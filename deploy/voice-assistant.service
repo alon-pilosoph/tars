@@ -1,0 +1,26 @@
+# systemd *user* service: starts TARS at boot and restarts it if it exits (e.g. the
+# microphone was unplugged). A user service shares the login session's PipeWire audio.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/voice-assistant.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now voice-assistant
+#   sudo loginctl enable-linger $USER    # start at boot, without logging in
+#
+#   journalctl --user -u voice-assistant -f    # follow the logs
+
+[Unit]
+Description=TARS voice assistant
+After=network-online.target pipewire.service
+Wants=network-online.target
+
+[Service]
+# Assumes the repo is cloned to ~/voice-assistant and uv is installed in ~/.local/bin.
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen voice-assistant
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
