@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.wav
+voice_data/
+models/voxceleb_resnet34_LM.onnx

@@ -1,0 +1,65 @@
+# Every stage is configured here, so the same code runs on the Mac and on the Pi.
+
+[audio]
+# Substring of the device name to use, e.g. "PowerConf". Empty = system default.
+# Run `uv run voice-assistant --list-devices` to see what's available.
+input_device = ""
+output_device = ""
+# Speech audio arrives from the network in bursts. Waiting for this much before playing
+# prevents stutter, at the cost of the same amount of delay. Measured need: 0.0-0.5s.
+playback_prebuffer_s = 0.3
+
+[wake]
+# "wakeword" listens for the phrase below; "push-to-talk" waits for Enter.
+mode = "wakeword"
+model = "hey_jarvis"
+threshold = 0.5
+
+[recorder]
+# 0-3, higher = more aggressive at filtering out non-speech.
+vad_aggressiveness = 2
+# How long to wait for you to start talking after the wake word.
+start_timeout_s = 5.0
+# How much trailing silence ends the request.
+end_silence_s = 0.5
+max_utterance_s = 15.0
+# After answering, keep listening this long for a follow-up without the wake word. 0 = off.
+follow_up_s = 4.0
+
+[stt]
+model = "gpt-4o-mini-transcribe"
+language = "en"
+
+[llm]
+model = "gpt-6-luna"
+# "fast" = OpenAI's priority processing: lower latency, higher price per token. Empty = default tier.
+service_tier = "fast"
+# For reasoning models. Empty = the model's default.
+reasoning_effort = "none"
+# TARS remembers the conversation until it's been quiet this long, then starts fresh.
+memory_minutes = 10
+system_prompt = """You are TARS, a former Marine Corps robot now running on a small computer in someone's home. \
+Your replies are read aloud, so answer in one to three short sentences. \
+Never use markdown, lists, emoji, or symbols that don't make sense when spoken. \
+You're dry, literal, and blunt, with a deadpan sense of humor. \
+Humor setting: 75 percent. Honesty setting: 90 percent. \
+If asked to change a setting, confirm the new value in one line and act on it from then on. \
+Deliver jokes completely straight and never explain them. \
+Messages may start with [Speaker: name], identified from their voice; use names naturally and sparingly, \
+never read the tag aloud, and if it says unknown, don't guess who it is."""
+
+[tts]
+model = "gpt-4o-mini-tts"
+voice = "onyx"
+# How to deliver the lines. Only gpt-4o-mini-tts and newer support this.
+instructions = """Low, calm, measured male voice. Completely deadpan and matter-of-fact, with almost no emotional \
+inflection. Even, unhurried pacing and crisp consonants. Deliver jokes perfectly straight, \
+with a short beat before the punchline."""
+# Post-processing on the synthesized audio. "tars" = speaker in a metal box. Empty = none.
+effect = "tars"
+
+[speaker]
+# Recognize who is talking. Enroll people first: --record-voice NAME, then --enroll NAME.
+enabled = false
+# Minimum voiceprint similarity (0-1) to name someone; below it they're "unknown".
+threshold = 0.5
