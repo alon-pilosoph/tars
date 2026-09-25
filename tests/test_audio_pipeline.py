@@ -10,7 +10,7 @@ from voice_assistant.enroll import PAD_BLOCKS
 from voice_assistant.recorder import UtteranceRecorder
 from voice_assistant.speech import clean_for_speech, split_sentences
 
-from .conftest import FakeMic, quiet_block, voiced_block
+from .conftest import FakeMic, chime_block, quiet_block, voiced_block
 
 SPEECH_BLOCKS = 12
 UTTERANCE = (
@@ -35,6 +35,17 @@ def test_recorder_keeps_padding_when_asked():
         FakeMic(UTTERANCE), preroll_blocks=PAD_BLOCKS, tail_blocks=PAD_BLOCKS
     )
     assert blocks_in(padded) - blocks_in(default) >= 2 * PAD_BLOCKS - 8  # about a second on each side
+
+
+def test_our_own_chime_does_not_count_as_speech():
+    """The chime leaks back into the mic; it used to start (and end) a recording before anyone spoke."""
+    rec = UtteranceRecorder(RecorderConfig())
+    assert not rec.is_speech(chime_block(880.0))
+    assert not rec.is_speech(chime_block(1320.0))  # the follow-up blip
+    assert rec.is_speech(voiced_block())
+    # A fresh recorder: webrtcvad keeps a short "still talking" state after the voice block above.
+    chime_then_silence = [chime_block() for _ in range(3)] + [quiet_block() for _ in range(60)]
+    assert UtteranceRecorder(RecorderConfig()).record(FakeMic(chime_then_silence), start_timeout_s=4.0) is None
 
 
 def test_recorder_gives_up_when_nobody_speaks():

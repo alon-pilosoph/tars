@@ -5,10 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from voice_assistant.wake import WakeWordTrigger
+from voice_assistant.wake import MicroWakeWordTrigger, WakeWordTrigger, wake_word_trigger
 
 REPO = Path(__file__).parents[1]
 SPEAKER_MODEL = REPO / "models" / "voxceleb_resnet34_LM.onnx"
+HEY_TARS = REPO / "models" / "hey_tars.tflite"
 
 
 def bundled_jarvis() -> Path:
@@ -34,6 +35,26 @@ def test_custom_model_phrase_comes_from_the_filename(tmp_path):
 def test_missing_wake_model_is_a_clear_error():
     with pytest.raises(SystemExit, match="not found"):
         WakeWordTrigger("models/does_not_exist.onnx", 0.5)
+
+
+@pytest.mark.skipif(not HEY_TARS.exists(), reason="microWakeWord model not trained yet")
+def test_tflite_models_use_microwakeword():
+    trigger = wake_word_trigger(str(HEY_TARS), 0.95)
+    assert isinstance(trigger, MicroWakeWordTrigger)
+    assert trigger.phrase == "hey tars"
+
+
+@pytest.mark.skipif(not HEY_TARS.exists(), reason="microWakeWord model not trained yet")
+def test_microwakeword_scores_do_not_depend_on_block_size():
+    """The trigger buffers leftover audio between blocks, so any mic block size gives the same stream of scores."""
+    rng = np.random.default_rng(0)
+    audio = (rng.normal(0, 2000, 16000 * 3)).astype(np.int16)
+    peaks = []
+    for block in [1280, 480, 1000]:
+        trigger = MicroWakeWordTrigger(str(HEY_TARS), 0.95)
+        peaks.append(max(trigger.score(audio[i : i + block]) for i in range(0, len(audio), block)))
+    assert peaks[0] == pytest.approx(peaks[1]) == pytest.approx(peaks[2])
+    assert peaks[0] < 0.95  # noise isn't "hey TARS"
 
 
 @pytest.mark.skipif(not SPEAKER_MODEL.exists(), reason="speaker model not downloaded yet")

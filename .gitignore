@@ -5,3 +5,6 @@ __pycache__/
 *.wav
 voice_data/
 models/voxceleb_resnet34_LM.onnx
+models/vosk-model-*/
+# Learned from the user's own voice: stays on this machine
+models/hey_tars_check.json

@@ -1,6 +1,8 @@
 from pathlib import Path
 from typing import Protocol
 
+import numpy as np
+
 from .audio import Microphone
 
 
@@ -24,18 +26,95 @@ class WakeWordTrigger:
             openwakeword.utils.download_models([model])  # No-op once cached.
             name = model
         self._model = Model(wakeword_models=[model], inference_framework="onnx")
-        self._threshold = threshold
+        self.threshold = threshold
         self.phrase = name.replace("_", " ")
 
     def score(self, block) -> float:
         return max(self._model.predict(block).values())
 
-    def wait(self, mic: Microphone) -> None:
-        mic.clear()
-        while self.score(mic.read()) < self._threshold:
-            pass
+    def reset(self) -> None:
         # Scores stay high for a few frames after a hit; reset so we don't re-trigger.
         self._model.reset()
+
+    def wait(self, mic: Microphone) -> None:
+        mic.clear()
+        while self.score(mic.read()) < self.threshold:
+            pass
+        self.reset()
+
+
+class MicroWakeWordTrigger:
+    """A microWakeWord streaming model (.tflite), like the ones trained for "hey TARS".
+
+    Audio goes through the micro_speech frontend in 10 ms steps; the model scores every few steps
+    and keeps its own streaming state, so a fresh interpreter is the only clean reset.
+    """
+
+    STEP_BYTES = 160 * 2  # 10 ms of 16-bit audio
+
+    def __init__(self, model: str, threshold: float):
+        path = Path(model)
+        if not path.exists():
+            raise SystemExit(f"Wake-word model {model!r} not found.")
+        self._path = str(path)
+        self.threshold = threshold
+        self.phrase = path.stem.replace("_", " ")
+        self.reset()
+
+    def reset(self) -> None:
+        from ai_edge_litert.interpreter import Interpreter
+        from pymicro_features import MicroFrontend
+
+        self._model = Interpreter(model_path=self._path)
+        self._model.allocate_tensors()
+        self._input = self._model.get_input_details()[0]
+        self._output = self._model.get_output_details()[0]
+        self._quantized = self._input["dtype"] == np.int8
+        self._slices_per_score = self._input["shape"][1]
+        self._frontend = MicroFrontend()
+        self._pending = b""
+        self._features = []
+
+    def _run(self, chunk: np.ndarray) -> float:
+        if self._quantized:
+            scale, zero = self._input["quantization"]
+            chunk = np.clip(np.round(chunk / scale + zero), -128, 127).astype(np.int8)
+        self._model.set_tensor(self._input["index"], chunk.reshape(self._input["shape"]))
+        self._model.invoke()
+        out = self._model.get_tensor(self._output["index"])[0][0]
+        if self._output["dtype"] != np.float32:
+            scale, zero = self._output["quantization"]
+            out = (float(out) - zero) * scale
+        return float(out)
+
+    def score(self, block) -> float:
+        """Highest score produced while consuming this block (0 until enough audio has arrived)."""
+        audio = self._pending + np.asarray(block, dtype=np.int16).tobytes()
+        best, i = 0.0, 0
+        while i + self.STEP_BYTES <= len(audio):
+            result = self._frontend.process_samples(audio[i : i + self.STEP_BYTES])
+            i += result.samples_read * 2
+            if result.features:
+                self._features.append(result.features)
+                if len(self._features) == self._slices_per_score:
+                    chunk = np.array(self._features, dtype=np.float32)  # already scaled like the training features
+                    best = max(best, self._run(chunk))
+                    self._features = []
+        self._pending = audio[i:]
+        return best
+
+    def wait(self, mic: Microphone) -> None:
+        mic.clear()
+        while self.score(mic.read()) < self.threshold:
+            pass
+        self.reset()
+
+
+def wake_word_trigger(model: str, threshold: float):
+    """openWakeWord for pretrained names and .onnx files, microWakeWord for .tflite files."""
+    if model.endswith(".tflite"):
+        return MicroWakeWordTrigger(model, threshold)
+    return WakeWordTrigger(model, threshold)
 
 
 class PushToTalkTrigger:

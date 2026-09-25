@@ -6,7 +6,7 @@ from dotenv import dotenv_values
 from .audio import Microphone, MicrophoneError, Speaker, find_device, list_devices
 from .config import Config, load_config
 from .recorder import UtteranceRecorder
-from .wake import PushToTalkTrigger, WakeWordTrigger
+from .wake import PushToTalkTrigger, wake_word_trigger
 
 
 OPENAI_TIMEOUT_S = 15.0
@@ -25,39 +25,28 @@ def make_openai_client(env_path: Path):
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
 
 
-def make_trigger(cfg: Config, push_to_talk: bool):
+def make_trigger(cfg: Config, push_to_talk: bool, root: Path):
     if push_to_talk or cfg.wake.mode == "push-to-talk":
         return PushToTalkTrigger(), "Press Enter to talk."
-    trigger = WakeWordTrigger(cfg.wake.model, cfg.wake.threshold)
+    trigger = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
+    if cfg.wake.verify:
+        from .verify import PhraseVerifier, VerifiedTrigger
+
+        trigger = VerifiedTrigger(trigger, PhraseVerifier(trigger.phrase, root / "models"))
     return trigger, f"Say '{trigger.phrase}'..."
 
 
-def mic_test(cfg: Config) -> None:
-    """Live meter for tuning, no API key needed: loudness, speech detection, wake-word score."""
-    wake = WakeWordTrigger(cfg.wake.model, cfg.wake.threshold)
-    recorder = UtteranceRecorder(cfg.recorder)
-    print(f"Talk, and try saying '{wake.phrase}'. Ctrl+C to stop.\n")
-    with Microphone(find_device(cfg.audio.input_device, "input")) as mic:
-        while True:
-            block = mic.read()
-            level = min(1.0, float(abs(block).mean()) / 3000)
-            score = wake.score(block)
-            bar = "#" * int(level * 30)
-            flags = ("SPEECH " if recorder.is_speech(block) else "       ") + (
-                "WAKE!" if score >= cfg.wake.threshold else ""
-            )
-            print(f"\rlevel [{bar:<30}] wake {score:.2f} {flags:<12}", end="", flush=True)
-
-
-def record_voice_session(cfg: Config, person: str, root: Path) -> None:
+def record_voice_session(cfg: Config, person: str, mic_name: str, root: Path) -> None:
     """No API key needed: this only records clips for the verifier, the stop word and speaker ID."""
     from .audio import SAMPLE_RATE
     from .enroll import record_voice
 
-    print(f"Recording {person}'s voice. After each chime, say the prompt. Ctrl+C to stop; rerun to resume.")
+    print(
+        f"Recording {person}'s voice on the {mic_name} mic. After each chime, say the prompt. Ctrl+C to stop; rerun to resume."
+    )
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), SAMPLE_RATE, cfg.audio.playback_prebuffer_s)
     with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
-        record_voice(person, mic, speaker, UtteranceRecorder(cfg.recorder), root)
+        record_voice(person, mic_name, mic, speaker, UtteranceRecorder(cfg.recorder), root)
 
 
 def make_speaker_id(cfg: Config, root: Path):
@@ -66,15 +55,21 @@ def make_speaker_id(cfg: Config, root: Path):
     return SpeakerID(root / cfg.speaker.model, root / cfg.speaker.voiceprints, cfg.speaker.threshold)
 
 
-def enroll_speaker(cfg: Config, person: str, root: Path) -> None:
+def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
     from .speaker import read_wav
 
-    clips = sorted((root / "voice_data" / person / "speech").glob("*.wav"))
+    # Enroll from the mic the assistant will listen with: voiceprints don't transfer perfectly between mics.
+    clips = sorted((root / "voice_data" / person / mic_name / "speech").glob("*.wav"))
     if len(clips) < 5:
-        raise SystemExit(f"Need at least 5 recorded sentences for {person}; run --record-voice {person} first.")
+        raise SystemExit(
+            f"Need at least 5 sentences for {person} on the {mic_name} mic; "
+            f"run --record-voice {person} --mic {mic_name} first."
+        )
     speaker_id = make_speaker_id(cfg, root)
     speaker_id.enroll(person, [read_wav(c) for c in clips])
-    print(f"Enrolled {person} from {len(clips)} sentences. Everyone enrolled: {', '.join(speaker_id.voiceprints)}")
+    print(
+        f"Enrolled {person} from {len(clips)} sentences ({mic_name} mic). Everyone enrolled: {', '.join(speaker_id.voiceprints)}"
+    )
     if not cfg.speaker.enabled:
         print("Set enabled = true under [speaker] in config.toml to use it.")
 
@@ -88,6 +83,9 @@ def main() -> None:
     parser.add_argument("--text", action="store_true", help="type questions instead of speaking them")
     parser.add_argument("--record-voice", metavar="NAME", help="guided recording of NAME's voice into voice_data/")
     parser.add_argument("--enroll", metavar="NAME", help="build NAME's voiceprint from their recorded sentences")
+    parser.add_argument(
+        "--mic", default="laptop", help="which mic a --record-voice/--enroll session is for (default: laptop)"
+    )
     args = parser.parse_args()
 
     if args.list_devices:
@@ -97,14 +95,16 @@ def main() -> None:
     cfg = load_config(args.config)
     try:
         if args.mic_test:
-            mic_test(cfg)
+            from .mic_test import mic_test
+
+            mic_test(cfg, args.config.resolve().parent)
             return
         root = args.config.resolve().parent
         if args.record_voice:
-            record_voice_session(cfg, args.record_voice, root / "voice_data")
+            record_voice_session(cfg, args.record_voice, args.mic, root / "voice_data")
             return
         if args.enroll:
-            enroll_speaker(cfg, args.enroll, root)
+            enroll_speaker(cfg, args.enroll, args.mic, root)
             return
         run(cfg, args)
     except KeyboardInterrupt:
@@ -145,10 +145,22 @@ def run(cfg: Config, args: argparse.Namespace) -> None:
                     assistant.answer(text)
                 except OpenAIError as e:
                     print(f"OpenAI error: {e!r}")
-        trigger, idle_message = make_trigger(cfg, args.ptt)
+        trigger, idle_message = make_trigger(cfg, args.ptt, args.config.resolve().parent)
         speaker_id = make_speaker_id(cfg, args.config.resolve().parent) if cfg.speaker.enabled else None
-        assistant = Assistant(mic, speaker, trigger, recorder, transcriber, brain, voice, speaker_id)
-        assistant.run_forever(idle_message, follow_up_s=cfg.recorder.follow_up_s)
+        assistant = Assistant(
+            mic,
+            speaker,
+            trigger,
+            recorder,
+            transcriber,
+            brain,
+            voice,
+            speaker_id,
+            name_threshold=cfg.speaker.wake_threshold,
+        )
+        assistant.run_forever(
+            idle_message, follow_up_s=cfg.recorder.follow_up_s, greet_after_s=cfg.recorder.greet_after_s
+        )
 
 
 if __name__ == "__main__":

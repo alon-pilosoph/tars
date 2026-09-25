@@ -13,11 +13,16 @@ MAX_TURNS = 50
 
 # Follow-ups are heard without the wake word, so they may just be people talking to each other.
 FOLLOW_UP_TAG = "[Follow-up, no wake word]"
+# When the wake word sounded close but not quite, the assistant asks "Did you call me?" and tags the reply.
+ASKED_TAG = "[Reply to your 'Did you call me?']"
 SKIP = "<skip>"
 PROTOCOL = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "
-    f"conversation), reply with exactly {SKIP} and nothing else."
+    f"conversation), reply with exactly {SKIP} and nothing else.\n"
+    f"Messages starting with {ASKED_TAG} answer the question you just asked because you weren't sure someone "
+    f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
+    f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
 )
 
 

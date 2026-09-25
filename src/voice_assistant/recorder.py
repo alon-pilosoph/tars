@@ -13,6 +13,16 @@ VAD_FRAMES_PER_BLOCK = BLOCK_SAMPLES // VAD_FRAME_SAMPLES
 START_BLOCKS = 2
 # Audio kept from just before speech was detected, so the first syllable isn't clipped.
 PREROLL_BLOCKS = 4
+# Our own chimes leak back into the mic (speaker latency, room echo) and webrtcvad calls a pure tone speech.
+# Peak-to-mean spectrum ratio: chimes measure ~100, voices ~15-40.
+MAX_TONALITY = 70.0
+_WINDOW = np.hanning(BLOCK_SAMPLES)
+
+
+def tonality(block: np.ndarray) -> float:
+    """How much of the block's energy sits at one frequency: high for beeps and whistles, low for voices."""
+    spectrum = np.abs(np.fft.rfft(block.astype(np.float32) * _WINDOW))
+    return float(spectrum.max() / (spectrum.mean() + 1e-9))
 
 
 class UtteranceRecorder:
@@ -25,6 +35,8 @@ class UtteranceRecorder:
         self.trailing_silence_s = 0.0
 
     def is_speech(self, block: np.ndarray) -> bool:
+        if tonality(block) > MAX_TONALITY:
+            return False
         raw = block.tobytes()
         frame_bytes = VAD_FRAME_SAMPLES * 2
         voiced = sum(

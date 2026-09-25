@@ -12,8 +12,12 @@ playback_prebuffer_s = 0.3
 [wake]
 # "wakeword" listens for the phrase below; "push-to-talk" waits for Enter.
 mode = "wakeword"
-model = "hey_jarvis"
+# A pretrained openWakeWord name, or a path to a custom .onnx (openWakeWord) or .tflite (microWakeWord) model.
+model = "models/hey_tars.tflite"
+# Low on purpose: the double-check below throws out lookalikes, so the model mustn't miss the real phrase.
 threshold = 0.5
+# Double-check each wake with a small offline speech recognizer, so "hey cars" doesn't wake it.
+verify = true
 
 [recorder]
 # 0-3, higher = more aggressive at filtering out non-speech.
@@ -25,6 +29,8 @@ end_silence_s = 0.5
 max_utterance_s = 15.0
 # After answering, keep listening this long for a follow-up without the wake word. 0 = off.
 follow_up_s = 4.0
+# If you say just "hey TARS" and pause this long, TARS answers "Yes, <your name>?" and waits. 0 = off.
+greet_after_s = 1.5
 
 [stt]
 model = "gpt-4o-mini-transcribe"
@@ -60,6 +66,8 @@ effect = "tars"
 
 [speaker]
 # Recognize who is talking. Enroll people first: --record-voice NAME, then --enroll NAME.
-enabled = false
+enabled = true
 # Minimum voiceprint similarity (0-1) to name someone; below it they're "unknown".
 threshold = 0.5
+# The same, but for naming you from just "hey TARS" (much less audio, so a lower bar; measured 0% wrong names).
+wake_threshold = 0.25

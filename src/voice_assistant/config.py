@@ -15,6 +15,7 @@ class WakeConfig:
     mode: str = "wakeword"
     model: str = "hey_jarvis"
     threshold: float = 0.5
+    verify: bool = False  # double-check each wake with an offline speech recognizer (verify.py)
 
 
 @dataclass
@@ -24,6 +25,7 @@ class RecorderConfig:
     end_silence_s: float = 0.5
     max_utterance_s: float = 15.0
     follow_up_s: float = 4.0
+    greet_after_s: float = 1.5  # say "Yes, <name>?" if nothing follows the wake word this long; 0 = off
 
 
 @dataclass
@@ -53,6 +55,8 @@ class TTSConfig:
 class SpeakerConfig:
     enabled: bool = False
     threshold: float = 0.5
+    # "hey TARS" alone is under a second of speech, so naming someone from it needs its own, lower bar.
+    wake_threshold: float = 0.25
     model: str = "models/voxceleb_resnet34_LM.onnx"
     voiceprints: str = "voice_data/voiceprints.npz"
 

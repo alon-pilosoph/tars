@@ -5,13 +5,24 @@ from concurrent.futures import ThreadPoolExecutor
 from openai import OpenAIError
 
 from .audio import Microphone, MicrophoneError, Speaker
-from .llm import FOLLOW_UP_TAG, Brain, split_skip
+from .llm import ASKED_TAG, FOLLOW_UP_TAG, Brain, split_skip
 from .recorder import UtteranceRecorder
 from .speaker import SpeakerID
 from .speech import speak_streamed_reply
 from .stt import Transcriber
 from .tts import Voice
+from .verify import ASK
 from .wake import Trigger
+
+
+ASK_PHRASE = "Did you call me?"
+
+
+def greeting(name: str | None) -> str:
+    return f"Yes, {name.capitalize()}?" if name else "Yes?"
+
+
+ASK_TIMEOUT_S = 5.0  # how long to wait for an answer to it
 
 
 class Assistant:
@@ -25,6 +36,7 @@ class Assistant:
         brain: Brain,
         voice: Voice,
         speaker_id: SpeakerID | None = None,
+        name_threshold: float = 0.25,
     ):
         self.mic = mic
         self.speaker = speaker
@@ -35,26 +47,79 @@ class Assistant:
         self.voice = voice
         self.speaker_id = speaker_id
         self._background = ThreadPoolExecutor(max_workers=1)
+        self.name_threshold = name_threshold
+        self._phrases: dict[str, list[bytes]] = {}  # short lines synthesized once: "Did you call me?", "Yes, Alon?"
 
-    def run_forever(self, idle_message: str, follow_up_s: float = 0.0) -> None:
+    def run_forever(self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0) -> None:
+        # Synthesize the short lines ahead of time so they play instantly.
+        names = list(self.speaker_id.voiceprints) if self.speaker_id else []
+        for line in [ASK_PHRASE, greeting(None)] + [greeting(n) for n in names]:
+            self._background.submit(self._phrase_audio, line)
         while True:
             print(f"\n{idle_message}")
-            self.trigger.wait(self.mic)
+            if self.trigger.wait(self.mic) == ASK:
+                self.ask_if_called(follow_up_s)
+                continue
             with self.mic.paused(tail_s=0.05):
                 self.speaker.chime()
             print("Listening...")
-            self.converse(follow_up_s)
+            self.converse(follow_up_s, greet_after_s=greet_after_s)
 
-    def converse(self, follow_up_s: float) -> None:
-        """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks."""
-        pcm = self.recorder.record(self.mic)
+    def _phrase_audio(self, text: str) -> list[bytes]:
+        if text not in self._phrases:
+            self._phrases[text] = list(self.voice.stream(text))
+        return self._phrases[text]
+
+    def say(self, text: str) -> None:
+        with self.mic.paused():
+            self.speaker.play_pcm_stream(iter(self._phrase_audio(text)), self.voice.sample_rate)
+
+    def wake_speaker(self) -> str | None:
+        """Who said the wake word, if we can tell from that short clip."""
+        audio = getattr(self.trigger, "last_audio", None)
+        if not self.speaker_id or audio is None:
+            return None
+        return self.speaker_id.identify(audio.astype("int16").tobytes(), threshold=self.name_threshold)
+
+    def greet(self) -> None:
+        """Just "hey TARS" and a pause: answer like a person would, by name when we're sure who it is."""
+        text = greeting(self.wake_speaker())
+        print(f"Bot:  {text}")
+        self.say(text)
+
+    def ask_if_called(self, follow_up_s: float) -> None:
+        """It sounded almost like our name ("hey cars"?): ask, and only carry on if someone answers."""
+        print(f"Bot:  {ASK_PHRASE}  (not sure I heard my name)")
+        self.say(ASK_PHRASE)
+        pcm = self.recorder.record(self.mic, start_timeout_s=ASK_TIMEOUT_S)
+        if pcm is None:
+            print("(no answer, going back to sleep)")
+            return
+        self.converse(follow_up_s, first=(pcm, ASKED_TAG))
+
+    def converse(self, follow_up_s: float, first: tuple[bytes, str] | None = None, greet_after_s: float = 0.0) -> None:
+        """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
+
+        `first` is an already-recorded request and the tag to send it with (a reply to "Did you call me?").
+        With `greet_after_s`, a pause that long after the wake word gets a "Yes, <name>?" before we keep waiting.
+        """
+        if first:
+            pcm, tag = first
+        else:
+            tag = None
+            pcm = self.recorder.record(self.mic, start_timeout_s=greet_after_s) if greet_after_s else None
+            if pcm is None:
+                if greet_after_s:
+                    self.greet()
+                pcm = self.recorder.record(self.mic)
         if pcm is None:
             print("(didn't hear anything)")
             return
         follow_up = False
         while True:
             try:
-                answered = self.handle(pcm, follow_up)
+                answered = self.handle(pcm, follow_up, tag)
+                tag = None
             except MicrophoneError:
                 raise  # Not recoverable here; let the process exit so a supervisor can restart it.
             except Exception as e:
@@ -77,7 +142,7 @@ class Assistant:
             if pcm is None:
                 return
 
-    def handle(self, pcm: bytes, follow_up: bool = False) -> bool:
+    def handle(self, pcm: bytes, follow_up: bool = False, tag: str | None = None) -> bool:
         """Transcribe and answer one request. Returns False if there was nothing (meant for us) to answer."""
         # Latency is measured from the moment you actually stopped talking,
         # including the silence we waited through to be sure you were done.
@@ -97,9 +162,12 @@ class Assistant:
             text = f"[Speaker: {name or 'unknown'}] {text}"
         if follow_up:
             text = f"{FOLLOW_UP_TAG} {text}"
+        if tag:
+            text = f"{tag} {text}"
 
         timings = [f"end-of-speech wait {silence_s:.2f}s", f"stt {stt_s:.2f}s"]
-        return self.answer(text, t_stopped_talking, timings, follow_up=follow_up)
+        # A reply to "Did you call me?" may be a "no", so it can be skipped like an overheard follow-up.
+        return self.answer(text, t_stopped_talking, timings, follow_up=follow_up or tag is not None)
 
     def answer(
         self, text: str, t_start: float | None = None, timings: list[str] | None = None, follow_up: bool = False

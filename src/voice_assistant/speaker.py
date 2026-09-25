@@ -68,11 +68,11 @@ class SpeakerID:
         emb = self.embed(pcm)
         return {name: float(emb @ vp) for name, vp in self.voiceprints.items()}
 
-    def identify(self, pcm: bytes) -> str | None:
+    def identify(self, pcm: bytes, threshold: float | None = None) -> str | None:
         """The best-matching enrolled person, or None if nobody matches well enough (or the clip is too short)."""
         audio = np.frombuffer(pcm, dtype=np.int16)
         if not self.voiceprints or len(audio) < MIN_SPEECH_S * SAMPLE_RATE:
             return None
         scores = self.scores(audio)
         best = max(scores, key=scores.get)
-        return best if scores[best] >= self.threshold else None
+        return best if scores[best] >= (self.threshold if threshold is None else threshold) else None
