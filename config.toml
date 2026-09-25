@@ -12,12 +12,20 @@ playback_prebuffer_s = 0.3
 [wake]
 # "wakeword" listens for the phrase below; "push-to-talk" waits for Enter.
 mode = "wakeword"
-# A pretrained openWakeWord name, or a path to a custom .onnx (openWakeWord) or .tflite (microWakeWord) model.
-model = "models/hey_tars.tflite"
+# Which "hey TARS" setup to use. Each folder has a wake model and a learned double-check:
+#   models/generic/   never trained on anyone's recordings: works for anyone out of the box (default)
+#   models/personal/  trained partly on Alon's recordings; kept local (uses check_window_s = 2.5)
+# A path to a custom .onnx (openWakeWord) or .tflite (microWakeWord) model, or a pretrained openWakeWord name.
+model = "models/generic/hey_tars.tflite"
 # Low on purpose: the double-check below throws out lookalikes, so the model mustn't miss the real phrase.
 threshold = 0.5
 # Double-check each wake with a small offline speech recognizer, so "hey cars" doesn't wake it.
 verify = true
+# The double-check's learned layer ("" = plain phrase match).
+check_model = "models/generic/hey_tars_check.json"
+# Seconds of audio the double-check hears. The generic model can fire a moment after the phrase ends, so it
+# needs 3.0 (measured: 94% of other voices vs 81% at 2.0); the personal one does best at 2.5.
+check_window_s = 3.0
 
 [recorder]
 # 0-3, higher = more aggressive at filtering out non-speech.

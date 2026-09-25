@@ -81,9 +81,10 @@ def mic_test(cfg: Config, root: Path) -> None:
     if cfg.wake.verify:
         from .verify import PhraseVerifier
 
-        verifier = PhraseVerifier(wake.phrase, root / "models")
+        check = root / cfg.wake.check_model if cfg.wake.check_model else None
+        verifier = PhraseVerifier(wake.phrase, root / "models", check)
     recorder = UtteranceRecorder(cfg.recorder)
-    recent = RecentAudio()
+    recent = RecentAudio(cfg.wake.check_window_s)
     log = WakeLog(cfg.wake.threshold)
     passed = 0
     check = " Each wake is then double-checked by the speech recognizer." if verifier else ""

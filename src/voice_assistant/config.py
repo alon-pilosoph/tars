@@ -16,6 +16,8 @@ class WakeConfig:
     model: str = "hey_jarvis"
     threshold: float = 0.5
     verify: bool = False  # double-check each wake with an offline speech recognizer (verify.py)
+    check_window_s: float = 2.5  # how much audio before the wake the double-check hears
+    check_model: str = ""  # a learned layer for the double-check (.json); "" = plain phrase match
 
 
 @dataclass

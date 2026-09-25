@@ -16,7 +16,9 @@ from .audio import BLOCK_SECONDS, Microphone
 
 MODEL_NAME = "vosk-model-small-en-us-0.15"  # 40 MB download, runs fine on a Raspberry Pi
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
-WINDOW_S = 2.0  # audio handed to the recognizer: the wake phrase has just ended when the model fires
+# Audio handed to the recognizer when the model fires. Some wake models fire up to ~1 s after the phrase ends,
+# so too short a window loses the "hey"; too long lets in more lookalikes. Measured best: 2.5 s (see config.toml).
+WINDOW_S = 2.5
 
 # Per wake phrase: what else it could be (so the recognizer has somewhere else to put a lookalike),
 # and what counts as a match. "darts" is how "TARS" often comes out for a soft t; nobody says "hey darts".
@@ -81,7 +83,7 @@ def ensure_model(models_dir: Path) -> Path:
 
 
 class PhraseVerifier:
-    def __init__(self, phrase: str, models_dir: Path):
+    def __init__(self, phrase: str, models_dir: Path, check_path: Path | None = None):
         from vosk import Model, SetLogLevel
 
         if phrase not in PHRASES:
@@ -93,9 +95,10 @@ class PhraseVerifier:
         self._accept = [a.split() for a in spec["accept"]]
         self._ask_after_hey = set(spec["ask_after_hey"])
         self.last_confidence: float | None = None
-        # Optional: a learned layer that knows how enrolled people say the phrase (see TunedCheck).
-        tuned = models_dir / f"{phrase.replace(' ', '_')}_check.json"
-        self._tuned = TunedCheck(json.loads(tuned.read_text())) if tuned.exists() else None
+        # Optional: a learned layer on top of the recognizer (see TunedCheck); without it, a plain phrase match.
+        if check_path is not None and not check_path.exists():
+            raise SystemExit(f"Wake check model {check_path} not found.")
+        self._tuned = TunedCheck(json.loads(check_path.read_text())) if check_path else None
         if self._tuned:
             self._grammar = self._tuned.grammar
 
@@ -179,8 +182,9 @@ class RecentAudio:
 class VerifiedTrigger:
     """The wake-word model listens all the time; each wake is double-checked before the assistant answers."""
 
-    def __init__(self, trigger, verifier: PhraseVerifier):
+    def __init__(self, trigger, verifier: PhraseVerifier, window_s: float = WINDOW_S):
         self._trigger = trigger
+        self._window_s = window_s
         self._verifier = verifier
         self.phrase = trigger.phrase
         self.last_audio: np.ndarray | None = None  # what woke us, so speaker ID can tell who said it
@@ -188,7 +192,7 @@ class VerifiedTrigger:
     def wait(self, mic: Microphone) -> str:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite."""
         mic.clear()
-        recent = RecentAudio()
+        recent = RecentAudio(self._window_s)
         while True:
             block = mic.read()
             recent.add(block)

@@ -9,7 +9,7 @@ from voice_assistant.wake import MicroWakeWordTrigger, WakeWordTrigger, wake_wor
 
 REPO = Path(__file__).parents[1]
 SPEAKER_MODEL = REPO / "models" / "voxceleb_resnet34_LM.onnx"
-HEY_TARS = REPO / "models" / "hey_tars.tflite"
+HEY_TARS = REPO / "models" / "generic" / "hey_tars.tflite"
 
 
 def bundled_jarvis() -> Path:

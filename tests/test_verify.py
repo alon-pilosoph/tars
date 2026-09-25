@@ -127,7 +127,7 @@ def test_unknown_phrase_is_a_clear_error(tmp_path):
         PhraseVerifier("hey jarvis", tmp_path)
 
 
-TUNED = Path(__file__).parents[1] / "models" / "hey_tars_check.json"
+TUNED = Path(__file__).parents[1] / "models" / "generic" / "hey_tars_check.json"
 
 
 @pytest.mark.skipif(not TUNED.exists(), reason="no learned check trained yet")

@@ -32,7 +32,10 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path):
     if cfg.wake.verify:
         from .verify import PhraseVerifier, VerifiedTrigger
 
-        trigger = VerifiedTrigger(trigger, PhraseVerifier(trigger.phrase, root / "models"))
+        check = root / cfg.wake.check_model if cfg.wake.check_model else None
+        trigger = VerifiedTrigger(
+            trigger, PhraseVerifier(trigger.phrase, root / "models", check), cfg.wake.check_window_s
+        )
     return trigger, f"Say '{trigger.phrase}'..."
 
 
