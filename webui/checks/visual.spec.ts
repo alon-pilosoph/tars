@@ -49,7 +49,7 @@ const STATES = [
   "tab=voices&demo=empty",
   "tab=models",
   "tab=models&retrain=running",
-  "tab=models&retrain=not_built",
+  "tab=models&retrain=skipped",
   "tab=models&retrain=worse",
   "tab=models&demo=empty",
 ];

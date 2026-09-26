@@ -163,5 +163,5 @@ they stay in stage 1, which needs variety, and are left out of stage 2, which ne
 
 Offline tuning has hit diminishing returns: every recent experiment moved one or two takes. The next gains come from
 real use: every wake and near-miss is saved with its audio and labeled (mostly automatically), and "Retrain now" in
-the web UI will retrain stage 2 on the household's own wakes. Retraining stage 1 on those clips (and the
+the web UI retrains stage 2 on the household's own wakes. Retraining stage 1 on those clips (and the
 near-misses) is a separate, occasional job on a bigger machine. See [self-learning](self-learning.md).

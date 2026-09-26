@@ -1,7 +1,7 @@
-"""A throwaway demo of the self-learning web UI with every kind of event, voice and model state.
+"""A throwaway demo of the self-learning web UI with every kind of event and voice.
 
     uv run python tools/webui_demo.py build /tmp/tars_demo      # make the demo log: wakes, voices, conversations, sent items
-    uv run python tools/webui_demo.py serve /tmp/tars_demo 8099  # serve it (with mock model history)
+    uv run python tools/webui_demo.py serve /tmp/tars_demo 8099  # serve it; "Retrain now" really retrains, inside the demo folder
     uv run python tools/webui_demo.py serve /tmp/tars_empty 8098 # an empty one, for the empty states
 
 Uses the user's recordings (voice_data/) and held-out test audio (~/wakeword_bench); nothing is committed.
@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from voice_assistant.__main__ import make_retrainer
 from voice_assistant.clustering import recluster
 from voice_assistant.config import load_config
 from voice_assistant.conversations import (
@@ -383,39 +384,6 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
     return len(convos.conversations())
 
 
-def mock_models() -> dict:
-    now = time.time()
-    return {
-        "active": {
-            "wake_model": "models/generic/hey_tars.tflite",
-            "threshold": 0.5,
-            "check_model": "models/generic/hey_tars_check.json",
-            "check_window_s": 3.0,
-        },
-        "history": [
-            {
-                "version": "check v2",
-                "ts": now - 3600 * 5,
-                "active": True,
-                "note": "Generic check retrained with accented voices (VCTK, 50 languages).",
-            },
-            {
-                "version": "check v1",
-                "ts": now - 3600 * 30,
-                "active": False,
-                "note": "Generic check: synthetic voices + 250 converted LibriSpeech speakers.",
-            },
-            {
-                "version": "plain",
-                "ts": now - 3600 * 60,
-                "active": False,
-                "note": "Plain phrase match, no learned layer.",
-            },
-        ],
-        "last_retrain": None,
-    }
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -428,9 +396,9 @@ def main() -> None:
         build(args.folder)
         return
     log = EventLog(args.folder / "events")
-    empty = not log.events(limit=1)  # an empty demo shows the "just started" model state too
-    info = (lambda: {**mock_models(), "history": []}) if empty else mock_models
-    serve(log, "127.0.0.1", args.port, recluster=lambda: recluster(log), models_info=info)
+    # The real Models page: retraining learns from the demo's wakes, and keeps its versions in the demo folder.
+    models = make_retrainer(load_config(REPO / "config.toml"), REPO, log)
+    serve(log, "127.0.0.1", args.port, recluster=lambda: recluster(log), models=models)
 
 
 if __name__ == "__main__":

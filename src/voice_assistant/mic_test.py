@@ -77,10 +77,12 @@ def mic_test(cfg: Config, root: Path) -> None:
     wake = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
     verifier = None
     if cfg.wake.verify:
+        from .checks import check_versions
         from .verify import PhraseVerifier
 
-        check = root / cfg.wake.check_model if cfg.wake.check_model else None
-        verifier = PhraseVerifier(wake.phrase, root / "models", check)
+        verifier = PhraseVerifier(wake.phrase, root / "models")
+        if versions := check_versions(cfg, root):
+            verifier.use_check(versions.in_use().spec)  # the one the assistant uses, retrained or not
     recorder = make_recorder(cfg, root, turn_model=False)
     recent = RecentAudio(cfg.wake.check_window_s)
     log = WakeLog(cfg.wake.threshold)

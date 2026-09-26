@@ -2284,3 +2284,9 @@ dialog.wide {
     width: calc(100% + 2 * var(--s1));
   }
 }
+
+/* ═══ Not in the design file: why the version history is ignored, and why a retrain kept the current check ═══ */
+.panel > .notice,
+.verdict + .notice {
+  margin-bottom: var(--s4);
+}

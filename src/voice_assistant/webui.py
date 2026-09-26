@@ -11,7 +11,7 @@ somewhere else can't read or change anything through the browser of someone at h
 import ipaddress
 import threading
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -69,6 +69,23 @@ class Seen(BaseModel):
     seen: bool = True
 
 
+class UseVersion(BaseModel):
+    version: str
+
+
+class Models(Protocol):
+    """The Models page: what hears the wake word, retraining the double-check, and its versions (retrain.py)."""
+
+    def info(self) -> dict:
+        """{"active": {...}, "history": [...], "last_retrain": {...} | None, "trainable": n}"""
+
+    def retrain(self) -> dict:
+        """Train a candidate and test it; it's put in use only if it's better. Returns how it went."""
+
+    def use(self, version: str) -> None:
+        """Put a version in use; KeyError if there's no such version."""
+
+
 def allowed_host(host: str, extra: frozenset[str] = frozenset()) -> bool:
     """A name this machine is reached by at home: an IP address, localhost, a .local name, a single-label name
     (the Pi's hostname, a Tailscale MagicDNS name), *.ts.net, or one listed in [web] allowed_hosts. Anything else
@@ -90,22 +107,16 @@ def same_site(origin: str, host: str, extra: frozenset[str] = frozenset()) -> bo
     return parts.netloc == host or (parts.hostname or "") in LOOPBACK | extra
 
 
-def not_built_retrain() -> dict:
-    return {
-        "status": "not_built",
-        "summary": "Retraining isn't built yet. Keep labeling wakes: they'll be the training and test data once it is.",
-    }
-
-
 def create_app(
-    log: EventLog, recluster=None, models_info=None, retrain=None, allowed_hosts: frozenset[str] = frozenset()
+    log: EventLog, recluster=None, models: Models | None = None, allowed_hosts: frozenset[str] = frozenset()
 ) -> FastAPI:
     """`recluster` re-clusters the voices (see clustering.regroup); None hides the button.
-    `models_info` returns what's running and its history; `retrain` retrains the check (manual, never scheduled).
+    `models` is the Models page (retraining is manual, never scheduled); None when there's nothing to retrain.
     `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
+    retraining = threading.Lock()
     extra = frozenset(h.lower() for h in allowed_hosts)
 
     @app.middleware("http")
@@ -329,12 +340,29 @@ def create_app(
             return recluster()
 
     @app.get("/api/models")
-    def models():
-        return models_info() if models_info else {"active": {}, "history": [], "last_retrain": None}
+    def models_page():
+        return models.info() if models else {"active": {}, "history": [], "last_retrain": None, "trainable": 0}
 
     @app.post("/api/retrain")
-    def run_retrain():
-        return (retrain or not_built_retrain)()
+    def retrain():
+        if models is None:
+            raise HTTPException(501, "the double-check has no learned layer to retrain")
+        if not retraining.acquire(blocking=False):
+            raise HTTPException(409, "already retraining")
+        try:
+            return models.retrain()
+        finally:
+            retraining.release()
+
+    @app.post("/api/models/use")
+    def use_version(body: UseVersion):
+        if models is None:
+            raise HTTPException(501, "the double-check has no learned layer to switch")
+        try:
+            models.use(body.version)
+        except KeyError:
+            raise HTTPException(404, "no such version") from None
+        return {"ok": True}
 
     @app.get("/api/status")
     def status():
@@ -348,13 +376,10 @@ def serve(
     host: str,
     port: int,
     recluster=None,
-    models_info=None,
-    retrain=None,
+    models: Models | None = None,
     allowed_hosts: frozenset[str] = frozenset(),
 ) -> None:
     import uvicorn
 
     print(f"TARS web UI on http://{host}:{port}  (Ctrl+C to stop)")
-    uvicorn.run(
-        create_app(log, recluster, models_info, retrain, allowed_hosts), host=host, port=port, log_level="warning"
-    )
+    uvicorn.run(create_app(log, recluster, models, allowed_hosts), host=host, port=port, log_level="warning")

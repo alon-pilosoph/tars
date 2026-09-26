@@ -6,6 +6,7 @@ These scripts made the wake models in `models/`:
 |---|---|---|
 | Generic (committed, the default) | `models/generic/hey_tars.tflite` | `stage1/train.py generic` |
 | | `models/generic/hey_tars_check.json` | `stage2/train_check.py generic` |
+| | `models/generic/hey_tars_check_data.npz` | `stage2/export_data.py generic` (what "Retrain now" needs) |
 | Personal (local only, gitignored) | `models/personal/hey_tars.tflite` | `stage1/train.py personal` |
 | | `models/personal/hey_tars_check.json` | `stage2/train_check.py personal` |
 
@@ -72,6 +73,7 @@ $M -m training.stage1.features user && $M -m training.stage1.train personal     
 # 5. Stage 2 (a few minutes, plus its own held-out test)
 $E -m training.stage2.train_check generic
 $E -m training.stage2.train_check personal                                        # personal only
+$E -m training.stage2.export_data generic    # its training examples and fixed test set, for "Retrain now" (2 min)
 
 # 6. End to end, the way the assistant runs (30-60 min)
 $E -m training.eval.pipeline $D/models/generic/hey_tars.tflite \

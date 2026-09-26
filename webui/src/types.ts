@@ -35,7 +35,7 @@ export interface Metric {
 }
 
 export interface RetrainResult {
-  status: "not_built" | "swapped" | "kept";
+  status: "swapped" | "kept" | "skipped"; // skipped: nothing was trained, and the summary says why
   summary?: string;
   version?: string;
   labeled?: number;
@@ -51,9 +51,17 @@ export interface Version {
 }
 
 export interface Models {
-  active: { wake_model?: string; threshold?: number; check_model?: string; check_window_s?: number };
+  active: {
+    wake_model?: string;
+    threshold?: number;
+    check_model?: string;
+    check_version?: string;
+    check_window_s?: number;
+  };
   history: Version[];
   last_retrain: RetrainResult | null;
+  trainable?: number; // labeled wakes a retrain would learn from
+  problem?: string | null; // why the saved version history is being ignored
 }
 
 export interface Status {

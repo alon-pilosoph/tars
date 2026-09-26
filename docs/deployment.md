@@ -75,7 +75,7 @@ down. The web UI's build is committed, so the Pi needs no Node. By hand, the ste
 | What | Learns from | Where | How long |
 | --- | --- | --- | --- |
 | **Voiceprints** (who's talking) | requests in a named voice (5+) | the Pi, on Re-cluster | seconds (built) |
-| **The double-check's layer** (answer / ask / ignore) | labeled wakes and near-misses | the Pi, on "Retrain now" | seconds (planned) |
+| **The double-check's layer** (answer / ask / ignore) | labeled wakes | the Pi, on "Retrain now" | seconds (built) |
 | **Stage 1, the wake model** | synthetic voices plus the household's labeled clips | a bigger machine, rarely | hours ([`training/`](../training/README.md)) |
 
 "Retrain now" is described in [self-learning](self-learning.md#learning-from-it). Given what the experiments showed

@@ -17,6 +17,7 @@ mic ──► wake word ──► record until you stop ──► speech-to-text
 - **Every stage sits behind a small interface** (`Trigger`, `Transcriber`, `Brain`, `Voice`), so swapping in a local model is one new class and a config change.
 - **Latency is printed for every turn**, broken down by stage.
 - **Conversations, not commands.** After answering, it listens a few more seconds for a follow-up without the wake word. If what it hears isn't meant for it (people talking to each other), the LLM answers `<skip>` and it stays quiet and forgets it. The whole conversation is sent to the LLM until it's been quiet for 10 minutes.
+- **It learns from your household** (optional). Every wake is kept with its audio and labeled, mostly automatically; "Retrain now" in the web UI retrains the double-check on your own wakes, in about a second, and uses the new one only if it tests better on your wakes and no worse on a fixed test set ([docs/self-learning.md](docs/self-learning.md)).
 - **It knows who's talking** (optional). Each request gets a voiceprint, compared to enrolled people while speech-to-text runs, so it adds no latency.
 - **Failures are spoken, not fatal.** A dropped connection or a crashed request gets a line in TARS's voice ("I lost that one somewhere between here and the server. Ask me again."), made ahead of time so it plays even when the voice service is the problem, and the assistant keeps listening. The voice gives up after 4 s of silence, other OpenAI requests after 15 s. A microphone that stops delivering audio exits with an error so a supervisor can restart it.
 
@@ -125,4 +126,5 @@ Then set `enabled = true` under `[speaker]`. There's also a way without a record
 | `journal.py` | What the assistant writes to those logs as it works; a failed write never costs a reply |
 | `clustering.py` | Groups requests by voice; builds voiceprints for named people |
 | `webui.py` | The web UI's server and API (the page itself is in `webui/`) |
+| `retrain.py` / `checks.py` | "Retrain now": a new double-check layer from the household's wakes, tested before it's used; its versions |
 | `enroll.py` | Guided recording of a person's voice for speaker ID and the wake-word verifier |

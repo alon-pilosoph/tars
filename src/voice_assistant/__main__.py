@@ -49,16 +49,17 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
         return PushToTalkTrigger(), "Press Enter to talk."
     trigger = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
     if cfg.wake.verify:
+        from .checks import check_versions
         from .verify import PhraseVerifier, VerifiedTrigger
 
-        check = root / cfg.wake.check_model if cfg.wake.check_model else None
+        # With a learned layer, the trigger puts the version in use into the verifier.
         trigger = VerifiedTrigger(
             trigger,
-            PhraseVerifier(trigger.phrase, root / "models", check),
+            PhraseVerifier(trigger.phrase, root / "models"),
             cfg.wake.check_window_s,
             journal=journal,
             wake_model=cfg.wake.model,
-            check_model=cfg.wake.check_model,
+            versions=check_versions(cfg, root),
         )
     return trigger, f"Say '{trigger.phrase}'..."
 
@@ -111,26 +112,28 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     if log is None:
         raise SystemExit("The web UI shows the event log: set log_events = true under [learning] in config.toml.")
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
-
-    def models_info():
-        return {
-            "active": {
-                "wake_model": cfg.wake.model,
-                "threshold": cfg.wake.threshold,
-                "check_model": cfg.wake.check_model or "plain phrase match",
-                "check_window_s": cfg.wake.check_window_s,
-            },
-            "history": [],
-            "last_retrain": None,
-        }
-
     serve(
         log,
         host,
         port,
         recluster=partial(regroup, log, speaker_id),
-        models_info=models_info,
+        models=make_retrainer(cfg, root, log),
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
+    )
+
+
+def make_retrainer(cfg: Config, root: Path, log):
+    """What the Models page shows and does, including retraining the double-check's learned layer if it has one."""
+    from .checks import CheckVersions
+    from .retrain import Retrainer
+    from .verify import PhraseVerifier
+
+    learned = cfg.wake.verify and cfg.wake.check_model
+    versions = CheckVersions(log.folder, root, cfg.wake.check_model) if learned else None
+    wake = {"wake_model": cfg.wake.model, "threshold": cfg.wake.threshold, "check_window_s": cfg.wake.check_window_s}
+    # The features come from the learned layer's own phrase list; "hey tars" only names the verifier's plain rules.
+    return Retrainer(
+        log, versions, root, lambda: PhraseVerifier("hey tars", root / "models", root / cfg.wake.check_model), wake
     )
 
 

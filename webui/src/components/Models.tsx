@@ -6,7 +6,7 @@ export function Models() {
   const s = useStore();
   const a = s.models?.active || {},
     h = s.models?.history || [],
-    labeled = s.events.filter(e => e.label || e.auto_label).length;
+    labeled = s.models?.trainable ?? 0;
   return (
     <>
       <div className="head">
@@ -39,9 +39,10 @@ export function Models() {
       <div className="panel">
         <h2>Retrain the double-check</h2>
         <p>
-          Trains on your {plural(labeled, "labeled event")} (conversations label themselves), then tests the candidate
-          on a fixed set: your held-out recordings, held-out voices, an hour of TV and an hour of audiobooks. It only
-          replaces the current check if it does better.
+          Learns from your {plural(labeled, "labeled wake")} (conversations label most of them), keeping every fifth
+          aside. The candidate is tested on those and on a fixed set: held-out voices in quiet and in noise, lookalikes,
+          an hour of TV and an hour of audiobooks. It only replaces the current check if it does better on your wakes
+          and no worse on anything else.
         </p>
         <div className="train-row">
           <button className="btn primary" disabled={s.retraining} onClick={retrain}>
@@ -60,6 +61,7 @@ export function Models() {
       </div>
       <div className="panel">
         <h2>History</h2>
+        {s.models?.problem && <div className="notice">{s.models.problem}</div>}
         {h.length ? (
           <div className="hist" role="table">
             <div className="h">Version</div>
@@ -81,7 +83,7 @@ export function Models() {
                 </div>,
                 <div key={`a${i}`} className={`a${last}`}>
                   {!x.active && (
-                    <button className="btn sm" onClick={() => rollback(x.version)}>
+                    <button className="btn sm" disabled={s.retraining} onClick={() => rollback(x.version)}>
                       Use this
                     </button>
                   )}
@@ -90,7 +92,7 @@ export function Models() {
             })}
           </div>
         ) : (
-          <p>Only the model you started with so far.</p>
+          <p>Only the check TARS was installed with, so far.</p>
         )}
       </div>
     </>
@@ -121,7 +123,7 @@ function Delta({ m }: { m: Metric }) {
 }
 
 function retrainNote(retraining: boolean, labeled: number) {
-  if (retraining) return "This takes a few minutes.";
+  if (retraining) return "The first time, this can take a minute.";
   return labeled ? "" : "Talk to TARS for a few days first: conversations are what it learns from.";
 }
 
@@ -156,7 +158,7 @@ function Result({ r, retraining }: { r: RetrainResult | null | undefined; retrai
         <p style={{ margin: 0, color: "var(--ink-3)" }}>No retrain yet.</p>
       </div>
     );
-  if (r.status === "not_built")
+  if (r.status === "skipped")
     return (
       <div className="result">
         <div className="notice">{r.summary}</div>
@@ -177,10 +179,10 @@ function Result({ r, retraining }: { r: RetrainResult | null | undefined; retrai
           <span className="badge no">✗ Not better: kept the current check</span>
         )}
         <span className="m">
-          Trained on {plural(r.labeled ?? 0, "labeled event")}
-          {r.ts ? `, ${when(r.ts)}` : ""}
+          Trained on {r.labeled ?? 0} of your wakes{r.ts ? `, ${when(r.ts)}` : ""}
         </span>
       </div>
+      {r.summary && <div className="notice">{r.summary}</div>}
       {rows.length > 0 && (
         <table>
           <thead>

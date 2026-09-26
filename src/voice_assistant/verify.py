@@ -16,6 +16,7 @@ import numpy as np
 from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
 
 if TYPE_CHECKING:
+    from .checks import CheckVersions
     from .journal import Journal
 
 MODEL_NAME = "vosk-model-small-en-us-0.15"  # 40 MB download, runs fine on a Raspberry Pi
@@ -95,16 +96,20 @@ class PhraseVerifier:
         SetLogLevel(-1)
         self._model = Model(str(ensure_model(models_dir)))
         spec = PHRASES[phrase]
-        self._grammar = json.dumps(spec["accept"] + spec["lookalikes"] + ["[unk]"])
+        self._phrase_grammar = json.dumps(spec["accept"] + spec["lookalikes"] + ["[unk]"])
         self._accept = [a.split() for a in spec["accept"]]
         self._ask_after_hey = set(spec["ask_after_hey"])
         self.last_confidence: float | None = None
         # Optional: a learned layer on top of the recognizer (see TunedCheck); without it, a plain phrase match.
         if check_path is not None and not check_path.exists():
             raise SystemExit(f"Wake check model {check_path} not found.")
-        self._tuned = TunedCheck(json.loads(check_path.read_text())) if check_path else None
-        if self._tuned:
-            self._grammar = self._tuned.grammar
+        self._tuned: TunedCheck | None = None
+        self.use_check(json.loads(check_path.read_text()) if check_path else None)
+
+    def use_check(self, spec: dict | None) -> None:
+        """Switch to another learned layer (or none), e.g. one "Retrain now" just made."""
+        self._tuned = TunedCheck(spec) if spec else None
+        self._grammar = self._tuned.grammar if self._tuned else self._phrase_grammar
 
     def heard(self, pcm: np.ndarray) -> str:
         return self._recognize(pcm, alternatives=0)["text"]
@@ -128,6 +133,13 @@ class PhraseVerifier:
         ok = any(words[i : i + len(a)] == a for a in self._accept for i in range(len(words)))
         # [unk] is the recognizer's catch-all: speech that matched none of the phrases it listens for.
         return ok, " ".join(words) or "nothing clear"
+
+    def features(self, pcm: np.ndarray) -> np.ndarray:
+        """What the learned layer sees in this audio: the numbers it's trained on."""
+        if not self._tuned:
+            raise ValueError("a plain phrase match has no learned layer")
+        alts = self._recognize(pcm, self._tuned.max_alternatives).get("alternatives", [])
+        return self._tuned.features(alts)
 
     def decide(self, pcm: np.ndarray) -> tuple[str, str]:
         """ANSWER, ASK ("Did you call me?") or IGNORE, plus what the recognizer heard."""
@@ -167,7 +179,11 @@ class TunedCheck:
         return np.array(best + [float(unknown)])
 
     def confidence(self, alternatives: list[dict]) -> float:
-        return float(1 / (1 + np.exp(-(self.features(alternatives) @ self.weights + self.bias))))
+        return float(self.probability(self.features(alternatives)))
+
+    def probability(self, features: np.ndarray) -> np.ndarray:
+        """For one clip's features, or a row of features per clip."""
+        return 1 / (1 + np.exp(-(features @ self.weights + self.bias)))
 
 
 class RecentAudio:
@@ -199,12 +215,18 @@ class VerifiedTrigger:
         journal: "Journal | None" = None,
         wake_model: str = "",
         check_model: str = "",
+        versions: "CheckVersions | None" = None,
     ):
+        """`versions`: the learned layer's versions, followed from wake to wake (the web UI retrains and rolls
+        back), starting with the one in use now."""
         self._trigger = trigger
         self._window_s = window_s
         self._verifier = verifier
         self._journal = journal
         self._wake_model, self._check_model = wake_model, check_model
+        self._versions = versions
+        self._stamp = None
+        self._follow_versions(quiet=True)
         self.phrase = trigger.phrase
         self.last_audio: np.ndarray | None = None  # what woke us, so speaker ID can tell who said it
 
@@ -231,6 +253,7 @@ class VerifiedTrigger:
             peak, peak_audio = 0.0, None  # it did wake: not a near-miss
             self._trigger.reset()
             audio = recent.audio()
+            self._follow_versions()
             outcome, heard = self._verifier.decide(audio)
             if self._journal:
                 self._journal.wake(
@@ -240,3 +263,18 @@ class VerifiedTrigger:
                 self.last_audio = audio
                 return outcome
             print(f"(Heard '{heard}', not '{self.phrase}'. Still listening.)")
+
+    def _follow_versions(self, quiet: bool = False) -> None:
+        if not self._versions:
+            return
+        try:
+            in_use = self._versions.in_use()
+            if in_use.stamp != self._stamp:
+                self._verifier.use_check(in_use.spec)
+                self._check_model, self._stamp = in_use.name, in_use.stamp
+                if not quiet:
+                    print(f"(The wake check is now {in_use.version}.)")
+        except Exception as e:  # at startup it's a config mistake; mid-run, it mustn't stop TARS listening
+            if self._stamp is None:
+                raise
+            print(f"(Couldn't switch the wake check, keeping {self._check_model}: {e!r})")

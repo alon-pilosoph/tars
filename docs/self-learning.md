@@ -78,22 +78,44 @@ Code: `clustering.py`, `speaker.py`.
 
 ## Learning from it
 
-"Retrain now" on the Models page will retrain **stage 2** from these labels, on the machine TARS runs on:
+"Retrain now" on the Models page retrains **stage 2**, the double-check's learned layer, from these labels, on the
+machine TARS runs on (`retrain.py`):
 
-1. Gather every labeled wake, automatic or a person's.
-2. Run Vosk once on each one's saved audio and cache the features.
-3. Fit the learned layer on most of them, keeping about 20% aside.
-4. Compare the candidate with the current layer on a fixed test set: the household's held-out wakes plus
-   precomputed features for held-out voices, lookalikes, and the TV and audiobook hours.
-5. Swap it in only if it catches more real wakes without more false answers. Every version is kept, so the Models
-   page can roll back.
-6. The running assistant loads the new layer without a restart.
+1. **Gather the labeled wakes.** A person's label, or the automatic one, except "the double-check heard something
+   else": that one is only the check's own opinion, and learning from it would teach the check what it already
+   thinks. Near-misses aren't used: the check never judges them.
+2. **Keep every fifth aside** (by id), so the held-out wakes are the same ones every time and the test only grows.
+3. **Run Vosk once** on each wake's saved audio. What it found is cached in `checks/<setup>/features.npz`.
+4. **Fit a candidate from scratch**, the same way `training/stage2/train_check.py` fitted the installed layer, on
+   that layer's own 13,000 training examples plus the household's wakes (each weighted 5, as the personal layer
+   weighs the owner's recordings). The examples ship next to the layer, as `models/generic/hey_tars_check_data.npz`
+   (58 KB, made by `training/stage2/export_data.py`), so nothing needs the training data folder.
+5. **Compare** the candidate with the layer in use, end to end, on the household's held-out wakes and on a fixed test
+   set that also ships in that file: 90 held-out voices saying "hey TARS" and 42 lookalikes, each in the 8 conditions
+   of the end-to-end test, plus every window the wake model fired on in an hour of TV and an hour of audiobooks.
+   A clip the wake model missed counts as missed, whatever the check would say.
+6. **Swap it in only if it's better on the household's wakes and no worse on anything**: more held-out "hey TARS"
+   answered, or fewer held-out wakes that weren't for TARS let through, and not one clip or false answer worse
+   anywhere else. Otherwise the page shows the comparison and keeps the current layer.
+7. **The running assistant switches** at its next wake, without a restart.
 
-The layer is a logistic regression over a few dozen numbers per clip, so fitting takes seconds on a Pi 5. It needs
-a few dozen labeled wakes of each kind before it can beat the generic layer.
+A retrain takes about a second, plus the recognizer's pass over wakes it hasn't seen yet. With too few wakes (none
+held out yet), it says so and changes nothing.
 
-**Status:** the button, its states and the version history are in the web UI; the training itself isn't built yet,
-and the button says so.
+**Versions.** Each version that was swapped in is kept in `<learning folder>/checks/<setup>/` (`v1.json`,
+`v2.json`...), with `history.json` saying which one is in use. The Models page lists them, newest first, with the
+installed layer (`config.toml`'s `check_model`) last, and "Use this" goes back to any of them. The assistant reads
+`history.json` on every wake, and notices a rewritten file too, so a rollback also applies from the next wake. A
+setup is named after the installed layer's folder, so switching `check_model` to `models/personal/` starts a
+separate history. Code: `checks.py`.
+
+Nothing about versions can stop TARS listening. Every file is written to a temporary file, flushed to disk and
+swapped in, so a power cut can't leave half of one. If the history can't be read, a version file is missing or
+damaged, or the installed layer has changed since the versions were made from it (an update replaced it), TARS uses
+the installed layer and the Models page says why; the next retrain or "Use this" starts a new history and keeps the
+old file aside. Version numbers are never reused. If someone picks another version while a retrain runs, the
+candidate isn't swapped in (it was compared with the old one), and the page says so. A wake whose audio can't be
+read is left out, and any other failure is shown on the Models page, keeping what the recognizer got through.
 
 **Stage 1** (the wake model) is a different job: retraining it on the household's real "hey TARS" clips and
 near-misses is what fixes wakes that stage 1 misses entirely, but it takes hours on a bigger machine (see

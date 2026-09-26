@@ -335,3 +335,19 @@ test("a name prompt: Enter saves, Cancel doesn't", async () => {
   await expect(dialog()).toHaveCount(0);
   expect((await A.clusters()).some(c => c.name === "Nobody")).toBe(false);
 });
+
+test("Retrain now really retrains, and the page shows what the server recorded", async () => {
+  await nav("Models").click();
+  const button = page.locator(".train-row .btn.primary");
+  await button.click();
+  await expect(button).toHaveText("Retrain now", { timeout: 60_000 });
+  const models = await (await page.request.get("/api/models")).json();
+  const r = models.last_retrain;
+  expect(["swapped", "kept"]).toContain(r.status);
+  await expect(page.locator(".result .verdict .badge")).toHaveText(
+    r.status === "swapped" ? "✓ Better: now in use" : "✗ Not better: kept the current check",
+  );
+  await expect(page.locator(".result tbody tr")).toHaveCount(r.metrics.length);
+  await expect(page.locator(".result tbody tr").first().locator("td").nth(1)).toHaveText(r.metrics[0].current);
+  await expect(page.locator(".hist .v").first()).toContainText(models.history[0].version);
+});

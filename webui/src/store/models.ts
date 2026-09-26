@@ -20,10 +20,16 @@ export async function rollback(version: string) {
   if (
     !(await confirm({
       title: `Go back to ${version}?`,
-      text: "The double-check switches to this version right away. You can switch back any time.",
+      text: "The double-check switches to this version from the next wake. You can switch back any time.",
       ok: "Use this version",
     }))
   )
     return;
-  toast("Rollback isn't built yet.");
+  try {
+    await post("/api/models/use", { version });
+    toast(`Now using ${version}.`);
+  } catch (e) {
+    toast(`Couldn't switch (${errText(e)}).`);
+  }
+  await reload();
 }
