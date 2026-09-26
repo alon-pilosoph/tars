@@ -75,7 +75,7 @@ Add `?demo` to the URL for built-in sample data with no server. [docs/web-ui.md]
 
 ### On the Pi, at boot
 
-[`deploy/voice-assistant.service`](deploy/voice-assistant.service) is a systemd user service that starts the assistant at boot and restarts it if it exits (for example after the speakerphone is unplugged and plugged back in). [`deploy/voice-assistant-web.service`](deploy/voice-assistant-web.service) does the same for the web UI. Install steps are at the top of each file.
+`deploy/install-pi.sh` sets everything up on a Pi in one go (see [docs/deployment.md](docs/deployment.md)). [`deploy/voice-assistant.service`](deploy/voice-assistant.service) is a systemd user service that starts the assistant at boot and restarts it if it exits (for example after the speakerphone is unplugged and plugged back in). [`deploy/voice-assistant-web.service`](deploy/voice-assistant-web.service) does the same for the web UI. Install steps are at the top of each file.
 
 On macOS, the first run will ask for microphone access for your terminal. If audio stays silent, check System Settings → Privacy & Security → Microphone.
 

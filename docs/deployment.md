@@ -15,20 +15,44 @@ OpenAI after a wake leaves the house.
 └────────────────────────────────────────────────┘
 ```
 
-## Install on the Pi
+## On the Mac, with a USB speakerphone
 
 ```bash
-sudo apt install libportaudio2
-git clone <this repo> ~/voice-assistant && cd ~/voice-assistant
-uv sync
-cp .env.example .env               # add the OpenAI API key
-uv run voice-assistant --mic-test  # check the speakerphone is found (names go in config.toml [audio])
+uv sync && cp .env.example .env    # then put your OpenAI API key in .env
+uv run voice-assistant --list-devices
 ```
 
-Then install both systemd user services; the steps are at the top of
+Plug the speakerphone in and look for its name in the list. If it isn't marked as the default (`*`), put part of
+its name in `config.toml`, for example `input_device = "PowerConf"` and `output_device = "PowerConf"`. Then:
+
+```bash
+uv run voice-assistant --mic-test   # speak: the level, speech and wake-word meters should move; no API key needed
+uv run voice-assistant              # say "hey TARS", wait for the chime, ask something
+uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:8080
+```
+
+The first start downloads the double-check's recognizer (40 MB) and the speaker model (25 MB) into `models/`. Expect
+about 3.5 to 4 seconds from when you stop talking to TARS's first word: noticing you've stopped (0.5 s), speech to
+text (about 1.2 s), the reply's first sentence (about 0.9 s) and its first audio (about 1.1 s). A web search adds a
+"Looking it up." first. macOS asks for microphone access the first time; if TARS hears nothing, check System
+Settings → Privacy & Security → Microphone for your terminal.
+
+## Install on the Pi
+
+On Raspberry Pi OS (64-bit, Bookworm or later), with the speakerphone plugged in:
+
+```bash
+git clone <this repo> ~/voice-assistant
+~/voice-assistant/deploy/install-pi.sh
+```
+
+[`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
+ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
+starts both systemd user services, at boot too. The first run stops to ask for the OpenAI key in `.env`; run it again
+after. It's safe to rerun. The two services are separate processes on purpose: a crash in one never takes the other
+down. The web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
-[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service). They're separate processes on
-purpose: a crash in one never takes the other down. The web UI's build is committed, so the Pi needs no Node.
+[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service).
 
 ## Things to know
 
@@ -43,7 +67,8 @@ purpose: a crash in one never takes the other down. The web UI's build is commit
   encrypted copy of `voice_data/` and `models/personal/` to S3 or Backblaze B2 costs cents a month.
 - **Two processes, one log.** The assistant writes and the web UI reads and edits the same SQLite file (WAL mode,
   so neither blocks the other; a failed write never costs a reply). Speaker ID picks up new voiceprints on its own.
-- **Upgrades.** `git pull && uv sync`, then restart both services. The database upgrades itself when either starts.
+- **Upgrades.** `git pull && uv sync --frozen && systemctl --user restart voice-assistant voice-assistant-web`. The
+  database upgrades itself when either starts.
 
 ## Where the learning happens
 

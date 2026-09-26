@@ -40,6 +40,10 @@ class Journal:
         if self.events:
             self._background.submit(self._safe, self.events.add_near_miss, pcm, peak_score, wake_model, time.time())
 
+    def flush(self) -> None:
+        """Wait for the near-misses still being written."""
+        self._background.submit(lambda: None).result()
+
     def wake(
         self,
         pcm: np.ndarray,

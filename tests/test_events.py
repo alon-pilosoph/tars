@@ -166,8 +166,9 @@ def test_trigger_logs_near_misses_and_every_wake(log):
         wake_model="m.tflite",
     )
     assert trigger.wait(SilentMic(len(scores) + 5)) == ANSWER
-    journal._background.shutdown(wait=True)  # near-misses are written in the background
-    rows = sorted(log.events(), key=lambda r: r["id"])
+    journal.flush()
+    # Near-misses are written in the background, so ids can come in any order; times are when it happened.
+    rows = sorted(log.events(), key=lambda r: r["ts"])
     assert [(r["kind"], r["outcome"]) for r in rows] == [("near_miss", None), ("wake", "ignore"), ("wake", "answer")]
     assert rows[0]["wake_score"] == pytest.approx(0.7) and rows[2]["wake_model"] == "m.tflite"
     assert journal._wake == rows[2]["id"]
@@ -177,7 +178,7 @@ def test_a_near_miss_that_turns_into_a_wake_is_just_a_wake(log):
     journal = Journal(log)
     trigger = VerifiedTrigger(ScriptedTrigger([0.6, 0.7, 0.95]), verifier_saying((ANSWER, "hey tars")), journal=journal)
     assert trigger.wait(SilentMic(40)) == ANSWER
-    journal._background.shutdown(wait=True)
+    journal.flush()
     assert [r["kind"] for r in log.events()] == ["wake"]
 
 

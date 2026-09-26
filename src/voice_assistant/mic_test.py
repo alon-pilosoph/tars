@@ -11,7 +11,7 @@ from pathlib import Path
 from .audio import Microphone, find_device, save_wav
 from .config import Config
 from .recorder import UtteranceRecorder
-from .verify import ANSWER, ASK, IGNORE, RecentAudio
+from .verify import ANSWER, ASK, IGNORE, NEAR_FRACTION, RecentAudio
 from .wake import wake_word_trigger
 
 QUIET_S = 1.0  # a near-miss ends after this long below the "close" line
@@ -23,7 +23,7 @@ class WakeLog:
     """Turns a stream of scores into events: one line per wake, one per near-miss (with its peak)."""
 
     threshold: float
-    close: float = 0.0  # scores at or above this count as a near-miss; defaults to half the threshold
+    close: float = 0.0  # scores at or above this count as a near-miss; defaults to what the assistant logs
     wakes: int = 0
     near_misses: int = 0
     _peak: float = 0.0
@@ -32,7 +32,7 @@ class WakeLog:
     history: list[str] = field(default_factory=list)
 
     def __post_init__(self):
-        self.close = self.close or self.threshold / 2
+        self.close = self.close or self.threshold * NEAR_FRACTION
 
     def update(self, score: float, now: float) -> str | None:
         """Feed one score; returns a line to print when an event happens."""
