@@ -7,8 +7,8 @@ from .audio import Microphone
 
 
 class Trigger(Protocol):
-    def wait(self, mic: Microphone) -> None:
-        """Block until the user wants to talk."""
+    def wait(self, mic: Microphone) -> str | None:
+        """Block until the user wants to talk. A double-checked trigger says how sure it is (verify.ANSWER or ASK)."""
 
 
 class WakeWordTrigger:

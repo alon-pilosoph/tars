@@ -1,8 +1,10 @@
 import queue
 import threading
 import time
+import wave
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
+from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
@@ -11,6 +13,21 @@ SAMPLE_RATE = 16_000
 # 80 ms of audio: the frame size openWakeWord is built around.
 BLOCK_SAMPLES = 1280
 BLOCK_SECONDS = BLOCK_SAMPLES / SAMPLE_RATE
+
+
+def save_wav(path: Path, pcm: bytes | np.ndarray) -> None:
+    """16 kHz mono 16-bit, the format every recording in voice_data/ uses."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(SAMPLE_RATE)
+        f.writeframes(pcm if isinstance(pcm, bytes) else np.asarray(pcm, dtype=np.int16).tobytes())
+
+
+def read_wav(path: Path) -> np.ndarray:
+    with wave.open(str(path)) as f:
+        return np.frombuffer(f.readframes(f.getnframes()), dtype=np.int16)
 
 
 def find_device(name: str, kind: str) -> int | None:

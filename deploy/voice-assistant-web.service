@@ -1,0 +1,30 @@
+# systemd *user* service for the web UI (conversations, what TARS sent, wakes to check, voices, models), next to
+# the assistant's own service. It only reads and edits the event log (voice_data/events), so it runs as its own
+# process: a crash here never takes the assistant down, and the other way round.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/voice-assistant-web.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now voice-assistant-web
+#   sudo loginctl enable-linger $USER    # start at boot, without logging in (once, for both services)
+#
+#   journalctl --user -u voice-assistant-web -f    # follow the logs
+#
+# Then open http://<pi-name>.local:8080 from a phone or laptop on the home network. There are no accounts:
+# anyone on the network can open it, so don't forward the port to the internet (use Tailscale to reach it away
+# from home). It only answers to home-network names (see [web] in config.toml).
+
+[Unit]
+Description=TARS web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen voice-assistant --web --host 0.0.0.0 --port 8080
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

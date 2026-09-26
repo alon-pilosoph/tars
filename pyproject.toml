@@ -16,6 +16,9 @@ dependencies = [
     "pymicro-features>=2",
     "ai-edge-litert>=2.2.0",
     "vosk==0.3.44",
+    "fastapi>=0.141.1",
+    "pydantic>=2",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -30,6 +33,7 @@ packages = ["src/voice_assistant"]
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "soundfile>=0.14.0",
 ]

@@ -9,10 +9,14 @@ import urllib.request
 import zipfile
 from collections import deque
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .audio import BLOCK_SECONDS, Microphone
+from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
+
+if TYPE_CHECKING:
+    from .journal import Journal
 
 MODEL_NAME = "vosk-model-small-en-us-0.15"  # 40 MB download, runs fine on a Raspberry Pi
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
@@ -108,7 +112,7 @@ class PhraseVerifier:
     def _recognize(self, pcm: np.ndarray, alternatives: int) -> dict:
         from vosk import KaldiRecognizer
 
-        recognizer = KaldiRecognizer(self._model, 16000, self._grammar)
+        recognizer = KaldiRecognizer(self._model, SAMPLE_RATE, self._grammar)
         if alternatives:
             recognizer.SetMaxAlternatives(alternatives)
         recognizer.AcceptWaveform(np.asarray(pcm, dtype=np.int16).tobytes())
@@ -179,13 +183,28 @@ class RecentAudio:
         return np.concatenate(self._blocks) if self._blocks else np.zeros(0, dtype=np.int16)
 
 
+# A score this close to the threshold without reaching it is logged as a near-miss (a possible missed wake).
+NEAR_FRACTION = 0.6
+NEAR_QUIET_S = 1.0  # a near-miss ends once the score has stayed low this long
+
+
 class VerifiedTrigger:
     """The wake-word model listens all the time; each wake is double-checked before the assistant answers."""
 
-    def __init__(self, trigger, verifier: PhraseVerifier, window_s: float = WINDOW_S):
+    def __init__(
+        self,
+        trigger,
+        verifier: PhraseVerifier,
+        window_s: float = WINDOW_S,
+        journal: "Journal | None" = None,
+        wake_model: str = "",
+        check_model: str = "",
+    ):
         self._trigger = trigger
         self._window_s = window_s
         self._verifier = verifier
+        self._journal = journal
+        self._wake_model, self._check_model = wake_model, check_model
         self.phrase = trigger.phrase
         self.last_audio: np.ndarray | None = None  # what woke us, so speaker ID can tell who said it
 
@@ -193,14 +212,31 @@ class VerifiedTrigger:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite."""
         mic.clear()
         recent = RecentAudio(self._window_s)
+        near = self._trigger.threshold * NEAR_FRACTION
+        peak, peak_audio, quiet = 0.0, None, 0.0
         while True:
             block = mic.read()
             recent.add(block)
-            if self._trigger.score(block) < self._trigger.threshold:
+            score = self._trigger.score(block)
+            if score < self._trigger.threshold:
+                if score >= near and score > peak:
+                    peak, peak_audio, quiet = score, recent.audio(), 0.0
+                elif peak:
+                    quiet += len(block) / SAMPLE_RATE
+                    if quiet >= NEAR_QUIET_S:
+                        if self._journal:
+                            self._journal.near_miss(peak_audio, peak, self._wake_model)
+                        peak, peak_audio = 0.0, None
                 continue
+            peak, peak_audio = 0.0, None  # it did wake: not a near-miss
             self._trigger.reset()
-            outcome, heard = self._verifier.decide(recent.audio())
+            audio = recent.audio()
+            outcome, heard = self._verifier.decide(audio)
+            if self._journal:
+                self._journal.wake(
+                    audio, score, outcome, heard, self._verifier.last_confidence, self._wake_model, self._check_model
+                )
             if outcome != IGNORE:
-                self.last_audio = recent.audio()
+                self.last_audio = audio
                 return outcome
             print(f"(Heard '{heard}', not '{self.phrase}'. Still listening.)")

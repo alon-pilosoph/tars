@@ -5,10 +5,10 @@ is printed on its own line above it, so the history stays on screen while you wa
 """
 
 import time
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from .audio import Microphone, find_device
+from .audio import Microphone, find_device, save_wav
 from .config import Config
 from .recorder import UtteranceRecorder
 from .verify import ANSWER, ASK, IGNORE, RecentAudio
@@ -57,8 +57,6 @@ class WakeLog:
 
 
 def save_wav_log(folder: Path, pcm, passed: bool, heard: str) -> Path:
-    from .enroll import save_wav
-
     tag = "passed" if passed else "rejected"
     words = "_".join(heard.replace("[unk]", "unk").split())[:40] or "none"
     path = folder / f"{time.strftime('%Y%m%d-%H%M%S')}_{tag}_{words}.wav"

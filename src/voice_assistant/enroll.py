@@ -8,11 +8,10 @@ close to the mic, then from across the room, then with the TV or music on.
 """
 
 import time
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 
-from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone, Speaker
+from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone, Speaker, save_wav
 from .recorder import UtteranceRecorder
 
 # The verifier runs the wake-word model over each clip, and the model only scores high once it has
@@ -110,15 +109,6 @@ def _prompts() -> list[Prompt]:
 
 
 PROMPTS = _prompts()
-
-
-def save_wav(path: Path, pcm: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(SAMPLE_RATE)
-        f.writeframes(pcm)
 
 
 def show(prompt: Prompt, n: int, total: int) -> None:

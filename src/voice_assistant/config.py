@@ -1,5 +1,5 @@
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -43,6 +43,10 @@ class LLMConfig:
     reasoning_effort: str = ""
     memory_minutes: float = 10.0
     system_prompt: str = "You are a helpful voice assistant. Answer in one to three short sentences."
+    # Let it look things up on the web (current events, real links to send). Only used when the model decides to.
+    web_search: bool = True
+    # Let it send links, notes, lists and text files to the web UI (needs [learning] log_events).
+    send: bool = True
 
 
 @dataclass
@@ -64,6 +68,23 @@ class SpeakerConfig:
 
 
 @dataclass
+class LearningConfig:
+    # Keep every wake, near-miss, conversation and sent item (voice_data/events/) for the web UI and retraining.
+    # Off also turns off sending ([llm] send): sent items live there.
+    log_events: bool = True
+    folder: str = "voice_data/events"
+    # Audio of events nothing labels (lonely near-misses, wakes nobody spoke after) is dropped after this many days.
+    keep_audio_days: float = 60.0
+
+
+@dataclass
+class WebConfig:
+    # More names the web UI may be reached by, besides IP addresses, localhost, *.local, *.ts.net and single-label
+    # names (which always work). Requests to any other name are refused.
+    allowed_hosts: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     audio: AudioConfig
     wake: WakeConfig
@@ -72,6 +93,8 @@ class Config:
     llm: LLMConfig
     tts: TTSConfig
     speaker: SpeakerConfig
+    learning: LearningConfig
+    web: WebConfig
 
 
 def load_config(path: Path) -> Config:
@@ -84,4 +107,6 @@ def load_config(path: Path) -> Config:
         llm=LLMConfig(**raw.get("llm", {})),
         tts=TTSConfig(**raw.get("tts", {})),
         speaker=SpeakerConfig(**raw.get("speaker", {})),
+        learning=LearningConfig(**raw.get("learning", {})),
+        web=WebConfig(**raw.get("web", {})),
     )

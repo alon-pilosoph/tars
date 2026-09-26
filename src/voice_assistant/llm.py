@@ -1,11 +1,13 @@
 import itertools
+import json
 import time
 from collections.abc import Iterable, Iterator
 from typing import Protocol
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 from .config import LLMConfig
+from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
 
 # The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a
 # marathon session from growing the prompt forever.
@@ -24,9 +26,100 @@ PROTOCOL = (
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
 )
+SEND_PROTOCOL = (
+    "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
+    "send tool: a link, a note, a list, or a text file. Use it when asked to send, save or share something, or "
+    "when the answer is a link, a recipe, a list or anything too long to hear. Only send links you found with web "
+    "search, never made-up ones. After sending, say in one short line that you sent it and that it's on the TARS "
+    "page; never read a link out loud. In anything you send, write like a person: no middots (·) or em dashes."
+)
+
+# Strict mode needs every field listed as required; the ones a kind doesn't use are nullable instead.
+SEND_TOOL = {
+    "type": "function",
+    "name": "send",
+    "description": "Send a link, note, list or text file to the household's TARS page.",
+    "strict": True,
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["kind", "title", "for", "url", "site", "description", "body", "entries", "file_name", "file_text"],
+        "properties": {
+            "kind": {"type": "string", "enum": list(KINDS)},
+            "title": {"type": "string", "description": "Short, like a headline."},
+            "for": {
+                "type": "string",
+                "enum": [PERSON, HOUSEHOLD],
+                "description": "person: whoever asked. household: things the house shares, like a shopping list.",
+            },
+            "url": {"type": ["string", "null"], "description": "link: the address, found with web search."},
+            "site": {"type": ["string", "null"], "description": "link: the site's name, e.g. BBC Good Food."},
+            "description": {"type": ["string", "null"], "description": "link: one line on what it is."},
+            "body": {"type": ["string", "null"], "description": "note: short markdown (headings, lists, bold)."},
+            "entries": {"type": ["array", "null"], "items": {"type": "string"}, "description": "list: the items."},
+            "file_name": {
+                "type": ["string", "null"],
+                "description": "file: a name with an extension: .txt, .md, .csv or .ics.",
+            },
+            "file_text": {"type": ["string", "null"], "description": "file: the whole content."},
+        },
+    },
+}
+# A web search takes several seconds: say something the moment one starts, instead of going silent.
+SEARCHING = "Looking it up."
+FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
+MAX_TOOL_ROUNDS = 3
+
+
+def check_send(args: dict) -> tuple[SentItem | None, str]:
+    """(the item to send, "sent") if the send call is complete, else (None, what's wrong) for the model to fix."""
+    if not isinstance(args, dict):
+        return None, "error: the arguments must be an object"
+    kind, title = args.get("kind"), _text(args.get("title"))
+    if not title:
+        return None, "error: a title is required"
+    item = SentItem(kind, title, scope=HOUSEHOLD if args.get("for") == HOUSEHOLD else PERSON)
+    if kind == LINK:
+        url = _text(args.get("url"))
+        if not url.startswith(("https://", "http://")) or len(url.split("//", 1)[1]) < 3:
+            return None, "error: a link needs a full http(s) url from web search"
+        item.url, item.site, item.description = (
+            url,
+            _text(args.get("site")) or None,
+            _text(args.get("description")) or None,
+        )
+    elif kind == NOTE:
+        if not (body := _text(args.get("body"))):
+            return None, "error: a note needs a body"
+        item.body = body
+    elif kind == LIST:
+        entries = args.get("entries")
+        entries = [_text(e) for e in entries if _text(e)] if isinstance(entries, list) else []
+        if not entries:
+            return None, "error: a list needs entries"
+        item.entries = entries
+    elif kind == FILE:
+        name, text = _text(args.get("file_name")), args.get("file_text")
+        mime = next((m for ext, m in FILE_TYPES.items() if name.lower().endswith(ext)), None)
+        if not mime or not isinstance(text, str) or not text:
+            return None, f"error: a file needs a name ending in {', '.join(FILE_TYPES)} and its text"
+        item.file_name, item.file_bytes, item.mime = name, text.encode(), mime
+    else:
+        return None, "error: kind must be link, note, list or file"
+    return item, "sent"
+
+
+def _text(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+class ReplyFailed(OpenAIError):
+    pass
 
 
 class Brain(Protocol):
+    sent: list[SentItem]  # what the last reply sent to the web UI
+
     def stream_reply(self, text: str) -> Iterator[str]:
         """Yield the reply in pieces as it's generated."""
 
@@ -51,17 +144,22 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
 
 
 class OpenAIChat:
+    """The conversation, through OpenAI's Responses API: streamed text, plus web search and the send tool."""
+
     def __init__(self, client: OpenAI, cfg: LLMConfig):
         self._client = client
         self._cfg = cfg
         self._history: list[dict] = []
         self._last_turn_at = self._previous_turn_at = 0.0
+        self.sent: list[SentItem] = []
+        self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
+        self._instructions = "\n\n".join([cfg.system_prompt, PROTOCOL] + ([SEND_PROTOCOL] if cfg.send else []))
         # Only send optional settings that are configured; not every model accepts them.
-        self._extra = {
-            key: value
-            for key, value in {"service_tier": cfg.service_tier, "reasoning_effort": cfg.reasoning_effort}.items()
-            if value
-        }
+        self._extra = {}
+        if cfg.service_tier:
+            self._extra["service_tier"] = cfg.service_tier
+        if cfg.reasoning_effort:
+            self._extra["reasoning"] = {"effort": cfg.reasoning_effort}
 
     def stream_reply(self, text: str) -> Iterator[str]:
         # After a long pause, start fresh: old context confuses more than it helps, and it's private.
@@ -69,21 +167,74 @@ class OpenAIChat:
             self._history.clear()
         self._previous_turn_at, self._last_turn_at = self._last_turn_at, time.monotonic()
         self._history.append({"role": "user", "content": text})
-        stream = self._client.chat.completions.create(
-            model=self._cfg.model,
-            messages=[{"role": "system", "content": f"{self._cfg.system_prompt}\n\n{PROTOCOL}"}, *self._history],
-            stream=True,
-            **self._extra,
-        )
+        self.sent = []
+        context = list(self._history)
         answer = ""
-        for chunk in stream:
-            if chunk.choices and (piece := chunk.choices[0].delta.content):
-                answer += piece
-                yield piece
+        for round_ in range(MAX_TOOL_ROUNDS):
+            calls, said = [], ""
+            tools = {"tools": self._tools} if self._tools else {}
+            if tools and round_ == MAX_TOOL_ROUNDS - 1:
+                tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
+            stream = self._client.responses.create(
+                model=self._cfg.model,
+                instructions=self._instructions,
+                input=context,
+                stream=True,
+                store=False,  # nothing kept on OpenAI's side beyond the request itself
+                **self._extra,
+                **tools,
+            )
+            for event in stream:
+                if event.type == "response.output_text.delta" and event.delta:
+                    said += event.delta
+                    yield event.delta
+                elif event.type == "response.web_search_call.in_progress" and not (answer or said):
+                    said = f"{SEARCHING} "
+                    yield said
+                elif event.type == "response.output_item.done" and event.item.type == "function_call":
+                    calls.append(event.item)
+                elif event.type in ("error", "response.failed", "response.incomplete"):
+                    # The SDK only raises for some of these; the rest would otherwise end the reply in silence.
+                    raise ReplyFailed(f"{event.type}: {_why(event)}")
+            answer += said
+            if not calls:
+                break
+            if said:
+                context.append({"role": "assistant", "content": said})
+            for call in calls:
+                context.append(
+                    {"type": "function_call", "call_id": call.call_id, "name": call.name, "arguments": call.arguments}
+                )
+                context.append(
+                    {"type": "function_call_output", "call_id": call.call_id, "output": self._run_tool(call)}
+                )
         self._history.append({"role": "assistant", "content": answer.strip()})
         self._history = self._history[-MAX_TURNS * 2 :]
+
+    def _run_tool(self, call) -> str:
+        if call.name != "send":
+            return f"error: no tool called {call.name}"
+        try:
+            item, result = check_send(json.loads(call.arguments or "{}"))
+        except json.JSONDecodeError:
+            return "error: the arguments weren't valid JSON"
+        if item:
+            self.sent.append(item)
+        return result
 
     def forget_last(self) -> None:
         # Overheard chatter shouldn't keep the memory alive either.
         del self._history[-2:]
         self._last_turn_at = self._previous_turn_at
+        self.sent = []
+
+
+def _why(event) -> str:
+    response = getattr(event, "response", None)
+    details = getattr(response, "error", None) or getattr(response, "incomplete_details", None)
+    return str(
+        getattr(event, "message", None)
+        or getattr(details, "message", None)
+        or getattr(details, "reason", None)
+        or "no details"
+    )

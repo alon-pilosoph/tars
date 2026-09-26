@@ -5,7 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from voice_assistant.wake import MicroWakeWordTrigger, WakeWordTrigger, wake_word_trigger
+from voice_assistant.wake import (
+    MicroWakeWordTrigger,
+    WakeWordTrigger,
+    wake_word_trigger,
+)
 
 REPO = Path(__file__).parents[1]
 SPEAKER_MODEL = REPO / "models" / "voxceleb_resnet34_LM.onnx"
@@ -77,3 +81,52 @@ def test_speaker_id_enrolls_saves_and_rejects_short_clips(tmp_path):
 
     strict = SpeakerID(SPEAKER_MODEL, tmp_path / "vp.npz", threshold=1.01)
     assert strict.identify(low.tobytes()) is None  # nobody passes an impossible threshold
+
+
+def speaker_id_without_the_model(path: Path, threshold: float = 0.5):
+    """A SpeakerID whose "embedding" is the clip's first samples, so voiceprint files can be tested offline."""
+    from voice_assistant.speaker import SpeakerID
+
+    sid = SpeakerID.__new__(SpeakerID)
+    sid._voiceprints_path, sid.threshold = path, threshold
+    sid.voiceprints, sid._from_clusters, sid._loaded_mtime = {}, set(), None
+    sid.embed = lambda pcm: (v := np.asarray(pcm[:4], np.float32)) / np.linalg.norm(v)
+    sid._reload()
+    return sid
+
+
+def clip(*first) -> np.ndarray:
+    return np.array([*first] + [0] * 16_000, np.int16)
+
+
+def test_voiceprints_are_shared_between_processes_whatever_the_names(tmp_path):
+    web = speaker_id_without_the_model(tmp_path / "vp.npz")
+    assistant = speaker_id_without_the_model(tmp_path / "vp.npz")
+    web.enroll("file", [clip(1, 0, 0, 0)])  # np.savez can't take "file" as an array name
+    web.set_cluster_voiceprints({"allow_pickle": web.voiceprint([clip(0, 1, 0, 0)])})
+    assert assistant.identify(clip(1, 0, 0, 0).tobytes()) == "file"  # picked up without a restart
+    assert assistant.identify(clip(0, 1, 0, 0).tobytes()) == "allow_pickle"
+
+
+def test_voiceprints_made_from_named_voices_go_when_the_name_does(tmp_path):
+    sid = speaker_id_without_the_model(tmp_path / "vp.npz")
+    sid.enroll("alon", [clip(1, 0, 0, 0)])  # recorded sentences, --enroll
+    sid.set_cluster_voiceprints({"stacey": sid.voiceprint([clip(0, 1, 0, 0)])})
+    sid.set_cluster_voiceprints({})  # Stacey's voice was renamed, merged away or marked not a person
+    assert set(speaker_id_without_the_model(tmp_path / "vp.npz").voiceprints) == {"alon"}
+    sid.set_cluster_voiceprints({"alon": sid.voiceprint([clip(0, 0, 1, 0)])})  # naming a voice Alon replaces it
+    sid.set_cluster_voiceprints({})
+    assert speaker_id_without_the_model(tmp_path / "vp.npz").voiceprints == {}
+
+
+def test_an_unreadable_voiceprint_file_keeps_the_ones_already_loaded(tmp_path, capsys):
+    sid = speaker_id_without_the_model(tmp_path / "vp.npz")
+    sid.enroll("alon", [clip(1, 0, 0, 0)])
+    (tmp_path / "vp.npz").write_bytes(b"half a file")
+    assert sid.identify(clip(1, 0, 0, 0).tobytes()) == "alon"
+    assert "keeping the old ones" in capsys.readouterr().out
+
+
+def test_the_first_voiceprint_format_still_loads(tmp_path):
+    np.savez(tmp_path / "vp.npz", alon=np.array([1.0, 0, 0, 0], np.float32))
+    assert set(speaker_id_without_the_model(tmp_path / "vp.npz").voiceprints) == {"alon"}

@@ -1,65 +1,18 @@
 import types
 
+import numpy as np
 import pytest
 from openai import OpenAIError
 
 import voice_assistant.assistant as assistant_module
-from voice_assistant.assistant import Assistant
+from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, SentItem
+from voice_assistant.events import EventLog
+from voice_assistant.journal import Journal
 from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG
 
-from .conftest import FakeMic
+from .conftest import AUDIO, make_assistant
 
-
-class ScriptedRecorder:
-    """record() returns the next scripted utterance (None = nobody spoke) and logs the timeout it was given."""
-
-    trailing_silence_s = 0.0
-
-    def __init__(self, script):
-        self.script = list(script)
-        self.timeouts = []
-
-    def record(self, mic, start_timeout_s=None, **kw):
-        self.timeouts.append(start_timeout_s)
-        return self.script.pop(0)
-
-
-class ScriptedTranscriber:
-    def __init__(self, texts):
-        self.texts = iter(texts)
-
-    def transcribe(self, pcm):
-        return next(self.texts)
-
-
-class RecordingBrain:
-    def __init__(self, replies=()):
-        self.replies = iter(replies)
-        self.asked = []
-        self.forgotten = 0
-
-    def stream_reply(self, text):
-        self.asked.append(text)
-        return iter([next(self.replies, "ok")])
-
-    def forget_last(self):
-        self.forgotten += 1
-
-
-@pytest.fixture(autouse=True)
-def no_tts(monkeypatch):
-    """Consume the reply the way playback would, without calling TTS."""
-    monkeypatch.setattr(
-        assistant_module, "speak_streamed_reply", lambda pieces, voice, on_sentence: iter(list(pieces) and [])
-    )
-
-
-def make_assistant(speaker, utterances, transcripts, replies=()):
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: list(chunks)
-    voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]))
-    brain = RecordingBrain(replies)
-    recorder = ScriptedRecorder(utterances)
-    return Assistant(FakeMic(), speaker, None, recorder, ScriptedTranscriber(transcripts), brain, voice), brain
+pytestmark = pytest.mark.usefixtures("no_tts")
 
 
 def test_follow_ups_continue_until_silence(speaker):
@@ -133,19 +86,21 @@ def test_did_you_call_me_goes_quiet_on_silence_or_no(speaker):
 
 
 class FakeSpeakerID:
-    voiceprints = {"alon": None}
-
     def __init__(self, who):
+        self.voiceprints = {"alon": None}
         self.who, self.thresholds = who, []
 
     def identify(self, pcm, threshold=None):
         self.thresholds.append(threshold)
         return self.who
 
+    def describe(self, pcm):
+        return self.who, 0.8 if self.who else 0.1, None
+
 
 def test_a_bare_wake_word_gets_a_greeting_by_name_then_the_question(speaker):
     assistant, brain = make_assistant(speaker, [None, b"q", None], ["what's the weather"])
-    assistant.trigger = types.SimpleNamespace(last_audio=__import__("numpy").zeros(32000, "int16"))
+    assistant.trigger = types.SimpleNamespace(last_audio=np.zeros(32000, np.int16))
     assistant.speaker_id = FakeSpeakerID("alon")
     said = []
     assistant.say = said.append
@@ -159,7 +114,7 @@ def test_a_bare_wake_word_gets_a_greeting_by_name_then_the_question(speaker):
 def test_greeting_without_a_confident_name_is_just_yes(speaker):
     assistant, _ = make_assistant(speaker, [None, None], [])
     assistant.speaker_id = FakeSpeakerID(None)
-    assistant.trigger = types.SimpleNamespace(last_audio=__import__("numpy").zeros(32000, "int16"))
+    assistant.trigger = types.SimpleNamespace(last_audio=np.zeros(32000, np.int16))
     said = []
     assistant.say = said.append
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
@@ -172,3 +127,149 @@ def test_asking_straight_away_skips_the_greeting(speaker):
     assistant.say = said.append
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
     assert said == [] and brain.asked == ["what time is it"]
+
+
+def logged_assistant(speaker, tmp_path, utterances, transcripts, replies=()):
+    journal = Journal(EventLog(tmp_path / "events"))
+    assistant, _ = make_assistant(speaker, utterances, transcripts, replies, journal=journal)
+    journal.wake(AUDIO, 0.9, "answer", "hey tars", 0.9, "", "")
+    assistant.trigger = types.SimpleNamespace(last_audio=None)
+    return assistant, journal.conversations
+
+
+def test_a_conversation_is_logged_turn_by_turn(speaker, tmp_path):
+    assistant, convos = logged_assistant(
+        speaker,
+        tmp_path,
+        [b"q1", b"q2", b"as", None],
+        ["what's the weather", "and tomorrow", "pass the salt"],
+        replies=["Sunny.", "Rain.", "<skip>"],
+    )
+    assistant.converse(follow_up_s=4.0)
+    (summary,) = convos.conversations()
+    conv = convos.get(summary["id"])
+    assert [(t["role"], t["text"]) for t in conv["turns"]] == [
+        ("person", "what's the weather"),
+        ("tars", "Sunny."),
+        ("person", "and tomorrow"),
+        ("tars", "Rain."),
+        ("person", "pass the salt"),
+    ]
+    assert conv["turns"][-1]["not_for_tars"] and conv["turns"][0]["has_audio"]
+    assert conv["wake"]["heard"] == "hey tars" and conv["ended"] is not None
+
+
+def test_the_first_request_keeps_one_copy_of_its_audio_on_the_wake(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q1", None], ["what's the weather"], replies=["Sunny."])
+    assistant.converse(follow_up_s=4.0)
+    conv = convos.get(convos.conversations()[0]["id"])
+    wake = convos.events.get(conv["wake"]["event_id"])
+    assert convos.turn(conv["turns"][0]["id"])["audio"] == wake["utterance_audio"]
+    assert wake["transcript"] == "what's the weather" and wake["follow"] == "asked"
+
+
+def test_did_you_call_me_and_greetings_open_the_thread(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"ye", None], ["yes, set a timer"], replies=["Done."])
+    assistant.say = lambda text: None
+    assistant.ask_if_called(follow_up_s=4.0)
+    turns = convos.get(convos.conversations()[0]["id"])["turns"]
+    assert [(t["role"], t["text"]) for t in turns] == [
+        ("tars", "Did you call me?"),
+        ("person", "yes, set a timer"),
+        ("tars", "Done."),
+    ]
+
+    assistant, convos = logged_assistant(speaker, tmp_path / "2", [None, b"qq", None], ["what time is it"], ["Noon."])
+    assistant.speaker_id = FakeSpeakerID("alon")
+    assistant.trigger.last_audio = np.zeros(32000, np.int16)
+    assistant.say = lambda text: None
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
+    turns = convos.get(convos.conversations()[0]["id"])["turns"]
+    assert [t["text"] for t in turns] == ["Yes, Alon?", "what time is it", "Noon."]
+    assert turns[1]["speaker"]["name"] == "Alon"
+
+
+def test_no_conversation_when_nobody_speaks(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [None], [])
+    assistant.say = lambda text: None
+    assistant.ask_if_called(follow_up_s=4.0)
+    assistant.recorder.script = [None, None]
+    assistant.speaker_id = FakeSpeakerID(None)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5)  # "Yes?", then silence
+    assert convos.conversations() == []
+
+
+def test_no_conversation_when_the_request_was_only_noise(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [None, b"qq"], [""])
+    assistant.say = lambda text: None
+    assistant.speaker_id = FakeSpeakerID(None)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5)  # "Yes?", then a noise that transcribes to nothing
+    assert convos.conversations() == []
+
+
+@pytest.mark.parametrize("broken", ["add_person_turn", "add_tars_turn", "start", "add_item"])
+def test_a_broken_conversation_log_never_costs_a_reply(speaker, tmp_path, monkeypatch, broken):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"qq", None], ["what's the weather"], replies=["Sunny."])
+    assistant.brain.sent = [SentItem(NOTE, "Forecast", body="Sunny.")]
+    monkeypatch.setattr(convos, broken, lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")))
+    assistant.speaker.error_tone = lambda: pytest.fail("the error tone played")
+    assistant.converse(follow_up_s=4.0)
+    assert assistant.brain.asked == ["what's the weather"]
+
+
+def test_a_broken_event_log_never_costs_a_reply(speaker, tmp_path, monkeypatch):
+    assistant, convos = logged_assistant(speaker, tmp_path, [None], [])
+    monkeypatch.setattr(convos.events, "set_follow", lambda *a: (_ for _ in ()).throw(OSError("database is locked")))
+    assistant.say = lambda text: None
+    assistant.ask_if_called(follow_up_s=4.0)  # nobody answers: saving that fails, and nothing else happens
+
+
+def test_a_conversation_deleted_while_it_goes_on_stays_deleted(speaker, tmp_path):
+    assistant, convos = logged_assistant(
+        speaker, tmp_path, [b"q1", b"q2", None], ["hello", "and another thing"], replies=["Hi.", "Go on."]
+    )
+    brain = assistant.brain
+    original = brain.stream_reply
+
+    def delete_after_first(text):
+        if len(brain.asked) == 1:
+            convos.delete(convos.conversations()[0]["id"])  # from the web UI, mid-conversation
+        return original(text)
+
+    brain.stream_reply = delete_after_first
+    assistant.converse(follow_up_s=4.0)
+    assert convos.conversations() == [] and convos.store.rows("SELECT * FROM turns") == []
+
+
+def test_what_tars_sends_is_kept_with_its_reply(speaker, tmp_path):
+    assistant, convos = logged_assistant(
+        speaker, tmp_path, [b"qq", None], ["send me the shopping list"], replies=["Sent it."]
+    )
+    assistant.speaker_id = FakeSpeakerID("alon")
+    assistant.brain.sent = [
+        SentItem(LIST, "Shopping", scope=HOUSEHOLD, entries=["milk"]),
+        SentItem(NOTE, "Pasta", scope=PERSON, body="Boil water."),
+    ]
+    assistant.converse(follow_up_s=4.0)
+    conv = convos.get(convos.conversations()[0]["id"])
+    shopping, pasta = conv["turns"][1]["items"]
+    assert shopping["scope"] == HOUSEHOLD and shopping["for"] is None
+    assert pasta["scope"] == PERSON and pasta["for"]["name"] == "Alon"
+
+
+def test_sent_for_an_unknown_voice_goes_to_the_household(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"qq", None], ["send me a recipe"], replies=["Sent."])
+    assistant.speaker_id = FakeSpeakerID(None)
+    assistant.brain.sent = [SentItem(NOTE, "Pasta", scope=PERSON, body="Boil water.")]
+    assistant.converse(follow_up_s=4.0)
+    (item,) = convos.items()
+    assert item["scope"] == HOUSEHOLD
+
+
+def test_sent_items_are_kept_even_if_the_conversation_couldnt_be(speaker, tmp_path, monkeypatch):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"qq", None], ["send me a recipe"], replies=["Sent."])
+    monkeypatch.setattr(convos, "start", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")))
+    assistant.brain.sent = [SentItem(NOTE, "Pasta", scope=HOUSEHOLD, body="Boil water.")]
+    assistant.converse(follow_up_s=4.0)
+    (item,) = convos.items()
+    assert item["title"] == "Pasta" and item["conversation_id"] is None
