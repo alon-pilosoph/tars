@@ -11,6 +11,9 @@ VAD_FRAME_SAMPLES = SAMPLE_RATE // 50
 VAD_FRAMES_PER_BLOCK = BLOCK_SAMPLES // VAD_FRAME_SAMPLES
 # Speech must last this many consecutive blocks (160 ms) to count as "started talking".
 START_BLOCKS = 2
+# After a pause, talking again means two speech blocks among this many (in steady room noise, webrtcvad's stray
+# "speech" blocks come alone: none within three blocks of another in two minutes of a laptop mic's room tone).
+RESUME_WINDOW = 3
 # Audio kept from just before speech was detected, so the first syllable isn't clipped.
 PREROLL_BLOCKS = 4
 # Our own chimes leak back into the mic (speaker latency, room echo) and webrtcvad calls a pure tone speech.
@@ -73,10 +76,17 @@ class UtteranceRecorder:
         silent_blocks_to_stop = int(self._cfg.end_silence_s / BLOCK_SECONDS)
         max_blocks = int(self._cfg.max_utterance_s / BLOCK_SECONDS)
         silence = 0
+        recent: deque[bool] = deque(maxlen=RESUME_WINDOW)
         while silence < silent_blocks_to_stop and len(blocks) < max_blocks:
             block = mic.read()
             blocks.append(block)
-            silence = 0 if self.is_speech(block) else silence + 1
+            recent.append(self.is_speech(block))
+            # A lone "speech" block is usually the room: webrtcvad flags one now and then in steady noise, and
+            # each would restart the wait. Talking again means two among the last three (speech flickers too).
+            if recent[-1] and sum(recent) >= 2:
+                silence = 0
+            elif not recent[-1]:
+                silence += 1
 
         self.trailing_silence_s = silence * BLOCK_SECONDS
         # Only needed when asked for more tail than the end-of-speech wait already captured.

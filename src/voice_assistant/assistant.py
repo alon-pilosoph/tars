@@ -57,6 +57,7 @@ class Assistant:
         self._background = ThreadPoolExecutor(max_workers=1)
         self.name_threshold = name_threshold
         self.journal = journal or Journal()
+        self.timings: dict[str, float] = {}  # the last answer's latency by stage, in seconds
         self._phrases: dict[str, list[bytes]] = {}  # short lines synthesized once: "Did you call me?", "Yes, Alon?"
 
     def run_forever(self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0) -> None:
@@ -187,6 +188,7 @@ class Assistant:
         if tag:
             text = f"{tag} {text}"
 
+        self.timings = {"end_of_speech": silence_s, "stt": stt_s}
         timings = [f"end-of-speech wait {silence_s:.2f}s", f"stt {stt_s:.2f}s"]
         # A reply to "Did you call me?" may be a "no", so it can be skipped like an overheard follow-up.
         reply = self.answer(text, t_stopped_talking, timings, follow_up=follow_up or tag is not None)
@@ -230,11 +232,14 @@ class Assistant:
             print(f"(sent to the TARS page: {item.kind} '{item.title}')")
 
         if "first_sentence" in marks:
-            timings.append(f"llm first sentence {marks['first_sentence'] - t_llm:.2f}s")
+            self.timings["llm"] = marks["first_sentence"] - t_llm
+            timings.append(f"llm first sentence {self.timings['llm']:.2f}s")
         if "first_audio" in marks:
             if "first_sentence" in marks:
-                timings.append(f"tts first audio {marks['first_audio'] - marks['first_sentence']:.2f}s")
-            timings.append(f"TOTAL to first sound {marks['first_audio'] - t_start:.2f}s")
+                self.timings["tts"] = marks["first_audio"] - marks["first_sentence"]
+                timings.append(f"tts first audio {self.timings['tts']:.2f}s")
+            self.timings["total"] = marks["first_audio"] - t_start
+            timings.append(f"TOTAL to first sound {self.timings['total']:.2f}s")
         print(f"[{' | '.join(timings)}]")
         return Reply("".join(spoken).strip(), sent)
 

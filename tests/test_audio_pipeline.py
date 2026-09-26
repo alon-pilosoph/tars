@@ -48,6 +48,23 @@ def test_our_own_chime_does_not_count_as_speech():
     assert UtteranceRecorder(RecorderConfig()).record(FakeMic(chime_then_silence), start_timeout_s=4.0) is None
 
 
+def test_a_lone_speech_block_in_the_silence_does_not_keep_the_recording_going(monkeypatch):
+    """webrtcvad flags a block of steady room noise as speech now and then; each used to restart the wait."""
+    rec = UtteranceRecorder(RecorderConfig(end_silence_s=0.4))  # 5 blocks
+    heard = iter("SSSSSS" + "...S...S...S" + "." * 20)
+    monkeypatch.setattr(rec, "is_speech", lambda block: next(heard) == "S")
+    pcm = rec.record(FakeMic([quiet_block() for _ in range(40)]))
+    assert blocks_in(pcm) <= 6 + 12 - 4  # it stopped within the stray blocks, not after them
+
+
+def test_talking_again_after_a_pause_keeps_recording(monkeypatch):
+    rec = UtteranceRecorder(RecorderConfig(end_silence_s=0.4))
+    heard = iter("SSSS" + "..." + "S.SS.S" + "." * 20)  # speech flickers
+    monkeypatch.setattr(rec, "is_speech", lambda block: next(heard) == "S")
+    pcm = rec.record(FakeMic([quiet_block() for _ in range(40)]))
+    assert blocks_in(pcm) >= 11
+
+
 def test_recorder_gives_up_when_nobody_speaks():
     silence = [quiet_block() for _ in range(100)]
     assert UtteranceRecorder(RecorderConfig()).record(FakeMic(silence), start_timeout_s=1.0) is None

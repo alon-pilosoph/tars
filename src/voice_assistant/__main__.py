@@ -179,21 +179,27 @@ def main() -> None:
         raise SystemExit(str(e))
 
 
-def run(cfg: Config, args: argparse.Namespace) -> None:
-    from openai import OpenAIError
-
-    from .assistant import Assistant
+def make_pipeline(cfg: Config, root: Path, typed: bool = False):
+    """The cloud stages, as config.toml picks them: (transcriber, brain, voice)."""
     from .effects import apply_effect
-    from .journal import Journal
     from .llm import OpenAIChat
     from .stt import OpenAITranscriber
     from .tts import OpenAISpeech
 
-    root = args.config.resolve().parent
     client = make_openai_client(root / ".env")
-    brain = OpenAIChat(client, brain_config(cfg, typed=args.text))
+    brain = OpenAIChat(client, brain_config(cfg, typed=typed))
     voice = apply_effect(OpenAISpeech(client, cfg.tts), cfg.tts.effect)
-    transcriber = OpenAITranscriber(client, cfg.stt)
+    return OpenAITranscriber(client, cfg.stt), brain, voice
+
+
+def run(cfg: Config, args: argparse.Namespace) -> None:
+    from openai import OpenAIError
+
+    from .assistant import Assistant
+    from .journal import Journal
+
+    root = args.config.resolve().parent
+    transcriber, brain, voice = make_pipeline(cfg, root, typed=args.text)
     recorder = UtteranceRecorder(cfg.recorder)
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s)
 
