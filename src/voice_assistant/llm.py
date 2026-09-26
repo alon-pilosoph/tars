@@ -124,7 +124,10 @@ class Brain(Protocol):
         """Yield the reply in pieces as it's generated."""
 
     def forget_last(self) -> None:
-        """Drop the most recent exchange from the conversation history, finished or not."""
+        """Drop the most recent exchange from the conversation history, finished or not. Once only."""
+
+    def interrupt(self) -> None:
+        """From another thread: stop writing the reply in progress; its stream ends with an error."""
 
     def warm(self) -> None:
         """Get a connection ready, when TARS wakes, so the reply doesn't wait to connect."""
@@ -154,6 +157,8 @@ class OpenAIChat:
         self._cfg = cfg
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
+        self._stream = None  # the response being read, so interrupt() can close it
+        self._interrupted = False
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
         self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
@@ -174,14 +179,20 @@ class OpenAIChat:
         self._asked = {"role": "user", "content": text}
         self._history.append(self._asked)
         self.sent = []
-        context = list(self._history)
+        self._interrupted = False
+        # Set up now rather than on the first read, so an interrupt() in between isn't lost.
+        return self._stream_reply(list(self._history))
+
+    def _stream_reply(self, context: list) -> Iterator[str]:
         answer = ""
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
             tools = {"tools": self._tools} if self._tools else {}
             if tools and round_ == MAX_TOOL_ROUNDS - 1:
                 tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
-            stream = self._client.responses.create(
+            if self._interrupted:
+                raise ReplyFailed("interrupted")
+            stream = self._stream = self._client.responses.create(
                 model=self._cfg.model,
                 instructions=self._instructions,
                 input=context,
@@ -191,6 +202,8 @@ class OpenAIChat:
                 **tools,
             )
             for event in stream:
+                if self._interrupted:
+                    raise ReplyFailed("interrupted")
                 if event.type == "response.output_text.delta" and event.delta:
                     said += event.delta
                     yield event.delta
@@ -202,6 +215,7 @@ class OpenAIChat:
                 elif event.type in ("error", "response.failed", "response.incomplete"):
                     # The SDK only raises for some of these; the rest would otherwise end the reply in silence.
                     raise ReplyFailed(f"{event.type}: {_why(event)}")
+            self._stream = None
             answer += said
             if not calls:
                 break
@@ -229,22 +243,33 @@ class OpenAIChat:
         return result
 
     def forget_last(self) -> None:
+        if self._asked is None:
+            return
         # From the question on, whether or not the answer got written; found by identity, since the history may
         # have been trimmed from the front since.
         for i in range(len(self._history) - 1, -1, -1):
             if self._history[i] is self._asked:
                 del self._history[i:]
                 break
+        self._asked = None
         # Overheard chatter shouldn't keep the memory alive either.
         self._last_turn_at = self._previous_turn_at
         self.sent = []
+
+    def interrupt(self) -> None:
+        self._interrupted = True
+        if (stream := self._stream) is not None:
+            try:
+                stream.close()
+            except Exception as e:  # noqa: BLE001 - a stream already closed is as good as closing it
+                print(f"(couldn't close the reply's stream: {e!r})")
 
     def warm(self) -> None:
         # The cheapest request there is; the OpenAI voice reuses the same connection.
         try:
             self._client.models.retrieve(self._cfg.model)
         except OpenAIError:
-            pass
+            pass  # only a head start: the real request reports a failure
 
 
 def _why(event) -> str:

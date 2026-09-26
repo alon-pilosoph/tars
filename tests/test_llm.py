@@ -81,6 +81,53 @@ def test_forgotten_chatter_does_not_keep_memory_alive(clock):
     assert seen_messages(brain, "next real question") == 1
 
 
+def asked(client):
+    """What the brain sent as the conversation on its last request, by content."""
+    return [m["content"] for m in client.requests[-1]["input"]]
+
+
+def test_a_reply_forgotten_while_still_being_written_leaves_no_trace():
+    client = fake_openai_chat(lambda messages: "An answer.")
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False))
+    "".join(brain.stream_reply("first"))
+    unfinished = brain.stream_reply("second")
+    next(unfinished)
+    brain.forget_last()
+    "".join(brain.stream_reply("third"))
+    assert asked(client) == ["first", "An answer.", "third"]
+
+
+def test_forgetting_twice_forgets_only_once():
+    client = fake_openai_chat(lambda messages: "An answer.")
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False))
+    "".join(brain.stream_reply("kept"))
+    "".join(brain.stream_reply("overheard"))
+    brain.forget_last()
+    brain.forget_last()
+    "".join(brain.stream_reply("next"))
+    assert asked(client) == ["kept", "An answer.", "next"]
+
+
+def test_an_interrupted_reply_ends_with_an_error():
+    brain = OpenAIChat(fake_openai_chat(lambda messages: "An answer."), LLMConfig(web_search=False, send=False))
+    reply = brain.stream_reply("hi")
+    brain.interrupt()
+    with pytest.raises(ReplyFailed):
+        list(reply)
+
+
+def test_the_humor_setting_goes_into_the_system_prompt():
+    captured = {}
+
+    def reply(messages):
+        captured["system"] = messages[0]["content"]
+        return "ok"
+
+    brain = OpenAIChat(fake_openai_chat(reply), LLMConfig(system_prompt="Humor setting: {humor} percent.", humor=40))
+    "".join(brain.stream_reply("hi"))
+    assert captured["system"].startswith("Humor setting: 40 percent.")
+
+
 def test_system_prompt_includes_the_follow_up_protocol():
     captured = {}
 

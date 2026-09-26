@@ -58,40 +58,75 @@ def test_first_request_is_never_treated_as_overheard(speaker):
     assert brain.forgotten == 0  # only follow-ups can be skipped
 
 
-@pytest.mark.parametrize("error", [RuntimeError("boom"), OpenAIError("connection dropped")])
-def test_a_failed_request_says_so_in_tars_voice(speaker, error):
-    assistant, _ = make_assistant(speaker, [b"a"], [])
-    assistant.prepare_phrases = lambda: None
-    line = assistant._error_lines[0]
-    assistant._phrases[line] = [b"pcm"]
-    said = []
-    assistant.say = said.append
-
-    def fail(pcm, follow_up=False, tag=None):
+def failing(assistant, error):
+    def fail(heard):
         raise error
 
     assistant.handle = fail
-    assistant.converse(follow_up_s=4.0)
-    assert said == [line] and speaker.sounds == []
 
 
-def test_without_a_ready_error_line_the_error_tone_plays(speaker):
+@pytest.mark.parametrize("error", [RuntimeError("boom"), OpenAIError("connection dropped")])
+def test_a_failed_request_says_so_in_tars_voice(speaker, error):
     assistant, _ = make_assistant(speaker, [b"a"], [])
-    assistant.prepare_phrases = lambda: None
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    played = []
+    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    failing(assistant, error)
+    assistant.converse(follow_up_s=4.0)
+    assert [chunk.decode() for chunk in played] in [[line] for line in ERROR_LINES["dry"]]
+    assert speaker.sounds == []
 
-    def fail(pcm, follow_up=False, tag=None):
-        raise OpenAIError("the voice service is down too")
 
-    assistant.handle = fail
+def test_below_half_humor_the_error_lines_are_plain(speaker):
+    assistant, _ = make_assistant(speaker, [b"a"], [])
+    assistant = Assistant(
+        assistant.mic,
+        speaker,
+        None,
+        assistant.recorder,
+        assistant.transcriber,
+        assistant.brain,
+        assistant.voice,
+        humor=20,
+    )
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    played = []
+    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    failing(assistant, RuntimeError("boom"))
+    assistant.converse(follow_up_s=4.0)
+    assert [chunk.decode() for chunk in played] in [[line] for line in ERROR_LINES["plain"]]
+
+
+def test_when_the_voice_is_down_too_the_error_tone_plays(speaker):
+    assistant, _ = make_assistant(speaker, [b"a"], [])
+
+    def down(text):
+        raise ConnectionError("no voice")
+
+    assistant.voice.stream = down
+    failing(assistant, OpenAIError("the voice service is down too"))
     assistant.converse(follow_up_s=4.0)
     assert speaker.sounds == [("error", None)]
 
 
-def test_error_lines_follow_the_humor_setting(speaker):
-    dry, _ = make_assistant(speaker, [], [])
-    assert dry._error_lines == ERROR_LINES["dry"]
-    plain = Assistant(None, speaker, None, None, None, None, None, humor=20)
-    assert plain._error_lines == ERROR_LINES["plain"]
+def test_an_error_line_that_failed_to_make_is_made_again_later(speaker):
+    assistant, _ = make_assistant(speaker, [b"a"], [])
+    down = [True]
+
+    def flaky(text):
+        if down[0]:
+            raise ConnectionError("no network yet")
+        return iter([text.encode()])
+
+    assistant.voice.stream = flaky
+    assistant.prepare_phrases()
+    assistant.say_error()  # the lines failed: only the tone
+    down[0] = False
+    played = []
+    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    failing(assistant, RuntimeError("boom"))
+    assistant.converse(follow_up_s=4.0)
+    assert played and played[0].decode() in ERROR_LINES["dry"]
 
 
 def test_did_you_call_me_carries_on_when_answered(speaker):
@@ -195,7 +230,7 @@ def test_the_first_request_keeps_one_copy_of_its_audio_on_the_wake(speaker, tmp_
 
 def test_did_you_call_me_and_greetings_open_the_thread(speaker, tmp_path):
     assistant, convos = logged_assistant(speaker, tmp_path, [b"ye", None], ["yes, set a timer"], replies=["Done."])
-    assistant.say = lambda text: None
+    assistant.say = lambda text: True
     assistant.ask_if_called(follow_up_s=4.0)
     turns = convos.get(convos.conversations()[0]["id"])["turns"]
     assert [(t["role"], t["text"]) for t in turns] == [
@@ -207,7 +242,7 @@ def test_did_you_call_me_and_greetings_open_the_thread(speaker, tmp_path):
     assistant, convos = logged_assistant(speaker, tmp_path / "2", [None, b"qq", None], ["what time is it"], ["Noon."])
     assistant.speaker_id = FakeSpeakerID("alon")
     assistant.trigger.last_audio = np.zeros(32000, np.int16)
-    assistant.say = lambda text: None
+    assistant.say = lambda text: True
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
     turns = convos.get(convos.conversations()[0]["id"])["turns"]
     assert [t["text"] for t in turns] == ["Yes, Alon?", "what time is it", "Noon."]
@@ -216,7 +251,7 @@ def test_did_you_call_me_and_greetings_open_the_thread(speaker, tmp_path):
 
 def test_no_conversation_when_nobody_speaks(speaker, tmp_path):
     assistant, convos = logged_assistant(speaker, tmp_path, [None], [])
-    assistant.say = lambda text: None
+    assistant.say = lambda text: True
     assistant.ask_if_called(follow_up_s=4.0)
     assistant.recorder.script = [None, None]
     assistant.speaker_id = FakeSpeakerID(None)
@@ -226,7 +261,7 @@ def test_no_conversation_when_nobody_speaks(speaker, tmp_path):
 
 def test_no_conversation_when_the_request_was_only_noise(speaker, tmp_path):
     assistant, convos = logged_assistant(speaker, tmp_path, [None, b"qq"], [""])
-    assistant.say = lambda text: None
+    assistant.say = lambda text: True
     assistant.speaker_id = FakeSpeakerID(None)
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5)  # "Yes?", then a noise that transcribes to nothing
     assert convos.conversations() == []
@@ -245,7 +280,7 @@ def test_a_broken_conversation_log_never_costs_a_reply(speaker, tmp_path, monkey
 def test_a_broken_event_log_never_costs_a_reply(speaker, tmp_path, monkeypatch):
     assistant, convos = logged_assistant(speaker, tmp_path, [None], [])
     monkeypatch.setattr(convos.events, "set_follow", lambda *a: (_ for _ in ()).throw(OSError("database is locked")))
-    assistant.say = lambda text: None
+    assistant.say = lambda text: True
     assistant.ask_if_called(follow_up_s=4.0)  # nobody answers: saving that fails, and nothing else happens
 
 

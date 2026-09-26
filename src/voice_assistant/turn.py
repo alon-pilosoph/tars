@@ -6,16 +6,20 @@ between a finished sentence and a trailing "and, um": after a short silence TARS
 when the model thinks there's more coming.
 """
 
-import urllib.request
 from pathlib import Path
 
 import numpy as np
 
 from .audio import SAMPLE_RATE
+from .models import onnx_session
 
-MODEL_URL = "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/main/smart-turn-v3.2-cpu.onnx"
+MODEL_URL = (
+    "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/"
+    "f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx"
+)
 WINDOW_S = 8  # the model hears the last 8 seconds, zero-padded in front
-# Whisper's log-mel front end, which the model was trained on (what transformers' WhisperFeatureExtractor computes).
+# Whisper's log-mel front end, which the model was trained on. It's what transformers' WhisperFeatureExtractor
+# computes (tests/test_turn.py checks against its output), written out because transformers is too big for a Pi.
 N_FFT, HOP, N_MELS = 400, 160, 80
 
 
@@ -63,15 +67,7 @@ def features(audio: np.ndarray) -> np.ndarray:
 
 class SmartTurn:
     def __init__(self, model_path: Path):
-        import onnxruntime as ort
-
-        if not model_path.exists():
-            print(f"Downloading the end-of-turn model to {model_path}...")
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(MODEL_URL, model_path)
-        options = ort.SessionOptions()
-        options.inter_op_num_threads = options.intra_op_num_threads = 1
-        self._session = ort.InferenceSession(str(model_path), sess_options=options)
+        self._session = onnx_session(model_path, MODEL_URL, "the end-of-turn model")
 
     def finished(self, pcm: bytes) -> float:
         """How likely it is that the speaker has finished (0-1), from 16 kHz mono int16 audio of what they said."""

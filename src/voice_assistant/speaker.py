@@ -6,13 +6,13 @@ The embedding model is WeSpeaker's ResNet34-LM, the same one pyannote.audio uses
 
 import os
 import tempfile
-import urllib.request
 from pathlib import Path
 
 import kaldi_native_fbank as knf
 import numpy as np
 
 from .audio import SAMPLE_RATE
+from .models import fetch
 
 MODEL_URL = "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx"
 # Shorter clips don't carry enough voice to identify anyone reliably.
@@ -36,10 +36,7 @@ class SpeakerID:
     def __init__(self, model_path: Path, voiceprints_path: Path, threshold: float):
         import onnxruntime
 
-        if not model_path.exists():
-            print(f"Downloading speaker model to {model_path}...")
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(MODEL_URL, model_path)
+        model_path = fetch(model_path, MODEL_URL, "the speaker model")
         self._session = onnxruntime.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         self._voiceprints_path = voiceprints_path
         self.threshold = threshold

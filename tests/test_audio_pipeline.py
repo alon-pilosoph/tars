@@ -27,6 +27,9 @@ class ScriptedVAD:
     def __call__(self, block):
         return next(self.probs, 0.05)
 
+    def reset(self):
+        pass
+
 
 def recorder(pattern, turn=None, **cfg):
     return UtteranceRecorder(RecorderConfig(**cfg), ScriptedVAD(pattern), turn)
@@ -105,12 +108,16 @@ def test_without_the_model_the_pause_is_just_the_silence_wait():
 def test_a_pause_is_announced_early_and_talking_again_after_it_too():
     events = []
     rec = recorder("SSSSSS" + "..." + "SSSS" + "." * 12, end_silence_s=0.8, answer_early_s=0.2)
-    rec.record(
-        mic(),
-        on_pause=lambda pcm, silence_s: events.append(("pause", round(silence_s, 2))),
-        on_resume=lambda: events.append(("resume",)),
-    )
-    assert events == [("pause", 0.24), ("resume",), ("pause", 0.24)]
+    rec.record(mic(), on_pause=lambda pcm: events.append("pause"), on_resume=lambda: events.append("resume"))
+    assert events == ["pause", "resume", "pause"]
+
+
+def test_soft_words_after_the_early_answer_started_throw_it_away():
+    events = []
+    rec = recorder("SSSSSS" + "...." + "mmm" + "." * 12, end_silence_s=0.8, answer_early_s=0.2)
+    pcm = rec.record(mic(), on_pause=lambda pcm: events.append("pause"), on_resume=lambda: events.append("resume"))
+    assert events[:2] == ["pause", "resume"]
+    assert blocks_in(pcm) >= 6 + 4 + 3  # the soft words are kept
 
 
 @pytest.mark.skipif(not VAD_MODEL.exists(), reason="speech detector not downloaded yet")
@@ -181,3 +188,19 @@ def test_repo_config_loads_with_every_section(tmp_path):
 def test_missing_config_falls_back_to_defaults(tmp_path):
     cfg = load_config(tmp_path / "nope.toml")
     assert cfg.speaker.enabled is False and cfg.tts.effect == ""
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        '[stt]\nprovider = "whisper"',
+        "[recorder]\nmax_pause_s = 0.5",
+        "[recorder]\nanswer_early_s = 0.9",
+        "[recorder]\nvad_threshold = 0.1",
+    ],
+)
+def test_a_setting_that_cannot_work_stops_at_startup(tmp_path, setting):
+    path = tmp_path / "config.toml"
+    path.write_text(setting)
+    with pytest.raises(SystemExit):
+        load_config(path)

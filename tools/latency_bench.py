@@ -3,9 +3,9 @@
     uv run python tools/latency_bench.py                               # the pipeline config.toml picks
     uv run python tools/latency_bench.py --set recorder.end_silence_s=0.3 --set tts.model=gpt-4o-mini-tts
 
-The questions are spoken once (by Deepgram's Aura, or OpenAI) and kept in voice_data/bench/questions/ (gitignored). Each is fed to
-the assistant at real-time pace, like a mic would, and the reply goes to a silent speaker that notes when the first
-sound would have played (after the same prebuffer the real speaker waits for). Costs a few cents per run.
+The questions are spoken once (by Deepgram's Aura, or OpenAI) and kept in voice_data/bench/questions/ (gitignored).
+Each is fed to the assistant at real-time pace, like a mic would, and the reply goes to a silent speaker that notes
+when the first sound would have played (after the same prebuffer the real speaker waits for). A few cents a run.
 """
 
 import argparse
@@ -25,7 +25,7 @@ from voice_assistant.__main__ import make_openai_client, make_pipeline
 from voice_assistant.assistant import Assistant
 from voice_assistant.audio import BLOCK_SAMPLES, BLOCK_SECONDS, SAMPLE_RATE
 from voice_assistant.config import RecorderConfig, load_config
-from voice_assistant.recorder import UtteranceRecorder, make_recorder
+from voice_assistant.recorder import make_recorder
 from voice_assistant.vad import SileroVAD
 
 REPO = Path(__file__).parents[1]
@@ -88,13 +88,14 @@ class RoomTone:
     """Real room tone: the quiet ends of the owner's recordings (after their last word), spliced in random order.
     Plain white noise won't do: after loud speech, the speech detector keeps calling it speech for seconds."""
 
-    def __init__(self, root: Path, rng: np.random.Generator):
-        vad = UtteranceRecorder(RecorderConfig(), SileroVAD(root / RecorderConfig().vad_model))
+    def __init__(self, root: Path, cfg: RecorderConfig, rng: np.random.Generator):
+        vad = SileroVAD(root / cfg.vad_model)
         tails = []
         for f in sorted((root / "voice_data").glob("*/*/speech/*.wav")):
             pcm = sf.read(f, dtype="int16")[0]
             blocks = pcm[: len(pcm) // BLOCK_SAMPLES * BLOCK_SAMPLES].reshape(-1, BLOCK_SAMPLES)
-            speech = [i for i, b in enumerate(blocks) if vad.is_speech(b)]
+            vad.reset()
+            speech = [i for i, b in enumerate(blocks) if vad(b) >= cfg.vad_threshold]
             quiet = blocks[(speech[-1] + 3 if speech else 0) :]  # a little past the last word
             if len(quiet) >= 5:
                 tails.append(np.concatenate(quiet))
@@ -173,11 +174,12 @@ def apply(cfg, assignment: str) -> None:
     section, name = key.split(".")
     part = getattr(cfg, section)
     old = getattr(part, name)
-    new = (
-        value
-        if isinstance(old, str)
-        else type(old)(value.lower() in ("1", "true", "yes") if isinstance(old, bool) else value)
-    )
+    if isinstance(old, bool):
+        new = value.lower() in ("1", "true", "yes")
+    elif isinstance(old, str):
+        new = value
+    else:
+        new = type(old)(value)
     setattr(cfg, section, dataclasses.replace(part, **{name: new}))
 
 
@@ -193,9 +195,11 @@ def main() -> None:
         apply(cfg, assignment)
 
     clips = questions(root)[: args.turns]
-    transcriber, brain, voice = make_pipeline(cfg, root, typed=True)
+    # Nothing it says is kept, so it mustn't send anything to the web page either.
+    cfg.llm = dataclasses.replace(cfg.llm, send=False)
+    transcriber, brain, voice = make_pipeline(cfg, root)
     speaker = SilentSpeaker(voice.sample_rate, cfg.audio.playback_prebuffer_s)
-    room = RoomTone(root, np.random.default_rng(0))
+    room = RoomTone(root, cfg.recorder, np.random.default_rng(0))
     assistant = Assistant(None, speaker, None, make_recorder(cfg, root), transcriber, brain, voice)
     rows = []
     for clip in clips:
@@ -204,7 +208,7 @@ def main() -> None:
         stopped = mic.t0 + (len(lead) + speech_end(clip)) / SAMPLE_RATE
         speaker.first_sound, assistant.timings = None, {}
         assistant.converse(follow_up_s=0)
-        if speaker.first_sound is None:
+        if "total" not in assistant.timings:  # nothing, or an error line: not an answer
             print("(no answer)")
             continue
         rows.append({**assistant.timings, "measured": speaker.first_sound - stopped})

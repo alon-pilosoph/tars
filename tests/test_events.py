@@ -203,12 +203,12 @@ def test_assistant_records_what_followed_each_wake(log, speaker):
     assert row["follow"] == ASKED and row["transcript"] == "what time is it"
 
     assistant, ask = woken_assistant(log, speaker, [None], [], outcome="ask")
-    assistant.say = lambda text: None
+    assistant.say = lambda text: True
     assistant.ask_if_called(follow_up_s=4.0)
     assert log.get(ask)["follow"] == SAID_NOTHING
 
     assistant, no = woken_assistant(log, speaker, [speech()], ["no"], replies=["<skip>"], outcome="ask")
-    assistant.say = lambda text: None
+    assistant.say = lambda text: True
     assistant.ask_if_called(follow_up_s=4.0)
     assert log.get(no)["follow"] == NOT_FOR_US
 

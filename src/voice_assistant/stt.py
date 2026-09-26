@@ -1,8 +1,15 @@
+"""Speech to text: streamed to Deepgram while you talk, with OpenAI transcribing the same recording if that fails.
+
+A session starts when TARS starts listening, before anyone speaks, so a streaming service can connect ahead; it's
+fed the audio as it's recorded, asked for the words so far (at a pause, and at the end), and closed.
+"""
+
 import io
 import json
 import queue
 import threading
 import wave
+from collections.abc import Callable
 from typing import Protocol
 from urllib.parse import urlencode
 
@@ -11,30 +18,25 @@ from openai import OpenAI
 from .audio import SAMPLE_RATE
 from .config import STTConfig
 
-# How long to wait for the last words once the audio has ended.
+DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
+# How long to wait for the last words once asked for them.
 FINAL_TIMEOUT_S = 5.0
+# Deepgram closes a stream that gets no audio for 10 s; while nobody speaks, this keeps it open.
+KEEPALIVE_S = 4.0
 
 
 class Session(Protocol):
-    """One utterance's transcription: fed 16 kHz mono int16 audio while the person talks."""
+    def feed(self, pcm: bytes) -> None:
+        """16 kHz mono int16 audio, as it's recorded."""
 
-    def feed(self, pcm: bytes) -> None: ...
+    def transcript(self) -> str:
+        """The words in everything fed so far. More audio may follow."""
 
-    def peek(self) -> str:
-        """The transcript of everything fed so far; more audio may follow."""
-
-    def finish(self) -> str:
-        """The whole transcript, once the audio has ended."""
-
-    def cancel(self) -> None:
-        """Nobody spoke after all: drop it."""
+    def close(self) -> None: ...
 
 
 class Transcriber(Protocol):
-    def session(self) -> Session:
-        """Called when listening starts, before anyone speaks, so a streaming service can connect ahead."""
-
-    def transcribe(self, pcm: bytes) -> str: ...
+    def session(self) -> Session: ...
 
 
 def pcm_to_wav(pcm: bytes) -> bytes:
@@ -48,22 +50,19 @@ def pcm_to_wav(pcm: bytes) -> bytes:
 
 
 class BufferedSession:
-    """For services that take a finished recording: keep the audio, send it all at the end."""
+    """For services that take a finished recording: keep the audio, send it all when asked."""
 
-    def __init__(self, transcriber: Transcriber):
-        self._transcriber = transcriber
+    def __init__(self, transcribe: Callable[[bytes], str]):
+        self._transcribe = transcribe
         self._audio = bytearray()
 
     def feed(self, pcm: bytes) -> None:
         self._audio += pcm
 
-    def peek(self) -> str:
-        return self._transcriber.transcribe(bytes(self._audio))
+    def transcript(self) -> str:
+        return self._transcribe(bytes(self._audio))
 
-    def finish(self) -> str:
-        return self.peek()
-
-    def cancel(self) -> None:
+    def close(self) -> None:
         self._audio.clear()
 
 
@@ -73,9 +72,9 @@ class OpenAITranscriber:
         self._cfg = cfg
 
     def session(self) -> Session:
-        return BufferedSession(self)
+        return BufferedSession(self._transcribe)
 
-    def transcribe(self, pcm: bytes) -> str:
+    def _transcribe(self, pcm: bytes) -> str:
         result = self._client.audio.transcriptions.create(
             model=self._cfg.model,
             file=("speech.wav", pcm_to_wav(pcm), "audio/wav"),
@@ -87,8 +86,6 @@ class OpenAITranscriber:
 class DeepgramTranscriber:
     """Deepgram's streaming speech-to-text: the words are recognized while you talk, so the transcript is ready a
     moment after you stop instead of after an upload and a pass over the whole recording."""
-
-    URL = "wss://api.deepgram.com/v1/listen"
 
     def __init__(self, api_key: str, cfg: STTConfig):
         self._key = api_key
@@ -102,36 +99,35 @@ class DeepgramTranscriber:
         }
         if cfg.language:
             params["language"] = cfg.language
-        self._url = f"{self.URL}?{urlencode(params)}"
+        self._url = f"{DEEPGRAM_URL}?{urlencode(params)}"
 
     def session(self) -> Session:
         return DeepgramSession(self._url, self._key)
 
-    def transcribe(self, pcm: bytes) -> str:
-        s = self.session()
-        s.feed(pcm)
-        return s.finish()
-
 
 class DeepgramSession:
-    """Connects in the background as soon as it's made; audio fed before the connection is up waits in a queue."""
+    """Connects in the background as soon as it's made; audio fed before the connection is up waits in a queue.
+
+    Asking for the transcript sends Finalize, which flushes what Deepgram has heard; each Finalize is answered by a
+    result marked from_finalize, so transcript() waits for the answer to its own. Anything that goes wrong (the
+    connection, a timeout) raises there, so the caller can fall back.
+    """
 
     def __init__(self, url: str, key: str):
         self._outbox: queue.Queue[bytes | str | None] = queue.Queue()
         self._final: list[str] = []
-        # Each Finalize is answered by a result marked from_finalize; peek() waits for the answer to its own.
         self._answered = threading.Condition()
         self._asked = self._got = 0
         self._closed = False
         self._error: Exception | None = None
         self._fed = False
-        threading.Thread(target=self._run, args=(url, key), daemon=True).start()
+        threading.Thread(target=self._run, args=(url, key), daemon=True, name="deepgram").start()
 
     def feed(self, pcm: bytes) -> None:
         self._fed = True
         self._outbox.put(pcm)
 
-    def peek(self) -> str:
+    def transcript(self) -> str:
         if not self._fed:
             return ""
         with self._answered:
@@ -139,31 +135,30 @@ class DeepgramSession:
             wanted = self._asked
         self._outbox.put(json.dumps({"type": "Finalize"}))
         with self._answered:
-            if not self._answered.wait_for(lambda: self._got >= wanted or self._closed, FINAL_TIMEOUT_S):
-                self._error = self._error or TimeoutError("Deepgram didn't finish the transcript in time")
-            if self._error:
-                raise self._error
+            self._answered.wait_for(lambda: self._got >= wanted or self._closed, FINAL_TIMEOUT_S)
+            if self._got < wanted:
+                raise self._error or TimeoutError("Deepgram didn't finish the transcript in time")
             return " ".join(self._final).strip()
 
-    def finish(self) -> str:
-        try:
-            return self.peek()
-        finally:
-            self.cancel()
-
-    def cancel(self) -> None:
+    def close(self) -> None:
         self._outbox.put(None)
 
     def _run(self, url: str, key: str) -> None:
-        from websockets.sync.client import connect
-
         try:
+            from websockets.sync.client import connect
+
             with connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=5) as ws:
-                threading.Thread(target=self._receive, args=(ws,), daemon=True).start()
-                while (item := self._outbox.get()) is not None:
+                threading.Thread(target=self._receive, args=(ws,), daemon=True, name="deepgram-receive").start()
+                while True:
+                    try:
+                        item = self._outbox.get(timeout=KEEPALIVE_S)
+                    except queue.Empty:
+                        item = json.dumps({"type": "KeepAlive"})
+                    if item is None:
+                        break
                     ws.send(item)
                 ws.send(json.dumps({"type": "CloseStream"}))
-        except Exception as e:  # noqa: BLE001 - whatever broke the connection is reported by peek()
+        except Exception as e:  # noqa: BLE001 - reported by transcript(), which the fallback catches
             self._close(e)
 
     def _receive(self, ws) -> None:
@@ -179,15 +174,13 @@ class DeepgramSession:
                     if data.get("from_finalize"):
                         self._got += 1
                         self._answered.notify_all()
-        except Exception as e:  # noqa: BLE001 - a dropped connection; peek() reports it if an answer was pending
-            self._close(e)
-        finally:
             self._close(None)
+        except Exception as e:  # noqa: BLE001 - reported by transcript(), which the fallback catches
+            self._close(e)
 
     def _close(self, error: Exception | None) -> None:
         with self._answered:
-            if self._got < self._asked:
-                self._error = self._error or error or ConnectionError("Deepgram closed before finishing")
+            self._error = self._error or error or ConnectionError("Deepgram closed the stream")
             self._closed = True
             self._answered.notify_all()
 
@@ -200,34 +193,24 @@ class FallbackTranscriber:
         self._transcriber, self._backup = transcriber, backup
 
     def session(self) -> Session:
-        return _FallbackSession(self._transcriber.session(), BufferedSession(self._backup))
-
-    def transcribe(self, pcm: bytes) -> str:
-        return self._backup.transcribe(pcm)
+        return _FallbackSession(self._transcriber.session(), self._backup.session())
 
 
 class _FallbackSession:
-    def __init__(self, main: Session, backup: BufferedSession):
+    def __init__(self, main: Session, backup: Session):
         self._main, self._backup = main, backup
 
     def feed(self, pcm: bytes) -> None:
         self._main.feed(pcm)
         self._backup.feed(pcm)
 
-    def peek(self) -> str:
+    def transcript(self) -> str:
         try:
-            return self._main.peek()
+            return self._main.transcript()
         except Exception as e:  # noqa: BLE001 - whatever broke the stream, the recording is still here
-            print(f"(speech to text failed: {e}; using the backup)")
-            return self._backup.peek()
+            print(f"(speech to text failed: {e!r}; using the backup)")
+            return self._backup.transcript()
 
-    def finish(self) -> str:
-        try:
-            return self._main.finish()
-        except Exception as e:  # noqa: BLE001 - whatever broke the stream, the recording is still here
-            print(f"(speech to text failed: {e}; using the backup)")
-            return self._backup.finish()
-
-    def cancel(self) -> None:
-        self._main.cancel()
-        self._backup.cancel()
+    def close(self) -> None:
+        self._main.close()
+        self._backup.close()

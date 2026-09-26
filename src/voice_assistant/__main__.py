@@ -5,13 +5,11 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from .audio import Microphone, MicrophoneError, Speaker, find_device, list_devices
-from .config import Config, LLMConfig, load_config
+from .config import Config, LLMConfig, STTConfig, load_config
 from .recorder import make_recorder
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 OPENAI_TIMEOUT_S = 15.0
-# OpenAI's transcription model, when it backs up another speech-to-text service.
-OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
 
 
 def api_key(env_path: Path, name: str) -> str:
@@ -28,7 +26,7 @@ def make_openai_client(env_path: Path):
 
     key = api_key(env_path, "OPENAI_API_KEY")
     # The SDK default is 10 minutes per request plus 2 retries. A voice assistant should give up
-    # quickly instead, so a dropped connection costs one error tone rather than a frozen assistant.
+    # quickly instead, so a dropped connection costs one "that didn't work" rather than a frozen assistant.
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
 
 
@@ -75,7 +73,7 @@ def record_voice_session(cfg: Config, person: str, mic_name: str, root: Path) ->
     )
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), SAMPLE_RATE, cfg.audio.playback_prebuffer_s)
     with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
-        record_voice(person, mic_name, mic, speaker, make_recorder(cfg, root), root)
+        record_voice(person, mic_name, mic, speaker, make_recorder(cfg, root, turn_model=False), root / "voice_data")
 
 
 def make_speaker_id(cfg: Config, root: Path):
@@ -170,7 +168,7 @@ def main() -> None:
             mic_test(cfg, root)
             return
         if args.record_voice:
-            record_voice_session(cfg, args.record_voice, args.mic, root / "voice_data")
+            record_voice_session(cfg, args.record_voice, args.mic, root)
             return
         if args.enroll:
             enroll_speaker(cfg, args.enroll, args.mic, root)
@@ -199,16 +197,13 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False):
     voice = apply_effect(OpenAISpeech(client, cfg.tts), cfg.tts.effect)
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt), brain, voice
-    if cfg.stt.provider != "deepgram":
-        raise SystemExit(f"[stt] provider must be openai or deepgram, not {cfg.stt.provider!r}")
-    # OpenAI takes over, from the same recording, if the stream fails.
-    backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
+    backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=STTConfig().model))
+    if typed:  # typed questions need no speech to text
+        return backup, brain, voice
     return FallbackTranscriber(DeepgramTranscriber(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt), backup), brain, voice
 
 
 def run(cfg: Config, args: argparse.Namespace) -> None:
-    from openai import OpenAIError
-
     from .assistant import Assistant
     from .journal import Journal
 
@@ -229,9 +224,9 @@ def run(cfg: Config, args: argparse.Namespace) -> None:
                 if not text:
                     continue
                 try:
-                    assistant.answer(text)
-                except OpenAIError as e:
-                    print(f"OpenAI error: {e!r}")
+                    assistant.answer_text(text)
+                except Exception as e:  # noqa: BLE001 - a failed question shouldn't end the session
+                    print(f"Error: {e!r}")
         journal = Journal(make_event_log(cfg, root))
         journal.keep_pruning(cfg.learning.keep_audio_days)
         trigger, idle_message = make_trigger(cfg, args.ptt, root, journal)

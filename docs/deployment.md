@@ -18,7 +18,7 @@ OpenAI after a wake leaves the house.
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync && cp .env.example .env    # then put your OpenAI API key in .env
+uv sync && cp .env.example .env    # then put your OpenAI and Deepgram API keys in .env
 uv run voice-assistant --list-devices
 ```
 
@@ -32,10 +32,9 @@ uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:808
 ```
 
 The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
-(8 MB) and the speaker model (25 MB) into `models/`. Expect about 3 seconds from when you stop talking to TARS's
-first word: noticing you've stopped (0.8 s, longer if you sounded mid-thought), speech to text (about 0.2 s), the
-reply's first words (about 0.8 s) and their first audio (about 1 s). A web search adds a
-"Looking it up." first. macOS asks for microphone access the first time; if TARS hears nothing, check System
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 2.5 seconds from when you stop talking to TARS's
+first word, a little more when you sounded mid-thought: TARS waits 0.8 s to be sure you're done, and prepares the
+answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks for microphone access the first time; if TARS hears nothing, check System
 Settings → Privacy & Security → Microphone for your terminal.
 
 ## Install on the Pi
@@ -49,8 +48,8 @@ git clone <this repo> ~/voice-assistant
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts both systemd user services, at boot too. The first run stops to ask for the OpenAI key in `.env`; run it again
-after. It's safe to rerun. The two services are separate processes on purpose: a crash in one never takes the other
+starts both systemd user services, at boot too. The first run stops to ask for the keys in `.env` (OpenAI, and
+Deepgram unless `[stt] provider = "openai"`); run it again after. It's safe to rerun. The two services are separate processes on purpose: a crash in one never takes the other
 down. The web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service).

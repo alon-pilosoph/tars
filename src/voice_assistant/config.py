@@ -106,7 +106,7 @@ class Config:
 
 def load_config(path: Path) -> Config:
     raw = tomllib.loads(path.read_text()) if path.exists() else {}
-    return Config(
+    cfg = Config(
         audio=AudioConfig(**raw.get("audio", {})),
         wake=WakeConfig(**raw.get("wake", {})),
         recorder=RecorderConfig(**raw.get("recorder", {})),
@@ -117,3 +117,21 @@ def load_config(path: Path) -> Config:
         learning=LearningConfig(**raw.get("learning", {})),
         web=WebConfig(**raw.get("web", {})),
     )
+    if problems := _problems(cfg):
+        raise SystemExit(f"{path}: " + "; ".join(problems))
+    return cfg
+
+
+def _problems(cfg: Config) -> list[str]:
+    r, problems = cfg.recorder, []
+    if cfg.stt.provider not in ("openai", "deepgram"):
+        problems.append(f"[stt] provider must be openai or deepgram, not {cfg.stt.provider!r}")
+    if r.end_of_turn not in ("silence", "smart"):
+        problems.append(f"[recorder] end_of_turn must be silence or smart, not {r.end_of_turn!r}")
+    if not 0.2 <= r.vad_threshold <= 0.95:
+        problems.append("[recorder] vad_threshold must be between 0.2 and 0.95")
+    if not 0 <= r.answer_early_s < r.end_silence_s:
+        problems.append("[recorder] answer_early_s must be at least 0 and shorter than end_silence_s")
+    if r.max_pause_s < r.end_silence_s:
+        problems.append("[recorder] max_pause_s can't be shorter than end_silence_s")
+    return problems

@@ -63,40 +63,31 @@ class StreamedReply:
     def __init__(self, pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]):
         self._playlist: queue.Queue = queue.Queue()
         self._stop = threading.Event()
-        self._pieces = pieces
-        self._producer = threading.Thread(target=self._produce, args=(voice, on_sentence), daemon=True)
+        self._producer = threading.Thread(target=self._produce, args=(pieces, voice, on_sentence), daemon=True)
         self._producer.start()
 
-    def _unless_stopped(self) -> Iterator[str]:
-        for piece in self._pieces:
-            if self._stop.is_set():
-                return
-            yield piece
-
-    def _produce(self, voice: Voice, on_sentence: Callable[[str], None]) -> None:
+    def _produce(self, pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]) -> None:
         try:
-            for sentence in split_sentences(self._unless_stopped()):
-                if self._stop.is_set():
-                    break
+            for sentence in split_sentences(self._until_stopped(pieces)):
                 on_sentence(sentence)
                 self._playlist.put(_Prefetch(voice, sentence))
         except Exception as e:  # noqa: BLE001 - raised again where the audio is played
             self._playlist.put(e)
         self._playlist.put(_DONE)
 
-    def cancel(self) -> None:
-        """Stop reading the reply, and return once nothing more of it will be read (its request is closed)."""
+    def _until_stopped(self, pieces: Iterable[str]) -> Iterator[str]:
+        for piece in pieces:
+            if self._stop.is_set():
+                return
+            yield piece
+
+    def stop(self) -> None:
+        """Stop at the next piece of the reply (interrupt the brain to get there sooner), and wait for it."""
         self._stop.set()
         self._producer.join()
-        if close := getattr(self._pieces, "close", None):
-            close()
 
     def __iter__(self) -> Iterator[bytes]:
         while (item := self._playlist.get()) is not _DONE:
             if isinstance(item, Exception):
                 raise item
             yield from item
-
-
-def speak_streamed_reply(pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]) -> StreamedReply:
-    return StreamedReply(pieces, voice, on_sentence)

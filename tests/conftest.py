@@ -152,7 +152,7 @@ class ScriptedRecorder:
         *events, pcm = entry
         for event in events:
             if event == "pause" and on_pause:
-                on_pause(pcm, 0.25)
+                on_pause(pcm)
             elif event == "resume" and on_resume:
                 on_resume()
         return pcm
@@ -163,10 +163,7 @@ class ScriptedTranscriber:
         self.texts = iter(texts)
 
     def session(self):
-        return BufferedSession(self)
-
-    def transcribe(self, pcm):
-        return next(self.texts)
+        return BufferedSession(lambda pcm: next(self.texts))
 
 
 class RecordingBrain:
@@ -179,6 +176,9 @@ class RecordingBrain:
     def warm(self):
         pass
 
+    def interrupt(self):
+        pass
+
     def stream_reply(self, text):
         self.asked.append(text)
         return iter([next(self.replies, "ok")])
@@ -187,12 +187,22 @@ class RecordingBrain:
         self.forgotten += 1
 
 
+class SilentReply:
+    """A StreamedReply that reads the whole reply at once and makes no audio."""
+
+    def __init__(self, pieces, voice, on_sentence):
+        list(pieces)
+
+    def __iter__(self):
+        return iter([])
+
+    def stop(self):
+        pass
+
+
 @pytest.fixture
 def no_tts(monkeypatch):
-    """Consume the reply the way playback would, without calling TTS."""
-    monkeypatch.setattr(
-        assistant_module, "speak_streamed_reply", lambda pieces, voice, on_sentence: iter(list(pieces) and [])
-    )
+    monkeypatch.setattr(assistant_module, "StreamedReply", SilentReply)
 
 
 def make_assistant(speaker, utterances, transcripts, replies=(), journal=None):

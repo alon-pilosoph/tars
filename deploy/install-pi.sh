@@ -20,9 +20,17 @@ UV="$HOME/.local/bin/uv"
 echo "== Python packages (uv installs its own Python)"
 "$UV" sync --frozen
 
-if [ ! -s .env ] || ! grep -q '^OPENAI_API_KEY=.' .env || ! grep -q '^DEEPGRAM_API_KEY=.' .env; then
+# Deepgram does the speech to text unless config.toml says [stt] provider = "openai".
+NEEDS_DEEPGRAM=$("$UV" run --frozen python -c "
+from pathlib import Path
+from voice_assistant.config import load_config
+print(load_config(Path('config.toml')).stt.provider == 'deepgram')
+")
+if [ ! -s .env ] || ! grep -q '^OPENAI_API_KEY=.' .env \
+    || { [ "$NEEDS_DEEPGRAM" = True ] && ! grep -q '^DEEPGRAM_API_KEY=.' .env; }; then
   [ -e .env ] || cp .env.example .env
-  echo "!! Put your OpenAI and Deepgram API keys in $REPO/.env, then run this again."
+  echo "!! Put your OpenAI API key (and DEEPGRAM_API_KEY, for [stt] provider = \"deepgram\") in $REPO/.env,"
+  echo "   then run this again."
   exit 1
 fi
 

@@ -37,8 +37,11 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
    `[Speaker: Alon]`.
 5. **The LLM** (OpenAI's Responses API, streamed) answers in TARS's voice. Each finished sentence goes to **text
-   to speech** (OpenAI, the Onyx voice) straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply
-   is still being written. The TARS effect (a speaker in a metal box) is applied as it streams.
+   to speech** (OpenAI, the Onyx voice) straight away, and playback starts on the first audio chunk, so TARS starts
+   talking while the reply is still being written. The TARS effect (a speaker in a metal box) is applied as it
+   streams. All of this starts early, a quarter second into a pause, while the recording goes on: if you carry on
+   talking the draft is thrown away, and it's only played, logged and allowed to send anything once your turn is
+   confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
@@ -104,8 +107,8 @@ To use it away from home, put the Pi and the phone on Tailscale rather than forw
 |---|---|
 | Audio in and out | `audio.py` (mic stream, devices, playback, chimes), `effects.py` (the TARS voice) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2) |
-| Hearing when you're done | `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn) |
-| Understanding and answering | `stt.py`, `llm.py`, `speech.py` (sentence pipelining), `tts.py` |
+| Hearing when you're done | `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn), `models.py` (downloads) |
+| Understanding and answering | `stt.py`, `llm.py`, `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups), `__main__.py` (wiring, command line) |
 | What's kept | `store.py` (database, files, upgrades), `events.py`, `conversations.py`, `journal.py` |

@@ -2,15 +2,12 @@
 trace if they carry on talking."""
 
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from voice_assistant.config import LLMConfig
 from voice_assistant.draft import Draft
-from voice_assistant.llm import OpenAIChat
 
-from .conftest import fake_openai_chat, make_assistant, speech
+from .conftest import make_assistant, speech
 
 
 def played_by(speaker):
@@ -49,36 +46,56 @@ def test_without_a_pause_it_answers_at_the_end(speaker):
     assert played == [b"Hello."] and brain.asked == ["hello"]
 
 
-def test_the_brain_forgets_a_reply_it_was_still_writing():
-    client = fake_openai_chat(lambda messages: "One. Two. Three.")
-    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False))
-    list(brain.stream_reply("first"))
-    unfinished = brain.stream_reply("second")
-    next(unfinished)
-    brain.forget_last()
-    assert [m["content"] for m in brain._history] == ["first", "One. Two. Three."]
+def test_a_reply_that_fails_while_playing_is_stopped_and_forgotten(speaker):
+    assistant, brain = make_assistant(speaker, [speech()], ["tell me a story"], replies=["Once. Upon. A time."])
+    interrupted = []
+    brain.interrupt = lambda: interrupted.append(True)
+
+    def fail(chunks, *args, **kwargs):
+        raise TimeoutError("the voice stalled")
+
+    speaker.play_pcm_stream = fail
+    assistant.say_error = lambda: None
+    assistant.converse(follow_up_s=0)
+    with assistant._thinking:  # the discarded draft has been cleaned up once it lets go
+        assert brain.forgotten == 1 and interrupted == [True]
+
+
+def test_a_question_the_brain_failed_on_is_forgotten(speaker):
+    assistant, brain = make_assistant(speaker, [["pause", speech()]], ["yes, the lights"])
+
+    def broken(text):
+        brain.asked.append(text)
+        raise ConnectionError("the brain is down")
+        yield
+
+    brain.stream_reply = broken
+    assistant.say = lambda text: True
+    assistant.say_error = lambda: None
+    assistant.ask_if_called(follow_up_s=0)
+    assert brain.forgotten == 1
 
 
 def test_a_cancelled_draft_is_undone_once_prepared():
-    pool, undone = ThreadPoolExecutor(max_workers=1), []
+    turn, undone = threading.Lock(), []
     started = threading.Event()
 
     def prepare(draft):
         started.set()
         return "answer"
 
-    draft = Draft(pool, prepare, undone.append)
+    draft = Draft(turn, prepare, undone.append)
     started.wait(1)
     draft.cancel()
-    pool.shutdown(wait=True)
-    assert undone == ["answer"]
+    with turn:  # the draft holds it until it's settled
+        assert undone == ["answer"]
 
 
 def test_a_draft_that_failed_raises_when_taken():
     def prepare(draft):
         raise ConnectionError("the stream dropped")
 
-    draft = Draft(ThreadPoolExecutor(max_workers=1), prepare, lambda answer: None)
+    draft = Draft(threading.Lock(), prepare, lambda answer: None)
     with pytest.raises(ConnectionError):
         draft.take()
-    draft.done()
+    draft.cancel()

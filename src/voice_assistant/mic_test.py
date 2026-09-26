@@ -81,7 +81,7 @@ def mic_test(cfg: Config, root: Path) -> None:
 
         check = root / cfg.wake.check_model if cfg.wake.check_model else None
         verifier = PhraseVerifier(wake.phrase, root / "models", check)
-    recorder = make_recorder(cfg, root)
+    recorder = make_recorder(cfg, root, turn_model=False)
     recent = RecentAudio(cfg.wake.check_window_s)
     log = WakeLog(cfg.wake.threshold)
     passed = 0

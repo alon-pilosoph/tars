@@ -1517,6 +1517,7 @@ dependencies = [
     { name = "kaldi-native-fbank" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "onnxruntime" },
     { name = "openai" },
     { name = "openwakeword" },
     { name = "pydantic" },
@@ -1527,6 +1528,7 @@ dependencies = [
     { name = "sounddevice" },
     { name = "uvicorn" },
     { name = "vosk" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -1542,6 +1544,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "kaldi-native-fbank", specifier = ">=1.20" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "onnxruntime", specifier = ">=1.20" },
     { name = "openai", specifier = ">=1.60" },
     { name = "openwakeword", specifier = ">=0.6.0" },
     { name = "pydantic", specifier = ">=2" },
@@ -1551,6 +1554,7 @@ requires-dist = [
     { name = "sounddevice", specifier = ">=0.4.7" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "vosk", specifier = "==0.3.44" },
+    { name = "websockets", specifier = ">=14" },
 ]
 
 [package.metadata.requires-dev]

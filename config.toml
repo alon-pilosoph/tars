@@ -37,6 +37,9 @@ start_timeout_s = 5.0
 end_silence_s = 0.8
 end_of_turn = "smart"
 max_pause_s = 1.6
+# From this far into a pause, TARS starts preparing the answer in the background; it's only played once you're done,
+# and thrown away if you carry on. 0 = wait for the end.
+answer_early_s = 0.25
 max_utterance_s = 15.0
 # After answering, keep listening this long for a follow-up without the wake word. 0 = off.
 follow_up_s = 4.0
