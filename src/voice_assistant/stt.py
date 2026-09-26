@@ -20,6 +20,9 @@ class Session(Protocol):
 
     def feed(self, pcm: bytes) -> None: ...
 
+    def peek(self) -> str:
+        """The transcript of everything fed so far; more audio may follow."""
+
     def finish(self) -> str:
         """The whole transcript, once the audio has ended."""
 
@@ -54,8 +57,11 @@ class BufferedSession:
     def feed(self, pcm: bytes) -> None:
         self._audio += pcm
 
-    def finish(self) -> str:
+    def peek(self) -> str:
         return self._transcriber.transcribe(bytes(self._audio))
+
+    def finish(self) -> str:
+        return self.peek()
 
     def cancel(self) -> None:
         self._audio.clear()
@@ -113,7 +119,10 @@ class DeepgramSession:
     def __init__(self, url: str, key: str):
         self._outbox: queue.Queue[bytes | str | None] = queue.Queue()
         self._final: list[str] = []
-        self._finalized = threading.Event()
+        # Each Finalize is answered by a result marked from_finalize; peek() waits for the answer to its own.
+        self._answered = threading.Condition()
+        self._asked = self._got = 0
+        self._closed = False
         self._error: Exception | None = None
         self._fed = False
         threading.Thread(target=self._run, args=(url, key), daemon=True).start()
@@ -122,17 +131,25 @@ class DeepgramSession:
         self._fed = True
         self._outbox.put(pcm)
 
-    def finish(self) -> str:
+    def peek(self) -> str:
         if not self._fed:
-            self.cancel()
             return ""
+        with self._answered:
+            self._asked += 1
+            wanted = self._asked
         self._outbox.put(json.dumps({"type": "Finalize"}))
-        if not self._finalized.wait(FINAL_TIMEOUT_S) and self._error is None:
-            self._error = TimeoutError("Deepgram didn't finish the transcript in time")
-        self._outbox.put(None)
-        if self._error:
-            raise self._error
-        return " ".join(self._final).strip()
+        with self._answered:
+            if not self._answered.wait_for(lambda: self._got >= wanted or self._closed, FINAL_TIMEOUT_S):
+                self._error = self._error or TimeoutError("Deepgram didn't finish the transcript in time")
+            if self._error:
+                raise self._error
+            return " ".join(self._final).strip()
+
+    def finish(self) -> str:
+        try:
+            return self.peek()
+        finally:
+            self.cancel()
 
     def cancel(self) -> None:
         self._outbox.put(None)
@@ -146,9 +163,8 @@ class DeepgramSession:
                 while (item := self._outbox.get()) is not None:
                     ws.send(item)
                 ws.send(json.dumps({"type": "CloseStream"}))
-        except Exception as e:  # noqa: BLE001 - whatever broke the connection is reported by finish()
-            self._error = self._error or e
-            self._finalized.set()
+        except Exception as e:  # noqa: BLE001 - whatever broke the connection is reported by peek()
+            self._close(e)
 
     def _receive(self, ws) -> None:
         try:
@@ -156,17 +172,24 @@ class DeepgramSession:
                 data = json.loads(message)
                 if data.get("type") != "Results":
                     continue
-                if data.get("is_final"):
-                    text = data["channel"]["alternatives"][0]["transcript"]
+                text = data["channel"]["alternatives"][0]["transcript"] if data.get("is_final") else ""
+                with self._answered:
                     if text:
                         self._final.append(text)
-                if data.get("from_finalize"):
-                    self._finalized.set()
-        except Exception as e:  # noqa: BLE001 - a closed connection ends the loop; finish() reports it if it matters
-            if not self._finalized.is_set():
-                self._error = self._error or e
+                    if data.get("from_finalize"):
+                        self._got += 1
+                        self._answered.notify_all()
+        except Exception as e:  # noqa: BLE001 - a dropped connection; peek() reports it if an answer was pending
+            self._close(e)
         finally:
-            self._finalized.set()
+            self._close(None)
+
+    def _close(self, error: Exception | None) -> None:
+        with self._answered:
+            if self._got < self._asked:
+                self._error = self._error or error or ConnectionError("Deepgram closed before finishing")
+            self._closed = True
+            self._answered.notify_all()
 
 
 class FallbackTranscriber:
@@ -190,6 +213,13 @@ class _FallbackSession:
     def feed(self, pcm: bytes) -> None:
         self._main.feed(pcm)
         self._backup.feed(pcm)
+
+    def peek(self) -> str:
+        try:
+            return self._main.peek()
+        except Exception as e:  # noqa: BLE001 - whatever broke the stream, the recording is still here
+            print(f"(speech to text failed: {e}; using the backup)")
+            return self._backup.peek()
 
     def finish(self) -> str:
         try:

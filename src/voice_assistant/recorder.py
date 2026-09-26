@@ -45,12 +45,16 @@ class UtteranceRecorder:
         tail_blocks: int = 2,
         start_timeout_s: float | None = None,
         on_audio: Callable[[bytes], None] | None = None,
+        on_pause: Callable[[bytes, float], None] | None = None,
+        on_resume: Callable[[], None] | None = None,
     ) -> bytes | None:
         """Return 16 kHz mono int16 PCM, or None if nobody spoke before the timeout.
 
         `preroll_blocks` and `tail_blocks` set how much audio to keep before speech starts and after it ends.
         `start_timeout_s` overrides the configured wait for speech to begin. `on_audio` gets the audio as it's
-        recorded, from the moment speech starts (the preroll first), for streaming transcription.
+        recorded, from the moment speech starts (the preroll first), for streaming transcription. `on_pause` gets
+        the audio so far and how long the silence has lasted, once `answer_early_s` into each pause, and `on_resume`
+        is called if they talk again after it.
         """
         preroll: deque[np.ndarray] = deque(maxlen=max(preroll_blocks, START_BLOCKS))
         streak = 0
@@ -68,6 +72,7 @@ class UtteranceRecorder:
         send = on_audio or (lambda pcm: None)
         send(np.concatenate(blocks).tobytes())
         pause = math.ceil(self._cfg.end_silence_s / BLOCK_SECONDS)
+        early = math.ceil(self._cfg.answer_early_s / BLOCK_SECONDS) if on_pause and self._cfg.answer_early_s else None
         silent_blocks_to_stop = pause
         max_blocks = int(self._cfg.max_utterance_s / BLOCK_SECONDS)
         speaking, quiet = self._cfg.vad_threshold, self._cfg.vad_threshold - END_MARGIN
@@ -78,9 +83,13 @@ class UtteranceRecorder:
             send(block.tobytes())
             p = self._vad(block)
             if p >= speaking:
+                if early and silence >= early and on_resume:
+                    on_resume()
                 silence = 0
             elif p < quiet:
                 silence += 1
+                if silence == early:
+                    on_pause(np.concatenate(blocks).tobytes(), silence * BLOCK_SECONDS)
                 if (
                     silence == pause
                     and self._turn

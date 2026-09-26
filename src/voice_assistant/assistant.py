@@ -4,17 +4,18 @@ import time
 import traceback
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from openai import OpenAIError
 
 from .audio import Microphone, MicrophoneError, Speaker
 from .conversations import SentItem
+from .draft import Draft
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, Brain, split_skip
 from .recorder import UtteranceRecorder
 from .speaker import SpeakerID
-from .speech import speak_streamed_reply
+from .speech import StreamedReply, speak_streamed_reply
 from .stt import Session, Transcriber
 from .tts import Voice
 from .verify import ASK
@@ -48,6 +49,21 @@ class Reply:
 class Utterance:
     pcm: bytes
     transcript: Session  # fed while it was recorded
+    draft: Draft | None = None  # an answer already being prepared, from a pause just before the end
+
+
+@dataclass
+class Answer:
+    """A request, transcribed, and the reply being made to it, not yet heard by anyone."""
+
+    text: str
+    speaker: tuple[str | None, float | None, object]  # speaker ID's (name, score, embedding)
+    stt_s: float
+    t_asked: float = 0.0  # when the brain was asked
+    reply: StreamedReply | None = None  # None: nothing to say (no words, or not meant for TARS)
+    skipped: bool = False  # an overheard follow-up the brain chose not to answer
+    spoken: list[str] = field(default_factory=list)  # the reply's text so far
+    sentences: list[tuple[float, str]] = field(default_factory=list)  # when each sentence was written, and it
 
 
 class Assistant:
@@ -74,6 +90,7 @@ class Assistant:
         self.voice = voice
         self.speaker_id = speaker_id
         self._background = ThreadPoolExecutor(max_workers=1)
+        self._thinking = ThreadPoolExecutor(max_workers=1)  # drafts, one at a time
         self.name_threshold = name_threshold
         self.journal = journal or Journal()
         self._error_lines = ERROR_LINES["dry" if humor >= 50 else "plain"]
@@ -141,21 +158,41 @@ class Assistant:
         print(f"Bot:  {ASK_PHRASE}  (not sure I heard my name)")
         self.journal.said(ASK_PHRASE)
         self.say(ASK_PHRASE)
-        heard = self.listen(start_timeout_s=ASK_TIMEOUT_S)
+        heard = self.listen(start_timeout_s=ASK_TIMEOUT_S, tag=ASKED_TAG)
         if heard is None:
             print("(no answer, going back to sleep)")
             self.journal.nobody_spoke()
             return
         self.converse(follow_up_s, first=(heard, ASKED_TAG))
 
-    def listen(self, start_timeout_s: float | None = None) -> Utterance | None:
-        """Record one utterance, transcribing it as it comes (a streaming service connects before anyone speaks)."""
+    def listen(
+        self, start_timeout_s: float | None = None, follow_up: bool = False, tag: str | None = None
+    ) -> Utterance | None:
+        """Record one utterance, transcribing it as it comes (a streaming service connects before anyone speaks),
+        and start answering at each pause, in case it's the end."""
         session = self.transcriber.session()
-        pcm = self.recorder.record(self.mic, start_timeout_s=start_timeout_s, on_audio=session.feed)
+        drafts: list[Draft] = []
+
+        def paused(pcm: bytes, silence_s: float) -> None:
+            drafts.append(self._draft(pcm, session, follow_up, tag))
+
+        def resumed() -> None:
+            while drafts:
+                drafts.pop().cancel()
+
+        try:
+            pcm = self.recorder.record(
+                self.mic, start_timeout_s=start_timeout_s, on_audio=session.feed, on_pause=paused, on_resume=resumed
+            )
+        except BaseException:
+            # Every draft must be settled, or the next one would wait behind it forever.
+            resumed()
+            raise
         if pcm is None:
+            resumed()
             session.cancel()
             return None
-        return Utterance(pcm, session)
+        return Utterance(pcm, session, drafts[-1] if drafts else None)
 
     def converse(
         self, follow_up_s: float, first: tuple[Utterance, str] | None = None, greet_after_s: float = 0.0
@@ -209,91 +246,129 @@ class Assistant:
             with self.mic.paused(tail_s=0.05):
                 self.speaker.chime(freq=1320.0, duration_s=0.06, volume=0.12)
             print(f"(listening {follow_up_s:.0f}s for a follow-up)")
-            heard = self.listen(start_timeout_s=follow_up_s)
+            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True)
             if heard is None:
                 return
 
     def handle(self, heard: Utterance, follow_up: bool = False, tag: str | None = None) -> bool:
-        """Transcribe and answer one request. Returns False if there was nothing (meant for us) to answer."""
+        """Answer one request. Returns False if there was nothing (meant for us) to answer."""
         # Latency is measured from the moment you actually stopped talking,
         # including the silence we waited through to be sure you were done.
         silence_s = self.recorder.trailing_silence_s
         t_stopped_talking = time.perf_counter() - silence_s
+        draft = heard.draft or self._draft(heard.pcm, heard.transcript, follow_up, tag)
+        try:
+            answer = draft.take()
+            name, score, embedding = answer.speaker
+            who = f" ({name or 'unknown'})" if self.speaker_id else ""
+            print(f"You{who}:  {answer.text!r}")
+            # Only the request right after the wake says whether the wake was real.
+            turn = self.journal.heard(heard.pcm, answer.text, name, score, embedding, first=not follow_up)
+            if not answer.text:
+                return False
+            if answer.skipped:
+                print("(not meant for me, going quiet)")
+                self.journal.not_for_tars(turn)
+                return False
+            self.timings = {"end_of_speech": silence_s, "stt": answer.stt_s}
+            reply = self._speak(
+                answer, t_stopped_talking, [f"end-of-speech wait {silence_s:.2f}s", f"stt {answer.stt_s:.2f}s"]
+            )
+            self.journal.answered(turn, reply.text, reply.sent, asker=name)
+            return True
+        finally:
+            draft.done()
+            heard.transcript.cancel()
 
-        pcm = heard.pcm
+    def _draft(self, pcm: bytes, transcript: Session, follow_up: bool, tag: str | None) -> Draft[Answer]:
+        return Draft(self._thinking, lambda d: self._prepare(d, pcm, transcript, follow_up, tag), self._discard)
+
+    def _prepare(self, draft: Draft, pcm: bytes, transcript: Session, follow_up: bool, tag: str | None) -> Answer:
+        """Transcribe, identify the speaker, and set the brain and voice to work, all without a sound."""
         # Identify the speaker while the audio is being transcribed, so it adds no latency.
         who = self._background.submit(self.speaker_id.describe, pcm) if self.speaker_id else None
-        t_stt = time.perf_counter()
-        text = heard.transcript.finish()
-        stt_s = time.perf_counter() - t_stt
-        name, score, embedding = who.result() if who else (None, None, None)
-        voice = f" ({name or 'unknown'})" if who else ""
-        print(f"You{voice}:  {text!r}")
-        # Only the request right after the wake says whether the wake was real.
-        turn = self.journal.heard(pcm, text, name, score, embedding, first=not follow_up)
-        if not text:
-            return False
-        if who:
+        t = time.perf_counter()
+        text = transcript.peek()
+        answer = Answer(text, who.result() if who else (None, None, None), time.perf_counter() - t)
+        if not text or draft.cancelled:
+            return answer
+        answer.t_asked = time.perf_counter()
+        pieces = _tee(self.brain.stream_reply(self._prompt(text, answer.speaker[0], follow_up, tag)), answer.spoken)
+        # A follow-up, or a reply to "Did you call me?" (maybe a "no"), may not be meant for TARS at all.
+        if follow_up or tag:
+            answer.skipped, pieces = split_skip(pieces)
+            if answer.skipped:
+                self.brain.forget_last()  # overheard conversation shouldn't linger in the history
+                return answer
+        answer.reply = speak_streamed_reply(
+            pieces, self.voice, lambda sentence: answer.sentences.append((time.perf_counter(), sentence))
+        )
+        return answer
+
+    def _discard(self, answer: Answer) -> None:
+        if answer.reply:
+            answer.reply.cancel()
+        if answer.t_asked and not answer.skipped:
+            self.brain.forget_last()
+
+    def _prompt(self, text: str, name: str | None, follow_up: bool, tag: str | None) -> str:
+        if self.speaker_id:
             text = f"[Speaker: {name or 'unknown'}] {text}"
         if follow_up:
             text = f"{FOLLOW_UP_TAG} {text}"
         if tag:
             text = f"{tag} {text}"
+        return text
 
-        self.timings = {"end_of_speech": silence_s, "stt": stt_s}
-        timings = [f"end-of-speech wait {silence_s:.2f}s", f"stt {stt_s:.2f}s"]
-        # A reply to "Did you call me?" may be a "no", so it can be skipped like an overheard follow-up.
-        reply = self.answer(text, t_stopped_talking, timings, follow_up=follow_up or tag is not None)
-        if reply is None:
-            self.journal.not_for_tars(turn)
-        else:
-            self.journal.answered(turn, reply.text, reply.sent, asker=name)
-        return reply is not None
-
-    def answer(
-        self, text: str, t_start: float | None = None, timings: list[str] | None = None, follow_up: bool = False
-    ) -> Reply | None:
-        """Speak the reply. Returns None if the model decided an overheard follow-up wasn't meant for it."""
-        t_llm = time.perf_counter()
-        t_start = t_start or t_llm
-        timings = list(timings or [])
-        marks: dict[str, float] = {}
-
-        spoken: list[str] = []
-        pieces = _tee(self.brain.stream_reply(text), spoken)
+    def answer(self, text: str, follow_up: bool = False) -> Reply | None:
+        """Answer typed text (--text). Returns None if the model decided an overheard follow-up wasn't meant for it."""
+        answer = Answer(text, (None, None, None), 0.0, t_asked=time.perf_counter())
+        pieces = _tee(self.brain.stream_reply(text), answer.spoken)
         if follow_up:
             skipped, pieces = split_skip(pieces)
             if skipped:
-                # Overheard conversation shouldn't linger in the history.
                 self.brain.forget_last()
-                print("(not meant for me, going quiet)")
                 return None
+        answer.reply = speak_streamed_reply(
+            pieces, self.voice, lambda sentence: answer.sentences.append((time.perf_counter(), sentence))
+        )
+        self.timings = {}
+        return self._speak(answer, answer.t_asked, [])
 
-        def on_sentence(sentence: str) -> None:
-            marks.setdefault("first_sentence", time.perf_counter())
-            print(f"Bot:  {sentence}")
+    def _speak(self, answer: Answer, t_start: float, timings: list[str]) -> Reply:
+        marks: dict[str, float] = {}
+        printed = 0
+
+        def started() -> None:
+            marks.setdefault("first_audio", time.perf_counter())
+
+        def audio():
+            nonlocal printed
+            for chunk in answer.reply:
+                while printed < len(answer.sentences):
+                    print(f"Bot:  {answer.sentences[printed][1]}")
+                    printed += 1
+                yield chunk
 
         with self.mic.paused():
-            self.speaker.play_pcm_stream(
-                speak_streamed_reply(pieces, self.voice, on_sentence),
-                self.voice.sample_rate,
-                on_first_audio=lambda: marks.setdefault("first_audio", time.perf_counter()),
-            )
+            self.speaker.play_pcm_stream(audio(), self.voice.sample_rate, on_first_audio=started)
+        for _, sentence in answer.sentences[printed:]:
+            print(f"Bot:  {sentence}")
         sent = list(self.brain.sent)
         for item in sent:
             print(f"(sent to the TARS page: {item.kind} '{item.title}')")
 
-        if "first_sentence" in marks:
-            self.timings["llm"] = marks["first_sentence"] - t_llm
+        if answer.sentences:
+            self.timings["llm"] = answer.sentences[0][0] - answer.t_asked
             timings.append(f"llm first sentence {self.timings['llm']:.2f}s")
         if "first_audio" in marks:
-            if "first_sentence" in marks:
-                self.timings["tts"] = marks["first_audio"] - marks["first_sentence"]
+            if answer.sentences:
+                self.timings["tts"] = max(0.0, marks["first_audio"] - answer.sentences[0][0])
                 timings.append(f"tts first audio {self.timings['tts']:.2f}s")
             self.timings["total"] = marks["first_audio"] - t_start
             timings.append(f"TOTAL to first sound {self.timings['total']:.2f}s")
         print(f"[{' | '.join(timings)}]")
-        return Reply("".join(spoken).strip(), sent)
+        return Reply("".join(answer.spoken).strip(), sent)
 
 
 def _tee(pieces: Iterator[str], into: list[str]) -> Iterator[str]:

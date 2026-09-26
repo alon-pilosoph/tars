@@ -133,7 +133,10 @@ def client(log):
 
 
 class ScriptedRecorder:
-    """record() returns the next scripted utterance (None = nobody spoke) and logs the timeout it was given."""
+    """record() returns the next scripted utterance (None = nobody spoke) and logs the timeout it was given.
+
+    An utterance can be a list: "pause" and "resume" events, then the utterance, e.g. ["pause", "resume", "pause", pcm].
+    """
 
     trailing_silence_s = 0.0
 
@@ -141,9 +144,18 @@ class ScriptedRecorder:
         self.script = list(script)
         self.timeouts = []
 
-    def record(self, mic, start_timeout_s=None, **kw):
+    def record(self, mic, start_timeout_s=None, on_pause=None, on_resume=None, **kw):
         self.timeouts.append(start_timeout_s)
-        return self.script.pop(0)
+        entry = self.script.pop(0)
+        if not isinstance(entry, list):
+            return entry
+        *events, pcm = entry
+        for event in events:
+            if event == "pause" and on_pause:
+                on_pause(pcm, 0.25)
+            elif event == "resume" and on_resume:
+                on_resume()
+        return pcm
 
 
 class ScriptedTranscriber:

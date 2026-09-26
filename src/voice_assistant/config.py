@@ -31,6 +31,7 @@ class RecorderConfig:
     greet_after_s: float = 1.5  # say "Yes, <name>?" if nothing follows the wake word this long; 0 = off
     end_of_turn: str = "smart"  # silence: end_silence_s ends it | smart: a model may extend it to max_pause_s
     max_pause_s: float = 1.6
+    answer_early_s: float = 0.25  # start preparing the answer after this much silence (it plays only once you're done)
     turn_model: str = "models/smart-turn-v3.2-cpu.onnx"
 
 

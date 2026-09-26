@@ -102,6 +102,17 @@ def test_without_the_model_the_pause_is_just_the_silence_wait():
     assert rec.trailing_silence_s == pytest.approx(0.8)
 
 
+def test_a_pause_is_announced_early_and_talking_again_after_it_too():
+    events = []
+    rec = recorder("SSSSSS" + "..." + "SSSS" + "." * 12, end_silence_s=0.8, answer_early_s=0.2)
+    rec.record(
+        mic(),
+        on_pause=lambda pcm, silence_s: events.append(("pause", round(silence_s, 2))),
+        on_resume=lambda: events.append(("resume",)),
+    )
+    assert events == [("pause", 0.24), ("resume",), ("pause", 0.24)]
+
+
 @pytest.mark.skipif(not VAD_MODEL.exists(), reason="speech detector not downloaded yet")
 def test_the_speech_detector_ignores_our_chime_and_quiet():
     vad = SileroVAD(VAD_MODEL)

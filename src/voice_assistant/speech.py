@@ -42,7 +42,7 @@ class _Prefetch:
         try:
             for chunk in voice.stream(text):
                 self._chunks.put(chunk)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - raised again where the audio is played
             self._chunks.put(e)
         self._chunks.put(_DONE)
 
@@ -53,29 +53,50 @@ class _Prefetch:
             yield item
 
 
-def speak_streamed_reply(
-    pieces: Iterable[str],
-    voice: Voice,
-    on_sentence: Callable[[str], None],
-) -> Iterator[bytes]:
-    """Yield reply audio as one continuous PCM stream.
+class StreamedReply:
+    """A reply's audio as one continuous PCM stream, made from the moment this is created.
 
-    The LLM stream is read on a background thread; each sentence is sent to TTS the moment
-    it's complete, so later sentences synthesize while earlier ones are still playing.
+    The LLM stream is read on a background thread; each sentence is sent to TTS the moment it's complete, so later
+    sentences synthesize while earlier ones are still playing, and a reply prepared ahead of time is ready to play.
     """
-    playlist: queue.Queue = queue.Queue()
 
-    def produce() -> None:
+    def __init__(self, pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]):
+        self._playlist: queue.Queue = queue.Queue()
+        self._stop = threading.Event()
+        self._pieces = pieces
+        self._producer = threading.Thread(target=self._produce, args=(voice, on_sentence), daemon=True)
+        self._producer.start()
+
+    def _unless_stopped(self) -> Iterator[str]:
+        for piece in self._pieces:
+            if self._stop.is_set():
+                return
+            yield piece
+
+    def _produce(self, voice: Voice, on_sentence: Callable[[str], None]) -> None:
         try:
-            for sentence in split_sentences(pieces):
+            for sentence in split_sentences(self._unless_stopped()):
+                if self._stop.is_set():
+                    break
                 on_sentence(sentence)
-                playlist.put(_Prefetch(voice, sentence))
-        except Exception as e:
-            playlist.put(e)
-        playlist.put(_DONE)
+                self._playlist.put(_Prefetch(voice, sentence))
+        except Exception as e:  # noqa: BLE001 - raised again where the audio is played
+            self._playlist.put(e)
+        self._playlist.put(_DONE)
 
-    threading.Thread(target=produce, daemon=True).start()
-    while (item := playlist.get()) is not _DONE:
-        if isinstance(item, Exception):
-            raise item
-        yield from item
+    def cancel(self) -> None:
+        """Stop reading the reply, and return once nothing more of it will be read (its request is closed)."""
+        self._stop.set()
+        self._producer.join()
+        if close := getattr(self._pieces, "close", None):
+            close()
+
+    def __iter__(self) -> Iterator[bytes]:
+        while (item := self._playlist.get()) is not _DONE:
+            if isinstance(item, Exception):
+                raise item
+            yield from item
+
+
+def speak_streamed_reply(pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]) -> StreamedReply:
+    return StreamedReply(pieces, voice, on_sentence)

@@ -124,7 +124,7 @@ class Brain(Protocol):
         """Yield the reply in pieces as it's generated."""
 
     def forget_last(self) -> None:
-        """Drop the most recent exchange from the conversation history."""
+        """Drop the most recent exchange from the conversation history, finished or not."""
 
     def warm(self) -> None:
         """Get a connection ready, when TARS wakes, so the reply doesn't wait to connect."""
@@ -153,6 +153,7 @@ class OpenAIChat:
         self._client = client
         self._cfg = cfg
         self._history: list[dict] = []
+        self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
         self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
@@ -170,7 +171,8 @@ class OpenAIChat:
         if self._history and time.monotonic() - self._last_turn_at > self._cfg.memory_minutes * 60:
             self._history.clear()
         self._previous_turn_at, self._last_turn_at = self._last_turn_at, time.monotonic()
-        self._history.append({"role": "user", "content": text})
+        self._asked = {"role": "user", "content": text}
+        self._history.append(self._asked)
         self.sent = []
         context = list(self._history)
         answer = ""
@@ -227,8 +229,13 @@ class OpenAIChat:
         return result
 
     def forget_last(self) -> None:
+        # From the question on, whether or not the answer got written; found by identity, since the history may
+        # have been trimmed from the front since.
+        for i in range(len(self._history) - 1, -1, -1):
+            if self._history[i] is self._asked:
+                del self._history[i:]
+                break
         # Overheard chatter shouldn't keep the memory alive either.
-        del self._history[-2:]
         self._last_turn_at = self._previous_turn_at
         self.sent = []
 
