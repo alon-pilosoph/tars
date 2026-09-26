@@ -29,6 +29,7 @@ mic ──► wake word ──► record until you stop ──► speech-to-text
 - [Self-learning TARS](docs/self-learning.md): what's kept, automatic labels, voices, retraining
 - [The web UI](docs/web-ui.md): pages, the Refresh rule, the API, development and checks
 - [Running TARS at home](docs/deployment.md): the Pi, services, storage, backup, a first test run
+- [What's next](docs/roadmap.md): a week of real use, interrupting TARS, a larger model for hard questions, memory
 
 ## Setup
 
