@@ -20,19 +20,21 @@ UV="$HOME/.local/bin/uv"
 echo "== Python packages (uv installs its own Python)"
 "$UV" sync --frozen
 
-if [ ! -s .env ] || ! grep -q '^OPENAI_API_KEY=.' .env; then
+if [ ! -s .env ] || ! grep -q '^OPENAI_API_KEY=.' .env || ! grep -q '^DEEPGRAM_API_KEY=.' .env; then
   [ -e .env ] || cp .env.example .env
-  echo "!! Put your OpenAI API key in $REPO/.env (OPENAI_API_KEY=...), then run this again."
+  echo "!! Put your OpenAI and Deepgram API keys in $REPO/.env, then run this again."
   exit 1
 fi
 
-echo "== Models (the double-check's recognizer and the speaker model download on first use)"
+echo "== Models (the double-check's recognizer, the speech detectors and the speaker model download on first use)"
 "$UV" run --frozen python -c "
 from pathlib import Path
 from voice_assistant.config import load_config
 from voice_assistant.__main__ import make_trigger, make_speaker_id
+from voice_assistant.recorder import make_recorder
 root = Path('.').resolve(); cfg = load_config(root / 'config.toml')
 make_trigger(cfg, False, root)
+make_recorder(cfg, root)
 if cfg.speaker.enabled: make_speaker_id(cfg, root)
 "
 

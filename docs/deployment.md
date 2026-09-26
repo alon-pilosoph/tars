@@ -31,9 +31,10 @@ uv run voice-assistant              # say "hey TARS", wait for the chime, ask so
 uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:8080
 ```
 
-The first start downloads the double-check's recognizer (40 MB) and the speaker model (25 MB) into `models/`. Expect
-about 3.5 to 4 seconds from when you stop talking to TARS's first word: noticing you've stopped (0.5 s), speech to
-text (about 1.2 s), the reply's first sentence (about 0.9 s) and its first audio (about 1.1 s). A web search adds a
+The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 3 seconds from when you stop talking to TARS's
+first word: noticing you've stopped (0.8 s, longer if you sounded mid-thought), speech to text (about 0.2 s), the
+reply's first words (about 0.8 s) and their first audio (about 1 s). A web search adds a
 "Looking it up." first. macOS asks for microphone access the first time; if TARS hears nothing, check System
 Settings → Privacy & Security → Microphone for your terminal.
 

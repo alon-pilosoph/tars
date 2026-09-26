@@ -1,3 +1,5 @@
+import random
+import threading
 import time
 import traceback
 from collections.abc import Iterator
@@ -13,12 +15,22 @@ from .llm import ASKED_TAG, FOLLOW_UP_TAG, Brain, split_skip
 from .recorder import UtteranceRecorder
 from .speaker import SpeakerID
 from .speech import speak_streamed_reply
-from .stt import Transcriber
+from .stt import Session, Transcriber
 from .tts import Voice
 from .verify import ASK
 from .wake import Trigger
 
 ASK_PHRASE = "Did you call me?"
+# Said instead of a reply when a request fails (network down, a service timing out). Made at startup like the
+# greetings, so they play even when the failure was the voice service itself.
+ERROR_LINES = {
+    "dry": [
+        "That didn't work. Not my finest moment. Try again.",
+        "I lost that one somewhere between here and the server. Ask me again.",
+        "Something broke. I'd blame the cloud, but I'm a little bit the cloud. Try again.",
+    ],
+    "plain": ["Something went wrong. Please try again.", "That didn't work. Please ask again."],
+}
 ASK_TIMEOUT_S = 5.0  # how long to wait for an answer to it
 
 
@@ -30,6 +42,12 @@ def greeting(name: str | None) -> str:
 class Reply:
     text: str
     sent: list[SentItem]  # what it sent to the web UI while saying it
+
+
+@dataclass
+class Utterance:
+    pcm: bytes
+    transcript: Session  # fed while it was recorded
 
 
 class Assistant:
@@ -45,6 +63,7 @@ class Assistant:
         speaker_id: SpeakerID | None = None,
         name_threshold: float = 0.25,
         journal: Journal | None = None,
+        humor: int = 75,
     ):
         self.mic = mic
         self.speaker = speaker
@@ -57,14 +76,14 @@ class Assistant:
         self._background = ThreadPoolExecutor(max_workers=1)
         self.name_threshold = name_threshold
         self.journal = journal or Journal()
+        self._error_lines = ERROR_LINES["dry" if humor >= 50 else "plain"]
         self.timings: dict[str, float] = {}  # the last answer's latency by stage, in seconds
         self._phrases: dict[str, list[bytes]] = {}  # short lines synthesized once: "Did you call me?", "Yes, Alon?"
+        self._phrasing = ThreadPoolExecutor(max_workers=1)  # apart from speaker ID, which a reply waits on
+        self._preparing: set[str] = set()
 
     def run_forever(self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0) -> None:
-        # Synthesize the short lines ahead of time so they play instantly.
-        names = list(self.speaker_id.voiceprints) if self.speaker_id else []
-        for line in [ASK_PHRASE, greeting(None)] + [greeting(n) for n in names]:
-            self._background.submit(self._phrase_audio, line)
+        self.prepare_phrases()
         while True:
             print(f"\n{idle_message}")
             if self.trigger.wait(self.mic) == ASK:
@@ -75,10 +94,29 @@ class Assistant:
             print("Listening...")
             self.converse(follow_up_s, greet_after_s=greet_after_s)
 
+    def prepare_phrases(self) -> None:
+        """Synthesize the short lines ahead of time so they play instantly, including a greeting for anyone who
+        got a voiceprint since the last time (named in the web UI, say)."""
+        names = list(self.speaker_id.voiceprints) if self.speaker_id else []
+        for line in [ASK_PHRASE, greeting(None), *self._error_lines] + [greeting(n) for n in names]:
+            if line not in self._phrases and line not in self._preparing:
+                self._preparing.add(line)
+                self._phrasing.submit(self._phrase_audio, line)
+
     def _phrase_audio(self, text: str) -> list[bytes]:
         if text not in self._phrases:
             self._phrases[text] = list(self.voice.stream(text))
         return self._phrases[text]
+
+    def say_error(self) -> None:
+        ready = [line for line in self._error_lines if line in self._phrases]
+        if not ready:  # the voice was never reachable: the tone is all there is
+            with self.mic.paused(tail_s=0.05):
+                self.speaker.error_tone()
+            return
+        line = random.choice(ready)
+        print(f"Bot:  {line}")
+        self.say(line)
 
     def say(self, text: str) -> None:
         with self.mic.paused():
@@ -103,42 +141,56 @@ class Assistant:
         print(f"Bot:  {ASK_PHRASE}  (not sure I heard my name)")
         self.journal.said(ASK_PHRASE)
         self.say(ASK_PHRASE)
-        pcm = self.recorder.record(self.mic, start_timeout_s=ASK_TIMEOUT_S)
-        if pcm is None:
+        heard = self.listen(start_timeout_s=ASK_TIMEOUT_S)
+        if heard is None:
             print("(no answer, going back to sleep)")
             self.journal.nobody_spoke()
             return
-        self.converse(follow_up_s, first=(pcm, ASKED_TAG))
+        self.converse(follow_up_s, first=(heard, ASKED_TAG))
 
-    def converse(self, follow_up_s: float, first: tuple[bytes, str] | None = None, greet_after_s: float = 0.0) -> None:
+    def listen(self, start_timeout_s: float | None = None) -> Utterance | None:
+        """Record one utterance, transcribing it as it comes (a streaming service connects before anyone speaks)."""
+        session = self.transcriber.session()
+        pcm = self.recorder.record(self.mic, start_timeout_s=start_timeout_s, on_audio=session.feed)
+        if pcm is None:
+            session.cancel()
+            return None
+        return Utterance(pcm, session)
+
+    def converse(
+        self, follow_up_s: float, first: tuple[Utterance, str] | None = None, greet_after_s: float = 0.0
+    ) -> None:
         """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
 
         `first` is an already-recorded request and the tag to send it with (a reply to "Did you call me?").
         With `greet_after_s`, a pause that long after the wake word gets a "Yes, <name>?" before we keep waiting.
         """
+        # While they're still talking, get the reply's connections ready.
+        threading.Thread(target=self.brain.warm, daemon=True).start()
+        self.prepare_phrases()
         try:
             self._converse(follow_up_s, first, greet_after_s)
         finally:
             self.journal.close()
 
-    def _converse(self, follow_up_s: float, first: tuple[bytes, str] | None, greet_after_s: float) -> None:
+    def _converse(self, follow_up_s: float, first: tuple[Utterance, str] | None, greet_after_s: float) -> None:
         if first:
-            pcm, tag = first
+            heard, tag = first
         else:
             tag = None
-            pcm = self.recorder.record(self.mic, start_timeout_s=greet_after_s) if greet_after_s else None
-            if pcm is None:
+            heard = self.listen(start_timeout_s=greet_after_s) if greet_after_s else None
+            if heard is None:
                 if greet_after_s:
                     self.greet()
-                pcm = self.recorder.record(self.mic)
-        if pcm is None:
+                heard = self.listen()
+        if heard is None:
             print("(didn't hear anything)")
             self.journal.nobody_spoke()
             return
         follow_up = False
         while True:
             try:
-                answered = self.handle(pcm, follow_up, tag)
+                answered = self.handle(heard, follow_up, tag)
                 tag = None
             except MicrophoneError:
                 raise  # Not recoverable here; let the process exit so a supervisor can restart it.
@@ -148,8 +200,7 @@ class Assistant:
                 print(f"{what}: {e!r}")
                 if not isinstance(e, OpenAIError):
                     traceback.print_exc()
-                with self.mic.paused(tail_s=0.05):
-                    self.speaker.error_tone()
+                self.say_error()
                 return
             if not answered or follow_up_s <= 0:
                 return
@@ -158,21 +209,22 @@ class Assistant:
             with self.mic.paused(tail_s=0.05):
                 self.speaker.chime(freq=1320.0, duration_s=0.06, volume=0.12)
             print(f"(listening {follow_up_s:.0f}s for a follow-up)")
-            pcm = self.recorder.record(self.mic, start_timeout_s=follow_up_s)
-            if pcm is None:
+            heard = self.listen(start_timeout_s=follow_up_s)
+            if heard is None:
                 return
 
-    def handle(self, pcm: bytes, follow_up: bool = False, tag: str | None = None) -> bool:
+    def handle(self, heard: Utterance, follow_up: bool = False, tag: str | None = None) -> bool:
         """Transcribe and answer one request. Returns False if there was nothing (meant for us) to answer."""
         # Latency is measured from the moment you actually stopped talking,
         # including the silence we waited through to be sure you were done.
         silence_s = self.recorder.trailing_silence_s
         t_stopped_talking = time.perf_counter() - silence_s
 
+        pcm = heard.pcm
         # Identify the speaker while the audio is being transcribed, so it adds no latency.
         who = self._background.submit(self.speaker_id.describe, pcm) if self.speaker_id else None
         t_stt = time.perf_counter()
-        text = self.transcriber.transcribe(pcm)
+        text = heard.transcript.finish()
         stt_s = time.perf_counter() - t_stt
         name, score, embedding = who.result() if who else (None, None, None)
         voice = f" ({name or 'unknown'})" if who else ""

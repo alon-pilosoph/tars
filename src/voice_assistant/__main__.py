@@ -6,20 +6,27 @@ from dotenv import dotenv_values
 
 from .audio import Microphone, MicrophoneError, Speaker, find_device, list_devices
 from .config import Config, LLMConfig, load_config
-from .recorder import UtteranceRecorder
+from .recorder import make_recorder
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 OPENAI_TIMEOUT_S = 15.0
+# OpenAI's transcription model, when it backs up another speech-to-text service.
+OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
+
+
+def api_key(env_path: Path, name: str) -> str:
+    # Keys come from this project's .env only, never from the shell environment,
+    # so the assistant can't silently pick up a key meant for something else.
+    key = dotenv_values(env_path).get(name)
+    if not key:
+        raise SystemExit(f"Put {name} in {env_path} (see .env.example).")
+    return key
 
 
 def make_openai_client(env_path: Path):
     from openai import OpenAI
 
-    # Read the key from this project's .env only, never from the shell environment,
-    # so the assistant can't silently pick up a key meant for something else.
-    key = dotenv_values(env_path).get("OPENAI_API_KEY")
-    if not key:
-        raise SystemExit(f"Put OPENAI_API_KEY in {env_path} (see .env.example).")
+    key = api_key(env_path, "OPENAI_API_KEY")
     # The SDK default is 10 minutes per request plus 2 retries. A voice assistant should give up
     # quickly instead, so a dropped connection costs one error tone rather than a frozen assistant.
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
@@ -68,7 +75,7 @@ def record_voice_session(cfg: Config, person: str, mic_name: str, root: Path) ->
     )
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), SAMPLE_RATE, cfg.audio.playback_prebuffer_s)
     with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
-        record_voice(person, mic_name, mic, speaker, UtteranceRecorder(cfg.recorder), root)
+        record_voice(person, mic_name, mic, speaker, make_recorder(cfg, root), root)
 
 
 def make_speaker_id(cfg: Config, root: Path):
@@ -183,13 +190,20 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice)."""
     from .effects import apply_effect
     from .llm import OpenAIChat
-    from .stt import OpenAITranscriber
+    from .stt import DeepgramTranscriber, FallbackTranscriber, OpenAITranscriber
     from .tts import OpenAISpeech
 
-    client = make_openai_client(root / ".env")
+    env = root / ".env"
+    client = make_openai_client(env)
     brain = OpenAIChat(client, brain_config(cfg, typed=typed))
     voice = apply_effect(OpenAISpeech(client, cfg.tts), cfg.tts.effect)
-    return OpenAITranscriber(client, cfg.stt), brain, voice
+    if cfg.stt.provider == "openai":
+        return OpenAITranscriber(client, cfg.stt), brain, voice
+    if cfg.stt.provider != "deepgram":
+        raise SystemExit(f"[stt] provider must be openai or deepgram, not {cfg.stt.provider!r}")
+    # OpenAI takes over, from the same recording, if the stream fails.
+    backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
+    return FallbackTranscriber(DeepgramTranscriber(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt), backup), brain, voice
 
 
 def run(cfg: Config, args: argparse.Namespace) -> None:
@@ -200,7 +214,7 @@ def run(cfg: Config, args: argparse.Namespace) -> None:
 
     root = args.config.resolve().parent
     transcriber, brain, voice = make_pipeline(cfg, root, typed=args.text)
-    recorder = UtteranceRecorder(cfg.recorder)
+    recorder = make_recorder(cfg, root)
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s)
 
     with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
@@ -233,6 +247,7 @@ def run(cfg: Config, args: argparse.Namespace) -> None:
             speaker_id,
             name_threshold=cfg.speaker.wake_threshold,
             journal=journal,
+            humor=cfg.llm.humor,
         )
         assistant.run_forever(
             idle_message, follow_up_s=cfg.recorder.follow_up_s, greet_after_s=cfg.recorder.greet_after_s

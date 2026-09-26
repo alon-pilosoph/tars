@@ -5,6 +5,7 @@ import pytest
 from openai import OpenAIError
 
 import voice_assistant.assistant as assistant_module
+from voice_assistant.assistant import ERROR_LINES, Assistant
 from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, SentItem
 from voice_assistant.events import EventLog
 from voice_assistant.journal import Journal
@@ -58,15 +59,39 @@ def test_first_request_is_never_treated_as_overheard(speaker):
 
 
 @pytest.mark.parametrize("error", [RuntimeError("boom"), OpenAIError("connection dropped")])
-def test_a_failed_request_plays_the_error_tone_and_returns(speaker, error):
+def test_a_failed_request_says_so_in_tars_voice(speaker, error):
     assistant, _ = make_assistant(speaker, [b"a"], [])
+    assistant.prepare_phrases = lambda: None
+    line = assistant._error_lines[0]
+    assistant._phrases[line] = [b"pcm"]
+    said = []
+    assistant.say = said.append
 
     def fail(pcm, follow_up=False, tag=None):
         raise error
 
     assistant.handle = fail
     assistant.converse(follow_up_s=4.0)
+    assert said == [line] and speaker.sounds == []
+
+
+def test_without_a_ready_error_line_the_error_tone_plays(speaker):
+    assistant, _ = make_assistant(speaker, [b"a"], [])
+    assistant.prepare_phrases = lambda: None
+
+    def fail(pcm, follow_up=False, tag=None):
+        raise OpenAIError("the voice service is down too")
+
+    assistant.handle = fail
+    assistant.converse(follow_up_s=4.0)
     assert speaker.sounds == [("error", None)]
+
+
+def test_error_lines_follow_the_humor_setting(speaker):
+    dry, _ = make_assistant(speaker, [], [])
+    assert dry._error_lines == ERROR_LINES["dry"]
+    plain = Assistant(None, speaker, None, None, None, None, None, humor=20)
+    assert plain._error_lines == ERROR_LINES["plain"]
 
 
 def test_did_you_call_me_carries_on_when_answered(speaker):

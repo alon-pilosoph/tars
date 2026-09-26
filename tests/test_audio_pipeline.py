@@ -1,5 +1,7 @@
 """Recorder, speech splitting, the TARS effect and config: the parts that don't need a device or an API."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -9,15 +11,29 @@ from voice_assistant.effects import EFFECTS, SpeakerBox, VoiceWithEffect, apply_
 from voice_assistant.enroll import PAD_BLOCKS
 from voice_assistant.recorder import UtteranceRecorder
 from voice_assistant.speech import clean_for_speech, split_sentences
+from voice_assistant.vad import SileroVAD
 
-from .conftest import FakeMic, chime_block, quiet_block, voiced_block
+from .conftest import FakeMic, chime_block, quiet_block
 
-SPEECH_BLOCKS = 12
-UTTERANCE = (
-    [quiet_block() for _ in range(20)]
-    + [voiced_block() for _ in range(SPEECH_BLOCKS)]
-    + [quiet_block() for _ in range(40)]
-)
+VAD_MODEL = Path(__file__).parents[1] / "models/silero_vad.onnx"
+
+
+class ScriptedVAD:
+    """Speech probabilities from a pattern, one character per block: S speech, m in between, . silence."""
+
+    def __init__(self, pattern):
+        self.probs = iter({"S": 0.9, "m": 0.4, ".": 0.05}[c] for c in pattern)
+
+    def __call__(self, block):
+        return next(self.probs, 0.05)
+
+
+def recorder(pattern, turn=None, **cfg):
+    return UtteranceRecorder(RecorderConfig(**cfg), ScriptedVAD(pattern), turn)
+
+
+def mic(n=200):
+    return FakeMic([quiet_block() for _ in range(n)])
 
 
 def blocks_in(pcm: bytes) -> int:
@@ -25,49 +41,72 @@ def blocks_in(pcm: bytes) -> int:
 
 
 def test_recorder_trims_to_the_speech():
-    pcm = UtteranceRecorder(RecorderConfig()).record(FakeMic(UTTERANCE))
-    assert SPEECH_BLOCKS <= blocks_in(pcm) <= SPEECH_BLOCKS + 8
+    pcm = recorder("." * 20 + "S" * 12 + "." * 40).record(mic())
+    assert 12 <= blocks_in(pcm) <= 12 + 8
 
 
 def test_recorder_keeps_padding_when_asked():
-    default = UtteranceRecorder(RecorderConfig()).record(FakeMic(UTTERANCE))
-    padded = UtteranceRecorder(RecorderConfig()).record(
-        FakeMic(UTTERANCE), preroll_blocks=PAD_BLOCKS, tail_blocks=PAD_BLOCKS
-    )
+    pattern = "." * 20 + "S" * 12 + "." * 40
+    default = recorder(pattern).record(mic())
+    padded = recorder(pattern).record(mic(), preroll_blocks=PAD_BLOCKS, tail_blocks=PAD_BLOCKS)
     assert blocks_in(padded) - blocks_in(default) >= 2 * PAD_BLOCKS - 8  # about a second on each side
 
 
-def test_our_own_chime_does_not_count_as_speech():
-    """The chime leaks back into the mic; it used to start (and end) a recording before anyone spoke."""
-    rec = UtteranceRecorder(RecorderConfig())
-    assert not rec.is_speech(chime_block(880.0))
-    assert not rec.is_speech(chime_block(1320.0))  # the follow-up blip
-    assert rec.is_speech(voiced_block())
-    # A fresh recorder: webrtcvad keeps a short "still talking" state after the voice block above.
-    chime_then_silence = [chime_block() for _ in range(3)] + [quiet_block() for _ in range(60)]
-    assert UtteranceRecorder(RecorderConfig()).record(FakeMic(chime_then_silence), start_timeout_s=4.0) is None
-
-
-def test_a_lone_speech_block_in_the_silence_does_not_keep_the_recording_going(monkeypatch):
-    """webrtcvad flags a block of steady room noise as speech now and then; each used to restart the wait."""
-    rec = UtteranceRecorder(RecorderConfig(end_silence_s=0.4))  # 5 blocks
-    heard = iter("SSSSSS" + "...S...S...S" + "." * 20)
-    monkeypatch.setattr(rec, "is_speech", lambda block: next(heard) == "S")
-    pcm = rec.record(FakeMic([quiet_block() for _ in range(40)]))
-    assert blocks_in(pcm) <= 6 + 12 - 4  # it stopped within the stray blocks, not after them
-
-
-def test_talking_again_after_a_pause_keeps_recording(monkeypatch):
-    rec = UtteranceRecorder(RecorderConfig(end_silence_s=0.4))
-    heard = iter("SSSS" + "..." + "S.SS.S" + "." * 20)  # speech flickers
-    monkeypatch.setattr(rec, "is_speech", lambda block: next(heard) == "S")
-    pcm = rec.record(FakeMic([quiet_block() for _ in range(40)]))
-    assert blocks_in(pcm) >= 11
-
-
 def test_recorder_gives_up_when_nobody_speaks():
-    silence = [quiet_block() for _ in range(100)]
-    assert UtteranceRecorder(RecorderConfig()).record(FakeMic(silence), start_timeout_s=1.0) is None
+    assert recorder("." * 100).record(mic(), start_timeout_s=1.0) is None
+
+
+def test_a_lone_speech_block_does_not_start_a_recording():
+    assert recorder("..S..S...S" + "." * 40).record(mic(), start_timeout_s=3.0) is None
+
+
+def test_a_soft_stretch_mid_sentence_does_not_end_it():
+    """Once someone's talking, only a clearly quiet block counts as silence (the detector's own hysteresis)."""
+    pcm = recorder("SSSS" + "m" * 10 + "SS" + "." * 20, end_silence_s=0.4).record(mic())
+    assert blocks_in(pcm) >= 16
+
+
+class FakeTurn:
+    def __init__(self, finished):
+        self.p, self.asked = finished, 0
+
+    def finished(self, pcm):
+        self.asked += 1
+        return self.p
+
+
+def test_a_finished_sentence_ends_after_the_usual_pause():
+    turn = FakeTurn(0.9)
+    rec = recorder("SSSSSS" + "." * 40, turn, end_silence_s=0.8, max_pause_s=1.6)
+    rec.record(mic())
+    assert turn.asked == 1 and rec.trailing_silence_s == pytest.approx(0.8)
+
+
+def test_someone_who_sounds_mid_thought_gets_a_longer_pause():
+    turn = FakeTurn(0.1)
+    rec = recorder("SSSSSS" + "." * 40, turn, end_silence_s=0.8, max_pause_s=1.6)
+    rec.record(mic())
+    assert turn.asked == 1 and rec.trailing_silence_s == pytest.approx(1.6)
+
+
+def test_talking_again_after_a_long_pause_keeps_the_whole_sentence():
+    """ "Tell me a fun fact about..." (thinks for 1.2 s) "...octopuses." """
+    turn = FakeTurn(0.1)
+    pcm = recorder("SSSSSS" + "." * 15 + "SSSS" + "." * 40, turn, end_silence_s=0.8, max_pause_s=1.6).record(mic())
+    assert blocks_in(pcm) >= 6 + 15 + 4
+
+
+def test_without_the_model_the_pause_is_just_the_silence_wait():
+    rec = recorder("SSSSSS" + "." * 40, end_silence_s=0.8)
+    rec.record(mic())
+    assert rec.trailing_silence_s == pytest.approx(0.8)
+
+
+@pytest.mark.skipif(not VAD_MODEL.exists(), reason="speech detector not downloaded yet")
+def test_the_speech_detector_ignores_our_chime_and_quiet():
+    vad = SileroVAD(VAD_MODEL)
+    assert max(vad(chime_block(f)) for f in (880.0, 1320.0) for _ in range(4)) < 0.3
+    assert max(vad(quiet_block()) for _ in range(20)) < 0.3
 
 
 def test_dead_microphone_raises_instead_of_hanging(monkeypatch):
@@ -85,6 +124,28 @@ def test_dead_microphone_raises_instead_of_hanging(monkeypatch):
 def test_sentences_are_split_as_they_stream_in():
     pieces = ["Hello th", "ere. It is 3.5 deg", "rees! Want more?", " Ok"]
     assert list(split_sentences(pieces)) == ["Hello there.", "It is 3.5 degrees!", "Want more?", "Ok"]
+
+
+def test_the_first_clause_goes_to_speech_early_then_whole_sentences():
+    pieces = [
+        "Octopuses have neurons ",
+        "in their arms, so each arm ",
+        "reacts, partly on its own. A useful, ",
+        "arrangement.",
+    ]
+    assert list(split_sentences(pieces, first_clause=True)) == [
+        "Octopuses have neurons in their arms,",
+        "so each arm reacts, partly on its own.",
+        "A useful, arrangement.",
+    ]
+
+
+def test_a_short_opening_word_waits_for_more():
+    assert list(split_sentences(["Well, ", "that depends, on the day. Yes."], first_clause=True)) == [
+        "Well, that depends,",
+        "on the day.",
+        "Yes.",
+    ]
 
 
 def test_markdown_is_stripped_before_speaking():

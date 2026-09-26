@@ -3,7 +3,7 @@
     uv run python tools/latency_bench.py                               # the pipeline config.toml picks
     uv run python tools/latency_bench.py --set recorder.end_silence_s=0.3 --set tts.model=gpt-4o-mini-tts
 
-The questions are spoken once with OpenAI's tts-1 and kept in voice_data/bench/questions/ (gitignored). Each is fed to
+The questions are spoken once (by Deepgram's Aura, or OpenAI) and kept in voice_data/bench/questions/ (gitignored). Each is fed to
 the assistant at real-time pace, like a mic would, and the reply goes to a silent speaker that notes when the first
 sound would have played (after the same prebuffer the real speaker waits for). Costs a few cents per run.
 """
@@ -15,15 +15,18 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+import httpx
 import numpy as np
 import soundfile as sf
+from dotenv import dotenv_values
 from scipy.signal import resample_poly
 
 from voice_assistant.__main__ import make_openai_client, make_pipeline
 from voice_assistant.assistant import Assistant
 from voice_assistant.audio import BLOCK_SAMPLES, BLOCK_SECONDS, SAMPLE_RATE
 from voice_assistant.config import RecorderConfig, load_config
-from voice_assistant.recorder import UtteranceRecorder
+from voice_assistant.recorder import UtteranceRecorder, make_recorder
+from voice_assistant.vad import SileroVAD
 
 REPO = Path(__file__).parents[1]
 QUESTIONS = [
@@ -39,32 +42,38 @@ QUESTIONS = [
 LEAD_S, TAIL_S = 0.4, 5.0  # room noise before the question, and after it
 
 
+def speak(root: Path, text: str) -> np.ndarray:
+    """One question, 16 kHz. Deepgram's Aura voices sound like a person to the speech detector; OpenAI's are so tonal
+    that it loses the middle of some sentences."""
+    env = dotenv_values(root / ".env")
+    if env.get("DEEPGRAM_API_KEY"):
+        r = httpx.post(
+            "https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=linear16&sample_rate=16000"
+            "&container=none",
+            headers={"Authorization": f"Token {env['DEEPGRAM_API_KEY']}"},
+            json={"text": text},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return np.frombuffer(r.content, np.int16)
+    client = make_openai_client(root / ".env")
+    with client.audio.speech.with_streaming_response.create(
+        model="tts-1", voice="alloy", input=text, response_format="pcm"
+    ) as response:
+        pcm = response.read()
+    audio = resample_poly(np.frombuffer(pcm, np.int16).astype(np.float32), 2, 3)  # 24 kHz -> 16 kHz
+    return np.clip(audio, -32768, 32767).astype(np.int16)
+
+
 def questions(root: Path) -> list[np.ndarray]:
     folder = root / "voice_data/bench/questions"
     folder.mkdir(parents=True, exist_ok=True)
-    client = None
     clips = []
     for i, text in enumerate(QUESTIONS):
         path = folder / f"{i:02d}.wav"
         if not path.exists():
-            client = client or make_openai_client(root / ".env")
-            for attempt in range(3):
-                try:
-                    with client.audio.speech.with_streaming_response.create(
-                        model="tts-1", voice="alloy", input=text, response_format="pcm"
-                    ) as response:
-                        pcm = response.read()
-                    break
-                except Exception:
-                    if attempt == 2:
-                        raise
-            audio = resample_poly(np.frombuffer(pcm, np.int16).astype(np.float32), 2, 3)  # 24 kHz -> 16 kHz
-            sf.write(path, np.clip(audio, -32768, 32767).astype(np.int16), SAMPLE_RATE)
-        clip = sf.read(path, dtype="int16")[0]
-        if np.abs(clip).max() < 1000:  # a failed download saved silence
-            path.unlink()
-            return questions(root)
-        clips.append(clip)
+            sf.write(path, speak(root, text), SAMPLE_RATE)
+        clips.append(sf.read(path, dtype="int16")[0])
     return clips
 
 
@@ -80,7 +89,7 @@ class RoomTone:
     Plain white noise won't do: after loud speech, the speech detector keeps calling it speech for seconds."""
 
     def __init__(self, root: Path, rng: np.random.Generator):
-        vad = UtteranceRecorder(RecorderConfig())
+        vad = UtteranceRecorder(RecorderConfig(), SileroVAD(root / RecorderConfig().vad_model))
         tails = []
         for f in sorted((root / "voice_data").glob("*/*/speech/*.wav")):
             pcm = sf.read(f, dtype="int16")[0]
@@ -187,7 +196,7 @@ def main() -> None:
     transcriber, brain, voice = make_pipeline(cfg, root, typed=True)
     speaker = SilentSpeaker(voice.sample_rate, cfg.audio.playback_prebuffer_s)
     room = RoomTone(root, np.random.default_rng(0))
-    assistant = Assistant(None, speaker, None, UtteranceRecorder(cfg.recorder), transcriber, brain, voice)
+    assistant = Assistant(None, speaker, None, make_recorder(cfg, root), transcriber, brain, voice)
     rows = []
     for clip in clips:
         lead = room(int(LEAD_S * SAMPLE_RATE))

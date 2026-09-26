@@ -22,16 +22,21 @@ class WakeConfig:
 
 @dataclass
 class RecorderConfig:
-    vad_aggressiveness: int = 2
+    vad_threshold: float = 0.5  # how sure the speech detector must be that it's hearing speech (0-1)
+    vad_model: str = "models/silero_vad.onnx"
     start_timeout_s: float = 5.0
-    end_silence_s: float = 0.5
+    end_silence_s: float = 0.8
     max_utterance_s: float = 15.0
     follow_up_s: float = 4.0
     greet_after_s: float = 1.5  # say "Yes, <name>?" if nothing follows the wake word this long; 0 = off
+    end_of_turn: str = "smart"  # silence: end_silence_s ends it | smart: a model may extend it to max_pause_s
+    max_pause_s: float = 1.6
+    turn_model: str = "models/smart-turn-v3.2-cpu.onnx"
 
 
 @dataclass
 class STTConfig:
+    provider: str = "openai"  # openai | deepgram (streams while you talk)
     model: str = "gpt-4o-mini-transcribe"
     language: str = "en"
 
@@ -43,6 +48,7 @@ class LLMConfig:
     reasoning_effort: str = ""
     memory_minutes: float = 10.0
     system_prompt: str = "You are a helpful voice assistant. Answer in one to three short sentences."
+    humor: int = 75  # percent; "{humor}" in the system prompt is replaced with it
     # Let it look things up on the web (current events, real links to send). Only used when the model decides to.
     web_search: bool = True
     # Let it send links, notes, lists and text files to the web UI (needs [learning] log_events).

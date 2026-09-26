@@ -126,6 +126,9 @@ class Brain(Protocol):
     def forget_last(self) -> None:
         """Drop the most recent exchange from the conversation history."""
 
+    def warm(self) -> None:
+        """Get a connection ready, when TARS wakes, so the reply doesn't wait to connect."""
+
 
 def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
     """Peek at the start of a streamed reply: (True, empty) if the model chose to skip, else the full stream."""
@@ -153,7 +156,8 @@ class OpenAIChat:
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
         self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
-        self._instructions = "\n\n".join([cfg.system_prompt, PROTOCOL] + ([SEND_PROTOCOL] if cfg.send else []))
+        prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
+        self._instructions = "\n\n".join([prompt, PROTOCOL] + ([SEND_PROTOCOL] if cfg.send else []))
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
         if cfg.service_tier:
@@ -227,6 +231,13 @@ class OpenAIChat:
         del self._history[-2:]
         self._last_turn_at = self._previous_turn_at
         self.sent = []
+
+    def warm(self) -> None:
+        # The cheapest request there is; the OpenAI voice reuses the same connection.
+        try:
+            self._client.models.retrieve(self._cfg.model)
+        except OpenAIError:
+            pass
 
 
 def _why(event) -> str:

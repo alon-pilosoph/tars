@@ -4,19 +4,21 @@ A hackable voice assistant: say a wake word, ask a question, hear the answer. Pr
 
 ```
 mic ──► wake word ──► record until you stop ──► speech-to-text ──► LLM ──► text-to-speech ──► speaker
-        (local)       (local VAD)               (OpenAI)            (OpenAI)  (OpenAI, streamed)
+        (local)       (local: Silero VAD +       (Deepgram,          (OpenAI)  (OpenAI, streamed)
+                       an end-of-turn model)      streamed)
 ```
 
 - **One continuous mic stream.** Every stage reads 80 ms blocks from the same queue, so nothing fights over the audio device.
-- **Wake word and speech detection run locally** ([microWakeWord](https://github.com/kahrendt/microWakeWord), a [Vosk](https://alphacephei.com/vosk/) double-check, [WebRTC VAD](https://github.com/wiseman/py-webrtcvad)). Nothing leaves the machine until you've said "hey TARS" and finished talking.
-- **Recording ends when you stop talking**, not after a fixed number of seconds.
+- **Wake word and speech detection run locally** ([microWakeWord](https://github.com/kahrendt/microWakeWord), a [Vosk](https://alphacephei.com/vosk/) double-check, [Silero VAD](https://github.com/snakers4/silero-vad)). Nothing leaves the machine until you've said "hey TARS".
+- **Recording ends when you stop talking**, not after a fixed number of seconds. After 0.8 s of silence a small local model ([Smart Turn](https://github.com/pipecat-ai/smart-turn)) listens to how you sounded, and if you were mid-thought, TARS keeps waiting.
+- **Your words are transcribed while you say them** (Deepgram, streamed), so the text is ready about 0.2 s after you stop. About 3 s from when you stop talking to TARS's first word; `tools/latency_bench.py` measures it stage by stage.
 - **It can look things up and send you things.** With web search it answers current questions and finds real links; with the send tool it puts links, notes, lists and text files in the web UI instead of reading them out.
 - **The reply is spoken while it's still being written.** The LLM response is streamed, each sentence goes to text-to-speech the moment it's complete, and later sentences synthesize while earlier ones play. Playback starts on the first audio chunk.
 - **Every stage sits behind a small interface** (`Trigger`, `Transcriber`, `Brain`, `Voice`), so swapping in a local model is one new class and a config change.
 - **Latency is printed for every turn**, broken down by stage.
 - **Conversations, not commands.** After answering, it listens a few more seconds for a follow-up without the wake word. If what it hears isn't meant for it (people talking to each other), the LLM answers `<skip>` and it stays quiet and forgets it. The whole conversation is sent to the LLM until it's been quiet for 10 minutes.
 - **It knows who's talking** (optional). Each request gets a voiceprint, compared to enrolled people while speech-to-text runs, so it adds no latency.
-- **Failures are audible, not fatal.** A dropped connection or a crashed request plays a two-note error tone and the assistant keeps listening; OpenAI requests give up after 15 s. A microphone that stops delivering audio exits with an error so a supervisor can restart it.
+- **Failures are spoken, not fatal.** A dropped connection or a crashed request gets a line in TARS's voice ("I lost that one somewhere between here and the server. Ask me again."), made ahead of time so it plays even when the voice service is the problem, and the assistant keeps listening. The voice gives up after 4 s of silence, other OpenAI requests after 15 s. A microphone that stops delivering audio exits with an error so a supervisor can restart it.
 
 ## Docs
 

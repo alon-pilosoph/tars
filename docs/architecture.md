@@ -6,7 +6,7 @@ Two processes on one machine (a Mac while developing, a Raspberry Pi 5 at home),
 flowchart LR
     subgraph assistant ["voice-assistant (the assistant)"]
         mic[Mic] --> wake["Stage 1: wake model"] --> check["Stage 2: double-check"] --> rec["Record until you stop"]
-        rec --> stt["Speech to text"] --> llm["LLM, with web search and send"] --> tts["Text to speech"] --> spk[Speaker]
+        rec --> stt["Speech to text (streamed)"] --> llm["LLM, with web search and send"] --> tts["Text to speech"] --> spk[Speaker]
         rec --> sid["Speaker ID (in parallel)"] --> llm
         journal["journal.py"]
     end
@@ -27,20 +27,28 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
 1. **Stage 1** (microWakeWord, local) scores the block. Close calls are logged as near-misses.
 2. **Stage 2** (Vosk with a grammar plus a learned layer, local) decides: answer, ask "Did you call me?", or ignore.
    See [hearing "hey TARS"](wake-word.md).
-3. **Recording** (WebRTC VAD, local) runs until you stop talking. A bare "hey TARS" followed by a pause gets
+3. **Recording** runs until you stop talking. [Silero VAD](https://github.com/snakers4/silero-vad) (local, 2 MB)
+   hears speech; after `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn)
+   (local, 8 MB) listens to how the last words sounded, and if you sounded mid-thought, TARS keeps waiting up to
+   `max_pause_s` (1.6 s). It only ever waits longer, never cuts in sooner. A bare "hey TARS" followed by a pause gets
    "Yes, Alon?" (speaker ID from the wake alone) and waits.
-4. **Speech to text** (OpenAI) and **speaker ID** (WeSpeaker ResNet34 on ONNX, local) run at the same time, so
-   knowing who's talking adds no latency. The request reaches the LLM tagged `[Speaker: Alon]`.
-5. **The LLM** (OpenAI's Responses API, streamed) answers in TARS's voice. Each finished sentence goes to **text
-   to speech** straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply
+4. **Speech to text** streams to Deepgram (Nova-3) while you talk, so the transcript is ready about 0.2 s after you
+   stop; if the stream fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
+   local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
+   `[Speaker: Alon]`.
+5. **The LLM** (OpenAI's Responses API, streamed) answers in TARS's voice. The first clause, then each finished
+   sentence, goes to **text to speech** (OpenAI, the Onyx voice) straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply
    is still being written. The TARS effect (a speaker in a metal box) is applied as it streams.
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one
-new class and a config change. Latency is printed for every turn, by stage. A failed request plays a two-note error
-tone and TARS keeps listening; a microphone that stops delivering audio exits so systemd restarts it.
+new class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it
+end to end. When TARS wakes, it opens its connection to OpenAI while you're still talking. A failed request gets a
+spoken line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it
+plays even when the voice service is what failed; the voice gives up after 4 s without audio. A microphone that
+stops delivering audio exits so systemd restarts it.
 
 ### The LLM's tools
 
@@ -64,9 +72,11 @@ Voiceprints live in `voice_data/voiceprints.npz`; the personal wake models in `m
 
 ## What leaves the machine
 
-- **Before the wake is confirmed, nothing.** Stage 1, stage 2 and the VAD run locally.
-- **After it,** the request's audio goes to OpenAI for speech to text, its text (and the conversation so far) for
-  the reply, and the reply for speech. Web searches run on OpenAI's side.
+- **Before the wake is confirmed, nothing.** Stage 1, stage 2, the speech detector and the end-of-turn model run
+  locally.
+- **After it,** the request's audio streams to Deepgram for speech to text (to OpenAI if that fails), its text and
+  the conversation so far go to OpenAI for the reply, and the reply to OpenAI for speech. Web searches run on
+  OpenAI's side. Deepgram only gets audio once you start speaking after a wake.
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
   served from the same machine and talks to nothing else.
 
@@ -93,7 +103,8 @@ To use it away from home, put the Pi and the phone on Tailscale rather than forw
 | Area | Files |
 |---|---|
 | Audio in and out | `audio.py` (mic stream, devices, playback, chimes), `effects.py` (the TARS voice) |
-| Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `recorder.py` (VAD) |
+| Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2) |
+| Hearing when you're done | `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn) |
 | Understanding and answering | `stt.py`, `llm.py`, `speech.py` (sentence pipelining), `tts.py` |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups), `__main__.py` (wiring, command line) |

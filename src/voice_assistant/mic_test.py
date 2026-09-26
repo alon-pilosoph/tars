@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .audio import Microphone, find_device, save_wav
 from .config import Config
-from .recorder import UtteranceRecorder
+from .recorder import make_recorder
 from .verify import ANSWER, ASK, IGNORE, NEAR_FRACTION, RecentAudio
 from .wake import wake_word_trigger
 
@@ -81,7 +81,7 @@ def mic_test(cfg: Config, root: Path) -> None:
 
         check = root / cfg.wake.check_model if cfg.wake.check_model else None
         verifier = PhraseVerifier(wake.phrase, root / "models", check)
-    recorder = UtteranceRecorder(cfg.recorder)
+    recorder = make_recorder(cfg, root)
     recent = RecentAudio(cfg.wake.check_window_s)
     log = WakeLog(cfg.wake.threshold)
     passed = 0

@@ -8,7 +8,6 @@ dependencies = [
     "numpy>=1.26",
     "sounddevice>=0.4.7",
     "openwakeword>=0.6.0",
-    "webrtcvad-wheels>=2.0.14",
     "openai>=1.60",
     "python-dotenv>=1.0",
     "scipy>=1.11",

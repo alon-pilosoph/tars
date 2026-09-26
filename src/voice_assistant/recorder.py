@@ -1,52 +1,42 @@
+import math
 from collections import deque
+from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
-import webrtcvad
 
-from .audio import BLOCK_SAMPLES, BLOCK_SECONDS, SAMPLE_RATE, Microphone
-from .config import RecorderConfig
+from .audio import BLOCK_SECONDS, Microphone
+from .config import Config, RecorderConfig
+from .turn import SmartTurn
+from .vad import SileroVAD
 
-# webrtcvad only accepts 10/20/30 ms frames; four 20 ms frames fit exactly in one 80 ms block.
-VAD_FRAME_SAMPLES = SAMPLE_RATE // 50
-VAD_FRAMES_PER_BLOCK = BLOCK_SAMPLES // VAD_FRAME_SAMPLES
 # Speech must last this many consecutive blocks (160 ms) to count as "started talking".
 START_BLOCKS = 2
-# After a pause, talking again means two speech blocks among this many (in steady room noise, webrtcvad's stray
-# "speech" blocks come alone: none within three blocks of another in two minutes of a laptop mic's room tone).
-RESUME_WINDOW = 3
 # Audio kept from just before speech was detected, so the first syllable isn't clipped.
 PREROLL_BLOCKS = 4
-# Our own chimes leak back into the mic (speaker latency, room echo) and webrtcvad calls a pure tone speech.
-# Peak-to-mean spectrum ratio: chimes measure ~100, voices ~15-40.
-MAX_TONALITY = 70.0
-_WINDOW = np.hanning(BLOCK_SAMPLES)
-
-
-def tonality(block: np.ndarray) -> float:
-    """How much of the block's energy sits at one frequency: high for beeps and whistles, low for voices."""
-    spectrum = np.abs(np.fft.rfft(block.astype(np.float32) * _WINDOW))
-    return float(spectrum.max() / (spectrum.mean() + 1e-9))
+# Once someone is talking, a block counts as silence only this far below the threshold (Silero's own hysteresis),
+# so a soft syllable doesn't end the sentence.
+END_MARGIN = 0.15
+# Below this, the end-of-turn model thinks there's more coming.
+UNFINISHED = 0.5
 
 
 class UtteranceRecorder:
-    """Records from when you start speaking until you stop, instead of a fixed number of seconds."""
+    """Records from when you start speaking until you stop, instead of a fixed number of seconds.
 
-    def __init__(self, cfg: RecorderConfig):
+    `end_silence_s` of silence ends it. With `turn`, the end-of-turn model hears whether you sounded finished at that
+    point, and if you didn't (a trailing "and, um"), it keeps listening up to `max_pause_s`: it only ever waits longer.
+    """
+
+    def __init__(self, cfg: RecorderConfig, vad: SileroVAD, turn: SmartTurn | None = None):
         self._cfg = cfg
-        self._vad = webrtcvad.Vad(cfg.vad_aggressiveness)
+        self._vad = vad
+        self._turn = turn
         # How long ago you actually stopped talking when record() returned; used for honest latency numbers.
         self.trailing_silence_s = 0.0
 
     def is_speech(self, block: np.ndarray) -> bool:
-        if tonality(block) > MAX_TONALITY:
-            return False
-        raw = block.tobytes()
-        frame_bytes = VAD_FRAME_SAMPLES * 2
-        voiced = sum(
-            self._vad.is_speech(raw[i : i + frame_bytes], SAMPLE_RATE)
-            for i in range(0, VAD_FRAMES_PER_BLOCK * frame_bytes, frame_bytes)
-        )
-        return voiced >= VAD_FRAMES_PER_BLOCK // 2
+        return self._vad(block) >= self._cfg.vad_threshold
 
     def record(
         self,
@@ -54,11 +44,13 @@ class UtteranceRecorder:
         preroll_blocks: int = PREROLL_BLOCKS,
         tail_blocks: int = 2,
         start_timeout_s: float | None = None,
+        on_audio: Callable[[bytes], None] | None = None,
     ) -> bytes | None:
         """Return 16 kHz mono int16 PCM, or None if nobody spoke before the timeout.
 
         `preroll_blocks` and `tail_blocks` set how much audio to keep before speech starts and after it ends.
-        `start_timeout_s` overrides the configured wait for speech to begin.
+        `start_timeout_s` overrides the configured wait for speech to begin. `on_audio` gets the audio as it's
+        recorded, from the moment speech starts (the preroll first), for streaming transcription.
         """
         preroll: deque[np.ndarray] = deque(maxlen=max(preroll_blocks, START_BLOCKS))
         streak = 0
@@ -73,20 +65,30 @@ class UtteranceRecorder:
             return None
 
         blocks = list(preroll)
-        silent_blocks_to_stop = int(self._cfg.end_silence_s / BLOCK_SECONDS)
+        send = on_audio or (lambda pcm: None)
+        send(np.concatenate(blocks).tobytes())
+        pause = math.ceil(self._cfg.end_silence_s / BLOCK_SECONDS)
+        silent_blocks_to_stop = pause
         max_blocks = int(self._cfg.max_utterance_s / BLOCK_SECONDS)
+        speaking, quiet = self._cfg.vad_threshold, self._cfg.vad_threshold - END_MARGIN
         silence = 0
-        recent: deque[bool] = deque(maxlen=RESUME_WINDOW)
         while silence < silent_blocks_to_stop and len(blocks) < max_blocks:
             block = mic.read()
             blocks.append(block)
-            recent.append(self.is_speech(block))
-            # A lone "speech" block is usually the room: webrtcvad flags one now and then in steady noise, and
-            # each would restart the wait. Talking again means two among the last three (speech flickers too).
-            if recent[-1] and sum(recent) >= 2:
+            send(block.tobytes())
+            p = self._vad(block)
+            if p >= speaking:
                 silence = 0
-            elif not recent[-1]:
+            elif p < quiet:
                 silence += 1
+                if (
+                    silence == pause
+                    and self._turn
+                    and self._turn.finished(np.concatenate(blocks).tobytes()) < UNFINISHED
+                ):
+                    silent_blocks_to_stop = math.ceil(self._cfg.max_pause_s / BLOCK_SECONDS)
+            if silence < pause:
+                silent_blocks_to_stop = pause
 
         self.trailing_silence_s = silence * BLOCK_SECONDS
         # Only needed when asked for more tail than the end-of-speech wait already captured.
@@ -95,3 +97,12 @@ class UtteranceRecorder:
             silence += 1
         # Drop the rest of the trailing silence; it's dead weight for transcription.
         return np.concatenate(blocks[: len(blocks) - silence + tail_blocks]).tobytes()
+
+
+def make_recorder(cfg: Config, root: Path) -> UtteranceRecorder:
+    turn = None
+    if cfg.recorder.end_of_turn == "smart":
+        turn = SmartTurn(root / cfg.recorder.turn_model)
+    elif cfg.recorder.end_of_turn != "silence":
+        raise SystemExit(f"[recorder] end_of_turn must be silence or smart, not {cfg.recorder.end_of_turn!r}")
+    return UtteranceRecorder(cfg.recorder, SileroVAD(root / cfg.recorder.vad_model), turn)

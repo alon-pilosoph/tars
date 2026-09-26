@@ -13,6 +13,7 @@ from voice_assistant.assistant import Assistant
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
 from voice_assistant.conversations import ConversationLog
 from voice_assistant.events import EventLog
+from voice_assistant.stt import BufferedSession
 from voice_assistant.webui import create_app
 
 AUDIO = np.zeros(SAMPLE_RATE, np.int16)  # a second of silence: stands in for any recording
@@ -72,21 +73,11 @@ class FakeSpeaker:
         self.sounds.append(("error", None))
 
 
-QUIET_RNG, VOICED_RNG = np.random.default_rng(0), np.random.default_rng(1)
+QUIET_RNG = np.random.default_rng(0)
 
 
 def quiet_block(rng=QUIET_RNG):
     return rng.normal(0, 30, BLOCK_SAMPLES).astype(np.int16)
-
-
-def voiced_block(rng=VOICED_RNG):
-    """Voice-like: many equal harmonics of 150 Hz plus breath noise, with a slow wobble.
-
-    webrtcvad calls it speech, and like a real voice its energy is spread over many frequencies (low tonality).
-    """
-    t = np.arange(BLOCK_SAMPLES) / SAMPLE_RATE
-    wave = sum(np.sin(2 * np.pi * 150 * k * t + k) for k in range(1, 20)) + rng.normal(0, 1.5, BLOCK_SAMPLES)
-    return (wave * 600 * (0.6 + 0.4 * np.sin(2 * np.pi * 4 * t))).astype(np.int16)
 
 
 def chime_block(freq=880.0):
@@ -159,6 +150,9 @@ class ScriptedTranscriber:
     def __init__(self, texts):
         self.texts = iter(texts)
 
+    def session(self):
+        return BufferedSession(self)
+
     def transcribe(self, pcm):
         return next(self.texts)
 
@@ -169,6 +163,9 @@ class RecordingBrain:
         self.asked = []
         self.forgotten = 0
         self.sent = []
+
+    def warm(self):
+        pass
 
     def stream_reply(self, text):
         self.asked.append(text)

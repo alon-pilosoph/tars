@@ -6,6 +6,8 @@ __pycache__/
 voice_data/
 models/voxceleb_resnet34_LM.onnx
 models/vosk-model-*/
+models/silero_vad.onnx
+models/smart-turn-*.onnx
 # Learned from the user's own voice: stays on this machine
 models/personal/
 
