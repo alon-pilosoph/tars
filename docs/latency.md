@@ -37,7 +37,8 @@ sequenceDiagram
 ```
 
 **Start early, speak late.** From a quarter second into a pause, TARS prepares the answer in the background while
-the recording goes on (`draft.py`). If you carry on talking, the draft is thrown away and the brain forgets it; it's
+the recording goes on (`draft.py`). If you carry on talking, the draft is thrown away and the brain forgets it (without
+waiting for it: a draft stuck in a web search can't hold up the next one); it's
 only played, logged, and allowed to send anything to the web page once your turn is confirmed over. So the waiting
 rule decides only *when TARS speaks*, never what it heard: a cut-off can't come from answering early.
 

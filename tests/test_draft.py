@@ -6,6 +6,7 @@ import threading
 import pytest
 
 from voice_assistant.draft import Draft
+from voice_assistant.speech import StreamedReply
 
 from .conftest import make_assistant, speech
 
@@ -14,6 +15,21 @@ def played_by(speaker):
     played = []
     speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
     return played
+
+
+def test_stopping_a_reply_stuck_on_the_network_does_not_wait_for_it():
+    network = threading.Event()
+
+    def pieces():
+        network.wait()  # a web search that takes its time
+        yield "Sunny."
+
+    reply = StreamedReply(pieces(), voice=None, on_sentence=lambda sentence: None)
+    stopped = threading.Thread(target=reply.stop)
+    stopped.start()
+    stopped.join(1)
+    network.set()
+    assert not stopped.is_alive()
 
 
 def test_an_answer_started_in_a_pause_is_the_one_played(speaker):

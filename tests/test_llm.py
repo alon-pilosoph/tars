@@ -116,6 +116,20 @@ def test_an_interrupted_reply_ends_with_an_error():
         list(reply)
 
 
+def test_a_stopped_reply_that_finishes_late_leaves_the_next_one_alone():
+    client = fake_openai_chat(lambda messages: "An answer.")
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False))
+    stale = brain.stream_reply("half a question")
+    next(stale)  # still waiting on the network when it's thrown away
+    brain.interrupt()
+    brain.forget_last()
+    "".join(brain.stream_reply("the whole question"))
+    with pytest.raises(ReplyFailed):
+        list(stale)
+    "".join(brain.stream_reply("next"))
+    assert asked(client) == ["the whole question", "An answer.", "next"]
+
+
 def test_the_humor_setting_goes_into_the_system_prompt():
     captured = {}
 

@@ -1,5 +1,6 @@
 import itertools
 import json
+import threading
 import time
 from collections.abc import Iterable, Iterator
 from typing import Protocol
@@ -149,6 +150,15 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
     return False, itertools.chain([head], stream)
 
 
+class _Writing:
+    """One reply being written. Each has its own stop, so a stopped reply still waiting on the network can't
+    touch the conversation after the next one has started."""
+
+    def __init__(self):
+        self.stopped = False
+        self.stream = None  # the response being read, so interrupt() can close it
+
+
 class OpenAIChat:
     """The conversation, through OpenAI's Responses API: streamed text, plus web search and the send tool."""
 
@@ -157,8 +167,9 @@ class OpenAIChat:
         self._cfg = cfg
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
-        self._stream = None  # the response being read, so interrupt() can close it
-        self._interrupted = False
+        self._writing = _Writing()
+        # A reply is written on the voice's thread while the next can start, or be forgotten, on another.
+        self._lock = threading.Lock()
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
         self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
@@ -172,27 +183,27 @@ class OpenAIChat:
             self._extra["reasoning"] = {"effort": cfg.reasoning_effort}
 
     def stream_reply(self, text: str) -> Iterator[str]:
-        # After a long pause, start fresh: old context confuses more than it helps, and it's private.
-        if self._history and time.monotonic() - self._last_turn_at > self._cfg.memory_minutes * 60:
-            self._history.clear()
-        self._previous_turn_at, self._last_turn_at = self._last_turn_at, time.monotonic()
-        self._asked = {"role": "user", "content": text}
-        self._history.append(self._asked)
-        self.sent = []
-        self._interrupted = False
-        # Set up now rather than on the first read, so an interrupt() in between isn't lost.
-        return self._stream_reply(list(self._history))
+        with self._lock:
+            # After a long pause, start fresh: old context confuses more than it helps, and it's private.
+            if self._history and time.monotonic() - self._last_turn_at > self._cfg.memory_minutes * 60:
+                self._history.clear()
+            self._previous_turn_at, self._last_turn_at = self._last_turn_at, time.monotonic()
+            self._asked = {"role": "user", "content": text}
+            self._history.append(self._asked)
+            self.sent = []
+            self._writing = writing = _Writing()
+            # Set up now rather than on the first read, so an interrupt() in between isn't lost.
+            return self._stream_reply(list(self._history), writing)
 
-    def _stream_reply(self, context: list) -> Iterator[str]:
+    def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
         answer = ""
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
             tools = {"tools": self._tools} if self._tools else {}
             if tools and round_ == MAX_TOOL_ROUNDS - 1:
                 tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
-            if self._interrupted:
-                raise ReplyFailed("interrupted")
-            stream = self._stream = self._client.responses.create(
+            _check(writing)
+            stream = writing.stream = self._client.responses.create(
                 model=self._cfg.model,
                 instructions=self._instructions,
                 input=context,
@@ -202,8 +213,7 @@ class OpenAIChat:
                 **tools,
             )
             for event in stream:
-                if self._interrupted:
-                    raise ReplyFailed("interrupted")
+                _check(writing)
                 if event.type == "response.output_text.delta" and event.delta:
                     said += event.delta
                     yield event.delta
@@ -215,21 +225,30 @@ class OpenAIChat:
                 elif event.type in ("error", "response.failed", "response.incomplete"):
                     # The SDK only raises for some of these; the rest would otherwise end the reply in silence.
                     raise ReplyFailed(f"{event.type}: {_why(event)}")
-            self._stream = None
+            writing.stream = None
             answer += said
             if not calls:
                 break
             if said:
                 context.append({"role": "assistant", "content": said})
-            for call in calls:
-                context.append(
-                    {"type": "function_call", "call_id": call.call_id, "name": call.name, "arguments": call.arguments}
-                )
-                context.append(
-                    {"type": "function_call_output", "call_id": call.call_id, "output": self._run_tool(call)}
-                )
-        self._history.append({"role": "assistant", "content": answer.strip()})
-        self._history = self._history[-MAX_TURNS * 2 :]
+            with self._lock:
+                _check(writing)
+                for call in calls:
+                    context.append(
+                        {
+                            "type": "function_call",
+                            "call_id": call.call_id,
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        }
+                    )
+                    context.append(
+                        {"type": "function_call_output", "call_id": call.call_id, "output": self._run_tool(call)}
+                    )
+        with self._lock:
+            _check(writing)
+            self._history.append({"role": "assistant", "content": answer.strip()})
+            self._history = self._history[-MAX_TURNS * 2 :]
 
     def _run_tool(self, call) -> str:
         if call.name != "send":
@@ -243,22 +262,24 @@ class OpenAIChat:
         return result
 
     def forget_last(self) -> None:
-        if self._asked is None:
-            return
-        # From the question on, whether or not the answer got written; found by identity, since the history may
-        # have been trimmed from the front since.
-        for i in range(len(self._history) - 1, -1, -1):
-            if self._history[i] is self._asked:
-                del self._history[i:]
-                break
-        self._asked = None
-        # Overheard chatter shouldn't keep the memory alive either.
-        self._last_turn_at = self._previous_turn_at
-        self.sent = []
+        with self._lock:
+            if self._asked is None:
+                return
+            # From the question on, whether or not the answer got written; found by identity, since the history
+            # may have been trimmed from the front since.
+            for i in range(len(self._history) - 1, -1, -1):
+                if self._history[i] is self._asked:
+                    del self._history[i:]
+                    break
+            self._asked = None
+            # Overheard chatter shouldn't keep the memory alive either.
+            self._last_turn_at = self._previous_turn_at
+            self.sent = []
 
     def interrupt(self) -> None:
-        self._interrupted = True
-        if (stream := self._stream) is not None:
+        writing = self._writing
+        writing.stopped = True
+        if (stream := writing.stream) is not None:
             try:
                 stream.close()
             except Exception as e:  # noqa: BLE001 - a stream already closed is as good as closing it
@@ -270,6 +291,11 @@ class OpenAIChat:
             self._client.models.retrieve(self._cfg.model)
         except OpenAIError:
             pass  # only a head start: the real request reports a failure
+
+
+def _check(writing: _Writing) -> None:
+    if writing.stopped:
+        raise ReplyFailed("interrupted")
 
 
 def _why(event) -> str:

@@ -82,9 +82,9 @@ class StreamedReply:
             yield piece
 
     def stop(self) -> None:
-        """Stop at the next piece of the reply (interrupt the brain to get there sooner), and wait for it."""
+        """Stop at the next piece of the reply; interrupt the brain to get there sooner. Doesn't wait: a reply
+        stuck on the network (a web search) finishes on its own, and nothing it makes is played."""
         self._stop.set()
-        self._producer.join()
 
     def __iter__(self) -> Iterator[bytes]:
         while (item := self._playlist.get()) is not _DONE:
