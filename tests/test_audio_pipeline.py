@@ -126,28 +126,6 @@ def test_sentences_are_split_as_they_stream_in():
     assert list(split_sentences(pieces)) == ["Hello there.", "It is 3.5 degrees!", "Want more?", "Ok"]
 
 
-def test_the_first_clause_goes_to_speech_early_then_whole_sentences():
-    pieces = [
-        "Octopuses have neurons ",
-        "in their arms, so each arm ",
-        "reacts, partly on its own. A useful, ",
-        "arrangement.",
-    ]
-    assert list(split_sentences(pieces, first_clause=True)) == [
-        "Octopuses have neurons in their arms,",
-        "so each arm reacts, partly on its own.",
-        "A useful, arrangement.",
-    ]
-
-
-def test_a_short_opening_word_waits_for_more():
-    assert list(split_sentences(["Well, ", "that depends, on the day. Yes."], first_clause=True)) == [
-        "Well, that depends,",
-        "on the day.",
-        "Yes.",
-    ]
-
-
 def test_markdown_is_stripped_before_speaking():
     assert clean_for_speech("**Bold** and `code` # heading ") == "Bold and code  heading"
 

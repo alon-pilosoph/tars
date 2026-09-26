@@ -36,8 +36,8 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    stop; if the stream fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
    local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
    `[Speaker: Alon]`.
-5. **The LLM** (OpenAI's Responses API, streamed) answers in TARS's voice. The first clause, then each finished
-   sentence, goes to **text to speech** (OpenAI, the Onyx voice) straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply
+5. **The LLM** (OpenAI's Responses API, streamed) answers in TARS's voice. Each finished sentence goes to **text
+   to speech** (OpenAI, the Onyx voice) straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply
    is still being written. The TARS effect (a speaker in a metal box) is applied as it streams.
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
