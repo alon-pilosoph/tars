@@ -135,3 +135,81 @@ def test_a_working_stream_never_calls_the_backup():
     session = FallbackTranscriber(ScriptedTranscriber(["streamed"]), ScriptedTranscriber([])).session()
     session.feed(b"12")
     assert session.transcript() == "streamed"
+
+
+class FakeFlux(FakeDeepgram):
+    """A Flux websocket: sends the turn events it's given, one each time a block of audio arrives."""
+
+    def __init__(self, events):
+        super().__init__()
+        self.events = list(events)
+
+    def send(self, item):
+        self.sent.append(item)
+        if isinstance(item, bytes) and self.events:
+            kind, words = self.events.pop(0)
+            with self.ready:
+                self.inbox.append(json.dumps({"type": "TurnInfo", "event": kind, "transcript": words}))
+                self.ready.notify_all()
+
+
+@pytest.fixture
+def flux(monkeypatch):
+    def use(fake):
+        import websockets.sync.client
+
+        monkeypatch.setattr(websockets.sync.client, "connect", fake)
+        return stt.FluxSession("wss://test", "key")
+
+    return use
+
+
+def wait_for(session, state):
+    for _ in range(200):
+        if session.turn_state() == state:
+            return
+        threading.Event().wait(0.01)
+    raise AssertionError(f"never reached {state}, stuck at {session.turn_state()}")
+
+
+def test_flux_follows_the_turn_and_its_words(flux):
+    session = flux(
+        FakeFlux(
+            [
+                ("StartOfTurn", "what's"),
+                ("Update", "what's the capital"),
+                ("EagerEndOfTurn", "what's the capital of"),
+                ("TurnResumed", "what's the capital of"),
+                ("EndOfTurn", "what's the capital of Australia"),
+                ("StartOfTurn", "somebody else"),
+            ]
+        )
+    )
+    for _ in range(3):
+        session.feed(b"\0\0")
+    wait_for(session, stt.MAYBE_DONE)
+    assert session.transcript() == "what's the capital of"  # a draft gets the words so far, right away
+    session.feed(b"\0\0")
+    wait_for(session, stt.LISTENING)
+    session.feed(b"\0\0")
+    wait_for(session, stt.DONE)
+    session.feed(b"\0\0")  # the next turn's words don't overwrite this one's
+    assert session.transcript() == "what's the capital of Australia"
+    session.close()
+
+
+def test_flux_that_never_ends_the_turn_raises_so_the_backup_transcribes(flux, monkeypatch):
+    monkeypatch.setattr(stt, "FINAL_TIMEOUT_S", 0.05)
+    session = flux(FakeFlux([("StartOfTurn", "hello")]))
+    session.feed(b"\0\0")
+    with pytest.raises(TimeoutError):
+        session.transcript()
+    session.close()
+
+
+def test_the_fallback_session_passes_flux_s_turns_through():
+    main = stt.FluxSession.__new__(stt.FluxSession)
+    main.turn_state = lambda: stt.DONE
+    fallback = stt._FallbackSession(main, BufferedSession(lambda pcm: "backup"))
+    assert fallback.turn_state() == stt.DONE
+    assert stt._FallbackSession(BufferedSession(lambda pcm: ""), BufferedSession(lambda pcm: "")).turn_state is None

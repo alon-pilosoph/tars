@@ -74,6 +74,9 @@ class VoiceWithEffect:
         self._make_effect = EFFECTS[effect]
         self.sample_rate = voice.sample_rate
 
+    def warm(self) -> None:
+        self._voice.warm()
+
     def stream(self, text: str) -> Iterator[bytes]:
         effect = self._make_effect(self.sample_rate)  # Fresh filter state per sentence.
         pending = b""

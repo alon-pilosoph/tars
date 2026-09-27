@@ -218,19 +218,30 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice)."""
     from .effects import apply_effect
     from .llm import OpenAIChat
-    from .stt import DeepgramTranscriber, FallbackTranscriber, OpenAITranscriber
-    from .tts import OpenAISpeech
+    from .stt import (
+        DeepgramTranscriber,
+        FallbackTranscriber,
+        FluxTranscriber,
+        OpenAITranscriber,
+    )
+    from .tts import DeepgramSpeech, OpenAISpeech
 
     env = root / ".env"
     client = make_openai_client(env)
     brain = OpenAIChat(client, brain_config(cfg, typed=typed))
-    voice = apply_effect(OpenAISpeech(client, cfg.tts), cfg.tts.effect)
+    speech = (
+        DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
+        if cfg.tts.provider == "deepgram"
+        else OpenAISpeech(client, cfg.tts)
+    )
+    voice = apply_effect(speech, cfg.tts.effect)
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt), brain, voice
     backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=STTConfig().model))
     if typed:  # typed questions need no speech to text
         return backup, brain, voice
-    return FallbackTranscriber(DeepgramTranscriber(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt), backup), brain, voice
+    streaming = FluxTranscriber if cfg.stt.provider == "flux" else DeepgramTranscriber
+    return FallbackTranscriber(streaming(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt), backup), brain, voice
 
 
 def run(cfg: Config, args: argparse.Namespace) -> None:

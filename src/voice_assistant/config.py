@@ -37,7 +37,7 @@ class RecorderConfig:
 
 @dataclass
 class STTConfig:
-    provider: str = "openai"  # openai | deepgram (streams while you talk)
+    provider: str = "openai"  # openai | deepgram (streams while you talk) | flux (Deepgram also ends your turn)
     model: str = "gpt-4o-mini-transcribe"
     language: str = "en"
 
@@ -58,6 +58,7 @@ class LLMConfig:
 
 @dataclass
 class TTSConfig:
+    provider: str = "openai"  # openai | deepgram (Flux TTS or Aura-2, by the model's name)
     model: str = "gpt-4o-mini-tts"
     voice: str = "alloy"
     instructions: str = ""
@@ -124,8 +125,12 @@ def load_config(path: Path) -> Config:
 
 def _problems(cfg: Config) -> list[str]:
     r, problems = cfg.recorder, []
-    if cfg.stt.provider not in ("openai", "deepgram"):
-        problems.append(f"[stt] provider must be openai or deepgram, not {cfg.stt.provider!r}")
+    if cfg.stt.provider not in ("openai", "deepgram", "flux"):
+        problems.append(f"[stt] provider must be openai, deepgram or flux, not {cfg.stt.provider!r}")
+    if cfg.tts.provider not in ("openai", "deepgram"):
+        problems.append(f"[tts] provider must be openai or deepgram, not {cfg.tts.provider!r}")
+    elif cfg.tts.provider == "deepgram" and not cfg.tts.model.startswith(("flux-", "aura-")):
+        problems.append(f"[tts] model must be a Deepgram voice (flux-... or aura-2-...), not {cfg.tts.model!r}")
     if r.end_of_turn not in ("silence", "smart"):
         problems.append(f"[recorder] end_of_turn must be silence or smart, not {r.end_of_turn!r}")
     if not 0.2 <= r.vad_threshold <= 0.95:

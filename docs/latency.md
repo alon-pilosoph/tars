@@ -69,6 +69,8 @@ plainer below 50% humor). Deepgram falls back to OpenAI transcribing the same re
 ```bash
 uv run python tools/latency_bench.py
 uv run python tools/latency_bench.py --set recorder.end_silence_s=0.6 --set stt.provider=openai
+uv run python tools/latency_bench.py --set stt.provider=flux --set tts.provider=deepgram --set tts.model=flux-cliff-en
+uv run python tools/turn_bench.py      # cut-offs: today's end of turn against Flux, on your own sentences
 ```
 
 The benchmark speaks 8 questions once (Deepgram's Aura voice, cached in `voice_data/bench/`), plays them to the
@@ -76,6 +78,39 @@ assistant at real-time pace over real room tone taken from your recordings, and 
 the audio to when the first reply sound would play. It uses the real services, so it costs a few cents a run, and
 the numbers move by a few tenths between runs with the network and the model; compare medians over several runs.
 Every turn also prints its own stage timings in the assistant's log.
+
+## Going all in on Deepgram (measured 2026-09-27)
+
+Deepgram's voices, and its Flux model deciding when you've finished, both behind settings (`[tts] provider =
+"deepgram"`, `[stt] provider = "flux"`). Same benchmark, same night, median over 16 turns per setup:
+
+| Setup | From you stopping to TARS's first sound | Slowest turn |
+|---|---|---|
+| Today: Nova-3, Silero + Smart Turn, Onyx | 2.63-3.02 s | 5.58 s |
+| Deepgram voice (Flux Cliff or Aura-2 Zeus) | 1.99-2.05 s | 2.44 s |
+| Flux turn-taking, Onyx | 2.03 s | 3.58 s |
+| Flux turn-taking, Deepgram voice | 1.69-1.93 s | 3.31 s |
+
+**The voice.** A warm connection to Deepgram starts speaking in about 0.27 s; opening one takes about 0.7 s from
+here, so `tts.DeepgramSpeech` keeps two open from the wake word (idle ones stay usable for minutes). Onyx's first
+audio averaged about 1.0 s, with stalls past 2 s. Deepgram's voices take no delivery instructions; Flux TTS has an
+expressivity setting instead. Which voice sounds most like TARS is a listening test, not a benchmark.
+
+**The end of the turn** (`tools/turn_bench.py`): the owner's 25 recorded sentences, whole, and with a pause spliced
+in after an unfinished word ("and", "the", "to"...), 0.5, 0.8 or 1.2 s long.
+
+| | Today (Silero + Smart Turn) | Flux |
+|---|---|---|
+| Turn over after a whole sentence | 0.88 s | 0.94 s median, 90% within 1.21 s |
+| Cut-offs in a 0.5 / 0.8 / 1.2 s pause | 0 / 0 / **18 of 18** | 0 / 0 / 1 of 18 |
+
+Today's setup cut off every 1.2 s pause because Smart Turn called them finished: checked after 0.8 s of silence, it
+scored 17 of these 18 unfinished sentences as done (after 0.2 s, 13 of 18), so it almost never extends the wait.
+Flux hears the words too ("...and the" isn't a sentence). Spliced pauses aren't real hesitations (no "um", no
+stretched last word), which may flatter Flux; real use will tell. Flux's early "maybe done" (where a draft starts)
+came 0.57 s after the end of a sentence, and was taken back in 20 of the 54 paused ones: a draft thrown away, about
+one extra brain call in three. If Flux goes quiet, the recorder ends the turn anyway after 2.5 s of silence and
+OpenAI transcribes the recording.
 
 ## Tried and dropped
 

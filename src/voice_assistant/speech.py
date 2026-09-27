@@ -15,7 +15,14 @@ MARKDOWN = re.compile(r"[*_#`]+")
 _DONE = object()
 
 
+# Web search answers carry their sources inline, as "([site](url))": for the screen, never for reading out.
+CITATION = re.compile(r"\s*\(\s*\[[^\]]*\]\([^)\s]*\)\s*\)")
+LINK = re.compile(r"\[([^\]]*)\]\([^)\s]*\)")  # [words](url): say the words
+URL = re.compile(r"\s*\bhttps?://\S+")
+
+
 def clean_for_speech(text: str) -> str:
+    text = URL.sub("", LINK.sub(r"\1", CITATION.sub("", text)))
     return MARKDOWN.sub("", text).strip()
 
 

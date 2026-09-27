@@ -148,6 +148,22 @@ def test_markdown_is_stripped_before_speaking():
     assert clean_for_speech("**Bold** and `code` # heading ") == "Bold and code  heading"
 
 
+@pytest.mark.parametrize(
+    "text, spoken",
+    [
+        (
+            "A frittata works well ([mayoclinic.org](https://www.mayoclinic.org/recipes/frittata?utm_source=openai)).",
+            "A frittata works well.",
+        ),
+        ("([mayoclinic.org](https://www.mayoclinic.org/x?p=1&utm_source=openai))", ""),
+        ("Try [this frittata](https://example.com/frittata) tonight.", "Try this frittata tonight."),
+        ("It's at https://example.com/a?b=1 if you want it.", "It's at if you want it."),
+    ],
+)
+def test_links_and_citations_are_never_read_out(text, spoken):
+    assert clean_for_speech(text) == spoken
+
+
 def test_speaker_box_is_identical_whether_streamed_or_whole():
     audio = (np.random.default_rng(1).normal(0, 3000, 24_000 * 2)).astype(np.int16).tobytes()
     whole = SpeakerBox(24_000).process(audio)
@@ -204,3 +220,53 @@ def test_a_setting_that_cannot_work_stops_at_startup(tmp_path, setting):
     path.write_text(setting)
     with pytest.raises(SystemExit):
         load_config(path)
+
+
+class FluxTurns:
+    """Stands in for a turn-taking service: its state, block by block, from a pattern: L listening, M maybe done,
+    D done."""
+
+    def __init__(self, pattern):
+        self.states = iter({"L": "listening", "M": "maybe_done", "D": "done"}[c] for c in pattern)
+        self.last = "listening"
+
+    def __call__(self):
+        self.last = next(self.states, self.last)
+        return self.last
+
+
+def test_with_flux_its_end_of_turn_ends_the_recording():
+    rec = recorder("SSSSSS" + "." * 40, FakeTurn(0.1), end_silence_s=0.8, max_pause_s=1.6)
+    # Asked from the 3rd speech block on (2 start the recording): "done" arrives on the 5th quiet block.
+    rec.record(mic(), turn_state=FluxTurns("L" * 8 + "D"))
+    assert rec.trailing_silence_s == pytest.approx(0.40)  # neither the silence wait nor Smart Turn's extension
+
+
+def test_with_flux_its_maybe_starts_a_draft_and_taking_it_back_throws_it_away():
+    events = []
+    rec = recorder("SSSSSS" + "." * 40, end_silence_s=0.8, answer_early_s=0.2)
+    rec.record(
+        mic(),
+        on_pause=lambda pcm: events.append("pause"),
+        on_resume=lambda: events.append("resume"),
+        turn_state=FluxTurns("L" * 7 + "MM" + "LL" + "MM" + "D"),
+    )
+    assert events == ["pause", "resume", "pause"]  # the silence itself announced nothing
+
+
+def test_a_breath_during_flux_s_maybe_does_not_throw_the_draft_away():
+    events = []
+    rec = recorder("SSSSSS" + "..." + "mm" + "." * 20, answer_early_s=0.2)
+    rec.record(
+        mic(),
+        on_pause=lambda pcm: events.append("pause"),
+        on_resume=lambda: events.append("resume"),
+        turn_state=FluxTurns("L" * 7 + "M" * 4 + "D"),
+    )
+    assert events == ["pause"]  # Flux kept its maybe: only Flux takes it back
+
+
+def test_if_flux_goes_quiet_the_backstop_ends_the_turn():
+    rec = recorder("SSSSSS" + "." * 60, end_silence_s=0.8)
+    rec.record(mic(), turn_state=FluxTurns("L"))
+    assert rec.trailing_silence_s == pytest.approx(2.56)  # BACKSTOP_S, in whole 80 ms blocks

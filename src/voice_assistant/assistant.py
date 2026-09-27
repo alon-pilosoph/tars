@@ -213,7 +213,12 @@ class Assistant:
 
         try:
             pcm = self.recorder.record(
-                self.mic, start_timeout_s=start_timeout_s, on_audio=session.feed, on_pause=paused, on_resume=resumed
+                self.mic,
+                start_timeout_s=start_timeout_s,
+                on_audio=session.feed,
+                on_pause=paused,
+                on_resume=resumed,
+                turn_state=getattr(session, "turn_state", None),
             )
         except BaseException:
             # Every draft must be settled, or the next one would wait behind it.
@@ -239,8 +244,9 @@ class Assistant:
         `first` is an already-recorded request (a reply to "Did you call me?"). With `greet_after_s`, a pause that
         long after the wake word gets a "Yes, <name>?" before we keep waiting.
         """
-        # While they're still talking, get the reply's connection ready.
+        # While they're still talking, get the reply's connections ready.
         threading.Thread(target=self.brain.warm, daemon=True).start()
+        self.voice.warm()
         self.prepare_phrases()
         try:
             self._converse(follow_up_s, first, greet_after_s)

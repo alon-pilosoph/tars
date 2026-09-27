@@ -207,7 +207,7 @@ def no_tts(monkeypatch):
 
 def make_assistant(speaker, utterances, transcripts, replies=(), journal=None):
     speaker.play_pcm_stream = lambda chunks, *a, **kw: list(chunks)
-    voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]))
+    voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
     recorder = ScriptedRecorder(utterances)
     assistant = Assistant(

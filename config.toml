@@ -53,6 +53,8 @@ greet_after_s = 1.5
 #   openai    the finished recording is sent after you stop (model = "gpt-4o-mini-transcribe")
 #   deepgram  streamed while you talk, so the text is ready a moment after you stop (model = "nova-3";
 #             DEEPGRAM_API_KEY in .env)
+#   flux      Deepgram's Flux: streamed, and it also decides when you've finished, from your words as well as the
+#             pause (fewer cut-offs, see docs/latency.md); [recorder]'s pause settings are then only a backstop
 provider = "deepgram"
 model = "nova-3"
 language = "en"
@@ -83,6 +85,9 @@ Messages may start with [Speaker: name], identified from their voice; use names 
 never read the tag aloud, and if it says unknown, don't guess who it is."""
 
 [tts]
+# openai (model + voice below), or deepgram: model = a Flux TTS or Aura-2 voice, e.g. "flux-cliff-en" or
+# "aura-2-zeus-en" (voice and instructions are then ignored; about 0.6 s faster to first sound, docs/latency.md)
+provider = "openai"
 model = "gpt-4o-mini-tts"
 voice = "onyx"
 # How to deliver the lines. Only gpt-4o-mini-tts and newer support this.

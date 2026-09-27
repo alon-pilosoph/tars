@@ -7,6 +7,7 @@ import numpy as np
 
 from .audio import BLOCK_SECONDS, Microphone
 from .config import Config, RecorderConfig
+from .stt import DONE, LISTENING, MAYBE_DONE
 from .turn import SmartTurn
 from .vad import SileroVAD
 
@@ -19,6 +20,9 @@ PREROLL_BLOCKS = 4
 END_MARGIN = 0.15
 # Below this, the end-of-turn model thinks there's more coming.
 UNFINISHED = 0.5
+# With a service deciding when the turn is over: silence that ends it anyway, in case the service went quiet
+# (a little sooner than Flux's own timeout, stt.FLUX_TIMEOUT_MS).
+BACKSTOP_S = 2.5
 
 
 class UtteranceRecorder:
@@ -47,6 +51,7 @@ class UtteranceRecorder:
         on_audio: Callable[[bytes], None] | None = None,
         on_pause: Callable[[bytes], None] | None = None,
         on_resume: Callable[[], None] | None = None,
+        turn_state: Callable[[], str] | None = None,
     ) -> bytes | None:
         """Return 16 kHz mono int16 PCM, or None if nobody spoke before the timeout.
 
@@ -54,6 +59,8 @@ class UtteranceRecorder:
         `start_timeout_s` overrides the configured wait for speech to begin. `on_audio` gets the audio as it's
         recorded, from the moment speech starts (the preroll first), for streaming transcription. `on_pause` gets the
         audio so far once `answer_early_s` into a pause, and `on_resume` is called if they make a sound after it.
+        With `turn_state` (a service that decides when the turn is over, like stt.FluxSession), the service ends the
+        turn and says when to call on_pause and on_resume; the silence rule is only a backstop, in case it goes quiet.
         """
         self._vad.reset()
         preroll: deque[np.ndarray] = deque(maxlen=max(preroll_blocks, START_BLOCKS))
@@ -75,6 +82,9 @@ class UtteranceRecorder:
         pause_blocks = math.ceil(cfg.end_silence_s / BLOCK_SECONDS)
         longest_blocks = math.ceil(cfg.max_pause_s / BLOCK_SECONDS) if self._turn else pause_blocks
         early_blocks = math.ceil(cfg.answer_early_s / BLOCK_SECONDS) if on_pause and cfg.answer_early_s else 0
+        if turn_state:
+            pause_blocks = longest_blocks = math.ceil(BACKSTOP_S / BLOCK_SECONDS)
+            early_blocks = 0
         max_blocks = int(cfg.max_utterance_s / BLOCK_SECONDS)
         speaking, quiet = cfg.vad_threshold, cfg.vad_threshold - END_MARGIN
         # `silence` counts clearly quiet blocks since the last speech; soft ones in between neither end nor extend
@@ -88,7 +98,7 @@ class UtteranceRecorder:
             p = self._vad(block)
             if p >= quiet:
                 last_voiced = len(blocks) - 1
-                if announced:
+                if announced and not turn_state:
                     on_resume and on_resume()
                     announced, announce_at = False, silence + early_blocks
             if p >= speaking:
@@ -101,9 +111,20 @@ class UtteranceRecorder:
                 if (
                     silence == pause_blocks
                     and self._turn
+                    and not turn_state
                     and self._turn.finished(np.concatenate(blocks).tobytes()) < UNFINISHED
                 ):
                     stop_at = longest_blocks
+            if turn_state:
+                state = turn_state()
+                if state == DONE:
+                    break
+                if state == MAYBE_DONE and on_pause and not announced:
+                    on_pause(np.concatenate(blocks).tobytes())
+                    announced = True
+                elif state == LISTENING and announced:
+                    on_resume and on_resume()
+                    announced = False
 
         after = len(blocks) - 1 - last_voiced
         self.trailing_silence_s = after * BLOCK_SECONDS
