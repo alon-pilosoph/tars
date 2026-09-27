@@ -14,7 +14,7 @@ n-best confidence for an alternative containing it, relative to its top guess (-
             sentences, weight 3) plus 500 synthetic wake phrases and 700 synthetic lookalikes.
 Then tests on held-out data (the owner's test half, the held-out OpenAI voices, test interference) and prints a
 table per decision rule. A few minutes. Output: DATA/models/<setup>/hey_tars_check.json (the format the assistant
-loads) and DATA/check/<setup>.pkl.
+loads), DATA/check/<setup>.pkl, and the training rows themselves, DATA/check/<setup>_base.npz.
 """
 
 import json
@@ -22,6 +22,7 @@ import pickle
 import random
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -147,6 +148,40 @@ def build_train(wb, feat, layout: Layout, setup: str, user, accent: bool):
     return np.array(X), np.array(y), np.array(w)
 
 
+def household_layer(layout: Layout, clips: Path) -> dict:
+    """The generic layer's training rows (DATA/check/generic_base.npz) plus a household's clips (clips/positive,
+    clips/negative), each in every training condition at weight 5, as the personal layer takes the owner's. Returns
+    the layer, in the format the assistant loads."""
+    from sklearn.linear_model import LogisticRegression
+
+    wb, _ = bench_tools(layout, layout.root / "no-owner-recordings")
+    with np.load(layout.check / "generic_base.npz") as base:
+        X, y, w, phrases = list(base["X"]), list(base["y"]), list(base["w"]), [str(p) for p in base["phrases"]]
+    feat = Features(phrases)
+    rng = np.random.default_rng(1)
+    aug = layout.aug
+    tv, babble = sorted((aug / "train/tv").glob("*.wav")), sorted((aug / "train/babble").glob("*.wav"))
+    rooms, cache = sorted((aug / "train_rirs").glob("*.wav")), {}
+    for kind, label in (("positive", 1), ("negative", 0)):
+        for f in sorted((clips / kind).glob("*.wav")):
+            clip = wb.read_wav(f)
+            for condition in TRAIN_KINDS:
+                X.append(feat(augment(wb, clip, rng, condition, tv, babble, rooms, cache)))
+                y.append(label)
+                w.append(5.0)
+    clf = LogisticRegression(C=1.0, max_iter=2000, class_weight="balanced").fit(
+        np.array(X), np.array(y), sample_weight=np.array(w)
+    )
+    return {
+        "about": "Learned layer over Vosk's n-best scores, trained on the generic layer's data plus this "
+        "household's own wakes. Made by training.household.",
+        **feat.spec,
+        "weights": clf.coef_[0].round(6).tolist(),
+        "bias": round(float(clf.intercept_[0]), 6),
+        "threshold": THRESHOLD,
+    }
+
+
 def test(wb, vb, sets, feat, clf, out_path) -> None:
     """Held-out data only, in every test condition; prints the share each rule accepts per set and condition."""
     conditions = vb.CONDITIONS + [
@@ -197,6 +232,14 @@ def main():
     print(f"{args.setup}: {len(y)} training examples ({y.sum()} positive) in {time.time() - t0:.0f}s", flush=True)
     clf = LogisticRegression(C=1.0, max_iter=2000, class_weight="balanced").fit(X, y, sample_weight=w)
     layout.check.mkdir(parents=True, exist_ok=True)
+    # The training rows themselves: what training.hub hosts, and what a household's own wakes are added to.
+    np.savez(
+        layout.check / f"{args.setup}_base.npz",
+        X=X.astype(np.float32),
+        y=y.astype(np.int8),
+        w=w.astype(np.float32),
+        phrases=np.array(phrases),
+    )
     with open(layout.check / f"{args.setup}.pkl", "wb") as f:
         pickle.dump(clf, f)
     spec = {

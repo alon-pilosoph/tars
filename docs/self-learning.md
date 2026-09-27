@@ -78,8 +78,9 @@ Code: `clustering.py`, `speaker.py`.
 
 ## Learning from it
 
-Both stages are retrained together, as a pair, on a bigger machine than the Pi: the wake model's training takes
-tens of minutes and needs the training data folder (see [`training/`](../training/README.md)). The web UI doesn't
+Both stages are retrained together, as a pair, on a bigger machine than the Pi, with `uv run python -m
+training.household --pi <pi>`: the wake model's training takes tens of minutes and needs the training data folder,
+which `training/setup/prepare.sh` fills (see [`training/`](../training/README.md#training-a-households-own-models)). The web UI doesn't
 train anything. Its Models page shows the pair in use and how it tested, how much new labeled data is waiting, and
 the version history, where "Use this" switches back.
 

@@ -6,11 +6,41 @@ These scripts made the wake models in `models/`:
 |---|---|---|
 | Generic (committed, the default) | `models/generic/hey_tars.tflite` | `stage1/train.py generic` |
 | | `models/generic/hey_tars_check.json` | `stage2/train_check.py generic` |
+| A household's pair (on its own machines) | `voice_data/events/wake_models/<setup>/vN/` | `household.py` |
 | Personal (local only, gitignored) | `models/personal/hey_tars.tflite` | `stage1/train.py personal` |
 | | `models/personal/hey_tars_check.json` | `stage2/train_check.py personal` |
 
 [docs/wake-word.md](../docs/wake-word.md) explains how the two stages work, how well they do and what was tried.
-This page is how to rebuild them. Running `stage2/train_check.py generic` on the original data reproduces the
+
+## Training a household's own models
+
+What most people want: a wake model and double-check tuned to the voices and rooms of one household, from the wakes
+TARS logged there (every labeled wake and near-miss; see [self-learning](../docs/self-learning.md#learning-from-it)).
+On a Mac or a Linux machine with about 80 GB free:
+
+```bash
+bash training/setup/prepare.sh                    # once: ~45 GB of downloads and 3-4 hours, unattended, resumable
+uv run python -m training.household               # TARS runs on this machine
+uv run python -m training.household --pi pi@tars.local   # TARS runs on a Pi (SSH access, repo in ~/voice-assistant)
+```
+
+`prepare.sh` sets up microWakeWord's environment and negative sets, downloads the noise, rooms and test audio from
+their own sources, fetches the prepared clips from Hugging Face (`training/hub.py`; the voices, not any household's
+recordings), and builds the wake model's features. `training.household` then copies the labeled wakes from TARS,
+keeps every fifth aside, trains both stages (about 25 minutes), and tests the new pair against the one in use end to
+end: the household's held-out wakes, held-out voices and lookalikes in 8 conditions, and false answers per hour on
+TV and audiobooks. It prints the comparison and installs the pair only if it answers more of the household's real
+wakes (or lets fewer through that weren't for TARS) and does no worse on anything else; otherwise it asks. The Pi
+switches to it within seconds, and its Models page can switch back. Each run is kept in `DATA/household/<run>/`.
+
+On the owner's 72 recordings (30 real, 42 lookalikes), a run took 19 minutes: other voices went from 94.4% to 97.8%
+answered in quiet and 83.5% to 88.3% in noise, but lookalikes let through went from 3.0% to 4.8% and audiobooks
+brought one false answer per hour, so it wasn't installed. That's the rule doing its job: more data per run, or a
+review of what it got wrong, and the next run is compared the same way.
+
+## Rebuilding everything from scratch
+
+The rest of this page is how the generic and personal models were made, from nothing. Running `stage2/train_check.py generic` on the original data reproduces the
 committed `hey_tars_check.json` exactly (same weights, same bias). Stage 1 training isn't bit-for-bit reproducible,
 because microWakeWord's augmentation isn't seeded; a rerun gives a model of the same quality, not the same file.
 
@@ -80,6 +110,9 @@ $E -m training.eval.pipeline $D/models/personal/hey_tars.tflite \
    --checks $D/models/personal/hey_tars_check.json --window 2.5
 
 # 7. Install: copy DATA/models/<setup>/* into the repo's models/<setup>/
+
+# 8. (maintainer) the hosted clips, from this data folder (needs a Hugging Face write token to upload)
+uv run --with huggingface_hub python -m training.hub export OUT && uv run --with huggingface_hub python -m training.hub upload OUT
 ```
 
 Tip: for long steps, `nohup nice -n 19 ... > log 2>&1 &`, and keep it to two heavy jobs at once.

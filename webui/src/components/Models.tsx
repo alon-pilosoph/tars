@@ -67,8 +67,9 @@ export function Models() {
         <h2>Waiting to learn from</h2>
         <Learning m={m} />
         <p>
-          Training runs on a bigger machine, not here (see <code className="mono">training/README.md</code>): it learns
-          from these, tests the new models against the ones in use, and installs them only if they're better.
+          Training runs on a bigger machine, not here (<code className="mono">uv run python -m training.household</code>
+          , see training/README.md): it learns from these, tests the new models against the ones in use, and installs
+          them only if they're better.
         </p>
       </div>
       <div className="panel">

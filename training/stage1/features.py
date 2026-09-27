@@ -2,13 +2,14 @@
 
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic      # every voice source + real lookalikes
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
+    DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
 
 Augmentation (the "v3" recipe): room echoes (MIT + 5,000 simulated rooms), MUSAN music/speech/noise, synthesized
 babble and TV, AudioSet and FMA at -5 to 15 dB, plus EQ, distortion, pitch and gain changes. Each source is split
 80/10/10 into training/validation/testing. Spectrograms are stored as uint16, which is exact: the microfrontend's
 outputs are integers times 0.0390625. Output: DATA/features/<phrase>/{positive,near_miss}/<source>/ and
-DATA/features/user/<phrase>/{positive,negative}/. Resumable per split; about 2 hours for everything on the
-development Mac at 4 threads.
+DATA/features/user/<phrase>/{positive,negative}/, DATA/features/household/<run>/{positive,negative}/. Resumable per
+split; about 2 hours for everything synthetic on the development Mac at 4 threads, minutes for the rest.
 """
 
 import os
@@ -20,6 +21,10 @@ import numpy as np
 from training.common import Layout, add_user_arg, log, parser, user_split
 
 SCALE = 0.0390625
+
+# The owner's 15 takes were each augmented 150 times, and that was enough: a household's clips get about the same
+# total, however many there are.
+POSITIVE_SPECTROGRAMS, NEGATIVE_SPECTROGRAMS = 2250, 800
 
 # source: max clips used
 POSITIVES = {"piper_libritts": 50_000, "kokoro": 20_000, "openai": 1_312, "piper_voices": 22_000, "prosody": 25_000}
@@ -133,9 +138,6 @@ def synthetic(layout: Layout, phrase: str) -> None:
 
 def user(layout: Layout, phrase: str, recordings: Path) -> None:
     """The owner's training half, each clip augmented many times over (it's only 15 takes)."""
-    from microwakeword.audio.clips import Clips
-    from microwakeword.audio.spectrograms import SpectrogramGeneration
-
     for set_name, kind, slide, repeat in [(phrase, "positive", 5, 150), ("speech", "negative", None, 60)]:
         train, _ = user_split(recordings, set_name)
         folder = layout.features / "user_split" / set_name / "train"  # Clips reads a folder: link the half into one
@@ -144,24 +146,42 @@ def user(layout: Layout, phrase: str, recordings: Path) -> None:
             link = folder / f.name
             if not link.exists():
                 link.symlink_to(f)
-        clips = Clips(
-            input_directory=str(folder),
-            file_pattern="*.wav",
-            max_clip_duration_s=None,
-            remove_silence=False,
-            random_split_seed=None,
-        )
-        gen = SpectrogramGeneration(
-            clips=clips, augmenter=augmenter(layout, owner=True), slide_frames=slide, step_ms=10
-        )
         log(f"user features: {phrase} {kind}: {len(train)} clips x {repeat} augmentations")
-        out = layout.features / "user" / phrase / kind / "training"
-        write(out, gen.spectrogram_generator(split=None, repeat=repeat))
+        augmented(layout, folder, layout.features / "user" / phrase / kind / "training", slide, repeat)
+
+
+def household(layout: Layout, run: str) -> None:
+    """A household's training clips (training.household puts them in DATA/household/<run>/clips/train/)."""
+    for kind, slide, total in [("positive", 5, POSITIVE_SPECTROGRAMS), ("negative", None, NEGATIVE_SPECTROGRAMS)]:
+        folder = layout.root / "household" / run / "clips" / "train" / kind
+        n = len(list(folder.glob("*.wav")))
+        if not n:
+            continue
+        repeat = max(5, min(150, -(-total // n)))
+        log(f"household features: {kind}: {n} clips x {repeat} augmentations")
+        augmented(layout, folder, layout.features / "household" / run / kind / "training", slide, repeat)
+
+
+def augmented(layout: Layout, folder: Path, out: Path, slide: int | None, repeat: int) -> None:
+    """Every clip in `folder`, augmented `repeat` times with the owner's recipe, as one training split."""
+    from microwakeword.audio.clips import Clips
+    from microwakeword.audio.spectrograms import SpectrogramGeneration
+
+    clips = Clips(
+        input_directory=str(folder),
+        file_pattern="*.wav",
+        max_clip_duration_s=None,
+        remove_silence=False,
+        random_split_seed=None,
+    )
+    gen = SpectrogramGeneration(clips=clips, augmenter=augmenter(layout, owner=True), slide_frames=slide, step_ms=10)
+    write(out, gen.spectrogram_generator(split=None, repeat=repeat))
 
 
 def main():
     p = parser(__doc__)
-    p.add_argument("what", choices=["synthetic", "user"])
+    p.add_argument("what", choices=["synthetic", "user", "household"])
+    p.add_argument("run", nargs="?", help="household: the training run's name")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     add_user_arg(p)
     args = p.parse_args()
@@ -173,7 +193,12 @@ def main():
     }.items():
         os.environ.setdefault(k, v)
     layout = Layout(args.data)
-    synthetic(layout, args.phrase) if args.what == "synthetic" else user(layout, args.phrase, args.user)
+    if args.what == "synthetic":
+        synthetic(layout, args.phrase)
+    elif args.what == "user":
+        user(layout, args.phrase, args.user)
+    else:
+        household(layout, args.run)
 
 
 if __name__ == "__main__":
