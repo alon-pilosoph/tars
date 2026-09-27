@@ -133,3 +133,9 @@ Then set `enabled = true` under `[speaker]`. There's also a way without a record
 | `webui.py` | The web UI's server and API (the page itself is in `webui/`) |
 | `versions.py` | The wake model and check pairs: the installed one, trained ones, which is in use, switching live |
 | `enroll.py` | Guided recording of a person's voice for speaker ID and the wake-word verifier |
+
+## License
+
+The code is MIT (`LICENSE`). The trained "hey TARS" models in `models/generic/` are CC BY-NC-SA 4.0
+(`models/LICENSE.md`): some of what they were trained on is only licensed for non-commercial use. Every source and
+its terms are in `ATTRIBUTION.md`.
