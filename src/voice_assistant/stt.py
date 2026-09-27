@@ -22,11 +22,13 @@ from .config import STTConfig
 DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
 FLUX_URL = "wss://api.deepgram.com/v2/listen"
 # Where a turn stands, for a service that decides when the speaker is done (FluxSession.turn_state).
-LISTENING, MAYBE_DONE, DONE = "listening", "maybe_done", "done"
+LISTENING, MAYBE_DONE, DONE, FAILED = "listening", "maybe_done", "done", "failed"
 # Flux: how sure it must be that the turn is over, and how sure for an early "maybe" (a draft starts there).
 FLUX_EOT, FLUX_EAGER_EOT = 0.7, 0.5
 # Flux ends a turn after this much silence whatever it thinks; the recorder's backstop is a little sooner.
 FLUX_TIMEOUT_MS = 3000
+# Once the recording is over, Flux sends the words it has and closes within about a quarter second.
+FLUX_LAST_WORDS_S = 1.0
 # How long to wait for the last words once asked for them.
 FINAL_TIMEOUT_S = 5.0
 # Deepgram closes a stream that gets no audio for 10 s; while nobody speaks, this keeps it open.
@@ -215,15 +217,16 @@ class FluxTranscriber:
 
 class FluxSession:
     """Connects in the background as soon as it's made, like DeepgramSession, and follows the turn as Flux calls it:
-    turn_state() is LISTENING, MAYBE_DONE (worth starting an answer) or DONE. Flux closes a connection that's sent
-    a KeepAlive, so none is sent; it keeps an idle one open well past the few seconds TARS waits for a follow-up."""
+    turn_state() is LISTENING, MAYBE_DONE (worth starting an answer), DONE, or FAILED (the recorder's own rules take
+    over). Flux closes a connection that's sent a KeepAlive, so none is sent; it keeps an idle one open well past the
+    few seconds TARS waits for a follow-up."""
 
     def __init__(self, url: str, key: str):
         self._outbox: queue.Queue[bytes | None] = queue.Queue()
         self._changed = threading.Condition()
         self._state, self._text = LISTENING, ""
         self._error: Exception | None = None
-        self._fed = False
+        self._fed = self._finished = self._closed = False
         threading.Thread(target=self._run, args=(url, key), daemon=True, name="flux").start()
 
     def feed(self, pcm: bytes) -> None:
@@ -232,17 +235,29 @@ class FluxSession:
 
     def turn_state(self) -> str:
         with self._changed:
-            return self._state
+            return FAILED if self._error is not None and self._state != DONE else self._state
+
+    def finish(self) -> None:
+        """The recording is over, whoever decided it: Flux gets no more audio, sends what it heard and closes."""
+        with self._changed:
+            self._finished = True
+        self._outbox.put(None)
 
     def transcript(self) -> str:
-        """At MAYBE_DONE, the words so far (a draft); otherwise the turn's final words, waiting for Flux to call it."""
+        """The words so far, at once, until the recording is finished; then the turn's last words, which Flux sends
+        within a moment. "" if nobody said anything; raises only if Flux failed and heard nothing."""
         if not self._fed:
             return ""
         with self._changed:
-            self._changed.wait_for(lambda: self._state != LISTENING or self._error is not None, FINAL_TIMEOUT_S)
-            if self._state == LISTENING:
-                raise self._error or TimeoutError("Flux didn't end the turn in time")
-            return self._text.strip()
+            if self._finished and self._state != DONE:
+                self._changed.wait_for(
+                    lambda: self._state == DONE or self._closed or self._error is not None, FLUX_LAST_WORDS_S
+                )
+            if self._text or (self._closed and self._error is None):
+                return self._text.strip()
+            if not self._finished and self._error is None:
+                return ""  # a draft asking before any words came in
+            raise self._error or TimeoutError("Flux didn't send the last words in time")
 
     def close(self) -> None:
         self._outbox.put(None)
@@ -256,7 +271,7 @@ class FluxSession:
                 while (item := self._outbox.get()) is not None:
                     ws.send(item)
                 ws.send(json.dumps({"type": "CloseStream"}))
-        except Exception as e:  # noqa: BLE001 - reported by transcript(), which the fallback catches
+        except Exception as e:  # noqa: BLE001 - FAILED for the recorder; transcript() raises for the fallback
             self._fail(e)
 
     def _receive(self, ws) -> None:
@@ -277,13 +292,15 @@ class FluxSession:
                     elif kind == "EndOfTurn":
                         self._state = DONE
                     self._changed.notify_all()
-            self._fail(None)
-        except Exception as e:  # noqa: BLE001 - reported by transcript(), which the fallback catches
+            with self._changed:
+                self._closed = True
+                self._changed.notify_all()
+        except Exception as e:  # noqa: BLE001 - FAILED for the recorder; transcript() raises for the fallback
             self._fail(e)
 
-    def _fail(self, error: Exception | None) -> None:
+    def _fail(self, error: Exception) -> None:
         with self._changed:
-            self._error = self._error or error or ConnectionError("Flux closed the stream")
+            self._error = self._error or error
             self._changed.notify_all()
 
 
@@ -304,6 +321,10 @@ class _FallbackSession:
         # A main session that decides when the turn is over keeps doing so; if it fails, the recorder's own
         # silence rule ends the turn and the backup transcribes.
         self.turn_state = getattr(main, "turn_state", None)
+
+    def finish(self) -> None:
+        if finish := getattr(self._main, "finish", None):
+            finish()
 
     def feed(self, pcm: bytes) -> None:
         self._main.feed(pcm)

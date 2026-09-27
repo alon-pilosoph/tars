@@ -229,6 +229,8 @@ class Assistant:
             resumed()
             session.close()
             return None
+        if finish := getattr(session, "finish", None):
+            finish()  # a service that follows the turn stops listening, and sends its last words
         return Utterance(
             pcm,
             session,

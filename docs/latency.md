@@ -89,7 +89,7 @@ Deepgram's voices, and its Flux model deciding when you've finished, both behind
 | Today: Nova-3, Silero + Smart Turn, Onyx | 2.63-3.02 s | 5.58 s |
 | Deepgram voice (Flux Cliff or Aura-2 Zeus) | 1.99-2.05 s | 2.44 s |
 | Flux turn-taking, Onyx | 2.03 s | 3.58 s |
-| Flux turn-taking, Deepgram voice | 1.69-1.93 s | 3.31 s |
+| Flux turn-taking, Deepgram voice | 1.59-2.47 s (6 runs, most under 1.95 s) | 3.37 s |
 
 **The voice.** A warm connection to Deepgram starts speaking in about 0.27 s; opening one takes about 0.7 s from
 here, so `tts.DeepgramSpeech` keeps two open from the wake word (idle ones stay usable for minutes). Onyx's first
@@ -101,16 +101,18 @@ in after an unfinished word ("and", "the", "to"...), 0.5, 0.8 or 1.2 s long.
 
 | | Today (Silero + Smart Turn) | Flux |
 |---|---|---|
-| Turn over after a whole sentence | 0.88 s | 0.94 s median, 90% within 1.21 s |
-| Cut-offs in a 0.5 / 0.8 / 1.2 s pause | 0 / 0 / **18 of 18** | 0 / 0 / 1 of 18 |
+| Turn over after a whole sentence | 0.88 s | 1.05 s median, 90% within 1.29 s |
+| Cut-offs in a 0.5 / 0.8 / 1.2 s pause | 0 / 0 / **18 of 18** | 0 / 1 / 1 of 18 |
 
 Today's setup cut off every 1.2 s pause because Smart Turn called them finished: checked after 0.8 s of silence, it
 scored 17 of these 18 unfinished sentences as done (after 0.2 s, 13 of 18), so it almost never extends the wait.
 Flux hears the words too ("...and the" isn't a sentence). Spliced pauses aren't real hesitations (no "um", no
 stretched last word), which may flatter Flux; real use will tell. Flux's early "maybe done" (where a draft starts)
-came 0.57 s after the end of a sentence, and was taken back in 20 of the 54 paused ones: a draft thrown away, about
-one extra brain call in three. If Flux goes quiet, the recorder ends the turn anyway after 2.5 s of silence and
-OpenAI transcribes the recording.
+came 0.65 s after the end of a sentence, and was taken back in 20 of the 54 paused ones: a draft thrown away, about
+one extra brain call in three. Flux ends a turn Flux's way in the benchmark as in the assistant (the same settings,
+the same 2.5 s backstop, judged by where in the audio it decided). If Flux fails, the recorder's own rules take
+over for the rest of the turn and OpenAI transcribes the recording; if the recording ends before Flux calls it,
+Flux sends the words it has within a quarter second.
 
 ## Tried and dropped
 

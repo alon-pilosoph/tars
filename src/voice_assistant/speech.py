@@ -16,8 +16,9 @@ _DONE = object()
 
 
 # Web search answers carry their sources inline, as "([site](url))": for the screen, never for reading out.
-CITATION = re.compile(r"\s*\(\s*\[[^\]]*\]\([^)\s]*\)\s*\)")
-LINK = re.compile(r"\[([^\]]*)\]\([^)\s]*\)")  # [words](url): say the words
+_URL_IN_LINK = r"\((?:[^()\s]|\([^()\s]*\))*\)"  # the (url) part, which may hold one level of (brackets)
+CITATION = re.compile(r"\s*\(\s*\[[^\]]*\]" + _URL_IN_LINK + r"\s*\)")
+LINK = re.compile(r"\[([^\]]*)\]" + _URL_IN_LINK)  # [words](url): say the words
 URL = re.compile(r"\s*\bhttps?://\S+")
 
 
@@ -30,12 +31,21 @@ def split_sentences(pieces: Iterable[str]) -> Iterator[str]:
     buffer = ""
     for piece in pieces:
         buffer += piece
-        while match := SENTENCE_END.search(buffer):
+        while match := _sentence_end(buffer):
             sentence, buffer = clean_for_speech(buffer[: match.end()]), buffer[match.end() :]
             if sentence:
                 yield sentence
     if sentence := clean_for_speech(buffer):
         yield sentence
+
+
+def _sentence_end(text: str) -> re.Match | None:
+    """The first sentence end that isn't inside a [link](...), which only makes sense cleaned whole."""
+    for match in SENTENCE_END.finditer(text):
+        before = text[: match.end()]
+        if before.rfind("[") <= before.rfind(")"):
+            return match
+    return None
 
 
 class _Prefetch:

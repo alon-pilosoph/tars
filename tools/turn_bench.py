@@ -1,7 +1,6 @@
 """Does TARS cut you off? The end of the turn, today's way (Silero VAD + Smart Turn) against Deepgram's Flux.
 
     uv run python tools/turn_bench.py                     # both, on the owner's recorded sentences
-    uv run python tools/turn_bench.py --flux-eot 0.8      # a more patient Flux
 
 The owner's own sentences (voice_data/*/*/speech/), each played twice: whole, to see how soon each way knows the
 turn is over; and with a mid-sentence pause (after "and", "the", "with"...; 0.5, 0.8 or 1.2 s of real room tone)
@@ -29,8 +28,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from latency_bench import RoomTone
 
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
-from voice_assistant.config import load_config
-from voice_assistant.recorder import make_recorder
+from voice_assistant.config import STTConfig, load_config
+from voice_assistant.recorder import BACKSTOP_S, make_recorder
+from voice_assistant.stt import FluxTranscriber
 
 REPO = Path(__file__).parents[1]
 UNFINISHED = {
@@ -155,51 +155,49 @@ def local_end(recorder, clip: Clip) -> float | None:
     return mic.read_count * BLOCK_SAMPLES / SAMPLE_RATE if pcm else None
 
 
-def flux_end(key: str, clip: Clip, eot: float, eager: float) -> dict:
-    """Stream the clip to Flux at real-time pace; when (wall clock, from the clip's start) it says each thing."""
+def flux_end(key: str, clip: Clip) -> dict:
+    """Stream the clip to Flux at real-time pace, with the assistant's settings. For each event, where in the audio
+    Flux was (its audio_window_end) and when it arrived (wall clock), both from the clip's start."""
     from websockets.sync.client import connect
 
-    url = (
-        f"wss://api.deepgram.com/v2/listen?model=flux-general-en&encoding=linear16&sample_rate={SAMPLE_RATE}"
-        f"&eot_threshold={eot}&eager_eot_threshold={eager}"
-    )
-    seen: dict = {"eager": [], "resumed": [], "end": None}
-    with connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=10) as ws:
-        t0 = time.perf_counter()
+    url = FluxTranscriber(key, STTConfig())._url
+    seen: dict = {"eager": [], "resumed": [], "end": None, "end_audio": None, "error": None}
+    try:
+        with connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=10) as ws:
+            t0 = time.perf_counter()
 
-        def feed():
-            for n, i in enumerate(range(0, len(clip.audio), BLOCK_SAMPLES)):
-                wait = t0 + n * BLOCK_SAMPLES / SAMPLE_RATE - time.perf_counter()
-                if wait > 0:
-                    time.sleep(wait)
+            def feed():
+                for n, i in enumerate(range(0, len(clip.audio), BLOCK_SAMPLES)):
+                    wait = t0 + (n + 1) * BLOCK_SAMPLES / SAMPLE_RATE - time.perf_counter()  # a block is sent once
+                    if wait > 0:  # it's all been heard
+                        time.sleep(wait)
+                    try:
+                        ws.send(clip.audio[i : i + BLOCK_SAMPLES].tobytes())
+                    except Exception:  # noqa: BLE001 - the socket closed once the turn ended
+                        return
+
+            threading.Thread(target=feed, daemon=True).start()
+            deadline = t0 + len(clip.audio) / SAMPLE_RATE + 1.0
+            while time.perf_counter() < deadline:
                 try:
-                    ws.send(clip.audio[i : i + BLOCK_SAMPLES].tobytes())
-                except Exception:  # noqa: BLE001 - the socket closed once the turn ended
-                    return
-
-        threading.Thread(target=feed, daemon=True).start()
-        deadline = t0 + len(clip.audio) / SAMPLE_RATE + 1.0
-        while time.perf_counter() < deadline:
-            try:
-                event = json.loads(ws.recv(timeout=0.5))
-            except TimeoutError:
-                continue
-            t = time.perf_counter() - t0
-            kind = event.get("event")
-            if kind == "EagerEndOfTurn":
-                seen["eager"].append(t)
-            elif kind == "TurnResumed":
-                seen["resumed"].append(t)
-            elif kind == "EndOfTurn" and seen["end"] is None:
-                seen["end"] = t
-                break
+                    event = json.loads(ws.recv(timeout=0.5))
+                except TimeoutError:
+                    continue
+                t, kind = time.perf_counter() - t0, event.get("event")
+                if kind == "EagerEndOfTurn":
+                    seen["eager"].append(t)
+                elif kind == "TurnResumed":
+                    seen["resumed"].append(t)
+                elif kind == "EndOfTurn":
+                    seen["end"], seen["end_audio"] = t, event.get("audio_window_end")
+                    break
+    except Exception as e:  # noqa: BLE001 - one failed connection shouldn't cost the whole run
+        seen["error"] = repr(e)
     return seen
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--flux-eot", type=float, default=0.7, help="Flux's eot_threshold (0.5-1.0)")
-    p.add_argument("--flux-eager", type=float, default=0.5, help="Flux's eager_eot_threshold")
     p.add_argument("--skip-local", action="store_true")
     args = p.parse_args()
     key = dotenv_values(REPO / ".env")["DEEPGRAM_API_KEY"]
@@ -210,9 +208,11 @@ def main():
     paused = [c for c in todo if c.resume_s is not None]
     print(f"{len(whole)} whole sentences, {len(paused)} with a pause")
 
-    def report(name, ends):
+    def report(name, ends, cut_at=None):
+        """`ends`: when the turn was over; `cut_at`: where in the audio it was decided, when that's known."""
+        cut_at = cut_at or ends
         waits = [ends[c.name] - c.speech_end_s for c in whole if ends.get(c.name) is not None]
-        cut = [c for c in paused if ends.get(c.name) is not None and ends[c.name] < c.resume_s]
+        cut = [c for c in paused if cut_at.get(c.name) is not None and cut_at[c.name] < c.resume_s]
         by_pause = {s: sum(1 for c in cut if f"pause {s}s" in c.name) for s in PAUSES_S}
         n_each = len(paused) // len(PAUSES_S)
         print(f"\n{name}")
@@ -227,7 +227,7 @@ def main():
             + ")"
         )
         for c in cut:
-            print(f"    - {c.name}: ended {c.resume_s - ends[c.name]:.2f}s before the rest")
+            print(f"    - {c.name}: ended {c.resume_s - cut_at[c.name]:.2f}s before the rest")
 
     if not args.skip_local:
         recorder = make_recorder(cfg, REPO)
@@ -238,15 +238,29 @@ def main():
         )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = dict(
-            zip(
-                [c.name for c in todo],
-                pool.map(lambda c: flux_end(key, c, args.flux_eot, args.flux_eager), todo),
-                strict=True,
-            )
-        )
-    report(f"Flux (eot_threshold {args.flux_eot})", {n: r["end"] for n, r in results.items()})
-    eager = [results[c.name]["eager"][0] - c.speech_end_s for c in whole if results[c.name]["eager"]]
+        results = dict(zip([c.name for c in todo], pool.map(lambda c: flux_end(key, c), todo), strict=True))
+    failed = {n: r["error"] for n, r in results.items() if r["error"]}
+    if failed:
+        print(f"\n{len(failed)} clips couldn't reach Flux, left out: {next(iter(failed.values()))}")
+    # As the assistant runs it: silence past BACKSTOP_S ends the turn whatever Flux thinks.
+    by_clip = {c.name: c for c in todo}
+    ends, cut_at = {}, {}
+    for n, r in results.items():
+        if r["error"]:
+            continue
+        spoken_to = by_clip[n].speech_end_s
+        backstop = spoken_to + BACKSTOP_S
+        ends[n] = min(r["end"], backstop) if r["end"] is not None else backstop
+        cut_at[n] = r["end_audio"] if r["end_audio"] is not None else ends[n]
+    backstopped = sum(1 for c in whole if c.name in ends and ends[c.name] >= c.speech_end_s + BACKSTOP_S)
+    report("Flux (the assistant's settings: eot_threshold 0.7, eager 0.5, timeout 3 s)", ends, cut_at)
+    print(f"  ended by the {BACKSTOP_S} s backstop instead of Flux: {backstopped}/{len(whole)} whole sentences")
+    eager = []
+    for c in whole:
+        r = results[c.name]
+        before_end = [t for t in r["eager"] if r["end"] is None or t <= r["end"]]
+        if before_end:
+            eager.append(before_end[-1] - c.speech_end_s)
     wasted = sum(1 for c in paused if results[c.name]["eager"] and results[c.name]["resumed"])
     if eager:
         print(

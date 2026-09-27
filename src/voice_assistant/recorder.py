@@ -7,7 +7,7 @@ import numpy as np
 
 from .audio import BLOCK_SECONDS, Microphone
 from .config import Config, RecorderConfig
-from .stt import DONE, LISTENING, MAYBE_DONE
+from .stt import DONE, FAILED, LISTENING, MAYBE_DONE
 from .turn import SmartTurn
 from .vad import SileroVAD
 
@@ -82,6 +82,7 @@ class UtteranceRecorder:
         pause_blocks = math.ceil(cfg.end_silence_s / BLOCK_SECONDS)
         longest_blocks = math.ceil(cfg.max_pause_s / BLOCK_SECONDS) if self._turn else pause_blocks
         early_blocks = math.ceil(cfg.answer_early_s / BLOCK_SECONDS) if on_pause and cfg.answer_early_s else 0
+        own_rules = pause_blocks, longest_blocks, early_blocks  # what applies if the service fails
         if turn_state:
             pause_blocks = longest_blocks = math.ceil(BACKSTOP_S / BLOCK_SECONDS)
             early_blocks = 0
@@ -117,6 +118,11 @@ class UtteranceRecorder:
                     stop_at = longest_blocks
             if turn_state:
                 state = turn_state()
+                if state == FAILED:  # the service is gone: the recorder's own rules take over from here
+                    turn_state = None
+                    pause_blocks, longest_blocks, early_blocks = own_rules
+                    stop_at, announce_at = pause_blocks, silence + early_blocks
+                    continue
                 if state == DONE:
                     break
                 if state == MAYBE_DONE and on_pause and not announced:

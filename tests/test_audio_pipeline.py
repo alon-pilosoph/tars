@@ -158,6 +158,7 @@ def test_markdown_is_stripped_before_speaking():
         ("([mayoclinic.org](https://www.mayoclinic.org/x?p=1&utm_source=openai))", ""),
         ("Try [this frittata](https://example.com/frittata) tonight.", "Try this frittata tonight."),
         ("It's at https://example.com/a?b=1 if you want it.", "It's at if you want it."),
+        ("See [Python](https://en.wikipedia.org/wiki/Python_(programming_language)) for more.", "See Python for more."),
     ],
 )
 def test_links_and_citations_are_never_read_out(text, spoken):
@@ -270,3 +271,15 @@ def test_if_flux_goes_quiet_the_backstop_ends_the_turn():
     rec = recorder("SSSSSS" + "." * 60, end_silence_s=0.8)
     rec.record(mic(), turn_state=FluxTurns("L"))
     assert rec.trailing_silence_s == pytest.approx(2.56)  # BACKSTOP_S, in whole 80 ms blocks
+
+
+def test_if_flux_fails_mid_turn_the_recorder_s_own_rules_take_over():
+    events = []
+    rec = recorder("SSSSSS" + "." * 60, end_silence_s=0.8, answer_early_s=0.2)
+    rec.record(mic(), on_pause=lambda pcm: events.append("pause"), turn_state=lambda: "failed")
+    assert rec.trailing_silence_s == pytest.approx(0.8) and events == ["pause"]  # not the 2.5 s backstop
+
+
+def test_a_sentence_never_ends_inside_a_link():
+    pieces = ["Read the [Dr. Who fan ", "site](https://example.com/who) now. ", "Then rest."]
+    assert list(split_sentences(pieces)) == ["Read the Dr. Who fan site now.", "Then rest."]

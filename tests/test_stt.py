@@ -198,13 +198,40 @@ def test_flux_follows_the_turn_and_its_words(flux):
     session.close()
 
 
-def test_flux_that_never_ends_the_turn_raises_so_the_backup_transcribes(flux, monkeypatch):
-    monkeypatch.setattr(stt, "FINAL_TIMEOUT_S", 0.05)
-    session = flux(FakeFlux([("StartOfTurn", "hello")]))
+def test_a_recording_that_ends_before_flux_does_gets_flux_s_last_words(flux):
+    session = flux(FakeFlux([("StartOfTurn", "what should"), ("Update", "what should I cook, um")]))
     session.feed(b"\0\0")
-    with pytest.raises(TimeoutError):
+    session.feed(b"\0\0")
+    wait_for_text(session, "what should I cook, um")  # a draft reads the words so far without waiting
+    session.finish()  # the backstop ended the turn: Flux sends what it has and closes
+    assert session.transcript() == "what should I cook, um"
+
+
+def test_a_turn_with_no_words_is_empty_not_an_error(flux):
+    session = flux(FakeFlux([]))
+    session.feed(b"\0\0")
+    session.finish()
+    assert session.transcript() == ""
+
+
+def test_flux_failing_hands_over_to_the_recorder_and_the_backup(flux):
+    def broken(url, additional_headers=None, open_timeout=None):
+        raise ConnectionRefusedError("no Flux today")
+
+    session = flux(broken)
+    session.feed(b"\0\0")
+    wait_for(session, stt.FAILED)
+    session.finish()
+    with pytest.raises(ConnectionRefusedError):
         session.transcript()
-    session.close()
+
+
+def wait_for_text(session, text):
+    for _ in range(200):
+        if session.transcript() == text:
+            return
+        threading.Event().wait(0.01)
+    raise AssertionError(f"never heard {text!r}")
 
 
 def test_the_fallback_session_passes_flux_s_turns_through():

@@ -44,6 +44,7 @@ class FakeSocket:
 def voice(model: str, sockets: list) -> DeepgramSpeech:
     v = DeepgramSpeech("key", TTSConfig(provider="deepgram", model=model))
     v._connect = lambda: sockets.pop(0)
+    v._discard = lambda ws: ws.close()  # the real one closes on another thread
     return v
 
 
@@ -87,3 +88,49 @@ def test_a_deepgram_error_ends_the_reply_with_the_reason():
     with pytest.raises(RuntimeError, match="bad model"):
         b"".join(v.stream("Hi."))
     assert socket.closed
+
+
+class DiesOnRecv(FakeSocket):
+    """Takes the text, then turns out closed: the server dropped it while it sat idle."""
+
+    def recv(self, timeout=None):
+        raise ConnectionClosed(None, None)
+
+
+class Stalls(FakeSocket):
+    def recv(self, timeout=None):
+        raise TimeoutError("nothing for 4 s")
+
+
+def test_a_warm_connection_found_closed_before_any_audio_is_replaced():
+    dead, fresh = DiesOnRecv(True), FakeSocket(True)
+    v = voice("flux-cliff-en", [fresh])
+    v._idle.put((time.monotonic(), dead))
+    assert b"".join(v.stream("Still here.")) == b"Still here." and dead.closed
+
+
+def test_a_stalled_voice_is_not_retried():
+    stalled, spare = Stalls(True), FakeSocket(True)
+    v = voice("flux-cliff-en", [stalled, spare])
+    with pytest.raises(TimeoutError):
+        b"".join(v.stream("Hi."))
+    assert stalled.closed and spare.spoken == []  # no second 4 s wait
+
+
+def test_no_more_than_a_few_idle_connections_are_kept():
+    sockets = [FakeSocket(True) for _ in range(6)]
+    v = voice("flux-cliff-en", list(sockets))
+    streams = [v.stream(f"Sentence {i}.") for i in range(6)]
+    for s_ in streams:
+        next(s_)  # six sentences synthesizing at once, like a long reply
+    for s_ in streams:
+        b"".join(s_)
+    assert v._idle.qsize() == DeepgramSpeech.KEEP and sum(s_.closed for s_ in sockets) == 6 - DeepgramSpeech.KEEP
+
+
+def test_warming_replaces_connections_too_old_to_trust():
+    old = FakeSocket(True)
+    v = voice("flux-cliff-en", [FakeSocket(True), FakeSocket(True)])
+    v._idle.put((-1000.0, old))
+    v._top_up()
+    assert old.closed and v._idle.qsize() == DeepgramSpeech.READY
