@@ -11,7 +11,7 @@ OpenAI after a wake leaves the house.
 │   writes voice_data/events/ (SQLite + WAVs)    │
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
 │   the React page + API over the same log       │◄── away from home: Tailscale (optional)
-│   re-cluster, voiceprints, retrain the check   │── nightly encrypted backup ──► S3 / B2 (optional)
+│   re-cluster, voiceprints, switch wake models  │── nightly encrypted backup ──► S3 / B2 (optional)
 └────────────────────────────────────────────────┘
 ```
 
@@ -75,12 +75,12 @@ down. The web UI's build is committed, so the Pi needs no Node. By hand, the ste
 | What | Learns from | Where | How long |
 | --- | --- | --- | --- |
 | **Voiceprints** (who's talking) | requests in a named voice (5+) | the Pi, on Re-cluster | seconds (built) |
-| **The double-check's layer** (answer / ask / ignore) | labeled wakes | the Pi, on "Retrain now" | seconds (built) |
-| **Stage 1, the wake model** | synthetic voices plus the household's labeled clips | a bigger machine, rarely | hours ([`training/`](../training/README.md)) |
+| **The wake model and its double-check**, as a pair | synthetic voices plus the household's labeled wakes and near-misses | a bigger machine, now and then | tens of minutes ([`training/`](../training/README.md)) |
 
-"Retrain now" is described in [self-learning](self-learning.md#learning-from-it). Given what the experiments showed
-(more stage 1 training made it worse, and accented clips hurt it), stage 1 retraining should be rare; most of the
-gains should come from the double-check and the wake threshold.
+The Pi only runs the pairs; see [self-learning](self-learning.md#learning-from-it) for how they're installed and
+switched. Given what the experiments showed (more wake model training made it worse, and accented clips hurt it),
+a new pair should be trained rarely, once there's a good number of new labeled wakes, and always tested end to end
+before it's installed.
 
 ## A first test run
 

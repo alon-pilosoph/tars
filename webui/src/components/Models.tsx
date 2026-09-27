@@ -1,22 +1,23 @@
-import { plural, stamp, when } from "../format";
-import { retrain, rollback, useStore } from "../store";
-import type { Metric, RetrainResult } from "../types";
+import { stamp } from "../format";
+import { rollback, setTab, useStore } from "../store";
+import type { Metric, Models as ModelsInfo } from "../types";
 
 export function Models() {
   const s = useStore();
-  const a = s.models?.active || {},
-    h = s.models?.history || [],
-    labeled = s.models?.trainable ?? 0;
+  const m = s.models,
+    a = m?.active || {},
+    h = m?.history || [],
+    rows = m?.results || [];
   return (
     <>
       <div className="head">
         <div>
           <h1>Models</h1>
-          <p>What TARS uses to hear its name. It only retrains when you ask.</p>
+          <p>What TARS uses to hear its name, and what it can learn from next.</p>
         </div>
       </div>
       <div className="panel">
-        <h2>In use now</h2>
+        <h2>In use now{a.version && a.version !== "installed" ? `: ${a.version}` : ""}</h2>
         <dl className="spec">
           <div>
             <dt>Wake model</dt>
@@ -35,33 +36,44 @@ export function Models() {
             <dd>{a.check_window_s ? `${a.check_window_s} s` : "—"}</dd>
           </div>
         </dl>
+        {rows.length > 0 && (
+          <div className="result">
+            <p className="m">How it tested against the models it replaced:</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Test</th>
+                  <th className="num">Before</th>
+                  <th className="num">These</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.name}>
+                    <td>{r.name}</td>
+                    <td className="num">{r.current}</td>
+                    <td className="num">
+                      {r.candidate}
+                      <Delta m={r} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
       <div className="panel">
-        <h2>Retrain the double-check</h2>
+        <h2>Waiting to learn from</h2>
+        <Learning m={m} />
         <p>
-          Learns from your {plural(labeled, "labeled wake")} (conversations label most of them), keeping every fifth
-          aside. The candidate is tested on those and on a fixed set: held-out voices in quiet and in noise, lookalikes,
-          an hour of TV and an hour of audiobooks. It only replaces the current check if it does better on your wakes
-          and no worse on anything else.
+          Training runs on a bigger machine, not here (see <code className="mono">training/README.md</code>): it learns
+          from these, tests the new models against the ones in use, and installs them only if they're better.
         </p>
-        <div className="train-row">
-          <button className="btn primary" disabled={s.retraining} onClick={retrain}>
-            {s.retraining ? (
-              <>
-                <span className="spin" />
-                Retraining…
-              </>
-            ) : (
-              "Retrain now"
-            )}
-          </button>
-          <span className="note">{retrainNote(s.retraining, labeled)}</span>
-        </div>
-        <Result r={s.lastRetrain} retraining={s.retraining} />
       </div>
       <div className="panel">
         <h2>History</h2>
-        {s.models?.problem && <div className="notice">{s.models.problem}</div>}
+        {m?.problem && <div className="notice">{m.problem}</div>}
         {h.length ? (
           <div className="hist" role="table">
             <div className="h">Version</div>
@@ -83,7 +95,7 @@ export function Models() {
                 </div>,
                 <div key={`a${i}`} className={`a${last}`}>
                   {!x.active && (
-                    <button className="btn sm" disabled={s.retraining} onClick={() => rollback(x.version)}>
+                    <button className="btn sm" onClick={() => rollback(x.version)}>
                       Use this
                     </button>
                   )}
@@ -92,19 +104,54 @@ export function Models() {
             })}
           </div>
         ) : (
-          <p>Only the check TARS was installed with, so far.</p>
+          <p>Only the models TARS was installed with, so far.</p>
         )}
       </div>
     </>
   );
 }
 
-/** Signed change from current to candidate, green when it's better. "0 / 0" (TV / audiobooks) counts as the sum. */
+function Learning({ m }: { m: ModelsInfo | null }) {
+  const l = m?.learning,
+    since = m?.active.version && m.active.version !== "installed" ? ` since ${m.active.version}` : "";
+  if (!l) return null;
+  const learned = [
+    [l.real, "real hey TARS"],
+    [l.missed, "missed hey TARS"],
+    [l.not_real, "not for TARS"],
+  ] as const;
+  return (
+    <>
+      <dl className="spec">
+        {learned.map(([n, what]) => (
+          <div key={what}>
+            <dt>{what}</dt>
+            <dd>{n}</dd>
+          </div>
+        ))}
+        <div>
+          <dt>to answer in Review</dt>
+          <dd>{l.to_review}</dd>
+        </div>
+      </dl>
+      <p>
+        Labeled wakes{since}. A missed "hey TARS" is a near-miss followed by a real wake: the ones the wake model most
+        needs to learn from.
+      </p>
+      {l.to_review > 0 && (
+        <div className="train-row">
+          <button className="btn sm" onClick={() => setTab("review")}>
+            Answer them in Review
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Signed change from before to after, green when it's better. */
 function Delta({ m }: { m: Metric }) {
-  const n = (v: string) =>
-    String(v)
-      .split("/")
-      .reduce((a, x) => a + (parseFloat(x) || 0), 0);
+  const n = (v: string) => parseFloat(v) || 0;
   const cur = m.current,
     cand = m.candidate;
   if (isNaN(parseFloat(cur)) || isNaN(parseFloat(cand))) return null;
@@ -119,93 +166,5 @@ function Delta({ m }: { m: Metric }) {
       {Math.abs(Math.round(d * 10) / 10)}
       {pct ? " pts" : ""}
     </span>
-  );
-}
-
-function retrainNote(retraining: boolean, labeled: number) {
-  if (retraining) return "The first time, this can take a minute.";
-  return labeled ? "" : "Talk to TARS for a few days first: conversations are what it learns from.";
-}
-
-const SPIN = {
-  width: 12,
-  height: 12,
-  border: "2px solid currentColor",
-  borderRightColor: "transparent",
-  borderRadius: "50%",
-  animation: "spin .8s linear infinite",
-};
-
-function Result({ r, retraining }: { r: RetrainResult | null | undefined; retraining: boolean }) {
-  if (retraining)
-    return (
-      <div className="result">
-        <div className="verdict">
-          <span className="badge mute">
-            <span className="spin" style={SPIN} />
-            Retraining
-          </span>
-          <span className="m">building a candidate and testing it against the fixed set</span>
-        </div>
-        <div className="progress">
-          <i />
-        </div>
-      </div>
-    );
-  if (!r)
-    return (
-      <div className="result">
-        <p style={{ margin: 0, color: "var(--ink-3)" }}>No retrain yet.</p>
-      </div>
-    );
-  if (r.status === "skipped")
-    return (
-      <div className="result">
-        <div className="notice">{r.summary}</div>
-      </div>
-    );
-  const rows = r.metrics || [];
-  return (
-    <div className="result">
-      <div className="verdict">
-        {r.status === "swapped" ? (
-          <>
-            <span className="badge yes">✓ Better: now in use</span>
-            <span className="mono" style={{ fontWeight: 500 }}>
-              {r.version || ""}
-            </span>
-          </>
-        ) : (
-          <span className="badge no">✗ Not better: kept the current check</span>
-        )}
-        <span className="m">
-          Trained on {r.labeled ?? 0} of your wakes{r.ts ? `, ${when(r.ts)}` : ""}
-        </span>
-      </div>
-      {r.summary && <div className="notice">{r.summary}</div>}
-      {rows.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Test</th>
-              <th className="num">Current</th>
-              <th className="num">Candidate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(m => (
-              <tr key={m.name}>
-                <td>{m.name}</td>
-                <td className="num">{m.current}</td>
-                <td className="num">
-                  {m.candidate}
-                  <Delta m={m} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
   );
 }

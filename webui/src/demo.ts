@@ -1,7 +1,7 @@
 /* Demo data (only with ?demo): the design's sample household, so every state can be opened from a link. */
 import type { Opts } from "./api";
 import { LINK } from "./params";
-import type { Cluster, Conversation, Item, Label, Models, RetrainResult, Speaker, TarsEvent, Turn } from "./types";
+import type { Cluster, Conversation, Item, Label, Metric, Models, Speaker, TarsEvent, Turn } from "./types";
 
 type Row = [
   number,
@@ -369,38 +369,50 @@ function demoInit() {
     convs,
     items: empty ? [] : items,
     models: {
-      active: {
-        wake_model: "models/generic/hey_tars.tflite",
-        threshold: 0.5,
-        check_window_s: 3.0,
-        check_model: empty ? "models/generic/hey_tars_check.json" : "voice_data/events/checks/generic/v2.json",
-      },
+      active: empty
+        ? {
+            version: "installed",
+            wake_model: "models/generic/hey_tars.tflite",
+            threshold: 0.5,
+            check_model: "models/generic/hey_tars_check.json",
+            check_window_s: 3.0,
+          }
+        : {
+            version: "v2",
+            wake_model: "voice_data/events/wake_models/generic/v2/hey_tars.tflite",
+            threshold: 0.5,
+            check_model: "voice_data/events/wake_models/generic/v2/hey_tars_check.json",
+            check_window_s: 3.0,
+          },
+      results: empty ? null : MOCK_RESULTS,
       history: [
         ...(empty
           ? []
           : [
               {
-                version: "check v2",
+                version: "v2",
                 ts: now - 3600 * 5,
                 active: true,
-                note: "Retrained on 43 of your wakes (37 real, 6 not).",
+                note: "Trained on 43 of your wakes (37 real, 6 not) and 5 missed ones.",
               },
               {
-                version: "check v1",
+                version: "v1",
                 ts: now - 3600 * 30,
                 active: false,
-                note: "Retrained on 21 of your wakes (18 real, 3 not).",
+                note: "Trained on 21 of your wakes (18 real, 3 not) and 2 missed ones.",
               },
             ]),
         {
           version: "installed",
           ts: now - 3600 * 24 * 12,
           active: empty,
-          note: "What TARS was installed with (models/generic/hey_tars_check.json).",
+          note: "What TARS was installed with (models/generic/hey_tars.tflite).",
         },
       ],
-      last_retrain: null,
-      trainable: empty ? 0 : 52,
+      problem: null,
+      learning: empty
+        ? { real: 0, not_real: 0, missed: 0, to_review: 0 }
+        : { real: 9, not_real: 2, missed: 3, to_review: 4 },
     },
   };
 }
@@ -582,44 +594,15 @@ export const MOCK_TOASTS = {
 };
 
 const LOW = { lower_is_better: true };
-export const MOCK_RETRAIN: Record<string, RetrainResult> = {
-  skipped: {
-    status: "skipped",
-    summary:
-      "Not enough to learn from yet: 3 labeled wakes, and every fifth is kept aside to test on. Keep talking to TARS, and answer the wakes on the Review tab.",
-  },
-  better: {
-    status: "swapped",
-    version: "check v3",
-    labeled: 48,
-    metrics: [
-      { name: "Your held-out hey TARS", current: "9 of 12", candidate: "11 of 12" },
-      {
-        name: "Your held-out wakes that weren't for TARS, let through",
-        current: "1 of 3",
-        candidate: "0 of 3",
-        ...LOW,
-      },
-      { name: "Held-out voices, quiet", current: "94.4%", candidate: "94.4%" },
-      { name: "Held-out voices, TV and chatter", current: "80.6%", candidate: "80.8%" },
-      { name: "Lookalikes let through", current: "1.8%", candidate: "1.8%", ...LOW },
-      { name: "False answers per hour, TV", current: "0.0", candidate: "0.0", ...LOW },
-      { name: "False answers per hour, audiobooks", current: "0.0", candidate: "0.0", ...LOW },
-    ],
-  },
-  worse: {
-    status: "kept",
-    labeled: 12,
-    metrics: [
-      { name: "Your held-out hey TARS", current: "2 of 3", candidate: "3 of 3" },
-      { name: "Held-out voices, quiet", current: "94.4%", candidate: "93.3%" },
-      { name: "Held-out voices, TV and chatter", current: "80.6%", candidate: "79.4%" },
-      { name: "Lookalikes let through", current: "1.8%", candidate: "3.6%", ...LOW },
-      { name: "False answers per hour, TV", current: "0.0", candidate: "1.0", ...LOW },
-      { name: "False answers per hour, audiobooks", current: "0.0", candidate: "0.0", ...LOW },
-    ],
-  },
-};
+const MOCK_RESULTS: Metric[] = [
+  { name: "Your held-out hey TARS", current: "9 of 12", candidate: "11 of 12" },
+  { name: "Your held-out wakes that weren't for TARS, let through", current: "1 of 3", candidate: "0 of 3", ...LOW },
+  { name: "Other voices, quiet", current: "94.4%", candidate: "95.6%" },
+  { name: "Other voices, TV and chatter", current: "80.6%", candidate: "80.8%" },
+  { name: "Lookalikes let through", current: "1.8%", candidate: "1.8%", ...LOW },
+  { name: "False answers per hour, TV", current: "0.0", candidate: "0.0", ...LOW },
+  { name: "False answers per hour, audiobooks", current: "0.0", candidate: "0.0", ...LOW },
+];
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -735,17 +718,9 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
     await sleep(1500);
     return { summary: MOCK_TOASTS.recluster };
   }
-  if (p === "/api/retrain") {
-    await sleep(2500);
-    const r = (d.models.last_retrain = { ...MOCK_RETRAIN.better, ts: Date.now() / 1000 });
-    d.models.history = [
-      { version: r.version!, ts: r.ts!, active: true, note: "Retrained on 48 of your wakes (41 real, 7 not)." },
-      ...d.models.history.map(h => ({ ...h, active: false })),
-    ];
-    return r;
-  }
   if (p === "/api/models/use") {
     d.models.history = d.models.history.map(h => ({ ...h, active: h.version === b.version }));
+    d.models.active = { ...d.models.active, version: b.version };
     return ok;
   }
   throw new Error("Not Found");

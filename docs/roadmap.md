@@ -36,9 +36,9 @@ has 5 requests.
 | Slow replies | the `TOTAL to first sound` line in the assistant's log | about 2.5 s, as on the laptop |
 | Answers you'd rate bad | Home's good / bad buttons | a list, for steps 3 and 4 |
 
-**At the end of the week:** answer what's left in Review, name the voices, and press "Retrain now". It needs
-wakes held out to test on (every fifth), so expect "not enough to learn from yet" in the first days. Then decide
-whether the order below still holds: if false wakes or wrong names are the real problem, they come first.
+**At the end of the week:** answer what's left in Review and name the voices. The Models page then shows how
+many real, missed and not-real wakes there are to train on. Decide whether the order below still holds: if missed
+wakes, false wakes or wrong names are the real problem, they come first.
 
 ## 2. "TARS stop": interrupting a reply
 
@@ -134,5 +134,5 @@ facts come up again.
 An offline job that reads the logged conversations and finds where TARS did badly: answers rated bad, transcripts
 people corrected, "not meant for TARS", the same question asked again right after an answer, interruptions (after
 step 2). It groups them, and suggests prompt changes, tested by replaying past conversations through the old and the
-new prompt, the way "Retrain now" tests a new check before using it. That's more telling than sentiment scores on
+new prompt, the way new wake models are tested before they're installed. That's more telling than sentiment scores on
 transcripts. Benched until there are a few hundred real conversations to learn from.

@@ -13,12 +13,13 @@ import json
 import re
 import sys
 import time
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
-import wakeword_bench as wb  # noqa: E402
+import wakeword_bench as wb
 
 REPO = Path(__file__).parents[1]
 MODELS = Path.home() / "asr_eval" / "models"
@@ -66,7 +67,7 @@ CONDITIONS = [
 
 def accepted(text: str) -> bool:
     words = re.sub(r"[^a-z' ]", " ", text.lower().replace("tar's", "tars")).split()
-    return any(a == "hey" and b in ACCEPT_WORDS for a, b in zip(words, words[1:]))
+    return any(a == "hey" and b in ACCEPT_WORDS for a, b in pairwise(words))
 
 
 # ---------- candidates: each turns 16 kHz int16 audio into text ----------
@@ -244,7 +245,7 @@ def main() -> None:
             rate = float(np.mean([accepted(o) for o in outs]))
             results[f"{name}@{cond}"] = round(rate, 3)
             wrong = [o for o in outs if accepted(o) != should]
-            examples[f"{name}@{cond}"] = sorted(set(o.strip() for o in wrong))[:8]
+            examples[f"{name}@{cond}"] = sorted({o.strip() for o in wrong})[:8]
             print(
                 f"{args.candidate:<15} {cond:<17} {name:<22} accepts {rate:5.0%}  {'(want 100%)' if should else '(want 0%)'}",
                 flush=True,

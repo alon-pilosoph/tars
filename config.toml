@@ -21,8 +21,9 @@ model = "models/generic/hey_tars.tflite"
 threshold = 0.5
 # Double-check each wake with a small offline speech recognizer, so "hey cars" doesn't wake it.
 verify = true
-# The double-check's learned layer ("" = plain phrase match). "Retrain now" in the web UI can replace it with one
-# trained on your own wakes (kept in voice_data/events/checks/); the Models page shows which one is in use.
+# The double-check's learned layer ("" = plain phrase match). These settings are the installed pair; models trained
+# on your own wakes (voice-assistant --install-models) are kept in voice_data/events/wake_models/ and used instead,
+# and the web UI's Models page shows which pair is in use and can switch back.
 check_model = "models/generic/hey_tars_check.json"
 # Seconds of audio the double-check hears. The generic model can fire a moment after the phrase ends, so it
 # needs 3.0 (measured: 94% of other voices vs 81% at 2.0); the personal one does best at 2.5.

@@ -13,7 +13,7 @@ element by element while it was ported, and its screenshot tests now hold it whe
 | **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. |
 | **Review** | Wakes no conversation explained (a near-miss, a "Did you call me?" nobody answered, a wake followed by silence). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, re-cluster. |
-| **Models** | The wake model and double-check in use, "Retrain now" with how the candidate compared, and the version history, where "Use this" rolls back. |
+| **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
 
 On a phone, Voices and Models sit under "More". The tab title counts what's new: "TARS (3)".
 
@@ -67,8 +67,7 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 | `POST /api/clusters/{id}` | `{"name": ..., "kind": ...}` rename, or mark "not a person"; without `kind`, a "not a person" voice stays one |
 | `POST /api/clusters/merge` | `{"keep": a, "absorb": b}` |
 | `POST /api/recluster` | Regroup the requests by voice and rebuild the voiceprints |
-| `GET /api/models` | What's in use, the version history, the last retrain, and how many labeled wakes a retrain would use |
-| `POST /api/retrain` | Train a candidate and compare it (see [self-learning](self-learning.md#learning-from-it)); 409 while one runs, 501 with no learned layer |
+| `GET /api/models` | The pair in use and its test results, the version history, and the labeled wakes since it was installed |
 | `POST /api/models/use` | `{"version": ...}` puts a version in use (`"installed"` is config.toml's) |
 
 ## Working on it
@@ -100,8 +99,9 @@ Both run headless in the installed Chrome with Playwright.
 - **`npm run e2e`** (`checks/e2e.spec.ts`, 20 steps, a few seconds): builds a throwaway copy of the demo log with
   `tools/webui_demo.py`, serves it, and uses the page like a person would: rate and undo, fix a transcript, tick a
   list, open a note, delete, move a voice, name one with Enter, filter, check that nothing moves until
-  Refresh, and retrain the check for real on the demo's wakes. Every step is checked against what the server then says. It needs the local recordings the demo log is
-  built from (`voice_data/`, `~/wakeword_bench`).
+  Refresh, and switch wake models on the Models page. Every step is checked against what the server then says. The demo log's audio is committed
+  (`tools/demo_audio/`, four synthetic voices made by `tools/make_demo_audio.py`), so it runs on any machine. A step
+  that finds the demo missing what it needs fails rather than skipping.
 - **`npm run visual`** (`checks/visual.spec.ts`, 162 screenshots, under 2 minutes): Playwright's
   `toHaveScreenshot()` on 47 states a link can open and after 23 interactions (opening a menu, rating, ticking,
   a dialog), on desktop and phone, and the main pages and overlays in dark too. The page loads from the build on

@@ -34,15 +34,6 @@ export interface Metric {
   lower_is_better?: boolean; // false answers, lookalikes let through
 }
 
-export interface RetrainResult {
-  status: "swapped" | "kept" | "skipped"; // skipped: nothing was trained, and the summary says why
-  summary?: string;
-  version?: string;
-  labeled?: number;
-  ts?: number;
-  metrics?: Metric[];
-}
-
 export interface Version {
   version: string;
   ts: number;
@@ -51,17 +42,11 @@ export interface Version {
 }
 
 export interface Models {
-  active: {
-    wake_model?: string;
-    threshold?: number;
-    check_model?: string;
-    check_version?: string;
-    check_window_s?: number;
-  };
+  active: { version?: string; wake_model?: string; threshold?: number; check_model?: string; check_window_s?: number };
+  results: Metric[] | null; // how the pair in use tested against the one it replaced
   history: Version[];
-  last_retrain: RetrainResult | null;
-  trainable?: number; // labeled wakes a retrain would learn from
   problem?: string | null; // why the saved version history is being ignored
+  learning: { real: number; not_real: number; missed: number; to_review: number }; // since the pair in use
 }
 
 export interface Status {

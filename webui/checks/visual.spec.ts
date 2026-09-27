@@ -36,7 +36,6 @@ const STATES = [
   "tab=voices",
   "tab=voices&modal=merge",
   "tab=voices&toast=recluster",
-  "tab=models&retrain=better",
   "tab=models&modal=rollback",
   "tab=sent&person=household",
   "tab=sent&demo=empty",
@@ -48,9 +47,6 @@ const STATES = [
   "tab=voices&toast=renamed",
   "tab=voices&demo=empty",
   "tab=models",
-  "tab=models&retrain=running",
-  "tab=models&retrain=skipped",
-  "tab=models&retrain=worse",
   "tab=models&demo=empty",
 ];
 

@@ -11,7 +11,7 @@ somewhere else can't read or change anything through the browser of someone at h
 import ipaddress
 import threading
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -21,6 +21,7 @@ from pydantic import BaseModel, field_validator
 
 from .conversations import FILE, LIST, TARS, ConversationLog
 from .events import NOT_PERSON, PERSON, UNKNOWN, EventLog
+from .versions import INSTALLED, ModelVersions
 
 STATIC = Path(__file__).with_name("webui_static")  # the React app in webui/, built with `npm run build`
 HIDDEN = {"embedding"}  # never sent to the browser
@@ -73,19 +74,6 @@ class UseVersion(BaseModel):
     version: str
 
 
-class Models(Protocol):
-    """The Models page: what hears the wake word, retraining the double-check, and its versions (retrain.py)."""
-
-    def info(self) -> dict:
-        """{"active": {...}, "history": [...], "last_retrain": {...} | None, "trainable": n}"""
-
-    def retrain(self) -> dict:
-        """Train a candidate and test it; it's put in use only if it's better. Returns how it went."""
-
-    def use(self, version: str) -> None:
-        """Put a version in use; KeyError if there's no such version."""
-
-
 def allowed_host(host: str, extra: frozenset[str] = frozenset()) -> bool:
     """A name this machine is reached by at home: an IP address, localhost, a .local name, a single-label name
     (the Pi's hostname, a Tailscale MagicDNS name), *.ts.net, or one listed in [web] allowed_hosts. Anything else
@@ -108,15 +96,19 @@ def same_site(origin: str, host: str, extra: frozenset[str] = frozenset()) -> bo
 
 
 def create_app(
-    log: EventLog, recluster=None, models: Models | None = None, allowed_hosts: frozenset[str] = frozenset()
+    log: EventLog,
+    recluster=None,
+    versions: ModelVersions | None = None,
+    installed: dict | None = None,
+    allowed_hosts: frozenset[str] = frozenset(),
 ) -> FastAPI:
     """`recluster` re-clusters the voices (see clustering.regroup); None hides the button.
-    `models` is the Models page (retraining is manual, never scheduled); None when there's nothing to retrain.
+    `versions`: the wake models' versions, for the Models page (training.household makes new ones); `installed`:
+    what config.toml listens with, shown when there are none.
     `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
-    retraining = threading.Lock()
     extra = frozenset(h.lower() for h in allowed_hosts)
 
     @app.middleware("http")
@@ -340,28 +332,38 @@ def create_app(
             return recluster()
 
     @app.get("/api/models")
-    def models_page():
-        return models.info() if models else {"active": {}, "history": [], "last_retrain": None, "trainable": 0}
-
-    @app.post("/api/retrain")
-    def retrain():
-        if models is None:
-            raise HTTPException(501, "the double-check has no learned layer to retrain")
-        if not retraining.acquire(blocking=False):
-            raise HTTPException(409, "already retraining")
-        try:
-            return models.retrain()
-        finally:
-            retraining.release()
+    def models():
+        if versions is None:
+            return {
+                "active": {"version": INSTALLED, **(installed or {})},
+                "results": None,
+                "history": [],
+                "problem": None,
+                "learning": log.learning(),
+            }
+        pair = versions.in_use()
+        return {
+            "active": {
+                "version": pair.version,
+                "wake_model": pair.wake_model,
+                "threshold": pair.threshold,
+                "check_model": pair.check_model,
+                "check_window_s": pair.check_window_s,
+            },
+            "results": pair.results,
+            "history": versions.versions(),
+            "problem": versions.problem(),
+            "learning": log.learning(since=None if pair.version == INSTALLED else pair.ts),
+        }
 
     @app.post("/api/models/use")
     def use_version(body: UseVersion):
-        if models is None:
-            raise HTTPException(501, "the double-check has no learned layer to switch")
+        if versions is None:
+            raise HTTPException(404, "no such version")
         try:
-            models.use(body.version)
+            versions.use(body.version)
         except KeyError:
-            raise HTTPException(404, "no such version") from None
+            raise HTTPException(404, "no such version, or it can't be loaded") from None
         return {"ok": True}
 
     @app.get("/api/status")
@@ -376,10 +378,13 @@ def serve(
     host: str,
     port: int,
     recluster=None,
-    models: Models | None = None,
+    versions: ModelVersions | None = None,
+    installed: dict | None = None,
     allowed_hosts: frozenset[str] = frozenset(),
 ) -> None:
     import uvicorn
 
     print(f"TARS web UI on http://{host}:{port}  (Ctrl+C to stop)")
-    uvicorn.run(create_app(log, recluster, models, allowed_hosts), host=host, port=port, log_level="warning")
+    uvicorn.run(
+        create_app(log, recluster, versions, installed, allowed_hosts), host=host, port=port, log_level="warning"
+    )

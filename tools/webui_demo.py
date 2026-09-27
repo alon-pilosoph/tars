@@ -1,13 +1,15 @@
 """A throwaway demo of the self-learning web UI with every kind of event and voice.
 
     uv run python tools/webui_demo.py build /tmp/tars_demo      # make the demo log: wakes, voices, conversations, sent items
-    uv run python tools/webui_demo.py serve /tmp/tars_demo 8099  # serve it; "Retrain now" really retrains, inside the demo folder
+    uv run python tools/webui_demo.py serve /tmp/tars_demo 8099  # serve it, with a trained pair of models to switch back from
     uv run python tools/webui_demo.py serve /tmp/tars_empty 8098 # an empty one, for the empty states
 
-Uses the user's recordings (voice_data/) and held-out test audio (~/wakeword_bench); nothing is committed.
+Its audio is tools/demo_audio/ (synthetic voices, committed), so it builds the same on any machine.
 """
 
 import argparse
+import json
+import shutil
 import struct
 import time
 import zlib
@@ -16,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from voice_assistant.__main__ import make_retrainer
+from voice_assistant.__main__ import installed_models
 from voice_assistant.clustering import recluster
 from voice_assistant.config import load_config
 from voice_assistant.conversations import (
@@ -37,28 +39,26 @@ from voice_assistant.events import (
     EventLog,
 )
 from voice_assistant.speaker import SpeakerID
+from voice_assistant.versions import ABOUT, CHECK, MODEL, ModelVersions
 from voice_assistant.webui import serve
 
 REPO = Path(__file__).parents[1]
-U = REPO / "voice_data/alon/laptop"
-BENCH = Path.home() / "wakeword_bench"
-LIBRI = BENCH / "LibriSpeech/test-clean"
+AUDIO = REPO / "tools" / "demo_audio"  # made by make_demo_audio.py: Alon, Stacey, a guest and the TV
 
 
-def wav(path: Path) -> np.ndarray:
-    audio, _sr = sf.read(path, dtype="int16")
-    return audio if audio.ndim == 1 else audio[:, 0]
-
-
-def libri(speaker: str, n: int) -> list[np.ndarray]:
-    return [wav(f) for f in sorted((LIBRI / speaker).glob("*/*.flac"))[:n]]
+def clip(speaker: str, kind: str, i: int) -> np.ndarray:
+    audio, _sr = sf.read(AUDIO / speaker / f"{kind}_{i:02d}.flac", dtype="int16")
+    return audio
 
 
 def build(folder: Path) -> None:
     cfg = load_config(REPO / "config.toml")
-    sid = SpeakerID(REPO / cfg.speaker.model, REPO / cfg.speaker.voiceprints, cfg.speaker.threshold)
+    # Its own voiceprints, of the demo's Alon: speaker ID gives the same guesses on any machine.
+    sid = SpeakerID(REPO / cfg.speaker.model, folder / "voiceprints.npz", cfg.speaker.threshold)
+    sid.enroll("alon", [clip("alon", "say", i) for i in range(6, 12)])
     log = EventLog(folder / "events")
     now = time.time()
+    trained_pair(cfg, folder)
 
     def wake(audio, score, outcome, heard, conf, minutes_ago):
         return log.add_wake(
@@ -87,68 +87,61 @@ def build(folder: Path) -> None:
     ]
     for i, text in enumerate(alon_requests):  # answered, a request followed (Alon)
         request(
-            wake(wav(U / f"hey_tars/{i:03d}.wav"), 0.92, "answer", "hey tars", 0.97, 400 - i * 45),
-            wav(U / f"speech/{i:03d}.wav"),
+            wake(clip("alon", "wake", i), 0.92, "answer", "hey tars", 0.97, 400 - i * 45),
+            clip("alon", "say", i),
             text,
             ASKED,
         )
-    stacey = libri("121", 3)
-    for i, audio in enumerate(stacey):  # another household member
+    stacey = [clip("stacey", "say", i) for i in range(4)]
+    for i, audio in enumerate(stacey[:3]):  # another household member
         request(
-            wake(
-                wav(BENCH / f"clips_heldout/hey_tars/coral_0{i}_1.wav"), 0.88, "answer", "hey tars", 0.9, 330 - i * 50
-            ),
+            wake(clip("stacey", "wake", i), 0.88, "answer", "hey tars", 0.9, 330 - i * 50),
             audio,
             ["Play some jazz.", "What's on my calendar today?", "Add milk to the shopping list."][i],
             ASKED,
         )
-    guest = libri("237", 2)
+    guest = [clip("guest", "say", i) for i in range(2)]
     for i, audio in enumerate(guest):  # a guest, not named
         request(
-            wake(
-                wav(BENCH / f"clips_heldout/hey_tars/sage_0{i}_1.wav"), 0.81, "answer", "hey darts", 0.74, 250 - i * 30
-            ),
+            wake(clip("guest", "wake", i), 0.81, "answer", "hey darts", 0.74, 250 - i * 30),
             audio,
             ["Is it going to rain?", "What time is it in Tokyo?"][i],
             ASKED,
         )
-    tv = sorted((BENCH / "interference/test/tv").glob("*.wav"))[:2]
-    for i, f in enumerate(tv):  # the TV: woke it, and the "request" was TV audio
+    tv = [clip("tv", "say", i) for i in range(2)]
+    for i, audio in enumerate(tv):  # the TV: woke it, and the "request" was TV audio
         request(
-            wake(wav(f)[:48000], 0.63, "answer", "hey tars", 0.41, 200 - i * 20),
-            wav(f)[48000:112000],
+            wake(audio[:48000], 0.63, "answer", "hey tars", 0.41, 200 - i * 20),
+            audio[48000:112000],
             ["and in tonight's top story the storm is moving east", "you won't believe what happened next"][i],
             NOT_FOR_US,
         )
     log.set_follow(
-        wake(wav(U / "hey_tars/007.wav"), 0.86, "answer", "hey tars", 0.93, 150), SAID_NOTHING
+        wake(clip("alon", "wake", 6), 0.86, "answer", "hey tars", 0.93, 150), SAID_NOTHING
     )  # "Yes, Alon?" then silence
     request(
-        wake(wav(U / "hey_tars_lookalikes/000.wav"), 0.71, "ask", "hey cars", 0.18, 120),
-        wav(U / "speech/020.wav"),
+        wake(clip("alon", "lookalike", 0), 0.71, "ask", "hey cars", 0.18, 120),
+        clip("alon", "say", 7),
         "Yes, set an alarm for seven.",
         ASKED,
     )  # asked "did you call me?" and they answered
-    log.set_follow(wake(wav(U / "hey_tars_lookalikes/004.wav"), 0.66, "ask", "hey bars", 0.12, 100), SAID_NOTHING)
+    log.set_follow(wake(clip("alon", "lookalike", 1), 0.66, "ask", "hey bars", 0.12, 100), SAID_NOTHING)
     request(
-        wake(wav(U / "hey_tars_lookalikes/007.wav"), 0.64, "ask", "hey mars", 0.1, 90),
-        wav(U / "speech/024.wav"),
-        "No.",
-        NOT_FOR_US,
+        wake(clip("alon", "lookalike", 2), 0.64, "ask", "hey mars", 0.1, 90), clip("alon", "say", 8), "No.", NOT_FOR_US
     )
-    wake(wav(U / "hey_tars_lookalikes/010.wav"), 0.58, "ignore", "hey stars", 0.04, 80)
-    wake(wav(tv[0])[:48000], 0.55, "ignore", "[unk] stars", 0.02, 70)
+    wake(clip("alon", "lookalike", 3), 0.58, "ignore", "hey stars", 0.04, 80)
+    wake(tv[0][:48000], 0.55, "ignore", "[unk] stars", 0.02, 70)
     relabeled = wake(
-        wav(U / "hey_tars/023.wav"), 0.73, "ignore", "bars", 0.16, 60
+        clip("alon", "wake", 9), 0.73, "ignore", "bars", 0.16, 60
     )  # it WAS hey TARS: the check got it wrong
-    log.add_near_miss(wav(U / "hey_tars/019.wav"), 0.41, "models/generic/hey_tars.tflite", ts=now - 40 * 60)
+    log.add_near_miss(clip("alon", "wake", 7), 0.41, "models/generic/hey_tars.tflite", ts=now - 40 * 60)
     request(
-        wake(wav(U / "hey_tars/020.wav"), 0.9, "answer", "hey tars", 0.95, 40 - 0.05),
-        wav(U / "speech/010.wav"),
+        wake(clip("alon", "wake", 8), 0.9, "answer", "hey tars", 0.95, 40 - 0.05),
+        clip("alon", "say", 6),
         "Turn off the lights.",
         ASKED,
     )  # said it again, louder: the near-miss above was a missed wake
-    log.add_near_miss(wav(U / "hey_tars_lookalikes/013.wav"), 0.36, "models/generic/hey_tars.tflite", ts=now - 20 * 60)
+    log.add_near_miss(clip("alon", "lookalike", 4), 0.36, "models/generic/hey_tars.tflite", ts=now - 20 * 60)
     recluster(log)
     rows = sorted(log.events(limit=1000), key=lambda r: r["ts"])
     by_text = {r["transcript"]: r for r in rows if r["transcript"]}
@@ -183,7 +176,7 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
     """Conversations on top of the demo wakes: follow-ups, an aside, "Did you call me?", an unknown voice,
     and one of each kind of sent item. Times follow each wake."""
     convos = ConversationLog(log)
-    speech = sorted((U / "speech").glob("*.wav"))
+    speech = [clip("alon", "say", i) for i in range(12)]
 
     def talk(request: str, turns: list, speaker: str | None, before: str | None = None) -> int:
         """`turns`: after the first request, (role, text, extra) in order: TARS's reply, then person / tars pairs."""
@@ -197,8 +190,8 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
         for i, (role, text, extra) in enumerate(turns):
             t += 4
             if role == "person":
-                clip = extra.get("audio", wav(speech[(i + 30) % len(speech)]))
-                tid = convos.add_person_turn(c, text, clip, extra.get("speaker", speaker), 0.8, ts=t)
+                audio = extra.get("audio", speech[(i + 30) % len(speech)])
+                tid = convos.add_person_turn(c, text, audio, extra.get("speaker", speaker), 0.8, ts=t)
                 if extra.get("aside"):
                     convos.mark_not_for_tars(tid)
                 if extra.get("corrected"):
@@ -257,7 +250,7 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
                 ],
             ),
             person("Did you feed the cat?", aside=True, speaker="alon"),
-            person("Yes, twice. She's lying.", aside=True, audio=stacey[1] if len(stacey) > 1 else stacey[0]),
+            person("Yes, twice. She's lying.", aside=True, audio=stacey[3]),
         ],
         "stacey",
     )
@@ -384,6 +377,46 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
     return len(convos.conversations())
 
 
+def demo_versions(cfg, folder: Path) -> ModelVersions:
+    return ModelVersions(
+        folder / "events", REPO, cfg.wake.model, cfg.wake.check_model, cfg.wake.threshold, cfg.wake.check_window_s
+    )
+
+
+def trained_pair(cfg, folder: Path) -> None:
+    """A second version, as training.household would install it (the installed files, with made-up results), so
+    the Models page has a history and something to switch back to."""
+    pair = folder / "trained_pair"
+    pair.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO / cfg.wake.model, pair / MODEL)
+    shutil.copyfile(REPO / cfg.wake.check_model, pair / CHECK)
+    low = {"lower_is_better": True}
+    (pair / ABOUT).write_text(
+        json.dumps(
+            {
+                "threshold": cfg.wake.threshold,
+                "check_window_s": cfg.wake.check_window_s,
+                "note": "Trained on 41 of your wakes (34 real, 7 not) and 6 missed ones.",
+                "results": [
+                    {"name": "Your held-out hey TARS", "current": "9 of 12", "candidate": "11 of 12"},
+                    {
+                        "name": "Your held-out wakes that weren't for TARS, let through",
+                        "current": "1 of 3",
+                        "candidate": "0 of 3",
+                        **low,
+                    },
+                    {"name": "Other voices, quiet", "current": "94.4%", "candidate": "95.6%"},
+                    {"name": "Other voices, TV and chatter", "current": "80.6%", "candidate": "80.2%"},
+                    {"name": "Lookalikes let through", "current": "1.8%", "candidate": "1.8%", **low},
+                    {"name": "False answers per hour, TV", "current": "0.0", "candidate": "0.0", **low},
+                    {"name": "False answers per hour, audiobooks", "current": "0.0", "candidate": "0.0", **low},
+                ],
+            }
+        )
+    )
+    demo_versions(cfg, folder).install(pair)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -396,9 +429,15 @@ def main() -> None:
         build(args.folder)
         return
     log = EventLog(args.folder / "events")
-    # The real Models page: retraining learns from the demo's wakes, and keeps its versions in the demo folder.
-    models = make_retrainer(load_config(REPO / "config.toml"), REPO, log)
-    serve(log, "127.0.0.1", args.port, recluster=lambda: recluster(log), models=models)
+    cfg = load_config(REPO / "config.toml")
+    serve(
+        log,
+        "127.0.0.1",
+        args.port,
+        recluster=lambda: recluster(log),
+        versions=demo_versions(cfg, args.folder),
+        installed=installed_models(cfg),
+    )
 
 
 if __name__ == "__main__":

@@ -78,46 +78,30 @@ Code: `clustering.py`, `speaker.py`.
 
 ## Learning from it
 
-"Retrain now" on the Models page retrains **stage 2**, the double-check's learned layer, from these labels, on the
-machine TARS runs on (`retrain.py`):
+Both stages are retrained together, as a pair, on a bigger machine than the Pi: the wake model's training takes
+tens of minutes and needs the training data folder (see [`training/`](../training/README.md)). The web UI doesn't
+train anything. Its Models page shows the pair in use and how it tested, how much new labeled data is waiting, and
+the version history, where "Use this" switches back.
 
-1. **Gather the labeled wakes.** A person's label, or the automatic one, except "the double-check heard something
-   else": that one is only the check's own opinion, and learning from it would teach the check what it already
-   thinks. Near-misses aren't used: the check never judges them.
-2. **Keep every fifth aside** (by id), so the held-out wakes are the same ones every time and the test only grows.
-3. **Run Vosk once** on each wake's saved audio. What it found is cached in `checks/<setup>/features.npz`.
-4. **Fit a candidate from scratch**, the same way `training/stage2/train_check.py` fitted the installed layer, on
-   that layer's own 13,000 training examples plus the household's wakes (each weighted 5, as the personal layer
-   weighs the owner's recordings). The examples ship next to the layer, as `models/generic/hey_tars_check_data.npz`
-   (58 KB, made by `training/stage2/export_data.py`), so nothing needs the training data folder.
-5. **Compare** the candidate with the layer in use, end to end, on the household's held-out wakes and on a fixed test
-   set that also ships in that file: 90 held-out voices saying "hey TARS" and 42 lookalikes, each in the 8 conditions
-   of the end-to-end test, plus every window the wake model fired on in an hour of TV and an hour of audiobooks.
-   A clip the wake model missed counts as missed, whatever the check would say.
-6. **Swap it in only if it's better on the household's wakes and no worse on anything**: more held-out "hey TARS"
-   answered, or fewer held-out wakes that weren't for TARS let through, and not one clip or false answer worse
-   anywhere else. Otherwise the page shows the comparison and keeps the current layer.
-7. **The running assistant switches** at its next wake, without a restart.
+**What training learns from** (`events.learning_label`): every labeled wake and near-miss, with a person's label
+winning over the automatic one. Near-misses labeled real (a near-miss followed within seconds by a real wake) are the
+most valuable: they're the "hey TARS" the wake model missed. One automatic label is left out: "the double-check
+heard something else", because it's only the check's own opinion. When the check wrongly turns down a soft "t"
+and nobody reviews it, learning from that would teach both stages to ignore that voice harder; answering it in
+Review makes it count.
 
-A retrain takes about a second, plus the recognizer's pass over wakes it hasn't seen yet. With too few wakes (none
-held out yet), it says so and changes nothing.
-
-**Versions.** Each version that was swapped in is kept in `<learning folder>/checks/<setup>/` (`v1.json`,
-`v2.json`...), with `history.json` saying which one is in use. The Models page lists them, newest first, with the
-installed layer (`config.toml`'s `check_model`) last, and "Use this" goes back to any of them. The assistant reads
-`history.json` on every wake, and notices a rewritten file too, so a rollback also applies from the next wake. A
-setup is named after the installed layer's folder, so switching `check_model` to `models/personal/` starts a
-separate history. Code: `checks.py`.
+**Versions** (`versions.py`). A trained pair (the wake model, the check's learned layer, and the threshold and check
+window they were tuned for, with the test results it was chosen on) is installed with `voice-assistant
+--install-models FOLDER` into `<learning folder>/wake_models/<setup>/v1/`, `v2/`..., and `history.json` says which
+one is in use. The installed pair is `config.toml`'s `[wake]` settings. `--based-on VERSION` refuses to install a
+pair that was tested against a version that's no longer in use. The running assistant looks every few seconds and
+switches the whole pair without a restart, as it does after "Use this". A setup is named after the installed
+check's folder, so switching `config.toml` to `models/personal/` starts a separate history.
 
 Nothing about versions can stop TARS listening. Every file is written to a temporary file, flushed to disk and
-swapped in, so a power cut can't leave half of one. If the history can't be read, a version file is missing or
-damaged, or the installed layer has changed since the versions were made from it (an update replaced it), TARS uses
-the installed layer and the Models page says why; the next retrain or "Use this" starts a new history and keeps the
-old file aside. Version numbers are never reused. If someone picks another version while a retrain runs, the
-candidate isn't swapped in (it was compared with the old one), and the page says so. A wake whose audio can't be
-read is left out, and any other failure is shown on the Models page, keeping what the recognizer got through.
-
-**Stage 1** (the wake model) is a different job: retraining it on the household's real "hey TARS" clips and
-near-misses is what fixes wakes that stage 1 misses entirely, but it takes hours on a bigger machine (see
-[`training/`](../training/README.md)). That's planned as an occasional job that pulls the labeled clips and installs
-the new model through the same version history.
+swapped in, and a pair is copied into place all at once, so a power cut can't leave half of one. A pair is checked
+before it's installed (the wake model loads, the layer parses, the settings make sense). If the history can't be
+read, a pair is missing or damaged, or the installed pair has changed since the versions were made from it (an update
+replaced it), TARS uses the installed pair and the Models page says why; the next install or "Use this" starts a new
+history and keeps the old file aside. Version numbers are never reused. If a new pair fails to load while TARS runs,
+it keeps listening with the one it has.

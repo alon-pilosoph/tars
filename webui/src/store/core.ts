@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { LINK, type PersonFilter, type Tab } from "../params";
-import type { Cluster, Conversation, Item, Models, RetrainResult, Status, TarsEvent } from "../types";
+import type { Cluster, Conversation, Item, Models, Status, TarsEvent } from "../types";
 
 export interface Toast {
   id: number;
@@ -55,8 +55,6 @@ export interface State {
   edit: number | null; // the turn whose transcript is being corrected
   refreshing: boolean;
   reclustering: boolean;
-  retraining: boolean;
-  lastRetrain: RetrainResult | null | undefined; // undefined: nothing loaded yet
   toast: Toast | null;
   dialog: Dialog | null;
   menu: MenuState | null;
@@ -88,8 +86,6 @@ let S: State = {
   edit: LINK.edit,
   refreshing: false,
   reclustering: false,
-  retraining: false,
-  lastRetrain: undefined,
   toast: null,
   dialog: null,
   menu: null,

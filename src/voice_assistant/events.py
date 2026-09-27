@@ -177,6 +177,18 @@ class EventLog:
             )
         ]
 
+    def learning(self, since: float | None = None) -> dict:
+        """What training would learn from (see learning_label): labeled wakes, real and not, and near-misses that
+        were a missed "hey TARS"; plus the wakes still waiting for an answer in Review. `since`: only newer ones."""
+        rows = [e for e in self.events(limit=1_000_000_000) if e["audio"] and (since is None or e["ts"] > since)]
+        labels = [(e["kind"], learning_label(e)) for e in rows]
+        return {
+            "real": labels.count((WAKE, REAL)),
+            "not_real": labels.count((WAKE, NOT_REAL)),
+            "missed": labels.count((NEAR_MISS, REAL)),
+            "to_review": labels.count((WAKE, None)),
+        }
+
     def counts(self) -> dict:
         (row,) = self.store.rows("SELECT COUNT(*) AS events, COUNT(label) AS labeled FROM events")
         return row
@@ -227,6 +239,15 @@ class EventLog:
                 r["cluster_pinned"] or r["cluster_name"] or r["cluster_kind"] == NOT_PERSON
             )
         return {r["id"]: r for r in rows}
+
+
+def learning_label(event: dict) -> str | None:
+    """The label training learns from: a person's, else the automatic one, except where that's only the check's own
+    verdict ("it heard something else"). Learning from those would teach both stages what the check already thinks,
+    including when it's wrong about a soft "t"; a person's answer in Review makes them count."""
+    if event["label"]:
+        return event["label"]
+    return None if event["outcome"] == IGNORE else event["auto_label"]
 
 
 def auto_label(event: dict, answered_wake_times: list[float]) -> tuple[str | None, str]:

@@ -1,0 +1,42 @@
+# Every push and pull request, on a clean Linux machine: the assistant installs from the lock file and its tests and
+# lint pass, the web page builds to exactly what's committed, and the page works against a real backend.
+# The screenshot tests stay local: their baselines are macOS's (fonts render differently on Linux).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1 # for sounddevice and Vosk
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run ruff check src tests tools training
+      - run: uv run pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webui
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+        working-directory: .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - name: The committed build is the current one
+        run: npm run build && test -z "$(git status --porcelain -- ../src/voice_assistant/webui_static)"
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test -c checks/e2e.config.ts

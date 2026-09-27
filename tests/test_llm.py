@@ -2,7 +2,7 @@ import types
 
 import pytest
 
-import voice_assistant.llm as llm
+from voice_assistant import llm
 from voice_assistant.config import LLMConfig
 from voice_assistant.conversations import SentItem
 from voice_assistant.llm import (

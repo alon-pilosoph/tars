@@ -76,7 +76,7 @@ class SpeakerConfig:
 
 @dataclass
 class LearningConfig:
-    # Keep every wake, near-miss, conversation and sent item (voice_data/events/) for the web UI and retraining.
+    # Keep every wake, near-miss, conversation and sent item (voice_data/events/) for the web UI and training.
     # Off also turns off sending ([llm] send): sent items live there.
     log_events: bool = True
     folder: str = "voice_data/events"

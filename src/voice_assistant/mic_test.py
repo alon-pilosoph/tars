@@ -12,6 +12,7 @@ from .audio import Microphone, find_device, save_wav
 from .config import Config
 from .recorder import make_recorder
 from .verify import ANSWER, ASK, IGNORE, NEAR_FRACTION, RecentAudio
+from .versions import listening_with
 from .wake import wake_word_trigger
 
 QUIET_S = 1.0  # a near-miss ends after this long below the "close" line
@@ -74,22 +75,21 @@ def meter(level: float, score: float, threshold: float, speech: bool, width: int
 
 
 def mic_test(cfg: Config, root: Path) -> None:
-    wake = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
+    model, threshold, window_s, check = listening_with(cfg, root)  # what the assistant listens with, trained or not
+    wake = wake_word_trigger(model, threshold)
     verifier = None
     if cfg.wake.verify:
-        from .checks import check_versions
         from .verify import PhraseVerifier
 
         verifier = PhraseVerifier(wake.phrase, root / "models")
-        if versions := check_versions(cfg, root):
-            verifier.use_check(versions.in_use().spec)  # the one the assistant uses, retrained or not
+        verifier.use_check(check)
     recorder = make_recorder(cfg, root, turn_model=False)
-    recent = RecentAudio(cfg.wake.check_window_s)
-    log = WakeLog(cfg.wake.threshold)
+    recent = RecentAudio(window_s)
+    log = WakeLog(threshold)
     passed = 0
     check = " Each wake is then double-checked by the speech recognizer." if verifier else ""
     print(
-        f"Say '{wake.phrase}'. It wakes at {cfg.wake.threshold:.2f} (the | on the wake bar); "
+        f"Say '{wake.phrase}'. It wakes at {threshold:.2f} (the | on the wake bar); "
         f"near-misses above {log.close:.2f} are logged too.{check} Ctrl+C to stop.\n"
     )
     try:
@@ -125,7 +125,7 @@ def mic_test(cfg: Config, root: Path) -> None:
                 if score >= peak_hold or now > peak_until:
                     peak_hold, peak_until = score, now + 1.0
                 level = float(abs(block).mean()) / 3000
-                line = meter(level, peak_hold, cfg.wake.threshold, recorder.is_speech(block))
+                line = meter(level, peak_hold, threshold, recorder.is_speech(block))
                 tally = (
                     f"wakes {log.wakes}" + (f" (passed {passed})" if verifier else "") + f"  close {log.near_misses}"
                 )

@@ -37,8 +37,14 @@ packages = ["src/voice_assistant"]
 dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
+    "ruff==0.16.9",
     "soundfile>=0.14.0",
 ]
+
+[tool.uv]
+# openWakeWord requires tflite-runtime on Linux, but TARS runs it through ONNX (and microWakeWord through
+# ai-edge-litert), and tflite-runtime has no wheels for Python 3.12: leaving it out lets Linux, and the Pi, install.
+override-dependencies = ["tflite-runtime; sys_platform == 'never'"]
 
 [tool.ruff]
 line-length = 120

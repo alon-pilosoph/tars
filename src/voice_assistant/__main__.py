@@ -7,6 +7,7 @@ from dotenv import dotenv_values
 from .audio import Microphone, MicrophoneError, Speaker, find_device, list_devices
 from .config import Config, LLMConfig, STTConfig, load_config
 from .recorder import make_recorder
+from .versions import model_versions
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 OPENAI_TIMEOUT_S = 15.0
@@ -49,17 +50,20 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
         return PushToTalkTrigger(), "Press Enter to talk."
     trigger = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
     if cfg.wake.verify:
-        from .checks import check_versions
         from .verify import PhraseVerifier, VerifiedTrigger
+        from .versions import model_versions
 
-        # With a learned layer, the trigger puts the version in use into the verifier.
+        check = root / cfg.wake.check_model if cfg.wake.check_model else None
+        # With versions, the trigger listens with the pair in use, and follows it.
         trigger = VerifiedTrigger(
             trigger,
-            PhraseVerifier(trigger.phrase, root / "models"),
+            PhraseVerifier(trigger.phrase, root / "models", check),
             cfg.wake.check_window_s,
             journal=journal,
             wake_model=cfg.wake.model,
-            versions=check_versions(cfg, root),
+            check_model=cfg.wake.check_model,
+            versions=model_versions(cfg, root),
+            make_trigger=wake_word_trigger,
         )
     return trigger, f"Say '{trigger.phrase}'..."
 
@@ -117,24 +121,35 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         host,
         port,
         recluster=partial(regroup, log, speaker_id),
-        models=make_retrainer(cfg, root, log),
+        versions=model_versions(cfg, root),
+        installed=installed_models(cfg),
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
     )
 
 
-def make_retrainer(cfg: Config, root: Path, log):
-    """What the Models page shows and does, including retraining the double-check's learned layer if it has one."""
-    from .checks import CheckVersions
-    from .retrain import Retrainer
-    from .verify import PhraseVerifier
+def installed_models(cfg: Config) -> dict:
+    """What config.toml listens with, for the Models page."""
+    return {
+        "wake_model": cfg.wake.model,
+        "threshold": cfg.wake.threshold,
+        "check_model": cfg.wake.check_model if cfg.wake.verify and cfg.wake.check_model else "plain phrase match",
+        "check_window_s": cfg.wake.check_window_s,
+    }
 
-    learned = cfg.wake.verify and cfg.wake.check_model
-    versions = CheckVersions(log.folder, root, cfg.wake.check_model) if learned else None
-    wake = {"wake_model": cfg.wake.model, "threshold": cfg.wake.threshold, "check_window_s": cfg.wake.check_window_s}
-    # The features come from the learned layer's own phrase list; "hey tars" only names the verifier's plain rules.
-    return Retrainer(
-        log, versions, root, lambda: PhraseVerifier("hey tars", root / "models", root / cfg.wake.check_model), wake
-    )
+
+def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) -> None:
+    """Add a pair training.household made, and put it in use: the running assistant switches within seconds."""
+    versions = model_versions(cfg, root)
+    if versions is None:
+        raise SystemExit(
+            "Trained wake models need a microWakeWord model (.tflite) with a learned double-check: set "
+            "[wake] model, verify and check_model in config.toml."
+        )
+    try:
+        name = versions.install(folder, based_on)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise SystemExit(f"Not installed: {e}") from None
+    print(f"Installed {folder} as {name}; it's in use now. The web UI's Models page can switch back.")
 
 
 def main() -> None:
@@ -156,6 +171,15 @@ def main() -> None:
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument(
+        "--install-models",
+        type=Path,
+        metavar="FOLDER",
+        help="put a wake model and check made by training.household in use",
+    )
+    parser.add_argument(
+        "--based-on", metavar="VERSION", help="with --install-models: only if this version is still the one in use"
+    )
     args = parser.parse_args()
 
     if args.list_devices:
@@ -178,6 +202,9 @@ def main() -> None:
             return
         if args.web:
             web_ui(cfg, root, args.host, args.port)
+            return
+        if args.install_models:
+            install_models(cfg, root, args.install_models, args.based_on)
             return
         run(cfg, args)
     except KeyboardInterrupt:

@@ -1,8 +1,8 @@
 /* Loading. refresh() is the page load and the Refresh button: everything as it is now, with finished things moved
    to where they belong. reload() runs after your own actions and stays within what the last Refresh showed. */
 import { get as fetchJson, writesDone } from "../api";
-import type { ApiConversation, Cluster, Conversation, Item, Models, RetrainResult, Status, TarsEvent } from "../types";
-import { type Snapshot, type State, get, set, setNow } from "./core";
+import type { ApiConversation, Cluster, Conversation, Item, Models, Status, TarsEvent } from "../types";
+import { type Snapshot, get, set, setNow } from "./core";
 import { errText, toast } from "./ui";
 
 interface Data {
@@ -54,12 +54,6 @@ export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap:
   };
 }
 
-/** While a retrain runs, the page shows its own result; otherwise the server's. */
-function retrainShown(s: State, models: Models): RetrainResult | null | undefined {
-  if (s.retraining && s.lastRetrain !== undefined) return s.lastRetrain;
-  return models.last_retrain ?? s.lastRetrain ?? null;
-}
-
 async function fetchAll(fresh: boolean) {
   try {
     await writesDone();
@@ -74,7 +68,7 @@ async function fetchAll(fresh: boolean) {
     let data: Data = { events, clusters, models, status, ...normalize(convs, items) };
     const snapshot = fresh ? snapshotOf(data) : get().snapshot;
     if (!fresh) data = within(snapshot, data);
-    setNow(s => ({ ...data, snapshot, phase: "ready", lastRetrain: retrainShown(s, models) }));
+    setNow({ ...data, snapshot, phase: "ready" });
   } catch (e) {
     // A failed reload after an action keeps the page as it is; only a failed page load or Refresh replaces it.
     if (fresh || get().phase !== "ready") set({ phase: "error", error: errText(e) || "Failed to fetch" });

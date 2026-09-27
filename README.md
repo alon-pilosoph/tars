@@ -17,7 +17,7 @@ mic ──► wake word ──► record until you stop ──► speech-to-text
 - **Every stage sits behind a small interface** (`Trigger`, `Transcriber`, `Brain`, `Voice`), so swapping in a local model is one new class and a config change.
 - **Latency is printed for every turn**, broken down by stage.
 - **Conversations, not commands.** After answering, it listens a few more seconds for a follow-up without the wake word. If what it hears isn't meant for it (people talking to each other), the LLM answers `<skip>` and it stays quiet and forgets it. The whole conversation is sent to the LLM until it's been quiet for 10 minutes.
-- **It learns from your household** (optional). Every wake is kept with its audio and labeled, mostly automatically; "Retrain now" in the web UI retrains the double-check on your own wakes, in about a second, and uses the new one only if it tests better on your wakes and no worse on a fixed test set ([docs/self-learning.md](docs/self-learning.md)).
+- **It learns from your household** (optional). Every wake and near-miss is kept with its audio and labeled, mostly automatically, and the web UI shows what's waiting to be learned from. New wake models are trained on a bigger machine, tested end to end, and installed on the Pi without a restart; "Use this" switches back ([docs/self-learning.md](docs/self-learning.md)).
 - **It knows who's talking** (optional). Each request gets a voiceprint, compared to enrolled people while speech-to-text runs, so it adds no latency.
 - **Failures are spoken, not fatal.** A dropped connection or a crashed request gets a line in TARS's voice ("I lost that one somewhere between here and the server. Ask me again."), made ahead of time so it plays even when the voice service is the problem, and the assistant keeps listening. The voice gives up after 4 s of silence, other OpenAI requests after 15 s. A microphone that stops delivering audio exits with an error so a supervisor can restart it.
 
@@ -26,7 +26,7 @@ mic ──► wake word ──► record until you stop ──► speech-to-text
 - [How TARS fits together](docs/architecture.md): the pipeline, the LLM's tools, what leaves the machine, the web UI's safeguards
 - [Hearing "hey TARS"](docs/wake-word.md): the two stages, training, performance, what was tried and dropped
 - [Response time](docs/latency.md): where the ~2.5 s goes, starting early and speaking late, what was tried
-- [Self-learning TARS](docs/self-learning.md): what's kept, automatic labels, voices, retraining
+- [Self-learning TARS](docs/self-learning.md): what's kept, automatic labels, voices, training new wake models
 - [The web UI](docs/web-ui.md): pages, the Refresh rule, the API, development and checks
 - [Running TARS at home](docs/deployment.md): the Pi, services, storage, backup, a first test run
 - [What's next](docs/roadmap.md): a week of real use, interrupting TARS, a larger model for hard questions, memory
@@ -43,7 +43,7 @@ cp .env.example .env   # then add your OpenAI and Deepgram API keys
 Keys are read from `.env` only; keys in your shell are ignored. Deepgram (streaming speech to text) is only needed
 with `[stt] provider = "deepgram"`, the default in `config.toml`; with `"openai"`, the OpenAI key is enough.
 
-On a Raspberry Pi, install PortAudio first: `sudo apt install libportaudio2`.
+On Linux (a Raspberry Pi included), install PortAudio and libatomic first: `sudo apt install libportaudio2 libatomic1`.
 
 ## Run
 
@@ -54,7 +54,11 @@ uv run voice-assistant --ptt           # press Enter instead of saying the wake 
 uv run voice-assistant --text          # type questions, hear spoken answers
 uv run voice-assistant --list-devices  # find your mic / speaker names for config.toml
 uv run pytest                          # offline tests, no devices or API key needed
+uv run ruff check src tests tools training
 ```
+
+The same checks, plus the web UI's unit tests, its build and its end-to-end check, run on a clean Linux machine for
+every push (`.github/workflows/ci.yml`), so the repo keeps working somewhere other than where it was written.
 
 Sounds: a chime means "listening", a soft blip after an answer means "still listening for a follow-up", and two falling notes mean something went wrong.
 
@@ -127,5 +131,5 @@ Then set `enabled = true` under `[speaker]`. There's also a way without a record
 | `journal.py` | What the assistant writes to those logs as it works; a failed write never costs a reply |
 | `clustering.py` | Groups requests by voice; builds voiceprints for named people |
 | `webui.py` | The web UI's server and API (the page itself is in `webui/`) |
-| `retrain.py` / `checks.py` | "Retrain now": a new double-check layer from the household's wakes, tested before it's used; its versions |
+| `versions.py` | The wake model and check pairs: the installed one, trained ones, which is in use, switching live |
 | `enroll.py` | Guided recording of a person's voice for speaker ID and the wake-word verifier |

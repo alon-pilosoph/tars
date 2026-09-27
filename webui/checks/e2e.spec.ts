@@ -247,9 +247,21 @@ test("a conversation's menu: not for TARS, who was talking, delete", async () =>
   expect(await wake()).toBeUndefined();
 });
 
+test("a name prompt: Cancel doesn't save", async () => {
+  await nav("Voices").click();
+  const voice = page.locator(".voice", { has: page.locator(".vfoot") }).first();
+  await expect(voice, "an unnamed voice in the demo log").not.toHaveCount(0);
+  await voice.locator(".vfoot .btn", { hasText: "Name" }).click();
+  await dialog().locator("input").fill("Nobody");
+  await dialog().locator(".btn", { hasText: "Cancel" }).click();
+  await expect(dialog()).toHaveCount(0);
+  expect((await A.clusters()).some(c => c.name === "Nobody")).toBe(false);
+});
+
 test("an unknown voice is named from its conversation, with Enter", async () => {
+  await nav("Home").click();
   const anon = (await A.convs()).find(c => c.speaker?.cluster_id != null && !c.speaker.name);
-  test.skip(!anon, "no conversation with an unnamed voice in the demo log");
+  expect(anon, "a conversation with an unnamed voice in the demo log").toBeTruthy();
   await conv(anon!.id).locator(".tact", { hasText: "Name this voice" }).click();
   await dialog().locator("input").fill("Guest");
   await dialog().locator("input").press("Enter");
@@ -290,7 +302,7 @@ test("nothing moves by itself: a ticked list stays in Home's strip until Refresh
   let fresh: Item | undefined;
   for (const i of items.filter(i => i.kind === "list" && !i.seen))
     if (await page.locator(`.igrid .item[data-id="${i.id}"]`).count()) fresh = i;
-  test.skip(!fresh, "no unseen list left on Home");
+  expect(fresh, "an unseen list on Home").toBeTruthy();
   const strip = page.locator(`.igrid .item[data-id="${fresh!.id}"]`);
   await strip.locator(".entries input").first().click();
   await expect.poll(async () => (await A.items()).find(i => i.id === fresh!.id)!.seen).toBe(true);
@@ -304,7 +316,7 @@ test("an answered wake stays under To check, and Refresh moves it to Reviewed", 
   await nav("Review").click();
   const todo = page.locator(".group", { has: page.locator(".group-h", { hasText: "To check" }) });
   const unanswered = todo.locator("article.ev:not(.done)");
-  test.skip(!(await unanswered.count()), "every wake is answered already");
+  await expect(unanswered, "an unanswered wake under To check").not.toHaveCount(0);
   const rows = await todo.locator("article.ev").count(),
     before = reviewTodo(await A.events());
   await unanswered.first().locator(".lab-seg .n").click();
@@ -325,29 +337,20 @@ test("clearing an answer in Reviewed keeps the row there until Refresh", async (
   await expect(reviewed.locator("article.ev")).toHaveCount(rows);
 });
 
-test("a name prompt: Enter saves, Cancel doesn't", async () => {
-  await nav("Voices").click();
-  const voice = page.locator(".voice", { has: page.locator(".vfoot") }).first();
-  test.skip(!(await voice.count()), "no unnamed voice left");
-  await voice.locator(".vfoot .btn", { hasText: "Name" }).click();
-  await dialog().locator("input").fill("Nobody");
-  await dialog().locator(".btn", { hasText: "Cancel" }).click();
-  await expect(dialog()).toHaveCount(0);
-  expect((await A.clusters()).some(c => c.name === "Nobody")).toBe(false);
-});
-
-test("Retrain now really retrains, and the page shows what the server recorded", async () => {
+test("Models: the pair in use, how it tested, and Use this switches back", async () => {
+  const models = async () =>
+    (await (await page.request.get("/api/models")).json()) as {
+      active: { version: string };
+      results: { current: string }[] | null;
+      history: { version: string; active: boolean }[];
+    };
   await nav("Models").click();
-  const button = page.locator(".train-row .btn.primary");
-  await button.click();
-  await expect(button).toHaveText("Retrain now", { timeout: 60_000 });
-  const models = await (await page.request.get("/api/models")).json();
-  const r = models.last_retrain;
-  expect(["swapped", "kept"]).toContain(r.status);
-  await expect(page.locator(".result .verdict .badge")).toHaveText(
-    r.status === "swapped" ? "✓ Better: now in use" : "✗ Not better: kept the current check",
-  );
-  await expect(page.locator(".result tbody tr")).toHaveCount(r.metrics.length);
-  await expect(page.locator(".result tbody tr").first().locator("td").nth(1)).toHaveText(r.metrics[0].current);
-  await expect(page.locator(".hist .v").first()).toContainText(models.history[0].version);
+  const before = await models();
+  await expect(page.locator(".panel h2").first()).toHaveText(`In use now: ${before.active.version}`);
+  await expect(page.locator(".result tbody tr")).toHaveCount(before.results!.length);
+  await page.locator(".hist .btn", { hasText: "Use this" }).first().click();
+  await dialog().locator(".btn", { hasText: "Use this version" }).click();
+  await expect(toast()).toHaveText("Now using installed.");
+  await expect.poll(async () => (await models()).active.version).toBe("installed");
+  await expect(page.locator(".panel h2").first()).toHaveText("In use now");
 });

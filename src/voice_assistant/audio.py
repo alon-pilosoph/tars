@@ -5,6 +5,7 @@ import wave
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Self
 
 import numpy as np
 import sounddevice as sd
@@ -84,7 +85,7 @@ class Microphone:
         except queue.Full:
             pass  # Consumer fell behind; dropping audio beats unbounded latency.
 
-    def __enter__(self) -> "Microphone":
+    def __enter__(self) -> Self:
         self._stream.start()
         return self
 
@@ -135,7 +136,7 @@ class Speaker:
             samplerate=sample_rate, device=device, channels=1, dtype="int16", callback=self._fill
         )
 
-    def __enter__(self) -> "Speaker":
+    def __enter__(self) -> Self:
         self._stream.start()
         return self
 

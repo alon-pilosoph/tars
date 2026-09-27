@@ -13,7 +13,8 @@ export default defineConfig({
   workers: 1,
   reporter: [["list"]],
   timeout: 120_000,
-  use: { channel: "chrome", headless: true, baseURL: `http://127.0.0.1:${PORT}` },
+  // The installed Chrome locally; Playwright's own Chromium in CI (CI=true), which also runs on Linux on ARM.
+  use: { channel: process.env.CI ? undefined : "chrome", headless: true, baseURL: `http://127.0.0.1:${PORT}` },
   webServer: {
     command: `uv run python tools/webui_demo.py build ${DATA} && uv run python tools/webui_demo.py serve ${DATA} ${PORT}`,
     cwd: path.resolve(import.meta.dirname, "../.."),

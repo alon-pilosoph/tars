@@ -11,7 +11,8 @@ REPO="$HOME/voice-assistant"
 cd "$REPO"
 
 echo "== PortAudio"
-dpkg -s libportaudio2 >/dev/null 2>&1 || sudo apt-get install -y libportaudio2
+# PortAudio for the mic and speaker; libatomic for Vosk, the wake double-check.
+for pkg in libportaudio2 libatomic1; do dpkg -s $pkg >/dev/null 2>&1 || sudo apt-get install -y $pkg; done
 
 echo "== uv (the services run it from ~/.local/bin)"
 UV="$HOME/.local/bin/uv"

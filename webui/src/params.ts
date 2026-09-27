@@ -7,7 +7,7 @@
    ?item=<id>             scrolled to that item     ?more=1: the phone's More menu open
    ?playing=<event id>-wake|<event id>-request|turn-<turn id>      a clip shown as playing
    ?modal=delete-conv[:id]|delete-item[:id]|note[:id]|delete[:id]|newvoice|merge|rollback
-   ?toast=recluster|renamed     ?recluster=running     ?retrain=running|skipped|better|worse */
+   ?toast=recluster|renamed     ?recluster=running */
 
 export type Tab = "home" | "sent" | "review" | "voices" | "models";
 export const TABS: Tab[] = ["home", "sent", "review", "voices", "models"];
@@ -37,5 +37,4 @@ export const LINK = {
   modalId: id(modalId),
   toast: oneOf(P.get("toast"), ["recluster", "renamed"] as const),
   reclustering: P.get("recluster") === "running",
-  retrain: oneOf(P.get("retrain"), ["running", "skipped", "better", "worse"] as const),
 };

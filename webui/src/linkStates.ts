@@ -13,17 +13,12 @@ import {
   rollback,
   scrollToEl,
   set,
-  setNow,
   showNote,
   toast,
   toggleMenu,
 } from "./store";
 
 export async function openLinkState() {
-  if (LINK.retrain && LINK.retrain !== "running") {
-    const { MOCK_RETRAIN } = await import("./demo");
-    setNow({ lastRetrain: { ...MOCK_RETRAIN[LINK.retrain], ts: Date.now() / 1000 - 60 } });
-  }
   if (LINK.playing) showPlaying(LINK.playing, 0.35);
   if (LINK.conv != null || LINK.item != null) await document.fonts.ready; // the text above has its final height
   if (LINK.conv != null) scrollToEl(`.conv[data-id="${LINK.conv}"]`);
@@ -88,6 +83,5 @@ export function openEarlyState() {
   }
   if (LINK.state === "loading") return false;
   if (LINK.reclustering) set({ reclustering: true });
-  if (LINK.retrain === "running") set({ retraining: true });
   return true;
 }

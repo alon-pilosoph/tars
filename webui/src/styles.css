@@ -2285,8 +2285,18 @@ dialog.wide {
   }
 }
 
-/* ═══ Not in the design file: why the version history is ignored, and why a retrain kept the current check ═══ */
-.panel > .notice,
-.verdict + .notice {
+/* ═══ Not in the design file: why the version history is ignored; the tests the models in use passed ═══ */
+.panel > .notice {
   margin-bottom: var(--s4);
 }
+.result > .m {
+  margin: 0 0 var(--s3);
+  color: var(--ink-3);
+}
+.panel > .spec + p,
+.panel > .train-row + p {
+  margin-top: var(--s4);
+}
+.hist .w {
+  white-space: normal;
+} /* an older date ("Tuesday, Sep 15, 8:59 AM") wraps instead of running into the next column */

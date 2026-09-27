@@ -128,7 +128,7 @@ def test_the_speech_detector_ignores_our_chime_and_quiet():
 
 
 def test_dead_microphone_raises_instead_of_hanging(monkeypatch):
-    import voice_assistant.audio as audio
+    from voice_assistant import audio
 
     monkeypatch.setattr(audio, "MIC_STALL_S", 0.1)
     mic = Microphone.__new__(Microphone)  # skip opening a real device

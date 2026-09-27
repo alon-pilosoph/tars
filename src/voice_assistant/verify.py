@@ -8,6 +8,7 @@ import json
 import urllib.request
 import zipfile
 from collections import deque
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,8 +17,8 @@ import numpy as np
 from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
 
 if TYPE_CHECKING:
-    from .checks import CheckVersions
     from .journal import Journal
+    from .versions import ModelVersions
 
 MODEL_NAME = "vosk-model-small-en-us-0.15"  # 40 MB download, runs fine on a Raspberry Pi
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
@@ -107,7 +108,7 @@ class PhraseVerifier:
         self.use_check(json.loads(check_path.read_text()) if check_path else None)
 
     def use_check(self, spec: dict | None) -> None:
-        """Switch to another learned layer (or none), e.g. one "Retrain now" just made."""
+        """Switch to another learned layer (or none), e.g. one just installed."""
         self._tuned = TunedCheck(spec) if spec else None
         self._grammar = self._tuned.grammar if self._tuned else self._phrase_grammar
 
@@ -147,7 +148,7 @@ class PhraseVerifier:
         if ok:
             return ANSWER, heard
         words = heard.split()
-        close = any(a == "hey" and b in self._ask_after_hey for a, b in zip(words, words[1:]))
+        close = any(a == "hey" and b in self._ask_after_hey for a, b in pairwise(words))
         return (ASK if close else IGNORE), heard
 
 
@@ -202,6 +203,7 @@ class RecentAudio:
 # A score this close to the threshold without reaching it is logged as a near-miss (a possible missed wake).
 NEAR_FRACTION = 0.6
 NEAR_QUIET_S = 1.0  # a near-miss ends once the score has stayed low this long
+FOLLOW_EVERY_S = 3.0  # how often TARS looks for newly installed wake models while it listens
 
 
 class VerifiedTrigger:
@@ -215,33 +217,38 @@ class VerifiedTrigger:
         journal: "Journal | None" = None,
         wake_model: str = "",
         check_model: str = "",
-        versions: "CheckVersions | None" = None,
+        versions: "ModelVersions | None" = None,
+        make_trigger=None,
     ):
-        """`versions`: the learned layer's versions, followed from wake to wake (the web UI retrains and rolls
-        back), starting with the one in use now."""
+        """With `versions`, the wake model, the check, the threshold and the window all come from the pair in use,
+        and follow it while TARS runs (`make_trigger(path, threshold)` loads a wake model); the arguments for them
+        are then ignored."""
         self._trigger = trigger
         self._window_s = window_s
         self._verifier = verifier
         self._journal = journal
         self._wake_model, self._check_model = wake_model, check_model
-        self._versions = versions
-        self._stamp = None
+        self._versions, self._make_trigger = versions, make_trigger
+        self._stamp, self._pair = None, None
         self._follow_versions(quiet=True)
-        self.phrase = trigger.phrase
+        self.phrase = self._trigger.phrase
         self.last_audio: np.ndarray | None = None  # what woke us, so speaker ID can tell who said it
 
     def wait(self, mic: Microphone) -> str:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite."""
         mic.clear()
         recent = RecentAudio(self._window_s)
-        near = self._trigger.threshold * NEAR_FRACTION
         peak, peak_audio, quiet = 0.0, None, 0.0
+        follow_blocks, blocks = max(1, round(FOLLOW_EVERY_S / BLOCK_SECONDS)), 0
         while True:
+            blocks += 1
+            if blocks % follow_blocks == 0 and self._follow_versions():
+                recent, peak, peak_audio = RecentAudio(self._window_s), 0.0, None  # a new pair starts fresh
             block = mic.read()
             recent.add(block)
             score = self._trigger.score(block)
             if score < self._trigger.threshold:
-                if score >= near and score > peak:
+                if score >= self._trigger.threshold * NEAR_FRACTION and score > peak:
                     peak, peak_audio, quiet = score, recent.audio(), 0.0
                 elif peak:
                     quiet += len(block) / SAMPLE_RATE
@@ -253,7 +260,6 @@ class VerifiedTrigger:
             peak, peak_audio = 0.0, None  # it did wake: not a near-miss
             self._trigger.reset()
             audio = recent.audio()
-            self._follow_versions()
             outcome, heard = self._verifier.decide(audio)
             if self._journal:
                 self._journal.wake(
@@ -264,17 +270,27 @@ class VerifiedTrigger:
                 return outcome
             print(f"(Heard '{heard}', not '{self.phrase}'. Still listening.)")
 
-    def _follow_versions(self, quiet: bool = False) -> None:
+    def _follow_versions(self, quiet: bool = False) -> bool:
+        """Switch to the pair in use if it changed. True if it did."""
         if not self._versions:
-            return
+            return False
         try:
-            in_use = self._versions.in_use()
-            if in_use.stamp != self._stamp:
-                self._verifier.use_check(in_use.spec)
-                self._check_model, self._stamp = in_use.name, in_use.stamp
-                if not quiet:
-                    print(f"(The wake check is now {in_use.version}.)")
+            stamp = self._versions.stamp()
+            if stamp == self._stamp:
+                return False
+            pair = self._versions.in_use()
+            self._stamp = stamp
+            if pair == self._pair:
+                return False
+            trigger = self._make_trigger(str(pair.model_path), pair.threshold)
+            self._verifier.use_check(pair.check)
+            self._trigger, self._window_s, self._pair = trigger, pair.check_window_s, pair
+            self._wake_model, self._check_model = pair.wake_model, pair.check_model
+            if not quiet:
+                print(f"(Now listening with the wake models {pair.version}.)")
+            return True
         except Exception as e:  # at startup it's a config mistake; mid-run, it mustn't stop TARS listening
-            if self._stamp is None:
+            if self._pair is None:
                 raise
-            print(f"(Couldn't switch the wake check, keeping {self._check_model}: {e!r})")
+            print(f"(Couldn't switch the wake models, keeping {self._pair.version}: {e!r})")
+            return False
