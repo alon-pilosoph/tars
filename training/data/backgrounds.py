@@ -7,12 +7,19 @@ The same sources as the first openWakeWord runs. Output: DATA/backgrounds/{mit_r
 
 import io
 import subprocess
+import urllib.request
+import zipfile
+from pathlib import Path
 
+import librosa
 import numpy as np
 import scipy.io.wavfile
 import soundfile as sf
 
 from training.common import Layout, parser
+
+FMA_SMALL = "https://os.unil.cloud.switch.ch/fma/fma_small.zip"
+FMA_TRACKS = 120
 
 
 def n_wavs(folder):
@@ -20,8 +27,6 @@ def n_wavs(folder):
 
 
 def write16k(path, y, sr):
-    import librosa
-
     y = y.mean(axis=1) if y.ndim > 1 else y
     if sr != 16000:
         y = librosa.resample(y, orig_sr=sr, target_sr=16000)
@@ -60,20 +65,50 @@ def main():
     print("audioset_16k", n_wavs(audioset))
 
     fma = out / "fma"
-    if n_wavs(fma) < 100:
-        import datasets
-
+    if n_wavs(fma) < FMA_TRACKS:
         fma.mkdir(exist_ok=True)
-        rows = iter(
-            datasets.load_dataset("rudraml/fma", name="small", split="train", streaming=True).cast_column(
-                "audio", datasets.Audio(sampling_rate=16000)
-            )
-        )
-        for _ in range(120):
-            row = next(rows)
-            name = row["audio"]["path"].split("/")[-1].replace(".mp3", ".wav")
-            scipy.io.wavfile.write(fma / name, 16000, (row["audio"]["array"] * 32767).astype(np.int16))
+        # The first tracks (in the zip's order) of the official fma_small.zip (7.2 GB), read over HTTP ranges: ~60 MB
+        # instead of all of it. The buffer turns zipfile's many small reads into a few large requests.
+        with zipfile.ZipFile(io.BufferedReader(RangeFile(FMA_SMALL), buffer_size=1 << 20)) as z:
+            for name in sorted(n for n in z.namelist() if n.endswith(".mp3"))[:FMA_TRACKS]:
+                target = fma / Path(name).with_suffix(".wav").name
+                if not target.exists():
+                    y, sr = librosa.load(io.BytesIO(z.read(name)), sr=None, mono=True)
+                    write16k(target, y, sr)
     print("fma", n_wavs(fma))
+
+
+class RangeFile(io.RawIOBase):
+    """A remote file that zipfile can seek in: every read is an HTTP range request."""
+
+    def __init__(self, url: str):
+        self._url, self._pos = url, 0
+        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as r:
+            self._size = int(r.headers["Content-Length"])
+
+    def seekable(self):
+        return True
+
+    def readable(self):
+        return True
+
+    def tell(self):
+        return self._pos
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        self._pos = {io.SEEK_SET: 0, io.SEEK_CUR: self._pos, io.SEEK_END: self._size}[whence] + offset
+        return self._pos
+
+    def readinto(self, buffer) -> int:
+        end = min(self._size, self._pos + len(buffer))
+        if end <= self._pos:
+            return 0
+        request = urllib.request.Request(self._url, headers={"Range": f"bytes={self._pos}-{end - 1}"})
+        with urllib.request.urlopen(request) as r:
+            data = r.read()
+        buffer[: len(data)] = data
+        self._pos += len(data)
+        return len(data)
 
 
 if __name__ == "__main__":
