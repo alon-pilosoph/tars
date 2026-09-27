@@ -25,8 +25,9 @@ uv run python -m training.household --pi pi@tars.local   # TARS runs on a Pi (SS
 ```
 
 `prepare.sh` sets up microWakeWord's environment and negative sets, downloads the noise, rooms and test audio from
-their own sources, fetches the prepared clips from Hugging Face (`training/hub.py`; the voices, not any household's
-recordings), and builds the wake model's features. `training.household` then copies the labeled wakes from TARS,
+their own sources, fetches the prepared clips from Hugging Face ([hey-tars-training](https://huggingface.co/datasets/alon-p/hey-tars-training),
+CC BY 4.0, and [hey-tars-training-nc](https://huggingface.co/datasets/alon-p/hey-tars-training-nc), CC BY-NC-SA 4.0,
+made by `training/hub.py`; the voices, never any household's recordings), and builds the wake model's features. `training.household` then copies the labeled wakes from TARS,
 keeps every fifth aside, trains both stages (about 25 minutes), and tests the new pair against the one in use end to
 end: the household's held-out wakes, held-out voices and lookalikes in 8 conditions, and false answers per hour on
 TV and audiobooks. It prints the comparison and installs the pair only if it answers more of the household's real

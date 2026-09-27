@@ -17,6 +17,7 @@ come out as the 16 kHz WAVs the scripts read, in the data folder's usual layout.
 a .done marker.
 """
 
+import argparse
 import csv
 import hashlib
 import io
@@ -152,7 +153,13 @@ def upload(out: Path) -> None:
     api = HfApi()
     for name, repo_id in DATASETS.items():
         api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
-        api.upload_large_folder(repo_id=repo_id, repo_type="dataset", folder_path=out / name)
+        # A few dozen files of up to about 500 MB each: one commit per dataset.
+        api.upload_folder(
+            repo_id=repo_id,
+            repo_type="dataset",
+            folder_path=out / name,
+            commit_message="The prepared training clips (training/hub.py export)",
+        )
         log(f"uploaded {out / name} to https://huggingface.co/datasets/{repo_id}")
 
 
@@ -215,7 +222,7 @@ def _card(name: str, clips: int) -> str:
 license: {LICENSES[name]}
 language: [en]
 tags: [audio, wake-word, keyword-spotting, synthetic-speech]
-pretty_name: "hey TARS" wake word training clips ({name})
+pretty_name: hey TARS wake word training clips ({name})
 ---
 
 # "hey TARS" training clips ({name})
@@ -239,6 +246,8 @@ def main():
     commands.add_parser("upload", help="upload an export (needs a Hugging Face write token)").add_argument(
         "out", type=Path
     )
+    for command in commands.choices.values():  # --data before or after the command, as the other scripts take it
+        command.add_argument("--data", type=Path, default=argparse.SUPPRESS, help="the training data folder")
     args = p.parse_args()
     layout = Layout(args.data)
     if args.command == "download":
