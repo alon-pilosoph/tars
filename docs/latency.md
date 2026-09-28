@@ -88,7 +88,7 @@ Deepgram's voices, and its Flux model deciding when you've finished, both behind
 |---|---|---|
 | Today: Nova-3, Silero + Smart Turn, Onyx | 2.63-3.02 s | 5.58 s |
 | Deepgram voice (Flux Cliff or Aura-2 Zeus) | 1.99-2.05 s | 2.44 s |
-| Flux turn-taking, Onyx | 2.03 s | 3.58 s |
+| Flux turn-taking, Onyx (the default since 2026-09-28) | 2.03-2.62 s (3 runs) | 4.72 s |
 | Flux turn-taking, Deepgram voice | 1.59-2.47 s (6 runs, most under 1.95 s) | 3.37 s |
 
 **The voice.** A warm connection to Deepgram starts speaking in about 0.27 s; opening one takes about 0.7 s from
