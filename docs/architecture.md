@@ -27,13 +27,14 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
 1. **Stage 1** (microWakeWord, local) scores the block. Close calls are logged as near-misses.
 2. **Stage 2** (Vosk with a grammar plus a learned layer, local) decides: answer, ask "Did you call me?", or ignore.
    See [hearing "hey TARS"](wake-word.md).
-3. **Recording** runs until you stop talking. [Silero VAD](https://github.com/snakers4/silero-vad) (local, 2 MB)
-   hears speech; after `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn)
-   (local, 8 MB) listens to how the last words sounded, and if you sounded mid-thought, TARS keeps waiting up to
-   `max_pause_s` (1.6 s). It only ever waits longer, never cuts in sooner. A bare "hey TARS" followed by a pause gets
-   "Yes, Alon?" (speaker ID from the wake alone) and waits.
-4. **Speech to text** streams to Deepgram (Nova-3) while you talk, so the transcript is ready about 0.2 s after you
-   stop; if the stream fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
+3. **Recording** runs until you've finished. [Silero VAD](https://github.com/snakers4/silero-vad) (local, 2 MB)
+   hears you start; Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
+   decides when you're done, from your words as well as the pause. If Flux fails, the local rules take over: after
+   `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (local, 8 MB) may keep
+   waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes, Alon?" (speaker ID from the
+   wake alone) and waits.
+4. **Speech to text** is Flux too, streamed while you talk, so the words come with its decision; if the stream
+   fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
    local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
    `[Speaker: Alon]`.
 5. **The LLM** (OpenAI's Responses API, streamed) answers in TARS's voice. Each finished sentence goes to **text
@@ -107,7 +108,7 @@ To use it away from home, put the Pi and the phone on Tailscale rather than forw
 |---|---|
 | Audio in and out | `audio.py` (mic stream, devices, playback, chimes), `effects.py` (the TARS voice) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2) |
-| Hearing when you're done | `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn), `models.py` (downloads) |
+| Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback), `models.py` (downloads) |
 | Understanding and answering | `stt.py`, `llm.py`, `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups), `__main__.py` (wiring, command line) |

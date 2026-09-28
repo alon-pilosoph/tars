@@ -32,9 +32,9 @@ uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:808
 ```
 
 The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
-(8 MB) and the speaker model (25 MB) into `models/`. Expect about 2.5 seconds from when you stop talking to TARS's
-first word, a little more when you sounded mid-thought: TARS waits 0.8 s to be sure you're done, and prepares the
-answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks for microphone access the first time; if TARS hears nothing, check System
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 2 to 2.5 seconds from when you stop talking to TARS's
+first word, a little more when you sounded mid-thought: Deepgram's Flux decides when you're done, and TARS prepares
+the answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks for microphone access the first time; if TARS hears nothing, check System
 Settings → Privacy & Security → Microphone for your terminal.
 
 ## Install on the Pi

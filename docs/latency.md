@@ -9,14 +9,15 @@ Median over 8 spoken questions, three runs, on the development Mac:
 
 | Stage | Time | What happens |
 |---|---|---|
-| Waiting to be sure you're done | 0.8 s (1.6 s when you sounded mid-thought) | Silero VAD hears the silence; at 0.8 s Smart Turn decides whether to wait longer |
-| Speech to text | ~0.2 s | Deepgram streamed your words while you talked; only the last ones are left |
-| The brain's first sentence | ~0.7 s | OpenAI, streamed |
-| The voice's first audio | ~1.0 s | OpenAI's Onyx, a sentence at a time |
-| **From you stopping to TARS's first sound** | **~2.5 s** | the answer is prepared during the wait, so these overlap |
+| Waiting to be sure you're done | ~0.6 s (0.2-1.7 s) | Deepgram's Flux decides, from your words as well as the pause |
+| Speech to text | ~0 s | Flux sends the words with its decision |
+| The brain's first sentence | ~0.8 s | OpenAI, streamed |
+| The voice's first audio | ~0.9 s | OpenAI's Onyx, a sentence at a time |
+| **From you stopping to TARS's first sound** | **~2.0-2.6 s** | the answer is prepared during the wait, so these overlap |
 
-Before this work it was 3.5 s: the recording was uploaded and transcribed only after the end (0.7 s), and the
-brain and voice only started after the full 0.5 s wait.
+It was 3.5 s before any of this work (the recording uploaded and transcribed only after a 0.5 s wait), then about
+2.5-3 s with Deepgram's streamed Nova-3 and a local end of turn (Silero VAD and Smart Turn), which also cut off
+sentences with a pause in them; see [going all in on Deepgram](#going-all-in-on-deepgram-measured-2026-09-27).
 
 ## How the stages overlap
 
@@ -24,33 +25,34 @@ brain and voice only started after the full 0.5 s wait.
 sequenceDiagram
     participant You
     participant Rec as Recorder (local)
-    participant DG as Deepgram
+    participant DG as Deepgram Flux
     participant Draft as Answer draft
     participant Out as Speaker
     You->>Rec: "What's the capital of Australia?"
     Rec-->>DG: audio, while you talk
-    Note over Rec: 0.25 s of silence
-    Rec->>Draft: start early (transcript so far, speaker ID)
+    DG->>Rec: maybe done
+    Rec->>Draft: start early (the words so far, speaker ID)
     Draft->>Draft: brain writes, Onyx speaks the first sentence
-    Note over Rec: 0.8 s of silence, Smart Turn: finished
+    DG->>Rec: done
     Rec->>Out: confirmed: play the draft
 ```
 
-**Start early, speak late.** From a quarter second into a pause, TARS prepares the answer in the background while
+**Start early, speak late.** When Flux thinks you may be done, TARS prepares the answer in the background while
 the recording goes on (`draft.py`). If you carry on talking, the draft is thrown away and the brain forgets it (without
 waiting for it: a draft stuck in a web search can't hold up the next one); it's
 only played, logged, and allowed to send anything to the web page once your turn is confirmed over. So the waiting
 rule decides only *when TARS speaks*, never what it heard: a cut-off can't come from answering early.
 
-**The end of your turn** (`recorder.py`, `vad.py`, `turn.py`): after 0.8 s of silence, [Smart
-Turn](https://github.com/pipecat-ai/smart-turn) (a small local model that listens to how your last words sounded)
-decides whether you're finished. If it thinks there's more coming ("and, um…"), TARS keeps waiting up to 1.6 s. It
-only ever makes TARS wait longer, so it cuts people off less than a plain silence rule. On the Mac a check takes
-about 35 ms; it hasn't been timed on the Pi yet.
+**The end of your turn** (`stt.FluxSession`, `recorder.py`): [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
+hears your words as well as the pause, so "and the..." isn't taken for the end of a sentence. Silero VAD (local)
+still hears when you start talking. If Flux fails, the local rules take over for that turn: after 0.8 s of silence,
+[Smart Turn](https://github.com/pipecat-ai/smart-turn) (a small local model that listens to how your last words
+sounded) may extend the wait to 1.6 s, and a draft starts a quarter second into a pause. `[stt] provider =
+"deepgram"` makes the local rules the only ones again.
 
 **Failures.** The voice gives up after 4 s without audio instead of the client's 15 s, and TARS says so in its own
 voice, from lines synthesized at startup ("I lost that one somewhere between here and the server. Ask me again.";
-plainer below 50% humor). Deepgram falls back to OpenAI transcribing the same recording.
+plainer below 50% humor). If Deepgram fails, OpenAI transcribes the same recording.
 
 ## Settings
 
@@ -86,7 +88,7 @@ Deepgram's voices, and its Flux model deciding when you've finished, both behind
 
 | Setup | From you stopping to TARS's first sound | Slowest turn |
 |---|---|---|
-| Today: Nova-3, Silero + Smart Turn, Onyx | 2.63-3.02 s | 5.58 s |
+| Before: Nova-3, Silero + Smart Turn, Onyx | 2.63-3.02 s | 5.58 s |
 | Deepgram voice (Flux Cliff or Aura-2 Zeus) | 1.99-2.05 s | 2.44 s |
 | Flux turn-taking, Onyx (the default since 2026-09-28) | 2.03-2.62 s (3 runs) | 4.72 s |
 | Flux turn-taking, Deepgram voice | 1.59-2.47 s (6 runs, most under 1.95 s) | 3.37 s |
@@ -99,12 +101,12 @@ expressivity setting instead. Which voice sounds most like TARS is a listening t
 **The end of the turn** (`tools/turn_bench.py`): the owner's 25 recorded sentences, whole, and with a pause spliced
 in after an unfinished word ("and", "the", "to"...), 0.5, 0.8 or 1.2 s long.
 
-| | Today (Silero + Smart Turn) | Flux |
+| | Before (Silero + Smart Turn) | Flux |
 |---|---|---|
 | Turn over after a whole sentence | 0.88 s | 1.05 s median, 90% within 1.29 s |
 | Cut-offs in a 0.5 / 0.8 / 1.2 s pause | 0 / 0 / **18 of 18** | 0 / 1 / 1 of 18 |
 
-Today's setup cut off every 1.2 s pause because Smart Turn called them finished: checked after 0.8 s of silence, it
+The local setup cut off every 1.2 s pause because Smart Turn called them finished: checked after 0.8 s of silence, it
 scored 17 of these 18 unfinished sentences as done (after 0.2 s, 13 of 18), so it almost never extends the wait.
 Flux hears the words too ("...and the" isn't a sentence). Spliced pauses aren't real hesitations (no "um", no
 stretched last word), which may flatter Flux; real use will tell. Flux's early "maybe done" (where a draft starts)

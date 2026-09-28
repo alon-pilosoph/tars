@@ -3,15 +3,15 @@
 A hackable voice assistant: say a wake word, ask a question, hear the answer. Prototyped on a Mac, deployed to a Raspberry Pi 5 with a USB speakerphone.
 
 ```
-mic ──► wake word ──► record until you stop ──► speech-to-text ──► LLM ──► text-to-speech ──► speaker
-        (local)       (local: Silero VAD +       (Deepgram,          (OpenAI)  (OpenAI, streamed)
-                       an end-of-turn model)      streamed)
+mic ──► wake word ──► record until you're done ──► speech-to-text ──► LLM ──► text-to-speech ──► speaker
+        (local)       (Silero VAD; Deepgram's        (Deepgram Flux,    (OpenAI)  (OpenAI, streamed)
+                       Flux decides when)             streamed)
 ```
 
 - **One continuous mic stream.** Every stage reads 80 ms blocks from the same queue, so nothing fights over the audio device.
 - **Wake word and speech detection run locally** ([microWakeWord](https://github.com/kahrendt/microWakeWord), a [Vosk](https://alphacephei.com/vosk/) double-check, [Silero VAD](https://github.com/snakers4/silero-vad)). Nothing leaves the machine until you've said "hey TARS".
-- **Recording ends when you stop talking**, not after a fixed number of seconds. After 0.8 s of silence a small local model ([Smart Turn](https://github.com/pipecat-ai/smart-turn)) listens to how you sounded, and if you were mid-thought, TARS keeps waiting.
-- **Your words are transcribed while you say them** (Deepgram, streamed), so the text is ready about 0.2 s after you stop. While TARS waits to be sure you're done, it already prepares the answer, and only plays it once you are: about 2.5 s from when you stop talking to its first word ([docs/latency.md](docs/latency.md)).
+- **Recording ends when you've finished**, not after a fixed silence. Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition) hears your words as well as the pause, so a pause after "and the..." doesn't cut you off (2 cut-offs in 54 paused sentences, against 18 for a local silence model). If Flux fails, local rules take over.
+- **Your words are transcribed while you say them** (Flux, streamed), so they arrive with the decision that you're done. While TARS waits to be sure, it already prepares the answer, and only plays it once you are: about 2 to 2.5 s from when you stop talking to its first word ([docs/latency.md](docs/latency.md)).
 - **It can look things up and send you things.** With web search it answers current questions and finds real links; with the send tool it puts links, notes, lists and text files in the web UI instead of reading them out.
 - **The reply is spoken while it's still being written.** The LLM response is streamed, each sentence goes to text-to-speech the moment it's complete, and later sentences synthesize while earlier ones play. Playback starts on the first audio chunk.
 - **Every stage sits behind a small interface** (`Trigger`, `Transcriber`, `Brain`, `Voice`), so swapping in a local model is one new class and a config change.
@@ -25,7 +25,7 @@ mic ──► wake word ──► record until you stop ──► speech-to-text
 
 - [How TARS fits together](docs/architecture.md): the pipeline, the LLM's tools, what leaves the machine, the web UI's safeguards
 - [Hearing "hey TARS"](docs/wake-word.md): the two stages, training, performance, what was tried and dropped
-- [Response time](docs/latency.md): where the ~2.5 s goes, starting early and speaking late, what was tried
+- [Response time](docs/latency.md): where the ~2 s goes, starting early and speaking late, what was tried
 - [Self-learning TARS](docs/self-learning.md): what's kept, automatic labels, voices, training new wake models
 - [The web UI](docs/web-ui.md): pages, the Refresh rule, the API, development and checks
 - [Running TARS at home](docs/deployment.md): the Pi, services, storage, backup, a first test run
@@ -116,7 +116,7 @@ Then set `enabled = true` under `[speaker]`. There's also a way without a record
 | `wake.py` | Wake-word and push-to-talk triggers |
 | `recorder.py` | Records one utterance: from when you start talking until your turn is over |
 | `vad.py` | Is someone talking? Silero VAD, a small local speech detector |
-| `turn.py` | Finished, or only paused? Smart Turn, a small local model that extends the wait when you sound mid-thought |
+| `turn.py` | Finished, or only paused? Smart Turn, a small local model, for when Flux isn't deciding |
 | `draft.py` | Start early, speak late: the answer prepared during a pause, used or thrown away |
 | `models.py` | Downloads the small local models on first use |
 | `stt.py` / `llm.py` / `tts.py` | Speech-to-text (Deepgram streamed, OpenAI as backup), conversation (OpenAI's Responses API, with web search and the send tool), text-to-speech |
