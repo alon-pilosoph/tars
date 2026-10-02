@@ -27,7 +27,8 @@ script.
 | [Piper](https://github.com/rhasspy/piper) voices ([model cards](https://huggingface.co/rhasspy/piper-voices)) | per voice | clips hosted, split by the voice's terms: |
 | ... trained from scratch: libritts-high (CC BY 4.0), cori, kristin (public domain), john (from kristin) | as listed | permissive set |
 | ... fine-tuned from lessac ([Blizzard 2013 license](https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html), research only), including libritts_r (the Piper LibriTTS clips), vctk, arctic, jenny_dioco and others; ryan (CC BY-NC-SA) and the voices built on it; l2arctic, semaine, hfc (NC datasets) | non-commercial | non-commercial set (CC BY-NC-SA 4.0) |
-| ... alan (all rights reserved), and amy, danny, kusal (no license found) | none usable | not hosted; their clips are left out |
+| ... alan (all rights reserved), and amy, danny, kusal (no license found) | none usable | not used: no clip from them, or derived from them, is in the models or the hosted sets |
+| ... non-English voices, for the double-check's accented clips | per voice | used locally for stage 2, never hosted; left out for no usable license or a source built on one above: ar_JO-kareem, zh_CN-huayan, sv_SE-lisa, eu_ES-antton, eu_ES-maider (from amy), ka_GE-natia, ru_RU-irina, es_MX-claude |
 | [piper-sample-generator](https://github.com/rhasspy/piper-sample-generator) | MIT | generates the Piper LibriTTS clips |
 
 ## Speech, noise and rooms
