@@ -6,9 +6,10 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "playwright.config.ts", "checks/**/*.ts"]
+  "include": ["vite.config.ts", "checks/**/*.ts"]
 }

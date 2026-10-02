@@ -1,42 +1,54 @@
-import { KIND, isToday, kindOf, sentence, shortDay, stamp, time } from "../format";
-import { type State, cName, menuOpen, reviewEvents, setLabel, toggleMenu, useStore } from "../store";
+import { KIND_LABEL, heardText, isToday, kindOf, sentence, shortDay, stamp, time } from "../format";
+import {
+  type MenuTarget,
+  type State,
+  answerWake,
+  clusterName,
+  menuOpen,
+  reviewEvents,
+  toggleMenu,
+  useStore,
+} from "../store";
 import type { Label, TarsEvent } from "../types";
+import { Empty, Group } from "./Blocks";
 import { PlayButton } from "./PlayButton";
-import { Slabs } from "./Slabs";
 
 export function Review() {
   const s = useStore();
-  // Rows stay in their group until Refresh, even after they're answered (or an answer is cleared).
-  const all = reviewEvents(s),
-    todo = all.filter(e => s.snapshot.review.has(e.id)),
-    done = all.filter(e => !s.snapshot.review.has(e.id));
-  const live = todo.filter(e => !e.label).length;
+  // Rows stay in their group until Refresh, even after an answer is given or cleared.
+  const all = reviewEvents(s);
+  const toCheck = all.filter(e => s.snapshot.review.has(e.id));
+  const reviewed = all.filter(e => !s.snapshot.review.has(e.id));
+  const unanswered = toCheck.filter(e => !e.label).length;
   return (
     <>
       <div className="head">
-        <ReviewHead live={live} shown={todo.length} />
+        <ReviewHead unanswered={unanswered} shown={toCheck.length} />
       </div>
-      {todo.length ? (
-        <Group title="To check" events={todo} s={s} />
+      {toCheck.length ? (
+        <Group title="To check" count={unanswered}>
+          <WakeList events={toCheck} s={s} />
+        </Group>
+      ) : all.length ? (
+        <Empty slabs title="All clear." text="Nothing new since you last looked." />
       ) : (
-        <div className="empty">
-          <Slabs />
-          <h2>All clear.</h2>
-          <p>TARS understood every wake since you last looked.</p>
-          <div className="quip">confidence 97%, smugness 0%</div>
-        </div>
+        <Empty slabs title="No wakes yet." text="TARS logs every wake. The ones it wasn't sure about come here." />
       )}
-      {done.length > 0 && <Group title="Reviewed" events={done} s={s} />}
+      {reviewed.length > 0 && (
+        <Group title="Reviewed" count={reviewed.length}>
+          <WakeList events={reviewed} s={s} />
+        </Group>
+      )}
     </>
   );
 }
 
-function ReviewHead({ live, shown }: { live: number; shown: number }) {
-  if (live)
+function ReviewHead({ unanswered, shown }: { unanswered: number; shown: number }) {
+  if (unanswered)
     return (
       <div>
         <h1>
-          <span className="n">{live}</span> to check
+          <span className="head-count">{unanswered}</span> to check
         </h1>
         <p>TARS wasn't sure these were meant for it. Its guess is highlighted.</p>
       </div>
@@ -51,38 +63,36 @@ function ReviewHead({ live, shown }: { live: number; shown: number }) {
   return (
     <div>
       <h1>Nothing to check</h1>
-      <p>When TARS isn't sure it heard its name, it shows up here.</p>
     </div>
   );
 }
 
-function Group({ title, events, s }: { title: string; events: TarsEvent[]; s: State }) {
+function WakeList({ events, s }: { events: TarsEvent[]; s: State }) {
   return (
-    <section className="group">
-      <h2 className="group-h">
-        <b>{title}</b>
-        {events.length}
-      </h2>
-      <div className="list">
-        {events.map(e => (
-          <Row key={e.id} e={e} s={s} />
-        ))}
-      </div>
-    </section>
+    <div className="wake-list">
+      {events.map(e => (
+        <WakeRow key={e.id} e={e} s={s} />
+      ))}
+    </div>
   );
 }
 
-function Row({ e, s }: { e: TarsEvent; s: State }) {
-  const k = kindOf(e);
+function WakeRow({ e, s }: { e: TarsEvent; s: State }) {
+  const kind = kindOf(e);
+  const menu: MenuTarget = { kind: "event", id: e.id };
   return (
-    <article className={`ev${e.label ? " done" : ""}`} aria-label={`${KIND[k]}, ${stamp(e.ts)}`}>
-      <PlayButton clip={{ event: e.id, part: "wake" }} label="what woke it" />
+    <article className={`wake-row${e.label ? " answered" : ""}`} aria-label={`${KIND_LABEL[kind]}, ${stamp(e.ts)}`}>
+      {e.has_wake_audio ? (
+        <PlayButton clip={{ event: e.id, part: "wake" }} label="what woke it" />
+      ) : (
+        <span className="play-gap" />
+      )}
       <div className="when">
-        <span className="t" title={new Date(e.ts * 1000).toLocaleString()}>
+        <span className="when-time" title={stamp(e.ts)}>
           {time(e.ts)}
         </span>
-        {!isToday(e.ts) && <span className="d">{shortDay(e.ts)}</span>}
-        <span className={`kind k-${k}`}>{KIND[k]}</span>
+        {!isToday(e.ts) && <span className="when-day">{shortDay(e.ts)}</span>}
+        <span className={`kind k-${kind}`}>{KIND_LABEL[kind]}</span>
       </div>
       <div className="heard">
         <Heard e={e} s={s} />
@@ -90,30 +100,30 @@ function Row({ e, s }: { e: TarsEvent; s: State }) {
       <div className="then">
         <Then e={e} s={s} />
       </div>
-      <LabelControl e={e} />
+      <AnswerControl e={e} />
       <button
         className="more"
         aria-haspopup="menu"
-        aria-expanded={menuOpen(s, "event", e.id)}
-        aria-label="More actions"
-        onClick={ev => toggleMenu({ kind: "event", id: e.id }, ev.currentTarget)}
+        aria-expanded={menuOpen(s, menu)}
+        aria-label={`More for the wake at ${time(e.ts)}`}
+        onClick={ev => toggleMenu(menu, ev.currentTarget)}
       />
     </article>
   );
 }
 
 function Heard({ e, s }: { e: TarsEvent; s: State }) {
-  const score = e.wake_score?.toFixed(2) ?? "?";
+  const score = e.wake_score?.toFixed(2) ?? "—";
   if (e.kind === "near_miss") {
-    const th = s.models?.active?.threshold;
+    const threshold = s.models?.active?.threshold;
     return (
       <>
-        <div className="cell-l">Heard</div>
-        <div className="q none">Below the wake threshold</div>
+        <div className="cell-label">Heard</div>
+        <div className="heard-text none">Below the wake threshold</div>
         <div className="meta">
           <span>
             wake {score}
-            {th != null ? ` / ${th}` : ""}
+            {threshold != null ? ` / ${threshold}` : ""}
           </span>
         </div>
       </>
@@ -122,8 +132,8 @@ function Heard({ e, s }: { e: TarsEvent; s: State }) {
   const pct = e.confidence != null ? Math.round(e.confidence * 100) : null;
   return (
     <>
-      <div className="cell-l">Heard</div>
-      <div className="q">“{e.heard || "?"}”</div>
+      <div className="cell-label">Heard</div>
+      <div className="heard-text">“{e.heard ? heardText(e.heard) : "—"}”</div>
       <div className="meta">
         {pct != null && (
           <>
@@ -140,31 +150,35 @@ function Heard({ e, s }: { e: TarsEvent; s: State }) {
 }
 
 function Then({ e, s }: { e: TarsEvent; s: State }) {
-  const k = kindOf(e);
-  const txt = (none: string, pre = false) => (
-    <div className="txt">
-      <div className="cell-l">Then</div>
-      {pre && <Asked />}
-      <div className="req none">{none}</div>
-    </div>
+  const kind = kindOf(e);
+  const nothing = (text: string, asked = false) => (
+    <>
+      <div className="cell-label">Then</div>
+      <div className="then-text">
+        {asked && <Asked />}
+        <div className="request none">{text}</div>
+      </div>
+    </>
   );
-  if (k === "near_miss") return txt("Didn't wake");
-  if (k === "ignore") return txt("Stayed quiet");
-  if (e.transcript || e.utterance_audio)
+  if (kind === "near_miss") return nothing("Didn't wake");
+  if (kind === "ignore") return nothing("Stayed quiet");
+  if (e.transcript || e.has_request_audio)
     return (
       <>
-        {e.utterance_audio && <PlayButton clip={{ event: e.id, part: "request" }} label="the request" sm />}
-        <div className="txt">
-          <div className="cell-l">Then</div>
-          {k === "ask" && <Asked />}
-          <div className={`req${e.transcript ? "" : " none"}`}>
-            {e.transcript ? `“${e.transcript}”` : "No transcript"}
+        <div className="cell-label">Then</div>
+        <div className="then-body">
+          {e.has_request_audio && <PlayButton clip={{ event: e.id, part: "request" }} label="the request" small />}
+          <div className="then-text">
+            {kind === "ask" && <Asked />}
+            <div className={`request${e.transcript ? "" : " none"}`}>
+              {e.transcript ? `“${e.transcript}”` : "No transcript"}
+            </div>
+            <Voice e={e} s={s} />
           </div>
-          <Voice e={e} s={s} />
         </div>
       </>
     );
-  return txt(nothingSaid(e.follow, k === "ask"), k === "ask");
+  return nothing(nothingSaid(e.follow, kind === "ask"), kind === "ask");
 }
 
 function nothingSaid(follow: TarsEvent["follow"], asked: boolean) {
@@ -173,65 +187,66 @@ function nothingSaid(follow: TarsEvent["follow"], asked: boolean) {
   return "Nothing followed";
 }
 
-const Asked = () => <div className="pre">Asked “Did you call me?”</div>;
+const Asked = () => <div className="asked">Asked “Did you call me?”</div>;
 
 function Voice({ e, s }: { e: TarsEvent; s: State }) {
-  if (!e.utterance_audio) return null;
-  const name = e.cluster_id != null ? cName(s, e.cluster_id) : null;
+  if (!e.has_request_audio) return null;
+  const name = clusterName(s, e.cluster_id);
+  const menu: MenuTarget = { kind: "eventVoice", id: e.id };
   return (
-    <div className="who">
+    <div className="voice-line">
       <button
         className="chip"
         aria-haspopup="menu"
-        aria-expanded={menuOpen(s, "eventVoice", e.id)}
+        aria-expanded={menuOpen(s, menu)}
         aria-label={`Voice: ${name || "none"}. Change`}
-        onClick={ev => toggleMenu({ kind: "eventVoice", id: e.id }, ev.currentTarget)}
+        onClick={ev => toggleMenu(menu, ev.currentTarget)}
       >
-        {name || "No voice"}
-        {e.cluster_pinned ? <span className="pin">(pinned)</span> : null}
-        <span className="car" />
+        <span className="chip-name" title={name || undefined}>
+          {name || "No voice"}
+        </span>
+        {e.cluster_pinned ? <span className="chip-pin">(pinned)</span> : null}
+        <span className="chip-caret" />
       </button>
-      {e.speaker && <span className="sid">speaker ID: {e.speaker}</span>}
     </div>
   );
 }
 
-const yn = (v: Label) => (v === "real" ? "yes" : "no");
+const yesNo = (v: Label) => (v === "real" ? "yes" : "no");
 
 function Reason({ e }: { e: TarsEvent }) {
-  if (e.label)
+  if (e.label) {
+    const guessed = e.auto_label && e.auto_label !== e.label ? ` TARS guessed ${yesNo(e.auto_label)}.` : "";
     return (
       <>
-        You said {yn(e.label)}.{e.auto_label && e.auto_label !== e.label ? ` TARS guessed ${yn(e.auto_label)}.` : ""}
+        You said {yesNo(e.label)}.{guessed}
       </>
     );
-  const r =
-    e.auto_reason && e.auto_reason !== "near-miss" ? e.auto_reason : e.kind === "near_miss" ? "it never woke up" : "";
+  }
   return (
     <>
-      <b>{e.auto_label ? `TARS thinks ${yn(e.auto_label)}.` : "No guess."}</b>
-      {r ? ` ${sentence(r)}` : ""}
+      <b>{e.auto_label ? `TARS thinks ${yesNo(e.auto_label)}.` : "No guess."}</b>
+      {e.auto_reason ? ` ${sentence(e.auto_reason)}` : ""}
     </>
   );
 }
 
-/** Was it really hey TARS? TARS's guess is highlighted until a person answers. */
-function LabelControl({ e }: { e: TarsEvent }) {
+function AnswerControl({ e }: { e: TarsEvent }) {
   const guess = !e.label && e.auto_label;
-  const b = (v: Label, cls: string, text: string) => (
+  const option = (value: Label, className: string, text: string) => (
     <button
-      className={`${cls}${guess === v ? " guess" : ""}`}
-      aria-pressed={e.label === v}
-      onClick={() => setLabel(e.id, v)}
+      className={`${className}${guess === value ? " guess" : ""}`}
+      aria-pressed={e.label === value}
+      onClick={() => answerWake(e.id, value)}
     >
       {text}
     </button>
   );
   return (
-    <div className="lab">
-      <div className="lab-seg" role="group" aria-label="Was it really hey TARS?">
-        {b("real", "y", "hey TARS")}
-        {b("not_real", "n", "Not it")}
+    <div className="answer">
+      <div className="answer-seg" role="group" aria-label="Was it really hey TARS?">
+        {option("real", "answer-yes", "hey TARS")}
+        {option("not_real", "answer-no", "Not it")}
       </div>
       <div className="reason">
         <Reason e={e} />

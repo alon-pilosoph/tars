@@ -1,5 +1,6 @@
-import { ENROLL_AT, plural } from "../format";
+import { plural } from "../format";
 import {
+  type MenuTarget,
   type State,
   menuOpen,
   notPeople,
@@ -13,19 +14,19 @@ import {
   voiceName,
 } from "../store";
 import type { Cluster } from "../types";
+import { Empty, Group } from "./Blocks";
 import { PlayButton } from "./PlayButton";
-import { Slabs } from "./Slabs";
 
 export function Voices() {
   const s = useStore();
-  const can = s.status?.clustering !== false;
+  const canRegroup = s.status.clustering;
   const head = (
     <div className="head">
       <div>
         <h1>Voices</h1>
         <p>The people TARS has heard. Name someone and TARS greets them by name.</p>
       </div>
-      {can && (
+      {canRegroup && (
         <button
           className="btn"
           disabled={s.reclustering}
@@ -35,10 +36,10 @@ export function Voices() {
           {s.reclustering ? (
             <>
               <span className="spin" />
-              Re-clustering…
+              Regrouping…
             </>
           ) : (
-            "Re-cluster voices"
+            "Regroup voices"
           )}
         </button>
       )}
@@ -48,38 +49,34 @@ export function Voices() {
     return (
       <>
         {head}
-        <div className="empty">
-          <Slabs />
-          <h2>No voices yet.</h2>
-          <p>
-            {can
-              ? "Once TARS has heard a few requests, press Re-cluster and it will sort them by who's speaking."
-              : "Clustering isn't set up on this assistant."}
-          </p>
-          <div className="quip">nobody here but me</div>
-        </div>
+        <Empty
+          slabs
+          title="No voices yet."
+          quip="nobody here but me"
+          text={
+            canRegroup
+              ? "Once TARS has heard a few requests, press Regroup voices and it will sort them by who's speaking."
+              : "Regrouping voices isn't set up on this assistant."
+          }
+        />
       </>
     );
 
-  const section = (title: string, cs: Cluster[]) =>
-    cs.length > 0 && (
-      <section className="group">
-        <h2 className="group-h">
-          <b>{title}</b>
-          {cs.length}
-        </h2>
-        <div className={`vgrid${s.reclustering ? " busy" : ""}`}>
-          {cs.map(c => (
+  const section = (title: string, clusters: Cluster[]) =>
+    clusters.length > 0 && (
+      <Group title={title} count={clusters.length}>
+        <div className={`voice-grid${s.reclustering ? " busy" : ""}`}>
+          {clusters.map(c => (
             <VoiceCard key={c.id} c={c} s={s} />
           ))}
         </div>
-      </section>
+      </Group>
     );
   return (
     <>
       {head}
       {s.reclustering && (
-        <div className="progress" role="progressbar" aria-label="Re-clustering">
+        <div className="progress" role="progressbar" aria-label="Regrouping">
           <i />
         </div>
       )}
@@ -90,58 +87,60 @@ export function Voices() {
   );
 }
 
-function VoiceCard({ c, s }: { c: Cluster; s: State }) {
-  const nm = voiceName(c);
-  const samples = s.events.filter(e => e.cluster_id === c.id && e.utterance_audio).slice(0, 4);
-  let status;
-  if (c.kind === "not_person") status = <div className="vs">Not a person, so it's left out of voiceprints</div>;
-  else if (!c.name) status = <div className="vs">Name it so TARS can recognize them</div>;
-  else if (c.size >= ENROLL_AT) status = <div className="vs ok">✓ Voiceprint from {c.size} requests</div>;
-  else
-    status = (
-      <div className="vs">
-        <span className="pips" aria-hidden="true">
-          {Array.from({ length: ENROLL_AT }, (_, i) => (
-            <i key={i} className={i < c.size ? "f" : ""} />
-          ))}
-        </span>
-        {plural(ENROLL_AT - c.size, "more request")} for a voiceprint
-      </div>
-    );
+function VoiceStatus({ c, enrollAt }: { c: Cluster; enrollAt: number }) {
+  if (c.kind === "not_person") return <div className="voice-status">Not a person, so it's left out of voiceprints</div>;
+  if (!c.name) return <div className="voice-status">Name it so TARS can recognize them</div>;
+  if (c.size >= enrollAt) return <div className="voice-status ok">✓ Voiceprint from {c.size} requests</div>;
   return (
-    <div className={`voice${c.kind === "not_person" ? " np" : ""}`}>
-      <div className="vh">
-        <div className="nm">
-          <h3 className={c.name ? "" : "un"}>{nm}</h3>
-          <div className="c">{plural(c.size, "request")}</div>
+    <div className="voice-status">
+      <span className="pips" aria-hidden="true">
+        {Array.from({ length: enrollAt }, (_, i) => (
+          <i key={i} className={i < c.size ? "filled" : ""} />
+        ))}
+      </span>
+      {plural(enrollAt - c.size, "more request")} for a voiceprint
+    </div>
+  );
+}
+
+function VoiceCard({ c, s }: { c: Cluster; s: State }) {
+  const name = voiceName(c);
+  const menu: MenuTarget = { kind: "voice", id: c.id };
+  const first = c.samples[0];
+  return (
+    <div className={`voice${c.kind === "not_person" ? " not-person" : ""}`}>
+      <div className="voice-head">
+        <div className="voice-name">
+          <h3 className={c.name ? "" : "unnamed"}>{name}</h3>
+          <div className="voice-count">{plural(c.size, "request")}</div>
         </div>
         <button
           className="more"
           aria-haspopup="menu"
-          aria-expanded={menuOpen(s, "voiceCard", c.id)}
-          aria-label={`More for ${nm}`}
-          onClick={ev => toggleMenu({ kind: "voiceCard", id: c.id }, ev.currentTarget)}
+          aria-expanded={menuOpen(s, menu)}
+          aria-label={`More for ${name}`}
+          onClick={ev => toggleMenu(menu, ev.currentTarget)}
         />
       </div>
       <div className="samples">
-        {samples.map((e, i) => (
+        {c.samples.map((sample, i) => (
           <PlayButton
-            key={e.id}
-            clip={{ event: e.id, part: "request" }}
-            label={`sample ${i + 1} of ${nm}`}
-            sm
-            title={e.transcript}
+            key={sample.event_id}
+            clip={{ event: sample.event_id, part: "request" }}
+            label={`sample ${i + 1} of ${name}`}
+            small
+            title={sample.transcript}
           />
         ))}
-        {samples[0]?.transcript ? (
-          <span className="sm-t">“{samples[0].transcript}”</span>
-        ) : samples.length ? null : (
-          <span className="sm-t">No samples</span>
+        {first?.transcript ? (
+          <span className="sample-text">“{first.transcript}”</span>
+        ) : first ? null : (
+          <span className="sample-text">No samples</span>
         )}
       </div>
-      {status}
+      <VoiceStatus c={c} enrollAt={s.status.enroll_at} />
       {!c.name && c.kind !== "not_person" && (
-        <div className="vfoot">
+        <div className="voice-foot">
           <button className="btn sm" onClick={() => rename(c.id)}>
             Name…
           </button>

@@ -1,18 +1,15 @@
 /* The little markdown TARS writes notes in: paragraphs, **bold**, *italic*, - lists, 1. lists, # headings. */
 
-const BOLD = /\*\*(.+?)\*\*/g,
-  ITALIC = /\*(.+?)\*/g;
+export const BOLD = /\*\*(.+?)\*\*/g;
+const ITALIC = /\*(.+?)\*/g;
 
-export const esc = (s: unknown) =>
-  String(s ?? "").replace(
-    /[&<>"']/g,
-    c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
-  );
+const ENTITIES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, c => ENTITIES[c] ?? c);
 
-/** HTML for a note. It's rendered as HTML, so everything is escaped before any tag is added. */
+/** The result is rendered as HTML, so everything is escaped before any tag is added. */
 export function md(src: string): string {
-  let out = "",
-    list: string | null = null;
+  let out = "";
+  let list: string | null = null;
   const close = () => {
     const c = list ? `</${list}>` : "";
     list = null;

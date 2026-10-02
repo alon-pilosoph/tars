@@ -1,63 +1,62 @@
-import { useRef } from "react";
-import { IKIND, fmtSize, itemName, stamp } from "../format";
+import { COPY_LABEL, ITEM_KIND_LABEL, fmtSize, itemName, stamp } from "../format";
 import { md } from "../markdown";
 import {
+  type ItemPlace,
+  type MenuTarget,
   type State,
   convById,
   copyItem,
-  fileUrl,
   followed,
   forLabel,
   goConv,
-  imageHref,
+  menuOpen,
   safeUrl,
-  showNote,
+  showItem,
   showWholeList,
   tick,
   toggleMenu,
 } from "../store";
 import type { Item } from "../types";
 
-const fileType = (i: Item) => {
-  const e = (i.name || "").split(".").pop();
-  return (e && e !== i.name ? e : (i.mime || "file").split("/").pop()!).slice(0, 4).toUpperCase();
-};
-const isImage = (i: Item) => /^image\//.test(i.mime || "");
+function fileType(i: Item) {
+  const extension = (i.name || "").split(".").pop();
+  const type = extension && extension !== i.name ? extension : (i.mime || "file").split("/").pop() || "file";
+  return type.slice(0, 4).toUpperCase();
+}
+const isImage = (i: Item) => (i.mime || "").startsWith("image/");
 const fileMeta = (i: Item) => [i.name, fmtSize(i.size)].filter(Boolean).join(", ");
 
-type Where = "thread" | "home" | "sent";
-
-export function ItemCard({ i, where, s }: { i: Item; where: Where; s: State }) {
-  const c = convById(s, i.conversation_id),
-    name = itemName(i);
-  const more = useRef<HTMLButtonElement>(null); // the same item can be on the page twice (Home's strip and its thread)
+export function ItemCard({ i, place, s }: { i: Item; place: ItemPlace; s: State }) {
+  const c = convById(s, i.conversation_id);
+  const name = itemName(i);
+  const menu: MenuTarget = { kind: "item", id: i.id, place };
+  const otherSpeaker = c?.speaker?.name && c.speaker.cluster_id !== i.for?.cluster_id ? c.speaker.name : null;
   return (
     <article
-      className={`item k-${i.kind}${i.seen ? "" : " unseen"}`}
+      className={`item${i.seen ? "" : " unseen"}`}
       data-id={i.id}
-      aria-label={`${IKIND[i.kind]}: ${name}`}
+      aria-label={`${ITEM_KIND_LABEL[i.kind]}: ${name}`}
     >
-      <div className="it-h">
-        <span>{IKIND[i.kind]}</span>
+      <div className="item-head">
+        <span>{ITEM_KIND_LABEL[i.kind]}</span>
         {i.seen ? null : <span className="new">New</span>}
-        <span className="sp" />
-        <time>{where === "thread" ? "" : stamp(i.ts)}</time>
+        <span className="spacer" />
+        <time>{place === "thread" ? "" : stamp(i.ts)}</time>
         <button
-          ref={more}
           className="more"
           aria-haspopup="menu"
-          aria-expanded={!!more.current && s.menu?.anchor === more.current}
+          aria-expanded={menuOpen(s, menu)}
           aria-label={`More for ${name}`}
-          onClick={e => toggleMenu({ kind: "item", id: i.id }, e.currentTarget)}
+          onClick={e => toggleMenu(menu, e.currentTarget)}
         />
       </div>
-      <Body i={i} where={where} s={s} />
-      {where === "thread" ? null : (
-        <div className="it-f">
-          <span className="for">{forLabel(s, i)}</span>
+      <Body i={i} place={place} s={s} />
+      {place === "thread" ? null : (
+        <div className="item-foot">
+          <span className="item-for">{forLabel(s, i)}</span>
           {c && (
-            <button className="tact" onClick={() => goConv(c.id)}>
-              {c.speaker?.name ? `${c.speaker.name}'s` : "The"} conversation
+            <button className="text-action" onClick={() => goConv(c.id)}>
+              {otherSpeaker ? `${otherSpeaker}'s` : "The"} conversation
             </button>
           )}
         </div>
@@ -66,24 +65,24 @@ export function ItemCard({ i, where, s }: { i: Item; where: Where; s: State }) {
   );
 }
 
-function Body({ i, where, s }: { i: Item; where: Where; s: State }) {
+function Body({ i, place, s }: { i: Item; place: ItemPlace; s: State }) {
   if (i.kind === "link") {
     const url = safeUrl(i.url);
     return (
       <>
-        <div className="it-site">{i.site || ""}</div>
-        <h3 className="it-t">
-          <a href={url} target="_blank" rel="noopener" onClick={e => followed(e, i, "open")}>
+        <div className="item-site">{i.site || ""}</div>
+        <h3 className="item-title">
+          <a href={url} target="_blank" rel="noopener noreferrer" onClick={() => followed(i)}>
             {i.title}
           </a>
         </h3>
-        {i.description ? <p className="it-d">{i.description}</p> : null}
-        <div className="it-a">
-          <a className="btn sm" href={url} target="_blank" rel="noopener" onClick={e => followed(e, i, "open")}>
+        {i.description ? <p className="item-desc">{i.description}</p> : null}
+        <div className="item-actions">
+          <a className="btn sm" href={url} target="_blank" rel="noopener noreferrer" onClick={() => followed(i)}>
             Open ↗
           </a>
           <button className="btn sm" onClick={() => copyItem(i)}>
-            Copy link
+            {COPY_LABEL.link}
           </button>
         </div>
       </>
@@ -92,69 +91,67 @@ function Body({ i, where, s }: { i: Item; where: Where; s: State }) {
   if (i.kind === "note")
     return (
       <>
-        <h3 className="it-t">{i.title}</h3>
-        <div className="note-p md" dangerouslySetInnerHTML={{ __html: md(i.body || "") }} />
-        <div className="it-a">
-          <button className="btn sm" onClick={() => showNote(i)}>
+        <h3 className="item-title">{i.title}</h3>
+        <div className="note-preview md" dangerouslySetInnerHTML={{ __html: md(i.body || "") }} />
+        <div className="item-actions">
+          <button className="btn sm" onClick={() => showItem(i)}>
             Open
           </button>
           <button className="btn sm" onClick={() => copyItem(i)}>
-            Copy text
+            {COPY_LABEL.note}
           </button>
         </div>
       </>
     );
-  if (i.kind === "list") return <ListBody i={i} cap={where === "thread" ? 4 : 6} whole={s.lists.has(i.id)} />;
+  if (i.kind === "list") return <ListBody i={i} cap={place === "thread" ? 4 : 6} whole={s.lists.has(i.id)} />;
   const download = (
-    <a className="btn sm" href={fileUrl(i)} download={i.name || ""} onClick={e => followed(e, i, "download")}>
+    <a className="btn sm" href={i.url ?? undefined} download={i.name || ""} onClick={() => followed(i)}>
       Download
     </a>
+  );
+  const tile = (
+    <div className="file-name">
+      <h3 className="item-title">{itemName(i)}</h3>
+      <div className="file-meta">{fileMeta(i)}</div>
+    </div>
   );
   if (isImage(i))
     return (
       <>
-        <a className="thumb" href={imageHref(i)} target="_blank" rel="noopener" onClick={e => followed(e, i, "open")}>
-          <img src={i.preview || fileUrl(i)} alt={itemName(i)} loading="lazy" />
-        </a>
-        <div className="ftile">
-          <div className="fn">
-            <h3 className="it-t">{itemName(i)}</h3>
-            <div className="fm">{fileMeta(i)}</div>
-          </div>
-        </div>
-        <div className="it-a">{download}</div>
+        <button className="thumb" aria-label={`Show ${itemName(i)}`} onClick={() => showItem(i)}>
+          <img src={i.preview || i.url || undefined} alt={itemName(i)} loading="lazy" />
+        </button>
+        <div className="file-tile">{tile}</div>
+        <div className="item-actions">{download}</div>
       </>
     );
   return (
     <>
-      <div className="ftile">
-        <span className="ext" aria-hidden="true">
+      <div className="file-tile">
+        <span className="file-ext" aria-hidden="true">
           {fileType(i)}
         </span>
-        <div className="fn">
-          <h3 className="it-t">{itemName(i)}</h3>
-          <div className="fm">{fileMeta(i)}</div>
-        </div>
+        {tile}
       </div>
-      <div className="it-a">{download}</div>
+      <div className="item-actions">{download}</div>
     </>
   );
 }
 
-/** A list shows its first `cap` entries (all of them if only one more would be hidden) until "N more" is pressed. */
 function ListBody({ i, cap, whole }: { i: Item; cap: number; whole: boolean }) {
-  const es = i.entries || [],
-    done = es.filter(e => e.done).length;
-  const all = whole || es.length <= cap + 1,
-    shown = all ? es : es.slice(0, cap);
+  const entries = i.entries || [];
+  const done = entries.filter(e => e.done).length;
+  const all = whole || entries.length <= cap + 1;
+  const shown = all ? entries : entries.slice(0, cap);
+  const percentDone = entries.length ? (done / entries.length) * 100 : 0;
   return (
     <>
-      <h3 className="it-t">{i.title}</h3>
-      <div className="lprog">
+      <h3 className="item-title">{i.title}</h3>
+      <div className="list-progress">
         <span className="bar" aria-hidden="true">
-          <i style={{ width: `${es.length ? (done / es.length) * 100 : 0}%` }} />
+          <i style={{ width: `${percentDone}%` }} />
         </span>
-        {done} of {es.length} done
+        {done} of {entries.length} done
       </div>
       <ul className="entries">
         {shown.map((e, n) => (
@@ -166,14 +163,14 @@ function ListBody({ i, cap, whole }: { i: Item; cap: number; whole: boolean }) {
           </li>
         ))}
       </ul>
-      <div className="it-a">
+      <div className="item-actions">
         {all ? null : (
           <button className="btn sm" onClick={() => showWholeList(i.id)}>
-            {es.length - cap} more
+            {entries.length - cap} more
           </button>
         )}
         <button className="btn sm" onClick={() => copyItem(i)}>
-          Copy list
+          {COPY_LABEL.list}
         </button>
       </div>
     </>

@@ -7,11 +7,14 @@ import {
   useRef,
 } from "react";
 import { createPortal } from "react-dom";
+import { COPY_LABEL, ITEM_KIND_LABEL } from "../format";
 import {
   type MenuState,
   type State,
-  cName,
+  answerWake,
   closeMenu,
+  clusterById,
+  clusterName,
   convById,
   copyItem,
   copyTranscript,
@@ -19,6 +22,7 @@ import {
   delEvent,
   delItem,
   download,
+  eventById,
   goConv,
   itemById,
   markSeen,
@@ -27,19 +31,17 @@ import {
   newVoice,
   openLink,
   rename,
-  setLabel,
   setTab,
-  showNote,
+  showItem,
   toggleNotPerson,
+  toggleWakeNotForTars,
   useStore,
-  wakeNotForTars,
 } from "../store";
 import type { Cluster, Conversation, Item, TarsEvent } from "../types";
 
-/** A dropdown under its ⋯ button; on a phone, a bottom sheet over a scrim. */
 export function Menu() {
-  const s = useStore(),
-    m = s.menu;
+  const s = useStore();
+  const m = s.menu;
   if (!m) return null;
   const body = menuBody(s, m);
   return body ? <Popup m={m}>{body}</Popup> : null;
@@ -47,11 +49,8 @@ export function Menu() {
 
 function menuBody(s: State, m: MenuState) {
   switch (m.kind) {
-    case "voiceCard":
-      return voiceMenu(
-        s,
-        s.clusters.find(c => c.id === m.id),
-      );
+    case "voice":
+      return voiceMenu(s, clusterById(s, m.id));
     case "item":
       return itemMenu(s, itemById(s, m.id));
     case "conversation":
@@ -59,17 +58,9 @@ function menuBody(s: State, m: MenuState) {
     case "more":
       return moreMenu(s);
     case "event":
-      return eventMenu(
-        s,
-        s.events.find(e => e.id === m.id),
-        false,
-      );
+      return eventMenu(s, eventById(s, m.id), false);
     case "eventVoice":
-      return eventMenu(
-        s,
-        s.events.find(e => e.id === m.id),
-        true,
-      );
+      return eventMenu(s, eventById(s, m.id), true);
   }
 }
 
@@ -79,14 +70,15 @@ function Popup({ m, children }: { m: MenuState; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
-    const el = ref.current!;
+    const el = ref.current;
+    if (!el) return;
     if (!m.sheet) {
-      const r = m.anchor.getBoundingClientRect(),
-        h = el.offsetHeight,
-        w = el.offsetWidth;
-      const below = r.bottom + h + 8 < innerHeight;
-      el.style.top = (below ? r.bottom + 4 : Math.max(8, r.top - h - 4)) + scrollY + "px";
-      el.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + scrollX + "px";
+      const r = m.anchor.getBoundingClientRect();
+      const height = el.offsetHeight;
+      const width = el.offsetWidth;
+      const below = r.bottom + height + 8 < innerHeight;
+      el.style.top = (below ? r.bottom + 4 : Math.max(8, r.top - height - 4)) + scrollY + "px";
+      el.style.left = Math.max(8, Math.min(r.right - width, innerWidth - width - 8)) + scrollX + "px";
     }
     buttons(el)[0]?.focus({ preventScroll: true });
   }, [m]);
@@ -96,11 +88,8 @@ function Popup({ m, children }: { m: MenuState; children: ReactNode }) {
       const t = e.target as Element;
       if (!t.closest(".menu") && !t.closest("[aria-haspopup=menu]")) closeMenu();
     };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        closeMenu();
-        m.anchor.focus();
-      }
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu(true);
     };
     // A phone's address bar showing or hiding changes only the height: that isn't a reason to close.
     let width = innerWidth;
@@ -109,30 +98,29 @@ function Popup({ m, children }: { m: MenuState; children: ReactNode }) {
       width = innerWidth;
     };
     document.addEventListener("click", outside);
-    document.addEventListener("keydown", esc);
+    document.addEventListener("keydown", escape);
     addEventListener("resize", resize);
     return () => {
       document.removeEventListener("click", outside);
-      document.removeEventListener("keydown", esc);
+      document.removeEventListener("keydown", escape);
       removeEventListener("resize", resize);
     };
-  }, [m]);
+  }, []);
 
-  // Up and down move between the menu's items; Tab out of it closes it.
   const keys = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if ((e.key !== "ArrowDown" && e.key !== "ArrowUp") || !ref.current) return;
     e.preventDefault();
-    const bs = buttons(ref.current!),
-      i = bs.indexOf(document.activeElement as HTMLButtonElement);
-    bs[(i + (e.key === "ArrowDown" ? 1 : bs.length - 1)) % bs.length]?.focus();
+    const all = buttons(ref.current);
+    const at = all.indexOf(document.activeElement as HTMLButtonElement);
+    all[(at + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
   };
   const blur = (e: ReactFocusEvent<HTMLDivElement>) => {
-    if (e.relatedTarget && !ref.current!.contains(e.relatedTarget as Node)) closeMenu();
+    if (e.relatedTarget && !ref.current?.contains(e.relatedTarget as Node)) closeMenu();
   };
 
   return createPortal(
     <>
-      {m.sheet && <div className="scrim" onClick={closeMenu} />}
+      {m.sheet && <div className="scrim" onClick={() => closeMenu()} />}
       <div ref={ref} className={`menu${m.sheet ? " sheet" : ""}`} role="menu" onKeyDown={keys} onBlur={blur}>
         {children}
       </div>
@@ -141,7 +129,6 @@ function Popup({ m, children }: { m: MenuState; children: ReactNode }) {
   );
 }
 
-/** A menu item: closes the menu, then acts. */
 function MenuItem({
   act,
   className,
@@ -159,7 +146,7 @@ function MenuItem({
       role={checked === undefined ? "menuitem" : "menuitemradio"}
       aria-checked={checked}
       onClick={() => {
-        closeMenu();
+        closeMenu(true);
         act();
       }}
     >
@@ -168,45 +155,53 @@ function MenuItem({
   );
 }
 
-function voices(s: State, current: number | null, move: (cid: number) => void, fresh: () => void) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <>
+    <div role="group" aria-label={title}>
+      <h4 aria-hidden="true">{title}</h4>
+      {children}
+    </div>
+  );
+}
+
+function voices(s: State, title: string, current: number | null, move: (clusterId: number) => void, fresh: () => void) {
+  return (
+    <Section title={title}>
       {s.clusters.map(c => (
         <MenuItem key={c.id} act={() => move(c.id)} checked={current === c.id}>
-          {cName(s, c.id)}
-          <span className="d">{c.size}</span>
+          {clusterName(s, c.id)}
+          <span className="menu-count">{c.size}</span>
         </MenuItem>
       ))}
       <MenuItem act={fresh}>New voice…</MenuItem>
-    </>
+    </Section>
   );
 }
 
 function eventMenu(s: State, e: TarsEvent | undefined, voiceOnly: boolean) {
   if (!e) return null;
-  const vs = e.utterance_audio && (
-    <>
-      <h4>This request's voice</h4>
-      {voices(
+  const label = e.label;
+  const voice = e.has_request_audio
+    ? voices(
         s,
+        "This request's voice",
         e.cluster_id,
-        cid => moveTo(e.id, cid),
+        id => moveTo(e.id, id),
         () => newVoice(e.id),
-      )}
-    </>
-  );
-  if (voiceOnly) return vs || null;
+      )
+    : null;
+  if (voiceOnly) return voice;
   return (
     <>
-      {vs && (
+      {voice && (
         <>
-          {vs}
+          {voice}
           <hr />
         </>
       )}
-      {e.label && <MenuItem act={() => setLabel(e.id, e.label!)}>Clear my label</MenuItem>}
+      {label && <MenuItem act={() => answerWake(e.id, label)}>Clear my answer</MenuItem>}
       <MenuItem className="bad" act={() => delEvent(e.id)}>
-        Delete event…
+        Delete wake…
       </MenuItem>
     </>
   );
@@ -224,13 +219,14 @@ function voiceMenu(s: State, c: Cluster | undefined) {
       {others.length > 0 && (
         <>
           <hr />
-          <h4>Same person as…</h4>
-          {others.map(o => (
-            <MenuItem key={o.id} act={() => merge(c.id, o.id)}>
-              {cName(s, o.id)}
-              <span className="d">{o.size}</span>
-            </MenuItem>
-          ))}
+          <Section title="Same person as…">
+            {others.map(o => (
+              <MenuItem key={o.id} act={() => merge(c.id, o.id)}>
+                {clusterName(s, o.id)}
+                <span className="menu-count">{o.size}</span>
+              </MenuItem>
+            ))}
+          </Section>
         </>
       )}
     </>
@@ -242,18 +238,16 @@ function itemMenu(s: State, i: Item | undefined) {
   return (
     <>
       {i.kind === "link" && <MenuItem act={() => openLink(i)}>Open link ↗</MenuItem>}
-      {i.kind === "note" && <MenuItem act={() => showNote(i)}>Open</MenuItem>}
+      {i.kind === "note" && <MenuItem act={() => showItem(i)}>Open</MenuItem>}
       {i.kind === "file" && <MenuItem act={() => download(i)}>Download</MenuItem>}
-      {i.kind !== "file" && (
-        <MenuItem act={() => copyItem(i)}>{i.kind === "link" ? "Copy link" : "Copy text"}</MenuItem>
-      )}
+      {i.kind !== "file" && <MenuItem act={() => copyItem(i)}>{COPY_LABEL[i.kind]}</MenuItem>}
       {!i.seen && <MenuItem act={() => markSeen(i)}>Mark seen</MenuItem>}
       {convById(s, i.conversation_id) && (
         <MenuItem act={() => goConv(i.conversation_id)}>Show the conversation</MenuItem>
       )}
       <hr />
       <MenuItem className="bad" act={() => delItem(i.id)}>
-        Delete…
+        Delete {ITEM_KIND_LABEL[i.kind].toLowerCase()}…
       </MenuItem>
     </>
   );
@@ -261,24 +255,24 @@ function itemMenu(s: State, i: Item | undefined) {
 
 function convMenu(s: State, c: Conversation | undefined) {
   if (!c) return null;
-  const wake = s.events.find(e => e.id === c.wake?.event_id);
+  const wake = c.wake;
   return (
     <>
       <MenuItem act={() => copyTranscript(c)}>Copy transcript</MenuItem>
       {wake && (
-        <MenuItem act={() => wakeNotForTars(c)}>
+        <MenuItem act={() => toggleWakeNotForTars(c)}>
           {wake.label === "not_real" ? "It was for TARS" : "Not meant for TARS"}
         </MenuItem>
       )}
-      {wake?.utterance_audio && (
+      {wake?.has_request_audio && (
         <>
           <hr />
-          <h4>Who was talking</h4>
           {voices(
             s,
+            "Who was talking",
             wake.cluster_id,
-            cid => moveTo(wake.id, cid),
-            () => newVoice(wake.id),
+            id => moveTo(wake.event_id, id),
+            () => newVoice(wake.event_id),
           )}
         </>
       )}

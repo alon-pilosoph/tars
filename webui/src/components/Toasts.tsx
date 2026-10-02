@@ -1,13 +1,13 @@
 import { closeToast, useStore } from "../store";
 
 export function Toasts() {
-  const { toast: t } = useStore();
+  const { toast } = useStore();
   return (
     <div className="toasts" role="status" aria-live="polite">
-      {t && (
-        <div className="toast" key={t.id}>
-          <span>{t.msg}</span>
-          {t.undo && <Undo undo={t.undo} />}
+      {toast && (
+        <div className="toast" key={toast.id}>
+          <span>{toast.msg}</span>
+          {toast.undo && <Undo undo={toast.undo} />}
         </div>
       )}
     </div>

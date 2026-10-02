@@ -1,14 +1,14 @@
 /* Loading. refresh() is the page load and the Refresh button: everything as it is now, with finished things moved
    to where they belong. reload() runs after your own actions and stays within what the last Refresh showed. */
-import { get as fetchJson, writesDone } from "../api";
-import type { ApiConversation, Cluster, Conversation, Item, Models, Status, TarsEvent } from "../types";
+import { getJson, writesDone, writesMade } from "../api";
+import type { ApiConversation, Cluster, Conversation, Item, ModelsInfo, Status, TarsEvent } from "../types";
 import { type Snapshot, get, set, setNow } from "./core";
 import { errText, toast } from "./ui";
 
 interface Data {
   events: TarsEvent[];
   clusters: Cluster[];
-  models: Models;
+  models: ModelsInfo;
   status: Status;
   convs: Conversation[];
   items: Item[];
@@ -42,7 +42,6 @@ export function snapshotOf(d: Pick<Data, "events" | "convs" | "items">): Snapsho
   };
 }
 
-/** Only what the snapshot showed, as it is now. */
 export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap: Snapshot, d: D): D {
   return {
     ...d,
@@ -54,36 +53,50 @@ export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap:
   };
 }
 
-async function fetchAll(fresh: boolean) {
+async function fetchData(): Promise<Data> {
+  const [events, clusters, models, status, convs, items] = await Promise.all([
+    getJson<TarsEvent[]>("/api/events"),
+    getJson<Cluster[]>("/api/clusters"),
+    getJson<ModelsInfo>("/api/models"),
+    getJson<Status>("/api/status"),
+    getJson<ApiConversation[]>("/api/conversations"),
+    getJson<Item[]>("/api/items"),
+  ]);
+  return { events, clusters, models, status, ...normalize(convs, items) };
+}
+
+/** True if it worked. `quiet`: a failed reload shows no toast, because the caller already showed one. */
+async function fetchAll(fresh: boolean, quiet: boolean) {
   try {
     await writesDone();
-    const [events, clusters, models, status, convs, items] = await Promise.all([
-      fetchJson<TarsEvent[]>("/api/events"),
-      fetchJson<Cluster[]>("/api/clusters"),
-      fetchJson<Models>("/api/models"),
-      fetchJson<Status>("/api/status"),
-      fetchJson<ApiConversation[]>("/api/conversations"),
-      fetchJson<Item[]>("/api/items"),
-    ]);
-    let data: Data = { events, clusters, models, status, ...normalize(convs, items) };
-    const snapshot = fresh ? snapshotOf(data) : get().snapshot;
-    if (!fresh) data = within(snapshot, data);
+    let loaded: Data;
+    let writes;
+    // A change made while this loaded may have reached the server after it answered: load again, or the page
+    // would show it undone.
+    do {
+      writes = writesMade();
+      loaded = await fetchData();
+      await writesDone();
+    } while (writes !== writesMade());
+    const snapshot = fresh ? snapshotOf(loaded) : get().snapshot;
+    const data = fresh ? loaded : within(snapshot, loaded);
     setNow({ ...data, snapshot, phase: "ready" });
+    return true;
   } catch (e) {
-    // A failed reload after an action keeps the page as it is; only a failed page load or Refresh replaces it.
     if (fresh || get().phase !== "ready") set({ phase: "error", error: errText(e) || "Failed to fetch" });
-    else toast(`Couldn't reload (${errText(e)}).`);
+    else if (!quiet) toast(`Couldn't reload (${errText(e)}).`);
+    return false;
   }
 }
 
 // One load at a time, in order, so an older answer never lands on top of a newer one.
-let loads: Promise<void> = Promise.resolve();
-function queue(fresh: boolean) {
-  loads = loads.then(() => fetchAll(fresh));
+let loads: Promise<boolean> = Promise.resolve(true);
+function queue(fresh: boolean, quiet = false) {
+  loads = loads.then(() => fetchAll(fresh, quiet));
   return loads;
 }
 export const refresh = () => queue(true);
-export const reload = () => queue(false);
+export const reload = (quiet = false) => queue(false, quiet);
 
 export async function refreshNow() {
   set({ refreshing: true });

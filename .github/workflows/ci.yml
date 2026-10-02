@@ -1,5 +1,3 @@
-# Every push and pull request, on a clean Linux machine: the assistant installs from the lock file and its tests and
-# lint pass, the web page builds to exactly what's committed, and the page works against a real backend.
 # The screenshot tests stay local: their baselines are macOS's (fonts render differently on Linux).
 name: CI
 
@@ -16,6 +14,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen
       - run: uv run ruff check src tests tools training
+      - run: uv run ruff format --check src tests tools training
+      - run: for f in deploy/*.sh training/*/*.sh; do bash -n "$f"; done
       - run: uv run pytest -q
 
   web:
@@ -35,6 +35,8 @@ jobs:
           cache: npm
           cache-dependency-path: webui/package-lock.json
       - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
       - run: npm test
       - name: The committed build is the current one
         run: npm run build && test -z "$(git status --porcelain -- ../src/voice_assistant/webui_static)"

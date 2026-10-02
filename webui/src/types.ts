@@ -1,23 +1,30 @@
+/* The API's responses: only the fields the page reads. */
+
 export type Label = "real" | "not_real";
+export type Outcome = "answer" | "ask" | "ignore";
 
 export interface TarsEvent {
   id: number;
   ts: number;
   kind: "wake" | "near_miss";
-  outcome: "answer" | "ask" | "ignore" | null;
+  outcome: Outcome | null;
   wake_score: number | null;
   heard: string | null;
   confidence: number | null;
   transcript: string | null;
   follow: "asked" | "said_nothing" | "not_for_us" | null;
-  speaker: string | null;
   cluster_id: number | null;
-  cluster_pinned: number | boolean;
+  cluster_pinned: boolean;
   label: Label | null;
-  audio: string | null;
-  utterance_audio: string | null;
   auto_label: Label | null;
   auto_reason: string | null;
+  has_wake_audio: boolean;
+  has_request_audio: boolean;
+}
+
+export interface VoiceSample {
+  event_id: number;
+  transcript: string | null;
 }
 
 export interface Cluster {
@@ -25,13 +32,14 @@ export interface Cluster {
   name: string | null;
   kind: "person" | "not_person" | "unknown";
   size: number;
+  samples: VoiceSample[];
 }
 
 export interface Metric {
   name: string;
   current: string;
   candidate: string;
-  lower_is_better?: boolean; // false answers, lookalikes let through
+  lower_is_better?: boolean; // e.g. false answers; absent means higher is better
 }
 
 export interface Version {
@@ -41,8 +49,18 @@ export interface Version {
   note: string;
 }
 
-export interface Models {
-  active: { version?: string; wake_model?: string; threshold?: number; check_model?: string; check_window_s?: number };
+/** The wake model and double-check in use. */
+export interface ActivePair {
+  version: string;
+  wake_model: string;
+  threshold: number;
+  check_model: string | null; // null: no double-check model, a plain phrase match
+  check_window_s: number;
+  replaced: string | null;
+}
+
+export interface ModelsInfo {
+  active: ActivePair | null; // null when the server doesn't know which models it listens with
   results: Metric[] | null; // how the pair in use tested against the one it replaced
   history: Version[];
   problem?: string | null; // why the saved version history is being ignored
@@ -50,10 +68,8 @@ export interface Models {
 }
 
 export interface Status {
-  events: number;
-  labeled: number;
   clustering: boolean;
-  unseen_items: number;
+  enroll_at: number; // requests a named voice needs before TARS builds its voiceprint
 }
 
 export interface Speaker {
@@ -75,8 +91,7 @@ export interface Item {
   for: Speaker | null;
   seen: boolean;
   conversation_id: number | null;
-  turn_id: number | null;
-  url?: string | null;
+  url?: string | null; // a link's page, or where a file downloads from
   site?: string | null;
   description?: string | null;
   body?: string | null;
@@ -104,21 +119,22 @@ export interface Turn {
 
 export type ApiTurn = Omit<Turn, "items"> & { items?: (Item | number)[] };
 
+export interface ConversationWake {
+  event_id: number;
+  heard: string | null;
+  confidence: number | null;
+  outcome: Outcome | null;
+  label: Label | null;
+  cluster_id: number | null;
+  has_request_audio: boolean;
+}
+
 export interface Conversation {
   id: number;
   started: number;
-  ended: number | null;
   speaker: Speaker | null;
-  wake: {
-    event_id: number | null;
-    heard: string | null;
-    confidence: number | null;
-    outcome: TarsEvent["outcome"];
-  } | null;
+  wake: ConversationWake | null;
   turns: Turn[];
-  preview: string | null;
-  item_count?: number;
-  unseen_count?: number;
 }
 
 export type ApiConversation = Omit<Conversation, "turns"> & { turns: ApiTurn[] };

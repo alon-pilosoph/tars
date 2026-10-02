@@ -1,24 +1,24 @@
 import type { CSSProperties } from "react";
-import { type Clip, play, usePlaying } from "../audio";
+import { type Clip, play, useProgress } from "../audio";
 import { toast } from "../store";
 
-/** Round play button; the ring fills as the clip plays. */
 export function PlayButton({
   clip,
   label,
-  sm,
+  small,
   title,
 }: {
   clip: Clip;
   label: string;
-  sm?: boolean;
+  small?: boolean;
   title?: string | null;
 }) {
-  const { on, p } = usePlaying(clip);
+  const progress = useProgress(clip);
+  const on = progress !== null;
   return (
     <button
-      className={`play${sm ? " sm" : ""}${on ? " on" : ""}`}
-      style={on && p != null ? ({ "--p": p } as CSSProperties) : undefined}
+      className={`play${small ? " sm" : ""}${on ? " on" : ""}`}
+      style={on ? ({ "--p": progress } as CSSProperties) : undefined}
       aria-label={`${on ? "Stop" : "Play"} ${label}`}
       title={title ?? undefined}
       onClick={() => play(clip, () => toast("Couldn't play that clip."))}

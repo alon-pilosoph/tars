@@ -1,171 +1,194 @@
-import { stamp } from "../format";
+import { INSTALLED, type Verdict, metricChange, plural, sentence, shortStamp, versionName, when } from "../format";
 import { rollback, setTab, useStore } from "../store";
-import type { Metric, Models as ModelsInfo } from "../types";
+import type { Metric, ModelsInfo, Version } from "../types";
+
+const fileName = (path: string | null | undefined) => path?.split("/").pop() || "";
 
 export function Models() {
   const s = useStore();
-  const m = s.models,
-    a = m?.active || {},
-    h = m?.history || [],
-    rows = m?.results || [];
+  const models = s.models;
+  const active = models?.active ?? null;
+  const history = models?.history || [];
+  const results = models?.results || [];
+  const inUse = history.find(v => v.active);
+  const version = active?.version || INSTALLED;
+  const files = [fileName(active?.wake_model), fileName(active?.check_model)].filter(Boolean).join(", ");
+  const checkModel = !active ? "—" : (active.check_model ?? "None: TARS listens for the phrase itself");
   return (
     <>
       <div className="head">
         <div>
           <h1>Models</h1>
-          <p>What TARS uses to hear its name, and what it can learn from next.</p>
+          <p>{status(version, inUse, results)}</p>
         </div>
       </div>
-      <div className="panel">
-        <h2>In use now{a.version && a.version !== "installed" ? `: ${a.version}` : ""}</h2>
-        <dl className="spec">
-          <div>
-            <dt>Wake model</dt>
-            <dd>{a.wake_model || "—"}</dd>
-          </div>
-          <div>
-            <dt>Wake threshold</dt>
-            <dd>{a.threshold ?? "—"}</dd>
-          </div>
-          <div>
-            <dt>Double-check</dt>
-            <dd>{a.check_model || "—"}</dd>
-          </div>
-          <div>
-            <dt>Check window</dt>
-            <dd>{a.check_window_s ? `${a.check_window_s} s` : "—"}</dd>
-          </div>
-        </dl>
-        {rows.length > 0 && (
-          <div className="result">
-            <p className="m">How it tested against the models it replaced:</p>
-            <table>
-              <thead>
-                <tr>
-                  <th>Test</th>
-                  <th className="num">Before</th>
-                  <th className="num">These</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.name}>
-                    <td>{r.name}</td>
-                    <td className="num">{r.current}</td>
-                    <td className="num">
-                      {r.candidate}
-                      <Delta m={r} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      <div className="models-grid">
+        <section className="panel">
+          <h2>In use</h2>
+          <div className="version">{version}</div>
+          {inUse?.note ? <p>{inUse.note}</p> : null}
+          <dl className="pairs">
+            <div>
+              <dt>Wake threshold</dt>
+              <dd>{active?.threshold ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>Check window</dt>
+              <dd>{active?.check_window_s ? `${active.check_window_s} s` : "—"}</dd>
+            </div>
+          </dl>
+          <details className="files">
+            <summary>Files: {files || "—"}</summary>
+            <dl>
+              <dt>Wake model</dt>
+              <dd>{active?.wake_model || "—"}</dd>
+              <dt>Double-check</dt>
+              <dd>{checkModel}</dd>
+            </dl>
+          </details>
+        </section>
+        <Learning models={models} />
       </div>
-      <div className="panel">
-        <h2>Waiting to learn from</h2>
-        <Learning m={m} />
-        <p>
-          Training runs on a bigger machine, not here (<code className="mono">uv run python -m training.household</code>
-          , see training/README.md): it learns from these, tests the new models against the ones in use, and installs
-          them only if they're better.
-        </p>
-      </div>
-      <div className="panel">
+      {results.length > 0 && <Compare rows={results} before={active?.replaced || null} after={version} />}
+      <section className="panel">
         <h2>History</h2>
-        {m?.problem && <div className="notice">{m.problem}</div>}
-        {h.length ? (
-          <div className="hist" role="table">
-            <div className="h">Version</div>
-            <div className="h">When</div>
-            <div className="h">What changed</div>
-            <div className="h" />
-            {h.map((x, i) => {
-              const last = i === h.length - 1 ? " last" : "";
-              return [
-                <div key={`v${i}`} className={`v${last}`}>
-                  {x.version}
-                  {x.active && <span className="tag">in use</span>}
-                </div>,
-                <div key={`w${i}`} className={`w${last}`}>
-                  {stamp(x.ts)}
-                </div>,
-                <div key={`n${i}`} className={`note${last}`}>
-                  {x.note}
-                </div>,
-                <div key={`a${i}`} className={`a${last}`}>
-                  {!x.active && (
-                    <button className="btn sm" onClick={() => rollback(x.version)}>
-                      Use this
+        {models?.problem && <div className="notice">{models.problem}</div>}
+        {history.length ? (
+          <ol className="hist">
+            {history.map(v => (
+              <li key={v.version}>
+                <div className="hist-version">
+                  <b>{v.version}</b>
+                  <span>{shortStamp(v.ts)}</span>
+                </div>
+                <p>{v.note}</p>
+                <div className="hist-action">
+                  {v.active ? (
+                    <span className="in-use">In use</span>
+                  ) : (
+                    <button className="btn sm" onClick={() => rollback(v.version)}>
+                      Use this…
                     </button>
                   )}
-                </div>,
-              ];
-            })}
-          </div>
+                </div>
+              </li>
+            ))}
+          </ol>
         ) : (
           <p>Only the models TARS was installed with, so far.</p>
         )}
-      </div>
+      </section>
+      <p className="models-foot">Training runs on another machine and installs new models only if they test better.</p>
+      <details className="howto">
+        <summary>How to train</summary>
+        <pre>
+          <code>uv run --group training python -m training.household</code>
+        </pre>
+        <p>
+          It learns from the wakes you've answered, tests the new models against the ones in use, and installs them only
+          if they're better. More in training/README.md.
+        </p>
+      </details>
     </>
   );
 }
 
-function Learning({ m }: { m: ModelsInfo | null }) {
-  const l = m?.learning,
-    since = m?.active.version && m.active.version !== "installed" ? ` since ${m.active.version}` : "";
-  if (!l) return null;
-  const learned = [
-    [l.real, "real hey TARS"],
-    [l.missed, "missed hey TARS"],
-    [l.not_real, "not for TARS"],
-  ] as const;
+function status(version: string, inUse: Version | undefined, rows: Metric[]) {
+  if (version === INSTALLED) return "Using the models TARS was installed with.";
+  const verdicts = rows.map(r => metricChange(r)?.verdict);
+  const count = (v: Verdict) => verdicts.filter(x => x === v).length;
+  const parts = [
+    count("better") && `better on ${plural(count("better"), "test")}`,
+    count("worse") && `worse on ${plural(count("worse"), "test")}`,
+    count("same") && `the same on ${count("same")}`,
+  ].filter(Boolean);
+  const tested = parts.length ? ` ${sentence(parts.join(", "))}` : "";
+  return `Using ${version}${inUse ? `, trained ${when(inUse.ts)}` : ""}.${tested}`;
+}
+
+function Learning({ models }: { models: ModelsInfo | null }) {
+  const learning = models?.learning;
+  if (!learning) return null;
+  const total = learning.real + learning.missed + learning.not_real;
   return (
-    <>
-      <dl className="spec">
-        {learned.map(([n, what]) => (
-          <div key={what}>
-            <dt>{what}</dt>
-            <dd>{n}</dd>
-          </div>
-        ))}
-        <div>
-          <dt>to answer in Review</dt>
-          <dd>{l.to_review}</dd>
-        </div>
-      </dl>
-      <p>
-        Labeled wakes{since}. A missed "hey TARS" is a near-miss followed by a real wake: the ones the wake model most
-        needs to learn from.
-      </p>
-      {l.to_review > 0 && (
-        <div className="train-row">
-          <button className="btn sm" onClick={() => setTab("review")}>
-            Answer them in Review
-          </button>
-        </div>
+    <section className="panel">
+      <h2>For the next training</h2>
+      {total ? (
+        <>
+          <dl className="stats">
+            <div>
+              <dt>Real “hey TARS”</dt>
+              <dd>{learning.real}</dd>
+            </div>
+            <div>
+              <dt>Missed “hey TARS”</dt>
+              <dd>{learning.missed}</dd>
+            </div>
+            <div>
+              <dt>Not for TARS</dt>
+              <dd>{learning.not_real}</dd>
+            </div>
+          </dl>
+          <p className="help">
+            A missed one is a near-miss followed by a real wake. The wake model learns the most from these.
+          </p>
+        </>
+      ) : (
+        <p>Nothing new yet. Wakes you answer in Review collect here.</p>
       )}
-    </>
+      {learning.to_review > 0 && (
+        <button className="btn sm" onClick={() => setTab("review")}>
+          Answer {plural(learning.to_review, "wake")} in Review
+        </button>
+      )}
+    </section>
   );
 }
 
-/** Signed change from before to after, green when it's better. */
-function Delta({ m }: { m: Metric }) {
-  const n = (v: string) => parseFloat(v) || 0;
-  const cur = m.current,
-    cand = m.candidate;
-  if (isNaN(parseFloat(cur)) || isNaN(parseFloat(cand))) return null;
-  const lower = !!m.lower_is_better,
-    d = n(cand) - n(cur);
-  if (!d) return <span className="delta">same</span>;
-  const good = lower ? d < 0 : d > 0,
-    pct = String(cur).includes("%");
+function Compare({ rows, before, after }: { rows: Metric[]; before: string | null; after: string }) {
+  const name = (v: string) => <span className="version-name">{v}</span>;
+  const beforeName = !before ? "the models before it" : before === INSTALLED ? versionName(before) : name(before);
   return (
-    <span className={`delta ${good ? "up" : "down"}`}>
-      {d > 0 ? "+" : "−"}
-      {Math.abs(Math.round(d * 10) / 10)}
-      {pct ? " pts" : ""}
+    <section className="panel">
+      <h2>
+        How {name(after)} compares with {beforeName}
+      </h2>
+      <table className="compare">
+        <thead>
+          <tr>
+            <th>Test</th>
+            <th className="num">{name(before || "Before")}</th>
+            <th className="num">{name(after)}</th>
+            <th className="num">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.name}>
+              <td>{r.name}</td>
+              <td className="num">{r.current}</td>
+              <td className="num after">{r.candidate}</td>
+              <td className="num">
+                <Delta m={r} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function Delta({ m }: { m: Metric }) {
+  const c = metricChange(m);
+  if (!c) return null;
+  if (c.verdict === "same") return <span className="delta">same</span>;
+  const points = String(m.current).includes("%");
+  return (
+    <span className={`delta ${c.verdict === "better" ? "up" : "down"}`}>
+      {c.diff > 0 ? "+" : "−"}
+      {Math.abs(Math.round(c.diff * 10) / 10)}
+      {points ? " pts" : ""}
     </span>
   );
 }

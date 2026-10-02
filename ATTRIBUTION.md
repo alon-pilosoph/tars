@@ -18,6 +18,12 @@ script.
 | [WeSpeaker ResNet34-LM](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM) | CC BY 4.0 | speaker ID; downloaded |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) (library; its pretrained models are CC BY-NC-SA 4.0) | Apache 2.0 | only for pretrained names like "hey_jarvis" |
 
+## Web UI
+
+| Asset | License | How it's used |
+|---|---|---|
+| [IBM Plex Sans and Mono](https://github.com/IBM/plex) | SIL OFL 1.1 (`webui/src/fonts/OFL.txt`) | the web UI's fonts, in this repo |
+
 ## Voices the training clips were synthesized with
 
 | Source | License | How it's used |

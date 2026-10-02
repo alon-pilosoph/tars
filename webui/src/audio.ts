@@ -1,19 +1,18 @@
-/* What's playing, and how far along: its own little store so the progress ring can repaint
-   every frame without re-rendering the page. */
+/* The playing clip and its progress, in a store of its own so the progress ring repaints every frame without
+   re-rendering the page or any other play button. */
 import { useSyncExternalStore } from "react";
 import { DEMO } from "./params";
 
-/** A wake's clip (what woke it, or the request after it), or what someone said in a conversation. */
 export type Clip = { event: number; part: "wake" | "request" } | { turn: number };
-export const clipKey = (c: Clip) => ("turn" in c ? `turn-${c.turn}` : `${c.event}-${c.part}`);
+const clipKey = (c: Clip) => ("turn" in c ? `turn-${c.turn}` : `${c.event}-${c.part}`);
 const clipUrl = (c: Clip) => ("turn" in c ? `/api/audio/turn/${c.turn}` : `/api/audio/${c.event}/${c.part}`);
 
-let playing: { key: string | null; p: number | null } = { key: null, p: null };
+let playing: { key: string | null; progress: number } = { key: null, progress: 0 };
 const subs = new Set<() => void>();
-const emit = (key: string | null, p: number | null) => {
-  playing = { key, p };
+function emit(key: string | null, progress: number) {
+  playing = { key, progress };
   subs.forEach(f => f());
-};
+}
 function subscribe(f: () => void) {
   subs.add(f);
   return () => {
@@ -21,41 +20,41 @@ function subscribe(f: () => void) {
   };
 }
 
-export function usePlaying(c: Clip): { on: boolean; p: number | null } {
-  const s = useSyncExternalStore(subscribe, () => playing);
-  return s.key === clipKey(c) ? { on: true, p: s.p } : { on: false, p: null };
+export function useProgress(c: Clip): number | null {
+  const key = clipKey(c);
+  const progress = useSyncExternalStore(subscribe, () => (playing.key === key ? playing.progress : -1));
+  return progress < 0 ? null : progress;
 }
 
-let audio: HTMLAudioElement | null = null,
-  raf = 0,
-  fake = 0;
+let audio: HTMLAudioElement | null = null;
+let frame = 0;
+let demoTimer = 0;
 
 export function stopAudio() {
   if (audio) {
-    audio.onended = audio.onerror = null; // a late error from this clip must not stop the next one
+    audio.onended = audio.onerror = null; // a late error from the old clip must not stop the next one
     audio.pause();
     audio = null;
   }
-  cancelAnimationFrame(raf);
-  clearInterval(fake);
-  if (playing.key) emit(null, null);
+  cancelAnimationFrame(frame);
+  clearInterval(demoTimer);
+  if (playing.key) emit(null, 0);
 }
 
-/** Shows a clip as playing without playing it (for a state opened from a link). */
-export const showPlaying = (key: string, p: number) => emit(key, p);
+export const showPlaying = (key: string, progress: number) => emit(key, progress);
 
 export function play(c: Clip, onError: () => void) {
-  const key = clipKey(c),
-    was = playing.key;
+  const key = clipKey(c);
+  const was = playing.key;
   stopAudio();
   if (was === key) return;
   emit(key, 0);
   if (DEMO) {
-    let p = 0;
-    fake = window.setInterval(() => {
-      p += 0.025;
-      emit(key, p);
-      if (p >= 1) stopAudio();
+    let progress = 0;
+    demoTimer = window.setInterval(() => {
+      progress += 0.025;
+      emit(key, progress);
+      if (progress >= 1) stopAudio();
     }, 60);
     return;
   }
@@ -69,7 +68,7 @@ export function play(c: Clip, onError: () => void) {
   const tick = () => {
     if (audio !== a) return;
     if (a.duration) emit(key, a.currentTime / a.duration);
-    raf = requestAnimationFrame(tick);
+    frame = requestAnimationFrame(tick);
   };
   tick();
 }

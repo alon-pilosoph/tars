@@ -1,45 +1,49 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { when } from "../format";
-import { md } from "../markdown";
-import { copyItem, forLabel, get, set, useStore } from "../store";
+import { BOLD, md } from "../markdown";
+import { type DialogState, copyItem, download, forLabel, get, set, useStore } from "../store";
 
-/** "Everything in **Voice 3** moves…" with the names in bold. */
-const rich = (text: string) => text.split(/\*\*(.+?)\*\*/).map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
+/** Splitting on BOLD's capture group puts the bold parts at the odd indices. */
+const rich = (text: string) => text.split(BOLD).map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part));
 
-/** The one modal: confirmations, name prompts, and an opened note (wide). */
 export function Dialog() {
-  const s = useStore(),
-    d = s.dialog;
-  const ref = useRef<HTMLDialogElement>(null),
-    input = useRef<HTMLInputElement>(null),
-    ok = useRef<HTMLButtonElement>(null);
+  const s = useStore();
+  const d = s.dialog;
+  const ref = useRef<HTMLDialogElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const ok = useRef<HTMLButtonElement>(null);
+  const no = useRef<HTMLButtonElement>(null);
   const downOutside = useRef(false);
+  // Kept with the dialog it was typed in, so a new prompt starts from its own value.
+  const [typed, setTyped] = useState<{ dialog: DialogState; value: string } | null>(null);
+  const value = typed && typed.dialog === d ? typed.value : d?.kind === "prompt" ? (d.value ?? "") : "";
 
   useEffect(() => {
-    const el = ref.current!;
-    if (!d || el.open) return;
+    const el = ref.current;
+    if (!d || !el || el.open) return;
     el.returnValue = "";
     el.showModal();
-    (d.kind === "prompt" ? input.current : ok.current)?.focus();
+    // A delete opens on Cancel, so Enter never deletes by accident.
+    (d.kind === "prompt" ? input.current : d.kind === "confirm" && d.danger ? no.current : ok.current)?.focus();
   }, [d]);
 
   const closed = () => {
     const cur = get().dialog;
     if (!cur) return;
-    const yes = ref.current!.returnValue === "ok",
-      value = input.current?.value.trim() ?? "";
+    const yes = ref.current?.returnValue === "ok";
     set({ dialog: null });
     if (cur.kind === "confirm") cur.resolve(yes);
-    if (cur.kind === "prompt") cur.resolve(yes ? value : null);
+    if (cur.kind === "prompt") cur.resolve(yes ? (input.current?.value ?? "").trim() : null);
   };
-  const cancel = () => ref.current!.close("cancel");
+  const cancel = () => ref.current?.close("cancel");
+  const wide = d?.kind === "note" || d?.kind === "image";
 
   // A click on the backdrop cancels, but not the end of a text selection that was dragged out of the dialog.
   return (
     <dialog
       ref={ref}
-      className={d?.kind === "note" ? "wide" : ""}
-      aria-labelledby="dlg-t"
+      className={wide ? "wide" : ""}
+      aria-labelledby="dialog-title"
       onClose={closed}
       onPointerDown={e => {
         downOutside.current = e.target === ref.current;
@@ -48,18 +52,28 @@ export function Dialog() {
         if (e.target === ref.current && downOutside.current) cancel();
       }}
     >
-      <form method="dialog" className="dlg">
-        {d?.kind === "note" ? (
+      <form method="dialog" className="dialog-form">
+        {d?.kind === "note" || d?.kind === "image" ? (
           <>
-            <h3 id="dlg-t">{d.item.title}</h3>
-            <div className="sub">
+            <h3 id="dialog-title">{d.item.title}</h3>
+            <div className="dialog-sub">
               {forLabel(s, d.item)}, sent {when(d.item.ts)}
             </div>
-            <div className="md" dangerouslySetInnerHTML={{ __html: md(d.item.body || "") }} />
+            {d.kind === "note" ? (
+              <div className="md" dangerouslySetInnerHTML={{ __html: md(d.item.body || "") }} />
+            ) : (
+              <img className="dialog-image" src={d.item.preview || d.item.url || ""} alt={d.item.title} />
+            )}
             <div className="row">
-              <button type="button" className="btn" onClick={() => copyItem(d.item)}>
-                Copy text
-              </button>
+              {d.kind === "note" ? (
+                <button type="button" className="btn" onClick={() => copyItem(d.item)}>
+                  Copy text
+                </button>
+              ) : (
+                <button type="button" className="btn" onClick={() => download(d.item)}>
+                  Download
+                </button>
+              )}
               <button ref={ok} className="btn primary" value="cancel">
                 Done
               </button>
@@ -68,20 +82,28 @@ export function Dialog() {
         ) : (
           d && (
             <>
-              <h3 id="dlg-t">{d.title}</h3>
+              <h3 id="dialog-title">{d.title}</h3>
               {d.text && <p>{rich(d.text)}</p>}
               {d.kind === "prompt" && (
-                <input ref={input} placeholder={d.placeholder} defaultValue={d.value ?? ""} autoComplete="off" />
+                <input
+                  ref={input}
+                  placeholder={d.placeholder}
+                  value={value}
+                  maxLength={d.maxLength}
+                  autoComplete="off"
+                  onChange={e => setTyped({ dialog: d, value: e.currentTarget.value })}
+                />
               )}
               <div className="row">
                 {/* type="button": Enter in the name box submits with the first submit button, which must be OK */}
-                <button type="button" className="btn" value="cancel" onClick={cancel}>
+                <button ref={no} type="button" className="btn" value="cancel" onClick={cancel}>
                   Cancel
                 </button>
                 <button
                   ref={ok}
                   className={`btn ${d.kind === "confirm" && d.danger ? "danger" : "primary"}`}
                   value="ok"
+                  disabled={d.kind === "prompt" && d.required && !value.trim()}
                 >
                   {d.ok ?? "OK"}
                 </button>

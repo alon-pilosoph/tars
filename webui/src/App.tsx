@@ -27,7 +27,7 @@ function TabButton({
 }) {
   return (
     <button
-      className={secondary ? "sec" : ""}
+      className={secondary ? "secondary" : ""}
       aria-current={s.tab === tab ? "page" : undefined}
       onClick={() => setTab(tab)}
     >
@@ -43,12 +43,12 @@ function TabButton({
 
 export function App() {
   const s = useStore();
-  const ready = s.phase === "ready",
-    n = ready ? unseen(s).length : 0,
-    r = ready ? reviewTodo(s).length : 0;
+  const ready = s.phase === "ready";
+  const unseenCount = ready ? unseen(s).length : 0;
+  const toReviewCount = ready ? reviewTodo(s).length : 0;
   useEffect(() => {
-    document.title = n ? `TARS (${n})` : "TARS";
-  }, [n]);
+    document.title = unseenCount ? `TARS (${unseenCount})` : "TARS";
+  }, [unseenCount]);
   const View = VIEWS[s.tab];
   return (
     <>
@@ -61,13 +61,13 @@ export function App() {
           </div>
           <nav className="nav" aria-label="Sections">
             <TabButton s={s} tab="home" label="Home" />
-            <TabButton s={s} tab="sent" label="Sent" count={n} />
-            <TabButton s={s} tab="review" label="Review" count={r} />
-            <span className="gap" />
+            <TabButton s={s} tab="sent" label="Sent" count={unseenCount} />
+            <TabButton s={s} tab="review" label="Review" count={toReviewCount} />
+            <span className="nav-gap" />
             <TabButton s={s} tab="voices" label="Voices" secondary />
             <TabButton s={s} tab="models" label="Models" secondary />
             <button
-              className="moreb"
+              className="more-tab"
               aria-haspopup="menu"
               aria-current={s.tab === "voices" || s.tab === "models" ? "page" : undefined}
               onClick={e => toggleMenu({ kind: "more" }, e.currentTarget)}
