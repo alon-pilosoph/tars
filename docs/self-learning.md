@@ -11,11 +11,11 @@ files next to it. `[learning] log_events` in `config.toml` turns all of it on or
 | Record | Written when | Holds |
 |---|---|---|
 | **Wake** | stage 1 fires | the 3 s the check heard, stage 1's score, what the check heard and how sure it was, the outcome (answer / ask / ignore), what followed |
-| **Near-miss** | stage 1 comes within 60% of its threshold, then falls away | the audio and the peak score |
+| **Near-miss** | stage 1's score reaches 60% of its threshold, then falls away | the audio and the peak score |
 | **Request** | the first thing said after a wake | its audio, transcript, speaker ID's guess and a voice embedding, on the wake |
 | **Conversation** | someone says something after a wake | every turn: what each person said (with audio), what TARS said, turns that weren't meant for TARS |
 | **Item** | TARS sends something | a link, note, list or text file, for a person or for the household |
-| **Voice** | re-clustering, or a person names, moves or merges one | a name, whether it's a person, and which requests belong to it |
+| **Voice** | Regroup voices, or a person names, moves or merges one | a name, whether it's a person, and which requests belong to it |
 
 A few rules keep the log honest:
 
@@ -28,13 +28,14 @@ A few rules keep the log honest:
   keeps its conversation, without the wake or the request's audio. Ids are never reused, so a deleted row can't
   come back attached to something new.
 - **Old audio that teaches nothing is dropped.** After `[learning] keep_audio_days` (60 by default), the audio of
-  wakes and near-misses that have no label at all, neither a person's nor an automatic one, is deleted; the row
-  stays. Labeled audio is training data and is kept. This runs at startup and once a day.
+  wakes and near-misses training wouldn't learn from is deleted; the row stays. That's a lonely near-miss, a wake
+  nobody spoke after, and a wake the double-check turned away that nobody answered in Review (the check's own
+  verdict isn't training data). Audio with a person's answer, or with an automatic label training uses, is kept.
+  This runs at startup and once a day.
 
-The assistant writes and the web UI reads and edits the same database from two processes: it runs in WAL mode, and
-every change of more than one row is one transaction. Older databases are upgraded automatically when either process
-starts. Code: `store.py` (the database and files), `events.py` (wakes, near-misses, voices), `conversations.py`
-(conversations, turns, items), `journal.py` (what gets written when).
+The assistant and the web UI share the database ([how](architecture.md#the-web-ui)), and an older one is upgraded
+automatically when either starts. Code: `store.py` (the database and files), `events.py` (wakes, near-misses, voices),
+`conversations.py` (conversations, turns, items), `journal.py` (what gets written when).
 
 ## Labels, mostly automatic
 
@@ -59,30 +60,29 @@ conversation explained, so reviewing is a few taps a day. A wake that led to a c
 
 The voice embedding of each wake's first request (WeSpeaker ResNet34, the model speaker ID uses) goes into leader
 clustering: each request joins the closest voice if it's similar enough (cosine similarity 0.5), or else starts a
-new one, oldest requests first so voice numbers stay stable. Later turns keep their embeddings too, for clustering
-them later. Whatever a person decided stays put when re-clustering: a request moved to a voice by hand, merged
-voices, names, and voices marked "not a person".
+new one, oldest requests first so voice numbers stay stable. Whatever a person decided stays put when the Voices page's Regroup voices runs: a request moved to a
+voice by hand, merged voices, names, and voices marked "not a person".
 
-Re-clustering also rebuilds the voiceprints speaker ID uses, from exactly the named people with 5 or more requests
+Regrouping also rebuilds the voiceprints speaker ID uses, from exactly the named people with 5 or more requests
 (two voices with the same name count as one person). A name that's gone (renamed, merged away, marked not a person)
 stops being recognized, and a voice named after someone enrolled with `--enroll` replaces that voiceprint; other
 `--enroll` voiceprints stay. The file is replaced in one step, and the running assistant picks it up before its next
 greeting or request, without a restart.
 
 Correcting a conversation's voice ("that was Stacey, not Alon") applies to the request that came with the wake, to
-the conversation's other turns speaker ID heard the same way, and to what TARS sent "for whoever asked". An
-automatic re-cluster alone doesn't override speaker ID's name for a conversation: only a voice a person pinned,
+the conversation's other turns speaker ID heard the same way, and to what TARS sent "for whoever asked". Regrouping
+alone doesn't override speaker ID's name for a conversation: only a voice a person pinned,
 named or marked counts.
 
 Code: `clustering.py`, `speaker.py`.
 
 ## Learning from it
 
-Both stages are retrained together, as a pair, on a bigger machine than the Pi, with `uv run python -m
-training.household --pi <pi>`: the wake model's training takes tens of minutes and needs the training data folder,
-which `training/setup/prepare.sh` fills (see [`training/`](../training/README.md#training-a-households-own-models)). The web UI doesn't
-train anything. Its Models page shows the pair in use and how it tested, how much new labeled data is waiting, and
-the version history, where "Use this" switches back.
+Both stages are retrained together, as a pair, on a bigger machine than the Pi, with `uv run --group training python -m
+training.household --pi <pi>`: the wake model's training takes tens of minutes and needs the training data folder, which
+`training/setup/prepare.sh` fills (see [`training/`](../training/README.md#training-a-households-own-models)). The web
+UI doesn't train anything. Its Models page shows the pair in use and how it tested, how much new labeled data is
+waiting, and the version history, where "Use this" switches back.
 
 **What training learns from** (`events.learning_label`): every labeled wake and near-miss, with a person's label
 winning over the automatic one. Near-misses labeled real (a near-miss followed within seconds by a real wake) are the

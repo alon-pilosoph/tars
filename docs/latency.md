@@ -11,13 +11,11 @@ Median over 8 spoken questions, three runs, on the development Mac:
 |---|---|---|
 | Waiting to be sure you're done | ~0.6 s (0.2-1.7 s) | Deepgram's Flux decides, from your words as well as the pause |
 | Speech to text | ~0 s | Flux sends the words with its decision |
-| The brain's first sentence | ~0.8 s | OpenAI, streamed |
-| The voice's first audio | ~0.9 s | OpenAI's Onyx, a sentence at a time |
-| **From you stopping to TARS's first sound** | **~2.0-2.6 s** | the answer is prepared during the wait, so these overlap |
+| The brain's first sentence | ~0.3 s | Qwen on Cerebras, streamed (OpenAI's Luna: ~0.7 s; it still answers anything that needs the web) |
+| The voice's first audio | ~0.4 s | Deepgram's Aura-2 Zeus, a sentence at a time (OpenAI's Onyx: ~1.1 s) |
+| **From you stopping to TARS's first sound** | **~1.1-1.6 s** | the answer is prepared during the wait, so these overlap |
 
-It was 3.5 s before any of this work (the recording uploaded and transcribed only after a 0.5 s wait), then about
-2.5-3 s with Deepgram's streamed Nova-3 and a local end of turn (Silero VAD and Smart Turn), which also cut off
-sentences with a pause in them; see [going all in on Deepgram](#going-all-in-on-deepgram-measured-2026-09-27).
+A turn that needs the web adds Qwen's 0.3 s and a web search, and TARS says "Looking it up." as it starts.
 
 ## How the stages overlap
 
@@ -32,37 +30,46 @@ sequenceDiagram
     Rec-->>DG: audio, while you talk
     DG->>Rec: maybe done
     Rec->>Draft: start early (the words so far, speaker ID)
-    Draft->>Draft: brain writes, Onyx speaks the first sentence
+    Draft->>Draft: Qwen writes, Zeus speaks the first sentence
     DG->>Rec: done
     Rec->>Out: confirmed: play the draft
 ```
 
 **Start early, speak late.** When Flux thinks you may be done, TARS prepares the answer in the background while
-the recording goes on (`draft.py`). If you carry on talking, the draft is thrown away and the brain forgets it (without
-waiting for it: a draft stuck in a web search can't hold up the next one); it's
-only played, logged, and allowed to send anything to the web page once your turn is confirmed over. So the waiting
-rule decides only *when TARS speaks*, never what it heard: a cut-off can't come from answering early.
+the recording goes on (`draft.py`). If you carry on talking, the draft is thrown away and the brain forgets it
+(without waiting for it: a draft stuck in a web search can't hold up the next one). It's only played, logged, and
+allowed to send anything to the web page once your turn is confirmed over. So the waiting rule decides only *when
+TARS speaks*, never what it heard: a cut-off can't come from answering early.
 
-**The end of your turn** (`stt.FluxSession`, `recorder.py`): [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
-hears your words as well as the pause, so "and the..." isn't taken for the end of a sentence. Silero VAD (local)
-still hears when you start talking. If Flux fails, the local rules take over for that turn: after 0.8 s of silence,
+**The end of your turn** (`stt.FluxSession`, `recorder.py`):
+[Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition) hears your words as well as
+the pause, so "and the..." isn't taken for the end of a sentence. Silero VAD (local) still hears when you start
+talking. If Flux fails, the local rules take over for that turn: after 0.8 s of silence,
 [Smart Turn](https://github.com/pipecat-ai/smart-turn) (a small local model that listens to how your last words
 sounded) may extend the wait to 1.6 s, and a draft starts a quarter second into a pause. `[stt] provider =
-"deepgram"` makes the local rules the only ones again.
+"deepgram"` makes the local rules the only ones.
+
+**The voice.** A warm connection to Deepgram starts speaking in about 0.27 s, and opening one takes about 0.7 s, so
+`tts.DeepgramSpeech` keeps two open from the wake word. The speaker (`audio.Speaker`) skips the silence a voice
+starts a reply on (0.2-0.5 s for Zeus) and hands the mic back at the last sound, so a short "Yes?" frees the mic
+0.9 s after it starts, of which 0.3 s is a margin for the room's echo.
 
 **Failures.** The voice gives up after 4 s without audio instead of the client's 15 s, and TARS says so in its own
 voice, from lines synthesized at startup ("I lost that one somewhere between here and the server. Ask me again.";
-plainer below 50% humor). If Deepgram fails, OpenAI transcribes the same recording.
+plainer below 50% humor). If Deepgram fails, OpenAI transcribes the same recording, and if Cerebras fails, Luna
+answers.
 
 ## Settings
 
 | Setting | In `config.toml` | What it does |
 |---|---|---|
-| `[stt] provider` | `"deepgram"` | `openai` sends the finished recording instead (slower, one key fewer) |
-| `[recorder] end_silence_s` | `0.8` | silence that ends your turn |
-| `[recorder] max_pause_s` | `1.6` | how long a pause may be when you sounded mid-thought |
-| `[recorder] end_of_turn` | `"smart"` | `silence` turns the model off |
-| `[recorder] answer_early_s` | `0.25` | when the answer starts being prepared; `0` waits for the end |
+| `[stt] provider` | `"flux"` | `flux`: Deepgram's Flux transcribes while you talk and decides when you're done. `deepgram`: Nova-3 transcribes while you talk, and the local rules below decide. `openai`: the finished recording is sent after the local rules decide (slowest, one key fewer) |
+| `[llm] cerebras_model` | `"qwen-3.8-27b"` | the quick brain; empty: OpenAI's `model` answers everything (~0.4 s slower) |
+| `[tts] provider`, `model` | `"deepgram"`, `"aura-2-zeus-en"` | the voice; `openai` with `gpt-4o-mini-tts` takes delivery instructions but starts ~0.6 s later |
+| `[recorder] end_silence_s` | `0.8` | without Flux: silence that ends your turn |
+| `[recorder] max_pause_s` | `1.6` | without Flux: how long a pause may be when you sounded mid-thought |
+| `[recorder] end_of_turn` | `"smart"` | without Flux: `silence` turns Smart Turn off |
+| `[recorder] answer_early_s` | `0.25` | without Flux: when the answer starts being prepared; `0` waits for the end |
 | `[recorder] vad_threshold` | `0.5` | how sure the speech detector must be |
 | `[llm] humor` | `75` | the persona's humor setting, and which error lines TARS uses |
 
@@ -70,60 +77,64 @@ plainer below 50% humor). If Deepgram fails, OpenAI transcribes the same recordi
 
 ```bash
 uv run python tools/latency_bench.py
-uv run python tools/latency_bench.py --set recorder.end_silence_s=0.6 --set stt.provider=openai
-uv run python tools/latency_bench.py --set stt.provider=flux --set tts.provider=deepgram --set tts.model=flux-cliff-en
-uv run python tools/turn_bench.py      # cut-offs: today's end of turn against Flux, on your own sentences
+uv run python tools/latency_bench.py --set recorder.end_silence_s=0.6 --set stt.provider=deepgram
+uv run python tools/latency_bench.py --set tts.provider=openai --set tts.model=gpt-4o-mini-tts
+uv run python tools/turn_bench.py      # cut-offs: the local end of turn against Flux, on your own sentences
 ```
 
 The benchmark speaks 8 questions once (Deepgram's Aura voice, cached in `voice_data/bench/`), plays them to the
 assistant at real-time pace over real room tone taken from your recordings, and measures from where the voice ends in
-the audio to when the first reply sound would play. It uses the real services, so it costs a few cents a run, and
-the numbers move by a few tenths between runs with the network and the model; compare medians over several runs.
-Every turn also prints its own stage timings in the assistant's log.
+the audio to when the first reply sound would play (its speaker skips a voice's leading silence too). It uses the
+real services, so it costs a few cents a run, and the numbers move by a few tenths between runs with the network and
+the model; compare medians over several runs. Every turn also prints its own stage timings in the assistant's log.
 
-## Going all in on Deepgram (measured 2026-09-27)
+## How it got here
 
-Deepgram's voices, and its Flux model deciding when you've finished, both behind settings (`[tts] provider =
-"deepgram"`, `[stt] provider = "flux"`). Same benchmark, same night, median over 16 turns per setup:
+Each step measured with the benchmark above, medians from you stopping to TARS's first sound:
 
-| Setup | From you stopping to TARS's first sound | Slowest turn |
-|---|---|---|
-| Before: Nova-3, Silero + Smart Turn, Onyx | 2.63-3.02 s | 5.58 s |
-| Deepgram voice (Flux Cliff or Aura-2 Zeus) | 1.99-2.05 s | 2.44 s |
-| Flux turn-taking, Onyx (the default since 2026-09-28) | 2.03-2.62 s (3 runs) | 4.72 s |
-| Flux turn-taking, Deepgram voice | 1.59-2.47 s (6 runs, most under 1.95 s) | 3.37 s |
+| Setup | Time |
+|---|---|
+| OpenAI throughout: the recording uploaded and transcribed after a 0.5 s silence | ~3.5 s |
+| Deepgram Nova-3 streamed, a local end of turn (Silero VAD and Smart Turn), Onyx's voice, Luna | 2.6-3.0 s |
+| Flux decides the end of the turn | 2.0-2.6 s |
+| Deepgram's Aura-2 Zeus voice instead of Onyx, counted to the first audible sound from here on | 2.1-2.5 s |
+| Qwen on Cerebras answers first, Luna takes what needs the web | 1.8-2.0 s |
+| The speaker skips the silence a voice starts on | 1.1-1.6 s |
 
-**The voice.** A warm connection to Deepgram starts speaking in about 0.27 s; opening one takes about 0.7 s from
-here, so `tts.DeepgramSpeech` keeps two open from the wake word (idle ones stay usable for minutes). Onyx's first
-audio averaged about 1.0 s, with stalls past 2 s. Deepgram's voices take no delivery instructions; Flux TTS has an
-expressivity setting instead. Which voice sounds most like TARS is a listening test, not a benchmark.
+**Why Flux ends the turn** (`tools/turn_bench.py`): the owner's 25 recorded sentences, whole, and with a pause
+spliced in after an unfinished word ("and", "the", "to"...), 0.5, 0.8 or 1.2 s long.
 
-**The end of the turn** (`tools/turn_bench.py`): the owner's 25 recorded sentences, whole, and with a pause spliced
-in after an unfinished word ("and", "the", "to"...), 0.5, 0.8 or 1.2 s long.
-
-| | Before (Silero + Smart Turn) | Flux |
+| | Silero VAD and Smart Turn | Flux |
 |---|---|---|
 | Turn over after a whole sentence | 0.88 s | 1.05 s median, 90% within 1.29 s |
 | Cut-offs in a 0.5 / 0.8 / 1.2 s pause | 0 / 0 / **18 of 18** | 0 / 1 / 1 of 18 |
 
-The local setup cut off every 1.2 s pause because Smart Turn called them finished: checked after 0.8 s of silence, it
-scored 17 of these 18 unfinished sentences as done (after 0.2 s, 13 of 18), so it almost never extends the wait.
-Flux hears the words too ("...and the" isn't a sentence). Spliced pauses aren't real hesitations (no "um", no
-stretched last word), which may flatter Flux; real use will tell. Flux's early "maybe done" (where a draft starts)
-came 0.65 s after the end of a sentence, and was taken back in 20 of the 54 paused ones: a draft thrown away, about
-one extra brain call in three. Flux ends a turn Flux's way in the benchmark as in the assistant (the same settings,
-the same 2.5 s backstop, judged by where in the audio it decided). If Flux fails, the recorder's own rules take
-over for the rest of the turn and OpenAI transcribes the recording; if the recording ends before Flux calls it,
-Flux sends the words it has within a quarter second.
+Smart Turn, checked after 0.8 s of silence, scored 17 of these 18 unfinished sentences as done, so it almost never
+extended the wait. Spliced pauses aren't real hesitations (no "um", no stretched last word), which may flatter Flux.
+Flux's early "maybe done", where a draft starts, came 0.65 s after the end of a sentence and was taken back in 20 of
+the 54 paused ones: about one extra brain call in three.
+
+**Choosing the brain.** First sentence with TARS's prompt over 24 questions: Cerebras Qwen 0.27 s (slowest 0.41
+s), Groq Qwen 0.16 s, Groq gpt-oss-20b 0.35 s, Groq gpt-oss-120b 0.38 s, Cerebras gpt-oss-120b 0.27 s. Qwen
+sounded the most like TARS; gpt-oss was correct but plain. On a free key Groq allows 8,000 tokens a minute (about 10
+of TARS's requests) and Cerebras gpt-oss-120b 5 requests a minute; Cerebras Qwen allows 450. Qwen gets no tools: for
+the web or the TARS page it replies `<look-up>` and the turn goes to Luna. Asked 12 questions that need them and 12
+that don't, six times each, it handed off 70 of the 72 it should have and answered all 72 others itself.
+
+**Choosing the voice.** Time to first audio: Onyx 0.97-1.19 s, Aura-2 Zeus 0.34-0.48 s, Flux Cliff 0.39-0.44 s.
+Flux Cliff now and then opens a sentence with about a second of silence, which undoes the gain. Onyx sounds best and
+takes delivery instructions, but TARS picks latency over voice.
 
 ## Tried and dropped
 
 | Tried | Result | Kept? |
 |---|---|---|
-| Faster voices: ElevenLabs Flash, Deepgram Aura, Cartesia Sonic | 0.2–0.45 s to first audio against Onyx's ~1 s; total 1.6–1.9 s | no: Onyx sounds best, and it's the only one that takes delivery instructions |
-| A backup voice when Onyx stalls | worked, but the voice changes mid-reply | no: a 4 s timeout and a spoken error line instead |
-| Ending the turn after 0.24 s when Smart Turn says "finished" | 1.6 s total, but it cut sentences in half (it scores some mid-sentence pauses as finished) | no: the model may only extend the wait |
-| Speaking the reply's first clause before its sentence ends | no measurable gain (2.99 s without, 3.28 s with; most replies are one sentence) | no |
+| ElevenLabs Flash, Cartesia Sonic voices | 0.2-0.45 s to first audio, like Deepgram's | no: Deepgram's Aura-2 Zeus instead |
+| Onyx at 1.2x speed (`speed`, pitch kept) | about 20% more words a second | no: it sounded bad |
+| A backup voice when the voice stalls | worked, but the voice changes mid-reply | no: a 4 s timeout and a spoken error line instead |
+| Ending the turn after 0.24 s when Smart Turn says "finished" | 1.6 s total, but it cut sentences in half | no: the model may only extend the wait |
+| Speaking the reply's first clause before its sentence ends | no measurable gain (most replies are one sentence) | no |
 | webrtcvad, with rules for its false alarms (tonal hums, lone noise blocks) | brittle: every rule fixed one case and broke another | replaced by Silero VAD |
-| Warming the voice's connection | ~0.15 s per fresh connection | only the brain's (shared with the voice) is warmed |
-| OpenAI's Realtime API (speech in, speech out) | reported around 1 s, but it ties the brain to OpenAI's realtime models | not tried: the brain stays swappable |
+
+Not tried: OpenAI's Realtime API (speech in, speech out), reported around 1 s, because it ties the brain to OpenAI's
+realtime models.

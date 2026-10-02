@@ -16,7 +16,9 @@ flowchart LR
     data[("voice_data/events/<br/>events.db + audio + files")]
     journal --> data
     api <--> data
-    stt & llm & tts <-.-> openai["OpenAI"]
+    stt & tts <-.-> deepgram["Deepgram"]
+    llm <-.-> cerebras["Cerebras"]
+    llm <-.-> openai["OpenAI"]
     phone["Phone / laptop browser"] <--> page
 ```
 
@@ -37,19 +39,23 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
    local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
    `[Speaker: Alon]`.
-5. **The LLM** (OpenAI's Responses API, streamed) answers in TARS's voice. Each finished sentence goes to **text
-   to speech** (OpenAI, the Onyx voice) straight away, and playback starts on the first audio chunk, so TARS starts
-   talking while the reply is still being written. The TARS effect (a speaker in a metal box) is applied as it
-   streams. All of this starts early, a quarter second into a pause, while the recording goes on: if you carry on
-   talking the draft is thrown away, and it's only played, logged and allowed to send anything once your turn is
-   confirmed over (see [response time](latency.md)).
+5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras first (about 0.3 s to its first sentence). When
+   the answer needs the web or the TARS page it replies `<look-up>`, and that turn goes to OpenAI's model (the
+   Responses API, with web search and the send tool), which also answers whenever Cerebras fails; both share one
+   conversation. Each finished sentence goes to **text to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's
+   Onyx) straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply is
+   still being written. The TARS effect (a speaker in a metal box) is applied as it streams. All of this starts
+   early, when Flux thinks you may be done, while the recording goes on: if you carry on talking the draft is thrown
+   away, and it's only played, logged and allowed to send anything once your turn is confirmed over (see
+   [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one
 new class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it
-end to end. When TARS wakes, it opens its connection to OpenAI while you're still talking. A failed request gets a
+end to end. When TARS wakes, it connects to Cerebras, OpenAI and Deepgram's voice while you're still talking. A
+failed request gets a
 spoken line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it
 plays even when the voice service is what failed; the voice gives up after 4 s without audio. A microphone that
 stops delivering audio exits so systemd restarts it.
@@ -65,22 +71,31 @@ stops delivering audio exits so systemd restarts it.
   things appear in the web UI; TARS says "It's on the TARS page." It never reads a link aloud. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
 
-Requests use `store=False`: OpenAI keeps nothing beyond the request. The send tool is off in `--text` mode and when
-logging is off, since there'd be nowhere to put what it sends.
+Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
+be nowhere to put what it sends.
 
 ## What it keeps, and where
 
 Everything the assistant writes goes to `voice_data/events/` (gitignored) through `journal.py`, whose writes can
 fail without costing a reply. The layout, retention and labeling rules are in [self-learning](self-learning.md).
 Voiceprints live in `voice_data/voiceprints.npz`; the personal wake models in `models/personal/` (gitignored).
+The short lines made ahead ("Yes?", "Did you call me?", the error lines) are kept in `voice_data/phrases/`, one
+folder per `[tts]` setup, so TARS can still say something went wrong after a restart with the network down. After
+changing the voice effect's code (`effects.py`), delete that folder so the lines are made again.
 
 ## What leaves the machine
 
 - **Before the wake is confirmed, nothing.** Stage 1, stage 2, the speech detector and the end-of-turn model run
   locally.
-- **After it,** the request's audio streams to Deepgram for speech to text (to OpenAI if that fails), its text and
-  the conversation so far go to OpenAI for the reply, and the reply to OpenAI for speech. Web searches run on
-  OpenAI's side. Deepgram only gets audio once you start speaking after a wake.
+- **After it,** three services each get part of the turn (with the default `config.toml`):
+  - **Deepgram** gets your request's audio, streamed for speech to text from when you start speaking after a wake,
+    and TARS's reply text, to speak it.
+  - **Cerebras** gets the conversation so far (its text, with each request's `[Speaker: name]` tag and TARS's
+    replies) and answers first.
+  - **OpenAI** gets the same conversation for the turns Cerebras hands over (anything that needs the web or the
+    TARS page) or can't answer, and runs those turns' web searches. It also transcribes a request's recording when
+    Deepgram's stream fails. With `[stt]` or `[tts] provider = "openai"`, it gets the audio or the reply text instead
+    of Deepgram.
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
   served from the same machine and talks to nothing else.
 
@@ -89,7 +104,8 @@ Voiceprints live in `voice_data/voiceprints.npz`; the personal wake models in `m
 `voice-assistant --web` is a separate process: a FastAPI server (`webui.py`) over the same database, serving the
 React page built from `webui/` (committed as `src/voice_assistant/webui_static/`, so the Pi needs no Node). The
 assistant writes and the web UI reads and edits: SQLite in WAL mode lets both work at once, and every change of more
-than one row is one transaction. The web UI is described in [the web UI](web-ui.md).
+than one row is one transaction. Each runs as its own service, so a crash in one never takes the other down. The web
+UI is described in [the web UI](web-ui.md).
 
 **It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
 elsewhere could reach it through someone's browser:
@@ -104,14 +120,20 @@ To use it away from home, put the Pi and the phone on Tailscale rather than forw
 
 ## Code map
 
+The assistant is `src/voice_assistant/`:
+
 | Area | Files |
 |---|---|
-| Audio in and out | `audio.py` (mic stream, devices, playback, chimes), `effects.py` (the TARS voice) |
-| Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2) |
-| Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback), `models.py` (downloads) |
-| Understanding and answering | `stt.py`, `llm.py`, `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
+| Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `mic_test.py` (the `--mic-test` meter) |
+| Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
+| Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
+| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Cerebras, OpenAI with its tools), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
-| The main loop | `assistant.py` (wake, listen, answer, follow-ups), `__main__.py` (wiring, command line) |
-| What's kept | `store.py` (database, files, upgrades), `events.py`, `conversations.py`, `journal.py` |
+| The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, the keys it needs) |
+| What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
+| Downloads | `models.py` (the small local models, on first use) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
-| Training | `training/` (the scripts that made the wake models), `tools/*_bench.py` (benchmarks) |
+
+Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),
+`tools/` (benchmarks: `latency_bench.py`, `turn_bench.py`, `wakeword_bench.py`, `verifier_bench.py`), `deploy/`
+(the Pi's install script and services) and `tests/`.

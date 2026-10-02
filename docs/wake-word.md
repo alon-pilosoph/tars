@@ -12,7 +12,7 @@ flowchart LR
     s1 -- "score ≥ 0.5" --> win["Last 3 s of audio"]
     s1 -- "0.3 ≤ score < 0.5, then quiet" --> near["Logged as a near-miss"]
     win --> s2["Stage 2: the double-check<br/>Vosk + a learned layer"]
-    s2 -- "hey TARS" --> answer["Answer: chime, listen"]
+    s2 -- "hey TARS" --> answer["Answer: listen"]
     s2 -- "'hey' + an unlikely word<br/>(hey cars, hey Mars…)" --> ask["Ask: 'Did you call me?'"]
     s2 -- "something else" --> ignore["Ignore, keep listening"]
 ```
@@ -33,7 +33,7 @@ lookalikes ("hey cars", "hey stars", "hey guitars", a bare "hey"…) and `[unk]`
 - **ignore** anything else, including plausible phrases like "hey there" or "hey Jarvis".
 
 The check window is 3 seconds because the generic stage 1 can fire up to a second after the phrase ends; with 2
-seconds the "hey" was often cut off (other voices: 81% at 2 s, 94% at 3 s). Code: `wake.py` (stage 1),
+seconds the "hey" was often cut off (other voices, measured with an earlier model: 81% at 2 s, 94% at 3 s). Code: `wake.py` (stage 1),
 `verify.py` (stage 2 and the answer/ask/ignore decision). Settings: `[wake]` in `config.toml`.
 
 ## Two setups
@@ -58,11 +58,11 @@ counts as answered when stage 1 fires and stage 2 says yes. Test audio never ove
 
 | Test | Recall |
 |---|---|
-| Held-out synthetic voices (3 OpenAI voices never trained on), quiet | 94% |
-| Same voices, TV or people talking at 10–15 dB | 87–92% |
-| The owner, whom it never heard, quiet (30 takes) | 83% |
+| Held-out synthetic voices (3 OpenAI voices never trained on), quiet | 97% |
+| Same voices, TV or people talking at 10–15 dB | 87–97% |
+| The owner, whom it never heard, quiet (30 takes) | 93% |
 | Lookalike phrases let through ("hey cars", "hey stars"…) | 0–5% |
-| False answers per hour: an hour of TV, half an hour of audiobooks | 0 (stage 1 alone fires about twice an hour) |
+| False answers per hour: an hour of TV, an hour of audiobooks | 1 on the TV hour (Vosk heard "hey darts"), 0 on audiobooks; stage 1 alone fires about 6 and 3 times an hour |
 
 **Personal setup**, the owner's 15 held-out takes (one take ≈ 7 points), 2.5 s window
 
@@ -88,7 +88,7 @@ only runs on a wake. Even a few times slower on a Raspberry Pi 5 that's comforta
 
 The training needs about 130 GB of audio, its own Python environments and a day or two of CPU, so it runs outside
 the assistant. [`training/README.md`](../training/README.md) has the run order, commands and times; rerunning
-stage 2 on the same data reproduces the committed layer exactly.
+stage 2 on the same data, in the environment `training/setup/eval_env.sh` pins, gives the same layer.
 
 ### 1. Speech to learn from
 
@@ -99,7 +99,7 @@ stage 2 on the same data reproduces the committed layer exactly.
 | Kokoro | 28 voices and blends of pairs | both |
 | OpenAI TTS | 8 voices, each in 164 deliveries (speaking styles, spellings, moods, pace, distance) plus 38 lookalikes; 3 more voices held out for testing | both |
 | Pitch and tempo variants | ±4 semitones, 0.8–1.25× speed over the synthetic clips | stage 1 |
-| Accented Piper voices | 106 non-English voices in 52 languages, with native spellings ("хэй тарс") | stage 2 |
+| Accented Piper voices | 92 non-English voices in 45 languages, with native spellings ("хэй тарс") | stage 2 |
 | Voice conversion | the synthetic clips turned into real people's voices with kNN-VC: 251 LibriSpeech speakers and VCTK's 110 (many English accents) | stage 2 |
 | Real lookalikes | real people saying "stars", "cars", "guards"… cut from LibriSpeech train-clean-100 with a forced aligner (MMS) | both |
 | microWakeWord negatives | the standard negative sets (speech, music, noise) | stage 1 |
@@ -113,8 +113,8 @@ simulated and real room responses (RIRS_NOISES, MIT). None of the test-only soun
 
 ### 3. Stage 1
 
-microWakeWord, with the recipe the experiments settled on ("D"): 20k steps, learning rate 0.001, negative weight
-20, and the v3 augmentation (background speech from −5 to 15 dB, room echo). The generic model is that recipe on
+microWakeWord, with the recipe the experiments settled on: 20k steps, learning rate 0.001, negative weight 20, and
+augmentation with background sound from −5 to 15 dB and room echo. The generic model is that recipe on
 all the synthetic clips (uncleaned) plus the real lookalikes at double weight. Features are stored as uint16, which
 is lossless (the microfrontend's outputs are integers times 0.0390625).
 
@@ -134,7 +134,7 @@ the personal one adds the owner's training half.
   variation may train the personal setup; takes 3–5 never do. The generic setup never trains on any, so its test
   uses all 30.
 - **Test-only noise:** LibriSpeech test-clean babble, FMA, ESC-50, real room recordings, and an hour of TV.
-- **False answers:** an hour of TV and half an hour of audiobooks, through both stages; any answer counts.
+- **False answers:** an hour of TV and an hour of audiobooks, through both stages; any answer counts.
 - **Padding:** each test clip gets 2 s of faint noise before and after, as in a live stream (stage 1 needs context).
 
 Benchmarks: `tools/wakeword_bench.py` (stage 1 alone), `tools/verifier_bench.py` (stage 2 alone) and
@@ -145,8 +145,8 @@ Benchmarks: `tools/wakeword_bench.py` (stage 1 alone), `tools/verifier_bench.py`
 | Tried | Result | Kept? |
 |---|---|---|
 | openWakeWord, custom "hey TARS" (50k clips) | 27% recall on the owner's voice; microWakeWord's first try got 97% | replaced by microWakeWord |
-| The "v3" training schedule: 60k steps, a second phase with negative weight 50 | worse everywhere (owner 80%); "TARS stop" became a "stop" detector | no (its augmentation is kept) |
-| Twice the training steps ("H") | overfit to the owner's voice | no |
+| A longer schedule: 60k steps, a second phase with negative weight 50 | worse everywhere (owner 80%); "TARS stop" became a "stop" detector | no (its augmentation is kept) |
+| Twice the training steps | overfit to the owner's voice | no |
 | Filtering synthetic positives with Vosk | stage 1 got too strict (owner quiet 93% → 77%); in two stages, stage 1 must be lenient | no, for stage 1 |
 | Accented voices in stage 1 | other voices 96% → 72% | no; used in stage 2, where they help a little |
 | Voice conversions in stage 1 | mixed | no; used in stage 2 |

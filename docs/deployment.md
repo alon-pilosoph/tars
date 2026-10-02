@@ -1,24 +1,32 @@
 # Running TARS at home
 
-TARS is local-first: the Raspberry Pi 5 records, serves the web UI and does the learning. Only what already goes to
-OpenAI after a wake leaves the house.
+TARS is local-first: the Raspberry Pi 5 listens, records, serves the web UI and learns voiceprints. Nothing leaves
+the house until a wake is confirmed, and then only the turn itself:
+
+- **Deepgram:** your request's audio, for speech to text, and TARS's reply text, for its voice.
+- **Cerebras:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
+- **OpenAI:** the same conversation for turns that need the web or the TARS page, or when Cerebras fails, and a
+  request's recording when Deepgram's stream fails.
+
+The event log, the audio kept for learning, voiceprints and the web UI never leave it
+([what leaves the machine](architecture.md#what-leaves-the-machine)).
 
 ```
                  home network (Wi-Fi)                               internet
 ┌──────────────── Raspberry Pi 5 ────────────────┐
-│ voice-assistant.service                        │── request audio / text ──► OpenAI (STT, LLM, TTS)
+│ voice-assistant.service                        │── request audio / text ──► Deepgram, Cerebras, OpenAI
 │   wake → double-check → answer                 │     (only after "hey TARS")
 │   writes voice_data/events/ (SQLite + WAVs)    │
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
 │   the React page + API over the same log       │◄── away from home: Tailscale (optional)
-│   re-cluster, voiceprints, switch wake models  │── nightly encrypted backup ──► S3 / B2 (optional)
+│   regroup voices, switch wake models           │── nightly encrypted backup ──► S3 / B2 (optional)
 └────────────────────────────────────────────────┘
 ```
 
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync && cp .env.example .env    # then put your OpenAI and Deepgram API keys in .env
+uv sync && cp .env.example .env    # then put your OpenAI, Deepgram and Cerebras API keys in .env
 uv run voice-assistant --list-devices
 ```
 
@@ -27,30 +35,33 @@ its name in `config.toml`, for example `input_device = "PowerConf"` and `output_
 
 ```bash
 uv run voice-assistant --mic-test   # speak: the level, speech and wake-word meters should move; no API key needed
-uv run voice-assistant              # say "hey TARS", wait for the chime, ask something
+uv run voice-assistant              # say "hey TARS" and ask something
 uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:8080
 ```
 
 The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
-(8 MB) and the speaker model (25 MB) into `models/`. Expect about 2 to 2.5 seconds from when you stop talking to TARS's
-first word, a little more when you sounded mid-thought: Deepgram's Flux decides when you're done, and TARS prepares
-the answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks for microphone access the first time; if TARS hears nothing, check System
-Settings → Privacy & Security → Microphone for your terminal.
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 1.1 to 1.6 seconds from when you stop talking to
+TARS's first sound, a little more when you sounded mid-thought: Deepgram's Flux decides when you're done, and TARS
+prepares the answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks
+for microphone access the first time; if TARS hears nothing, check System Settings → Privacy & Security →
+Microphone for your terminal.
 
 ## Install on the Pi
 
 On Raspberry Pi OS (64-bit, Bookworm or later), with the speakerphone plugged in:
 
 ```bash
-git clone <this repo> ~/voice-assistant
+git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 ~/voice-assistant/deploy/install-pi.sh
 ```
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts both systemd user services, at boot too. The first run stops to ask for the keys in `.env` (OpenAI, and
-Deepgram unless `[stt] provider = "openai"`); run it again after. It's safe to rerun. The two services are separate processes on purpose: a crash in one never takes the other
-down. The web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
+starts both systemd user services, at boot too. The first run stops to ask for the keys `config.toml`'s choices
+need in `.env` (OpenAI, Deepgram and Cerebras, by default); run it again after. It's safe to rerun, and it restarts
+the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml` or a missing key stops a
+service instead of restarting it every few seconds: `journalctl` says what's wrong. The web UI's build is
+committed, so the Pi needs no Node. By hand, the steps are at the top of
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service).
 
@@ -59,22 +70,22 @@ down. The web UI's build is committed, so the Pi needs no Node. By hand, the ste
 - **Reaching it.** Open `http://<pi-name>.local:8080` on the home network. It has no accounts, so don't forward the
   port to the internet; to use it away from home, put the Pi and the phone on
   [Tailscale](https://tailscale.com) and open `http://<pi-name>:8080`. It only answers to IP addresses, `localhost`,
-  `*.local`, `*.ts.net` and single-label names; add any other name to `[web] allowed_hosts`.
+  `*.local`, `*.ts.net` and single-label names; add any other name to `[web] allowed_hosts`. For a name of your
+  own, such as `home.example.com`, point its DNS A record at the Pi's Tailscale address (`100.x.y.z`): it resolves
+  anywhere, but only connects from your tailnet.
 - **Storage.** A wake window is 3 s (96 KB), a request about 4 s (130 KB). At around 60 events a day that's about
-  12 MB a day. Audio that teaches nothing (no label, not even an automatic one) is dropped after
-  `[learning] keep_audio_days` (60); labeled audio is kept, since it's the training data. A 64 GB card lasts years.
+  12 MB a day. Audio training wouldn't learn from is dropped after `[learning] keep_audio_days` (60); audio with
+  an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years.
 - **Backup.** SD cards die, and the labels are the valuable part. A nightly `restic` or `rclone` job sending an
   encrypted copy of `voice_data/` and `models/personal/` to S3 or Backblaze B2 costs cents a month.
-- **Two processes, one log.** The assistant writes and the web UI reads and edits the same SQLite file (WAL mode,
-  so neither blocks the other; a failed write never costs a reply). Speaker ID picks up new voiceprints on its own.
-- **Upgrades.** `git pull && uv sync --frozen && systemctl --user restart voice-assistant voice-assistant-web`. The
-  database upgrades itself when either starts.
+- **Two processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
+- **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 
 ## Where the learning happens
 
 | What | Learns from | Where | How long |
 | --- | --- | --- | --- |
-| **Voiceprints** (who's talking) | requests in a named voice (5+) | the Pi, on Re-cluster | seconds (built) |
+| **Voiceprints** (who's talking) | requests in a named voice (5+) | the Pi, on Regroup voices | seconds (built) |
 | **The wake model and its double-check**, as a pair | synthetic voices plus the household's labeled wakes and near-misses | a bigger machine, now and then | tens of minutes ([`training/`](../training/README.md)) |
 
 The Pi only runs the pairs; see [self-learning](self-learning.md#learning-from-it) for how they're installed and
@@ -98,8 +109,8 @@ minutes on this:
 | "send me a lasagna recipe" | a link or a note under Sent, and "It's on the TARS page." |
 | a second person, 5+ requests | a second voice in Voices |
 
-Then answer the wakes in Review, and in Voices name your voice and re-cluster: the next bare "hey TARS" should get
-"Yes, <name>?". Note down false wakes from the TV, missed wakes, wrong guesses, and anything that felt slow.
+Then answer the wakes in Review, and in Voices name your voice and press Regroup voices: the next bare "hey TARS"
+should get "Yes, <name>?". Note down false wakes from the TV, missed wakes, wrong guesses, and anything that felt slow.
 
 ## If this ever became a product
 

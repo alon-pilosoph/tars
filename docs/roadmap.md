@@ -2,7 +2,8 @@
 
 Four steps, in this order. Each one makes the next one better: real use shows whether speaker ID and the wake word
 hold up on the speakerphone (memory depends on the first); interrupting matters more once answers can run long (the
-larger model); and the larger model and memory are both tools the brain calls, built the way the send tool already is.
+larger model); the larger model is one more hand-off, built the way `<look-up>` already is, and memory is a tool,
+built the way the send tool is.
 
 | | Step | Why now | Size |
 |---|---|---|---|
@@ -22,8 +23,8 @@ what actually goes wrong.
 **Before starting:** set `input_device` and `output_device` in `config.toml` to the speakerphone's name
 (`uv run voice-assistant --list-devices`), and check it with `--mic-test` from across the room. Speaker ID's
 voiceprint was made on the laptop mic; if TARS doesn't greet you by name, record and enroll again on the speakerphone
-(`--record-voice alon --mic anker`, then `--enroll alon --mic anker`), or name your voice in the Voices tab once it
-has 5 requests.
+(`--record-voice alon --mic powerconf`, then `--enroll alon --mic powerconf`), or name your voice in the Voices tab
+once it has 5 requests.
 
 **Keep track of:**
 
@@ -33,7 +34,7 @@ has 5 requests.
 | False wakes (TV, talk) | Review | at most one or two a day, none answered |
 | Wrong names | Home, a conversation's "who was talking" | rare once voiceprints come from the speakerphone |
 | Cut off mid-sentence | your notes | never |
-| Slow replies | the `TOTAL to first sound` line in the assistant's log | about 2.5 s, as on the laptop |
+| Slow replies | the `TOTAL to first sound` line in the assistant's log | about 1.1-1.6 s, as on the laptop ([response time](latency.md)) |
 | Answers you'd rate bad | Home's good / bad buttons | a list, for steps 3 and 4 |
 
 **At the end of the week:** answer what's left in Review and name the voices. The Models page then shows how
@@ -57,14 +58,13 @@ for the word "stop" ([wake word](wake-word.md), tried and dropped).
 3. **On an interrupt:** stop the playback, the reply (`StreamedReply.stop()`) and the brain (`brain.interrupt()`),
    all of which exist; keep what was already said in the conversation, marked as cut off; then record the new
    request, with no greeting.
-4. **"TARS stop" later, if still wanted.** Retrain it with the recipe that worked for "hey TARS" (the D setup),
+4. **"TARS stop" later, if still wanted.** Retrain it with the stage 1 recipe that worked for "hey TARS",
    with "stop", "top", "star stop" and TARS's own voice saying them as negatives, which is what the first try lacked.
    A bare stop (no new request) is then its own action: cut the reply and go back to waiting.
 
-**Measure before turning it on:** false interrupts per hour of TARS talking (play an hour of its own answers through
-the speakerphone, with and without the TV on; the wake-word work checked TARS's voice once, with a script that
-isn't in the repo yet and belongs in `tools/`), and
-how long from the phrase to silence. Done when false interrupts are about zero and it stops within half a second.
+**Measure before turning it on:** false interrupts per hour of TARS talking (play an hour of its own answers through the
+speakerphone, with and without the TV on), and how long from the phrase to silence. Done when false interrupts are about
+zero and it stops within half a second.
 
 **Open question:** whether the Pi can run the wake model and the voice's playback at once without glitches. It
 should (the wake model is tiny), but it's the first time both run together.
@@ -76,10 +76,11 @@ When a question needs real thinking (planning a trip, comparing options, a trick
 
 **Design:**
 
-- **A `think` tool** the fast model can call, defined next to the send tool in `llm.py`, with the question and
-  what it has already found. The tool's description is what decides when it's used: questions that need several
-  steps of reasoning, never small talk, facts or anything web search answers.
-- **No silence.** The moment the call starts, TARS plays a line made ahead of time, like the spoken error lines
+- **A `<think>` hand-off**, next to `<look-up>` in `llm.py`. Qwen on Cerebras gets no tools: for the web or the TARS
+  page it already replies `<look-up>` and the turn goes to OpenAI's model. A second marker sends a turn to the larger
+  model instead. Its line in Qwen's prompt decides when: questions that need several steps of reasoning, never small
+  talk, facts or anything web search answers.
+- **No silence.** The moment the hand-off starts, TARS plays a line made ahead of time, like the spoken error lines
   (`ERROR_LINES` in `assistant.py`), dry or plain by the humor setting.
 - **The larger model is a second brain**, set in config (`[llm] think_model`, with its own reasoning effort), with
   the same conversation and web search. Its answer is streamed and spoken like any other, so the brain stays
@@ -88,11 +89,12 @@ When a question needs real thinking (planning a trip, comparing options, a trick
   when it runs out. With step 2 done, "hey TARS" interrupts a long answer too.
 - **Visible in the web UI:** a turn that went to the larger model is marked, with how long it took.
 
-**Measure:** on 50 typical questions from step 1's log, how often the tool is called (it should be rare, and never
-for the simple ones), the time to the "let me think" line (should be the usual ~2.5 s), and the cost per call.
+**Measure:** on 50 typical questions from step 1's log, how often it hands off (it should be rare, and never for
+the simple ones), the time to the "let me think" line (should be the usual time to first sound), and the cost per
+call.
 
-**Open question:** whether the fast model reliably knows when to call it, or overcalls. If it does, a stricter
-description comes first; a separate classifier only if that fails.
+**Open question:** whether Qwen hands off when it should, and only then. If it doesn't, a stricter line in its
+prompt comes first; a separate classifier only if that fails.
 
 ## 4. Long-term memory and personalization
 
@@ -106,7 +108,8 @@ each person's settings, and the persona part of the system prompt.
 - **Storage:** a `memories` table in the event database (`store.py`, with the usual automatic upgrade): the text,
   whose it is (a person, by the same names speaker ID uses, or the household), the conversation turn it came from,
   and when it was made and last changed.
-- **Writing:** `remember` and `forget` tools, like the send tool. TARS offers only for lasting facts and
+- **Writing:** `remember` and `forget` tools, like the send tool, so those turns go to OpenAI's model the way
+  `<look-up>` turns do. TARS offers only for lasting facts and
   preferences, at most once a conversation, and never for anything said to someone else. The call doesn't hold
   up the reply: TARS speaks what the model said and saves in the background, without another round to the model.
 - **Reading:** everything kept for the person speaking, plus the household's, goes into the prompt as a short
