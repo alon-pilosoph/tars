@@ -9,7 +9,7 @@ Piper voices. Resumable. Output: DATA/vc_vctk/{positive,near_miss}/<speaker>_<nn
 import random
 import time
 
-from training.common import Layout, parser
+from training.common import Layout, log, parser
 from training.data.vc_librispeech import MATCH_SECONDS, convert, load_knn_vc
 
 
@@ -23,7 +23,7 @@ def main():
     layout = Layout(args.data)
     sources = {
         kind: [
-            layout.clips / "accent/hey_tars" / kind,
+            layout.clip_dir("accent", "hey_tars", kind),
             layout.clip_dir("kokoro", "hey_tars", kind),
             layout.clip_dir("piper_voices", "hey_tars", kind),
         ]
@@ -55,11 +55,7 @@ def main():
             if total >= MATCH_SECONDS:
                 break
         done += convert(knn_vc, refs, todo, spk.name)
-        print(
-            f"[{time.strftime('%H:%M:%S')}] speaker {si + 1}/{len(speakers)} ({spk.name}) done; "
-            f"{done / (time.time() - t0):.1f} clips/s",
-            flush=True,
-        )
+        log(f"speaker {si + 1}/{len(speakers)} ({spk.name}) done; {done / (time.time() - t0):.1f} clips/s")
 
 
 if __name__ == "__main__":

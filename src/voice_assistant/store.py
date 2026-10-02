@@ -1,8 +1,8 @@
 """Where self-learning TARS keeps everything: one SQLite database plus the audio and files next to it.
 
-The assistant writes and the web UI reads and edits the same folder (voice_data/events/, gitignored) from two
-processes, so the database runs in WAL mode and every multi-step change is one IMMEDIATE transaction.
-events.py (wakes, near-misses, voices) and conversations.py (turns, sent items) are built on top of this.
+The assistant and the web UI share the folder (voice_data/events/, gitignored) from two processes, so the database
+runs in WAL mode and every multi-step change is one IMMEDIATE transaction. events.py (wakes, near-misses, voices) and
+conversations.py (turns, sent items) build on this.
 """
 
 import secrets
@@ -16,8 +16,8 @@ import numpy as np
 
 from .audio import save_wav
 
-# AUTOINCREMENT so an id is never handed out twice: the web UI deletes rows while the assistant keeps adding them,
-# and a reused id would silently attach a new wake to an old conversation (or delete it along with one).
+# AUTOINCREMENT so an id is never reused: the web UI deletes rows while the assistant adds them, and a reused id
+# would silently attach a new wake to an old conversation (or delete it along with one).
 TABLES = {
     "events": """CREATE TABLE events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,8 +60,6 @@ TABLES = {
     text TEXT,
     audio TEXT,                      -- person turns: what they said (the first request shares the wake's copy)
     speaker TEXT,                    -- person turns: speaker ID's guess at the time
-    speaker_score REAL,
-    embedding BLOB,                  -- person turns after the first: voice embedding, for clustering later
     not_for_tars INTEGER DEFAULT 0,  -- person turns: overheard, TARS stayed quiet
     corrected_text TEXT,             -- person turns: what they really said, typed in the web UI
     rating TEXT                      -- tars turns: good | bad, from the web UI
@@ -83,13 +81,23 @@ TABLES = {
     file_name TEXT                   -- file: the name it downloads as
 )""",
 }
-# Columns added after a table first shipped: an existing database gets them on startup.
-ADDED_COLUMNS = {"items": {"file_name": "TEXT"}}
-INDEXES = """
-CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
-CREATE INDEX IF NOT EXISTS turns_conversation ON turns(conversation_id);
-CREATE INDEX IF NOT EXISTS items_conversation ON items(conversation_id);
-"""
+INDEXES = [
+    "CREATE INDEX events_ts ON events(ts)",
+    "CREATE INDEX events_cluster ON events(cluster_id)",
+    "CREATE INDEX turns_conversation ON turns(conversation_id)",
+    "CREATE INDEX turns_audio ON turns(audio)",  # the first request's audio is shared with its wake
+    "CREATE INDEX items_conversation ON items(conversation_id)",
+]
+# Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
+# version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
+MIGRATIONS = [
+    [
+        "ALTER TABLE turns DROP COLUMN speaker_score",
+        "ALTER TABLE turns DROP COLUMN embedding",
+        "CREATE INDEX events_cluster ON events(cluster_id)",
+        "CREATE INDEX turns_audio ON turns(audio)",
+    ],
+]
 
 
 class Store:
@@ -103,7 +111,7 @@ class Store:
         # Autocommit: a single statement is atomic on its own, and transaction() opens the multi-step ones.
         db = sqlite3.connect(self.folder / "events.db", timeout=10, isolation_level=None)
         db.row_factory = sqlite3.Row
-        db.execute("PRAGMA journal_mode=WAL")  # the web UI reads while the assistant writes
+        db.execute("PRAGMA journal_mode=WAL")
         return db
 
     @contextmanager
@@ -114,12 +122,12 @@ class Store:
             try:
                 yield db
             except BaseException:
-                db.execute("ROLLBACK")
+                if db.in_transaction:  # SQLite has already rolled back after some errors (a full disk)
+                    db.execute("ROLLBACK")
                 raise
             db.execute("COMMIT")
 
     def write(self, sql: str, args: tuple = ()) -> int:
-        """Run one statement; returns the new row's id (for an INSERT)."""
         with closing(self.connect()) as db:
             return db.execute(sql, args).lastrowid
 
@@ -141,34 +149,29 @@ class Store:
         path.write_bytes(data)
         return rel
 
+    @contextmanager
+    def removed_on_failure(self, rel: str | None) -> Iterator[None]:
+        """A file just stored is deleted again if the row meant to point at it can't be written."""
+        try:
+            yield
+        except BaseException:
+            self.remove([rel])
+            raise
+
     def remove(self, rels: list[str | None]) -> None:
-        """Delete stored audio and files. Called after the rows that pointed at them are gone."""
+        """Call only after the rows that pointed at these files are gone."""
         for rel in rels:
             if rel:
                 (self.folder / rel).unlink(missing_ok=True)
 
 
 def _migrate(db: sqlite3.Connection) -> None:
-    """Create what's missing and bring an older database up to date, keeping every row."""
-    for table, create in TABLES.items():
-        row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        if row is None:
-            db.execute(create)
-        elif "AUTOINCREMENT" not in row["sql"].upper():
-            old = [r["name"] for r in db.execute(f"PRAGMA table_info({table})")]
-            db.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
-            db.execute(create)
-            new = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
-            cols = ", ".join(c for c in old if c in new)
-            # Explicit ids carry over, and AUTOINCREMENT's counter starts above the highest one.
-            db.execute(f"INSERT INTO {table} ({cols}) SELECT {cols} FROM {table}_old")
-            db.execute(f"DROP TABLE {table}_old")
-        else:
-            have = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
-            for name, sql_type in ADDED_COLUMNS.get(table, {}).items():
-                if name not in have:
-                    db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
-    for statement in filter(str.strip, INDEXES.split(";")):
-        db.execute(statement)
-    # Before AUTOINCREMENT, deleting a wake could leave its conversation pointing at a reused id.
-    db.execute("UPDATE conversations SET wake_event_id=NULL WHERE wake_event_id NOT IN (SELECT id FROM events)")
+    version = db.execute("PRAGMA user_version").fetchone()[0]
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
+        for statement in [*TABLES.values(), *INDEXES]:
+            db.execute(statement)
+    else:
+        for steps in MIGRATIONS[version:]:
+            for statement in steps:
+                db.execute(statement)
+    db.execute(f"PRAGMA user_version={len(MIGRATIONS)}")

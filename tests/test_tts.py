@@ -53,7 +53,7 @@ def test_a_sentence_is_its_audio_and_the_connection_is_used_again(model, flux):
     socket = FakeSocket(flux)
     v = voice(model, [socket])
     assert b"".join(v.stream("Hello there.")) == b"Hello there."
-    assert b"".join(v.stream("Again.")) == b"Again."  # the same connection: no second one was needed
+    assert b"".join(v.stream("Again.")) == b"Again."
     assert socket.spoken == ["Hello there.", "Again."] and not socket.closed
 
 

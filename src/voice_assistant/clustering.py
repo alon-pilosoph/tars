@@ -1,9 +1,8 @@
-"""Group the requests TARS has heard by voice, and enroll the voices people have named. No recording sessions.
+"""Groups heard requests by voice and enrolls the voices people have named.
 
-Each request's voice embedding (from speaker ID) joins the closest existing voice if it's similar enough, or
-starts a new one. Anything a person decided stays put: requests moved or merged by hand, and voices someone
-named or marked "not a person". A voice someone has named (with enough requests) becomes a voiceprint, so TARS
-recognizes that person from then on.
+Each request's speaker embedding joins the closest voice if similar enough, or starts a new one. Decisions made by
+hand stay put: moved or merged requests, and voices named or marked "not a person". A named voice with enough
+requests becomes a voiceprint.
 """
 
 import time
@@ -11,7 +10,7 @@ import time
 import numpy as np
 
 from .audio import read_wav
-from .events import NOT_PERSON, PERSON, UNKNOWN, EventLog, person_key
+from .events import PERSON, UNKNOWN, EventLog, person_key, voice_decided
 from .speaker import SpeakerID
 
 # Same-person sentences score ~0.8-0.9 with this speaker model and different people <= ~0.2 (measured on the
@@ -27,10 +26,10 @@ def _unit(v: np.ndarray) -> np.ndarray:
 def recluster(log: EventLog, same_voice: float = SAME_VOICE) -> dict:
     started = time.time()
     rows = sorted(log.embeddings())  # oldest first, so voices are founded by their earliest requests
-    decided = {c["id"] for c in log.clusters() if c["name"] or c["kind"] == NOT_PERSON}
+    clusters = {c["id"]: c for c in log.clusters()}
 
-    def settled(cluster, pinned):  # a person put it there, or it's in a voice a person named or classified
-        return cluster is not None and (pinned or cluster in decided)
+    def settled(cluster: int | None, pinned: bool) -> bool:
+        return voice_decided(clusters.get(cluster), pinned)
 
     members: dict[int, list[np.ndarray]] = {}
     for _, emb, cluster, pinned in rows:
@@ -53,20 +52,19 @@ def recluster(log: EventLog, same_voice: float = SAME_VOICE) -> dict:
         if best != cluster:
             log.assign(event_id, best, pinned=False)
             moved += 1
-    # Undecided voices that ended up empty are leftovers from earlier runs. One made since this run started is
-    # someone's "New voice" about to get its first request, so it stays.
+    # Empty undecided voices are leftovers, except one created during this run: that's a "New voice" someone just
+    # made in the UI, about to get its first request.
     for c in log.clusters():
         if c["size"] == 0 and not c["name"] and c["kind"] == UNKNOWN and c["created"] < started:
             log.delete_cluster(c["id"])
     return {
-        "summary": f"{len(rows)} requests grouped into {len(log.clusters())} voices "
-        f"({created} new, {moved} moved; your manual choices kept)."
+        "summary": f"Grouped {len(rows)} requests into {len(log.clusters())} voices, {created} of them new. "
+        f"{moved} requests moved. Anything you set by hand stayed put."
     }
 
 
 def enroll_named(log: EventLog, speaker_id: SpeakerID) -> list[str]:
-    """Rebuild the voiceprints of every named person from their voices' requests (voices sharing a name count as
-    one person). Returns who has a voiceprint now."""
+    """Rebuilds every named person's voiceprint; voices sharing a name count as one person. Returns who is enrolled."""
     people: dict[str, tuple[str, list]] = {}
     for c in log.clusters():
         if c["kind"] == PERSON and (key := person_key(c["name"])):
@@ -83,5 +81,5 @@ def regroup(log: EventLog, speaker_id: SpeakerID | None) -> dict:
     if speaker_id:
         enrolled = enroll_named(log, speaker_id)
         if enrolled:
-            result["summary"] += f" Voiceprints updated for: {', '.join(enrolled)}."
+            result["summary"] += f" Updated the voiceprints of {', '.join(enrolled)}."
     return result

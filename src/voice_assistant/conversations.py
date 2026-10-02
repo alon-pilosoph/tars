@@ -1,25 +1,23 @@
 """Every conversation TARS has: what each person said, what TARS answered, and what it sent them.
 
-Lives in the same store as the event log (see store.py) and links each conversation to the wake that started it.
-Items (links, notes, lists, files) are what TARS "sends": it says it sent them, and they show up in the web UI.
-There are no private inboxes: an item is for a person (whoever asked) or the household, and anyone at home can
-see it.
+Shares the event log's store (see store.py) and links each conversation to the wake that started it. Items (links,
+notes, lists, files) are what TARS "sends" to the web UI. There are no private inboxes: an item is for a person
+(whoever asked) or the household, and anyone at home can see it.
 """
 
 import json
 import time
+from contextlib import closing
 from dataclasses import dataclass
-from pathlib import Path
 
 import numpy as np
 
 from .events import EventLog, person_key
 
-PERSON, TARS = "person", "tars"
-GOOD, BAD = "good", "bad"
+ROLE_PERSON, ROLE_TARS = "person", "tars"
 LINK, NOTE, LIST, FILE = "link", "note", "list", "file"
 KINDS = (LINK, NOTE, LIST, FILE)
-HOUSEHOLD = "household"
+PERSON, HOUSEHOLD = "person", "household"
 SCOPES = (PERSON, HOUSEHOLD)
 
 
@@ -28,12 +26,12 @@ class SentItem:
     kind: str
     title: str
     scope: str = PERSON  # person: whoever asked; household: shared, like a shopping list
-    url: str | None = None  # link
+    url: str | None = None
     site: str | None = None
     description: str | None = None
     body: str | None = None  # note: short markdown
-    entries: list[str] | None = None  # list
-    file_name: str | None = None  # file
+    entries: list[str] | None = None
+    file_name: str | None = None
     file_bytes: bytes | None = None
     mime: str | None = None
 
@@ -60,34 +58,39 @@ class ConversationLog:
         text: str,
         pcm: np.ndarray | bytes | None = None,
         speaker: str | None = None,
-        speaker_score: float | None = None,
-        embedding: np.ndarray | None = None,
         audio: str | None = None,
         ts: float | None = None,
     ) -> int | None:
-        """`audio` is audio that's already stored (the request that came with the wake keeps its one copy on the
-        wake), else `pcm` is saved. None if the conversation is gone (deleted from the web UI mid-conversation)."""
+        """`audio` is already-stored audio (the request that came with the wake shares the wake's copy), else `pcm`
+        is saved. None if the conversation was deleted from the web UI meanwhile."""
         if not self.exists(conversation_id):
             return None
         ts = ts or time.time()
         saved = self.store.save_audio(pcm, f"{int(ts * 1000)}_turn") if audio is None and pcm is not None else None
-        blob = np.asarray(embedding, dtype=np.float32).tobytes() if embedding is not None and saved else None
-        turn = self._insert_turn(conversation_id, ts, PERSON, text, audio or saved, speaker, speaker_score, blob)
+        with self.store.removed_on_failure(saved):
+            turn = self._insert_turn(conversation_id, ts, ROLE_PERSON, text, audio=audio or saved, speaker=speaker)
         if turn is None:
             self.store.remove([saved])
         return turn
 
     def add_tars_turn(self, conversation_id: int, text: str, ts: float | None = None) -> int | None:
-        return self._insert_turn(conversation_id, ts or time.time(), TARS, text)
+        return self._insert_turn(conversation_id, ts or time.time(), ROLE_TARS, text)
 
-    def _insert_turn(self, conversation_id: int, ts: float, role: str, text: str, *person_fields) -> int | None:
-        columns = ["conversation_id", "ts", "role", "text", "audio", "speaker", "speaker_score", "embedding"]
-        values = (conversation_id, ts, role, text, *person_fields)
-        with self.store.transaction() as db:
+    def _insert_turn(
+        self,
+        conversation_id: int,
+        ts: float,
+        role: str,
+        text: str,
+        audio: str | None = None,
+        speaker: str | None = None,
+    ) -> int | None:
+        """None if the conversation is gone."""
+        with closing(self.store.connect()) as db:
             cursor = db.execute(
-                f"INSERT INTO turns ({', '.join(columns[: len(values)])}) SELECT {', '.join('?' * len(values))} "
+                "INSERT INTO turns (conversation_id, ts, role, text, audio, speaker) SELECT ?, ?, ?, ?, ?, ? "
                 "WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)",
-                (*values, conversation_id),
+                (conversation_id, ts, role, text, audio, speaker, conversation_id),
             )
             return cursor.lastrowid if cursor.rowcount else None
 
@@ -102,45 +105,47 @@ class ConversationLog:
         for_name: str | None = None,
         ts: float | None = None,
     ) -> int:
+        """Kept even if the conversation was deleted in the web UI meanwhile; it's then on its own."""
         if item.kind not in KINDS:
             raise ValueError(f"unknown item kind {item.kind!r}")
         if item.scope not in SCOPES:
             raise ValueError(f"unknown item scope {item.scope!r}")
-        file_rel = (
-            self.store.save_file(item.file_bytes, item.file_name or "file") if item.file_bytes is not None else None
-        )
+        file_name = (item.file_name or "file") if item.file_bytes is not None else None
+        file_rel = self.store.save_file(item.file_bytes, file_name) if file_name else None
         entries = json.dumps([{"text": e, "done": False} for e in item.entries]) if item.entries is not None else None
-        return self.store.write(
-            "INSERT INTO items (conversation_id, turn_id, ts, kind, title, scope, for_name, url, site, description, "
-            "body, entries, file, mime, size, file_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                conversation_id,
-                turn_id,
-                ts or time.time(),
-                item.kind,
-                item.title,
-                item.scope,
-                for_name if item.scope == PERSON else None,
-                item.url,
-                item.site,
-                item.description,
-                item.body,
-                entries,
-                file_rel,
-                item.mime,
-                len(item.file_bytes) if item.file_bytes is not None else None,
-                item.file_name if file_rel else None,
-            ),
-        )
+        with self.store.removed_on_failure(file_rel):
+            return self.store.write(
+                "INSERT INTO items (conversation_id, turn_id, ts, kind, title, scope, for_name, url, site, "
+                "description, body, entries, file, mime, size, file_name) "
+                "VALUES ((SELECT id FROM conversations WHERE id=?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    conversation_id,
+                    turn_id,
+                    ts or time.time(),
+                    item.kind,
+                    item.title,
+                    item.scope,
+                    for_name if item.scope == PERSON else None,
+                    item.url,
+                    item.site,
+                    item.description,
+                    item.body,
+                    entries,
+                    file_rel,
+                    item.mime,
+                    len(item.file_bytes) if file_name else None,
+                    file_name,
+                ),
+            )
 
     def rate(self, turn_id: int, rating: str | None) -> None:
-        self.store.write("UPDATE turns SET rating=? WHERE id=? AND role=?", (rating, turn_id, TARS))
+        self.store.write("UPDATE turns SET rating=? WHERE id=? AND role=?", (rating, turn_id, ROLE_TARS))
 
     def correct(self, turn_id: int, text: str | None) -> None:
-        """What they really said. Saving what TARS heard, or nothing, clears the correction."""
+        """What the person really said. Saving what TARS heard, or nothing, clears the correction."""
         self.store.write(
             "UPDATE turns SET corrected_text=CASE WHEN ?=text THEN NULL ELSE ? END WHERE id=? AND role=?",
-            (text, text or None, turn_id, PERSON),
+            (text, text or None, turn_id, ROLE_PERSON),
         )
 
     def mark_seen(self, item_id: int, seen: bool = True) -> None:
@@ -154,7 +159,7 @@ class ConversationLog:
             if not 0 <= index < len(entries):
                 raise IndexError(index)
             entries[index]["done"] = done
-            # Ticking something off means someone has seen the list.
+            # Ticking an entry means someone has seen the list.
             db.execute("UPDATE items SET entries=?, seen=1 WHERE id=?", (json.dumps(entries), item_id))
 
     def delete_item(self, item_id: int) -> None:
@@ -187,62 +192,41 @@ class ConversationLog:
         return rows[0] if rows else None
 
     def item(self, item_id: int) -> dict | None:
+        """The raw row, including the stored file path the browser must never see."""
         rows = self.store.rows("SELECT * FROM items WHERE id=?", (item_id,))
-        return self._items(rows)[0] if rows else None
+        return rows[0] if rows else None
 
-    def item_file(self, item_id: int) -> str | None:
-        """Where a sent file is stored (relative to the folder); the browser never sees this."""
-        rows = self.store.rows("SELECT file FROM items WHERE id=?", (item_id,))
-        return rows[0]["file"] if rows else None
+    def items(self) -> list[dict]:
+        rows = self.store.rows("SELECT * FROM items ORDER BY ts DESC")
+        people, voices = self._people(), self._voices([r["conversation_id"] for r in rows])
+        return [_item(r, people, voices.get(r["conversation_id"])) for r in rows]
 
-    def items(self, person: str | None = None, unseen: bool = False, limit: int = 500) -> list[dict]:
-        """Newest first. `person` keeps that person's items (after any voice correction) plus the household's."""
-        sql = "SELECT * FROM items" + (" WHERE seen=0" if unseen else "") + " ORDER BY ts DESC"
-        items = self._items(self.store.rows(sql + ("" if person else " LIMIT ?"), () if person else (limit,)))
-        if person:
-            key = person_key(person)
-            items = [i for i in items if i["scope"] == HOUSEHOLD or person_key((i["for"] or {}).get("name")) == key]
-        return items[:limit]
-
-    def unseen_count(self) -> int:
-        return self.store.rows("SELECT COUNT(*) AS n FROM items WHERE seen=0")[0]["n"]
-
-    def conversations(self, limit: int = 200, turns: bool = True, ids: list[int] | None = None) -> list[dict]:
-        """Newest first, each with its turns (the timeline shows them), or just a summary with `turns=False`."""
+    def conversations(self, limit: int = 200, ids: list[int] | None = None) -> list[dict]:
         where, args = (f"WHERE c.id IN ({','.join('?' * len(ids))}) ", list(ids)) if ids is not None else ("", [])
         rows = self.store.rows(
-            "SELECT c.*, "
-            " (SELECT COUNT(*) FROM turns t WHERE t.conversation_id=c.id) AS turn_count, "
-            " (SELECT text FROM turns t WHERE t.conversation_id=c.id AND t.role=? ORDER BY ts, id LIMIT 1) AS preview, "
-            " (SELECT COUNT(*) FROM items i WHERE i.conversation_id=c.id) AS item_count, "
-            " (SELECT COUNT(*) FROM items i WHERE i.conversation_id=c.id AND i.seen=0) AS unseen_count "
-            f"FROM conversations c {where}ORDER BY c.started DESC LIMIT ?",
-            (PERSON, *args, limit),
+            f"SELECT c.*, {FIRST_GUESS} AS guess FROM conversations c {where}ORDER BY c.started DESC LIMIT ?",
+            (ROLE_PERSON, *args, limit),
         )
-        people, voices = self._people(), self._voices([r["id"] for r in rows])
-        wakes = self.events.wakes([r["wake_event_id"] for r in rows])
-        out = [_conversation(r, wakes.get(r["wake_event_id"]), voices.get(r["id"]), people) for r in rows]
-        if turns and out:
-            self._add_turns(out, people, voices)
+        if not rows:
+            return []
+        people, wakes = self._people(), self.events.wakes([r["wake_event_id"] for r in rows])
+        voices = _voices(rows, wakes)
+        out = [_conversation(r, wakes.get(r["wake_event_id"]), voices[r["id"]], people) for r in rows]
+        self._add_turns(out, people, voices)
         return out
 
     def get(self, conversation_id: int) -> dict | None:
-        found = self.conversations(turns=True, ids=[conversation_id])
-        if not found:
-            return None
-        conv = found[0]
-        conv["items"] = [i for t in conv["turns"] for i in t.get("items", [])]
-        return conv
+        found = self.conversations(ids=[conversation_id])
+        return found[0] if found else None
 
     def _add_turns(self, convs: list[dict], people: dict, voices: dict) -> None:
         ids = [c["id"] for c in convs]
         marks = ",".join("?" * len(ids))
         turns = self.store.rows(f"SELECT * FROM turns WHERE conversation_id IN ({marks}) ORDER BY ts, id", ids)
-        items = self._items(
-            self.store.rows(f"SELECT * FROM items WHERE conversation_id IN ({marks}) ORDER BY ts, id", ids),
-            people,
-            voices,
-        )
+        items = [
+            _item(r, people, voices.get(r["conversation_id"]))
+            for r in self.store.rows(f"SELECT * FROM items WHERE conversation_id IN ({marks}) ORDER BY ts, id", ids)
+        ]
         by_turn: dict[int, list[dict]] = {}
         for i in items:
             by_turn.setdefault(i["turn_id"], []).append(i)
@@ -254,45 +238,45 @@ class ConversationLog:
         for c in convs:
             c["turns"] = by_conv.get(c["id"], [])
 
-    def _items(self, rows: list[dict], people: dict | None = None, voices: dict | None = None) -> list[dict]:
-        if people is None:
-            people = self._people()
-        if voices is None:
-            voices = self._voices([r["conversation_id"] for r in rows])
-        return [_item(r, people, voices.get(r["conversation_id"])) for r in rows]
-
     def _voices(self, conversation_ids: list[int | None]) -> dict[int, "Voice"]:
-        """For each conversation: speaker ID's guess for its first request, and the voice that wins over it."""
         ids = sorted({i for i in conversation_ids if i is not None})
         if not ids:
             return {}
         rows = self.store.rows(
-            "SELECT c.id, c.wake_event_id, (SELECT t.speaker FROM turns t WHERE t.conversation_id = c.id "
-            f" AND t.role = ? ORDER BY t.ts, t.id LIMIT 1) AS guess FROM conversations c "
+            f"SELECT c.id, c.wake_event_id, {FIRST_GUESS} AS guess FROM conversations c "
             f"WHERE c.id IN ({','.join('?' * len(ids))})",
-            (PERSON, *ids),
+            (ROLE_PERSON, *ids),
         )
-        wakes = self.events.wakes([r["wake_event_id"] for r in rows])
-        return {r["id"]: Voice(r["guess"], _wake_voice(wakes.get(r["wake_event_id"]), r["guess"])) for r in rows}
+        return _voices(rows, self.events.wakes([r["wake_event_id"] for r in rows]))
 
     def _people(self) -> dict[str, dict]:
         """Named voices by name key, to connect speaker ID's guesses to the voices in the web UI."""
         return {person_key(c["name"]): c for c in self.events.clusters() if person_key(c["name"])}
 
 
+# Speaker ID's guess for a conversation's first request; bind ROLE_PERSON to its parameter.
+FIRST_GUESS = (
+    "(SELECT t.speaker FROM turns t WHERE t.conversation_id = c.id AND t.role = ? ORDER BY t.ts, t.id LIMIT 1)"
+)
+
+
 @dataclass
 class Voice:
-    """Who a conversation's first request was: speaker ID's guess at the time, and the wake's voice cluster when
-    that should win over it. The request that came with the wake is the clip the wake's cluster is about, so the
-    cluster wins when a person decided it ("that was Stacey"), and also when speaker ID had no guess at all. It
-    then applies to every turn and item speaker ID guessed the same way; a turn it heard as someone else (an
-    aside) keeps its own."""
+    """Who a conversation's first request was: speaker ID's guess at the time, and the wake's voice cluster when that
+    should win. The wake's cluster is about that very clip, so it wins when a person decided it ("that was Stacey")
+    or when speaker ID had no guess. It then applies to every turn and item speaker ID guessed the same way; a turn
+    heard as someone else (an aside) keeps its own."""
 
     guess: str | None
     wake: dict | None
 
     def applies_to(self, guess: str | None) -> bool:
         return self.wake is not None and person_key(guess) == person_key(self.guess)
+
+
+def _voices(rows: list[dict], wakes: dict[int, dict]) -> dict[int, Voice]:
+    """Who each conversation's first request was; rows need id, wake_event_id and FIRST_GUESS as guess."""
+    return {r["id"]: Voice(r["guess"], _wake_voice(wakes.get(r["wake_event_id"]), r["guess"])) for r in rows}
 
 
 def _wake_voice(wake: dict | None, first_guess: str | None) -> dict | None:
@@ -311,9 +295,17 @@ def _speaker(guess: str | None, people: dict, voice: Voice | None) -> dict | Non
 
 
 def _conversation(row: dict, wake: dict | None, voice: Voice | None, people: dict) -> dict:
-    out = {k: row.get(k) for k in ("id", "started", "ended", "turn_count", "preview", "item_count", "unseen_count")}
+    out = {k: row[k] for k in ("id", "started", "ended")}
     out["wake"] = (
-        {"event_id": wake["id"], "heard": wake["heard"], "confidence": wake["confidence"], "outcome": wake["outcome"]}
+        {
+            "event_id": wake["id"],
+            "heard": wake["heard"],
+            "confidence": wake["confidence"],
+            "outcome": wake["outcome"],
+            "label": wake["label"],
+            "cluster_id": wake["cluster_id"],
+            "has_request_audio": bool(wake["has_request_audio"]),
+        }
         if wake
         else None
     )
@@ -323,7 +315,7 @@ def _conversation(row: dict, wake: dict | None, voice: Voice | None, people: dic
 
 def _turn(row: dict, items: list[dict], people: dict, voice: Voice | None) -> dict:
     out = {"id": row["id"], "ts": row["ts"], "role": row["role"], "text": row["text"]}
-    if row["role"] == PERSON:
+    if row["role"] == ROLE_PERSON:
         out.update(
             has_audio=bool(row["audio"]),
             speaker=_speaker(row["speaker"], people, voice),
@@ -347,7 +339,5 @@ def _item(row: dict, people: dict, voice: Voice | None) -> dict:
     elif row["kind"] == LIST:
         out["entries"] = json.loads(row["entries"] or "[]")
     elif row["kind"] == FILE:
-        # Files stored before file_name existed only have the name inside their storage path.
-        name = row["file_name"] or (Path(row["file"]).name.split("_", 1)[-1] if row["file"] else None)
-        out.update(name=name, mime=row["mime"], size=row["size"])
+        out.update(name=row["file_name"], mime=row["mime"], size=row["size"])
     return out

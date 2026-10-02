@@ -1,20 +1,20 @@
 """The prepared training data on Hugging Face: what a new machine downloads instead of spending a day making it.
 
-    uv run --with huggingface_hub python -m training.hub download              # into the data folder
-    uv run --with huggingface_hub python -m training.hub download --from DIR   # from a local copy of the datasets
-    uv run --with huggingface_hub python -m training.hub export OUT            # (maintainer) build both datasets
-    uv run --with huggingface_hub python -m training.hub upload OUT            # (maintainer) needs a write token
+    uv run --group training python -m training.hub download              # into the data folder
+    uv run --group training python -m training.hub download --from DIR   # from a local copy of the datasets
+    uv run --group training python -m training.hub export OUT            # (maintainer) build both datasets
+    uv run --group training python -m training.hub upload OUT            # (maintainer) needs a write token
 
 Two datasets, split by what their sources allow (ATTRIBUTION.md):
   open: CC BY 4.0. Kokoro and OpenAI clips, the permissively licensed Piper voices, real LibriSpeech lookalike words,
         the held-out test voices (AI-generated), and the double-check's training rows (numbers, not audio).
   nc:   CC BY-NC-SA 4.0. The Piper voices built on research-only or non-commercial voices, the Piper LibriTTS clips,
-        and the pitch and tempo variants (made from every source).
-Only the clean clips are hosted: the background noise, music and rooms are downloaded from their own sources and
-mixed in on the training machine, since several of them can't be passed on. Voice conversions into real
-people's voices are never hosted. Clips are FLAC in tar shards (a folder on the hub holds at most 10,000 files) and
-come out as the 16 kHz WAVs the scripts read, in the data folder's usual layout. Resumable: a finished shard leaves
-a .done marker.
+        and the pitch and tempo variants (made from the hosted sources only, see export).
+Only the clean clips are hosted: several of the background noise, music and room sources can't be redistributed, so
+they're downloaded from their own sources and mixed in on the training machine. Voice conversions into real people's
+voices are never hosted. Clips are FLAC in tar shards (a hub folder holds at most 10,000 files) and extract to the
+16 kHz WAVs the scripts read. Resumable: a finished shard leaves a .done marker. Downloads are pinned to the dataset
+commits in DATASETS; update them after an upload.
 """
 
 import argparse
@@ -28,12 +28,15 @@ from pathlib import Path
 
 import soundfile as sf
 
-from training.common import Layout, log, parser
+from training.common import REPO, Layout, log, parser
 
-DATASETS = {"open": "alon-p/hey-tars-training", "nc": "alon-p/hey-tars-training-nc"}
+DATASETS = {
+    "open": ("alon-p/hey-tars-training", "7b57b0a0458a79ec6c8d56af2fee58438462660b"),
+    "nc": ("alon-p/hey-tars-training-nc", "5f1ffc657d8d2d7fa46f20346516894a2dd9492d"),
+}
 LICENSES = {"open": "cc-by-4.0", "nc": "cc-by-nc-sa-4.0"}
-SHARD = 5000  # clips per tar
-# Piper voices by what their model cards allow (ATTRIBUTION.md). Voices not listed at all are left out.
+SHARD = 5000
+# Piper voices by what their model cards allow (ATTRIBUTION.md). A voice in neither set is never hosted.
 PIPER_OPEN = {"en_US-libritts-high", "en_GB-cori-medium", "en_US-kristin-medium", "en_US-john-medium"}
 PIPER_NC = {
     "en_GB-alba-medium",
@@ -59,7 +62,7 @@ def piper_voice(path: Path) -> str:
 
 
 def sets(layout: Layout) -> list[tuple[str, str, Path, Callable[[Path], bool]]]:
-    """(dataset, where it goes in the data folder, where it's taken from, which clips): everything hosted."""
+    """Everything hosted, as (dataset, path in the data folder, source folder, clip filter)."""
     everything = lambda f: True
     rows = []
     for kind in ("positive", "near_miss"):
@@ -88,23 +91,34 @@ def sets(layout: Layout) -> list[tuple[str, str, Path, Callable[[Path], bool]]]:
 
 
 def export(layout: Layout, out: Path) -> None:
-    """Both datasets, as they're uploaded: shards, a manifest with each shard's hash, a card, the attributions."""
-    repo = Path(__file__).resolve().parents[1]
+    """A shard left by an interrupted export is reused if it holds exactly the clips it should."""
+    # The pitch and tempo variants don't record which clip they came from, so they're hosted only from a data folder
+    # whose Piper voices can all be hosted: they must be made after any other voice is removed.
+    unhosted = (
+        {
+            piper_voice(f)
+            for kind in ("positive", "near_miss")
+            for f in layout.clip_dir("piper_voices", "hey_tars", kind).glob("*.wav")
+        }
+        - PIPER_OPEN
+        - PIPER_NC
+    )
+    if unhosted:
+        raise SystemExit(
+            f"Piper voices that can't be hosted are in the data folder ({', '.join(sorted(unhosted))}), "
+            "and the pitch and tempo variants may be made from them: remove them and remake those."
+        )
     manifests = {name: [] for name in DATASETS}
     for dataset, target, source, keep in sets(layout):
         clips = sorted(f for f in source.glob("*.wav") if keep(f))
         if not clips:
             raise SystemExit(f"No clips in {source}: is the data folder complete?")
         for n, start in enumerate(range(0, len(clips), SHARD)):
-            shard = out / dataset / target / f"{n:03d}.tar"
-            if not shard.exists():
-                _write_shard(shard, clips[start : start + SHARD])
+            shard, chunk = out / dataset / target / f"{n:03d}.tar", clips[start : start + SHARD]
+            if not (shard.exists() and _names(shard) == [f"{c.stem}.flac" for c in chunk]):
+                _write_shard(shard, chunk)
             manifests[dataset].append(
-                {
-                    "shard": str(shard.relative_to(out / dataset)),
-                    "clips": len(clips[start : start + SHARD]),
-                    "sha256": _sha256(shard),
-                }
+                {"shard": str(shard.relative_to(out / dataset)), "clips": len(chunk), "sha256": _sha256(shard)}
             )
         log(f"{dataset}: {target} ({len(clips)} clips)")
     base = layout.check / "generic_base.npz"
@@ -119,25 +133,26 @@ def export(layout: Layout, out: Path) -> None:
             writer = csv.DictWriter(f, fieldnames=["shard", "clips", "sha256"])
             writer.writeheader()
             writer.writerows(rows)
-        shutil.copyfile(repo / "ATTRIBUTION.md", folder / "ATTRIBUTION.md")
+        shutil.copyfile(REPO / "ATTRIBUTION.md", folder / "ATTRIBUTION.md")
         (folder / "README.md").write_text(_card(name, sum(r["clips"] for r in rows)))
     log(f"exported to {out}: {', '.join(f'{n} ({_size(out / n)})' for n in DATASETS)}")
 
 
-def download(layout: Layout, source: Path | None, revision: str | None) -> None:
-    """Both datasets into the data folder. `source`: a local copy of them (export's output) instead of the hub."""
-    for name, repo_id in DATASETS.items():
-        folder = source / name if source else _snapshot(repo_id, layout.root / "hub" / name, revision)
+def download(layout: Layout, source: Path | None) -> None:
+    """`source`: a local copy of the datasets (export's output) to use instead of the hub."""
+    for name, (repo_id, revision) in DATASETS.items():
+        folder = source / name if source else _snapshot(repo_id, layout.hub / name, revision)
         with open(folder / "manifest.csv") as f:
             rows = list(csv.DictReader(f))
         for row in rows:
             path = folder / row["shard"]
-            if _sha256(path) != row["sha256"]:
-                raise SystemExit(f"{path} doesn't match its manifest: download it again.")
             target = layout.root / Path(row["shard"]).parent
-            done = target / f".{name}-{Path(row['shard']).name}.done"  # both datasets fill some folders
+            # Keyed by dataset (both fill some folders) and by hash (so a changed shard is extracted again).
+            done = target / f".{name}-{Path(row['shard']).name}-{row['sha256'][:16]}.done"
             if done.exists():
                 continue
+            if _sha256(path) != row["sha256"]:
+                raise SystemExit(f"{path} doesn't match its manifest: download it again.")
             if path.suffix == ".tar":
                 _extract_shard(path, target)
             else:
@@ -151,9 +166,8 @@ def upload(out: Path) -> None:
     from huggingface_hub import HfApi
 
     api = HfApi()
-    for name, repo_id in DATASETS.items():
+    for name, (repo_id, _) in DATASETS.items():
         api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
-        # A few dozen files of up to about 500 MB each: one commit per dataset.
         api.upload_folder(
             repo_id=repo_id,
             repo_type="dataset",
@@ -186,14 +200,19 @@ def _extract_shard(shard: Path, target: Path) -> None:
             sf.write(target / f"{Path(member.name).stem}.wav", audio, sr, subtype="PCM_16")
 
 
+def _names(shard: Path) -> list[str]:
+    with tarfile.open(shard) as tar:
+        return tar.getnames()
+
+
 def _flac_members(tar: tarfile.TarFile) -> Iterator[tarfile.TarInfo]:
     for member in tar:
-        # Only plain .flac files at the top: a shard never writes outside its folder.
+        # Only plain top-level .flac files, so a shard can't write outside its folder.
         if member.isfile() and member.name.endswith(".flac") and "/" not in member.name and ".." not in member.name:
             yield member
 
 
-def _snapshot(repo_id: str, local: Path, revision: str | None) -> Path:
+def _snapshot(repo_id: str, local: Path, revision: str) -> Path:
     from huggingface_hub import snapshot_download
 
     return Path(snapshot_download(repo_id, repo_type="dataset", local_dir=local, revision=revision))
@@ -216,7 +235,7 @@ def _card(name: str, clips: int) -> str:
         "open": "Kokoro and OpenAI text-to-speech clips, the permissively licensed Piper voices, real LibriSpeech "
         "lookalike words, held-out test voices, and the double-check's training rows",
         "nc": "Piper voices built on research-only or non-commercial voices (including the Piper LibriTTS clips), "
-        "and pitch and tempo variants of every source",
+        "and pitch and tempo variants of the hosted voices",
     }[name]
     return f"""---
 license: {LICENSES[name]}
@@ -241,17 +260,16 @@ def main():
     commands = p.add_subparsers(dest="command", required=True)
     d = commands.add_parser("download", help="both datasets into the data folder")
     d.add_argument("--from", dest="source", type=Path, help="a local copy of the datasets instead of the hub")
-    d.add_argument("--revision", help="a dataset commit to download (default: the latest)")
     commands.add_parser("export", help="build both datasets from the data folder").add_argument("out", type=Path)
     commands.add_parser("upload", help="upload an export (needs a Hugging Face write token)").add_argument(
         "out", type=Path
     )
-    for command in commands.choices.values():  # --data before or after the command, as the other scripts take it
+    for command in commands.choices.values():  # also accept --data after the subcommand
         command.add_argument("--data", type=Path, default=argparse.SUPPRESS, help="the training data folder")
     args = p.parse_args()
     layout = Layout(args.data)
     if args.command == "download":
-        download(layout, args.source, args.revision)
+        download(layout, args.source)
     elif args.command == "export":
         export(layout, args.out)
     else:

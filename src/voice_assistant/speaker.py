@@ -1,21 +1,21 @@
-"""Who is talking: compares a voiceprint (speaker embedding) of each request to enrolled people.
+"""Speaker ID: compares each request's speaker embedding to enrolled people's voiceprints.
 
-The embedding model is WeSpeaker's ResNet34-LM, the same one pyannote.audio uses by default
-(CC-BY-4.0, https://github.com/wenet-e2e/wespeaker). It runs on onnxruntime, so no PyTorch.
+The model is WeSpeaker's ResNet34-LM, pyannote.audio's default (CC-BY-4.0, https://github.com/wenet-e2e/wespeaker),
+run on onnxruntime to avoid PyTorch.
 """
 
-import os
-import tempfile
+import io
 from pathlib import Path
 
 import kaldi_native_fbank as knf
 import numpy as np
 
 from .audio import SAMPLE_RATE
+from .events import person_key
+from .files import atomic_write
 from .models import fetch
 
 MODEL_URL = "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx"
-# Shorter clips don't carry enough voice to identify anyone reliably.
 MIN_SPEECH_S = 0.8
 
 
@@ -37,17 +37,18 @@ class SpeakerID:
         import onnxruntime
 
         model_path = fetch(model_path, MODEL_URL, "the speaker model")
+        # All cores, unlike the per-block models in models.onnx_session: this runs once per request, while TARS waits.
         self._session = onnxruntime.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         self._voiceprints_path = voiceprints_path
         self.threshold = threshold
         self.voiceprints: dict[str, np.ndarray] = {}
-        self._from_clusters: set[str] = set()  # the voiceprints the web UI made from named voices
+        self._from_clusters: set[str] = set()  # voiceprints the web UI made from named voices
         self._loaded_mtime = None
         self._reload()
 
     def _reload(self) -> None:
-        """Pick up voiceprints saved by another process (the web UI enrolls people by naming their voice).
-        A file that can't be read (caught mid-write by an older version, or damaged) keeps the ones we have."""
+        """Picks up voiceprints saved by another process (the web UI enrolls people by naming their voice).
+        An unreadable file keeps the current ones."""
         try:
             mtime = self._voiceprints_path.stat().st_mtime_ns
         except FileNotFoundError:
@@ -61,24 +62,16 @@ class SpeakerID:
         self._loaded_mtime = mtime
 
     def _save(self) -> None:
-        """Written to a temporary file and swapped in, so a reader never sees half a file."""
-        path = self._voiceprints_path
-        path.parent.mkdir(parents=True, exist_ok=True)
         names = list(self.voiceprints)
-        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".npz")
-        try:
-            with os.fdopen(fd, "wb") as f:
-                np.savez(
-                    f,
-                    names=np.array(names, dtype=str),
-                    vectors=np.array([self.voiceprints[n] for n in names]),
-                    from_clusters=np.array(sorted(self._from_clusters), dtype=str),
-                )
-            os.replace(tmp, path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
-        self._loaded_mtime = path.stat().st_mtime_ns
+        data = io.BytesIO()
+        np.savez(
+            data,
+            names=np.array(names, dtype=str),
+            vectors=np.array([self.voiceprints[n] for n in names]),
+            from_clusters=np.array(sorted(self._from_clusters), dtype=str),
+        )
+        atomic_write(self._voiceprints_path, data.getvalue())
+        self._loaded_mtime = self._voiceprints_path.stat().st_mtime_ns
 
     def embed(self, pcm: np.ndarray) -> np.ndarray:
         feats = _fbank(pcm)[None].astype(np.float32)
@@ -86,19 +79,19 @@ class SpeakerID:
         return emb / np.linalg.norm(emb)
 
     def voiceprint(self, clips: list[np.ndarray]) -> np.ndarray:
-        """The normalized average of the clips' embeddings."""
         mean = np.mean([self.embed(c) for c in clips], axis=0)
         return mean / np.linalg.norm(mean)
 
     def enroll(self, name: str, clips: list[np.ndarray]) -> None:
-        """From recorded sentences (--enroll). Kept until a voice with the same name is named in the web UI."""
+        """From recorded sentences (--enroll). Replaced if a voice with the same name is named in the web UI."""
         self._reload()
-        self.voiceprints[name] = self.voiceprint(clips)
-        self._from_clusters.discard(name)
+        key = person_key(name)
+        self.voiceprints[key] = self.voiceprint(clips)
+        self._from_clusters.discard(key)
         self._save()
 
     def set_cluster_voiceprints(self, voiceprints: dict[str, np.ndarray]) -> None:
-        """Replace every voiceprint the web UI made with these (one per named person). A name that's gone (renamed,
+        """Replaces every web-UI voiceprint with these (keyed by events.person_key). A name that's gone (renamed,
         merged away, marked not a person) stops being recognized; people enrolled with --enroll stay."""
         self._reload()
         for name in self._from_clusters - set(voiceprints):
@@ -108,7 +101,6 @@ class SpeakerID:
         self._save()
 
     def _match(self, pcm: bytes) -> tuple[str | None, float | None, np.ndarray | None]:
-        """(best-matching person, their similarity, the embedding); (None, None, None) for a clip too short."""
         self._reload()
         audio = np.frombuffer(pcm, dtype=np.int16)
         if len(audio) < MIN_SPEECH_S * SAMPLE_RATE:
@@ -119,12 +111,11 @@ class SpeakerID:
         return best, (scores[best] if best else None), emb
 
     def describe(self, pcm: bytes) -> tuple[str | None, float | None, np.ndarray | None]:
-        """(best-matching person or None, their similarity, the voice embedding), for identifying and clustering."""
+        """(best match if above the threshold, else None; its similarity; the embedding)."""
         best, score, emb = self._match(pcm)
         return (best if score is not None and score >= self.threshold else None), score, emb
 
     def identify(self, pcm: bytes, threshold: float | None = None) -> str | None:
-        """The best-matching enrolled person, or None if nobody matches well enough (or the clip is too short)."""
         self._reload()
         if not self.voiceprints:
             return None
@@ -135,7 +126,7 @@ class SpeakerID:
 def _load(path: Path) -> tuple[dict[str, np.ndarray], set[str]]:
     with np.load(path) as saved:
         if "names" in saved.files and "vectors" in saved.files:
-            names = [str(n) for n in saved["names"]]
-            return dict(zip(names, saved["vectors"], strict=True)), {str(n) for n in saved["from_clusters"]}
-        # The first format: one array per person, named after them.
-        return {name: saved[name] for name in saved.files}, set()
+            names = [person_key(str(n)) for n in saved["names"]]
+            return dict(zip(names, saved["vectors"], strict=True)), {person_key(str(n)) for n in saved["from_clusters"]}
+        # Legacy format: one array per person, named after them.
+        return {person_key(name): saved[name] for name in saved.files}, set()

@@ -1,6 +1,5 @@
-# The exact versions of the environment that trained the shipped models (training/setup/mww_env.sh installs with
-# these as constraints, so a new machine gets the same one; newer datasets, for one, can't decode audio without
-# torchcodec).
+# Exact versions of the environment that trained the shipped models; training/setup/mww_env.sh installs with these
+# as constraints. Unpinned, newer releases break it (newer datasets can't decode audio without torchcodec).
 absl-py==2.5.0
 ai-edge-litert==2.2.0
 aiohappyeyeballs==2.7.1

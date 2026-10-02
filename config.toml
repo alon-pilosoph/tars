@@ -14,7 +14,7 @@ playback_prebuffer_s = 0.3
 mode = "wakeword"
 # Which "hey TARS" setup to use. Each folder has a wake model and a learned double-check:
 #   models/generic/   never trained on anyone's recordings: works for anyone out of the box (default)
-#   models/personal/  trained partly on Alon's recordings; kept local (uses check_window_s = 2.5)
+#   models/personal/  trained partly on the author's recordings; kept local (uses check_window_s = 2.5)
 # A path to a custom .onnx (openWakeWord) or .tflite (microWakeWord) model, or a pretrained openWakeWord name.
 model = "models/generic/hey_tars.tflite"
 # Low on purpose: the double-check below throws out lookalikes, so the model mustn't miss the real phrase.
@@ -55,16 +55,22 @@ greet_after_s = 1.5
 #             DEEPGRAM_API_KEY in .env)
 #   flux      Deepgram's Flux: streamed, and it also decides when you've finished, from your words as well as the
 #             pause (fewer cut-offs, see docs/latency.md); [recorder]'s pause settings are then only a fallback,
-#             and model is ignored (Flux has its own)
+#             and model is ignored (Flux has its own, English only)
+# With deepgram or flux, OpenAI's gpt-4o-mini-transcribe transcribes the recording if the stream fails.
 provider = "flux"
 model = "nova-3"
 language = "en"
 
 [llm]
+# Answers first, on Cerebras (CEREBRAS_API_KEY in .env): about 0.3 s to its first sentence, against about 0.7 s for
+# OpenAI's. Anything that needs the web or the TARS page goes to `model` below, and so does everything while Cerebras
+# fails. Empty = `model` answers everything.
+cerebras_model = "qwen-3.8-27b"
+# OpenAI's model: web search, sending things, and a backup for the one above.
 model = "gpt-6-luna"
 # "fast" = OpenAI's priority processing: lower latency, higher price per token. Empty = default tier.
 service_tier = "fast"
-# For reasoning models. Empty = the model's default.
+# For reasoning models; both models above get it. Empty = each model's default.
 reasoning_effort = "none"
 # Percent, like TARS's in the film. It goes into the system prompt ({humor}) and picks how TARS says something
 # went wrong: dry at 50 and up, plain below. (Asking TARS to change it only lasts for the conversation.)
@@ -86,12 +92,13 @@ Messages may start with [Speaker: name], identified from their voice; use names 
 never read the tag aloud, and if it says unknown, don't guess who it is."""
 
 [tts]
-# openai (model + voice below), or deepgram: model = a Flux TTS or Aura-2 voice, e.g. "flux-cliff-en" or
-# "aura-2-zeus-en" (voice and instructions are then ignored; about 0.6 s faster to first sound, docs/latency.md)
-provider = "openai"
-model = "gpt-4o-mini-tts"
+# deepgram: model = a Flux TTS or Aura-2 voice, e.g. "aura-2-zeus-en" or "flux-cliff-en" (voice and instructions
+# are then ignored). openai: model = "gpt-4o-mini-tts" with the voice and instructions below; Onyx sounds best, but
+# TARS answers about 0.6 s later with it (docs/latency.md).
+provider = "deepgram"
+model = "aura-2-zeus-en"
 voice = "onyx"
-# How to deliver the lines. Only gpt-4o-mini-tts and newer support this.
+# How to deliver the lines (OpenAI only; gpt-4o-mini-tts and newer).
 instructions = """Low, calm, measured male voice. Completely deadpan and matter-of-fact, with almost no emotional \
 inflection. Even, unhurried pacing and crisp consonants. Deliver jokes perfectly straight, \
 with a short beat before the punchline."""
@@ -112,8 +119,9 @@ wake_threshold = 0.25
 log_events = true
 # Where they're kept, relative to this file.
 folder = "voice_data/events"
-# Audio nothing labels (a lonely near-miss, a wake nobody spoke after) is dropped after this many days. Labeled
-# audio (a person's label, or an automatic one like "a request followed") is training data and stays. 0 = keep all.
+# Audio training wouldn't learn from (a lonely near-miss, a wake nobody spoke after, a wake the check turned away
+# that nobody answered) is dropped after this many days. Training data (a person's answer, or an automatic label
+# like "a request followed") stays. 0 = keep all.
 keep_audio_days = 60
 
 [web]

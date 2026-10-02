@@ -1,4 +1,4 @@
-"""VCTK's 110 real speakers (many English accents), ~2.5 min of each at 16 kHz, from a Hugging Face parquet mirror.
+"""VCTK's 110 real speakers (many English accents), ~160 s of each at 16 kHz, from a Hugging Face parquet mirror.
 
     DATA/eval/.venv/bin/python -m training.data.prep_vctk
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from training.common import Layout, parser
+from training.common import SR, Layout, log, parser
 
 REPO_ID = "sanchit-gandhi/vctk"
 MATCH_SECONDS = 160
@@ -43,15 +43,15 @@ def main():
                 audio, sr = sf.read(io.BytesIO(row["audio"]["bytes"]), dtype="float32")
                 if audio.ndim > 1:
                     audio = audio.mean(axis=1)
-                if sr != 16000:
-                    audio = resample_poly(audio, 16000, sr).astype(np.float32)
+                if sr != SR:
+                    audio = resample_poly(audio, SR, sr).astype(np.float32)
                 (out / spk).mkdir(exist_ok=True)
-                sf.write(out / spk / f"{row['text_id']}.wav", audio, 16000, subtype="PCM_16")
-                have[spk] = have.get(spk, 0.0) + len(audio) / 16000
+                sf.write(out / spk / f"{row['text_id']}.wav", audio, SR, subtype="PCM_16")
+                have[spk] = have.get(spk, 0.0) + len(audio) / SR
         Path(path).unlink()
-        print(f"shard {n + 1}/{len(shards)} done; {len(have)} speakers so far", flush=True)
+        log(f"shard {n + 1}/{len(shards)} done; {len(have)} speakers so far")
     (out / "speakers.tsv").write_text("".join(f"{s}\t{g}\t{a}\t{r}\n" for s, (g, a, r) in sorted(meta.items())))
-    print("DONE", flush=True)
+    log("DONE")
 
 
 if __name__ == "__main__":

@@ -11,8 +11,7 @@
 
 [Unit]
 Description=TARS voice assistant
-After=network-online.target pipewire.service
-Wants=network-online.target
+After=pipewire.service
 
 [Service]
 # Assumes the repo is cloned to ~/voice-assistant and uv is installed in ~/.local/bin.
@@ -21,6 +20,8 @@ ExecStart=%h/.local/bin/uv run --frozen voice-assistant
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=3
+# 78 (EX_CONFIG): a mistake in config.toml or a missing API key. Restarting won't fix it; see the logs.
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=default.target

@@ -1,19 +1,17 @@
-"""Recorder, speech splitting, the TARS effect and config: the parts that don't need a device or an API."""
+"""The recorder: when an utterance starts and ends, by its own silence rules or by a service that follows the turn."""
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 
-from voice_assistant.audio import BLOCK_SAMPLES, Microphone, MicrophoneError
-from voice_assistant.config import Config, RecorderConfig, load_config
-from voice_assistant.effects import EFFECTS, SpeakerBox, VoiceWithEffect, apply_effect
+from voice_assistant.audio import BLOCK_SAMPLES
+from voice_assistant.config import RecorderConfig
 from voice_assistant.enroll import PAD_BLOCKS
 from voice_assistant.recorder import UtteranceRecorder
-from voice_assistant.speech import clean_for_speech, split_sentences
+from voice_assistant.stt import TurnState
 from voice_assistant.vad import SileroVAD
 
-from .conftest import FakeMic, chime_block, quiet_block
+from .conftest import FakeMic, quiet_block
 
 VAD_MODEL = Path(__file__).parents[1] / "models/silero_vad.onnx"
 
@@ -35,8 +33,18 @@ def recorder(pattern, turn=None, **cfg):
     return UtteranceRecorder(RecorderConfig(**cfg), ScriptedVAD(pattern), turn)
 
 
+class CountingMic(FakeMic):
+    def __init__(self, n=200):
+        super().__init__([quiet_block() for _ in range(n)])
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        return super().read()
+
+
 def mic(n=200):
-    return FakeMic([quiet_block() for _ in range(n)])
+    return CountingMic(n)
 
 
 def blocks_in(pcm: bytes) -> int:
@@ -69,11 +77,18 @@ def test_a_soft_stretch_mid_sentence_does_not_end_it():
     assert blocks_in(pcm) >= 16
 
 
+def test_someone_who_never_stops_is_cut_off_at_the_longest_utterance():
+    rec = recorder("S" * 300, max_utterance_s=2.0)
+    pcm = rec.record(mic(300))
+    assert blocks_in(pcm) == 25 + 2  # 2 s of 80 ms blocks, preroll included, and the usual tail
+    assert rec.trailing_silence_s == 0.0
+
+
 class FakeTurn:
     def __init__(self, finished):
         self.p, self.asked = finished, 0
 
-    def finished(self, pcm):
+    def p_finished(self, pcm):
         self.asked += 1
         return self.p
 
@@ -121,106 +136,9 @@ def test_soft_words_after_the_early_answer_started_throw_it_away():
 
 
 @pytest.mark.skipif(not VAD_MODEL.exists(), reason="speech detector not downloaded yet")
-def test_the_speech_detector_ignores_our_chime_and_quiet():
+def test_the_speech_detector_ignores_quiet():
     vad = SileroVAD(VAD_MODEL)
-    assert max(vad(chime_block(f)) for f in (880.0, 1320.0) for _ in range(4)) < 0.3
     assert max(vad(quiet_block()) for _ in range(20)) < 0.3
-
-
-def test_dead_microphone_raises_instead_of_hanging(monkeypatch):
-    from voice_assistant import audio
-
-    monkeypatch.setattr(audio, "MIC_STALL_S", 0.1)
-    mic = Microphone.__new__(Microphone)  # skip opening a real device
-    import queue
-
-    mic._queue = queue.Queue()
-    with pytest.raises(MicrophoneError):
-        mic.read()
-
-
-def test_sentences_are_split_as_they_stream_in():
-    pieces = ["Hello th", "ere. It is 3.5 deg", "rees! Want more?", " Ok"]
-    assert list(split_sentences(pieces)) == ["Hello there.", "It is 3.5 degrees!", "Want more?", "Ok"]
-
-
-def test_markdown_is_stripped_before_speaking():
-    assert clean_for_speech("**Bold** and `code` # heading ") == "Bold and code  heading"
-
-
-@pytest.mark.parametrize(
-    "text, spoken",
-    [
-        (
-            "A frittata works well ([mayoclinic.org](https://www.mayoclinic.org/recipes/frittata?utm_source=openai)).",
-            "A frittata works well.",
-        ),
-        ("([mayoclinic.org](https://www.mayoclinic.org/x?p=1&utm_source=openai))", ""),
-        ("Try [this frittata](https://example.com/frittata) tonight.", "Try this frittata tonight."),
-        ("It's at https://example.com/a?b=1 if you want it.", "It's at if you want it."),
-        ("See [Python](https://en.wikipedia.org/wiki/Python_(programming_language)) for more.", "See Python for more."),
-    ],
-)
-def test_links_and_citations_are_never_read_out(text, spoken):
-    assert clean_for_speech(text) == spoken
-
-
-def test_speaker_box_is_identical_whether_streamed_or_whole():
-    audio = (np.random.default_rng(1).normal(0, 3000, 24_000 * 2)).astype(np.int16).tobytes()
-    whole = SpeakerBox(24_000).process(audio)
-    box = SpeakerBox(24_000)
-    streamed = b"".join(box.process(audio[i : i + 4096]) for i in range(0, len(audio), 4096))
-    assert streamed == whole
-
-
-def test_voice_with_effect_handles_odd_sized_chunks():
-    class OddVoice:
-        sample_rate = 24_000
-
-        def stream(self, text):
-            yield b"\x01"  # half a sample
-            yield b"\x00" * 999
-
-    out = b"".join(VoiceWithEffect(OddVoice(), "tars").stream("hi"))
-    assert len(out) % 2 == 0 and len(out) >= 1000
-
-
-def test_no_effect_returns_the_voice_unchanged():
-    voice = object()
-    assert apply_effect(voice, "") is voice
-
-
-def test_unknown_effect_is_a_clear_error():
-    with pytest.raises(SystemExit, match="tars"):
-        VoiceWithEffect(object(), "robot")
-    assert "tars" in EFFECTS
-
-
-def test_repo_config_loads_with_every_section(tmp_path):
-    cfg = load_config(__import__("pathlib").Path(__file__).parents[1] / "config.toml")
-    assert isinstance(cfg, Config)
-    assert cfg.tts.effect == "tars" and cfg.recorder.follow_up_s > 0 and cfg.llm.memory_minutes > 0
-
-
-def test_missing_config_falls_back_to_defaults(tmp_path):
-    cfg = load_config(tmp_path / "nope.toml")
-    assert cfg.speaker.enabled is False and cfg.tts.effect == ""
-
-
-@pytest.mark.parametrize(
-    "setting",
-    [
-        '[stt]\nprovider = "whisper"',
-        "[recorder]\nmax_pause_s = 0.5",
-        "[recorder]\nanswer_early_s = 0.9",
-        "[recorder]\nvad_threshold = 0.1",
-    ],
-)
-def test_a_setting_that_cannot_work_stops_at_startup(tmp_path, setting):
-    path = tmp_path / "config.toml"
-    path.write_text(setting)
-    with pytest.raises(SystemExit):
-        load_config(path)
 
 
 class FluxTurns:
@@ -228,8 +146,9 @@ class FluxTurns:
     D done."""
 
     def __init__(self, pattern):
-        self.states = iter({"L": "listening", "M": "maybe_done", "D": "done"}[c] for c in pattern)
-        self.last = "listening"
+        states = {"L": TurnState.LISTENING, "M": TurnState.MAYBE_DONE, "D": TurnState.DONE}
+        self.states = iter(states[c] for c in pattern)
+        self.last = TurnState.LISTENING
 
     def __call__(self):
         self.last = next(self.states, self.last)
@@ -241,6 +160,13 @@ def test_with_flux_its_end_of_turn_ends_the_recording():
     # Asked from the 3rd speech block on (2 start the recording): "done" arrives on the 5th quiet block.
     rec.record(mic(), turn_state=FluxTurns("L" * 8 + "D"))
     assert rec.trailing_silence_s == pytest.approx(0.40)  # neither the silence wait nor Smart Turn's extension
+
+
+def test_once_flux_calls_the_turn_no_more_audio_is_waited_for():
+    rec = recorder("SSSSSS" + "." * 40)
+    m = mic()
+    pcm = rec.record(m, turn_state=FluxTurns("L" * 3 + "D"))  # done as the last word ends
+    assert m.reads == 6 and blocks_in(pcm) == 6  # no tail read after it
 
 
 def test_with_flux_its_maybe_starts_a_draft_and_taking_it_back_throws_it_away():
@@ -276,10 +202,5 @@ def test_if_flux_goes_quiet_the_backstop_ends_the_turn():
 def test_if_flux_fails_mid_turn_the_recorder_s_own_rules_take_over():
     events = []
     rec = recorder("SSSSSS" + "." * 60, end_silence_s=0.8, answer_early_s=0.2)
-    rec.record(mic(), on_pause=lambda pcm: events.append("pause"), turn_state=lambda: "failed")
+    rec.record(mic(), on_pause=lambda pcm: events.append("pause"), turn_state=lambda: TurnState.FAILED)
     assert rec.trailing_silence_s == pytest.approx(0.8) and events == ["pause"]  # not the 2.5 s backstop
-
-
-def test_a_sentence_never_ends_inside_a_link():
-    pieces = ["Read the [Dr. Who fan ", "site](https://example.com/who) now. ", "Then rest."]
-    assert list(split_sentences(pieces)) == ["Read the Dr. Who fan site now.", "Then rest."]

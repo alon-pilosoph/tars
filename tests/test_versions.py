@@ -1,25 +1,21 @@
 """The wake models' versions: installing a trained pair, switching back, the running assistant following along,
-and never being stopped by a damaged file. Also which wakes training learns from."""
+and never being stopped by a damaged file."""
 
 import json
 import shutil
 import threading
 from pathlib import Path
 
-import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from voice_assistant.events import NOT_REAL, REAL, EventLog, learning_label
-from voice_assistant.verify import ANSWER, ASK, IGNORE, VerifiedTrigger
-from voice_assistant.versions import ABOUT, CHECK, INSTALLED, MODEL, ModelVersions
+from voice_assistant.verify import ANSWER, VerifiedTrigger
+from voice_assistant.versions import ABOUT, CHECK, INSTALLED, MODEL, FixedPair, ModelVersions, Pair
 from voice_assistant.webui import create_app
 
-from .conftest import FakeTrigger, SilentMic
+from .conftest import GENERIC, FakeTrigger, SilentMic, needs_models
 
-REPO = Path(__file__).parents[1]
-GENERIC = REPO / "models" / "generic"
-needs_models = pytest.mark.skipif(not (GENERIC / "hey_tars.tflite").exists(), reason="no generic wake model")
+pytestmark = needs_models
 
 
 @pytest.fixture
@@ -56,54 +52,34 @@ def trained(root: Path, name: str = "run", bias: float = 1.0, threshold: float =
     return folder
 
 
-def test_training_learns_from_people_and_from_what_happened_but_not_from_the_check_itself():
-    def event(label=None, auto=None, outcome=ANSWER):
-        return {"label": label, "auto_label": auto, "outcome": outcome}
-
-    assert learning_label(event(auto=REAL)) == REAL  # a request followed
-    assert learning_label(event(auto=NOT_REAL, outcome=ASK)) == NOT_REAL  # nobody answered "Did you call me?"
-    assert learning_label(event(auto=NOT_REAL, outcome=IGNORE)) is None  # only the check's own verdict
-    assert learning_label(event(label=REAL, auto=NOT_REAL, outcome=IGNORE)) == REAL  # a person said it was real
+def version_names(versions: ModelVersions) -> list[str]:
+    return [v["version"] for v in versions.overview()[1]]
 
 
-def test_what_is_waiting_to_be_learned_from(tmp_path):
-    log = EventLog(tmp_path / "events")
-    pcm = np.zeros(1600, np.int16)
-    log.set_label(log.add_wake(pcm, 0.9, IGNORE, "hey cars", 0.1, ts=100), REAL)  # answered in Review
-    log.add_wake(pcm, 0.9, IGNORE, "hey cars", 0.1, ts=101)  # the check's own verdict: waits for Review
-    log.set_label(log.add_wake(pcm, 0.9, ANSWER, "hey tars", 0.9, ts=102), NOT_REAL)
-    log.set_label(log.add_near_miss(pcm, 0.4, ts=103), REAL)
-    assert log.learning() == {"real": 1, "not_real": 1, "missed": 1, "to_review": 1}
-    assert log.learning(since=101.5) == {"real": 0, "not_real": 1, "missed": 1, "to_review": 0}
-
-
-@needs_models
 def test_installing_a_trained_pair_puts_all_of_it_in_use(root):
     versions = versions_in(root)
     assert versions.in_use().version == INSTALLED
     assert versions.install(trained(root)) == "v1"
     pair = versions.in_use()
     assert (pair.version, pair.threshold, pair.check_window_s, pair.check["bias"]) == ("v1", 0.6, 2.5, 1.0)
-    assert (
-        pair.wake_model == "events/wake_models/generic/v1/hey_tars.tflite" and pair.results[0]["candidate"] == "2 of 2"
-    )
-    assert [v["version"] for v in versions.versions()] == ["v1", INSTALLED]
+    assert pair.wake_model == "events/wake_models/generic/v1/hey_tars.tflite"
+    assert pair.results[0]["candidate"] == "2 of 2"
+    assert pair.replaced == INSTALLED  # what its results compare it with
+    assert version_names(versions) == ["v1", INSTALLED]
 
 
-@needs_models
 def test_rolling_back_and_forward(root):
     versions = versions_in(root)
     versions.install(trained(root))
     versions.use(INSTALLED)
     assert versions.in_use().version == INSTALLED
-    assert [v["active"] for v in versions.versions()] == [False, True]
+    assert [v["active"] for v in versions.overview()[1]] == [False, True]
     versions.use("v1")
     assert versions.in_use().version == "v1"
     with pytest.raises(KeyError):
         versions.use("v9")
 
 
-@needs_models
 def test_a_pair_tested_against_another_version_is_not_installed(root):
     versions = versions_in(root)
     versions.install(trained(root, "first"))
@@ -113,12 +89,12 @@ def test_a_pair_tested_against_another_version_is_not_installed(root):
     assert versions.in_use().version == INSTALLED
 
 
-@needs_models
 @pytest.mark.parametrize(
     "break_it",
     [
         lambda f: (f / MODEL).write_bytes(b"not a model"),
         lambda f: (f / CHECK).write_text("{half"),
+        lambda f: (f / CHECK).write_text(json.dumps({**json.loads((f / CHECK).read_text()), "weights": [0.1]})),
         lambda f: (f / ABOUT).write_text(json.dumps({"threshold": 7, "check_window_s": 2})),
     ],
 )
@@ -130,40 +106,63 @@ def test_a_broken_pair_is_refused(root, break_it):
     assert versions_in(root).in_use().version == INSTALLED
 
 
-@needs_models
-def test_a_damaged_version_falls_back_to_the_installed_pair(root, capsys):
+@pytest.mark.parametrize(
+    "damage",
+    [
+        lambda v1: (v1 / CHECK).write_text(""),  # a power cut before it reached the disk
+        lambda v1: (v1 / CHECK).write_text(json.dumps({**json.loads((v1 / CHECK).read_text()), "weights": [0.1]})),
+    ],
+)
+def test_a_damaged_version_falls_back_to_the_installed_pair(root, capsys, damage):
     versions = versions_in(root)
     versions.install(trained(root))
-    (versions.folder / "v1" / CHECK).write_text("")  # a power cut before it reached the disk
-    assert versions.in_use().version == INSTALLED and "Couldn't load" in capsys.readouterr().out
+    damage(versions.folder / "v1")
+    assert versions.in_use().version == INSTALLED and "couldn't load" in capsys.readouterr().out
     with pytest.raises(KeyError):
         versions.use("v1")
 
 
-@needs_models
+def test_the_models_page_shows_a_damaged_version_as_not_in_use(root):
+    versions = versions_in(root)
+    versions.install(trained(root))
+    (versions.folder / "v1" / MODEL).write_bytes(b"cut short")
+    pair, rows, problem = versions.overview()
+    assert pair.version == INSTALLED and [r["version"] for r in rows if r["active"]] == [INSTALLED]
+    assert "Couldn't load the wake models v1" in problem
+
+
+def test_a_damaged_wake_model_cant_be_chosen(root):
+    versions = versions_in(root)
+    versions.install(trained(root))
+    versions.use(INSTALLED)
+    (versions.folder / "v1" / MODEL).write_bytes(b"cut short")
+    with pytest.raises(KeyError, match="can't be loaded"):
+        versions.use("v1")
+
+
 @pytest.mark.parametrize("damage", ["", "{half a file", "[]"])
 def test_a_damaged_history_is_set_aside_by_the_next_change(root, damage):
     versions = versions_in(root)
     versions.folder.mkdir(parents=True)
     (versions.folder / "history.json").write_text(damage)
-    assert versions.in_use().version == INSTALLED and "couldn't be read" in versions.problem()
+    assert versions.in_use().version == INSTALLED and "couldn't be read" in versions.overview()[2]
     assert versions.install(trained(root)) == "v1"
-    assert versions.problem() is None and list(versions.folder.glob("history-*.old.json"))
+    assert versions.overview()[2] is None and list(versions.folder.glob("history-*.old.json"))
 
 
-@needs_models
 def test_pairs_made_from_other_installed_models_are_set_aside(root):
     versions = versions_in(root)
     versions.install(trained(root, "first"))
     check = root / "models/generic/hey_tars_check.json"
     check.write_text(json.dumps({**json.loads(check.read_text()), "bias": 0.1}))  # an update replaced it
-    assert versions.in_use().version == INSTALLED and "have changed" in versions.problem()
+    assert versions.in_use().version == INSTALLED and "have changed" in versions.overview()[2]
     assert versions.install(trained(root, "second")) == "v2"  # numbers go on: v1's folder is still there
 
 
 class RecordingVerifier:
     def __init__(self):
         self.used: list[dict] = []
+        self.last_confidence = None
 
     def use_check(self, spec):
         self.used.append(spec)
@@ -173,57 +172,76 @@ class RecordingVerifier:
 
 
 class LoadedTriggers:
-    """Stands in for loading a wake model: records what was loaded, and fires at the given blocks."""
+    """Stands in for loading a wake model: records what was loaded, and fires at the given blocks. A version in
+    `broken` fails to load, like a damaged model file."""
 
-    def __init__(self, fire_at):
+    def __init__(self, fire_at, broken=()):
         self.loaded: list[tuple[str, float]] = []
-        self.fire_at = fire_at
+        self.fire_at, self.broken = fire_at, broken
 
     def __call__(self, path, threshold):
-        self.loaded.append((Path(path).parts[-2], threshold))
+        folder = Path(path).parts[-2]
+        if folder in self.broken:
+            raise ValueError("The model is not a valid Flatbuffer buffer")
+        self.loaded.append((folder, threshold))
         trigger = FakeTrigger(fire_at=self.fire_at)
         trigger.threshold = threshold
         return trigger
 
 
-@needs_models
+def listening(root: Path, versions: ModelVersions, triggers=None, verifier=None) -> VerifiedTrigger:
+    verifier = verifier or RecordingVerifier()
+    return VerifiedTrigger(
+        versions,
+        root / "models",
+        make_trigger=triggers or LoadedTriggers(fire_at=[3]),
+        make_verifier=lambda phrase, folder: verifier,
+    )
+
+
 def test_the_running_assistant_switches_the_whole_pair(root, capsys, monkeypatch):
     monkeypatch.setattr("voice_assistant.verify.FOLLOW_EVERY_S", 0.08)  # look every block
     versions = versions_in(root)
     verifier, triggers = RecordingVerifier(), LoadedTriggers(fire_at=[3])
-    listening = VerifiedTrigger(FakeTrigger(fire_at=[]), verifier, versions=versions, make_trigger=triggers)
+    trigger = listening(root, versions, triggers, verifier)
     assert triggers.loaded == [("generic", 0.5)] and len(verifier.used) == 1  # the pair in use, from the start
     versions.install(trained(root))
-    assert listening.wait(SilentMic(10)) == ANSWER
+    assert trigger.wait(SilentMic(10)) == ANSWER
     assert triggers.loaded[-1] == ("v1", 0.6) and verifier.used[-1]["bias"] == 1.0
-    assert listening._window_s == 2.5 and "wake models v1" in capsys.readouterr().out
+    assert trigger.pair.check_window_s == 2.5 and "wake models v1" in capsys.readouterr().out
 
 
-@needs_models
-def test_a_pair_that_fails_to_load_mid_run_keeps_the_one_it_has(root, capsys, monkeypatch):
+def test_a_pair_that_fails_to_load_mid_run_keeps_the_installed_one(root, capsys, monkeypatch):
     monkeypatch.setattr("voice_assistant.verify.FOLLOW_EVERY_S", 0.08)
     versions = versions_in(root)
-    triggers = LoadedTriggers(fire_at=[3])
-    listening = VerifiedTrigger(FakeTrigger(fire_at=[]), RecordingVerifier(), versions=versions, make_trigger=triggers)
-
-    def broken(path, threshold):
-        raise RuntimeError("the interpreter crashed")
-
-    listening._make_trigger = broken
+    trigger = listening(root, versions, LoadedTriggers(fire_at=[3], broken={"v1"}))
     versions.install(trained(root))
     with pytest.raises(StopIteration):  # it kept listening with the installed pair; the fake mic ran out
-        listening.wait(SilentMic(2))
-    assert "keeping installed" in capsys.readouterr().out
+        trigger.wait(SilentMic(2))
+    assert "couldn't load the wake models v1" in capsys.readouterr().out and trigger.pair.version == INSTALLED
 
 
-@needs_models
-def test_the_models_page_shows_the_pair_its_results_and_what_is_waiting(root):
+def test_a_damaged_wake_model_at_startup_falls_back_to_the_installed_pair(root, capsys):
     versions = versions_in(root)
-    log = EventLog(root / "events")
-    client = TestClient(create_app(log, versions=versions))
+    versions.install(trained(root))
+    (versions.folder / "v1" / MODEL).write_bytes(b"cut short")  # only loading it shows the damage
+    trigger = VerifiedTrigger(versions, root / "models", make_verifier=lambda phrase, folder: RecordingVerifier())
+    assert trigger.pair.version == INSTALLED and "couldn't load the wake models v1" in capsys.readouterr().out
+
+
+def test_a_broken_installed_pair_is_a_startup_error(root):
+    versions = versions_in(root)
+    with pytest.raises(ValueError):
+        listening(root, versions, LoadedTriggers(fire_at=[], broken={"generic"}))
+
+
+def test_the_models_page_shows_the_pair_its_results_and_what_is_waiting(root, log):
+    versions = versions_in(root)
+    client = TestClient(create_app(log, pairs=versions))
     versions.install(trained(root))
     page = client.get("/api/models").json()
-    assert page["active"]["version"] == "v1" and page["results"][0]["candidate"] == "2 of 2"
+    assert page["active"]["version"] == "v1" and page["active"]["replaced"] == INSTALLED
+    assert page["results"][0]["candidate"] == "2 of 2"
     assert page["learning"] == {"real": 0, "not_real": 0, "missed": 0, "to_review": 0}
     assert client.post("/api/models/use", json={"version": INSTALLED}).json() == {"ok": True}
     assert client.get("/api/models").json()["active"]["version"] == INSTALLED
@@ -231,24 +249,28 @@ def test_the_models_page_shows_the_pair_its_results_and_what_is_waiting(root):
 
 
 def test_without_versions_the_page_shows_what_config_installs(log):
-    client = TestClient(create_app(log, installed={"wake_model": "hey_jarvis", "threshold": 0.5}))
-    assert client.get("/api/models").json()["active"] == {
+    pair = Pair(INSTALLED, "hey_jarvis", "", None, 0.5, 2.5, Path("hey_jarvis"))
+    client = TestClient(create_app(log, pairs=FixedPair(pair)))
+    page = client.get("/api/models").json()
+    assert page["active"] == {
         "version": INSTALLED,
         "wake_model": "hey_jarvis",
         "threshold": 0.5,
+        "check_model": None,
+        "check_window_s": 2.5,
+        "replaced": None,
     }
-    assert client.post("/api/models/use", json={"version": INSTALLED}).status_code == 404
-    assert client.post("/api/retrain").status_code == 404  # training is a command on the Mac now
+    assert page["history"] == [] and client.post("/api/models/use", json={"version": INSTALLED}).status_code == 404
 
 
-@needs_models
 def test_installs_and_the_web_ui_never_lose_each_others_changes(root):
-    versions = versions_in(root)
+    """An install runs as its own process and "Use this" in the web UI's: two ModelVersions, sharing only files."""
+    install, web = versions_in(root), versions_in(root)
     folders = [trained(root, f"run{i}") for i in range(4)]
-    threads = [threading.Thread(target=versions.install, args=(f,)) for f in folders]
-    threads += [threading.Thread(target=versions.use, args=(INSTALLED,)) for _ in range(4)]
+    threads = [threading.Thread(target=install.install, args=(f,)) for f in folders]
+    threads += [threading.Thread(target=web.use, args=(INSTALLED,)) for _ in range(4)]
     for t in threads:
         t.start()
     for t in threads:
         t.join(10)
-    assert sorted(v["version"] for v in versions.versions()) == [INSTALLED, "v1", "v2", "v3", "v4"]
+    assert sorted(version_names(web)) == [INSTALLED, "v1", "v2", "v3", "v4"]

@@ -12,7 +12,7 @@ import random
 
 import numpy as np
 
-from training.common import PHRASES, Layout, parser
+from training.common import PHRASES, Layout, log, parser, write_wav
 
 T = "[TARS](/tˈɑːɹs/)"  # forced pronunciation: TARS with an S (plain "TARS" gets spelled out as letters)
 
@@ -156,7 +156,6 @@ def main():
     p.add_argument("n_positive", type=int)
     p.add_argument("n_near_miss", type=int)
     args = p.parse_args()
-    import soundfile as sf
     from kokoro import KPipeline
     from scipy.signal import resample_poly
 
@@ -167,7 +166,6 @@ def main():
         ("near_miss", NEAR_MISS[args.phrase], args.n_near_miss),
     ]:
         folder = layout.clip_dir("kokoro", args.phrase, kind)
-        folder.mkdir(parents=True, exist_ok=True)
         rng = random.Random(f"{args.phrase}-{kind}")
         plan = [(voice_for(rng), rng.choice(texts), round(rng.uniform(0.8, 1.3), 2)) for _ in range(n)]
         order = range(n - 1, -1, -1) if os.environ.get("REVERSE") == "1" else range(n)
@@ -180,10 +178,11 @@ def main():
             audio = np.concatenate(
                 [a.numpy() if hasattr(a, "numpy") else a for _, _, a in pipes[lang](text, voice=voice, speed=speed)]
             )
-            sf.write(path, resample_poly(audio, 2, 3).astype(np.float32), 16000, subtype="PCM_16")  # 24 -> 16 kHz
+            audio = np.clip(resample_poly(audio, 2, 3), -1, 1)  # 24 -> 16 kHz
+            write_wav(path, (audio * 32767).astype(np.int16))
             if i % 500 == 0:
-                print(f"{args.phrase} {kind}: {i}/{n}", flush=True)
-        print(f"{args.phrase} {kind}: done ({n})", flush=True)
+                log(f"{args.phrase} {kind}: {i}/{n}")
+        log(f"{args.phrase} {kind}: done ({n})")
 
 
 if __name__ == "__main__":

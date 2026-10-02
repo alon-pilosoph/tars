@@ -3,19 +3,17 @@
     OPENAI_API_KEY=... DATA/tts/.venv/bin/python -m training.data.openai_clips
 
 Each training voice says the phrase in 20 styles x 4 spellings, 12 more styles x 2, and 60 mood/pace/distance
-combinations (164 clips per voice and phrase), plus 38 lookalikes. The held-out voices (coral, sage, verse) say it
-in 10 styles x 3 spellings, plus 14 lookalikes; nothing ever trains on them.
+combinations (164 clips per voice and phrase), plus 38 lookalikes (30 for "TARS stop"). The held-out voices (coral,
+sage, verse) say it in 10 styles x 3 spellings, plus 14 lookalikes; nothing ever trains on them.
 Output: DATA/clips/openai/PHRASE/{positive,near_miss}, and DATA/bench/clips_heldout/{PHRASE,PHRASE_near_miss}.
 """
 
 import os
 import random
-import sys
-import wave
 
 import numpy as np
 
-from training.common import Layout, parser
+from training.common import Layout, log, parser, write_wav
 
 TRAIN_VOICES = ["alloy", "ash", "ballad", "echo", "fable", "nova", "onyx", "shimmer"]
 TEST_VOICES = ["coral", "sage", "verse"]
@@ -42,7 +40,6 @@ STYLES = [
     "with an Israeli accent",
     "with a Spanish accent",
 ]
-# Second round: more delivery variety (cadence, rhythm, pitch, tone).
 STYLES_2 = [
     "in a sing-song voice",
     "shouting",
@@ -155,17 +152,12 @@ def synth(client, path, text, voice, instruction):
     pcm = client.audio.speech.create(
         model="gpt-4o-mini-tts", voice=voice, input=text, instructions=instruction, response_format="pcm"
     ).content
-    audio = resample_poly(np.frombuffer(pcm, np.int16).astype(np.float32), 2, 3).astype(np.int16)  # 24 -> 16 kHz
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as f:
-        f.setnchannels(1)
-        f.setsampwidth(2)
-        f.setframerate(16000)
-        f.writeframes(audio.tobytes())
+    audio = resample_poly(np.frombuffer(pcm, np.int16).astype(np.float32), 2, 3)  # 24 -> 16 kHz
+    write_wav(path, audio.astype(np.int16))
 
 
 def jobs(layout: Layout) -> list[tuple]:
-    out, test_out = layout.clips / "openai", layout.bench / "clips_heldout"
+    out, test_out = layout.clips / "openai", layout.heldout
     todo = []
     for phrase, texts in TEXTS.items():
         positive = out / phrase / "positive"
@@ -193,18 +185,18 @@ def jobs(layout: Layout) -> list[tuple]:
 def main():
     args = parser(__doc__).parse_args()
     if not os.environ.get("OPENAI_API_KEY"):
-        sys.exit("Set OPENAI_API_KEY first.")
+        raise SystemExit("Set OPENAI_API_KEY first.")
     from openai import OpenAI
 
     client = OpenAI(timeout=30)
     all_jobs = jobs(Layout(args.data))
     todo = [j for j in all_jobs if not j[0].exists()]
-    print(f"{len(all_jobs)} clips, {len(todo)} to synthesize", flush=True)
+    log(f"{len(all_jobs)} clips, {len(todo)} to synthesize")
     for i, job in enumerate(todo, 1):
         synth(client, *job)
         if i % 100 == 0:
-            print(f"  {i}/{len(todo)}", flush=True)
-    print("done", flush=True)
+            log(f"  {i}/{len(todo)}")
+    log("done")
 
 
 if __name__ == "__main__":

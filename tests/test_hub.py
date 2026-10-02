@@ -4,9 +4,11 @@ import io
 import tarfile
 
 import numpy as np
+import pytest
 import soundfile as sf
 
-from training.hub import _extract_shard, _write_shard, piper_voice
+from training.common import Layout
+from training.hub import _extract_shard, _write_shard, export, piper_voice
 
 
 def test_clips_come_back_from_a_shard_sample_for_sample(tmp_path):
@@ -41,3 +43,14 @@ def test_piper_clips_are_sorted_by_their_voice():
 
     assert piper_voice(Path("en_US-lessac-medium_s000_012.wav")) == "en_US-lessac-medium"
     assert piper_voice(Path("en_GB-northern_english_male-medium_s003_001.wav")) == "en_GB-northern_english_male-medium"
+
+
+def test_export_refuses_a_data_folder_with_a_voice_it_cant_host(tmp_path):
+    # Pitch and tempo variants could be made from it, and they don't say which clip they came from.
+    folder = Layout(tmp_path).clip_dir("piper_voices", "hey_tars", "positive")
+    folder.mkdir(parents=True)
+    for name in ("en_US-lessac-medium_s000_000.wav", "en_GB-alan-medium_s000_000.wav"):
+        sf.write(folder / name, np.zeros(1600, np.int16), 16000, subtype="PCM_16")
+    with pytest.raises(SystemExit, match="en_GB-alan-medium"):
+        export(Layout(tmp_path), tmp_path / "out")
+    assert not (tmp_path / "out").exists()

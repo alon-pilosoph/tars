@@ -2,18 +2,20 @@
 
     uv run python tools/make_demo_audio.py        # needs OPENAI_API_KEY in .env; about a cent
 
-Four speakers, each an OpenAI voice (never Onyx, which is TARS's own): the household's Alon and Stacey, a guest, and
-the TV. What they say doesn't have to match the demo's transcripts; they have to sound like four different people, so
-the voice clustering finds them. Speaker ID hears most of OpenAI's voices as close relatives (similarity 0.5-0.8);
-these four stay below 0.4 of each other. The clips are committed; run this again only to change them.
+Four speakers, each an OpenAI voice (never Onyx, TARS's voice with OpenAI speech): the household's Alon and Stacey,
+a guest, and the TV. What they say doesn't have to match the demo's transcripts; they have to sound like four
+different people, so the voice clustering finds them. Speaker ID hears most of OpenAI's voices as close relatives
+(similarity 0.5-0.8); these four stay below 0.4 of each other. The clips are committed; run this again only to
+change them.
 """
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
+
+from voice_assistant.__main__ import make_openai_client
 
 REPO = Path(__file__).parents[1]
 OUT = REPO / "tools" / "demo_audio"
@@ -73,12 +75,12 @@ SPEAKERS = {
         {
             "say": [
                 (
-                    "And in tonight's top story, the storm is moving east, with heavy rain expected across the coast by morning. "
-                    "Officials are asking drivers to stay off the roads."
+                    "And in tonight's top story, the storm is moving east, with heavy rain expected across the coast "
+                    "by morning. Officials are asking drivers to stay off the roads."
                 ),
                 (
-                    "You won't believe what happened next. After the break, the chef who turned a food truck into a national "
-                    "chain, and the one ingredient she refuses to use."
+                    "You won't believe what happened next. After the break, the chef who turned a food truck into a "
+                    "national chain, and the one ingredient she refuses to use."
                 ),
             ]
         },
@@ -87,9 +89,6 @@ SPEAKERS = {
 
 
 def main() -> None:
-    sys.path.insert(0, str(REPO / "src"))
-    from voice_assistant.__main__ import make_openai_client
-
     client = make_openai_client(REPO / ".env")
     for speaker, (voice, sets) in SPEAKERS.items():
         for kind, lines in sets.items():

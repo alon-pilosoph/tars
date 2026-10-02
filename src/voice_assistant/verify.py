@@ -1,13 +1,14 @@
 """Second check on every wake: a small offline speech recognizer confirms the words.
 
-The wake-word model is fast but can't reliably tell "hey TARS" from "hey cars" (one consonant apart).
-Vosk, restricted to a short list of phrases, can: it has to pick which one it heard, and it knows words.
+The wake-word model is fast but can't reliably tell "hey TARS" from "hey cars". Vosk, restricted to a short list of
+phrases, has to pick which one it heard, so it can.
 """
 
 import json
-import urllib.request
+import tempfile
 import zipfile
 from collections import deque
+from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,45 +16,46 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
+from .models import fetch
+from .wake import WakeModel, wake_word_trigger
 
 if TYPE_CHECKING:
     from .journal import Journal
-    from .versions import ModelVersions
+    from .versions import Pair, PairSource
 
 MODEL_NAME = "vosk-model-small-en-us-0.15"  # 40 MB download, runs fine on a Raspberry Pi
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
-# Audio handed to the recognizer when the model fires. Some wake models fire up to ~1 s after the phrase ends,
-# so too short a window loses the "hey"; too long lets in more lookalikes. Measured best: 2.5 s (see config.toml).
-WINDOW_S = 2.5
 
-# Per wake phrase: what else it could be (so the recognizer has somewhere else to put a lookalike),
-# and what counts as a match. "darts" is how "TARS" often comes out for a soft t; nobody says "hey darts".
+# Gives the recognizer somewhere else to put a lookalike. The learned layer scores each of these
+# (training/stage2/train_check.py) and its weights follow this order, so append only.
+LOOKALIKES = [
+    "hey cars",
+    "hey bars",
+    "hey mars",
+    "hey stars",
+    "hey lars",
+    "hey parts",
+    "hey guitars",
+    "hey guards",
+    "hey tara",
+    "hey jarvis",
+    "hey there",
+    "hey star",
+    "hey tarot",
+    "hey car",
+    "hey bar",
+    "hey tar",
+    "tars stop",
+    "stop",
+]
+# "darts" is how "TARS" often comes out with a soft t, so the plain match accepts it; the learned layer tells a clear
+# "hey darts" from a soft "hey TARS" by how close the two scored.
 PHRASES = {
     "hey tars": {
-        "lookalikes": [
-            "hey cars",
-            "hey bars",
-            "hey mars",
-            "hey stars",
-            "hey lars",
-            "hey parts",
-            "hey guitars",
-            "hey guards",
-            "hey tara",
-            "hey jarvis",
-            "hey there",
-            "hey star",
-            "hey tarot",
-            "hey car",
-            "hey bar",
-            "hey tar",
-            "hey",
-            "tars stop",
-            "stop",
-        ],
         "accept": ["hey tars", "hey darts"],
-        # "hey" + one of these is close to the name but nobody calls it out: worth a "Did you call me?".
-        # Plausible phrases ("hey there", "hey Jarvis", "hey Tara", a bare "stars") are ignored instead.
+        "lookalikes": [*LOOKALIKES, "hey"],
+        # "hey" + one of these is close to the name but nobody says it: worth a "Did you call me?". Plausible
+        # phrases ("hey there", "hey Jarvis", "hey Tara", a bare "stars") are ignored instead.
         "ask_after_hey": [
             "tars",
             "darts",
@@ -78,12 +80,10 @@ ANSWER, ASK, IGNORE = "answer", "ask", "ignore"
 def ensure_model(models_dir: Path) -> Path:
     path = models_dir / MODEL_NAME
     if not path.exists():
-        print(f"Downloading the speech recognizer for wake checks to {path}...")
-        models_dir.mkdir(parents=True, exist_ok=True)
-        archive = models_dir / f"{MODEL_NAME}.zip"
-        urllib.request.urlretrieve(MODEL_URL, archive)
-        with zipfile.ZipFile(archive) as z:
-            z.extractall(models_dir)
+        archive = fetch(models_dir / f"{MODEL_NAME}.zip", MODEL_URL, "the speech recognizer for wake checks")
+        with tempfile.TemporaryDirectory(dir=models_dir) as unpacked, zipfile.ZipFile(archive) as z:
+            z.extractall(unpacked)
+            (Path(unpacked) / MODEL_NAME).rename(path)
         archive.unlink()
     return path
 
@@ -93,22 +93,19 @@ class PhraseVerifier:
         from vosk import Model, SetLogLevel
 
         if phrase not in PHRASES:
-            raise SystemExit(f"No wake check is set up for '{phrase}'; add it to PHRASES in verify.py.")
+            raise ValueError(f"No wake check is set up for '{phrase}'; add it to PHRASES in verify.py.")
         SetLogLevel(-1)
         self._model = Model(str(ensure_model(models_dir)))
         spec = PHRASES[phrase]
+        # "[unk]" is Vosk's catch-all for speech that matches none of the phrases.
         self._phrase_grammar = json.dumps(spec["accept"] + spec["lookalikes"] + ["[unk]"])
         self._accept = [a.split() for a in spec["accept"]]
         self._ask_after_hey = set(spec["ask_after_hey"])
         self.last_confidence: float | None = None
-        # Optional: a learned layer on top of the recognizer (see TunedCheck); without it, a plain phrase match.
-        if check_path is not None and not check_path.exists():
-            raise SystemExit(f"Wake check model {check_path} not found.")
         self._tuned: TunedCheck | None = None
         self.use_check(json.loads(check_path.read_text()) if check_path else None)
 
     def use_check(self, spec: dict | None) -> None:
-        """Switch to another learned layer (or none), e.g. one just installed."""
         self._tuned = TunedCheck(spec) if spec else None
         self._grammar = self._tuned.grammar if self._tuned else self._phrase_grammar
 
@@ -125,22 +122,14 @@ class PhraseVerifier:
         return json.loads(recognizer.FinalResult())
 
     def check(self, pcm: np.ndarray) -> tuple[bool, str]:
-        """Is the wake phrase in this audio? Also returns what the recognizer heard, for logging."""
+        """Whether the wake phrase is in this audio, and what the recognizer heard."""
         if self._tuned:
             alts = self._recognize(pcm, self._tuned.max_alternatives).get("alternatives", [])
             self.last_confidence = self._tuned.confidence(alts)
             return self.last_confidence >= self._tuned.threshold, (alts[0]["text"] if alts else "") or "nothing clear"
         words = self.heard(pcm).split()
         ok = any(words[i : i + len(a)] == a for a in self._accept for i in range(len(words)))
-        # [unk] is the recognizer's catch-all: speech that matched none of the phrases it listens for.
         return ok, " ".join(words) or "nothing clear"
-
-    def features(self, pcm: np.ndarray) -> np.ndarray:
-        """What the learned layer sees in this audio: the numbers it's trained on."""
-        if not self._tuned:
-            raise ValueError("a plain phrase match has no learned layer")
-        alts = self._recognize(pcm, self._tuned.max_alternatives).get("alternatives", [])
-        return self._tuned.features(alts)
 
     def decide(self, pcm: np.ndarray) -> tuple[str, str]:
         """ANSWER, ASK ("Did you call me?") or IGNORE, plus what the recognizer heard."""
@@ -155,8 +144,8 @@ class PhraseVerifier:
 class TunedCheck:
     """How likely "hey TARS" is, from how the recognizer ranked every listed phrase (its top guesses and scores).
 
-    Trained on the enrolled person's recordings plus synthetic voices, so a soft "t" that the recognizer
-    scores as a near-tie between "tars" and "darts" or "cars" still counts, while a clear "hey cars" doesn't.
+    Trained on the enrolled person's recordings plus synthetic voices, so a soft "t" that the recognizer scores as a
+    near-tie between "tars" and "darts" or "cars" still counts, while a clear "hey cars" doesn't.
     """
 
     def __init__(self, spec: dict):
@@ -167,6 +156,8 @@ class TunedCheck:
         self.weights = np.array(spec["weights"])
         self.bias = spec["bias"]
         self.threshold = spec["threshold"]
+        if self.weights.shape != (len(self.phrases) + 1,):  # one per phrase, and one for "heard nothing it knows"
+            raise ValueError(f"{len(self.weights)} weights for {len(self.phrases)} phrases")
 
     def features(self, alternatives: list[dict]) -> np.ndarray:
         top = alternatives[0]["confidence"] if alternatives else 0.0
@@ -180,17 +171,11 @@ class TunedCheck:
         return np.array(best + [float(unknown)])
 
     def confidence(self, alternatives: list[dict]) -> float:
-        return float(self.probability(self.features(alternatives)))
-
-    def probability(self, features: np.ndarray) -> np.ndarray:
-        """For one clip's features, or a row of features per clip."""
-        return 1 / (1 + np.exp(-(features @ self.weights + self.bias)))
+        return float(1 / (1 + np.exp(-(self.features(alternatives) @ self.weights + self.bias))))
 
 
 class RecentAudio:
-    """The last WINDOW_S of mic audio, so the recognizer can hear the phrase that just woke us."""
-
-    def __init__(self, seconds: float = WINDOW_S):
+    def __init__(self, seconds: float):
         self._blocks = deque(maxlen=max(1, round(seconds / BLOCK_SECONDS)))
 
     def add(self, block: np.ndarray) -> None:
@@ -202,95 +187,129 @@ class RecentAudio:
 
 # A score this close to the threshold without reaching it is logged as a near-miss (a possible missed wake).
 NEAR_FRACTION = 0.6
-NEAR_QUIET_S = 1.0  # a near-miss ends once the score has stayed low this long
+NEAR_QUIET_S = 1.0  # a near-miss ends once the score has stayed below the near line this long
 FOLLOW_EVERY_S = 3.0  # how often TARS looks for newly installed wake models while it listens
 
 
+class NearMisses:
+    """Wake scores into near-misses, shared by the assistant and the mic test so both count the same."""
+
+    def __init__(self, threshold: float):
+        self.threshold = threshold
+        self.near = threshold * NEAR_FRACTION
+        self.peak = 0.0
+        self.rose = False  # the last score was the near-miss's new peak
+        self._quiet = 0.0
+
+    def update(self, score: float, seconds: float) -> float | None:
+        """Feed one score, and how much audio it covers. Returns the peak once a near-miss has ended."""
+        self.rose = False
+        if score >= self.threshold:
+            self.peak = 0.0
+        elif score >= self.near:
+            self.rose, self.peak, self._quiet = score > self.peak, max(self.peak, score), 0.0
+        elif self.peak:
+            self._quiet += seconds
+            if self._quiet >= NEAR_QUIET_S:
+                peak, self.peak = self.peak, 0.0
+                return peak
+        return None
+
+
 class VerifiedTrigger:
-    """The wake-word model listens all the time; each wake is double-checked before the assistant answers."""
+    last_audio: np.ndarray | None = None  # what woke it, for speaker ID
+    pair: "Pair"
 
     def __init__(
         self,
-        trigger,
-        verifier: PhraseVerifier,
-        window_s: float = WINDOW_S,
+        pairs: "PairSource",
+        models_dir: Path,
         journal: "Journal | None" = None,
-        wake_model: str = "",
-        check_model: str = "",
-        versions: "ModelVersions | None" = None,
-        make_trigger=None,
+        make_trigger: Callable[[str, float], WakeModel] = wake_word_trigger,
+        make_verifier: Callable[[str, Path], PhraseVerifier] = PhraseVerifier,
     ):
-        """With `versions`, the wake model, the check, the threshold and the window all come from the pair in use,
-        and follow it while TARS runs (`make_trigger(path, threshold)` loads a wake model); the arguments for them
-        are then ignored."""
-        self._trigger = trigger
-        self._window_s = window_s
-        self._verifier = verifier
-        self._journal = journal
-        self._wake_model, self._check_model = wake_model, check_model
-        self._versions, self._make_trigger = versions, make_trigger
-        self._stamp, self._pair = None, None
+        """The wake model, threshold, check and check window come from the pair `pairs` has in use, and follow it
+        while TARS runs."""
+        self._pairs, self._models_dir, self._journal = pairs, models_dir, journal
+        self._make_trigger, self._make_verifier = make_trigger, make_verifier
+        self._stamp, self.pair, self._verifier = None, None, None
         self._follow_versions(quiet=True)
         self.phrase = self._trigger.phrase
-        self.last_audio: np.ndarray | None = None  # what woke us, so speaker ID can tell who said it
 
     def wait(self, mic: Microphone) -> str:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite."""
         mic.clear()
-        recent = RecentAudio(self._window_s)
-        peak, peak_audio, quiet = 0.0, None, 0.0
+
+        def fresh() -> tuple[RecentAudio, NearMisses, None]:
+            return RecentAudio(self.pair.check_window_s), NearMisses(self._trigger.threshold), None
+
+        recent, near, peak_audio = fresh()
         follow_blocks, blocks = max(1, round(FOLLOW_EVERY_S / BLOCK_SECONDS)), 0
         while True:
             blocks += 1
             if blocks % follow_blocks == 0 and self._follow_versions():
-                recent, peak, peak_audio = RecentAudio(self._window_s), 0.0, None  # a new pair starts fresh
+                recent, near, peak_audio = fresh()
             block = mic.read()
             recent.add(block)
             score = self._trigger.score(block)
+            peak = near.update(score, len(block) / SAMPLE_RATE)
+            if near.rose:
+                peak_audio = recent.audio()
+            if peak is not None and self._journal:
+                self._journal.near_miss(peak_audio, peak, self.pair.wake_model)
             if score < self._trigger.threshold:
-                if score >= self._trigger.threshold * NEAR_FRACTION and score > peak:
-                    peak, peak_audio, quiet = score, recent.audio(), 0.0
-                elif peak:
-                    quiet += len(block) / SAMPLE_RATE
-                    if quiet >= NEAR_QUIET_S:
-                        if self._journal:
-                            self._journal.near_miss(peak_audio, peak, self._wake_model)
-                        peak, peak_audio = 0.0, None
                 continue
-            peak, peak_audio = 0.0, None  # it did wake: not a near-miss
             self._trigger.reset()
             audio = recent.audio()
             outcome, heard = self._verifier.decide(audio)
             if self._journal:
                 self._journal.wake(
-                    audio, score, outcome, heard, self._verifier.last_confidence, self._wake_model, self._check_model
+                    audio,
+                    score,
+                    outcome,
+                    heard,
+                    self._verifier.last_confidence,
+                    self.pair.wake_model,
+                    self.pair.check_model,
                 )
             if outcome != IGNORE:
                 self.last_audio = audio
                 return outcome
-            print(f"(Heard '{heard}', not '{self.phrase}'. Still listening.)")
+            print(f"(heard '{heard}', not '{self.phrase}'; still listening)")
 
     def _follow_versions(self, quiet: bool = False) -> bool:
-        """Switch to the pair in use if it changed. True if it did."""
-        if not self._versions:
-            return False
+        """Switches to the pair in use if it changed; True if it did. A pair that won't load gives way to the
+        installed one; only a broken installed pair (a mistake in config.toml) raises, and only at startup."""
         try:
-            stamp = self._versions.stamp()
+            stamp = self._pairs.stamp()
             if stamp == self._stamp:
                 return False
-            pair = self._versions.in_use()
             self._stamp = stamp
-            if pair == self._pair:
+            pair = self._pairs.in_use()
+            if pair == self.pair:
                 return False
-            trigger = self._make_trigger(str(pair.model_path), pair.threshold)
-            self._verifier.use_check(pair.check)
-            self._trigger, self._window_s, self._pair = trigger, pair.check_window_s, pair
-            self._wake_model, self._check_model = pair.wake_model, pair.check_model
+            try:
+                self._listen_with(pair)
+            except Exception as e:  # whatever a damaged model file makes its loader raise
+                installed = self._pairs.installed()
+                if pair == installed:
+                    raise
+                print(f"(couldn't load the wake models {pair.version}, using the installed ones: {e!r})")
+                if installed == self.pair:
+                    return False
+                self._listen_with(installed)
             if not quiet:
-                print(f"(Now listening with the wake models {pair.version}.)")
+                print(f"(now listening with the wake models {self.pair.version})")
             return True
-        except Exception as e:  # at startup it's a config mistake; mid-run, it mustn't stop TARS listening
-            if self._pair is None:
+        except Exception as e:  # mid-run, nothing may stop TARS listening
+            if self.pair is None:
                 raise
-            print(f"(Couldn't switch the wake models, keeping {self._pair.version}: {e!r})")
+            print(f"(couldn't switch the wake models, keeping {self.pair.version}: {e!r})")
             return False
+
+    def _listen_with(self, pair: "Pair") -> None:
+        trigger = self._make_trigger(str(pair.model_path), pair.threshold)
+        if self._verifier is None:
+            self._verifier = self._make_verifier(trigger.phrase, self._models_dir)
+        self._verifier.use_check(pair.check)
+        self._trigger, self.pair = trigger, pair

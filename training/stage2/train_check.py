@@ -3,10 +3,11 @@
     DATA/eval/.venv/bin/python -m training.stage2.train_check generic     # no household recordings
     DATA/eval/.venv/bin/python -m training.stage2.train_check personal    # + the owner's training half
 
-Features per clip, computed by the assistant's own code (verify.TunedCheck): for each of the 20 phrases, Vosk's best
-n-best confidence for an alternative containing it, relative to its top guess (-40 if absent), plus one flag for
-"heard nothing or [unk]". Every training clip goes through one random training condition (clean, TV or babble at
-5/10/15 dB, a simulated room, a room plus TV at 10 dB), using training interference only.
+Features per clip, computed by the assistant's own code (verify.TunedCheck): for each of the 20 phrases (the wake
+phrase, "hey darts" and the lookalikes, all from verify.PHRASES), Vosk's best n-best confidence for an alternative
+containing it, relative to its top guess (-40 if absent), plus one flag for "heard nothing or [unk]". Every training
+clip goes through one random training condition (clean, TV or babble at 5/10/15 dB, a simulated room, a room plus TV
+at 10 dB), using training interference only.
   generic:  6,000 wake phrases and 7,000 lookalikes from Kokoro, Piper voices, OpenAI, accented Piper voices,
             kNN-VC conversions into LibriSpeech and VCTK speakers (counted twice), and real LibriSpeech lookalikes
             (counted twice). --no-accent leaves out the accented and VCTK clips (3,000 and 3,500).
@@ -26,27 +27,29 @@ from pathlib import Path
 
 import numpy as np
 
-from training.common import (
-    REPO,
-    Layout,
-    add_user_arg,
-    bench_tools,
-    parser,
-    test_sets,
-    user_split,
-)
+from training.audio import Interference, conditioned, in_room, mix, read_wav
+from training.common import REPO, SR, Layout, add_user_arg, log, parser, test_sets, user_split
+
+sys.path.insert(0, str(REPO / "src"))  # this runs in DATA/eval/.venv, where the assistant isn't installed
+from voice_assistant.verify import PHRASES, TunedCheck, ensure_model
 
 THRESHOLD = 0.3
 TRAIN_KINDS = ["clean", "tv_5", "tv_10", "tv_15", "babble_5", "babble_10", "babble_15", "room", "room_tv_10"]
 ABOUT = {
     "generic": "Generic learned layer over Vosk's n-best scores for 'hey tars' vs lookalikes. Trained WITHOUT any "
-    "user recordings: synthetic voices, accented Piper voices in ~50 languages, kNN-VC conversions into "
-    "250 LibriSpeech and 110 VCTK (accented) speakers, and real LibriSpeech lookalike words, with training "
+    "user recordings: synthetic voices, accented Piper voices in 45 languages, kNN-VC conversions into "
+    "251 LibriSpeech and 110 VCTK (accented) speakers, and real LibriSpeech lookalike words, with training "
     "noise. Made by training/stage2/train_check.py generic.",
     "personal": "Learned layer over Vosk's n-best scores for 'hey tars' vs lookalikes, trained on the owner's "
     "recordings (training half) + synthetic clips with training noise. Made by "
     "training/stage2/train_check.py personal.",
 }
+
+
+def check_phrases() -> list[str]:
+    """A bare "hey" is in every grammar (see Features) but isn't scored."""
+    spec = PHRASES["hey tars"]
+    return spec["accept"] + [p for p in spec["lookalikes"] if p != "hey"]
 
 
 class Features:
@@ -55,38 +58,60 @@ class Features:
     def __init__(self, phrases: list[str]):
         from vosk import Model, SetLogLevel
 
-        sys.path.insert(0, str(REPO / "src"))
-        from voice_assistant.verify import TunedCheck
-
         SetLogLevel(-1)
-        self.vosk = Model(str(REPO / "models" / "vosk-model-small-en-us-0.15"))
+        self.vosk = Model(str(ensure_model(REPO / "models")))
         self.spec = {"phrases": phrases, "extra_grammar": ["hey", "[unk]"], "max_alternatives": 8, "floor": -40.0}
         self.check = TunedCheck({**self.spec, "weights": [0.0] * (len(phrases) + 1), "bias": 0.0, "threshold": 0.5})
 
     def __call__(self, pcm: np.ndarray) -> np.ndarray:
         from vosk import KaldiRecognizer
 
-        r = KaldiRecognizer(self.vosk, 16000, self.check.grammar)
+        r = KaldiRecognizer(self.vosk, SR, self.check.grammar)
         r.SetMaxAlternatives(self.check.max_alternatives)
         r.AcceptWaveform(pcm.astype(np.int16).tobytes())
         return self.check.features(json.loads(r.FinalResult()).get("alternatives", [])).astype(np.float32)
 
 
-def augment(wb, clip, rng, kind, tv, babble, rooms, cache):
-    def load(path):
-        if path not in cache:
-            cache[path] = wb.read_wav(path)
-        return cache[path]
+class Training:
+    """The training interference (DATA/aug: simulated rooms, babble and TV), loaded lazily."""
 
-    if kind == "clean":
-        return clip
-    if kind.startswith("room"):
-        clip = wb.in_room(clip, load(rooms[rng.integers(len(rooms))]))
-        if kind == "room":
+    def __init__(self, layout: Layout):
+        aug = layout.aug
+        self.tv, self.babble = sorted((aug / "train/tv").glob("*.wav")), sorted((aug / "train/babble").glob("*.wav"))
+        self.rooms = sorted((aug / "train_rirs").glob("*.wav"))
+        self._cache: dict[Path, np.ndarray] = {}
+
+    def _load(self, path: Path) -> np.ndarray:
+        if path not in self._cache:
+            self._cache[path] = read_wav(path)
+        return self._cache[path]
+
+    def apply(self, clip: np.ndarray, kind: str, rng: np.random.Generator) -> np.ndarray:
+        if kind == "clean":
             return clip
-    bank = tv if "tv" in kind else babble
-    snr = int(kind.split("_")[-1])
-    return wb.mix(clip, load(bank[rng.integers(len(bank))]), snr, rng)
+        if kind.startswith("room"):
+            clip = in_room(clip, self._load(self.rooms[rng.integers(len(self.rooms))]))
+            if kind == "room":
+                return clip
+        bank = self.tv if "tv" in kind else self.babble
+        return mix(clip, self._load(bank[rng.integers(len(bank))]), int(kind.split("_")[-1]), rng)
+
+
+def fit(X, y, w):
+    from sklearn.linear_model import LogisticRegression
+
+    return LogisticRegression(C=1.0, max_iter=2000, class_weight="balanced").fit(X, y, sample_weight=w)
+
+
+def layer(clf, feat: "Features", about: str) -> dict:
+    """The learned layer in the format the assistant loads (models/*/hey_tars_check.json)."""
+    return {
+        "about": about,
+        **feat.spec,
+        "weights": clf.coef_[0].round(6).tolist(),
+        "bias": round(float(clf.intercept_[0]), 6),
+        "threshold": THRESHOLD,
+    }
 
 
 def synthetic(layout: Layout, kind: str, n: int, seed: int) -> list:
@@ -101,9 +126,9 @@ def generic_pool(layout: Layout, kind: str, n: int, seed: int, accent: bool) -> 
     files = []
     for src in ["kokoro", "piper_voices", "openai"]:
         files += sorted(layout.clip_dir(src, "hey_tars", kind).glob("*.wav"))
-    files += sorted((layout.vc / kind).glob("*.wav")) * 2  # real voices: count double
+    files += sorted((layout.vc / kind).glob("*.wav")) * 2  # real speakers' voices count double
     if accent:
-        files += sorted((layout.clips / "accent/hey_tars" / kind).glob("*.wav"))
+        files += sorted(layout.clip_dir("accent", "hey_tars", kind).glob("*.wav"))
         files += sorted((layout.vc_vctk / kind).glob("*.wav")) * 2
     if kind == "near_miss":
         files += sorted(layout.real_lookalikes.glob("*.wav")) * 2
@@ -111,19 +136,16 @@ def generic_pool(layout: Layout, kind: str, n: int, seed: int, accent: bool) -> 
     return files[:n]
 
 
-def build_train(wb, feat, layout: Layout, setup: str, user, accent: bool):
+def build_train(feat, layout: Layout, setup: str, user, accent: bool):
     rng = np.random.default_rng(1)
-    aug = layout.aug
-    tv, babble = sorted((aug / "train/tv").glob("*.wav")), sorted((aug / "train/babble").glob("*.wav"))
-    rooms = sorted((aug / "train_rirs").glob("*.wav"))
-    cache = {}
+    noise = Training(layout)
     X, y, w = [], [], []
 
     def add(files, label, weight, kinds):
         for f in files:
-            clip = wb.read_wav(f)
+            clip = read_wav(f)
             for kind in kinds:
-                X.append(feat(augment(wb, clip, rng, kind, tv, babble, rooms, cache)))
+                X.append(feat(noise.apply(clip, kind, rng)))
                 y.append(label)
                 w.append(weight)
 
@@ -142,68 +164,45 @@ def build_train(wb, feat, layout: Layout, setup: str, user, accent: bool):
     for files, label in pools:
         for f in files:
             kind = TRAIN_KINDS[rng.integers(len(TRAIN_KINDS))]
-            X.append(feat(augment(wb, wb.read_wav(f), rng, kind, tv, babble, rooms, cache)))
+            X.append(feat(noise.apply(read_wav(f), kind, rng)))
             y.append(label)
             w.append(1.0)
     return np.array(X), np.array(y), np.array(w)
 
 
 def household_layer(layout: Layout, clips: Path) -> dict:
-    """The generic layer's training rows (DATA/check/generic_base.npz) plus a household's clips (clips/positive,
-    clips/negative), each in every training condition at weight 5, as the personal layer takes the owner's. Returns
-    the layer, in the format the assistant loads."""
-    from sklearn.linear_model import LogisticRegression
-
-    wb, _ = bench_tools(layout, layout.root / "no-owner-recordings")
+    """The generic layer's training rows (DATA/check/generic_base.npz) plus a household's clips/{positive,negative},
+    each in every training condition at weight 5, as the personal layer weights the owner's."""
     with np.load(layout.check / "generic_base.npz") as base:
         X, y, w, phrases = list(base["X"]), list(base["y"]), list(base["w"]), [str(p) for p in base["phrases"]]
     feat = Features(phrases)
     rng = np.random.default_rng(1)
-    aug = layout.aug
-    tv, babble = sorted((aug / "train/tv").glob("*.wav")), sorted((aug / "train/babble").glob("*.wav"))
-    rooms, cache = sorted((aug / "train_rirs").glob("*.wav")), {}
+    noise = Training(layout)
     for kind, label in (("positive", 1), ("negative", 0)):
         for f in sorted((clips / kind).glob("*.wav")):
-            clip = wb.read_wav(f)
+            clip = read_wav(f)
             for condition in TRAIN_KINDS:
-                X.append(feat(augment(wb, clip, rng, condition, tv, babble, rooms, cache)))
+                X.append(feat(noise.apply(clip, condition, rng)))
                 y.append(label)
                 w.append(5.0)
-    clf = LogisticRegression(C=1.0, max_iter=2000, class_weight="balanced").fit(
-        np.array(X), np.array(y), sample_weight=np.array(w)
-    )
-    return {
-        "about": "Learned layer over Vosk's n-best scores, trained on the generic layer's data plus this "
+    clf = fit(np.array(X), np.array(y), np.array(w))
+    return layer(
+        clf,
+        feat,
+        "Learned layer over Vosk's n-best scores, trained on the generic layer's data plus this "
         "household's own wakes. Made by training.household.",
-        **feat.spec,
-        "weights": clf.coef_[0].round(6).tolist(),
-        "bias": round(float(clf.intercept_[0]), 6),
-        "threshold": THRESHOLD,
-    }
+    )
 
 
-def test(wb, vb, sets, feat, clf, out_path) -> None:
-    """Held-out data only, in every test condition; prints the share each rule accepts per set and condition."""
-    conditions = vb.CONDITIONS + [
-        ("tv_15dB", "tv", 15, False),
-        ("babble_15dB", "babble", 15, False),
-        ("tv_10dB", "tv", 10, False),
-        ("babble_10dB", "babble", 10, False),
-    ]
+def test(layout: Layout, sets, feat, clf, out_path) -> None:
+    """Prints the share each decision rule accepts per set and condition."""
     rng = np.random.default_rng(0)
-    banks = {n: wb.bank(n) for n in ["tv", "babble"]}
-    rooms = wb.bank("rooms", limit=1000)
-    rows = []
-    for cond, noise, snr, room in conditions:
-        for name, (files, should) in sets.items():
-            for f in files:
-                c = wb.read_wav(f)
-                c = wb.in_room(c, rooms[rng.integers(len(rooms))]) if room else c
-                c = wb.mix(c, banks[noise][rng.integers(len(banks[noise]))], snr, rng) if noise else c
-                p = float(clf.predict_proba([feat(c)])[0, 1])
-                rows.append({"cond": cond, "set": name, "should": should, "p": p})
+    rows = [
+        {"cond": cond, "set": name, "should": should, "p": float(clf.predict_proba([feat(clip)])[0, 1])}
+        for cond, name, should, clip in conditioned(sets, Interference(layout.interference), rng)
+    ]
     out_path.write_text(json.dumps(rows))
-    conds = [c for c, *_ in conditions]
+    conds = list(dict.fromkeys(r["cond"] for r in rows))
     for rule in [0.3, 0.5, 0.7]:
         print(f"\nrule: confidence >= {rule}")
         print(f"{'':<28}" + "".join(f"{c[:11]:>12}" for c in conds))
@@ -219,18 +218,15 @@ def main():
     p.add_argument("--skip-test", action="store_true")
     add_user_arg(p)
     args = p.parse_args()
-    from sklearn.linear_model import LogisticRegression
-
     layout = Layout(args.data)
-    wb, vb = bench_tools(layout, args.user)
-    if args.setup == "personal" and not args.user.exists():
-        sys.exit(f"The personal layer needs the owner's recordings; {args.user} doesn't exist.")
-    phrases = ["hey tars", "hey darts"] + vb.LOOKALIKES
+    if args.setup == "personal" and not (args.user and args.user.is_dir()):
+        raise SystemExit("The personal layer needs the owner's recordings: pass --user.")
+    phrases = check_phrases()
     feat = Features(phrases)
     t0 = time.time()
-    X, y, w = build_train(wb, feat, layout, args.setup, args.user, accent=not args.no_accent)
-    print(f"{args.setup}: {len(y)} training examples ({y.sum()} positive) in {time.time() - t0:.0f}s", flush=True)
-    clf = LogisticRegression(C=1.0, max_iter=2000, class_weight="balanced").fit(X, y, sample_weight=w)
+    X, y, w = build_train(feat, layout, args.setup, args.user, accent=not args.no_accent)
+    log(f"{args.setup}: {len(y)} training examples ({y.sum()} positive) in {time.time() - t0:.0f}s")
+    clf = fit(X, y, w)
     layout.check.mkdir(parents=True, exist_ok=True)
     # The training rows themselves: what training.hub hosts, and what a household's own wakes are added to.
     np.savez(
@@ -242,19 +238,12 @@ def main():
     )
     with open(layout.check / f"{args.setup}.pkl", "wb") as f:
         pickle.dump(clf, f)
-    spec = {
-        "about": ABOUT[args.setup],
-        **feat.spec,
-        "weights": clf.coef_[0].round(6).tolist(),
-        "bias": round(float(clf.intercept_[0]), 6),
-        "threshold": THRESHOLD,
-    }
     out = layout.models / args.setup / "hey_tars_check.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(spec, indent=1))
-    print(f"wrote {out} (copy it to the repo's models/{args.setup}/)", flush=True)
+    out.write_text(json.dumps(layer(clf, feat, ABOUT[args.setup]), indent=1))
+    log(f"wrote {out} (copy it to the repo's models/{args.setup}/)")
     if not args.skip_test:
-        test(wb, vb, test_sets(layout, args.user), feat, clf, layout.check / f"{args.setup}_test.json")
+        test(layout, test_sets(layout, args.user), feat, clf, layout.check / f"{args.setup}_test.json")
 
 
 if __name__ == "__main__":

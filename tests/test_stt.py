@@ -2,11 +2,12 @@
 
 import json
 import threading
+import types
 
 import pytest
 
 from voice_assistant import stt
-from voice_assistant.stt import BufferedSession, DeepgramSession, FallbackTranscriber
+from voice_assistant.stt import BufferedSession, DeepgramSession, FallbackTranscriber, FluxSession, TurnState
 
 from .conftest import ScriptedTranscriber
 
@@ -20,7 +21,7 @@ class FakeDeepgram:
         self.ready = threading.Condition()
         self.closed = False
 
-    def __call__(self, url, additional_headers=None, open_timeout=None):
+    def __call__(self, url, additional_headers=None, open_timeout=None, **kwargs):
         return self
 
     def __enter__(self):
@@ -58,15 +59,21 @@ class FakeDeepgram:
             yield message
 
 
-@pytest.fixture
-def deepgram(monkeypatch):
+def connected(monkeypatch, session_class):
+    """Opens a session of `session_class` on whatever socket (or failing connect) it's given."""
+
     def use(fake):
         import websockets.sync.client
 
         monkeypatch.setattr(websockets.sync.client, "connect", fake)
-        return DeepgramSession("wss://test", "key")
+        return session_class("wss://test", "key")
 
     return use
+
+
+@pytest.fixture
+def deepgram(monkeypatch):
+    return connected(monkeypatch, DeepgramSession)
 
 
 def test_the_words_so_far_and_then_the_rest(deepgram):
@@ -104,6 +111,18 @@ def test_no_answer_times_out(deepgram, monkeypatch):
     session.close()
 
 
+def test_a_quiet_stream_is_kept_open(deepgram, monkeypatch):
+    monkeypatch.setattr(stt, "KEEPALIVE_S", 0.05)
+    fake = FakeDeepgram()
+    session = deepgram(fake)
+    for _ in range(100):
+        if '{"type": "KeepAlive"}' in fake.sent:
+            break
+        threading.Event().wait(0.01)
+    session.close()
+    assert '{"type": "KeepAlive"}' in fake.sent
+
+
 class BrokenStream:
     def session(self):
         return self
@@ -111,8 +130,13 @@ class BrokenStream:
     def feed(self, pcm):
         pass
 
+    turn_state = None
+
     def transcript(self):
         raise ConnectionError("the stream dropped")
+
+    def finish(self):
+        pass
 
     def close(self):
         pass
@@ -153,15 +177,18 @@ class FakeFlux(FakeDeepgram):
                 self.ready.notify_all()
 
 
+class FluxThatDrops(FakeFlux):
+    """Sends its events, then the connection breaks on the next audio."""
+
+    def send(self, item):
+        if isinstance(item, bytes) and not self.events:
+            raise ConnectionResetError("Flux went away")
+        super().send(item)
+
+
 @pytest.fixture
 def flux(monkeypatch):
-    def use(fake):
-        import websockets.sync.client
-
-        monkeypatch.setattr(websockets.sync.client, "connect", fake)
-        return stt.FluxSession("wss://test", "key")
-
-    return use
+    return connected(monkeypatch, FluxSession)
 
 
 def wait_for(session, state):
@@ -170,6 +197,14 @@ def wait_for(session, state):
             return
         threading.Event().wait(0.01)
     raise AssertionError(f"never reached {state}, stuck at {session.turn_state()}")
+
+
+def wait_for_text(session, text):
+    for _ in range(200):
+        if session.transcript() == text:
+            return
+        threading.Event().wait(0.01)
+    raise AssertionError(f"never heard {text!r}")
 
 
 def test_flux_follows_the_turn_and_its_words(flux):
@@ -187,12 +222,12 @@ def test_flux_follows_the_turn_and_its_words(flux):
     )
     for _ in range(3):
         session.feed(b"\0\0")
-    wait_for(session, stt.MAYBE_DONE)
+    wait_for(session, TurnState.MAYBE_DONE)
     assert session.transcript() == "what's the capital of"  # a draft gets the words so far, right away
     session.feed(b"\0\0")
-    wait_for(session, stt.LISTENING)
+    wait_for(session, TurnState.LISTENING)
     session.feed(b"\0\0")
-    wait_for(session, stt.DONE)
+    wait_for(session, TurnState.DONE)
     session.feed(b"\0\0")  # the next turn's words don't overwrite this one's
     assert session.transcript() == "what's the capital of Australia"
     session.close()
@@ -215,28 +250,40 @@ def test_a_turn_with_no_words_is_empty_not_an_error(flux):
 
 
 def test_flux_failing_hands_over_to_the_recorder_and_the_backup(flux):
-    def broken(url, additional_headers=None, open_timeout=None):
+    def broken(url, additional_headers=None, open_timeout=None, **kwargs):
         raise ConnectionRefusedError("no Flux today")
 
     session = flux(broken)
     session.feed(b"\0\0")
-    wait_for(session, stt.FAILED)
+    wait_for(session, TurnState.FAILED)
     session.finish()
     with pytest.raises(ConnectionRefusedError):
         session.transcript()
 
 
-def wait_for_text(session, text):
-    for _ in range(200):
-        if session.transcript() == text:
-            return
-        threading.Event().wait(0.01)
-    raise AssertionError(f"never heard {text!r}")
+def with_backup(session, backup_text):
+    """`session` with a backup that transcribes the recording as `backup_text`."""
+    main = types.SimpleNamespace(session=lambda: session)
+    backup = types.SimpleNamespace(session=lambda: BufferedSession(lambda pcm: backup_text))
+    return FallbackTranscriber(main, backup).session()
 
 
-def test_the_fallback_session_passes_flux_s_turns_through():
-    main = stt.FluxSession.__new__(stt.FluxSession)
-    main.turn_state = lambda: stt.DONE
-    fallback = stt._FallbackSession(main, BufferedSession(lambda pcm: "backup"))
-    assert fallback.turn_state() == stt.DONE
-    assert stt._FallbackSession(BufferedSession(lambda pcm: ""), BufferedSession(lambda pcm: "")).turn_state is None
+def test_flux_failing_after_some_words_asks_the_backup_for_all_of_them(flux):
+    session = flux(FluxThatDrops([("StartOfTurn", "what's the weather"), ("Update", "what's the weather in")]))
+    fallback = with_backup(session, "what's the weather in Haifa")
+    for _ in range(3):
+        fallback.feed(b"\0\0")
+    wait_for(session, TurnState.FAILED)
+    assert fallback.turn_state() == TurnState.FAILED  # the recorder's own rules end the turn
+    assert fallback.transcript() == "what's the weather in Haifa"  # a draft's words, from the whole recording
+    fallback.finish()
+    assert fallback.transcript() == "what's the weather in Haifa"
+
+
+def test_the_fallback_session_passes_flux_s_turns_through(flux):
+    fallback = with_backup(flux(FakeFlux([("EndOfTurn", "what time is it")])), "the backup")
+    fallback.feed(b"\0\0")
+    wait_for(fallback, TurnState.DONE)
+    fallback.finish()
+    assert fallback.transcript() == "what time is it"
+    assert with_backup(BufferedSession(lambda pcm: ""), "").turn_state is None

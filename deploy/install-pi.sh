@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
 # Sets TARS up on a Raspberry Pi (Raspberry Pi OS 64-bit, Bookworm or later), from a clone at ~/voice-assistant:
 #
-#   git clone <repo> ~/voice-assistant && ~/voice-assistant/deploy/install-pi.sh
+#   git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant && ~/voice-assistant/deploy/install-pi.sh
 #
-# Safe to run again: it only adds what's missing. It asks for sudo for two things: PortAudio (audio I/O) and
-# letting the services start at boot without anyone logged in.
+# Safe to run again: it adds what's missing and restarts the services (after a `git pull`, say). It asks for sudo
+# for two things: PortAudio (audio I/O) and letting the services start at boot without anyone logged in.
 set -euo pipefail
 
-REPO="$HOME/voice-assistant"
+REPO=$(cd "$(dirname "$0")/.." && pwd)
+if [ "$REPO" != "$HOME/voice-assistant" ]; then
+  echo "!! The services run TARS from ~/voice-assistant, but this clone is at $REPO. Clone it there instead."
+  exit 1
+fi
 cd "$REPO"
 
 echo "== PortAudio"
 # PortAudio for the mic and speaker; libatomic for Vosk, the wake double-check.
-for pkg in libportaudio2 libatomic1; do dpkg -s $pkg >/dev/null 2>&1 || sudo apt-get install -y $pkg; done
+missing=$(for pkg in libportaudio2 libatomic1; do dpkg -s "$pkg" >/dev/null 2>&1 || echo "$pkg"; done)
+if [ -n "$missing" ]; then
+  sudo apt-get update
+  sudo apt-get install -y $missing
+fi
 
 echo "== uv (the services run it from ~/.local/bin)"
 UV="$HOME/.local/bin/uv"
@@ -21,17 +29,13 @@ UV="$HOME/.local/bin/uv"
 echo "== Python packages (uv installs its own Python)"
 "$UV" sync --frozen
 
-# Deepgram does the speech to text unless config.toml says [stt] provider = "openai".
-NEEDS_DEEPGRAM=$("$UV" run --frozen python -c "
-from pathlib import Path
-from voice_assistant.config import load_config
-print(load_config(Path('config.toml')).stt.provider == 'deepgram')
-")
-if [ ! -s .env ] || ! grep -q '^OPENAI_API_KEY=.' .env \
-    || { [ "$NEEDS_DEEPGRAM" = True ] && ! grep -q '^DEEPGRAM_API_KEY=.' .env; }; then
-  [ -e .env ] || cp .env.example .env
-  echo "!! Put your OpenAI API key (and DEEPGRAM_API_KEY, for [stt] provider = \"deepgram\") in $REPO/.env,"
-  echo "   then run this again."
+echo "== API keys (the ones config.toml's choices need)"
+KEYS=$("$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config, \
+required_keys; print(' '.join(required_keys(load_config(Path('config.toml')))))")
+[ -e .env ] || cp .env.example .env
+unset_keys=$(for key in $KEYS; do grep -q "^$key=." .env || echo "$key"; done)
+if [ -n "$unset_keys" ]; then
+  echo "!! Put these in $REPO/.env, then run this again:" $unset_keys
   exit 1
 fi
 
@@ -54,7 +58,8 @@ echo "== Services"
 mkdir -p "$HOME/.config/systemd/user"
 cp deploy/voice-assistant.service deploy/voice-assistant-web.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
-systemctl --user enable --now voice-assistant voice-assistant-web
+systemctl --user enable voice-assistant voice-assistant-web
+systemctl --user restart voice-assistant voice-assistant-web  # picks up new code on a rerun
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
 
 echo

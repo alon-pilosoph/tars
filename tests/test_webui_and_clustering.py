@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from voice_assistant import webui
 from voice_assistant.clustering import MIN_REQUESTS_TO_ENROLL, enroll_named, recluster
 from voice_assistant.events import NOT_PERSON, PERSON, REAL, UNKNOWN
+from voice_assistant.verify import ANSWER
 from voice_assistant.webui import allowed_host, create_app
 
 from .conftest import AUDIO
@@ -22,28 +23,46 @@ def voice(direction, rng, n=1):
 def add_requests(log, embeddings):
     ids = []
     for emb in embeddings:
-        e = log.add_wake(AUDIO, 0.9, "answer", "hey tars", 0.9)
+        e = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9)
         log.add_request(e, AUDIO, "hi", None, None, emb.astype(np.float32))
         ids.append(e)
     return ids
 
 
 def test_api_lists_labels_retags_and_deletes(log, client):
-    event = log.add_wake(AUDIO, 0.9, "answer", "hey tars", 0.9)
+    event = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9)
     (row,) = client.get("/api/events").json()
-    assert row["id"] == event and "embedding" not in row
+    assert row["id"] == event and row["has_wake_audio"] and not row["has_request_audio"]
+    assert set(row) == {
+        "id",
+        "ts",
+        "kind",
+        "outcome",
+        "wake_score",
+        "heard",
+        "confidence",
+        "transcript",
+        "follow",
+        "cluster_id",
+        "cluster_pinned",
+        "label",
+        "auto_label",
+        "auto_reason",
+        "has_wake_audio",
+        "has_request_audio",
+    }  # never where things are stored, or the voice embedding
     assert client.post(f"/api/events/{event}/label", json={"label": REAL}).status_code == 200
     assert log.get(event)["label"] == REAL
     cluster = client.post("/api/clusters", json={"name": "Stacey"}).json()["id"]
     client.post(f"/api/events/{event}/cluster", json={"cluster_id": cluster})
     assert log.get(event)["cluster_id"] == cluster and log.get(event)["cluster_pinned"] == 1
     assert client.get(f"/api/audio/{event}/wake").status_code == 200
-    assert client.get(f"/api/audio/{event}/request").status_code == 404  # no request recorded
+    assert client.get(f"/api/audio/{event}/request").status_code == 404
     assert client.delete(f"/api/events/{event}").status_code == 200 and log.get(event) is None
 
 
 def test_api_rejects_bad_labels_and_same_voice_merges(log, client):
-    event = log.add_wake(AUDIO, 0.9, "answer", "", None)
+    event = log.add_wake(AUDIO, 0.9, ANSWER, "", None)
     r = client.post(f"/api/events/{event}/label", json={"label": "maybe"})
     assert r.status_code == 422 and r.json()["detail"][0]["loc"] == ["body", "label"]
     c = log.new_cluster()
@@ -53,7 +72,7 @@ def test_api_rejects_bad_labels_and_same_voice_merges(log, client):
 
 
 def test_voices_that_dont_exist_are_refused(log, client):
-    event = log.add_wake(AUDIO, 0.9, "answer", "", None)
+    event = log.add_wake(AUDIO, 0.9, ANSWER, "", None)
     real = log.new_cluster("Alon", PERSON)
     assert client.post(f"/api/events/{event}/cluster", json={"cluster_id": 999}).status_code == 404
     assert log.get(event)["cluster_id"] is None
@@ -79,10 +98,17 @@ def test_naming_a_voice_that_isnt_a_person_keeps_it_that_way(log, client):
     assert log.cluster(tv)["kind"] == PERSON
 
 
-def test_status_counts(log, convos, client):
-    log.set_label(log.add_wake(AUDIO, 0.9, "answer", "", None), REAL)
-    log.add_near_miss(AUDIO, 0.4)
-    assert client.get("/api/status").json() == {"events": 2, "labeled": 1, "clustering": False, "unseen_items": 0}
+def test_status_says_what_the_page_can_offer(client):
+    assert client.get("/api/status").json() == {"clustering": False, "enroll_at": MIN_REQUESTS_TO_ENROLL}
+
+
+def test_each_voice_comes_with_its_newest_requests(log, client):
+    rng = np.random.default_rng(5)
+    ids = add_requests(log, voice(np.eye(16)[0], rng, 6))
+    recluster(log)
+    (cluster,) = client.get("/api/clusters").json()
+    assert cluster["size"] == 6 and [s["event_id"] for s in cluster["samples"]] == ids[::-1][:4]
+    assert cluster["samples"][0]["transcript"] == "hi"
 
 
 @pytest.mark.parametrize(
@@ -105,9 +131,10 @@ def test_only_home_network_names_are_answered(host, ok):
 
 
 def test_requests_to_other_names_and_changes_from_other_sites_are_refused(log):
-    event = log.add_wake(AUDIO, 0.9, "answer", "", None)
+    event = log.add_wake(AUDIO, 0.9, ANSWER, "", None)
     home = TestClient(create_app(log), base_url="http://tars.local:8080")
-    assert TestClient(create_app(log), base_url="http://evil.example").get("/api/events").status_code == 421
+    elsewhere = TestClient(create_app(log), base_url="http://evil.example").get("/api/events")
+    assert elsewhere.status_code == 421 and "allowed_hosts" in elsewhere.json()["detail"]
     assert (
         TestClient(create_app(log, allowed_hosts=frozenset({"tars.example.com"})), base_url="http://tars.example.com")
         .get("/api/events")
@@ -115,7 +142,9 @@ def test_requests_to_other_names_and_changes_from_other_sites_are_refused(log):
         == 200
     )
     url = f"/api/events/{event}/label"
-    assert home.post(url, json={"label": REAL}, headers={"Origin": "https://evil.example"}).status_code == 403
+    refused = home.post(url, json={"label": REAL}, headers={"Origin": "https://evil.example"})
+    assert refused.status_code == 403
+    assert refused.json() == {"detail": "changes can only come from the TARS page itself"}
     assert home.post(url, json={"label": REAL}, headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
     assert home.post(url, json={"label": REAL}, headers={"Origin": "http://tars.local:8080"}).status_code == 200
     assert home.post(url, json={"label": None}, headers={"Origin": "http://localhost:5173"}).status_code == 200  # dev

@@ -1,14 +1,16 @@
 """Compare speech recognizers as the wake double-check: does it hear "hey TARS" and reject lookalikes?
 
-    ~/asr_eval/.venv/bin/python tools/verifier_bench.py CANDIDATE [--threads N]
+    DATA/eval/.venv/bin/python tools/verifier_bench.py CANDIDATE [--threads N] [--user voice_data/<name>/laptop]
 
-CANDIDATE: vosk | kws | moonshine-tiny | moonshine-base | parakeet | whisper-tiny | whisper-base | whisper-small.
+CANDIDATE: vosk | kws | moonshine-tiny | moonshine-base | parakeet | whisper-tiny | whisper-base | whisper-small
+(-hot: biased toward "TARS"). vosk runs as the assistant does, with verify.PHRASES' grammar. The others need
+`uv pip install sherpa-onnx faster-whisper` in that environment, and sherpa-onnx's models unpacked in
+DATA/asr_models. This is the comparison that picked Vosk (docs/wake-word.md); TARS itself uses only Vosk.
 Each clip is heard as-is (clean), under TV or babble at 5 dB, and through a real recorded room with TV at 10 dB.
-Only test data is used: the user's recordings, held-out OpenAI voices, and interference no model trains on.
-Writes ~/wakeword_bench/verifier_<candidate>.json.
+Only test data is used: the held-out OpenAI voices, every take of the owner's recordings (with --user), and
+interference no model trains on. Writes DATA/results/verifier_<candidate>.json.
 """
 
-import argparse
 import json
 import re
 import sys
@@ -18,51 +20,15 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
-import wakeword_bench as wb
+REPO = Path(__file__).resolve().parents[1]
+sys.path[:0] = [str(REPO), str(REPO / "src")]
+from training.audio import CONDITIONS, Interference, conditioned
+from training.common import SR, Layout, add_user_arg, parser, test_sets
+from voice_assistant.verify import PHRASES, ensure_model
 
-REPO = Path(__file__).parents[1]
-MODELS = Path.home() / "asr_eval" / "models"
-USER = REPO / "voice_data" / "alon" / "laptop"
-HELD = wb.BENCH / "clips_heldout"
-
-LOOKALIKES = [
-    "hey cars",
-    "hey bars",
-    "hey mars",
-    "hey stars",
-    "hey lars",
-    "hey parts",
-    "hey guitars",
-    "hey guards",
-    "hey tara",
-    "hey jarvis",
-    "hey there",
-    "hey star",
-    "hey tarot",
-    "hey car",
-    "hey bar",
-    "hey tar",
-    "tars stop",
-    "stop",
-]
-# What counts as hearing the wake phrase. "darts" is how a soft t often comes out; nobody says "hey darts".
+WAKE = PHRASES["hey tars"]
+# "darts" is how a soft t often comes out.
 ACCEPT_WORDS = {"tars", "tarz", "tarse", "darts"}
-
-SETS = {  # name: (files, should the check accept these?)
-    "your hey TARS": (sorted((USER / "hey_tars").glob("*.wav")), True),
-    "other voices hey TARS": (sorted((HELD / "hey_tars").glob("*.wav")), True),
-    "your lookalikes": (sorted((USER / "hey_tars_lookalikes").glob("*.wav")), False),
-    "other lookalikes": (sorted((HELD / "hey_tars_near_miss").glob("*.wav")), False),
-    "your TARS stop": (sorted((USER / "tars_stop").glob("*.wav")), False),
-    "your sentences": (sorted((USER / "speech").glob("*.wav")), False),
-}
-CONDITIONS = [
-    ("clean", None, None, False),
-    ("tv_5dB", "tv", 5, False),
-    ("babble_5dB", "babble", 5, False),
-    ("far_room+tv_10dB", "tv", 10, True),
-]
 
 
 def accepted(text: str) -> bool:
@@ -70,41 +36,39 @@ def accepted(text: str) -> bool:
     return any(a == "hey" and b in ACCEPT_WORDS for a, b in pairwise(words))
 
 
-# ---------- candidates: each turns 16 kHz int16 audio into text ----------
-
-
-def vosk(threads):
+def vosk(models, threads):
     from vosk import KaldiRecognizer, Model, SetLogLevel
 
     SetLogLevel(-1)
-    model = Model(str(REPO / "models" / "vosk-model-small-en-us-0.15"))
-    grammar = json.dumps(["hey tars", "hey darts"] + LOOKALIKES + ["hey", "[unk]"])
+    model = Model(str(ensure_model(REPO / "models")))
+    grammar = json.dumps(WAKE["accept"] + WAKE["lookalikes"] + ["[unk]"])
 
     def hear(pcm):
-        r = KaldiRecognizer(model, 16000, grammar)
+        r = KaldiRecognizer(model, SR, grammar)
         r.AcceptWaveform(pcm.tobytes())
         return json.loads(r.FinalResult())["text"]
 
     return hear
 
 
-def kws(threads):
+def kws(models, threads):
     """sherpa-onnx keyword spotter: listens only for the listed phrases (lookalikes included, so they can win)."""
     import sherpa_onnx
 
-    d = MODELS / "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
+    d = models / "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
     # A streaming spotter fires as soon as a phrase completes, so a lookalike that is the start of another
     # ("hey tar" in "hey tars") would always win: leave those out.
-    phrases = ["HEY TARS", "HEY DARTS"] + [
-        p.upper()
-        for p in LOOKALIKES
-        if not any(o != p and o.startswith(p) for o in LOOKALIKES + ["hey tars", "hey darts"])
+    every = WAKE["accept"] + WAKE["lookalikes"]
+    phrases = [p.upper() for p in WAKE["accept"]] + [
+        p.upper() for p in WAKE["lookalikes"] if not any(o != p and o.startswith(p) for o in every)
     ]
     tokens = sherpa_onnx.text2token(
         phrases, tokens=str(d / "tokens.txt"), tokens_type="bpe", bpe_model=str(d / "bpe.model")
     )
-    keywords = Path(wb.BENCH / "kws_keywords.txt")
-    keywords.write_text("".join(" ".join(t) + f" @{p.replace(' ', '_')}\n" for p, t in zip(phrases, tokens)))
+    keywords = models / "kws_keywords.txt"
+    keywords.write_text(
+        "".join(f"{' '.join(t)} @{p.replace(' ', '_')}\n" for p, t in zip(phrases, tokens, strict=True))
+    )
     spotter = sherpa_onnx.KeywordSpotter(
         tokens=str(d / "tokens.txt"),
         encoder=str(d / "encoder-epoch-12-avg-2-chunk-16-left-64.onnx"),
@@ -118,8 +82,8 @@ def kws(threads):
 
     def hear(pcm):
         s = spotter.create_stream()
-        s.accept_waveform(16000, pcm.astype(np.float32) / 32768)
-        s.accept_waveform(16000, np.zeros(8000, np.float32))  # flush the streaming model
+        s.accept_waveform(SR, pcm.astype(np.float32) / 32768)
+        s.accept_waveform(SR, np.zeros(SR // 2, np.float32))  # flush the streaming model
         s.input_finished()
         found = []
         while spotter.is_ready(s):
@@ -135,7 +99,7 @@ def kws(threads):
 def offline(recognizer):
     def hear(pcm):
         s = recognizer.create_stream()
-        s.accept_waveform(16000, pcm.astype(np.float32) / 32768)
+        s.accept_waveform(SR, pcm.astype(np.float32) / 32768)
         recognizer.decode_stream(s)
         return s.result.text
 
@@ -143,10 +107,10 @@ def offline(recognizer):
 
 
 def moonshine(size):
-    def make(threads):
+    def make(models, threads):
         import sherpa_onnx
 
-        d = MODELS / f"sherpa-onnx-moonshine-{size}-en-int8"
+        d = models / f"sherpa-onnx-moonshine-{size}-en-int8"
         return offline(
             sherpa_onnx.OfflineRecognizer.from_moonshine(
                 preprocessor=str(d / "preprocess.onnx"),
@@ -161,13 +125,13 @@ def moonshine(size):
     return make
 
 
-def parakeet(threads, hot=False):
+def parakeet(models, threads, hot=False):
     import sherpa_onnx
 
-    d = MODELS / "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
+    d = models / "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8"
     extra = {}
     if hot:  # bias the decoder toward the word it has never seen
-        hotwords = wb.BENCH / "parakeet_hotwords.txt"
+        hotwords = models / "parakeet_hotwords.txt"
         hotwords.write_text("TARS\nHEY TARS\n")
         extra = {"decoding_method": "modified_beam_search", "hotwords_file": str(hotwords), "hotwords_score": 2.0}
     return offline(
@@ -184,7 +148,7 @@ def parakeet(threads, hot=False):
 
 
 def whisper(size, hotwords=None):
-    def make(threads):
+    def make(models, threads):
         from faster_whisper import WhisperModel
 
         model = WhisperModel(f"{size}.en", device="cpu", compute_type="int8", cpu_threads=threads)
@@ -211,7 +175,7 @@ CANDIDATES = {
     "moonshine-tiny": moonshine("tiny"),
     "moonshine-base": moonshine("base"),
     "parakeet": parakeet,
-    "parakeet-hot": lambda t: parakeet(t, hot=True),
+    "parakeet-hot": lambda m, t: parakeet(m, t, hot=True),
     "whisper-tiny": whisper("tiny"),
     "whisper-base": whisper("base"),
     "whisper-small": whisper("small"),
@@ -221,38 +185,38 @@ CANDIDATES = {
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("candidate", choices=CANDIDATES)
-    parser.add_argument("--threads", type=int, default=2)
-    args = parser.parse_args()
-    hear = CANDIDATES[args.candidate](args.threads)
-    rng = np.random.default_rng(0)
-    banks = {n: wb.bank(n) for n in ["tv", "babble"]}
-    rooms = wb.bank("rooms", limit=1000)
-    hear(np.zeros(16000, np.int16))  # warm up
-    results, examples, seconds, n = {}, {}, 0.0, 0
-    for cond, noise, snr, room in CONDITIONS:
-        for name, (files, should) in SETS.items():
-            outs = []
-            for f in files:
-                clip = wb.read_wav(f)
-                clip = wb.in_room(clip, rooms[rng.integers(len(rooms))]) if room else clip
-                clip = wb.mix(clip, banks[noise][rng.integers(len(banks[noise]))], snr, rng) if noise else clip
-                t0 = time.perf_counter()
-                outs.append(hear(clip))
-                seconds += time.perf_counter() - t0
-                n += 1
-            rate = float(np.mean([accepted(o) for o in outs]))
-            results[f"{name}@{cond}"] = round(rate, 3)
-            wrong = [o for o in outs if accepted(o) != should]
-            examples[f"{name}@{cond}"] = sorted({o.strip() for o in wrong})[:8]
-            print(
-                f"{args.candidate:<15} {cond:<17} {name:<22} accepts {rate:5.0%}  {'(want 100%)' if should else '(want 0%)'}",
-                flush=True,
-            )
+    p = parser(__doc__)
+    p.add_argument("candidate", choices=CANDIDATES)
+    p.add_argument("--threads", type=int, default=2)
+    add_user_arg(p)
+    args = p.parse_args()
+    layout = Layout(args.data)
+    hear = CANDIDATES[args.candidate](layout.root / "asr_models", args.threads)
+    sets = test_sets(layout, args.user, all_user=True)
+    hear(np.zeros(SR, np.int16))  # warm up, so loading isn't timed
+    heard: dict[str, list[str]] = {}
+    seconds, n = 0.0, 0
+    for cond, name, _should, clip in conditioned(
+        sets, Interference(layout.interference), np.random.default_rng(0), CONDITIONS[:4]
+    ):
+        t0 = time.perf_counter()
+        heard.setdefault(f"{name}@{cond}", []).append(hear(clip))
+        seconds += time.perf_counter() - t0
+        n += 1
+    results, examples = {}, {}
+    for key, outs in heard.items():
+        name, cond = key.split("@")
+        should = sets[name][1]
+        results[key] = round(float(np.mean([accepted(o) for o in outs])), 3)
+        examples[key] = sorted({o.strip() for o in outs if accepted(o) != should})[:8]
+        print(
+            f"{args.candidate:<15} {cond:<17} {name:<28} accepts {results[key]:5.0%}  "
+            f"{'(want 100%)' if should else '(want 0%)'}"
+        )
     ms = seconds / n * 1000
     print(f"{args.candidate}: {ms:.0f} ms per clip on {args.threads} threads")
-    out = wb.BENCH / f"verifier_{args.candidate}.json"
+    layout.results.mkdir(parents=True, exist_ok=True)
+    out = layout.results / f"verifier_{args.candidate}.json"
     out.write_text(
         json.dumps(
             {"accept_rates": results, "ms_per_clip": ms, "threads": args.threads, "mistakes": examples}, indent=2

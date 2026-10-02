@@ -4,13 +4,11 @@ __pycache__/
 *.pyc
 *.wav
 voice_data/
-models/voxceleb_resnet34_LM.onnx
-models/vosk-model-*/
-models/silero_vad.onnx
-models/smart-turn-*.onnx
-# Learned from the user's own voice: stays on this machine
-models/personal/
+# Models download on first use and models/personal/ is learned from the owner's voice: only the generic pair and its
+# license are committed.
+models/*
+!models/generic/
+!models/LICENSE.md
 
-# Local clutter
 .DS_Store
 webui/node_modules/

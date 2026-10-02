@@ -1,8 +1,13 @@
+"""The brain. Qwen on Cerebras answers first (CerebrasChat) and hands the turns it can't do (the web, the TARS page)
+to OpenAI's model and its tools (OpenAIChat). One shared history, kept until the conversation goes quiet. Replies are
+streamed, and every reply can be stopped and forgotten."""
+
 import itertools
 import json
 import threading
 import time
 from collections.abc import Iterable, Iterator
+from datetime import datetime
 from typing import Protocol
 
 from openai import OpenAI, OpenAIError
@@ -10,16 +15,14 @@ from openai import OpenAI, OpenAIError
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
 
-# The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a
-# marathon session from growing the prompt forever.
+# The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a marathon session from
+# growing the prompt forever.
 MAX_TURNS = 50
 
-# Follow-ups are heard without the wake word, so they may just be people talking to each other.
 FOLLOW_UP_TAG = "[Follow-up, no wake word]"
-# When the wake word sounded close but not quite, the assistant asks "Did you call me?" and tags the reply.
 ASKED_TAG = "[Reply to your 'Did you call me?']"
 SKIP = "<skip>"
-PROTOCOL = (
+SKIP_RULES = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "
     f"conversation), reply with exactly {SKIP} and nothing else.\n"
@@ -27,7 +30,7 @@ PROTOCOL = (
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
 )
-SEND_PROTOCOL = (
+SEND_RULES = (
     "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
     "send tool: a link, a note, a list, or a text file. Use it when asked to send, save or share something, or "
     "when the answer is a link, a recipe, a list or anything too long to hear. Only send links you found with web "
@@ -70,6 +73,32 @@ SEND_TOOL = {
 SEARCHING = "Looking it up."
 FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
 MAX_TOOL_ROUNDS = 3
+CEREBRAS_URL = "https://api.cerebras.ai/v1"
+# What the quick model replies when a turn needs OpenAI's tools; that turn is then OpenAI's to answer.
+LOOK_UP = "<look-up>"
+NEEDS_THE_WEB = "anything current or live: the weather, news, sports results, prices or opening hours, or a real link"
+NEEDS_SENDING = (
+    "sending, saving or sharing something to the household's TARS page: a recipe, a list, a note, a link "
+    "or a file, or any answer too long to hear"
+)
+
+
+def local_time() -> str:
+    """The date and time here, which no model knows. Goes last in the instructions, so the rest can be cached."""
+    now = datetime.now().astimezone()
+    clock = f"{now:%I:%M %p}".lstrip("0")
+    return f"It's {now:%A, %B} {now.day}, {now.year}, {clock} here ({now.tzname()}, UTC{now:%:z})."
+
+
+def look_up_rules(web_search: bool, send: bool) -> str:
+    needs = [need for need, can in [(NEEDS_THE_WEB, web_search), (NEEDS_SENDING, send)] if can]
+    return (
+        f"You can't do these yourself, but another model can. When a message needs any of them, reply with "
+        f"exactly {LOOK_UP} and nothing else, and it answers instead:\n"
+        + "\n".join(f"- {n}" for n in needs)
+        + f"\nNever say you can't do one of these: reply {LOOK_UP}. For example, \"add batteries to my to-do "
+        f'list" or "how much is a flight to Rome?" get {LOOK_UP}. Answer everything else yourself.'
+    )
 
 
 def check_send(args: dict) -> tuple[SentItem | None, str]:
@@ -84,11 +113,8 @@ def check_send(args: dict) -> tuple[SentItem | None, str]:
         url = _text(args.get("url"))
         if not url.startswith(("https://", "http://")) or len(url.split("//", 1)[1]) < 3:
             return None, "error: a link needs a full http(s) url from web search"
-        item.url, item.site, item.description = (
-            url,
-            _text(args.get("site")) or None,
-            _text(args.get("description")) or None,
-        )
+        item.url, item.site = url, _text(args.get("site")) or None
+        item.description = _text(args.get("description")) or None
     elif kind == NOTE:
         if not (body := _text(args.get("body"))):
             return None, "error: a note needs a body"
@@ -106,7 +132,7 @@ def check_send(args: dict) -> tuple[SentItem | None, str]:
             return None, f"error: a file needs a name ending in {', '.join(FILE_TYPES)} and its text"
         item.file_name, item.file_bytes, item.mime = name, text.encode(), mime
     else:
-        return None, "error: kind must be link, note, list or file"
+        return None, f"error: kind must be one of {', '.join(KINDS)}"
     return item, "sent"
 
 
@@ -150,6 +176,32 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
     return False, itertools.chain([head], stream)
 
 
+class _UpTo:
+    """A streamed reply up to `marker`, holding back only what might be the start of it. `found`: whether it came."""
+
+    def __init__(self, pieces: Iterable[str], marker: str):
+        self._pieces, self._marker = pieces, marker
+        self.found = False
+
+    def __iter__(self) -> Iterator[str]:
+        pending = ""
+        for piece in self._pieces:
+            pending += piece
+            if (at := pending.find(self._marker)) >= 0:
+                self.found = True
+                if at:
+                    yield pending[:at]
+                return
+            hold = pending.rfind(self._marker[0])
+            if hold < 0 or not self._marker.startswith(pending[hold:]):
+                hold = len(pending)
+            if hold:
+                yield pending[:hold]
+            pending = pending[hold:]
+        if pending:
+            yield pending
+
+
 class _Writing:
     """One reply being written. Each has its own stop, so a stopped reply still waiting on the network can't
     touch the conversation after the next one has started."""
@@ -173,8 +225,8 @@ class OpenAIChat:
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
         self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
-        prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
-        self._instructions = "\n\n".join([prompt, PROTOCOL] + ([SEND_PROTOCOL] if cfg.send else []))
+        self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
+        self._instructions = "\n\n".join([self._system_prompt, SKIP_RULES] + ([SEND_RULES] if cfg.send else []))
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
         if cfg.service_tier:
@@ -195,8 +247,9 @@ class OpenAIChat:
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
 
-    def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
-        answer = ""
+    def _stream_reply(self, context: list, writing: _Writing, said_first: str = "") -> Iterator[str]:
+        """`said_first`: what TARS already said of this reply (a hand-off's first sentence), for the history."""
+        answer = said_first
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
             tools = {"tools": self._tools} if self._tools else {}
@@ -205,7 +258,7 @@ class OpenAIChat:
             _check(writing)
             stream = writing.stream = self._client.responses.create(
                 model=self._cfg.model,
-                instructions=self._instructions,
+                instructions=f"{self._instructions}\n\n{local_time()}",
                 input=context,
                 stream=True,
                 store=False,  # nothing kept on OpenAI's side beyond the request itself
@@ -245,6 +298,11 @@ class OpenAIChat:
                     context.append(
                         {"type": "function_call_output", "call_id": call.call_id, "output": self._run_tool(call)}
                     )
+        if not answer.strip() and not self.sent:
+            raise ReplyFailed("the reply was empty")
+        self._remember(answer, writing)
+
+    def _remember(self, answer: str, writing: _Writing) -> None:
         with self._lock:
             _check(writing)
             self._history.append({"role": "assistant", "content": answer.strip()})
@@ -291,6 +349,70 @@ class OpenAIChat:
             self._client.models.retrieve(self._cfg.model)
         except OpenAIError:
             pass  # only a head start: the real request reports a failure
+
+
+class CerebrasChat(OpenAIChat):
+    """Answers on Cerebras (about 0.3 s to the first sentence, against about 0.7 s for OpenAI's), and hands a turn to
+    OpenAI's model, tools and all, when it needs the web or the TARS page, or when Cerebras fails. One conversation:
+    each sees what the other said."""
+
+    def __init__(self, client: OpenAI, cfg: LLMConfig, cerebras: OpenAI):
+        super().__init__(client, cfg)
+        self._cerebras = cerebras
+        hand_off = [look_up_rules(cfg.web_search, cfg.send)] if cfg.web_search or cfg.send else []
+        self._quick_instructions = "\n\n".join([self._system_prompt, SKIP_RULES, *hand_off])
+        self._quick_extra = {"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_effort else {}
+
+    def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+        answer = ""
+        quick = self._quick_reply(context, writing)
+        # Usually the whole reply is the marker; now and then it comes after a sentence ("I can't check that.
+        # <look-up>").
+        reply = _UpTo(quick, LOOK_UP)
+        handed_off = False
+        try:
+            for piece in reply:
+                answer += piece
+                yield piece
+            handed_off = reply.found
+        except OpenAIError as e:  # ReplyFailed is one too: an interrupted reply stays interrupted
+            if answer.strip() or isinstance(e, ReplyFailed):
+                raise
+            print(f"(Cerebras failed: {e!r}; OpenAI answers instead)")
+            handed_off = True
+        finally:
+            quick.close()
+        if not handed_off and not answer.strip():
+            print("(Cerebras said nothing; OpenAI answers instead)")
+            handed_off = True
+        if not handed_off:
+            self._remember(answer, writing)
+            return
+        if answer.strip():  # OpenAI carries on from what TARS already said, rather than repeating it
+            context.append({"role": "assistant", "content": answer.strip()})
+        yield from super()._stream_reply(context, writing, said_first=answer)
+
+    def _quick_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+        _check(writing)
+        stream = writing.stream = self._cerebras.chat.completions.create(
+            model=self._cfg.cerebras_model,
+            stream=True,
+            messages=[{"role": "system", "content": f"{self._quick_instructions}\n\n{local_time()}"}, *context],
+            **self._quick_extra,
+        )
+        with stream:
+            for event in stream:
+                _check(writing)
+                if event.choices and (delta := event.choices[0].delta.content):
+                    yield delta
+        writing.stream = None
+
+    def warm(self) -> None:
+        try:
+            self._cerebras.models.list()
+        except OpenAIError:
+            pass  # only a head start
+        super().warm()
 
 
 def _check(writing: _Writing) -> None:

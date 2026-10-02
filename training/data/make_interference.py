@@ -11,19 +11,17 @@ Needs downloads.sh first. Resumable; writes DATA/aug/interference.done at the en
 """
 
 import random
-import sys
 
 import librosa
 import numpy as np
-import soundfile as sf
 from scipy.signal import fftconvolve
 
-from training.common import Layout, parser
-
-SR = 16000
+from training.common import SR, Layout, log, parser, write_wav
 
 
 def load(path, seconds=None, offset=None):
+    import soundfile as sf
+
     info = sf.info(str(path))
     dur = info.duration
     if seconds is None or dur <= seconds:
@@ -69,7 +67,6 @@ def babble(speech, seconds):
 
 
 def tv(speech, music, effects, rirs, seconds):
-    """A TV in the room: a talking head or two over a music bed, the odd sound effect, all through a room."""
     n = int(SR * seconds)
     mix = np.zeros(n, np.float32)
     for _ in range(random.randint(1, 2)):
@@ -93,15 +90,15 @@ def write_set(folder, make, count: int, seconds: float | None):
         if path.exists():
             continue
         y = make(seconds)
-        sf.write(path, (y / (np.abs(y).max() + 1e-9) * 0.7).astype(np.float32), SR, subtype="PCM_16")
-    print(f"{folder}: {count}", flush=True)
+        write_wav(path, (y / (np.abs(y).max() + 1e-9) * 0.7 * 32767).astype(np.int16))
+    log(f"{folder}: {count}")
 
 
 def main():
     args = parser(__doc__).parse_args()
     layout = Layout(args.data)
     aug, bench = layout.aug, layout.bench
-    train_out, test_out = aug / "train", bench / "interference" / "test"
+    train_out, test_out = aug / "train", layout.interference
     random.seed(0)
     musan = aug / "musan"
     train_speech = sorted((musan / "speech").glob("**/*.wav"))
@@ -110,7 +107,7 @@ def main():
     rirs_root = aug / "RIRS_NOISES"
     sim_rirs = sorted((rirs_root / "simulated_rirs").glob("**/*.wav"))
     real_rirs = sorted((rirs_root / "real_rirs_isotropic_noises").glob("*rir*.wav"))
-    test_speech = sorted((bench / "LibriSpeech/test-clean").glob("**/*.flac"))
+    test_speech = sorted(layout.librispeech_test.glob("**/*.flac"))
     test_music = sorted((bench / "interference/fma_small").glob("**/*.mp3"))
     test_noise = sorted((bench / "interference/ESC-50-master/audio").glob("*.wav"))
     sources = {
@@ -123,10 +120,10 @@ def main():
         "test_music": test_music,
         "test_noise": test_noise,
     }
-    print({k: len(v) for k, v in sources.items()}, flush=True)
+    log(str({k: len(v) for k, v in sources.items()}))
     missing = [k for k, v in sources.items() if not v]
     if missing:
-        sys.exit(f"Missing sources: {', '.join(missing)}. Run training/data/downloads.sh first.")
+        raise SystemExit(f"Missing sources: {', '.join(missing)}. Run training/data/downloads.sh first.")
     rir_subset = random.sample(sim_rirs, 5000)
     (aug / "train_rirs.txt").write_text("\n".join(map(str, rir_subset)))
     # microWakeWord's augmenter takes folders, so the 5,000 training rooms become a folder of links.
@@ -145,10 +142,9 @@ def main():
     write_set(test_out / "music", lambda s: fit(load(random.choice(test_music), s), int(SR * s)), 200, 10)
     write_set(test_out / "noise", lambda s: fit(load(random.choice(test_noise)), int(SR * s)), 400, 5)
     write_set(test_out / "rooms", lambda s: load(random.choice(real_rirs)), len(real_rirs), None)
-    # One continuous hour of test TV (60 x 60 s) for false answers per hour with the TV on.
     write_set(test_out / "tv_hour", lambda s: tv(test_speech, test_music, test_noise, real_rirs, s), 60, 60)
     (aug / "interference.done").touch()
-    print("ALL DONE", flush=True)
+    log("ALL DONE")
 
 
 if __name__ == "__main__":

@@ -1,28 +1,33 @@
+"""Text to speech: OpenAI's voices over HTTP, or Deepgram's over websockets kept warm between sentences."""
+
 import json
 import queue
 import threading
 import time
 from collections.abc import Iterator
 from typing import Protocol
+from urllib.parse import urlencode
 
 from openai import OpenAI, Timeout
 
 from .config import TTSConfig
+from .stt import deepgram_connect
 
-# A reply's audio normally starts within a second. If nothing arrives for this long, give up: TARS says so in its
-# own (pre-made) voice instead of going quiet for the client's full timeout.
+# A reply's audio normally starts within a second. After this long with nothing, TARS gives up and says so in a
+# pre-made clip instead of going quiet for the client's full timeout.
 STALL_S = 4.0
 CONNECT_S = 3.0
+SPEAK_URL = "wss://api.deepgram.com/{version}/speak"
 
 
 class Voice(Protocol):
     sample_rate: int
 
     def stream(self, text: str) -> Iterator[bytes]:
-        """Yield 16-bit mono PCM chunks as they're synthesized."""
+        """Yields 16-bit mono PCM chunks as they're synthesized."""
 
     def warm(self) -> None:
-        """Get ready to speak, when TARS wakes, so the reply doesn't wait to connect. May do nothing."""
+        """Called when TARS wakes, so the reply doesn't wait to connect. May do nothing."""
 
 
 class OpenAISpeech:
@@ -32,7 +37,7 @@ class OpenAISpeech:
     def __init__(self, client: OpenAI, cfg: TTSConfig):
         self._client = client.with_options(timeout=Timeout(STALL_S, connect=CONNECT_S), max_retries=0)
         self._cfg = cfg
-        # Only gpt-4o-mini-tts and newer accept delivery instructions; don't send them to older models.
+        # Only gpt-4o-mini-tts and newer accept delivery instructions: leave them empty for older models.
         self._extra = {"instructions": cfg.instructions} if cfg.instructions else {}
 
     def warm(self) -> None:
@@ -52,10 +57,10 @@ class OpenAISpeech:
 class DeepgramSpeech:
     """Deepgram's streaming voices, Flux TTS (flux-*) and Aura-2 (aura-2-*), over a websocket.
 
-    Opening a connection takes about 0.7 s from here and a warm one starts speaking in about 0.27 s, so connections
-    are opened ahead (warm(), when TARS wakes) and reused: each sentence takes one and hands it back when it's done.
-    Idle ones stay usable for minutes; older than MAX_IDLE_S, one is replaced. A connection is only ever closed off
-    the caller's thread: closing one that has gone quiet waits for a handshake that never comes.
+    Opening a connection takes about 0.7 s and a warm one starts speaking in about 0.27 s (measured), so connections
+    are opened ahead in warm() and reused: each sentence takes one and hands it back when done. Idle ones stay usable
+    for minutes; past MAX_IDLE_S one is replaced. Connections are closed off the caller's thread, because closing one
+    that has gone quiet waits for a handshake that never comes.
     """
 
     sample_rate = 24_000
@@ -65,10 +70,11 @@ class DeepgramSpeech:
 
     def __init__(self, api_key: str, cfg: TTSConfig):
         version = "v2" if cfg.model.startswith("flux-") else "v1"
-        self._url = f"wss://api.deepgram.com/{version}/speak?model={cfg.model}&encoding=linear16&sample_rate=24000"
+        params = {"model": cfg.model, "encoding": "linear16", "sample_rate": self.sample_rate}
+        self._url = f"{SPEAK_URL.format(version=version)}?{urlencode(params)}"
         # Aura-2 sends a sentence's audio, then Flushed; Flux sends Flushed, the audio, then SpeechMetadata.
         self._last = "SpeechMetadata" if version == "v2" else "Flushed"
-        self._headers = {"Authorization": f"Token {api_key}"}
+        self._key = api_key
         self._idle: queue.LifoQueue = queue.LifoQueue()
 
     def warm(self) -> None:
@@ -88,8 +94,8 @@ class DeepgramSpeech:
                 done = True
                 return
             except (ConnectionClosed, OSError) as e:
-                # A warm connection that died while idle fails before any audio: one fresh try. Never after a
-                # stall (TimeoutError), which already cost STALL_S.
+                # A warm connection that died while idle fails before any audio, so it gets one fresh try. Never after
+                # a stall (TimeoutError), which already cost STALL_S.
                 if started or attempt == 2 or isinstance(e, TimeoutError):
                     raise
             finally:
@@ -98,7 +104,7 @@ class DeepgramSpeech:
 
     def _audio(self, ws) -> Iterator[bytes]:
         while True:
-            message = ws.recv(timeout=STALL_S)  # TimeoutError: a stalled voice, reported as a failed reply
+            message = ws.recv(timeout=STALL_S)
             if isinstance(message, bytes):
                 yield message
                 continue
@@ -114,14 +120,10 @@ class DeepgramSpeech:
         ws.send(json.dumps({"type": "Flush"}))
 
     def _take(self):
-        while True:
-            try:
-                opened, ws = self._idle.get_nowait()
-            except queue.Empty:
-                return self._connect()
-            if time.monotonic() - opened < self.MAX_IDLE_S:
-                return ws
-            self._discard(ws)
+        fresh = self._fresh()
+        for entry in reversed(fresh[1:]):  # the rest go back, newest on top
+            self._idle.put(entry)
+        return fresh[0][1] if fresh else self._connect()
 
     def _keep(self, ws) -> None:
         if self._idle.qsize() >= self.KEEP:
@@ -130,28 +132,30 @@ class DeepgramSpeech:
             self._idle.put((time.monotonic(), ws))
 
     def _top_up(self) -> None:
-        fresh = []
-        while True:  # set aside the ones too old to trust, so they don't count as ready
-            try:
-                opened, ws = self._idle.get_nowait()
-            except queue.Empty:
-                break
-            if time.monotonic() - opened < self.MAX_IDLE_S:
-                fresh.append((opened, ws))
-            else:
-                self._discard(ws)
-        for entry in fresh:
+        fresh = self._fresh()
+        for entry in reversed(fresh):
             self._idle.put(entry)
         try:
             for _ in range(self.READY - len(fresh)):
                 self._idle.put((time.monotonic(), self._connect()))
-        except Exception as e:  # noqa: BLE001 - only a head start: the sentence connects itself if this failed
+        except Exception as e:  # noqa: BLE001 - only a head start; stream() connects on its own
             print(f"(couldn't open a connection to the voice ahead of time: {e!r})")
 
-    def _connect(self):
-        from websockets.sync.client import connect
+    def _fresh(self) -> list:
+        """Takes out every idle connection young enough to use, newest first, and closes the older ones."""
+        fresh = []
+        while True:
+            try:
+                opened, ws = self._idle.get_nowait()
+            except queue.Empty:
+                return fresh
+            if time.monotonic() - opened < self.MAX_IDLE_S:
+                fresh.append((opened, ws))
+            else:
+                self._discard(ws)
 
-        return connect(self._url, additional_headers=self._headers, open_timeout=CONNECT_S, close_timeout=1)
+    def _connect(self):
+        return deepgram_connect(self._url, self._key, open_timeout=CONNECT_S, close_timeout=1)
 
     @staticmethod
     def _discard(ws) -> None:

@@ -1,34 +1,65 @@
+"""The command line: `voice-assistant` runs TARS; its options record voices, enroll speakers, test the mic, serve the
+web UI and install trained wake models. Heavy dependencies are imported lazily, so each command loads only its own."""
+
 import argparse
 import dataclasses
+import hashlib
+import json
+import sys
 from pathlib import Path
 
 from dotenv import dotenv_values
 
-from .audio import Microphone, MicrophoneError, Speaker, find_device, list_devices
-from .config import Config, LLMConfig, STTConfig, load_config
+from .audio import AudioDeviceError, Microphone, Speaker, find_device, list_devices
+from .config import OPENAI_STT_MODEL, Config, ConfigError, LLMConfig, load_config, required_keys
 from .recorder import make_recorder
-from .versions import model_versions
+from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 OPENAI_TIMEOUT_S = 15.0
+CEREBRAS_TIMEOUT_S = 4.0  # its replies take well under a second
+PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
+# sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
+EX_CONFIG = 78
 
 
 def api_key(env_path: Path, name: str) -> str:
-    # Keys come from this project's .env only, never from the shell environment,
-    # so the assistant can't silently pick up a key meant for something else.
+    # Keys come from this project's .env only, never the shell environment, so the assistant can't silently pick up
+    # a key meant for something else.
     key = dotenv_values(env_path).get(name)
     if not key:
-        raise SystemExit(f"Put {name} in {env_path} (see .env.example).")
+        raise ConfigError(f"Put {name} in {env_path} (see .env.example).")
     return key
+
+
+def check_keys(cfg: Config, env_path: Path) -> None:
+    """Checks every key at once, so missing ones don't surface one run at a time."""
+    keys = dotenv_values(env_path) if env_path.exists() else {}
+    if missing := [name for name in required_keys(cfg) if not keys.get(name)]:
+        raise ConfigError(f"Put {', '.join(missing)} in {env_path} (see .env.example).")
 
 
 def make_openai_client(env_path: Path):
     from openai import OpenAI
 
     key = api_key(env_path, "OPENAI_API_KEY")
-    # The SDK default is 10 minutes per request plus 2 retries. A voice assistant should give up
-    # quickly instead, so a dropped connection costs one "that didn't work" rather than a frozen assistant.
+    # The SDK default is 10 minutes per request plus 2 retries. A voice assistant should give up quickly, so a dropped
+    # connection costs one "that didn't work" rather than a frozen assistant.
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
+
+
+def make_cerebras_client(env_path: Path):
+    from openai import OpenAI, Timeout
+
+    from .llm import CEREBRAS_URL
+
+    # No retries and a short wait: when Cerebras is slow or says "too many requests", OpenAI answers instead.
+    return OpenAI(
+        base_url=CEREBRAS_URL,
+        api_key=api_key(env_path, "CEREBRAS_API_KEY"),
+        timeout=Timeout(CEREBRAS_TIMEOUT_S, connect=2.0),
+        max_retries=0,
+    )
 
 
 def make_event_log(cfg: Config, root: Path):
@@ -48,33 +79,25 @@ def brain_config(cfg: Config, typed: bool) -> LLMConfig:
 def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
     if push_to_talk or cfg.wake.mode == "push-to-talk":
         return PushToTalkTrigger(), "Press Enter to talk."
-    trigger = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
-    if cfg.wake.verify:
-        from .verify import PhraseVerifier, VerifiedTrigger
-        from .versions import model_versions
+    try:
+        if cfg.wake.verify:
+            from .verify import VerifiedTrigger
 
-        check = root / cfg.wake.check_model if cfg.wake.check_model else None
-        # With versions, the trigger listens with the pair in use, and follows it.
-        trigger = VerifiedTrigger(
-            trigger,
-            PhraseVerifier(trigger.phrase, root / "models", check),
-            cfg.wake.check_window_s,
-            journal=journal,
-            wake_model=cfg.wake.model,
-            check_model=cfg.wake.check_model,
-            versions=model_versions(cfg, root),
-            make_trigger=wake_word_trigger,
-        )
+            trigger = VerifiedTrigger(pair_source(cfg, root), root / "models", journal=journal)
+        else:
+            trigger = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
+    except (FileNotFoundError, ValueError) as e:  # a wake model or check that's missing or broken
+        raise ConfigError(str(e)) from None
     return trigger, f"Say '{trigger.phrase}'..."
 
 
 def record_voice_session(cfg: Config, person: str, mic_name: str, root: Path) -> None:
-    """No API key needed: this only records clips for the verifier, the stop word and speaker ID."""
     from .audio import SAMPLE_RATE
     from .enroll import record_voice
 
     print(
-        f"Recording {person}'s voice on the {mic_name} mic. After each chime, say the prompt. Ctrl+C to stop; rerun to resume."
+        f"Recording {person}'s voice on the {mic_name} mic. After each chime, say the prompt. "
+        "Ctrl+C to stop; rerun to resume."
     )
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), SAMPLE_RATE, cfg.audio.playback_prebuffer_s)
     with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
@@ -100,7 +123,8 @@ def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
     speaker_id = make_speaker_id(cfg, root)
     speaker_id.enroll(person, [read_wav(c) for c in clips])
     print(
-        f"Enrolled {person} from {len(clips)} sentences ({mic_name} mic). Everyone enrolled: {', '.join(speaker_id.voiceprints)}"
+        f"Enrolled {person} from {len(clips)} sentences ({mic_name} mic). "
+        f"Everyone enrolled: {', '.join(speaker_id.voiceprints)}"
     )
     if not cfg.speaker.enabled:
         print("Set enabled = true under [speaker] in config.toml to use it.")
@@ -116,29 +140,22 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     if log is None:
         raise SystemExit("The web UI shows the event log: set log_events = true under [learning] in config.toml.")
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
+    try:
+        pairs = pair_source(cfg, root)
+    except (FileNotFoundError, ValueError) as e:
+        raise ConfigError(str(e)) from None
     serve(
         log,
         host,
         port,
         recluster=partial(regroup, log, speaker_id),
-        versions=model_versions(cfg, root),
-        installed=installed_models(cfg),
+        pairs=pairs,
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
     )
 
 
-def installed_models(cfg: Config) -> dict:
-    """What config.toml listens with, for the Models page."""
-    return {
-        "wake_model": cfg.wake.model,
-        "threshold": cfg.wake.threshold,
-        "check_model": cfg.wake.check_model if cfg.wake.verify and cfg.wake.check_model else "plain phrase match",
-        "check_window_s": cfg.wake.check_window_s,
-    }
-
-
 def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) -> None:
-    """Add a pair training.household made, and put it in use: the running assistant switches within seconds."""
+    """Adds a pair training.household made and puts it in use; a running assistant switches within seconds."""
     versions = model_versions(cfg, root)
     if versions is None:
         raise SystemExit(
@@ -147,7 +164,7 @@ def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) 
         )
     try:
         name = versions.install(folder, based_on)
-    except (OSError, ValueError, KeyError, TypeError) as e:
+    except UNUSABLE as e:
         raise SystemExit(f"Not installed: {e}") from None
     print(f"Installed {folder} as {name}; it's in use now. The web UI's Models page can switch back.")
 
@@ -186,13 +203,16 @@ def main() -> None:
         list_devices()
         return
 
-    cfg = load_config(args.config)
     root = args.config.resolve().parent
     try:
+        cfg = load_config(args.config)
         if args.mic_test:
             from .mic_test import mic_test
 
-            mic_test(cfg, root)
+            try:
+                mic_test(cfg, root)
+            except (FileNotFoundError, ValueError) as e:  # the wake model or check is missing or broken
+                raise ConfigError(str(e)) from None
             return
         if args.record_voice:
             record_voice_session(cfg, args.record_voice, args.mic, root)
@@ -206,18 +226,24 @@ def main() -> None:
         if args.install_models:
             install_models(cfg, root, args.install_models, args.based_on)
             return
-        run(cfg, args)
+        if args.text:
+            typed(cfg, root)
+            return
+        run(cfg, args.ptt, root)
     except KeyboardInterrupt:
         print("\nBye.")
-    except MicrophoneError as e:
-        # Exit non-zero so a supervisor (systemd on the Pi) restarts us once the device is back.
-        raise SystemExit(str(e))
+    except ConfigError as e:
+        print(e.code, file=sys.stderr)
+        raise SystemExit(EX_CONFIG) from None
+    except AudioDeviceError as e:
+        # Exit non-zero so a supervisor (systemd on the Pi) restarts the process once the device is back.
+        raise SystemExit(str(e)) from None
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False):
-    """The cloud stages, as config.toml picks them: (transcriber, brain, voice)."""
+    """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions."""
     from .effects import apply_effect
-    from .llm import OpenAIChat
+    from .llm import CerebrasChat, OpenAIChat
     from .stt import (
         DeepgramTranscriber,
         FallbackTranscriber,
@@ -227,50 +253,68 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False):
     from .tts import DeepgramSpeech, OpenAISpeech
 
     env = root / ".env"
+    check_keys(cfg, env)
     client = make_openai_client(env)
-    brain = OpenAIChat(client, brain_config(cfg, typed=typed))
+    llm = brain_config(cfg, typed=typed)
+    brain = CerebrasChat(client, llm, make_cerebras_client(env)) if llm.cerebras_model else OpenAIChat(client, llm)
     speech = (
         DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
         if cfg.tts.provider == "deepgram"
         else OpenAISpeech(client, cfg.tts)
     )
     voice = apply_effect(speech, cfg.tts.effect)
+    if typed:
+        return None, brain, voice
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt), brain, voice
-    backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=STTConfig().model))
-    if typed:  # typed questions need no speech to text
-        return backup, brain, voice
-    streaming = FluxTranscriber if cfg.stt.provider == "flux" else DeepgramTranscriber
-    return FallbackTranscriber(streaming(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt), backup), brain, voice
+    backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
+    key = api_key(env, "DEEPGRAM_API_KEY")
+    streaming = FluxTranscriber(key) if cfg.stt.provider == "flux" else DeepgramTranscriber(key, cfg.stt)
+    return FallbackTranscriber(streaming, backup), brain, voice
 
 
-def run(cfg: Config, args: argparse.Namespace) -> None:
+def phrase_folder(cfg: Config, root: Path) -> Path:
+    """Where the short lines' audio is kept: one folder per [tts] setup, so a new voice makes them again."""
+    setup = json.dumps(dataclasses.asdict(cfg.tts), sort_keys=True)
+    return root / PHRASES / hashlib.sha256(setup.encode()).hexdigest()[:12]
+
+
+def typed(cfg: Config, root: Path) -> None:
+    """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
+    from .assistant import Assistant
+
+    _, brain, voice = make_pipeline(cfg, root, typed=True)
+    with Speaker(
+        find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
+    ) as speaker:
+        assistant = Assistant(None, speaker, None, None, None, brain, voice)
+        while True:
+            try:
+                text = input("\nYou:  ").strip()
+            except EOFError:
+                print()
+                return
+            if not text:
+                continue
+            try:
+                assistant.answer_text(text)
+            except AudioDeviceError:
+                raise
+            except Exception as e:  # noqa: BLE001 - a failed question shouldn't end the session
+                print(f"Error: {e!r}")
+
+
+def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     from .assistant import Assistant
     from .journal import Journal
 
-    root = args.config.resolve().parent
-    transcriber, brain, voice = make_pipeline(cfg, root, typed=args.text)
+    transcriber, brain, voice = make_pipeline(cfg, root)
     recorder = make_recorder(cfg, root)
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s)
-
     with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
-        if args.text:
-            assistant = Assistant(mic, speaker, PushToTalkTrigger(), recorder, transcriber, brain, voice)
-            while True:
-                try:
-                    text = input("\nYou:  ").strip()
-                except EOFError:  # Ctrl+D, or the end of piped input.
-                    print()
-                    return
-                if not text:
-                    continue
-                try:
-                    assistant.answer_text(text)
-                except Exception as e:  # noqa: BLE001 - a failed question shouldn't end the session
-                    print(f"Error: {e!r}")
         journal = Journal(make_event_log(cfg, root))
         journal.keep_pruning(cfg.learning.keep_audio_days)
-        trigger, idle_message = make_trigger(cfg, args.ptt, root, journal)
+        trigger, idle_message = make_trigger(cfg, push_to_talk, root, journal)
         speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
         assistant = Assistant(
             mic,
@@ -284,6 +328,7 @@ def run(cfg: Config, args: argparse.Namespace) -> None:
             name_threshold=cfg.speaker.wake_threshold,
             journal=journal,
             humor=cfg.llm.humor,
+            phrases=phrase_folder(cfg, root),
         )
         assistant.run_forever(
             idle_message, follow_up_s=cfg.recorder.follow_up_s, greet_after_s=cfg.recorder.greet_after_s

@@ -1,3 +1,5 @@
+"""What starts a conversation: a wake-word model listening all the time, or Enter for push-to-talk."""
+
 from pathlib import Path
 from typing import Protocol
 
@@ -7,11 +9,24 @@ from .audio import Microphone
 
 
 class Trigger(Protocol):
+    last_audio: np.ndarray | None  # what woke it, for speaker ID; None when there's nothing to go on
+
     def wait(self, mic: Microphone) -> str | None:
         """Block until the user wants to talk. A double-checked trigger says how sure it is (verify.ANSWER or ASK)."""
 
 
+class WakeModel(Protocol):
+    threshold: float
+    phrase: str
+
+    def score(self, block: np.ndarray) -> float: ...
+
+    def reset(self) -> None: ...
+
+
 class WakeWordTrigger:
+    last_audio = None
+
     def __init__(self, model: str, threshold: float):
         """`model` is a pretrained openWakeWord name ("hey_jarvis") or a path to a custom .onnx file."""
         import openwakeword.utils
@@ -20,20 +35,20 @@ class WakeWordTrigger:
         if model.endswith(".onnx"):
             path = Path(model)
             if not path.exists():
-                raise SystemExit(f"Wake-word model {model!r} not found.")
+                raise FileNotFoundError(f"Wake-word model {model!r} not found.")
             name = path.stem
         else:
-            openwakeword.utils.download_models([model])  # No-op once cached.
+            openwakeword.utils.download_models([model])  # no-op once cached
             name = model
         self._model = Model(wakeword_models=[model], inference_framework="onnx")
         self.threshold = threshold
         self.phrase = name.replace("_", " ")
 
-    def score(self, block) -> float:
+    def score(self, block: np.ndarray) -> float:
         return max(self._model.predict(block).values())
 
     def reset(self) -> None:
-        # Scores stay high for a few frames after a hit; reset so we don't re-trigger.
+        # Scores stay high for a few frames after a hit; resetting stops a re-trigger.
         self._model.reset()
 
     def wait(self, mic: Microphone) -> None:
@@ -46,16 +61,17 @@ class WakeWordTrigger:
 class MicroWakeWordTrigger:
     """A microWakeWord streaming model (.tflite), like the ones trained for "hey TARS".
 
-    Audio goes through the micro_speech frontend in 10 ms steps; the model scores every few steps
-    and keeps its own streaming state, so a fresh interpreter is the only clean reset.
+    Audio goes through the micro_speech frontend in 10 ms steps. The model scores every few steps and keeps its own
+    streaming state, so a fresh interpreter is the only clean reset.
     """
 
     STEP_BYTES = 160 * 2  # 10 ms of 16-bit audio
+    last_audio = None
 
     def __init__(self, model: str, threshold: float):
         path = Path(model)
         if not path.exists():
-            raise SystemExit(f"Wake-word model {model!r} not found.")
+            raise FileNotFoundError(f"Wake-word model {model!r} not found.")
         self._path = str(path)
         self.threshold = threshold
         self.phrase = path.stem.replace("_", " ")
@@ -87,7 +103,7 @@ class MicroWakeWordTrigger:
             out = (float(out) - zero) * scale
         return float(out)
 
-    def score(self, block) -> float:
+    def score(self, block: np.ndarray) -> float:
         """Highest score produced while consuming this block (0 until enough audio has arrived)."""
         audio = self._pending + np.asarray(block, dtype=np.int16).tobytes()
         best, i = 0.0, 0
@@ -110,14 +126,15 @@ class MicroWakeWordTrigger:
         self.reset()
 
 
-def wake_word_trigger(model: str, threshold: float):
-    """openWakeWord for pretrained names and .onnx files, microWakeWord for .tflite files."""
+def wake_word_trigger(model: str, threshold: float) -> WakeWordTrigger | MicroWakeWordTrigger:
     if model.endswith(".tflite"):
         return MicroWakeWordTrigger(model, threshold)
     return WakeWordTrigger(model, threshold)
 
 
 class PushToTalkTrigger:
+    last_audio = None
+
     def wait(self, mic: Microphone) -> None:
         input("Press Enter, then speak... ")
         mic.clear()

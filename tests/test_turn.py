@@ -1,4 +1,4 @@
-"""The end-of-turn model's ears: the same log-mel features Whisper computes, and the model itself when downloaded."""
+"""The end-of-turn model: the same log-mel features Whisper computes, and the model itself when downloaded."""
 
 from pathlib import Path
 
@@ -27,5 +27,5 @@ def test_the_features_match_whispers_own_extractor():
 
 @pytest.mark.skipif(not MODEL.exists(), reason="end-of-turn model not downloaded yet")
 def test_the_model_gives_a_probability():
-    p = SmartTurn(MODEL).finished(tone_in_noise().tobytes())
+    p = SmartTurn(MODEL).p_finished(tone_in_noise().tobytes())
     assert 0.0 <= p <= 1.0

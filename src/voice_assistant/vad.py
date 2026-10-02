@@ -1,7 +1,4 @@
-"""Is someone talking? Silero VAD (MIT, 2 MB): a small neural speech detector, the usual one in voice assistants.
-
-It holds up in room noise and ignores tones like TARS's own chime, where webrtcvad needed workarounds for both.
-"""
+"""Speech detection with Silero VAD (MIT, 2 MB), a small neural model that holds up in room noise."""
 
 from pathlib import Path
 
@@ -11,7 +8,7 @@ from .audio import SAMPLE_RATE
 from .models import onnx_session
 
 MODEL_URL = "https://github.com/snakers4/silero-vad/raw/v6.2.3/src/silero_vad/data/silero_vad.onnx"
-WINDOW, CONTEXT = 512, 64  # the model's step at 16 kHz, and how much of the previous step it sees again
+WINDOW, CONTEXT = 512, 64  # the model's step at 16 kHz, and how many samples of the previous step it sees again
 
 
 class SileroVAD:
@@ -20,14 +17,13 @@ class SileroVAD:
         self.reset()
 
     def reset(self) -> None:
-        """Forget what came before: each recording is judged on its own."""
         self._state = np.zeros((2, 1, 128), np.float32)
         self._context = np.zeros(CONTEXT, np.float32)
         self._pending = np.zeros(0, np.float32)
         self._last = 0.0
 
     def __call__(self, block: np.ndarray) -> float:
-        """How likely it is that this block of 16 kHz int16 audio is speech (0-1). Feed the stream in order."""
+        """Speech probability (0-1) of a block of 16 kHz int16 audio. Stateful: feed the stream in order."""
         self._pending = np.concatenate([self._pending, block.astype(np.float32) / 32768])
         probs = []
         while len(self._pending) >= WINDOW:

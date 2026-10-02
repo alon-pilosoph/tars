@@ -23,7 +23,12 @@ from scipy.signal import resample_poly
 
 from voice_assistant.__main__ import make_openai_client, make_pipeline
 from voice_assistant.assistant import Assistant
-from voice_assistant.audio import BLOCK_SAMPLES, BLOCK_SECONDS, SAMPLE_RATE
+from voice_assistant.audio import (
+    BLOCK_SAMPLES,
+    BLOCK_SECONDS,
+    SAMPLE_RATE,
+    silent_bytes,
+)
 from voice_assistant.config import RecorderConfig, load_config
 from voice_assistant.recorder import make_recorder
 from voice_assistant.vad import SileroVAD
@@ -39,12 +44,12 @@ QUESTIONS = [
     "What should I cook tonight with eggs and spinach?",
     "Say something that would make a robot laugh.",
 ]
-LEAD_S, TAIL_S = 0.4, 5.0  # room noise before the question, and after it
+LEAD_S, TAIL_S = 0.4, 5.0
 
 
 def speak(root: Path, text: str) -> np.ndarray:
-    """One question, 16 kHz. Deepgram's Aura voices sound like a person to the speech detector; OpenAI's are so tonal
-    that it loses the middle of some sentences."""
+    """Deepgram's Aura voices sound like a person to the speech detector; OpenAI's are so tonal that it loses the
+    middle of some sentences."""
     env = dotenv_values(root / ".env")
     if env.get("DEEPGRAM_API_KEY"):
         r = httpx.post(
@@ -85,7 +90,7 @@ def speech_end(clip: np.ndarray) -> int:
 
 
 class RoomTone:
-    """Real room tone: the quiet ends of the owner's recordings (after their last word), spliced in random order.
+    """Real room tone: the quiet ends of the recorded sentences (after their last word), spliced in random order.
     Plain white noise won't do: after loud speech, the speech detector keeps calling it speech for seconds."""
 
     def __init__(self, root: Path, cfg: RecorderConfig, rng: np.random.Generator):
@@ -140,7 +145,8 @@ class RealtimeMic:
 
 
 class SilentSpeaker:
-    """Takes the reply's audio as fast as it comes and notes when a real speaker would have started playing."""
+    """Takes the reply's audio as fast as it comes and notes when audio.Speaker would have started playing: at its
+    first audible sound, once the prebuffer holds that much."""
 
     def __init__(self, sample_rate: int, prebuffer_s: float):
         self.sample_rate = sample_rate
@@ -150,6 +156,8 @@ class SilentSpeaker:
     def play_pcm_stream(self, chunks, sample_rate, on_first_audio=None) -> None:
         got = 0
         for chunk in chunks:
+            if not got:  # the silence a voice starts on isn't played
+                chunk = chunk[silent_bytes(chunk[: len(chunk) // 2 * 2]) :]
             got += len(chunk)
             if got >= self._prebuffer and self.first_sound is None:
                 self._started(on_first_audio)
@@ -160,12 +168,6 @@ class SilentSpeaker:
         self.first_sound = time.perf_counter()
         if on_first_audio:
             on_first_audio()
-
-    def chime(self, *args, **kwargs) -> None:
-        pass
-
-    def error_tone(self) -> None:
-        print("(error tone)")
 
 
 def apply(cfg, assignment: str) -> None:

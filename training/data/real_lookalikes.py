@@ -9,7 +9,7 @@ Output: DATA/real_lookalikes/<utterance>_<word>.wav
 
 import random
 
-from training.common import Layout, parser
+from training.common import Layout, log, parser
 
 WORDS = {
     "STARS",
@@ -61,7 +61,7 @@ def main():
             hits = [i for i, w in enumerate(words) if w in WORDS or (w in COMMON and rng.random() < 0.15)]
             if hits:
                 lines.append((trans.parent / f"{utt}.flac", words, hits))
-    print(f"{len(lines)} sentences with lookalike words", flush=True)
+    log(f"{len(lines)} sentences with lookalike words")
     kept = 0
     for n, (flac, words, hits) in enumerate(lines):
         audio, sr = sf.read(flac, dtype="float32")
@@ -80,8 +80,8 @@ def main():
                 sf.write(out / f"{flac.stem}_{words[i].lower()}.wav", clip, sr, subtype="PCM_16")
                 kept += 1
         if n % 200 == 0:
-            print(f"{n}/{len(lines)} sentences, {kept} clips", flush=True)
-    print(f"done: {kept} clips", flush=True)
+            log(f"{n}/{len(lines)} sentences, {kept} clips")
+    log(f"done: {kept} clips")
 
 
 if __name__ == "__main__":

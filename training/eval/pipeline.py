@@ -3,12 +3,13 @@ hears the last few seconds. A clip counts as answered only when both say yes. Al
 of test TV and on audiobooks (LibriSpeech test-clean).
 
     DATA/eval/.venv/bin/python -m training.eval.pipeline models/generic/hey_tars.tflite \
-        --checks models/generic/hey_tars_check.json plain --window 3.0 --all-user
+        --checks models/generic/hey_tars_check.json plain --window 3.0 [--user voice_data/<name>/laptop --all-user]
 
 A check is a learned layer (.json, loaded by the assistant's own PhraseVerifier) or "plain" (Vosk with the phrase
 grammar and no learned layer). Every test clip gets 2 s of faint noise before and after it, as in a live stream.
-Test sets: the owner's recordings (test half, or all of them with --all-user for a setup that never trained on
-them) and the held-out OpenAI voices, in 8 conditions. Writes DATA/results/pipeline_<model>_t<threshold>_w<window>.json.
+Test sets: the held-out OpenAI voices and, with --user, the owner's recordings (the test half, or all of them with
+--all-user for a setup that never trained on them), in 8 conditions.
+Writes DATA/results/pipeline_<model>_t<threshold>_w<window>.json.
 """
 
 import json
@@ -17,19 +18,10 @@ from pathlib import Path
 
 import numpy as np
 
-from training.common import REPO, Layout, add_user_arg, bench_tools, parser, test_sets
+from training.audio import CONDITIONS, Interference, conditioned, long_speech, quiet_room, read_wav
+from training.common import REPO, SR, Layout, add_user_arg, log, parser, test_sets
 
-CONDITIONS = [
-    ("clean", None, None, False),
-    ("tv_5dB", "tv", 5, False),
-    ("babble_5dB", "babble", 5, False),
-    ("far_room+tv_10dB", "tv", 10, True),
-    ("tv_15dB", "tv", 15, False),
-    ("babble_15dB", "babble", 15, False),
-    ("tv_10dB", "tv", 10, False),
-    ("babble_10dB", "babble", 10, False),
-]
-MUTE_BLOCKS = 25  # after a wake, 2 s before the next one counts: one phrase is one wake
+MUTE_BLOCKS = 25  # 2 s after a wake before another counts, so one phrase is one wake
 
 
 def make_check(spec: str):
@@ -40,7 +32,7 @@ def make_check(spec: str):
 
 
 def stream(wake, audio, checks, window_s, stop_at_first=True):
-    """Returns how often the wake model fired, and per check how many of those wakes it answered."""
+    """Returns (times the wake model fired, {check: how many of those wakes it answered})."""
     from voice_assistant.audio import BLOCK_SAMPLES
     from voice_assistant.verify import RecentAudio
 
@@ -83,29 +75,21 @@ def main():
     from voice_assistant.wake import MicroWakeWordTrigger
 
     layout = Layout(args.data)
-    wb, _ = bench_tools(layout, args.user)
     sets = test_sets(layout, args.user, args.all_user)
     wake = MicroWakeWordTrigger(str(args.wake_model), args.threshold)
     checks = {c: make_check(c) for c in args.checks}
     rng = np.random.default_rng(0)
-    banks = {n: wb.bank(n) for n in ["tv", "babble"]}
-    rooms = wb.bank("rooms", limit=1000)
     rows = []
-    for cond, noise, snr, room in CONDITIONS:
-        for name, (files, _should) in sets.items():
-            for f in files:
-                c = wb.read_wav(f)
-                c = wb.in_room(c, rooms[rng.integers(len(rooms))]) if room else c
-                c = wb.mix(c, banks[noise][rng.integers(len(banks[noise]))], snr, rng) if noise else c
-                pad = rng.normal(0, 40, 32000).astype(np.int16)  # a quiet room before and after
-                fired, answered = stream(wake, np.concatenate([pad, c, pad]), checks, args.window)
-                rows.append({"cond": cond, "set": name, "fired": fired > 0, **{k: v > 0 for k, v in answered.items()}})
-        print(f"{cond} done", flush=True)
+    log(f"{sum(len(files) for files, _ in sets.values())} clips in {len(CONDITIONS)} conditions")
+    for cond, name, _should, clip in conditioned(sets, Interference(layout.interference), rng):
+        pad = quiet_room(rng)
+        fired, answered = stream(wake, np.concatenate([pad, clip, pad]), checks, args.window)
+        rows.append({"cond": cond, "set": name, "fired": fired > 0, **{k: v > 0 for k, v in answered.items()}})
     long = {}
-    tv = np.concatenate([wb.read_wav(f) for f in sorted((wb.INTERFERENCE / "tv_hour").glob("*.wav"))])
-    for label, audio in [("TV hour", tv), ("audiobooks", wb.long_speech(args.hours))]:
+    tv = np.concatenate([read_wav(f) for f in sorted((layout.interference / "tv_hour").glob("*.wav"))])
+    for label, audio in [("TV hour", tv), ("audiobooks", long_speech(layout.librispeech_test, args.hours))]:
         fired, answered = stream(wake, audio, checks, args.window, stop_at_first=False)
-        hours = len(audio) / 16000 / 3600
+        hours = len(audio) / SR / 3600
         long[label] = {
             "wake model fired /h": round(fired / hours, 1),
             **{k: round(v / hours, 1) for k, v in answered.items()},

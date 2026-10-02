@@ -3,33 +3,34 @@
     voice-assistant --web                 # http://127.0.0.1:8080, this machine only
     voice-assistant --web --host 0.0.0.0  # reachable from the home network (e.g. on the Pi)
 
-It never leaves your network: no accounts, no cloud. Everything it shows and edits lives in voice_data/events/.
-Only requests addressed to this machine by a home-network name are answered (see allowed_host), so a web page
-somewhere else can't read or change anything through the browser of someone at home.
+No accounts, no cloud: everything it shows and edits lives in voice_data/events/. Only requests addressed to this
+machine by a home-network name are answered (see allowed_host), so a page elsewhere can't read or change anything
+through the browser of someone at home.
 """
 
 import ipaddress
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
-from .conversations import FILE, LIST, TARS, ConversationLog
-from .events import NOT_PERSON, PERSON, UNKNOWN, EventLog
-from .versions import INSTALLED, ModelVersions
+from .clustering import MIN_REQUESTS_TO_ENROLL
+from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
+from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, UNKNOWN, EventLog
+from .versions import INSTALLED, FixedPair, ModelVersions
 
 STATIC = Path(__file__).with_name("webui_static")  # the React app in webui/, built with `npm run build`
-HIDDEN = {"embedding"}  # never sent to the browser
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
 class Label(BaseModel):
-    label: Literal["real", "not_real"] | None  # None clears it
+    label: Literal[REAL, NOT_REAL] | None  # None clears it
 
 
 class Assignment(BaseModel):
@@ -38,7 +39,7 @@ class Assignment(BaseModel):
 
 class ClusterName(BaseModel):
     name: str | None = None
-    kind: Literal["person", "not_person", "unknown"] | None = None  # None: what the name implies
+    kind: Literal[PERSON, NOT_PERSON, UNKNOWN] | None = None  # None: what the name implies
 
     @field_validator("name")
     @classmethod
@@ -59,15 +60,11 @@ class Rating(BaseModel):
 
 
 class Correction(BaseModel):
-    text: str | None  # what they really said; None or "" clears it
+    text: str | None  # None or "" clears it
 
 
 class Tick(BaseModel):
     done: bool
-
-
-class Seen(BaseModel):
-    seen: bool = True
 
 
 class UseVersion(BaseModel):
@@ -95,16 +92,42 @@ def same_site(origin: str, host: str, extra: frozenset[str] = frozenset()) -> bo
     return parts.netloc == host or (parts.hostname or "") in LOOPBACK | extra
 
 
+def event(e: dict) -> dict:
+    """What the browser gets for an event: whether it has audio, not where it's stored."""
+    out = {
+        k: e[k]
+        for k in (
+            "id",
+            "ts",
+            "kind",
+            "outcome",
+            "wake_score",
+            "heard",
+            "confidence",
+            "transcript",
+            "follow",
+            "cluster_id",
+            "label",
+            "auto_label",
+            "auto_reason",
+        )
+    }
+    out.update(
+        cluster_pinned=bool(e["cluster_pinned"]),
+        has_wake_audio=bool(e["audio"]),
+        has_request_audio=bool(e["utterance_audio"]),
+    )
+    return out
+
+
 def create_app(
     log: EventLog,
-    recluster=None,
-    versions: ModelVersions | None = None,
-    installed: dict | None = None,
+    recluster: Callable[[], dict] | None = None,
+    pairs: ModelVersions | FixedPair | None = None,
     allowed_hosts: frozenset[str] = frozenset(),
 ) -> FastAPI:
-    """`recluster` re-clusters the voices (see clustering.regroup); None hides the button.
-    `versions`: the wake models' versions, for the Models page (training.household makes new ones); `installed`:
-    what config.toml listens with, shown when there are none.
+    """`recluster` regroups the voices (see clustering.regroup); None hides the button.
+    `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
     `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
@@ -115,16 +138,18 @@ def create_app(
     async def only_from_home(request: Request, call_next):
         host = request.headers.get("host", "")
         if not allowed_host(host, extra):
-            return PlainTextResponse(
-                f"{host!r} isn't a name this machine answers to; add it to [web] allowed_hosts "
-                "in config.toml if it should be",
+            return JSONResponse(
+                {
+                    "detail": f"{host!r} isn't a name this machine answers to; add it to [web] "
+                    "allowed_hosts in config.toml if it should be"
+                },
                 status_code=421,
             )
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("origin")
             cross = request.headers.get("sec-fetch-site") == "cross-site"
             if (origin is not None and not same_site(origin, host, extra)) or (origin is None and cross):
-                return PlainTextResponse("changes can only come from the TARS page itself", status_code=403)
+                return JSONResponse({"detail": "changes can only come from the TARS page itself"}, status_code=403)
         return await call_next(request)
 
     def event_or_404(event_id: int) -> dict:
@@ -165,14 +190,10 @@ def create_app(
         return {**item, "url": url, "preview": url if (item["mime"] or "").startswith("image/") else None}
 
     def public_conversation(conv: dict) -> dict:
-        conv = dict(conv)
-        if "items" in conv:
-            conv["items"] = [public(i) for i in conv["items"]]
-        if "turns" in conv:
-            conv["turns"] = [
-                {**t, "items": [public(i) for i in t["items"]]} if "items" in t else t for t in conv["turns"]
-            ]
-        return conv
+        return {
+            **conv,
+            "turns": [{**t, "items": [public(i) for i in t["items"]]} if "items" in t else t for t in conv["turns"]],
+        }
 
     if (STATIC / "index.html").exists():
 
@@ -192,8 +213,9 @@ def create_app(
             )
 
     @app.get("/api/events")
-    def list_events(kind: Literal["wake", "near_miss"] | None = None, limit: int = Query(500, ge=1, le=100_000)):
-        return [{k: v for k, v in e.items() if k not in HIDDEN} for e in log.events(limit=limit, kind=kind)]
+    def list_events(limit: int | None = Query(None, ge=1)):
+        """Without a `limit`: every event still waiting for an answer, and the newest answered ones."""
+        return [event(e) for e in (log.events(limit) if limit else log.for_review())]
 
     # Before /api/audio/{event_id}/{which}, or "turn" would be taken for an event id.
     @app.get("/api/audio/turn/{turn_id}")
@@ -217,7 +239,7 @@ def create_app(
         with voices:
             if body.cluster_id is not None:
                 cluster_or_404(body.cluster_id)
-            log.assign(event_id, body.cluster_id, pinned=True)  # a person decided: re-clustering keeps it
+            log.assign(event_id, body.cluster_id, pinned=True)
         return {"ok": True}
 
     @app.delete("/api/events/{event_id}")
@@ -227,8 +249,8 @@ def create_app(
         return {"ok": True}
 
     @app.get("/api/conversations")
-    def conversations(limit: int = Query(200, ge=1, le=100_000), turns: bool = True):
-        return [public_conversation(c) for c in convos.conversations(limit=limit, turns=turns)]
+    def conversations():
+        return [public_conversation(c) for c in convos.conversations()]
 
     @app.get("/api/conversations/{conversation_id}")
     def conversation(conversation_id: int):
@@ -246,26 +268,26 @@ def create_app(
 
     @app.post("/api/turns/{turn_id}/rating")
     def rate(turn_id: int, body: Rating):
-        if turn_or_404(turn_id)["role"] != TARS:
+        if turn_or_404(turn_id)["role"] != ROLE_TARS:
             raise HTTPException(400, "only TARS's replies can be rated")
         convos.rate(turn_id, body.rating)
         return {"ok": True}
 
     @app.post("/api/turns/{turn_id}/correction")
     def correct(turn_id: int, body: Correction):
-        if turn_or_404(turn_id)["role"] == TARS:
+        if turn_or_404(turn_id)["role"] == ROLE_TARS:
             raise HTTPException(400, "only what a person said can be corrected")
         convos.correct(turn_id, (body.text or "").strip() or None)
         return {"ok": True}
 
     @app.get("/api/items")
-    def items(person: str | None = None, unseen: bool = False, limit: int = Query(500, ge=1, le=100_000)):
-        return [public(i) for i in convos.items(person=person, unseen=unseen, limit=limit)]
+    def items():
+        return [public(i) for i in convos.items()]
 
     @app.post("/api/items/{item_id}/seen")
-    def seen(item_id: int, body: Seen | None = None):
+    def seen(item_id: int):
         item_or_404(item_id)
-        convos.mark_seen(item_id, body.seen if body else True)  # {"seen": false} is Undo
+        convos.mark_seen(item_id)
         return {"ok": True}
 
     @app.post("/api/items/{item_id}/entries/{index}")
@@ -289,15 +311,16 @@ def create_app(
         item = item_or_404(item_id)
         # Always a download (never rendered as a page on this origin); images still preview in an <img>.
         return FileResponse(
-            file_or_404(convos.item_file(item_id)),
-            filename=item.get("name"),
-            media_type=item.get("mime") or "application/octet-stream",
+            file_or_404(item["file"]),
+            filename=item["file_name"],
+            media_type=item["mime"] or "application/octet-stream",
             headers={"X-Content-Type-Options": "nosniff"},
         )
 
     @app.get("/api/clusters")
     def clusters():
-        return log.clusters()
+        samples = log.samples()
+        return [{**c, "samples": samples.get(c["id"], [])} for c in log.clusters()]
 
     @app.post("/api/clusters")
     def new_cluster(body: ClusterName):
@@ -333,58 +356,43 @@ def create_app(
 
     @app.get("/api/models")
     def models():
-        if versions is None:
-            return {
-                "active": {"version": INSTALLED, **(installed or {})},
-                "results": None,
-                "history": [],
-                "problem": None,
-                "learning": log.learning(),
-            }
-        pair = versions.in_use()
+        if pairs is None:
+            return {"active": None, "results": None, "history": [], "problem": None, "learning": log.learning()}
+        pair, history, problem = pairs.overview() if isinstance(pairs, ModelVersions) else (pairs.in_use(), [], None)
         return {
             "active": {
                 "version": pair.version,
                 "wake_model": pair.wake_model,
                 "threshold": pair.threshold,
-                "check_model": pair.check_model,
+                "check_model": pair.check_model or None,
                 "check_window_s": pair.check_window_s,
+                "replaced": pair.replaced,
             },
             "results": pair.results,
-            "history": versions.versions(),
-            "problem": versions.problem(),
+            "history": history,
+            "problem": problem,
             "learning": log.learning(since=None if pair.version == INSTALLED else pair.ts),
         }
 
     @app.post("/api/models/use")
     def use_version(body: UseVersion):
-        if versions is None:
+        if not isinstance(pairs, ModelVersions):
             raise HTTPException(404, "no such version")
         try:
-            versions.use(body.version)
+            pairs.use(body.version)
         except KeyError:
             raise HTTPException(404, "no such version, or it can't be loaded") from None
         return {"ok": True}
 
     @app.get("/api/status")
     def status():
-        return {**log.counts(), "clustering": recluster is not None, "unseen_items": convos.unseen_count()}
+        return {"clustering": recluster is not None, "enroll_at": MIN_REQUESTS_TO_ENROLL}
 
     return app
 
 
-def serve(
-    log: EventLog,
-    host: str,
-    port: int,
-    recluster=None,
-    versions: ModelVersions | None = None,
-    installed: dict | None = None,
-    allowed_hosts: frozenset[str] = frozenset(),
-) -> None:
+def serve(log: EventLog, host: str, port: int, **options) -> None:
     import uvicorn
 
     print(f"TARS web UI on http://{host}:{port}  (Ctrl+C to stop)")
-    uvicorn.run(
-        create_app(log, recluster, versions, installed, allowed_hosts), host=host, port=port, log_level="warning"
-    )
+    uvicorn.run(create_app(log, **options), host=host, port=port, log_level="warning")

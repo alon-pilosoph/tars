@@ -3,6 +3,7 @@
 import json
 import types
 from contextlib import contextmanager
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -16,12 +17,10 @@ from voice_assistant.events import EventLog
 from voice_assistant.stt import BufferedSession
 from voice_assistant.webui import create_app
 
-AUDIO = np.zeros(SAMPLE_RATE, np.int16)  # a second of silence: stands in for any recording
+AUDIO = np.zeros(SAMPLE_RATE, np.int16)
 
 
 class FakeMic:
-    """Replays a list of 80 ms blocks."""
-
     def __init__(self, blocks=()):
         self.blocks = iter(blocks)
 
@@ -34,8 +33,6 @@ class FakeMic:
 
 
 class SilentMic:
-    """`n` blocks of silence, for the trigger (which clears the queue first)."""
-
     def __init__(self, n):
         self.blocks = iter(np.zeros((n, BLOCK_SAMPLES), np.int16))
 
@@ -47,7 +44,7 @@ class SilentMic:
 
 
 class FakeTrigger:
-    """A wake-word model that fires on the given block numbers."""
+    """A wake-word model that fires on the given 1-based block numbers."""
 
     phrase, threshold = "hey tars", 0.9
 
@@ -63,14 +60,14 @@ class FakeTrigger:
 
 
 class FakeSpeaker:
-    def __init__(self):
-        self.sounds = []
+    """Plays nothing: a test that wants to hear what was said replaces play_pcm_stream."""
 
-    def chime(self, **kw):
-        self.sounds.append(("chime", kw.get("freq", 880.0)))
 
-    def error_tone(self):
-        self.sounds.append(("error", None))
+def raising(error: Exception):
+    def fail(*args, **kwargs):
+        raise error
+
+    return fail
 
 
 QUIET_RNG = np.random.default_rng(0)
@@ -78,11 +75,6 @@ QUIET_RNG = np.random.default_rng(0)
 
 def quiet_block(rng=QUIET_RNG):
     return rng.normal(0, 30, BLOCK_SAMPLES).astype(np.int16)
-
-
-def chime_block(freq=880.0):
-    t = np.arange(BLOCK_SAMPLES) / SAMPLE_RATE
-    return (0.3 * np.sin(2 * np.pi * freq * t) * 32767).astype(np.int16)
 
 
 def fake_openai_chat(reply_for, calls_for=None, search_for=None):
@@ -210,12 +202,16 @@ def make_assistant(speaker, utterances, transcripts, replies=(), journal=None):
     voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
     recorder = ScriptedRecorder(utterances)
+    trigger = types.SimpleNamespace(last_audio=None)
     assistant = Assistant(
-        FakeMic(), speaker, None, recorder, ScriptedTranscriber(transcripts), brain, voice, journal=journal
+        FakeMic(), speaker, trigger, recorder, ScriptedTranscriber(transcripts), brain, voice, journal=journal
     )
     return assistant, brain
 
 
 def speech(seconds=1.0) -> bytes:
-    """What the recorder hands over: 16-bit mono PCM."""
     return b"\0\0" * int(SAMPLE_RATE * seconds)
+
+
+GENERIC = Path(__file__).parents[1] / "models" / "generic"  # the installed wake pair
+needs_models = pytest.mark.skipif(not (GENERIC / "hey_tars.tflite").exists(), reason="no generic wake model")

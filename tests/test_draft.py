@@ -1,5 +1,5 @@
-"""Start early, speak late: an answer prepared in a pause is used when they're done, and thrown away without a
-trace if they carry on talking."""
+"""An answer prepared in a pause is used once the speaker is done, and thrown away without a trace if they carry on
+talking."""
 
 import threading
 

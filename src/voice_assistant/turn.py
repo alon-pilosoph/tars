@@ -1,9 +1,6 @@
-"""Has the speaker finished, or only paused? A small local model listens to how the last words sounded.
+"""End-of-turn detection from audio with Pipecat's Smart Turn v3 (BSD-2, Whisper Tiny encoder plus a small head, 8 MB).
 
-A fixed silence wait has to be long enough for someone collecting their thoughts mid-sentence, so every reply waits
-that long. Pipecat's Smart Turn v3 (BSD-2, a Whisper Tiny encoder with a small head, 8 MB) hears the difference
-between a finished sentence and a trailing "and, um": after a short silence TARS asks it, and only keeps waiting
-when the model thinks there's more coming.
+After a short silence TARS asks whether the speaker finished or only paused, and keeps waiting only if more is coming.
 """
 
 from pathlib import Path
@@ -18,8 +15,8 @@ MODEL_URL = (
     "f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx"
 )
 WINDOW_S = 8  # the model hears the last 8 seconds, zero-padded in front
-# Whisper's log-mel front end, which the model was trained on. It's what transformers' WhisperFeatureExtractor
-# computes (tests/test_turn.py checks against its output), written out because transformers is too big for a Pi.
+# Whisper's log-mel front end, which the model was trained on. Matches transformers' WhisperFeatureExtractor
+# (tests/test_turn.py checks this); reimplemented because transformers is too big for a Pi.
 N_FFT, HOP, N_MELS = 400, 160, 80
 
 
@@ -53,7 +50,7 @@ _WINDOW = np.hanning(N_FFT + 1)[:-1]  # periodic Hann, as torch.hann_window
 def features(audio: np.ndarray) -> np.ndarray:
     """(1, 80, 800) float32 log-mel features of the last 8 s of 16 kHz audio."""
     n = WINDOW_S * SAMPLE_RATE
-    x = audio.astype(np.float32)  # the scale doesn't matter: it's normalized below
+    x = audio.astype(np.float32)
     x = x[-n:] if len(x) > n else np.pad(x, (n - len(x), 0))
     x = (x - x.mean()) / np.sqrt(x.var() + 1e-7)
     padded = np.pad(x, N_FFT // 2, mode="reflect")
@@ -69,7 +66,7 @@ class SmartTurn:
     def __init__(self, model_path: Path):
         self._session = onnx_session(model_path, MODEL_URL, "the end-of-turn model")
 
-    def finished(self, pcm: bytes) -> float:
+    def p_finished(self, pcm: bytes) -> float:
         """How likely it is that the speaker has finished (0-1), from 16 kHz mono int16 audio of what they said."""
         audio = np.frombuffer(pcm, dtype=np.int16)
         return float(self._session.run(None, {"input_features": features(audio)})[0].ravel()[0])

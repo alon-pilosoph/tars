@@ -1,12 +1,12 @@
-"""Does TARS cut you off? The end of the turn, today's way (Silero VAD + Smart Turn) against Deepgram's Flux.
+"""Does TARS cut you off? The end of the turn, Deepgram's Flux against the local fallback (Silero VAD + Smart Turn).
 
-    uv run python tools/turn_bench.py                     # both, on the owner's recorded sentences
+    uv run python tools/turn_bench.py                     # both, on the recorded sentences
 
-The owner's own sentences (voice_data/*/*/speech/), each played twice: whole, to see how soon each way knows the
-turn is over; and with a mid-sentence pause (after "and", "the", "with"...; 0.5, 0.8 or 1.2 s of real room tone)
-where the sentence obviously isn't finished, to count the times each way ends the turn inside it: a cut-off. Word
-times come from Deepgram once, cached in voice_data/bench/turns/. Flux hears every clip streamed at real-time pace,
-several at once; a run costs about 10 cents.
+The household's own recorded sentences (voice_data/<person>/<mic>/speech/), each played twice: whole, to see how
+soon each way knows the turn is over; and with a mid-sentence pause (after "and", "the", "with"...; 0.5, 0.8 or
+1.2 s of real room tone) where the sentence obviously isn't finished, to count the times each way ends the turn
+inside it: a cut-off. Word times come from Deepgram once, cached in voice_data/bench/turns/. Flux hears every clip
+streamed at real-time pace, several at once; a run costs about 10 cents.
 """
 
 import argparse
@@ -22,15 +22,15 @@ from pathlib import Path
 import httpx
 import numpy as np
 import soundfile as sf
-from dotenv import dotenv_values
 
 sys.path.insert(0, str(Path(__file__).parent))
 from latency_bench import RoomTone
 
+from voice_assistant.__main__ import api_key
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
-from voice_assistant.config import STTConfig, load_config
+from voice_assistant.config import load_config
 from voice_assistant.recorder import BACKSTOP_S, make_recorder
-from voice_assistant.stt import FluxTranscriber
+from voice_assistant.stt import FLUX_EAGER_EOT, FLUX_EOT, FLUX_TIMEOUT_MS, FluxTranscriber
 
 REPO = Path(__file__).parents[1]
 UNFINISHED = {
@@ -90,13 +90,14 @@ def clips(root: Path, key: str, room: RoomTone) -> list[Clip]:
     out = []
     for path in sorted((root / "voice_data").glob("*/*/speech/*.wav")):
         pcm = sf.read(path, dtype="int16")[0]
-        ws = words(path, key, root / "voice_data/bench/turns" / f"{path.parent.parent.parent.name}-{path.stem}.json")
+        person, mic = path.parents[2].name, path.parents[1].name  # the same person can have a session per mic
+        ws = words(path, key, root / "voice_data/bench/turns" / f"{person}-{mic}-{path.stem}.json")
         if len(ws) < 5:
             continue
         lead = room(int(LEAD_S * SAMPLE_RATE))
         first, last = ws[0]["start"], ws[-1]["end"]
         body = pcm[max(0, int((first - EDGE_S) * SAMPLE_RATE)) : int((last + EDGE_S) * SAMPLE_RATE)]
-        name = f"{path.parent.parent.parent.name}/{path.stem}"
+        name = f"{person}/{mic}/{path.stem}"
         out.append(
             Clip(
                 f"{name} whole",
@@ -105,7 +106,6 @@ def clips(root: Path, key: str, room: RoomTone) -> list[Clip]:
                 None,
             )
         )
-        # The unfinished word nearest the middle, never the first two or last two words.
         middle = [i for i in range(2, len(ws) - 2) if ws[i]["word"].lower().strip(".,?!") in UNFINISHED]
         if not middle:
             continue
@@ -146,7 +146,7 @@ class ListMic:
 
 
 def local_end(recorder, clip: Clip) -> float | None:
-    """When today's recorder stops listening, in seconds from the clip's start (None: it never did)."""
+    """When the local recorder stops listening, in seconds from the clip's start (None: it never did)."""
     mic = ListMic(clip.audio)
     try:
         pcm = recorder.record(mic, start_timeout_s=3.0)
@@ -156,11 +156,11 @@ def local_end(recorder, clip: Clip) -> float | None:
 
 
 def flux_end(key: str, clip: Clip) -> dict:
-    """Stream the clip to Flux at real-time pace, with the assistant's settings. For each event, where in the audio
-    Flux was (its audio_window_end) and when it arrived (wall clock), both from the clip's start."""
+    """Streams the clip to Flux at real-time pace with the assistant's settings. Records each event's arrival time
+    and, for EndOfTurn, where in the audio Flux was (audio_window_end), both from the clip's start."""
     from websockets.sync.client import connect
 
-    url = FluxTranscriber(key, STTConfig())._url
+    url = FluxTranscriber(key)._url
     seen: dict = {"eager": [], "resumed": [], "end": None, "end_audio": None, "error": None}
     try:
         with connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=10) as ws:
@@ -168,8 +168,9 @@ def flux_end(key: str, clip: Clip) -> dict:
 
             def feed():
                 for n, i in enumerate(range(0, len(clip.audio), BLOCK_SAMPLES)):
-                    wait = t0 + (n + 1) * BLOCK_SAMPLES / SAMPLE_RATE - time.perf_counter()  # a block is sent once
-                    if wait > 0:  # it's all been heard
+                    # A block goes out once all of it has been "heard", as from a mic.
+                    wait = t0 + (n + 1) * BLOCK_SAMPLES / SAMPLE_RATE - time.perf_counter()
+                    if wait > 0:
                         time.sleep(wait)
                     try:
                         ws.send(clip.audio[i : i + BLOCK_SAMPLES].tobytes())
@@ -200,7 +201,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--skip-local", action="store_true")
     args = p.parse_args()
-    key = dotenv_values(REPO / ".env")["DEEPGRAM_API_KEY"]
+    key = api_key(REPO / ".env", "DEEPGRAM_API_KEY")
     cfg = load_config(REPO / "config.toml")
     room = RoomTone(REPO, cfg.recorder, np.random.default_rng(0))
     todo = clips(REPO, key, room)
@@ -232,7 +233,7 @@ def main():
     if not args.skip_local:
         recorder = make_recorder(cfg, REPO)
         report(
-            f"Today: Silero + Smart Turn (end_silence_s {cfg.recorder.end_silence_s}, max_pause_s "
+            f"Local fallback: Silero + Smart Turn (end_silence_s {cfg.recorder.end_silence_s}, max_pause_s "
             f"{cfg.recorder.max_pause_s})",
             {c.name: local_end(recorder, c) for c in todo},
         )
@@ -253,7 +254,12 @@ def main():
         ends[n] = min(r["end"], backstop) if r["end"] is not None else backstop
         cut_at[n] = r["end_audio"] if r["end_audio"] is not None else ends[n]
     backstopped = sum(1 for c in whole if c.name in ends and ends[c.name] >= c.speech_end_s + BACKSTOP_S)
-    report("Flux (the assistant's settings: eot_threshold 0.7, eager 0.5, timeout 3 s)", ends, cut_at)
+    report(
+        f"Flux (the assistant's settings: eot_threshold {FLUX_EOT}, eager {FLUX_EAGER_EOT}, "
+        f"timeout {FLUX_TIMEOUT_MS / 1000:g} s)",
+        ends,
+        cut_at,
+    )
     print(f"  ended by the {BACKSTOP_S} s backstop instead of Flux: {backstopped}/{len(whole)} whole sentences")
     eager = []
     for c in whole:

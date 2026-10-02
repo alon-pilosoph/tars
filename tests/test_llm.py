@@ -1,13 +1,18 @@
+"""The brain: skipping overheard chatter, memory, the send tool, failures, and Cerebras handing turns to OpenAI."""
+
 import types
 
 import pytest
+from openai import OpenAIError
 
 from voice_assistant import llm
 from voice_assistant.config import LLMConfig
 from voice_assistant.conversations import SentItem
 from voice_assistant.llm import (
+    LOOK_UP,
     MAX_TOOL_ROUNDS,
     SKIP,
+    CerebrasChat,
     OpenAIChat,
     ReplyFailed,
     split_skip,
@@ -189,11 +194,16 @@ def test_send_runs_the_tool_then_speaks_the_confirmation():
     first, second = client.requests
     assert {"type": "web_search"} in first["tools"] and first["store"] is False
     assert second["input"][-1] == {"type": "function_call_output", "call_id": "call_1_0", "output": "sent"}
-    assert brain._history[-1] == {"role": "assistant", "content": "Sent it. It's on the TARS page."}
+    "".join(brain.stream_reply("thanks"))
+    assert client.requests[2]["input"][:3] == [  # the exchange is remembered, its tool calls aren't
+        {"role": "user", "content": "send me a pasta recipe"},
+        {"role": "assistant", "content": "Sent it. It's on the TARS page."},
+        {"role": "user", "content": "thanks"},
+    ]
 
 
 def test_a_bad_send_is_explained_to_the_model_not_sent():
-    bad = {**RECIPE, "url": "example.com/pasta"}  # not a full URL
+    bad = {**RECIPE, "url": "example.com/pasta"}
     client = fake_openai_chat(lambda m: "Found nothing.", lambda m: [] if m[-1].get("type") else [("send", bad)])
     brain = OpenAIChat(client, LLMConfig())
     "".join(brain.stream_reply("send me a recipe"))
@@ -280,3 +290,138 @@ def test_tars_only_sends_things_when_they_can_be_kept(tmp_path, log_events, type
     cfg = load_config(tmp_path / "none.toml")
     cfg.learning.log_events = log_events
     assert brain_config(cfg, typed).send is sends
+
+
+class FakeStream:
+    """A streamed chat completion that can be closed, like the SDK's."""
+
+    def __init__(self, text):
+        self.pieces, self.closed = [text[:3], text[3:]], False
+
+    def __iter__(self):
+        for piece in self.pieces:
+            yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content=piece))])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+
+
+def fake_cerebras(reply_for):
+    """A Chat Completions client: each request streams `reply_for(messages)`, or raises it if it's an error."""
+    requests, streams = [], []
+
+    def create(**kw):
+        requests.append(kw)
+        reply = reply_for(kw["messages"])
+        if isinstance(reply, Exception):
+            raise reply
+        streams.append(FakeStream(reply))
+        return streams[-1]
+
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    client.requests, client.streams = requests, streams
+    return client
+
+
+def cerebras_brain(quick_reply, openai_reply="From OpenAI.", **cfg):
+    openai, cerebras = fake_openai_chat(lambda m: openai_reply), fake_cerebras(quick_reply)
+    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen", **cfg), cerebras)
+    return brain, openai, cerebras
+
+
+def seen_by_cerebras(cerebras) -> list[str]:
+    """The conversation Cerebras was given on its last request, without the system prompt."""
+    return [m["content"] for m in cerebras.requests[-1]["messages"][1:]]
+
+
+def test_cerebras_answers_and_openai_is_never_asked():
+    brain, openai, cerebras = cerebras_brain(lambda m: "Canberra.")
+    assert "".join(brain.stream_reply("capital of Australia?")) == "Canberra."
+    assert openai.requests == [] and cerebras.requests[0]["model"] == "qwen"
+    "".join(brain.stream_reply("and of Canada?"))
+    assert seen_by_cerebras(cerebras) == ["capital of Australia?", "Canberra.", "and of Canada?"]
+
+
+def test_a_turn_that_needs_the_web_is_openais_with_its_tools_and_both_remember_it():
+    brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP if "weather" in m[-1]["content"] else "Noted.")
+    assert "".join(brain.stream_reply("what's the weather?")) == "From OpenAI."
+    assert {"type": "web_search"} in openai.requests[0]["tools"] and cerebras.streams[0].closed
+    "".join(brain.stream_reply("and tomorrow?"))
+    # No <look-up> in the conversation.
+    assert seen_by_cerebras(cerebras) == ["what's the weather?", "From OpenAI.", "and tomorrow?"]
+
+
+def test_when_cerebras_fails_openai_answers():
+    brain, _, _ = cerebras_brain(lambda m: OpenAIError("429 too many requests"))
+    assert "".join(brain.stream_reply("hi")) == "From OpenAI."
+
+
+def test_when_cerebras_says_nothing_openai_answers():
+    brain, _, _ = cerebras_brain(lambda m: "")
+    assert "".join(brain.stream_reply("hi")) == "From OpenAI."
+
+
+class BreaksAfterAWord(FakeStream):
+    def __iter__(self):
+        yield from list(super().__iter__())[:1]
+        raise OpenAIError("connection reset")
+
+
+def test_cerebras_failing_after_it_started_talking_is_an_error_not_a_second_answer():
+    brain, openai, cerebras = cerebras_brain(lambda m: "Canberra is the capital.")
+    cerebras.chat.completions.create = lambda **kw: BreaksAfterAWord("Canberra is the capital.")
+    reply = brain.stream_reply("capital of Australia?")
+    assert next(reply) == "Can"
+    with pytest.raises(OpenAIError, match="connection reset"):
+        list(reply)
+    assert openai.requests == []  # half an answer isn't followed by a different whole one
+
+
+def test_an_empty_reply_is_an_error_not_silence():
+    brain = OpenAIChat(fake_openai_chat(lambda m: ""), LLMConfig(web_search=False, send=False))
+    with pytest.raises(ReplyFailed):
+        "".join(brain.stream_reply("hi"))
+
+
+def test_cerebras_is_only_told_to_hand_off_what_openai_can_do():
+    brain, _, cerebras = cerebras_brain(lambda m: "ok", web_search=False, send=False)
+    "".join(brain.stream_reply("hi"))
+    assert LOOK_UP not in cerebras.requests[0]["messages"][0]["content"]
+    brain, _, cerebras = cerebras_brain(lambda m: "ok", web_search=False)
+    "".join(brain.stream_reply("hi"))
+    system = cerebras.requests[0]["messages"][0]["content"]
+    assert LOOK_UP in system and "TARS page" in system and "weather" not in system
+
+
+def test_an_interrupted_cerebras_reply_stays_interrupted():
+    brain, openai, _ = cerebras_brain(lambda m: "A long answer.")
+    reply = brain.stream_reply("hi")
+    brain.interrupt()
+    with pytest.raises(ReplyFailed):
+        list(reply)
+    assert openai.requests == []
+
+
+def test_a_hand_off_after_a_sentence_says_the_sentence_then_openai_answers_and_both_are_remembered():
+    brain, openai, cerebras = cerebras_brain(lambda m: f"I can't check that. {LOOK_UP}" if len(m) == 2 else "Sure.")
+    assert "".join(brain.stream_reply("who won last night?")) == "I can't check that. From OpenAI."
+    assert asked(openai) == ["who won last night?", "I can't check that."]  # it carries on from what was said
+    "".join(brain.stream_reply("thanks"))
+    assert seen_by_cerebras(cerebras) == ["who won last night?", "I can't check that. From OpenAI.", "thanks"]
+
+
+@pytest.mark.parametrize("text", ["3 < 5, obviously.", "It ends in <", "<look", "A <b>bold</b> claim."])
+def test_text_that_only_looks_like_the_start_of_a_hand_off_is_said_whole(text):
+    assert "".join(llm._UpTo(iter(text), LOOK_UP)) == text  # one character at a time
+
+
+def test_both_models_are_told_the_date_and_time_here(monkeypatch):
+    now = "It's Tuesday, September 29, 2026, 11:26 PM here (IDT, UTC+03:00)."
+    monkeypatch.setattr(llm, "local_time", lambda: now)
+    brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP)
+    "".join(brain.stream_reply("what's on tonight?"))
+    assert cerebras.requests[0]["messages"][0]["content"].endswith(now)
+    assert openai.requests[0]["instructions"].endswith(now)

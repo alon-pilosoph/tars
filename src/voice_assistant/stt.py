@@ -1,46 +1,57 @@
 """Speech to text: streamed to Deepgram while you talk, with OpenAI transcribing the same recording if that fails.
 With Flux, Deepgram also decides when you've finished talking.
 
-A session starts when TARS starts listening, before anyone speaks, so a streaming service can connect ahead; it's
-fed the audio as it's recorded, asked for the words so far (at a pause, and at the end), and closed.
+A session starts when TARS starts listening, before anyone speaks, so a streaming service can connect ahead. It's fed
+the audio as it's recorded, asked for the words so far (at a pause, and at the end), and closed.
 """
 
-import io
 import json
 import queue
 import threading
-import wave
 from collections.abc import Callable
-from typing import Protocol
+from enum import StrEnum
+from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlencode
 
-from openai import OpenAI
-
-from .audio import SAMPLE_RATE
+from .audio import SAMPLE_RATE, wav_bytes
 from .config import STTConfig
+
+if TYPE_CHECKING:
+    from openai import OpenAI
 
 DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
 FLUX_URL = "wss://api.deepgram.com/v2/listen"
-# Where a turn stands, for a service that decides when the speaker is done (FluxSession.turn_state).
-LISTENING, MAYBE_DONE, DONE, FAILED = "listening", "maybe_done", "done", "failed"
-# Flux: how sure it must be that the turn is over, and how sure for an early "maybe" (a draft starts there).
+CONNECT_S = 5.0
+# How sure Flux must be that the turn is over, and how sure for an early "maybe" (where a draft starts).
 FLUX_EOT, FLUX_EAGER_EOT = 0.7, 0.5
 # Flux ends a turn after this much silence whatever it thinks; the recorder's backstop is a little sooner.
 FLUX_TIMEOUT_MS = 3000
 # Once the recording is over, Flux sends the words it has and closes within about a quarter second.
 FLUX_LAST_WORDS_S = 1.0
-# How long to wait for the last words once asked for them.
 FINAL_TIMEOUT_S = 5.0
 # Deepgram closes a stream that gets no audio for 10 s; while nobody speaks, this keeps it open.
 KEEPALIVE_S = 4.0
 
 
+class TurnState(StrEnum):
+    LISTENING = "listening"
+    MAYBE_DONE = "maybe_done"  # worth starting an answer
+    DONE = "done"
+    FAILED = "failed"  # the service is gone: the recorder's own rules take over
+
+
 class Session(Protocol):
+    # Where the turn stands, for a service that decides when the speaker is done; None for one that doesn't.
+    turn_state: Callable[[], TurnState] | None
+
     def feed(self, pcm: bytes) -> None:
         """16 kHz mono int16 audio, as it's recorded."""
 
     def transcript(self) -> str:
-        """The words in everything fed so far. More audio may follow."""
+        """The words in everything fed so far. More audio may follow until finish()."""
+
+    def finish(self) -> None:
+        """The recording is over. May do nothing."""
 
     def close(self) -> None: ...
 
@@ -49,18 +60,16 @@ class Transcriber(Protocol):
     def session(self) -> Session: ...
 
 
-def pcm_to_wav(pcm: bytes) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(SAMPLE_RATE)
-        wav.writeframes(pcm)
-    return buf.getvalue()
+def deepgram_connect(url: str, key: str, open_timeout: float = CONNECT_S, **kwargs):
+    from websockets.sync.client import connect
+
+    return connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=open_timeout, **kwargs)
 
 
 class BufferedSession:
-    """For services that take a finished recording: keep the audio, send it all when asked."""
+    """For services that take a finished recording: keeps the audio and sends it all when asked."""
+
+    turn_state = None
 
     def __init__(self, transcribe: Callable[[bytes], str]):
         self._transcribe = transcribe
@@ -72,12 +81,15 @@ class BufferedSession:
     def transcript(self) -> str:
         return self._transcribe(bytes(self._audio))
 
+    def finish(self) -> None:
+        pass
+
     def close(self) -> None:
         self._audio.clear()
 
 
 class OpenAITranscriber:
-    def __init__(self, client: OpenAI, cfg: STTConfig):
+    def __init__(self, client: "OpenAI", cfg: STTConfig):
         self._client = client
         self._cfg = cfg
 
@@ -87,15 +99,15 @@ class OpenAITranscriber:
     def _transcribe(self, pcm: bytes) -> str:
         result = self._client.audio.transcriptions.create(
             model=self._cfg.model,
-            file=("speech.wav", pcm_to_wav(pcm), "audio/wav"),
+            file=("speech.wav", wav_bytes(pcm), "audio/wav"),
             language=self._cfg.language or None,
         )
         return result.text.strip()
 
 
 class DeepgramTranscriber:
-    """Deepgram's streaming speech-to-text: the words are recognized while you talk, so the transcript is ready a
-    moment after you stop instead of after an upload and a pass over the whole recording."""
+    """Deepgram's streaming speech to text, recognized while you talk, so the transcript is ready a moment after
+    you stop."""
 
     def __init__(self, api_key: str, cfg: STTConfig):
         self._key = api_key
@@ -122,6 +134,8 @@ class DeepgramSession:
     result marked from_finalize, so transcript() waits for the answer to its own. Anything that goes wrong (the
     connection, a timeout) raises there, so the caller can fall back.
     """
+
+    turn_state = None
 
     def __init__(self, url: str, key: str):
         self._outbox: queue.Queue[bytes | str | None] = queue.Queue()
@@ -150,14 +164,15 @@ class DeepgramSession:
                 raise self._error or TimeoutError("Deepgram didn't finish the transcript in time")
             return " ".join(self._final).strip()
 
+    def finish(self) -> None:
+        pass  # each transcript() flushes what Deepgram has heard
+
     def close(self) -> None:
         self._outbox.put(None)
 
     def _run(self, url: str, key: str) -> None:
         try:
-            from websockets.sync.client import connect
-
-            with connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=5) as ws:
+            with deepgram_connect(url, key) as ws:
                 threading.Thread(target=self._receive, args=(ws,), daemon=True, name="deepgram-receive").start()
                 while True:
                     try:
@@ -197,9 +212,9 @@ class DeepgramSession:
 
 class FluxTranscriber:
     """Deepgram's Flux: transcribes while you talk and also decides when you're done, from how you sound and what
-    you've said (after "and the...", you clearly aren't)."""
+    you've said."""
 
-    def __init__(self, api_key: str, cfg: STTConfig):
+    def __init__(self, api_key: str):
         self._key = api_key
         params = {
             "model": "flux-general-en",
@@ -216,15 +231,14 @@ class FluxTranscriber:
 
 
 class FluxSession:
-    """Connects in the background as soon as it's made, like DeepgramSession, and follows the turn as Flux calls it:
-    turn_state() is LISTENING, MAYBE_DONE (worth starting an answer), DONE, or FAILED (the recorder's own rules take
-    over). Flux closes a connection that's sent a KeepAlive, so none is sent; it keeps an idle one open well past the
-    few seconds TARS waits for a follow-up."""
+    """Connects in the background as soon as it's made, like DeepgramSession, and follows the turn as Flux calls it
+    (turn_state()). Flux closes a connection that's sent a KeepAlive, so none is sent; it keeps an idle one open
+    well past the few seconds TARS waits for a follow-up."""
 
     def __init__(self, url: str, key: str):
         self._outbox: queue.Queue[bytes | None] = queue.Queue()
         self._changed = threading.Condition()
-        self._state, self._text = LISTENING, ""
+        self._state, self._text = TurnState.LISTENING, ""
         self._error: Exception | None = None
         self._fed = self._finished = self._closed = False
         threading.Thread(target=self._run, args=(url, key), daemon=True, name="flux").start()
@@ -233,9 +247,9 @@ class FluxSession:
         self._fed = True
         self._outbox.put(pcm)
 
-    def turn_state(self) -> str:
+    def turn_state(self) -> TurnState:
         with self._changed:
-            return FAILED if self._error is not None and self._state != DONE else self._state
+            return TurnState.FAILED if self._failed() else self._state
 
     def finish(self) -> None:
         """The recording is over, whoever decided it: Flux gets no more audio, sends what it heard and closes."""
@@ -245,28 +259,30 @@ class FluxSession:
 
     def transcript(self) -> str:
         """The words so far, at once, until the recording is finished; then the turn's last words, which Flux sends
-        within a moment. "" if nobody said anything; raises only if Flux failed and heard nothing."""
+        within a moment. "" if nobody said anything. Raises if Flux failed before the turn was over, even with some
+        words in: they may be only the start, and the backup has the whole recording."""
         if not self._fed:
             return ""
         with self._changed:
-            if self._finished and self._state != DONE:
+            if self._finished and self._state != TurnState.DONE:
                 self._changed.wait_for(
-                    lambda: self._state == DONE or self._closed or self._error is not None, FLUX_LAST_WORDS_S
+                    lambda: self._state == TurnState.DONE or self._closed or self._error is not None, FLUX_LAST_WORDS_S
                 )
-            if self._text or (self._closed and self._error is None):
+            if self._failed():
+                raise self._error
+            if self._text or self._closed or not self._finished:
                 return self._text.strip()
-            if not self._finished and self._error is None:
-                return ""  # a draft asking before any words came in
-            raise self._error or TimeoutError("Flux didn't send the last words in time")
+            raise TimeoutError("Flux didn't send the last words in time")
+
+    def _failed(self) -> bool:
+        return self._error is not None and self._state != TurnState.DONE
 
     def close(self) -> None:
         self._outbox.put(None)
 
     def _run(self, url: str, key: str) -> None:
         try:
-            from websockets.sync.client import connect
-
-            with connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=5) as ws:
+            with deepgram_connect(url, key) as ws:
                 threading.Thread(target=self._receive, args=(ws,), daemon=True, name="flux-receive").start()
                 while (item := self._outbox.get()) is not None:
                     ws.send(item)
@@ -281,16 +297,16 @@ class FluxSession:
                 if event.get("type") != "TurnInfo":
                     continue
                 with self._changed:
-                    if self._state == DONE:
+                    if self._state == TurnState.DONE:
                         continue  # the turn is over: whatever comes next belongs to someone else's turn
                     self._text = event.get("transcript") or self._text
                     kind = event.get("event")
                     if kind == "EagerEndOfTurn":
-                        self._state = MAYBE_DONE
+                        self._state = TurnState.MAYBE_DONE
                     elif kind == "TurnResumed":
-                        self._state = LISTENING
+                        self._state = TurnState.LISTENING
                     elif kind == "EndOfTurn":
-                        self._state = DONE
+                        self._state = TurnState.DONE
                     self._changed.notify_all()
             with self._changed:
                 self._closed = True
@@ -305,8 +321,8 @@ class FluxSession:
 
 
 class FallbackTranscriber:
-    """A streaming transcriber with a backup: the audio is also kept, and if the stream fails, the backup
-    transcribes the recording instead."""
+    """A streaming transcriber whose audio is also kept, so a backup can transcribe the recording if the stream
+    fails."""
 
     def __init__(self, transcriber: Transcriber, backup: Transcriber):
         self._transcriber, self._backup = transcriber, backup
@@ -320,11 +336,10 @@ class _FallbackSession:
         self._main, self._backup = main, backup
         # A main session that decides when the turn is over keeps doing so; if it fails, the recorder's own
         # silence rule ends the turn and the backup transcribes.
-        self.turn_state = getattr(main, "turn_state", None)
+        self.turn_state = main.turn_state
 
     def finish(self) -> None:
-        if finish := getattr(self._main, "finish", None):
-            finish()
+        self._main.finish()
 
     def feed(self, pcm: bytes) -> None:
         self._main.feed(pcm)

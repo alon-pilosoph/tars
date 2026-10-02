@@ -1,6 +1,19 @@
+"""Settings from config.toml, one dataclass per section. A setting that can't work stops the assistant at startup
+with one line naming it, rather than failing on the first request."""
+
+import dataclasses
 import tomllib
+import typing
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+class ConfigError(SystemExit):
+    """A setup that can't work: a bad setting, or a missing key or model file."""
+
+
+# The default speech to text, and the backup for the streaming services.
+OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
 
 
 @dataclass
@@ -31,22 +44,24 @@ class RecorderConfig:
     greet_after_s: float = 1.5  # say "Yes, <name>?" if nothing follows the wake word this long; 0 = off
     end_of_turn: str = "smart"  # silence: end_silence_s ends it | smart: a model may extend it to max_pause_s
     max_pause_s: float = 1.6
-    answer_early_s: float = 0.25  # start preparing the answer after this much silence (it plays only once you're done)
+    answer_early_s: float = 0.25  # start preparing the answer after this much silence; it plays only once you're done
     turn_model: str = "models/smart-turn-v3.2-cpu.onnx"
 
 
 @dataclass
 class STTConfig:
     provider: str = "openai"  # openai | deepgram (streams while you talk) | flux (Deepgram also ends your turn)
-    model: str = "gpt-4o-mini-transcribe"
+    model: str = OPENAI_STT_MODEL
     language: str = "en"
 
 
 @dataclass
 class LLMConfig:
     model: str = "gpt-4.1-mini"
+    # Answers first, on Cerebras; turns that need the web or the TARS page go to `model`. Empty = `model` answers all.
+    cerebras_model: str = ""
     service_tier: str = ""
-    reasoning_effort: str = ""
+    reasoning_effort: str = ""  # sent to both models: OpenAI's and Cerebras's
     memory_minutes: float = 10.0
     system_prompt: str = "You are a helpful voice assistant. Answer in one to three short sentences."
     humor: int = 75  # percent; "{humor}" in the system prompt is replaced with it
@@ -106,31 +121,79 @@ class Config:
 
 
 def load_config(path: Path) -> Config:
-    raw = tomllib.loads(path.read_text()) if path.exists() else {}
-    cfg = Config(
-        audio=AudioConfig(**raw.get("audio", {})),
-        wake=WakeConfig(**raw.get("wake", {})),
-        recorder=RecorderConfig(**raw.get("recorder", {})),
-        stt=STTConfig(**raw.get("stt", {})),
-        llm=LLMConfig(**raw.get("llm", {})),
-        tts=TTSConfig(**raw.get("tts", {})),
-        speaker=SpeakerConfig(**raw.get("speaker", {})),
-        learning=LearningConfig(**raw.get("learning", {})),
-        web=WebConfig(**raw.get("web", {})),
-    )
-    if problems := _problems(cfg):
-        raise SystemExit(f"{path}: " + "; ".join(problems))
+    try:
+        raw = tomllib.loads(path.read_text()) if path.exists() else {}
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path}: {e}") from None
+    sections = {f.name: f.type for f in dataclasses.fields(Config)}
+    problems = [f"there's no [{name}] section" for name in raw if name not in sections]
+    cfg = Config(**{name: _section(kind, name, raw.get(name, {}), problems) for name, kind in sections.items()})
+    problems = problems or _problems(cfg)  # the checks between settings assume each one is the right type
+    if problems:
+        raise ConfigError(f"{path}: " + "; ".join(problems))
     return cfg
 
 
+def required_keys(cfg: Config) -> list[str]:
+    keys = ["OPENAI_API_KEY"]  # always: OpenAI's model answers what needs the web or the TARS page, and backs up STT
+    if cfg.stt.provider in ("deepgram", "flux") or cfg.tts.provider == "deepgram":
+        keys.append("DEEPGRAM_API_KEY")
+    if cfg.llm.cerebras_model:
+        keys.append("CEREBRAS_API_KEY")
+    return keys
+
+
+_KINDS = {str: "text", bool: "true or false", int: "a whole number", float: "a number", list: "a list"}
+
+
+def _section(kind: type, name: str, values, problems: list[str]):
+    """One section's settings; a misspelled or mistyped one is added to `problems` and left at its default."""
+    if not isinstance(values, dict):
+        problems.append(f"[{name}] must be a section")
+        return kind()
+    types = {f.name: f.type for f in dataclasses.fields(kind)}
+    kept = {}
+    for key, value in values.items():
+        if key not in types:
+            problems.append(f"[{name}] has no setting {key}")
+        elif not _fits(value, types[key]):
+            wanted = _KINDS[typing.get_origin(types[key]) or types[key]]
+            problems.append(f"[{name}] {key} must be {wanted}, not {value!r}")
+        else:
+            kept[key] = value
+    return kind(**kept)
+
+
+def _fits(value, kind) -> bool:
+    if isinstance(value, bool) and kind is not bool:  # bool is a subclass of int
+        return False
+    if kind is float:
+        return isinstance(value, int | float)
+    if typing.get_origin(kind) is list:
+        (item,) = typing.get_args(kind)
+        return isinstance(value, list) and all(isinstance(v, item) for v in value)
+    return isinstance(value, kind)
+
+
 def _problems(cfg: Config) -> list[str]:
-    r, problems = cfg.recorder, []
-    if cfg.stt.provider not in ("openai", "deepgram", "flux"):
-        problems.append(f"[stt] provider must be openai, deepgram or flux, not {cfg.stt.provider!r}")
+    r, stt, problems = cfg.recorder, cfg.stt, []
+    if cfg.wake.mode not in ("wakeword", "push-to-talk"):
+        problems.append(f"[wake] mode must be wakeword or push-to-talk, not {cfg.wake.mode!r}")
+    if stt.provider not in ("openai", "deepgram", "flux"):
+        problems.append(f"[stt] provider must be openai, deepgram or flux, not {stt.provider!r}")
+    elif stt.provider == "deepgram" and stt.model.startswith("gpt-"):
+        problems.append(f"[stt] model must be a Deepgram model (e.g. nova-3) for provider deepgram, not {stt.model!r}")
+    elif stt.provider == "flux" and stt.language and not stt.language.lower().startswith("en"):
+        problems.append(f"[stt] provider flux only understands English, not language {stt.language!r}")
     if cfg.tts.provider not in ("openai", "deepgram"):
         problems.append(f"[tts] provider must be openai or deepgram, not {cfg.tts.provider!r}")
     elif cfg.tts.provider == "deepgram" and not cfg.tts.model.startswith(("flux-", "aura-")):
         problems.append(f"[tts] model must be a Deepgram voice (flux-... or aura-2-...), not {cfg.tts.model!r}")
+    if cfg.tts.effect:
+        from .effects import EFFECTS  # only here: it loads scipy
+
+        if cfg.tts.effect not in EFFECTS:
+            problems.append(f"[tts] effect must be {' or '.join(EFFECTS)}, or empty for none, not {cfg.tts.effect!r}")
     if r.end_of_turn not in ("silence", "smart"):
         problems.append(f"[recorder] end_of_turn must be silence or smart, not {r.end_of_turn!r}")
     if not 0.2 <= r.vad_threshold <= 0.95:

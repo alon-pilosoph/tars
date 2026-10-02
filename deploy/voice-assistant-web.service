@@ -1,6 +1,5 @@
-# systemd *user* service for the web UI (conversations, what TARS sent, wakes to check, voices, models), next to
-# the assistant's own service. It only reads and edits the event log (voice_data/events), so it runs as its own
-# process: a crash here never takes the assistant down, and the other way round.
+# systemd *user* service for the web UI. It only reads and edits the event log (voice_data/events), so it runs as
+# its own process: a crash in either never takes the other down.
 #
 #   mkdir -p ~/.config/systemd/user
 #   cp deploy/voice-assistant-web.service ~/.config/systemd/user/
@@ -16,8 +15,6 @@
 
 [Unit]
 Description=TARS web UI
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 WorkingDirectory=%h/voice-assistant
@@ -25,6 +22,8 @@ ExecStart=%h/.local/bin/uv run --frozen voice-assistant --web --host 0.0.0.0 --p
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=3
+# 78 (EX_CONFIG): a mistake in config.toml or a missing API key. Restarting won't fix it; see the logs.
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=default.target

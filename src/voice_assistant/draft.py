@@ -1,26 +1,22 @@
-"""An answer prepared while TARS waits to be sure you've finished: start early, speak late.
+"""An answer prepared in the background after a short pause, while the recording goes on.
 
-A short pause starts one in the background while the recording goes on. If you carry on talking it's thrown away;
-it's only played, logged and allowed to send anything once your turn is confirmed over. At worst an early start
-costs a wasted request, never a wrong answer.
+It is played, logged and allowed to send anything only once the turn is confirmed over; if the speaker carries on,
+it is discarded. An early start costs at most a wasted request.
 """
 
 import threading
 from collections.abc import Callable
-from typing import Generic, TypeVar
 
-T = TypeVar("T")
-
-# Longer than any answer takes to play. Only a bug leaves a draft unsettled; without a limit that would stop every
-# later answer, since drafts take turns.
+# Longer than any answer takes to play. Only a bug leaves a draft unsettled, and since drafts share one lock, an
+# unbounded wait would block every later answer.
 SETTLE_TIMEOUT_S = 600.0
 
 
-class Draft(Generic[T]):
-    """Runs `prepare` on its own thread, holding `turn` until it's kept or cancelled; a cancelled one is `discard`ed.
+class Draft[T]:
+    """Runs `prepare` on its own thread, holding `turn` until kept or cancelled; a cancelled result is `discard`ed.
 
-    Give every draft the same lock: the next one only starts once the last is settled, so two never work on the
-    conversation at once. (A daemon thread per draft, so a pending one never holds up quitting.)
+    Give every draft the same lock, so the next one starts only after the last is settled and two never work on the
+    conversation at once.
     """
 
     def __init__(self, turn: threading.Lock, prepare: Callable[["Draft[T]"], T], discard: Callable[[T], None]):
@@ -49,7 +45,7 @@ class Draft(Generic[T]):
             self._discard(self._result)
 
     def take(self) -> T:
-        """The prepared answer, once it's ready. Then keep() it, or cancel() it if it can't be used."""
+        """Blocks until the answer is ready. The caller must then keep() or cancel() it."""
         self._ready.wait()
         if self._error:
             raise self._error
@@ -60,6 +56,6 @@ class Draft(Generic[T]):
         self._settled.set()
 
     def cancel(self) -> None:
-        """Throw it away (in the background; this doesn't wait)."""
+        """Returns at once; the draft's own thread discards the result."""
         self.cancelled = True
         self._settled.set()

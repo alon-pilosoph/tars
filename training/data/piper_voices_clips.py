@@ -3,7 +3,8 @@
     DATA/tts/.venv/bin/python -m training.data.piper_voices_clips hey_tars
 
 Voices: VCTK (109 speakers), L2-ARCTIC (24 speakers with accented English), ARCTIC (18), ARU (12), SEMAINE (4),
-LibriTTS-high (904) and 17 single-speaker voices. "tarss" makes espeak say TARS with an S.
+LibriTTS-high (904) and 13 single-speaker voices (alan, amy, danny and kusal are left out: no usable license, see
+ATTRIBUTION.md). "tarss" makes espeak say TARS with an S.
 Resumable: names are deterministic and existing files are skipped.
 Output: DATA/clips/piper_voices/PHRASE/{positive,near_miss}/<voice>_s<speaker>_<n>.wav
 """
@@ -12,12 +13,11 @@ import json
 import os
 import random
 import urllib.request
-import wave
 from pathlib import Path
 
 import numpy as np
 
-from training.common import PHRASES, Layout, cap_onnxruntime_threads, parser
+from training.common import PHRASES, SR, Layout, cap_onnxruntime_threads, log, parser, write_wav
 
 HF = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 
@@ -32,22 +32,18 @@ VOICES = {
     **{
         p: 150
         for p in [
-            "en/en_GB/alan/medium/en_GB-alan-medium",
             "en/en_GB/alba/medium/en_GB-alba-medium",
             "en/en_GB/cori/medium/en_GB-cori-medium",
             "en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium",
             "en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium",
             "en/en_GB/southern_english_female/low/en_GB-southern_english_female-low",
-            "en/en_US/amy/medium/en_US-amy-medium",
             "en/en_US/bryce/medium/en_US-bryce-medium",
-            "en/en_US/danny/low/en_US-danny-low",
             "en/en_US/hfc_female/medium/en_US-hfc_female-medium",
             "en/en_US/hfc_male/medium/en_US-hfc_male-medium",
             "en/en_US/joe/medium/en_US-joe-medium",
             "en/en_US/john/medium/en_US-john-medium",
             "en/en_US/kathleen/low/en_US-kathleen-low",
             "en/en_US/kristin/medium/en_US-kristin-medium",
-            "en/en_US/kusal/medium/en_US-kusal-medium",
             "en/en_US/lessac/medium/en_US-lessac-medium",
         ]
     },
@@ -171,7 +167,6 @@ def main():
             ("near_miss", NEAR_MISS[args.phrase], int(per_speaker * NEAR_MISS_RATIO)),
         ]:
             folder = layout.clip_dir("piper_voices", args.phrase, kind)
-            folder.mkdir(parents=True, exist_ok=True)
             rng = random.Random(f"{args.phrase}-{kind}-{name}")
             for speaker in range(n_speakers):
                 for i in range(count):
@@ -187,15 +182,11 @@ def main():
                         continue
                     audio = np.concatenate([c.audio_int16_array for c in voice.synthesize(text, syn_config=cfg)])
                     rate = voice.config.sample_rate
-                    if rate != 16000:
-                        audio = resample_poly(audio.astype(np.float32), 16000, rate).astype(np.int16)
-                    with wave.open(str(out), "wb") as f:
-                        f.setnchannels(1)
-                        f.setsampwidth(2)
-                        f.setframerate(16000)
-                        f.writeframes(audio.tobytes())
-        print(f"{args.phrase}: {name} ({n_speakers} speakers) done", flush=True)
-    print(f"{args.phrase}: ALL DONE", flush=True)
+                    if rate != SR:
+                        audio = resample_poly(audio.astype(np.float32), SR, rate).astype(np.int16)
+                    write_wav(out, audio)
+        log(f"{args.phrase}: {name} ({n_speakers} speakers) done")
+    log(f"{args.phrase}: ALL DONE")
 
 
 if __name__ == "__main__":

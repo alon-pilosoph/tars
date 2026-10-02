@@ -10,7 +10,7 @@ development Mac at 4 threads (~11 clips/s). Resumable. Output: DATA/vc/{positive
 import random
 import time
 
-from training.common import Layout, parser
+from training.common import Layout, log, parser, write_wav
 
 MATCH_SECONDS = 150
 POSITIVE_MIX = {"piper_libritts": 0.40, "piper_voices": 0.20, "kokoro": 0.25, "openai": 0.05, "prosody": 0.10}
@@ -33,14 +33,14 @@ def load_knn_vc(threads: int):
 
 
 def convert(knn_vc, refs: list[str], todo: list[tuple], speaker: str) -> int:
-    """Converts each (kind, source, destination) into the voice heard in refs; returns how many were written."""
+    """`todo`: (kind, source, destination) tuples. Returns how many were written."""
     import numpy as np
     import soundfile as sf
 
     try:
         matching = knn_vc.get_matching_set(refs)
     except Exception as e:  # noqa: BLE001 - too little reference audio for this speaker
-        print(f"  skipped speaker {speaker}: {e}", flush=True)
+        log(f"  skipped speaker {speaker}: {e}")
         return 0
     done = 0
     for _kind, src, dst in todo:
@@ -48,10 +48,10 @@ def convert(knn_vc, refs: list[str], todo: list[tuple], speaker: str) -> int:
             continue
         try:
             wav = knn_vc.match(knn_vc.get_features(src), matching, topk=4).numpy()
-        except Exception as e:  # noqa: BLE001 - an empty or silent source clip; not worth stopping the night for
-            print(f"  skipped {src}: {e}", flush=True)
+        except Exception as e:  # noqa: BLE001 - an empty or silent source clip
+            log(f"  skipped {src}: {e}")
             continue
-        sf.write(dst, np.clip(wav, -1, 1), 16000, subtype="PCM_16")
+        write_wav(dst, (np.clip(wav, -1, 1) * 32767).astype(np.int16))  # kNN-VC's output is 16 kHz
         done += 1
     return done
 
@@ -106,11 +106,7 @@ def main():
         done += convert(knn_vc, refs, todo, spk.name)
         rate = done / (time.time() - t_start)
         left = (len(speakers) - si - 1) * 2 * args.per_speaker / max(rate, 1e-6)
-        print(
-            f"[{time.strftime('%H:%M:%S')}] speaker {si + 1}/{len(speakers)} ({spk.name}) done; "
-            f"{rate:.1f} clips/s, ~{left / 3600:.1f} h left",
-            flush=True,
-        )
+        log(f"speaker {si + 1}/{len(speakers)} ({spk.name}) done; {rate:.1f} clips/s, ~{left / 3600:.1f} h left")
 
 
 if __name__ == "__main__":
