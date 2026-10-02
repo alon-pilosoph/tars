@@ -1,0 +1,2349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>How TARS works</title>
+    <meta
+      name="description"
+      content="What happens when you say “hey TARS”: one request, second by second, from the wake word on a Raspberry Pi to the answer, and how it learns from the household."
+    />
+    <link rel="canonical" href="https://tars.alonp.dev/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://tars.alonp.dev/" />
+    <meta property="og:title" content="How TARS works" />
+    <meta
+      property="og:description"
+      content="A household voice assistant that answers in about 1.2 seconds, and nothing leaves the house until it's sure it heard “hey TARS”."
+    />
+    <meta property="og:image" content="https://tars.alonp.dev/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="../webui/src/favicon.svg" />
+    <link rel="apple-touch-icon" href="../webui/src/apple-touch-icon.png" />
+    <script>
+      try {
+        const t = localStorage.getItem("tars-about-theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+    <link rel="stylesheet" href="../webui/src/fonts.css" />
+    <style>
+      :root,
+      [data-theme="light"] {
+        --bg: oklch(0.965 0.003 90);
+        --surface: oklch(0.995 0.002 90);
+        --ink: oklch(0.22 0.006 90);
+        --ink-2: oklch(0.42 0.006 90);
+        --ink-3: oklch(0.64 0.005 90);
+        --line: oklch(0.89 0.004 90);
+        --line-2: oklch(0.8 0.005 90);
+        --amber: oklch(0.74 0.15 70);
+        --amber-soft: oklch(0.74 0.15 70 / 0.16);
+        --on-amber: oklch(0.22 0.006 90);
+        --green: oklch(0.48 0.1 155);
+        --red: oklch(0.5 0.14 32);
+        color-scheme: light;
+      }
+      [data-theme="dark"] {
+        --bg: oklch(0.165 0.004 90);
+        --surface: oklch(0.205 0.004 90);
+        --ink: oklch(0.94 0.004 90);
+        --ink-2: oklch(0.74 0.005 90);
+        --ink-3: oklch(0.52 0.005 90);
+        --line: oklch(0.29 0.004 90);
+        --line-2: oklch(0.38 0.004 90);
+        --amber: oklch(0.8 0.14 75);
+        --amber-soft: oklch(0.8 0.14 75 / 0.16);
+        --on-amber: oklch(0.165 0.004 90);
+        --green: oklch(0.74 0.12 155);
+        --red: oklch(0.72 0.13 32);
+        color-scheme: dark;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: oklch(0.165 0.004 90);
+          --surface: oklch(0.205 0.004 90);
+          --ink: oklch(0.94 0.004 90);
+          --ink-2: oklch(0.74 0.005 90);
+          --ink-3: oklch(0.52 0.005 90);
+          --line: oklch(0.29 0.004 90);
+          --line-2: oklch(0.38 0.004 90);
+          --amber: oklch(0.8 0.14 75);
+          --amber-soft: oklch(0.8 0.14 75 / 0.16);
+          --on-amber: oklch(0.165 0.004 90);
+          --green: oklch(0.74 0.12 155);
+          --red: oklch(0.72 0.13 32);
+          color-scheme: dark;
+        }
+      }
+      :root {
+        --sans: "IBM Plex Sans", system-ui, sans-serif;
+        --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+        --top: 57px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-padding-top: var(--top);
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: var(--ink);
+        text-underline-offset: 3px;
+      }
+      a:hover {
+        color: var(--ink-2);
+      }
+      button {
+        font: inherit;
+        color: inherit;
+      }
+      ::selection {
+        background: var(--amber-soft);
+      }
+      h1,
+      h2,
+      h3,
+      p,
+      figure {
+        margin: 0;
+      }
+      .mono {
+        font-family: var(--mono);
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 clamp(16px, 4vw, 40px);
+      }
+      .label {
+        font: 400 10.5px/1.3 var(--mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--ink-2);
+      }
+      .label.big {
+        font-size: 11px;
+      }
+      .muted {
+        color: var(--ink-2);
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        height: 32px;
+        padding: 0 12px;
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+        background: var(--surface);
+        font-size: 13px;
+        font-weight: 500;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .btn:hover {
+        color: var(--ink);
+        border-color: var(--ink-3);
+      }
+      .mark {
+        display: flex;
+        gap: 3px;
+      }
+      .mark i {
+        width: 9px;
+        height: 22px;
+        border-radius: 1px;
+        background: var(--ink);
+      }
+      .mark i + i {
+        background: var(--ink-3);
+      }
+      .mark.sm {
+        gap: 2px;
+      }
+      .mark.sm i {
+        width: 6px;
+        height: 14px;
+      }
+      .mark.xs {
+        gap: 2px;
+      }
+      .mark.xs i {
+        width: 4px;
+        height: 11px;
+      }
+
+      .top {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: var(--bg);
+        border-bottom: 1px solid var(--line);
+      }
+      .top .wrap {
+        height: 56px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none;
+      }
+      .brand b {
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 0.22em;
+      }
+      .top .tagline {
+        font-size: 14px;
+        color: var(--ink-2);
+      }
+      .top .side {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+        overflow: hidden;
+        background: var(--surface);
+      }
+      .seg button {
+        height: 30px;
+        padding: 0 12px;
+        border: 0;
+        background: transparent;
+        color: var(--ink-2);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] {
+        background: var(--ink);
+        color: var(--bg);
+      }
+      @media (max-width: 759px) {
+        .top .tagline {
+          display: none;
+        }
+        .top .wrap {
+          gap: 10px;
+        }
+        .seg button {
+          padding: 0 10px;
+        }
+        .btn {
+          padding: 0 10px;
+        }
+      }
+
+      .part {
+        padding: 56px 0 72px;
+        border-top: 1px solid var(--line);
+      }
+      .part-head {
+        display: grid;
+        gap: 8px;
+        max-width: 760px;
+        margin-bottom: 28px;
+      }
+      .part-head h2 {
+        font-size: 30px;
+        line-height: 1.2;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+        text-wrap: balance;
+      }
+      .lead {
+        font-size: 16px;
+        line-height: 1.6;
+        color: var(--ink-2);
+        text-wrap: pretty;
+      }
+      .small {
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--ink-2);
+        text-wrap: pretty;
+      }
+      .note {
+        margin-top: 12px;
+        font: 400 11.5px/1.6 var(--mono);
+        color: var(--ink-2);
+        max-width: 900px;
+      }
+
+      .intro {
+        padding: 56px 0 64px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+        gap: 40px;
+        align-items: start;
+      }
+      .intro h1 {
+        font-size: clamp(34px, 5vw, 52px);
+        line-height: 1.05;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+        text-wrap: balance;
+      }
+      .intro .lead {
+        font-size: 17px;
+        max-width: 560px;
+        margin-top: 20px;
+      }
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+        margin-top: 28px;
+      }
+      .fact {
+        display: grid;
+        gap: 8px;
+        padding: 16px;
+        text-decoration: none;
+      }
+      .fact b {
+        font-size: 20px;
+        font-weight: 500;
+      }
+      .fact span:last-child {
+        font-size: 14px;
+        line-height: 1.5;
+        color: var(--ink-2);
+        text-wrap: pretty;
+      }
+      .request {
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+      }
+      .request dl {
+        margin: 0;
+        display: grid;
+        grid-template-columns: 64px minmax(0, 1fr);
+        gap: 16px 12px;
+        align-items: baseline;
+      }
+      .request dt {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font: 400 11px/1.3 var(--mono);
+        letter-spacing: 0.08em;
+        color: var(--ink-2);
+      }
+      .request dd {
+        margin: 0;
+        font-size: 17px;
+        line-height: 1.45;
+      }
+      .request dd.tars {
+        font: 400 15px/1.5 var(--mono);
+      }
+      .request .foot {
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+
+      .controls {
+        position: sticky;
+        top: var(--top);
+        z-index: 10;
+        background: var(--bg);
+        padding: 10px 0 12px;
+        display: grid;
+        gap: 10px;
+      }
+      .controls .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .ctl {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 34px;
+        padding: 0;
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+        background: var(--surface);
+        cursor: pointer;
+      }
+      .ctl.play {
+        width: 44px;
+        border-color: var(--ink);
+        background: var(--ink);
+        color: var(--bg);
+      }
+      .ctl svg {
+        display: block;
+        fill: currentColor;
+      }
+      .ctl.play .i-pause,
+      .ctl.play[aria-pressed="true"] .i-play {
+        display: none;
+      }
+      .ctl.play[aria-pressed="true"] .i-pause {
+        display: block;
+      }
+      .clock {
+        min-width: 64px;
+        text-align: right;
+        font: 400 13px var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      .dots {
+        display: flex;
+        gap: 4px;
+        margin: 0 8px;
+        align-items: center;
+      }
+      .dots button {
+        width: 9px;
+        height: 22px;
+        padding: 0;
+        border: 0;
+        border-radius: 2px;
+        background: var(--line-2);
+        cursor: pointer;
+      }
+      .dots button.past {
+        background: var(--ink-2);
+      }
+      .dots button.on {
+        background: var(--amber);
+      }
+      .reset {
+        height: 34px;
+        padding: 0 10px;
+        border: 0;
+        background: transparent;
+        color: var(--ink-2);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .reset:hover {
+        color: var(--ink);
+      }
+      .now {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        min-height: 24px;
+      }
+      .now .badge {
+        align-self: center;
+      }
+      .now .time {
+        font: 400 13px var(--mono);
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .now .line {
+        font-size: 15px;
+        line-height: 1.45;
+        text-wrap: pretty;
+      }
+      .now:not(.has-step) .badge,
+      .now:not(.has-step) .time {
+        display: none;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 22px;
+        height: 20px;
+        padding: 0 5px;
+        border-radius: 3px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--ink-2);
+        font: 500 11px var(--mono);
+      }
+      .badge.amber,
+      .on > * > .badge,
+      .on > .badge {
+        background: var(--amber);
+        border-color: var(--amber);
+        color: var(--on-amber);
+      }
+
+      .wide-only {
+        display: none;
+      }
+      @media (min-width: 760px) {
+        .wide-only {
+          display: block;
+        }
+        .narrow-only {
+          display: none;
+        }
+      }
+      .chart {
+        overflow-x: auto;
+      }
+      .chart-in {
+        position: relative;
+        min-width: 820px;
+      }
+      .chart .row {
+        display: grid;
+        grid-template-columns: 168px minmax(0, 1fr);
+        background: var(--surface);
+      }
+      .chart .row + .row {
+        border-top: 1px solid var(--line);
+      }
+      .chart .row.cloud {
+        background: var(--bg);
+      }
+      .chart .row.head {
+        height: 26px;
+      }
+      .chart .row > .label {
+        display: flex;
+        align-items: center;
+        padding-left: 16px;
+      }
+      .chart .row.axis {
+        height: 30px;
+      }
+      .chart .row.boundary {
+        height: 34px;
+        border-top: 2px solid var(--ink);
+        background: var(--bg);
+      }
+      .chart .row.boundary > span {
+        font-weight: 500;
+        color: var(--ink);
+      }
+      .chart .lane {
+        height: 46px;
+        --lane-bg: var(--surface);
+      }
+      .chart .lane.cloud {
+        --lane-bg: var(--bg);
+      }
+      .lane-name {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 12px 0 16px;
+        min-width: 0;
+      }
+      .lane-name b {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1.25;
+        white-space: nowrap;
+      }
+      .lane-name small {
+        display: block;
+        font: 400 10.5px var(--mono);
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .slab {
+        flex: none;
+        width: 5px;
+        height: 20px;
+        border-radius: 1px;
+        background: var(--ink-3);
+      }
+      .cloud .slab {
+        background: transparent;
+        border: 1.5px solid var(--ink-3);
+      }
+      .slab.on {
+        background: var(--amber);
+        border: 0;
+      }
+      .track {
+        position: relative;
+      }
+      .axis .track {
+        cursor: ew-resize;
+        touch-action: none;
+        user-select: none;
+      }
+      .tick {
+        position: absolute;
+        top: 9px;
+        margin-left: 4px;
+        font: 400 10.5px var(--mono);
+        color: var(--ink-2);
+        white-space: nowrap;
+        pointer-events: none;
+      }
+      .tick.zero {
+        margin-left: -3px;
+        color: var(--ink);
+        font-weight: 500;
+      }
+      .knob {
+        position: absolute;
+        top: 4px;
+        left: 0;
+        width: 10px;
+        height: 22px;
+        border-radius: 2px;
+        background: var(--ink-3);
+        cursor: grab;
+        z-index: 3;
+      }
+      .playing-or-set .knob {
+        margin-left: -5px;
+        background: var(--amber);
+      }
+      .dragging .knob {
+        cursor: grabbing;
+      }
+      .layer {
+        position: absolute;
+        top: 30px;
+        bottom: 0;
+        left: 168px;
+        right: 0;
+        pointer-events: none;
+      }
+      .layer.grid {
+        z-index: 1;
+      }
+      .layer.head {
+        z-index: 5;
+      }
+      .gridline {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 0;
+        border-left: 1px solid var(--line);
+      }
+      .gridline.zero {
+        border-left-color: color-mix(in oklch, var(--ink-2) 70%, var(--surface));
+      }
+      .gridline.break {
+        border-left-style: dashed;
+        border-left-color: var(--line-2);
+      }
+      .cross-line {
+        position: absolute;
+        top: 74px;
+        bottom: 0;
+        width: 2px;
+        margin-left: -1px;
+        background: color-mix(in oklch, var(--ink) 50%, var(--bg));
+      }
+      .playhead {
+        position: absolute;
+        top: -8px;
+        bottom: 0;
+        width: 2px;
+        margin-left: -1px;
+        background: var(--amber);
+        display: none;
+      }
+      .playhead-hit {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 16px;
+        margin-left: -8px;
+        cursor: ew-resize;
+        touch-action: none;
+        pointer-events: none;
+      }
+      .playing-or-set .playhead {
+        display: block;
+      }
+      .playing-or-set .playhead-hit {
+        pointer-events: auto;
+      }
+      .cross-mark {
+        position: absolute;
+        top: 5px;
+        width: 5px;
+        height: 24px;
+        margin-left: -2.5px;
+        border-radius: 1px;
+        z-index: 3;
+        background: var(--ink);
+        box-shadow: 0 0 0 2px var(--bg);
+      }
+      .cross-label {
+        position: absolute;
+        top: 9px;
+        margin-left: 10px;
+        padding: 0 3px;
+        z-index: 2;
+        background: var(--bg);
+        font: 500 11px var(--mono);
+        white-space: pre;
+      }
+      .before-cross .cross-line {
+        background: color-mix(in oklch, var(--ink) 20%, var(--bg));
+      }
+      .before-cross .cross-mark {
+        background: color-mix(in oklch, var(--ink) 22%, var(--bg));
+      }
+      .before-cross .cross-label {
+        color: color-mix(in oklch, var(--ink) 45%, var(--bg));
+      }
+      .cross-on .cross-line,
+      .cross-on .cross-mark {
+        background: var(--amber);
+      }
+
+      .it {
+        position: absolute;
+        z-index: 2;
+        --base: var(--ink);
+        --later: color-mix(in oklch, var(--base) 22%, var(--lane-bg));
+      }
+      .it.soft {
+        --base: var(--ink-3);
+      }
+      .it[data-go] {
+        cursor: pointer;
+      }
+      .it.bar {
+        top: 9px;
+        height: 14px;
+        border-radius: 2px;
+        background: var(--base);
+      }
+      .it.bar.later {
+        background: var(--later);
+      }
+      .it.bar.on {
+        background: linear-gradient(90deg, var(--amber) var(--p), var(--later) var(--p));
+      }
+      .it.wave {
+        top: 6px;
+        height: 22px;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+      }
+      .it.wave i {
+        flex: 1 1 0;
+        min-width: 1px;
+        border-radius: 1px;
+        background: var(--base);
+      }
+      .it.wave.later i,
+      .it.wave.on i {
+        background: var(--later);
+      }
+      .it.wave.on i.played {
+        background: var(--amber);
+      }
+      .it.point {
+        top: 4px;
+        width: 5px;
+        height: 24px;
+        margin-left: -2.5px;
+        border-radius: 1px;
+        z-index: 3;
+        background: var(--ink);
+        box-shadow: 0 0 0 2px var(--lane-bg);
+      }
+      .it.point.later {
+        background: var(--later);
+      }
+      .it.point.on {
+        background: var(--amber);
+      }
+      .it.idle {
+        top: 15px;
+        height: 0;
+        border-top: 1.5px dashed var(--line-2);
+        z-index: 0;
+      }
+      .it.muted {
+        top: 9px;
+        height: 14px;
+        border: 1.5px solid var(--ink-2);
+        border-radius: 2px;
+      }
+      .it.muted.later {
+        border-color: color-mix(in oklch, var(--ink-2) 30%, var(--lane-bg));
+      }
+      .it.muted.on {
+        border-color: var(--amber);
+        background: var(--amber-soft);
+      }
+      .it.closed {
+        top: 0;
+        height: 100%;
+        z-index: 0;
+        background: repeating-linear-gradient(135deg, var(--line-2) 0 1px, transparent 1px 7px);
+      }
+      .lab {
+        position: absolute;
+        top: 30px;
+        z-index: 2;
+        margin-left: -3px;
+        padding: 0 3px;
+        background: var(--lane-bg);
+        font: 400 10.5px/14px var(--mono);
+        color: var(--ink-2);
+        white-space: nowrap;
+      }
+      .lab.after-mark {
+        margin-left: 4px;
+      }
+      .lab.closed {
+        top: 15px;
+        background: var(--bg);
+      }
+      .lab.later {
+        color: color-mix(in oklch, var(--ink-2) 40%, var(--lane-bg));
+      }
+      .lab.on {
+        color: var(--ink);
+        font-weight: 500;
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 10px;
+        margin: 28px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .step {
+        padding: 14px;
+        cursor: pointer;
+      }
+      .step.on {
+        border-color: var(--ink);
+      }
+      .step-top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .step-top .mono {
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+      .step-top .label {
+        margin-left: auto;
+      }
+      .step p {
+        font-size: 14px;
+        line-height: 1.5;
+        margin-top: 10px;
+        text-wrap: pretty;
+      }
+
+      .runs {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        overflow: hidden;
+      }
+      .run {
+        display: grid;
+        grid-template-columns: 50px 40px minmax(0, 1fr);
+        cursor: pointer;
+      }
+      .run > .mono {
+        padding: 14px 6px 0 0;
+        text-align: right;
+        font-size: 11px;
+        line-height: 1.3;
+        color: var(--ink-2);
+      }
+      .run .lanes {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: var(--bg);
+      }
+      .run .lanes::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        margin-left: -1px;
+        background: var(--ink);
+      }
+      .run .lanes i {
+        justify-self: center;
+        width: 6px;
+        margin: 12px 0;
+        border-radius: 1px;
+      }
+      .run .lanes i.used {
+        background: var(--ink);
+      }
+      .run.on .lanes i.used {
+        background: var(--amber);
+      }
+      .run .lanes i.shut {
+        width: auto;
+        justify-self: stretch;
+        margin: 0;
+        border-radius: 0;
+        background: repeating-linear-gradient(135deg, var(--line-2) 0 1px, transparent 1px 6px);
+      }
+      .run .lanes b {
+        position: absolute;
+        left: 25%;
+        right: 25%;
+        top: 22px;
+        height: 2px;
+        background: var(--ink);
+        z-index: 1;
+      }
+      .run.on .lanes b {
+        background: var(--amber);
+      }
+      .run > div:last-child {
+        padding: 12px 14px;
+        border-top: 1px solid var(--line);
+        background: var(--surface);
+      }
+      .run:first-child > div:last-child {
+        border-top: 0;
+      }
+      .run p {
+        font-size: 14px;
+        line-height: 1.5;
+        margin-top: 6px;
+        text-wrap: pretty;
+      }
+      .run .step-top .label {
+        margin-left: 0;
+      }
+
+      .two {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+        gap: 24px;
+        align-items: start;
+      }
+      .box {
+        padding: 14px 16px;
+        display: grid;
+        gap: 4px;
+        align-content: start;
+      }
+      .box b {
+        font-size: 15px;
+        font-weight: 500;
+      }
+      .box.strong {
+        border-color: var(--ink);
+      }
+      .box.dashed {
+        background: transparent;
+        border-style: dashed;
+        border-color: var(--line-2);
+        padding: 12px 14px;
+      }
+      .box.dashed b {
+        font-size: 14px;
+      }
+      .stem {
+        height: 20px;
+        margin-left: 24px;
+        border-left: 1.5px solid var(--ink-3);
+      }
+      .stem.tall {
+        height: 30px;
+        display: flex;
+        align-items: center;
+        padding-left: 10px;
+        font: 400 11px var(--mono);
+        color: var(--ink-2);
+      }
+      .fork {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) 44px minmax(0, 1fr);
+        align-items: center;
+      }
+      .fork > i {
+        height: 1.5px;
+        background: var(--ink-3);
+      }
+      .outcomes {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .outcomes .box {
+        padding: 12px 14px;
+      }
+      .outcomes b {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .yes {
+        color: var(--green);
+      }
+      .no {
+        color: var(--red);
+      }
+      .results {
+        padding: 20px;
+      }
+      .results > .small {
+        margin: 8px 0 16px;
+      }
+      .result {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(64px, auto);
+        gap: 4px 16px;
+        padding: 12px 0;
+        border-top: 1px solid var(--line);
+      }
+      .result > span:first-child {
+        font-size: 14px;
+        line-height: 1.45;
+        text-wrap: pretty;
+      }
+      .result > .mono {
+        font-size: 14px;
+        text-align: right;
+        white-space: nowrap;
+      }
+      .result .meter {
+        grid-column: 1 / -1;
+        position: relative;
+        height: 4px;
+        background: var(--line);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .result .meter i {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        background: var(--ink);
+      }
+      .result .meter i + i {
+        background: var(--ink-3);
+      }
+      .result > .small {
+        grid-column: 1 / -1;
+        font-size: 12.5px;
+      }
+
+      .loop {
+        display: grid;
+      }
+      .loop > li {
+        position: relative;
+        display: grid;
+        grid-template-columns: 40px minmax(0, 1fr);
+        gap: 18px;
+        padding-bottom: 36px;
+      }
+      .loop > li:last-child {
+        padding-bottom: 0;
+      }
+      .loop > li::before {
+        content: "";
+        position: absolute;
+        left: 19px;
+        top: 28px;
+        bottom: 0;
+        width: 2px;
+        background: var(--ink-3);
+      }
+      .loop > li:last-child::before {
+        display: none;
+      }
+      .loop {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: loop;
+      }
+      .num {
+        position: relative;
+        justify-self: center;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--surface);
+        border: 1.5px solid var(--ink);
+        border-radius: 3px;
+        font: 500 12px var(--mono);
+      }
+      .num.people {
+        background: var(--ink);
+        color: var(--bg);
+      }
+      .loop h3 {
+        font-size: 17px;
+        font-weight: 600;
+      }
+      .loop .text {
+        display: grid;
+        gap: 6px;
+        max-width: 640px;
+        padding-top: 3px;
+      }
+      .loop .text p {
+        font-size: 15px;
+        line-height: 1.55;
+        color: var(--ink-2);
+        text-wrap: pretty;
+      }
+      .loop .split {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+        gap: 20px 32px;
+        align-items: start;
+      }
+      .shot {
+        display: grid;
+        gap: 6px;
+      }
+      .shot figcaption {
+        font: 400 11px var(--mono);
+        color: var(--ink-2);
+      }
+      .shot .frame {
+        display: block;
+        padding: 20px 12px 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      .gate {
+        padding: 16px;
+        margin-top: 12px;
+      }
+      .gate table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+        font-size: 13.5px;
+      }
+      .gate th {
+        padding: 6px 0;
+        font: 400 10.5px var(--mono);
+        color: var(--ink-2);
+        text-align: right;
+      }
+      .gate th:first-child {
+        text-align: left;
+      }
+      .gate td {
+        padding: 8px 0;
+        border-top: 1px solid var(--line);
+      }
+      .gate td + td {
+        font-family: var(--mono);
+        text-align: right;
+        padding-left: 14px;
+      }
+      .gate td:last-child {
+        font-size: 11.5px;
+        text-align: left;
+      }
+      .gate p {
+        margin-top: 12px;
+        font-size: 14px;
+        line-height: 1.5;
+        text-wrap: pretty;
+      }
+      .gate p strong {
+        font-weight: 600;
+        color: var(--red);
+      }
+
+      .ladder {
+        overflow: hidden;
+      }
+      .ladder .rung {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+        padding: 14px 20px;
+        border-top: 1px solid var(--line);
+      }
+      .ladder .rung.th {
+        display: none;
+        border-top: 0;
+        padding: 12px 20px;
+      }
+      @media (min-width: 760px) {
+        .ladder .rung {
+          grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1.6fr);
+          gap: 6px 20px;
+        }
+        .ladder .rung.th {
+          display: grid;
+        }
+      }
+      .rung b {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .rung > span:not(.label) {
+        display: grid;
+        grid-template-columns: 6px minmax(0, 1fr);
+        gap: 10px;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      .rung > span:not(.label)::before {
+        content: "";
+        width: 6px;
+        height: 12px;
+        margin-top: 4px;
+        border-radius: 1px;
+        background: var(--ink);
+      }
+      .rung > span.then::before {
+        background: transparent;
+        border: 1.5px solid var(--ink-2);
+      }
+
+      .hood {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+        gap: 12px;
+      }
+      .hood .card {
+        padding: 18px;
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }
+      .hood .card > span:not(.label) {
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .hood .card > .small {
+        font-size: 13.5px;
+      }
+      .procs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      .procs > div {
+        border-radius: 3px;
+        padding: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        min-height: 64px;
+      }
+      .procs > div:first-child {
+        background: var(--ink);
+        color: var(--bg);
+      }
+      .procs > div:nth-child(2) {
+        border: 1.5px solid var(--ink);
+      }
+      .procs > div:nth-child(2) small {
+        display: block;
+        font: 400 11px var(--mono);
+        color: var(--ink-2);
+      }
+      .procs > div:last-child {
+        grid-column: 1 / -1;
+        min-height: 0;
+        background: var(--bg);
+        border: 1px solid var(--line-2);
+        padding: 8px 10px;
+        font: 400 11.5px var(--mono);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chips span {
+        font: 400 12px var(--mono);
+        padding: 4px 8px;
+        border-radius: 4px;
+        background: var(--bg);
+      }
+      .hood a {
+        font-size: 14px;
+        font-weight: 500;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+      }
+      footer .wrap {
+        padding-top: 20px;
+        padding-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: var(--ink-2);
+      }
+      footer a {
+        color: var(--ink-2);
+      }
+      footer .links {
+        margin-left: auto;
+        display: flex;
+        gap: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="#top" aria-label="TARS, back to the top">
+          <span class="mark">
+            <i></i>
+            <i></i>
+          </span>
+          <b>TARS</b>
+        </a>
+        <span class="tagline">How it works</span>
+        <div class="side">
+          <div class="seg" role="group" aria-label="Theme">
+            <button type="button" data-theme-pick="light">Light</button>
+            <button type="button" data-theme-pick="dark">Dark</button>
+          </div>
+          <a class="btn" href="https://github.com/alon-pilosoph/tars">Repo ↗</a>
+          <a
+            class="btn"
+            href="https://huggingface.co/datasets/alon-p/hey-tars-training"
+            title="The wake-word training clips on Hugging Face"
+          >
+            Data ↗
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="top" class="wrap">
+      <section class="intro" aria-label="Introduction">
+        <div>
+          <h1>What happens when you say “hey TARS”</h1>
+          <p class="lead">
+            TARS is a voice assistant for one household. It runs on a Raspberry Pi at home and uses a few cloud services
+            for the hard parts. This page follows one real request from the first word to the follow-up.
+          </p>
+          <div class="facts">
+            <a class="card fact" href="#timeline">
+              <span class="label big">Time</span>
+              <b>About 1.2 s</b>
+              <span>
+                from your last word to its first sound. It starts answering before you finish, so the work overlaps.
+              </span>
+            </a>
+            <a class="card fact" href="#timeline">
+              <span class="label big">Boundary</span>
+              <b>Nothing leaves the house</b>
+              <span>
+                until a second, stricter check is sure it heard “hey TARS”. Until then the cloud lanes stay closed.
+              </span>
+            </a>
+          </div>
+        </div>
+        <div class="card request">
+          <span class="label big">The request we follow</span>
+          <dl>
+            <dt>ALON</dt>
+            <dd>“Hey TARS, what's the weather tomorrow morning?”</dd>
+            <dt>
+              <span class="mark xs">
+                <i></i>
+                <i></i>
+              </span>
+              TARS
+            </dt>
+            <dd class="tars">Cloudy, 14 degrees. Rain from about four.</dd>
+            <dt>ALON</dt>
+            <dd>“Should I take the bike?”</dd>
+          </dl>
+          <div class="foot">The second question needs no wake word.</div>
+        </div>
+      </section>
+
+      <section id="timeline" class="part">
+        <div class="part-head" style="margin-bottom: 24px">
+          <span class="label big">01 One request, second by second</span>
+          <h2>0 is the moment you stop talking</h2>
+          <p class="lead">
+            Everything left of 0 happens while you are still speaking. That is why the answer comes so fast: by the time
+            you finish, the connections are open, the speaker is known and the reply is already being drafted.
+          </p>
+        </div>
+
+        <div class="controls" id="controls">
+          <div class="row">
+            <button type="button" class="ctl" data-act="prev" aria-label="Previous event" title="Previous event">
+              <svg width="12" height="11" viewBox="0 0 12 11">
+                <rect width="2" height="11" />
+                <path d="M12 0v11L3 5.5z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="ctl play"
+              data-act="play"
+              aria-label="Play"
+              aria-pressed="false"
+              title="Play (Space)"
+            >
+              <svg class="i-play" width="11" height="13" viewBox="0 0 11 13"><path d="M0 0l11 6.5L0 13z" /></svg
+              ><svg class="i-pause" width="11" height="12" viewBox="0 0 11 12">
+                <rect width="3.5" height="12" rx=".5" />
+                <rect x="7.5" width="3.5" height="12" rx=".5" />
+              </svg>
+            </button>
+            <button type="button" class="ctl" data-act="next" aria-label="Next event" title="Next event">
+              <svg width="12" height="11" viewBox="0 0 12 11">
+                <path d="M0 0v11l9-5.5z" />
+                <rect x="10" width="2" height="11" />
+              </svg>
+            </button>
+            <span class="clock" id="clock" aria-live="off"></span>
+            <div class="dots" id="dots"></div>
+            <button type="button" class="reset" data-act="reset">Reset</button>
+          </div>
+          <div class="now" id="now" aria-live="polite">
+            <span class="badge amber" id="now-n"></span>
+            <span class="time" id="now-time"></span>
+            <span class="line" id="now-line">
+              The whole run at once. Press play, drag the playhead, or pick any step.
+            </span>
+          </div>
+        </div>
+
+        <div class="wide-only">
+          <div class="chart card" id="chart"><div class="chart-in" id="chart-in"></div></div>
+          <p class="note">
+            A typical run, built from measured medians; measured 1.1 to 1.6 s to the first sound. After 0 the axis is 3
+            times wider per second, so the dense part is readable; the follow-up at the far right is not to scale. Drag
+            the playhead along the seconds row to scrub, or click anything to jump to it. Play moves the playhead at an
+            even, slow pace, and Space plays or pauses.
+          </p>
+        </div>
+
+        <ol class="steps wide-only" id="steps">
+          <li class="card step" data-step="1">
+            <div class="step-top">
+              <span class="badge">1</span>
+              <span class="mono">−3.4 s</span>
+              <span class="label">You</span>
+            </div>
+            <p>You say “hey TARS”.</p>
+          </li>
+          <li class="card step" data-step="2">
+            <div class="step-top">
+              <span class="badge">2</span>
+              <span class="mono">−2.8 s</span>
+              <span class="label">Pi</span>
+            </div>
+            <p>Stage 1 fires: the small wake model scores 0.5 or more.</p>
+          </li>
+          <li class="card step" data-step="3">
+            <div class="step-top">
+              <span class="badge">3</span>
+              <span class="mono">−2.7 s</span>
+              <span class="label">Pi to cloud</span>
+            </div>
+            <p>
+              Stage 2 says answer. Only now can anything leave the house, and TARS opens its connections while you are
+              still talking.
+            </p>
+          </li>
+          <li class="card step" data-step="4">
+            <div class="step-top">
+              <span class="badge">4</span>
+              <span class="mono">−2.5 to 0 s</span>
+              <span class="label">You, Pi, Flux</span>
+            </div>
+            <p>You ask “what's the weather tomorrow morning?” and the audio streams to Flux as you talk.</p>
+          </li>
+          <li class="card step" data-step="5">
+            <div class="step-top">
+              <span class="badge">5</span>
+              <span class="mono">0.25 s</span>
+              <span class="label">Flux, Pi</span>
+            </div>
+            <p>Flux says “maybe done”. TARS starts the answer early, in the background, while still recording.</p>
+          </li>
+          <li class="card step" data-step="6">
+            <div class="step-top">
+              <span class="badge">6</span>
+              <span class="mono">0.55 s</span>
+              <span class="label">Cerebras</span>
+            </div>
+            <p>Qwen on Cerebras has the first sentence, about 0.3 s later, streamed.</p>
+          </li>
+          <li class="card step" data-step="7">
+            <div class="step-top">
+              <span class="badge">7</span>
+              <span class="mono">0.6 s</span>
+              <span class="label">Flux</span>
+            </div>
+            <p>Flux says “done”. Now the draft may be played, logged and allowed to send anything.</p>
+          </li>
+          <li class="card step" data-step="8">
+            <div class="step-top">
+              <span class="badge">8</span>
+              <span class="mono">0.95 s</span>
+              <span class="label">Aura-2</span>
+            </div>
+            <p>Zeus, the Aura-2 voice, has the first sentence's audio.</p>
+          </li>
+          <li class="card step" data-step="9">
+            <div class="step-top">
+              <span class="badge">9</span>
+              <span class="mono">1.2 s</span>
+              <span class="label">Pi</span>
+            </div>
+            <p>First sound: “Cloudy, 14 degrees. Rain from about four.”</p>
+          </li>
+          <li class="card step" data-step="10">
+            <div class="step-top">
+              <span class="badge">10</span>
+              <span class="mono">after</span>
+              <span class="label">Everyone</span>
+            </div>
+            <p>It listens a few seconds for a follow-up. “Should I take the bike?” goes straight in, no wake word.</p>
+          </li>
+        </ol>
+
+        <div class="narrow-only">
+          <p class="small" style="margin: 4px 0 12px">
+            Time runs down. The left slab is at home, the right one is in the cloud, and the line between them is the
+            house boundary. The cloud stays hatched, closed, until stage 2 says yes.
+          </p>
+          <ol class="card runs" id="runs"></ol>
+          <p class="note">A typical run, built from measured medians; measured 1.1 to 1.6 s to the first sound.</p>
+        </div>
+      </section>
+
+      <section id="wake" class="part">
+        <div class="part-head">
+          <span class="label big">02 How it decides it was called</span>
+          <h2>A fast guess, then a careful check</h2>
+          <p class="lead">
+            Stage 1 is cheap enough to run on every 80 ms of sound, so it is allowed to be a little eager. Stage 2 only
+            runs when stage 1 fires, and it is the one that opens the door.
+          </p>
+        </div>
+        <div class="two">
+          <div>
+            <div class="card box">
+              <span class="label">Every 80 ms</span>
+              <b>A block of sound from the mic</b>
+            </div>
+            <div class="stem"></div>
+            <div class="fork">
+              <div class="card box strong">
+                <span class="label">Stage 1</span>
+                <b>Wake model scores it</b>
+                <span class="small">microWakeWord, local, 69 KB. A score of 0.5 or more goes on.</span>
+              </div>
+              <i></i>
+              <div class="card box dashed">
+                <span class="label">Close, below 0.5</span>
+                <b>Near-miss</b>
+                <span class="small">Logged, never answered. It may be a missed “hey TARS”.</span>
+              </div>
+            </div>
+            <div class="stem tall">score 0.5 or more</div>
+            <div class="card box strong">
+              <span class="label">Stage 2, the double-check</span>
+              <b>Vosk listens for a small grammar, and a learned layer decides</b>
+              <span class="small">Still on the Pi. Nothing has left the house yet.</span>
+            </div>
+            <div class="stem"></div>
+            <div class="outcomes">
+              <div class="card box">
+                <b class="yes">Answer</b>
+                <span class="small">The cloud opens. Step 3 on the timeline.</span>
+              </div>
+              <div class="card box">
+                <b>Ask</b>
+                <span class="small">“Did you call me?” The reply decides.</span>
+              </div>
+              <div class="card box">
+                <b class="no">Ignore</b>
+                <span class="small">Stays quiet. Kept for Review.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card results">
+            <span class="label big">How well the generic models do</span>
+            <p class="small">
+              Trained on synthetic and converted voices, never on a household member. These are the models every new
+              install starts with. The clips are
+              <a href="https://huggingface.co/datasets/alon-p/hey-tars-training">on Hugging Face</a>
+              .
+            </p>
+            <div class="result">
+              <span>Held-out synthetic voices, quiet</span>
+              <span class="mono">97%</span>
+              <div class="meter"><i style="width: 97%"></i></div>
+            </div>
+            <div class="result">
+              <span>Same voices with TV or people talking, 10–15 dB</span>
+              <span class="mono">87–97%</span>
+              <div class="meter">
+                <i style="width: 87%"></i>
+                <i style="left: 87%; width: 10%"></i>
+              </div>
+            </div>
+            <div class="result">
+              <span>The owner, whom it never heard, 30 takes</span>
+              <span class="mono">93%</span>
+              <div class="meter"><i style="width: 93%"></i></div>
+            </div>
+            <div class="result">
+              <span>Lookalikes let through, like “hey cars” and “hey stars”</span>
+              <span class="mono">0–5%</span>
+              <div class="meter"><i style="left: 0; width: 5%; background: var(--ink-3)"></i></div>
+            </div>
+            <div class="result">
+              <span>False answers per hour, an hour of TV and an hour of audiobooks</span>
+              <span class="mono">1 / 0</span>
+              <span class="small">
+                One on the TV hour, when it heard “hey darts”. Stage 1 alone fires about 6 times an hour on TV and 3 on
+                audiobooks; stage 2 turns down all the others.
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="learn" class="part">
+        <div class="part-head" style="margin-bottom: 32px">
+          <span class="label big">03 It learns from the household</span>
+          <h2>Every wake teaches the next pair of models</h2>
+          <p class="lead">
+            The generic models start out good on voices they have never heard. The loop makes them good on yours. People
+            only take part in three places, all in the web app.
+          </p>
+        </div>
+        <ol class="loop">
+          <li>
+            <span class="num">1</span>
+            <div class="text">
+              <h3>Every wake is kept</h3>
+              <p>
+                Its 3 seconds of audio, the scores and what followed. Close calls, the near-misses, too. All of it stays
+                on the Pi; nothing leaves the house for learning.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="num">2</span>
+            <div class="text">
+              <h3>Most label themselves</h3>
+              <p>What happened next says whether a wake was real.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num people">3</span>
+            <div class="split">
+              <div class="text">
+                <span class="label">People, in the web app</span>
+                <h3>People answer the rest in Review</h3>
+                <p>
+                  A few taps a day. Each unsure wake has its audio, what TARS heard, what happened, and TARS's guess
+                  highlighted.
+                </p>
+              </div>
+              <figure class="shot">
+                <div class="frame" data-app-panel="review"></div>
+                <figcaption>Review, with sample data</figcaption>
+              </figure>
+            </div>
+          </li>
+          <li>
+            <span class="num people">4</span>
+            <div class="split">
+              <div class="text">
+                <span class="label">People, in the web app</span>
+                <h3>Voices are grouped automatically</h3>
+                <p>Naming one lets TARS greet that person by name.</p>
+              </div>
+              <figure class="shot">
+                <div class="frame" data-app-panel="voices"></div>
+                <figcaption>Voices, with sample data</figcaption>
+              </figure>
+            </div>
+          </li>
+          <li>
+            <span class="num">5</span>
+            <div class="text">
+              <h3>A bigger machine trains a new pair</h3>
+              <p>
+                A new stage 1 and stage 2, trained on those wakes in about 20 to 25 minutes. Every fifth wake is kept
+                aside for testing, and the new pair is tested end to end against the one in use.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="num people">6</span>
+            <div class="split">
+              <div>
+                <div class="text">
+                  <span class="label">The gate</span>
+                  <h3>It installs only if it is better for this house and no worse anywhere else</h3>
+                  <p>
+                    Better means it answers more of the household's real wakes, or lets fewer through that weren't for
+                    TARS. If not, it asks. Once installed, the Pi switches within seconds, and the Models page can
+                    switch back.
+                  </p>
+                </div>
+                <div class="card gate">
+                  <span class="label">The first real run said no</span>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Test</th>
+                        <th>In use</th>
+                        <th>New</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Other voices, quiet</td>
+                        <td>94.4%</td>
+                        <td>97.8%</td>
+                        <td class="yes">better</td>
+                      </tr>
+                      <tr>
+                        <td>Other voices, noise</td>
+                        <td>83.5%</td>
+                        <td>88.3%</td>
+                        <td class="yes">better</td>
+                      </tr>
+                      <tr>
+                        <td>Lookalikes let through</td>
+                        <td>3.0%</td>
+                        <td>4.8%</td>
+                        <td class="no">worse</td>
+                      </tr>
+                      <tr>
+                        <td>False answers per hour, audiobooks</td>
+                        <td>0</td>
+                        <td>1</td>
+                        <td class="no">worse</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p>
+                    <strong>Not installed.</strong>
+                    Better on other voices, but worse on two things that matter. That is the rule doing its job.
+                  </p>
+                </div>
+              </div>
+              <figure class="shot">
+                <div class="frame" data-app-panel="models"></div>
+                <figcaption>Models, with sample data</figcaption>
+              </figure>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section id="fallbacks" class="part">
+        <div class="part-head">
+          <span class="label big">04 When something breaks</span>
+          <h2>Every stage has a second option</h2>
+          <p class="lead">TARS fails soft, and when it can't recover it tells you in its own voice.</p>
+        </div>
+        <div class="card ladder">
+          <div class="rung th">
+            <span class="label">Stage</span>
+            <span class="label">Normally</span>
+            <span class="label">If that fails</span>
+          </div>
+          <div class="rung">
+            <b>End of turn</b>
+            <span>Deepgram Flux</span>
+            <span class="then">Local rules</span>
+          </div>
+          <div class="rung">
+            <b>Speech to text</b>
+            <span>Flux</span>
+            <span class="then">OpenAI transcribes the same recording</span>
+          </div>
+          <div class="rung">
+            <b>Brain</b>
+            <span>Qwen on Cerebras</span>
+            <span class="then">OpenAI answers</span>
+          </div>
+          <div class="rung">
+            <b>Voice</b>
+            <span>Deepgram Aura-2</span>
+            <span class="then">A spoken error line, made at startup</span>
+          </div>
+          <div class="rung">
+            <b>Wake models</b>
+            <span>The newest trained pair</span>
+            <span class="then">The pair it was installed with</span>
+          </div>
+          <div class="rung">
+            <b>Mic or speaker</b>
+            <span>The USB speakerphone</span>
+            <span class="then">TARS exits and the system restarts it</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="hood" class="part">
+        <div class="part-head">
+          <span class="label big">05 Under the hood</span>
+          <h2>Small on purpose</h2>
+        </div>
+        <div class="hood">
+          <div class="card">
+            <span class="label">Two processes, one folder</span>
+            <div class="procs">
+              <div>The assistant</div>
+              <div>
+                The web app
+                <small>FastAPI, React</small>
+              </div>
+              <div>one SQLite database, WAL mode</div>
+            </div>
+            <span class="small">The assistant writes while the page reads, on the same machine.</span>
+          </div>
+          <div class="card">
+            <span class="label">Every stage is an interface</span>
+            <div class="chips">
+              <span>Trigger</span>
+              <span>Transcriber</span>
+              <span>Brain</span>
+              <span>Voice</span>
+            </div>
+            <span class="small">Swapping a cloud service for a local model is one new class and a config change.</span>
+          </div>
+          <div class="card">
+            <span class="label">Hardware</span>
+            <span>A Raspberry Pi 5 and a USB speakerphone, an Anker PowerConf.</span>
+          </div>
+          <div class="card">
+            <span class="label">Licenses</span>
+            <span>The code is MIT. The trained models are CC BY-NC-SA 4.0.</span>
+            <a href="https://github.com/alon-pilosoph/tars">The repo on GitHub ↗</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span class="mark sm">
+          <i></i>
+          <i></i>
+        </span>
+        <span>TARS, a voice assistant for one household.</span>
+        <span class="links">
+          <a href="https://huggingface.co/datasets/alon-p/hey-tars-training">Training data ↗</a>
+          <a href="https://github.com/alon-pilosoph/tars">Source ↗</a>
+        </span>
+      </div>
+    </footer>
+
+    <script>
+      "use strict";
+      {
+        const root = document.documentElement,
+          dark = matchMedia("(prefers-color-scheme: dark)");
+        const buttons = document.querySelectorAll("[data-theme-pick]");
+        const show = () => {
+          const theme = root.dataset.theme || (dark.matches ? "dark" : "light");
+          buttons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.themePick === theme)));
+        };
+        buttons.forEach(b =>
+          b.addEventListener("click", () => {
+            root.dataset.theme = b.dataset.themePick;
+            try {
+              localStorage.setItem("tars-about-theme", b.dataset.themePick);
+            } catch {}
+            show();
+          }),
+        );
+        dark.addEventListener("change", show);
+        show();
+      }
+
+      {
+        const T0 = -3.6,
+          T_END = 3.0;
+        const PACE = 100 / 30;
+        const AT = [-3.4, -2.8, -2.7, -2.5, 0.25, 0.55, 0.6, 0.95, 1.2, 1.9];
+        const CROSS = 3;
+
+        const X = t =>
+          t <= 0
+            ? Math.max(0, ((t + 3.6) / 3.6) * 36)
+            : t <= 1.6
+              ? 36 + (t / 1.6) * 48
+              : Math.min(100, 84 + ((t - 1.6) / 1.4) * 16);
+        const inv = p =>
+          p <= 36 ? (p / 36) * 3.6 - 3.6 : p <= 84 ? ((p - 36) / 48) * 1.6 : 1.6 + ((p - 84) / 16) * 1.4;
+
+        const LANES = [
+          {
+            g: "you",
+            name: "You",
+            sub: "speech",
+            items: [
+              { k: "wave", t0: -3.4, t1: -2.9, s: [1], seed: 1, label: "“hey TARS”" },
+              {
+                k: "wave",
+                t0: -2.5,
+                t1: 0,
+                s: [4],
+                seed: 2,
+                label: "“what's the weather tomorrow morning?”",
+                lt: -2.2,
+              },
+              { k: "wave", t0: 2.05, t1: 2.75, s: [10], seed: 3, label: "“Should I take the bike?”", la: "end" },
+            ],
+          },
+          {
+            g: "home",
+            name: "Wake check",
+            sub: "stage 1 and 2",
+            items: [
+              { k: "point", t0: -2.8, s: [2] },
+              { k: "point", t0: -2.7, s: [3], label: "stage 1, then stage 2: answer", lt: -2.64 },
+            ],
+          },
+          {
+            g: "home",
+            name: "Recorder",
+            sub: "Silero VAD",
+            items: [
+              {
+                k: "bar",
+                t0: -2.7,
+                t1: 0.6,
+                s: [4, 5, 7],
+                soft: 1,
+                label: "recording; VAD hears you start",
+                lt: -2.64,
+              },
+              { k: "point", t0: -2.5, s: [4] },
+              { k: "muted", t0: 1.2, t1: 1.6, s: [9], label: "mic muted" },
+              { k: "bar", t0: 1.9, t1: 2.95, s: [10], soft: 1, label: "listening" },
+            ],
+          },
+          {
+            g: "home",
+            name: "Speaker ID",
+            sub: "voiceprints",
+            items: [{ k: "bar", t0: -2.5, t1: -1.2, s: [4], label: "Alon, in parallel" }],
+          },
+          {
+            g: "home",
+            name: "Speaker",
+            sub: "playback",
+            items: [{ k: "bar", t0: 1.2, t1: 1.85, s: [9], label: "first sound" }],
+          },
+          {
+            g: "home",
+            name: "Journal",
+            sub: "SQLite",
+            items: [
+              { k: "point", t0: -2.7, s: [3], label: "wake" },
+              { k: "point", t0: 0.6, s: [7], label: "turn" },
+              { k: "point", t0: 1.2, s: [9], label: "reply" },
+            ],
+          },
+          {
+            g: "cloud",
+            name: "Deepgram Flux",
+            sub: "speech to text",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7, label: "closed" },
+              { k: "point", t0: -2.7, s: [3] },
+              { k: "bar", t0: -2.5, t1: 0.6, s: [4], soft: 1, label: "your audio, streamed", lt: -2.45 },
+              { k: "point", t0: 0.25, s: [5], label: "maybe done" },
+              { k: "point", t0: 0.6, s: [7], label: "done", lt: 0.68 },
+            ],
+          },
+          {
+            g: "cloud",
+            name: "Cerebras",
+            sub: "Qwen, fast brain",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7 },
+              { k: "idle", t0: -2.7, t1: 0.25 },
+              { k: "point", t0: -2.7, s: [3], label: "open" },
+              { k: "bar", t0: 0.25, t1: 0.55, s: [5, 6], label: "first sentence" },
+              { k: "bar", t0: 0.56, t1: 0.95, s: [6], soft: 1 },
+            ],
+          },
+          {
+            g: "cloud",
+            name: "OpenAI",
+            sub: "web search, send",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7 },
+              { k: "idle", t0: -2.7, t1: 1.6 },
+              { k: "point", t0: -2.7, s: [3], label: "open, standing by for a hand-off" },
+            ],
+          },
+          {
+            g: "cloud",
+            name: "Deepgram Aura-2",
+            sub: "the voice, “Zeus”",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7 },
+              { k: "idle", t0: -2.7, t1: 0.55 },
+              { k: "point", t0: -2.7, s: [3], label: "two connections open" },
+              { k: "bar", t0: 0.55, t1: 0.95, s: [8], label: "sentence 1" },
+              { k: "bar", t0: 0.97, t1: 1.37, soft: 1, label: "sentence 2" },
+              { k: "bar", t0: 1.39, t1: 1.6, soft: 1 },
+            ],
+          },
+        ];
+        const TICKS = [
+          [-3, "−3 s"],
+          [-2, "−2 s"],
+          [-1, "−1 s"],
+          [0, "0  you stop talking"],
+          [1, "+1 s"],
+          [1.62, "then"],
+        ];
+        const GRID = [-3, -2, -1, 0, 0.5, 1, 1.5, 1.6];
+
+        const $ = (sel, el = document) => el.querySelector(sel);
+        const el = (tag, cls, parent) => {
+          const e = document.createElement(tag);
+          if (cls) e.className = cls;
+          if (parent) parent.append(e);
+          return e;
+        };
+        const pct = v => v + "%";
+
+        let t = null,
+          playing = false,
+          raf = 0,
+          dragging = false;
+        const section = $("#timeline"),
+          chart = $("#chart"),
+          inner = $("#chart-in"),
+          controls = $("#controls");
+        const playBtn = $("[data-act=play]"),
+          clock = $("#clock"),
+          now = $("#now");
+        const cards = [...document.querySelectorAll("#steps .step")];
+        const stepTime = n => cards[n - 1].querySelector(".mono").textContent;
+        const stepWhere = n => cards[n - 1].querySelector(".label").textContent;
+        const stepLine = n => cards[n - 1].querySelector("p").textContent;
+
+        const items = [],
+          slabs = [];
+        const row = (cls, name) => {
+          const r = el("div", "row " + cls, inner);
+          const n = el("span", "label", r);
+          n.textContent = name;
+          el("div", "track", r);
+          return r;
+        };
+        const axis = row("axis", "Seconds");
+        const track = $(".track", axis);
+        const knob = el("div", "knob", track);
+        for (const [v, label] of TICKS) {
+          const s = el("span", "tick" + (v === 0 ? " zero" : ""), track);
+          s.style.left = pct(X(v));
+          s.textContent = label;
+        }
+
+        function lane(L) {
+          const r = el("div", "row lane" + (L.g === "cloud" ? " cloud" : ""), inner);
+          const name = el("div", "lane-name", r);
+          slabs.push({ el: el("span", "slab", name), items: [] });
+          const text = el("div", "", name);
+          el("b", "", text).textContent = L.name;
+          el("small", "", text).textContent = L.sub;
+          const tr = el("div", "track", r);
+          for (const it of L.items) {
+            const t1 = it.t1 ?? it.t0,
+              l = X(it.t0),
+              w = Math.max(X(t1) - l, 0.5);
+            const box = el("div", "it " + it.k + (it.soft ? " soft" : ""), tr);
+            box.style.left = pct(l);
+            if (it.k !== "point") box.style.width = pct(w);
+            const bars = [];
+            if (it.k === "wave") {
+              const n = Math.max(8, Math.round(w * 2));
+              for (let i = 0; i < n; i++) {
+                const b = el("i", "", box);
+                b.style.height =
+                  (18 + 78 * Math.abs(Math.sin(i * 1.37 + it.seed * 2.1) * Math.cos(i * 0.29 + it.seed))).toFixed(0) +
+                  "%";
+                bars.push({ el: b, x: l + ((i + 0.5) / n) * w });
+              }
+            }
+            let lab = null;
+            if (it.label) {
+              lab = el("div", "lab" + (it.k === "closed" ? " closed" : ""), tr);
+              lab.textContent = it.label;
+              if (it.la === "end") lab.style.right = pct(100 - X(t1));
+              else {
+                lab.style.left = pct(X(it.lt ?? it.t0));
+                if (it.k === "point" || it.k === "closed") lab.classList.add("after-mark");
+              }
+            }
+            if (it.s) for (const e of lab ? [box, lab] : [box]) e.dataset.go = it.s[0];
+            const item = { ...it, t1, l, w, box, lab, bars, passive: it.k === "closed" || it.k === "idle" };
+            items.push(item);
+            slabs.at(-1).items.push(item);
+          }
+        }
+        LANES.filter(L => L.g === "you").forEach(lane);
+        row("head", "At home, on the Pi");
+        LANES.filter(L => L.g === "home").forEach(lane);
+        const boundary = row("boundary", "House boundary");
+        const crossMark = el("div", "cross-mark", $(".track", boundary));
+        const crossLabel = el("div", "cross-label", $(".track", boundary));
+        crossMark.style.left = crossLabel.style.left = pct(X(-2.7));
+        crossLabel.textContent = "−2.7 s  stage 2 said yes, so the first bytes leave the house";
+        $(".label", row("head cloud", "In the cloud"));
+        LANES.filter(L => L.g === "cloud").forEach(lane);
+        const grid = el("div", "layer grid", inner);
+        for (const v of GRID)
+          el("div", "gridline" + (v === 0 ? " zero" : v === 1.6 ? " break" : ""), grid).style.left = pct(X(v));
+        el("div", "cross-line", grid).style.left = pct(X(-2.7));
+        const head = el("div", "layer head", inner);
+        const playhead = el("div", "playhead", head),
+          hit = el("div", "playhead-hit", head);
+
+        const dots = cards.map((c, i) => {
+          const b = el("button", "", $("#dots"));
+          b.type = "button";
+          b.dataset.go = i + 1;
+          b.setAttribute("aria-label", "Step " + (i + 1));
+          return b;
+        });
+        const runs = cards.map((c, i) => {
+          const n = i + 1,
+            r = el("li", "run", $("#runs"));
+          r.dataset.go = n;
+          el("span", "mono", r).textContent = stepTime(n);
+          const lanes = el("div", "lanes", r);
+          const home = c.dataset.step && LANES.some(L => L.g !== "cloud" && L.items.some(it => it.s?.includes(n)));
+          const cloud = LANES.some(L => L.g === "cloud" && L.items.some(it => it.s?.includes(n) && it.k !== "closed"));
+          el("i", home ? "used" : "", lanes);
+          el("i", n < CROSS ? "shut" : cloud ? "used" : "", lanes);
+          if (n === CROSS) el("b", "", lanes);
+          const body = el("div", "", r);
+          const top = el("div", "step-top", body);
+          el("span", "badge", top).textContent = n;
+          el("span", "label", top).textContent = stepWhere(n);
+          el("p", "", body).textContent = stepLine(n);
+          return r;
+        });
+
+        const stepAt = v => (v == null ? 0 : AT.filter(a => v >= a - 1e-6).length);
+
+        function render() {
+          const step = stepAt(t),
+            live = t != null,
+            xt = live ? X(t) : 0;
+          for (const it of items) {
+            const later = live && !it.passive && t < it.t0 - 1e-6;
+            const on = live && !it.passive && !later && (it.k === "point" ? it.s.includes(step) : t <= it.t1);
+            for (const e of it.lab ? [it.box, it.lab] : [it.box]) {
+              e.classList.toggle("on", on);
+              e.classList.toggle("later", later);
+            }
+            if (on && it.k === "bar")
+              it.box.style.setProperty("--p", pct(Math.max(0, Math.min(100, ((xt - it.l) / it.w) * 100))));
+            for (const b of it.bars) b.el.classList.toggle("played", on && b.x <= xt);
+            it.on = on;
+          }
+          for (const s of slabs)
+            s.el.classList.toggle(
+              "on",
+              s.items.some(it => it.on),
+            );
+          inner.classList.toggle("playing-or-set", live);
+          inner.classList.toggle("before-cross", live && t < -2.7 - 1e-6);
+          inner.classList.toggle("cross-on", step === CROSS);
+          inner.classList.toggle("dragging", dragging);
+          knob.style.left = playhead.style.left = hit.style.left = pct(xt);
+
+          playBtn.setAttribute("aria-pressed", String(playing));
+          playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+          playBtn.title = (playing ? "Pause" : "Play") + " (Space)";
+          clock.textContent = !live ? "" : t > 1.6 ? "then" : (t < -0.004 ? "−" : "") + Math.abs(t).toFixed(2) + " s";
+          dots.forEach((d, i) => {
+            d.classList.toggle("on", i + 1 === step);
+            d.classList.toggle("past", i + 1 < step);
+          });
+          cards.forEach((c, i) => c.classList.toggle("on", i + 1 === step));
+          runs.forEach((r, i) => r.classList.toggle("on", i + 1 === step));
+          now.classList.toggle("has-step", step > 0);
+          if (step) {
+            $("#now-n").textContent = step;
+            $("#now-time").textContent = stepTime(step);
+          }
+          $("#now-line").textContent = step
+            ? stepLine(step)
+            : live
+              ? "Silence. TARS is listening, on the Pi only."
+              : "The whole run at once. Press play, drag the playhead, or pick any step.";
+        }
+
+        function pause() {
+          cancelAnimationFrame(raf);
+          playing = false;
+        }
+        function go(n) {
+          pause();
+          n = Math.max(0, Math.min(AT.length, n));
+          t = n ? AT[n - 1] : null;
+          render();
+        }
+        function prev() {
+          const n = stepAt(t);
+          go(n > 0 && t > AT[n - 1] + 0.01 ? n : n - 1);
+        }
+        function next() {
+          go(stepAt(t) + 1);
+        }
+
+        function showChart() {
+          if (!chart.offsetParent) return;
+          const r = chart.getBoundingClientRect(),
+            want = controls.getBoundingClientRect().height + parseInt(getComputedStyle(controls).top) + 8;
+          if (r.top < want || r.bottom > innerHeight) scrollBy({ top: r.top - want, behavior: "smooth" });
+        }
+
+        function togglePlay() {
+          if (playing) {
+            pause();
+            render();
+            return;
+          }
+          if (t == null || t >= T_END - 0.01) t = T0;
+          showChart();
+          playing = true;
+          let last = performance.now();
+          const frame = time => {
+            const dt = Math.min(0.1, (time - last) / 1000);
+            last = time;
+            t = inv(Math.min(100, X(t) + dt * PACE));
+            if (t >= T_END - 1e-6) {
+              t = T_END;
+              playing = false;
+              render();
+              return;
+            }
+            render();
+            raf = requestAnimationFrame(frame);
+          };
+          raf = requestAnimationFrame(frame);
+          render();
+        }
+
+        function scrubTo(x) {
+          const r = track.getBoundingClientRect();
+          t = Math.min(T_END, inv(Math.max(0, Math.min(100, ((x - r.left) / r.width) * 100))));
+          render();
+        }
+        function startDrag(e) {
+          e.preventDefault();
+          pause();
+          dragging = true;
+          scrubTo(e.clientX);
+          const move = ev => scrubTo(ev.clientX);
+          const up = () => {
+            dragging = false;
+            removeEventListener("pointermove", move);
+            removeEventListener("pointerup", up);
+            render();
+          };
+          addEventListener("pointermove", move);
+          addEventListener("pointerup", up);
+        }
+        track.addEventListener("pointerdown", startDrag);
+        hit.addEventListener("pointerdown", startDrag);
+
+        section.addEventListener("click", e => {
+          const target = e.target.closest("[data-go], [data-act], .step");
+          if (!target) return;
+          const act = target.dataset.act;
+          if (act === "play") togglePlay();
+          else if (act === "prev") prev();
+          else if (act === "next") next();
+          else if (act === "reset") go(0);
+          else go(Number(target.dataset.go || target.dataset.step));
+        });
+
+        const onScreen = () => {
+          const r = section.getBoundingClientRect();
+          return r.top < innerHeight && r.bottom > 0;
+        };
+        addEventListener("keydown", e => {
+          if (e.target.closest("input, textarea, select") || e.metaKey || e.ctrlKey || e.altKey) return;
+          if (e.key === " " && onScreen()) {
+            e.preventDefault();
+            if (!e.repeat) togglePlay();
+          } else if (e.key === "ArrowRight" && onScreen()) next();
+          else if (e.key === "ArrowLeft" && onScreen()) prev();
+        });
+        addEventListener("keyup", e => {
+          if (e.key === " " && onScreen()) e.preventDefault();
+        });
+
+        render();
+      }
+    </script>
+  </body>
+</html>

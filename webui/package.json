@@ -8,12 +8,13 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "test": "vitest run",
     "lint": "oxlint --deny-warnings",
-    "format": "prettier --write src checks *.ts package.json tsconfig*.json .oxlintrc.json ../.github/workflows",
-    "format:check": "prettier --check src checks *.ts package.json tsconfig*.json .oxlintrc.json ../.github/workflows",
+    "format": "prettier --write src checks *.ts package.json tsconfig*.json .oxlintrc.json ../site/index.html ../.github/workflows",
+    "format:check": "prettier --check src checks *.ts package.json tsconfig*.json .oxlintrc.json ../site/index.html ../.github/workflows",
     "e2e": "npm run build && playwright test -c checks/e2e.config.ts",
     "screenshots": "npm run build && playwright test -c checks/screenshots.config.ts",
     "visual": "npm run build && playwright test -c checks/visual.config.ts",
-    "visual:update": "npm run build && playwright test -c checks/visual.config.ts --update-snapshots"
+    "visual:update": "npm run build && playwright test -c checks/visual.config.ts --update-snapshots",
+    "site": "npm run build && playwright test -c checks/site.config.ts"
   },
   "dependencies": {
     "react": "^19.3.0",
