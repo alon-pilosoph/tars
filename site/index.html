@@ -500,15 +500,15 @@
         color: var(--on-amber);
       }
 
-      .wide-only {
-        display: none;
+      @media (max-width: 759px) {
+        .wide-only,
+        .dots {
+          display: none !important;
+        }
       }
       @media (min-width: 760px) {
-        .wide-only {
-          display: block;
-        }
         .narrow-only {
-          display: none;
+          display: none !important;
         }
       }
       .chart {
@@ -1069,9 +1069,6 @@
         font-size: 12.5px;
       }
 
-      .loop {
-        display: grid;
-      }
       .loop > li {
         position: relative;
         display: grid;
@@ -1095,10 +1092,10 @@
         display: none;
       }
       .loop {
+        display: grid;
         margin: 0;
         padding: 0;
         list-style: none;
-        counter-reset: loop;
       }
       .num {
         position: relative;
@@ -1154,6 +1151,32 @@
         border-radius: 6px;
         background: var(--bg);
         overflow: hidden;
+      }
+      @media (max-width: 520px) {
+        .fork,
+        .outcomes {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .fork > i {
+          width: 0;
+          height: 12px;
+          margin-left: 24px;
+          border-left: 1.5px dashed var(--line-2);
+          background: none;
+        }
+        .fork > .dashed {
+          margin-left: 24px;
+        }
+        .loop > li {
+          grid-template-columns: 28px minmax(0, 1fr);
+          gap: 12px;
+        }
+        .loop > li::before {
+          left: 13px;
+        }
+        .shot .frame {
+          padding: 14px 6px 6px;
+        }
       }
       .gate {
         padding: 16px;
@@ -1453,9 +1476,7 @@
           <div class="now" id="now" aria-live="polite">
             <span class="badge amber" id="now-n"></span>
             <span class="time" id="now-time"></span>
-            <span class="line" id="now-line">
-              The whole run at once. Press play, drag the playhead, or pick any step.
-            </span>
+            <span class="line" id="now-line">The whole run at once. Press play, or pick any step.</span>
           </div>
         </div>
 
@@ -1622,8 +1643,7 @@
             <p class="small">
               Trained on synthetic and converted voices, never on a household member. These are the models every new
               install starts with. The clips are
-              <a href="https://huggingface.co/datasets/alon-p/hey-tars-training">on Hugging Face</a>
-              .
+              <a href="https://huggingface.co/datasets/alon-p/hey-tars-training">on Hugging Face</a>.
             </p>
             <div class="result">
               <span>Held-out synthetic voices, quiet</span>
@@ -2237,7 +2257,7 @@
             ? stepLine(step)
             : live
               ? "Silence. TARS is listening, on the Pi only."
-              : "The whole run at once. Press play, drag the playhead, or pick any step.";
+              : "The whole run at once. Press play, or pick any step.";
         }
 
         function pause() {
