@@ -153,13 +153,18 @@ for (const [name, q, steps] of jobs)
         await expect(page).toHaveScreenshot(`${name}--${size}-${theme}.png`);
       });
 
-test("the tabs get a row of their own at every phone width", async ({ page }) => {
+test("the tabs get a row of their own at every phone and tablet width, and nothing leaves the screen", async ({
+  page,
+}) => {
   await serveFromDisk(page);
-  for (const width of [360, 480, 560, 640]) {
+  for (const width of [360, 480, 560, 640, 700, 860, 861, 1000]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto(`${ORIGIN}/index.html?demo`);
     const refresh = (await page.locator(".refresh").boundingBox())!;
     const tabs = (await page.getByRole("navigation", { name: "Sections" }).boundingBox())!;
-    expect(tabs.y, `at ${width}px`).toBeGreaterThanOrEqual(refresh.y + refresh.height);
+    if (width <= 860) expect(tabs.y, `at ${width}px`).toBeGreaterThanOrEqual(refresh.y + refresh.height);
+    else expect(tabs.y, `at ${width}px`).toBeLessThan(refresh.y + refresh.height);
+    expect(refresh.x + refresh.width, `at ${width}px`).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `at ${width}px`).toBe(width);
   }
 });

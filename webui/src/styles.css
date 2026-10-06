@@ -282,8 +282,10 @@ main {
   margin: 0 auto;
   padding: var(--s6) var(--s5) 96px;
 }
-@media (max-width: 640px) {
-  /* the tabs wrap to a second row; Refresh lines up with the cards */
+/* Narrower than this, the header can't fit the logo, six tabs and Refresh on one line: the tabs get a row of their
+   own, spread evenly, and Voices and Models move under More. */
+@media (max-width: 860px) {
+  /* Refresh lines up with the cards */
   .top-in {
     padding: 0 var(--s4);
     height: auto;
@@ -299,10 +301,11 @@ main {
     margin: 0 calc(-1 * var(--s4));
     height: 44px;
     gap: 0;
+    justify-content: space-evenly;
     border-top: 1px solid var(--line);
   }
   .nav button {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     justify-content: center;
     font-size: 15px;
     padding: 0 6px;
@@ -323,6 +326,8 @@ main {
     margin-left: auto;
     margin-right: calc(-1 * var(--s1));
   }
+}
+@media (max-width: 640px) {
   main {
     padding: var(--s5) var(--s3) calc(48px + env(safe-area-inset-bottom));
   }
