@@ -38,6 +38,7 @@ from voice_assistant.events import (
     SAID_NOTHING,
     EventLog,
 )
+from voice_assistant.llm import FALLBACK, LOOKED_UP, QUICK
 from voice_assistant.speaker import SpeakerID
 from voice_assistant.verify import ANSWER, ASK, IGNORE
 from voice_assistant.versions import ABOUT, CHECK, MODEL, ModelVersions
@@ -186,7 +187,12 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
                 if extra.get("corrected"):
                     convos.correct(tid, extra["corrected"])
             else:
-                tid = convos.add_tars_turn(c, text, ts=t)
+                took = extra.get("took")
+                timings = {"end_of_speech": 0.25, "stt": 0.06, "total": took} if took else None
+                failed = extra.get("failed", (None, None))
+                tid = convos.add_tars_turn(
+                    c, text, ts=t, timings=timings, answered_by=extra.get("by"), failed_at=failed[0], error=failed[1]
+                )
                 if extra.get("rating"):
                     convos.rate(tid, extra["rating"])
                 for sent in extra.get("items", []):
@@ -204,15 +210,15 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
 
     talk(
         "What's the weather going to be like tomorrow?",
-        [tars("Sunny, 24 degrees. Sunglasses advised. Irony optional.", rating="good")],
+        [tars("Sunny, 24 degrees. Sunglasses advised. Irony optional.", rating="good", took=2.8, by=LOOKED_UP)],
         "alon",
     )
     talk(
         "Set a timer for ten minutes.",
         [
-            tars("Ten minutes. Starting now."),
+            tars("Ten minutes. Starting now.", took=1.2, by=QUICK),
             person("Actually, make it fifteen."),
-            tars("Fifteen minutes. I've adjusted my expectations too."),
+            tars("Fifteen minutes. I've adjusted my expectations too.", took=1.3, by=QUICK),
             person("And remind me to take the pasta out when it's done."),
             tars("I'll remind you. The pasta has no say in it."),
         ],
@@ -243,13 +249,18 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
         ],
         "stacey",
     )
-    talk("Play some jazz.", [tars("Playing jazz. Try to look sophisticated.")], "stacey")
+    talk("Play some jazz.", [tars("Playing jazz. Try to look sophisticated.", took=2.1, by=FALLBACK)], "stacey")
     talk(
         "Is it going to rain?",
         [
-            tars("No. Ten percent. I'd leave the umbrella."),
+            tars("No. Ten percent. I'd leave the umbrella.", took=2.9, by=LOOKED_UP),
             person("And in Tokyo?"),
-            tars("Tokyo, light rain all afternoon."),
+            tars(
+                "Looking it up.",
+                took=0.9,
+                by=LOOKED_UP,
+                failed=("llm", "APITimeoutError: Request timed out."),
+            ),
         ],
         None,
     )

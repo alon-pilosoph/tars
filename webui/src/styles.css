@@ -1834,6 +1834,22 @@ th.num {
 .fixed {
   color: var(--ink-3);
 }
+.turn-meta {
+  font: var(--t-label);
+  color: var(--ink-3);
+}
+.turn-failed {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--no);
+}
+.turn-error {
+  display: block;
+  margin-top: 2px;
+  font: 12px/1.4 var(--mono);
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
 .fixed s {
   text-decoration-color: var(--ink-3);
 }

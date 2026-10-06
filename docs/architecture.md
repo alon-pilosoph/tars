@@ -41,8 +41,8 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    `[Speaker: Alon]`.
 5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras first (about 0.3 s to its first sentence). When
    the answer needs the web or the TARS page it replies `<look-up>`, and that turn goes to OpenAI's model (the
-   Responses API, with web search and the send tool), which also answers whenever Cerebras fails; both share one
-   conversation. Each finished sentence goes to **text to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's
+   Responses API, with web search and the send tool), which also answers whenever Cerebras fails, and for two
+   minutes after, so an outage doesn't cost every turn Cerebras's timeout; both share one conversation. Each finished sentence goes to **text to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's
    Onyx) straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply is
    still being written. The TARS effect (a speaker in a metal box) is applied as it streams. All of this starts
    early, when Flux thinks you may be done, while the recording goes on: if you carry on talking the draft is thrown

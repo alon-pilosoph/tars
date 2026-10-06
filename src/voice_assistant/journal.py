@@ -121,18 +121,60 @@ class Journal:
             self.conversations.add_tars_turn(conversation, text, ts=said_at)
         return conversation
 
-    def answered(self, text: str, sent: list[SentItem], asker: str | None) -> None:
-        """Sent items are kept even if the conversation couldn't be."""
+    def answered(
+        self,
+        text: str,
+        sent: list[SentItem],
+        asker: str | None,
+        timings: dict[str, float] | None = None,
+        answered_by: str | None = None,
+    ) -> None:
+        """Sent items are kept even if the conversation couldn't be. `timings`: seconds by stage
+        (conversations.TIMINGS); `answered_by`: which model wrote it (Brain.answered_by)."""
         self.flush()
         self._settle_wake(ASKED)
         if self.conversations is None:
             return
         conversation = None if self._gone else self._conversation
-        tars_turn = self._safe(self.conversations.add_tars_turn, conversation, text) if conversation else None
+        tars_turn = (
+            self._safe(self.conversations.add_tars_turn, conversation, text, timings=timings, answered_by=answered_by)
+            if conversation
+            else None
+        )
         for item in sent:
             # "For whoever asked" needs a known asker; otherwise it's the household's.
             item = item if asker else dataclasses.replace(item, scope=HOUSEHOLD)
             self._safe(self.conversations.add_item, conversation, tars_turn, item, for_name=asker)
+
+    def failed(
+        self,
+        text: str,
+        failed_at: str,
+        error: str,
+        timings: dict[str, float] | None = None,
+        answered_by: str | None = None,
+    ) -> None:
+        """Answering went wrong (`failed_at`: a conversations.STAGES), after saying `text` of the answer, maybe
+        nothing. Kept as a TARS turn, so the web UI shows where it failed; when nothing was heard (transcribing
+        failed), the conversation starts here."""
+        self.flush()
+        self._settle_wake(ASKED)
+        if self.conversations is None or self._gone:
+            return
+        if self._conversation is None:
+            said, self._said = self._said, []
+            self._conversation = self._safe(self._start, said, time.time())
+        if self._conversation is None:
+            return
+        self._safe(
+            self.conversations.add_tars_turn,
+            self._conversation,
+            text,
+            timings=timings,
+            answered_by=answered_by,
+            failed_at=failed_at,
+            error=error,
+        )
 
     def not_for_tars(self) -> None:
         """TARS stayed quiet about what was just heard: it was overheard, or a "no" to "Did you call me?"."""

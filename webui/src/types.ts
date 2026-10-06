@@ -115,7 +115,22 @@ export interface Turn {
   // tars turns
   rating?: "good" | "bad" | null;
   items?: number[]; // ids into State.items (the API sends whole items; load() keeps just their ids)
+  timings?: Timings | null; // seconds by stage, as in the assistant's log
+  answered_by?: AnsweredBy | null;
+  failed_at?: FailedAt | null; // where answering failed, if it did
+  error?: string | null;
 }
+
+export interface Timings {
+  end_of_speech?: number; // the silence waited through
+  stt?: number;
+  llm?: number; // to the brain's first sentence
+  tts?: number; // from that sentence to the voice's first audio
+  total?: number; // from the end of speech to the first sound
+}
+
+export type AnsweredBy = "quick" | "look_up" | "fallback" | "openai";
+export type FailedAt = "stt" | "llm" | "tts" | "other";
 
 export type ApiTurn = Omit<Turn, "items"> & { items?: (Item | number)[] };
 

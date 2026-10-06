@@ -10,10 +10,12 @@ from openai import OpenAIError
 import voice_assistant.assistant as assistant_module
 from voice_assistant.assistant import ASK_PHRASE, ERROR_LINES, Assistant
 from voice_assistant.audio import SpeakerError
-from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, SentItem
+from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, TIMINGS, SentItem
 from voice_assistant.events import EventLog
 from voice_assistant.journal import Journal
-from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG
+from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK
+from voice_assistant.speech import StreamedReply
+from voice_assistant.stt import BufferedSession
 
 from .conftest import AUDIO, make_assistant, raising
 
@@ -434,3 +436,57 @@ def test_sent_items_are_kept_even_if_the_conversation_couldnt_be(speaker, tmp_pa
     assistant.converse(follow_up_s=4.0)
     (item,) = convos.items()
     assert item["title"] == "Pasta" and item["conversation_id"] is None
+
+
+def turns_of(convos):
+    (summary,) = convos.conversations()
+    return convos.get(summary["id"])["turns"]
+
+
+def playing(speaker):
+    def play(chunks, *a, on_first_audio=None, **kw):
+        for _ in chunks:
+            if on_first_audio:
+                on_first_audio()
+                on_first_audio = None
+
+    speaker.play_pcm_stream = play
+
+
+def test_each_answer_is_kept_with_how_long_it_took_and_who_wrote_it(speaker, tmp_path, monkeypatch):
+    monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q", None], ["what time is it"], replies=["Late."])
+    playing(speaker)
+    assistant.brain.answered_by = QUICK
+    assistant.converse(follow_up_s=4.0)
+    tars = turns_of(convos)[-1]
+    assert tars["text"] == "Late." and tars["answered_by"] == QUICK and tars["failed_at"] is None
+    assert set(tars["timings"]) == set(TIMINGS) and tars["timings"]["total"] >= 0
+
+
+@pytest.mark.parametrize("stage", ["stt", "llm", "tts"])
+def test_a_failed_answer_is_kept_with_where_it_failed(speaker, tmp_path, monkeypatch, stage):
+    monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q"], ["what's the weather"], replies=["Sunny."])
+    playing(speaker)
+    down = OpenAIError(f"{stage} is down")
+    if stage == "stt":
+        assistant.transcriber = types.SimpleNamespace(session=lambda: BufferedSession(raising(down)))
+    elif stage == "llm":
+        assistant.brain.stream_reply = raising(down)
+    else:
+        assistant.voice.stream = raising(down)
+    assistant.converse(follow_up_s=4.0)
+    turns = turns_of(convos)
+    # When nothing could be heard, the failure starts the conversation on its own.
+    assert [t["role"] for t in turns] == (["tars"] if stage == "stt" else ["person", "tars"])
+    assert turns[-1]["failed_at"] == stage and turns[-1]["error"] == f"OpenAIError: {stage} is down"
+    assert turns[-1]["text"] == ("Sunny." if stage == "tts" else "")  # what it had written before the voice failed
+
+
+def test_a_bug_is_kept_as_a_failure_too(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q"], ["hi"])
+    assistant.brain.stream_reply = lambda text: iter(["fine"])
+    assistant._speak = raising(KeyError("oops"))
+    assistant.converse(follow_up_s=4.0)
+    assert turns_of(convos)[-1]["failed_at"] == "other"

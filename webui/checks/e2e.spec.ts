@@ -76,6 +76,16 @@ test("a long conversation folds its middle, and expands", async () => {
   await expect(fold).toHaveCount(0);
 });
 
+test("each answer shows how long it took and who wrote it, and a failed one says where it failed", async () => {
+  const tars = (await A.convs()).flatMap(c => c.turns).filter(t => t.role === "tars");
+  const timed = tars.find(t => t.timings?.total != null && t.answered_by === "quick");
+  const failed = tars.find(t => t.failed_at === "llm");
+  if (!timed || !failed) throw new Error("the demo log needs a timed answer and a failed one");
+  await expect(turn(timed.id).locator(".turn-meta")).toHaveText(`${timed.timings!.total!.toFixed(1)} s · Qwen`);
+  await expect(turn(failed.id).locator(".turn-failed")).toContainText("Failed while writing the answer");
+  await expect(turn(failed.id).locator(".turn-error")).toHaveText(failed.error!);
+});
+
 test("rating a reply saves it, and Undo clears it", async () => {
   const c = (await A.convs()).find(x => x.turns.some(t => t.role === "tars" && !t.rating));
   const reply = c?.turns.find(t => t.role === "tars" && !t.rating);

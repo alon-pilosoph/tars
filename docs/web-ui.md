@@ -8,7 +8,7 @@ laptop on the home network. The design came from Claude Design, and screenshot t
 
 | Page | What's there |
 |---|---|
-| **Home** | Conversations by day, newest first: who spoke (by voice), what they said (with audio), what TARS answered and sent. Anything TARS sent since the last Refresh sits on top. Rate an answer good or bad, fix a misheard transcript, name an unknown voice, and from a conversation's ⋯ menu: copy it, "Not meant for TARS", who was talking, delete. With two or more named people, a filter by person. |
+| **Home** | Conversations by day, newest first: who spoke (by voice), what they said (with audio), what TARS answered and sent, how long each answer took and which model wrote it, and where an answer failed. Anything TARS sent since the last Refresh sits on top. Rate an answer good or bad, fix a misheard transcript, name an unknown voice, and from a conversation's ⋯ menu: copy it, "Not meant for TARS", who was talking, delete. With two or more named people, a filter by person. |
 | **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. |
 | **Review** | Wakes no conversation explained (a near-miss, a "Did you call me?" nobody answered, a wake followed by silence). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |

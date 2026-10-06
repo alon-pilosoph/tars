@@ -76,6 +76,12 @@ MAX_TOOL_ROUNDS = 3
 CEREBRAS_URL = "https://api.cerebras.ai/v1"
 # What the quick model replies when a turn needs OpenAI's tools; that turn is then OpenAI's to answer.
 LOOK_UP = "<look-up>"
+# After Cerebras fails (down, slow, "too many requests"), OpenAI answers on its own for this long, so each turn
+# doesn't wait out Cerebras's timeout first.
+CEREBRAS_COOLDOWN_S = 120.0
+# Who answered a reply (Brain.answered_by), kept with the turn: Qwen on Cerebras, OpenAI because Qwen handed the turn
+# over, OpenAI because Cerebras failed or is cooling down, or OpenAI as the only brain.
+QUICK, LOOKED_UP, FALLBACK, OPENAI = "quick", "look_up", "fallback", "openai"
 NEEDS_THE_WEB = "anything current or live: the weather, news, sports results, prices or opening hours, or a real link"
 NEEDS_SENDING = (
     "sending, saving or sharing something to the household's TARS page: a recipe, a list, a note, a link "
@@ -146,6 +152,7 @@ class ReplyFailed(OpenAIError):
 
 class Brain(Protocol):
     sent: list[SentItem]  # what the last reply sent to the web UI
+    answered_by: str | None  # who wrote the last reply (QUICK, LOOKED_UP, FALLBACK or OPENAI), once known
 
     def stream_reply(self, text: str) -> Iterator[str]:
         """Yield the reply in pieces as it's generated."""
@@ -206,13 +213,16 @@ class _Writing:
     """One reply being written. Each has its own stop, so a stopped reply still waiting on the network can't
     touch the conversation after the next one has started."""
 
-    def __init__(self):
+    def __init__(self, answered_by: str | None = None):
         self.stopped = False
         self.stream = None  # the response being read, so interrupt() can close it
+        self.answered_by = answered_by
 
 
 class OpenAIChat:
     """The conversation, through OpenAI's Responses API: streamed text, plus web search and the send tool."""
+
+    first_answerer = OPENAI
 
     def __init__(self, client: OpenAI, cfg: LLMConfig):
         self._client = client
@@ -243,7 +253,7 @@ class OpenAIChat:
             self._asked = {"role": "user", "content": text}
             self._history.append(self._asked)
             self.sent = []
-            self._writing = writing = _Writing()
+            self._writing = writing = _Writing(self.first_answerer)
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
 
@@ -302,6 +312,10 @@ class OpenAIChat:
             raise ReplyFailed("the reply was empty")
         self._remember(answer, writing)
 
+    @property
+    def answered_by(self) -> str | None:
+        return self._writing.answered_by
+
     def _remember(self, answer: str, writing: _Writing) -> None:
         with self._lock:
             _check(writing)
@@ -356,14 +370,21 @@ class CerebrasChat(OpenAIChat):
     OpenAI's model, tools and all, when it needs the web or the TARS page, or when Cerebras fails. One conversation:
     each sees what the other said."""
 
+    first_answerer = QUICK
+
     def __init__(self, client: OpenAI, cfg: LLMConfig, cerebras: OpenAI):
         super().__init__(client, cfg)
         self._cerebras = cerebras
+        self._cerebras_back_at = 0.0  # monotonic time; until then, Cerebras failed recently and OpenAI answers
         hand_off = [look_up_rules(cfg.web_search, cfg.send)] if cfg.web_search or cfg.send else []
         self._quick_instructions = "\n\n".join([self._system_prompt, SKIP_RULES, *hand_off])
         self._quick_extra = {"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_effort else {}
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+        if time.monotonic() < self._cerebras_back_at:
+            writing.answered_by = FALLBACK
+            yield from super()._stream_reply(context, writing)
+            return
         answer = ""
         quick = self._quick_reply(context, writing)
         # Usually the whole reply is the marker; now and then it comes after a sentence ("I can't check that.
@@ -375,16 +396,20 @@ class CerebrasChat(OpenAIChat):
                 answer += piece
                 yield piece
             handed_off = reply.found
+            writing.answered_by = LOOKED_UP if handed_off else QUICK
         except OpenAIError as e:  # ReplyFailed is one too: an interrupted reply stays interrupted
-            if answer.strip() or isinstance(e, ReplyFailed):
+            if isinstance(e, ReplyFailed):
                 raise
-            print(f"(Cerebras failed: {e!r}; OpenAI answers instead)")
-            handed_off = True
+            self._cerebras_back_at = time.monotonic() + CEREBRAS_COOLDOWN_S
+            if answer.strip():
+                raise
+            print(f"(Cerebras failed: {e!r}; OpenAI answers instead, and for the next {CEREBRAS_COOLDOWN_S:.0f} s)")
+            handed_off, writing.answered_by = True, FALLBACK
         finally:
             quick.close()
         if not handed_off and not answer.strip():
             print("(Cerebras said nothing; OpenAI answers instead)")
-            handed_off = True
+            handed_off, writing.answered_by = True, FALLBACK
         if not handed_off:
             self._remember(answer, writing)
             return

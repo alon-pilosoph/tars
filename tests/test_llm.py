@@ -362,6 +362,44 @@ def test_when_cerebras_fails_openai_answers():
 def test_when_cerebras_says_nothing_openai_answers():
     brain, _, _ = cerebras_brain(lambda m: "")
     assert "".join(brain.stream_reply("hi")) == "From OpenAI."
+    assert brain.answered_by == llm.FALLBACK
+
+
+def test_after_cerebras_fails_openai_answers_alone_for_a_while(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
+    down = [True]
+    brain, _, cerebras = cerebras_brain(lambda m: OpenAIError("timed out") if down[0] else "Quick.")
+    assert "".join(brain.stream_reply("hi")) == "From OpenAI." and len(cerebras.requests) == 1
+    down[0] = False
+    now[0] += llm.CEREBRAS_COOLDOWN_S - 1
+    assert "".join(brain.stream_reply("again")) == "From OpenAI."
+    assert len(cerebras.requests) == 1 and brain.answered_by == llm.FALLBACK  # no waiting out its timeout
+    now[0] += 2
+    assert "".join(brain.stream_reply("and now?")) == "Quick." and brain.answered_by == llm.QUICK
+
+
+def test_an_interrupted_reply_doesnt_count_as_cerebras_failing():
+    brain, openai, _ = cerebras_brain(lambda m: "A long answer.")
+    reply = brain.stream_reply("hi")
+    next(reply)  # interrupted mid-reply, while reading Cerebras's stream
+    brain.interrupt()
+    with pytest.raises(ReplyFailed):
+        list(reply)
+    assert "".join(brain.stream_reply("hi again")) == "A long answer."
+    assert openai.requests == [] and brain.answered_by == llm.QUICK
+
+
+@pytest.mark.parametrize(
+    "quick, by", [("Canberra.", llm.QUICK), (LOOK_UP, llm.LOOKED_UP), (OpenAIError("down"), llm.FALLBACK)]
+)
+def test_the_brain_says_who_answered(quick, by):
+    brain, _, _ = cerebras_brain(lambda m: quick)
+    "".join(brain.stream_reply("hi"))
+    assert brain.answered_by == by
+    alone = OpenAIChat(fake_openai_chat(lambda m: "Hi."), LLMConfig(web_search=False, send=False))
+    "".join(alone.stream_reply("hi"))
+    assert alone.answered_by == llm.OPENAI
 
 
 class BreaksAfterAWord(FakeStream):

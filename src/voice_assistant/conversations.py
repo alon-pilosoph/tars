@@ -19,6 +19,12 @@ LINK, NOTE, LIST, FILE = "link", "note", "list", "file"
 KINDS = (LINK, NOTE, LIST, FILE)
 PERSON, HOUSEHOLD = "person", "household"
 SCOPES = (PERSON, HOUSEHOLD)
+# How long each stage of an answer took, in seconds, as the assistant's log prints them: the silence waited through,
+# speech to text, the brain's first sentence, the voice's first audio, and from the end of speech to first sound.
+TIMINGS = ("end_of_speech", "stt", "llm", "tts", "total")
+# Where answering failed: transcribing, the brain, the voice, or anything else.
+STAGES = ("stt", "llm", "tts", "other")
+MAX_ERROR = 300
 
 
 @dataclass
@@ -73,8 +79,29 @@ class ConversationLog:
             self.store.remove([saved])
         return turn
 
-    def add_tars_turn(self, conversation_id: int, text: str, ts: float | None = None) -> int | None:
-        return self._insert_turn(conversation_id, ts or time.time(), ROLE_TARS, text)
+    def add_tars_turn(
+        self,
+        conversation_id: int,
+        text: str,
+        ts: float | None = None,
+        timings: dict[str, float] | None = None,
+        answered_by: str | None = None,
+        failed_at: str | None = None,
+        error: str | None = None,
+    ) -> int | None:
+        """`timings`: seconds by stage (TIMINGS); `failed_at` and `error`: where and why the answer failed, if it
+        did."""
+        kept = {k: round(v, 3) for k, v in (timings or {}).items() if k in TIMINGS}
+        return self._insert_turn(
+            conversation_id,
+            ts or time.time(),
+            ROLE_TARS,
+            text,
+            timings=json.dumps(kept) if kept else None,
+            answered_by=answered_by,
+            failed_at=failed_at,
+            error=error[:MAX_ERROR] if error else None,
+        )
 
     def _insert_turn(
         self,
@@ -82,15 +109,15 @@ class ConversationLog:
         ts: float,
         role: str,
         text: str,
-        audio: str | None = None,
-        speaker: str | None = None,
+        **columns: str | None,
     ) -> int | None:
-        """None if the conversation is gone."""
+        """`columns`: the rest of the turn's columns, by name. None if the conversation is gone."""
+        names = ", ".join(["conversation_id", "ts", "role", "text", *columns])
+        marks = ", ".join("?" * (4 + len(columns)))
         with closing(self.store.connect()) as db:
             cursor = db.execute(
-                "INSERT INTO turns (conversation_id, ts, role, text, audio, speaker) SELECT ?, ?, ?, ?, ?, ? "
-                "WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)",
-                (conversation_id, ts, role, text, audio, speaker, conversation_id),
+                f"INSERT INTO turns ({names}) SELECT {marks} WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)",
+                (conversation_id, ts, role, text, *columns.values(), conversation_id),
             )
             return cursor.lastrowid if cursor.rowcount else None
 
@@ -323,7 +350,14 @@ def _turn(row: dict, items: list[dict], people: dict, voice: Voice | None) -> di
             not_for_tars=bool(row["not_for_tars"]),
         )
     else:
-        out.update(rating=row["rating"], items=items)
+        out.update(
+            rating=row["rating"],
+            items=items,
+            timings=json.loads(row["timings"]) if row["timings"] else None,
+            answered_by=row["answered_by"],
+            failed_at=row["failed_at"],
+            error=row["error"],
+        )
     return out
 
 
