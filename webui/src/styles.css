@@ -182,7 +182,10 @@ code {
   gap: var(--s1);
   height: 100%;
 }
+/* The underline is drawn over the header's bottom line and takes no room, so the label sits on the same line as
+   the logo's. */
 .nav button {
+  position: relative;
   border: 0;
   background: none;
   padding: 0 var(--s3);
@@ -192,15 +195,23 @@ code {
   gap: var(--s2);
   color: var(--ink-2);
   font-weight: 500;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+}
+.nav button::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
 }
 .nav button:hover {
   color: var(--ink);
 }
 .nav button[aria-current="page"] {
   color: var(--ink);
-  border-bottom-color: var(--ink);
+}
+.nav button[aria-current="page"]::after {
+  background: var(--ink);
 }
 .nav .nav-gap {
   flex: 1;
@@ -291,9 +302,15 @@ main {
     border-top: 1px solid var(--line);
   }
   .nav button {
-    flex: 1;
+    flex: 1 1 auto;
     justify-content: center;
     font-size: 15px;
+    padding: 0 6px;
+    gap: 5px;
+    min-width: 0;
+  }
+  .nav .count {
+    padding: 3px 5px;
   }
   .nav .nav-gap,
   .nav button.secondary {
@@ -2261,5 +2278,189 @@ th.num {
     min-height: 44px;
     padding-block: 10px;
     font-size: 16px;
+  }
+}
+
+/* Reminders */
+.rems {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.rem {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: var(--s4);
+  padding: var(--s4) var(--s5);
+  border-top: 1px solid var(--line);
+}
+.rem:first-child {
+  border-top: 0;
+}
+.rem-kind {
+  font: var(--t-label);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-top: 5px;
+}
+.rem-body p {
+  margin: 0;
+}
+.rem-says {
+  font: 14.5px/1.6 var(--mono);
+}
+.rem-meta {
+  margin-top: 2px !important;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.rem-status {
+  margin-top: var(--s2) !important;
+  color: var(--ink-2);
+}
+.rem.waiting .rem-status {
+  color: var(--signal-ink);
+  font-weight: 500;
+}
+.rem.missed .rem-status {
+  color: var(--no);
+}
+.rem.acknowledged .rem-status {
+  color: var(--yes);
+}
+.rem.cancelled .rem-says,
+.rem.said .rem-says,
+.rem.acknowledged .rem-says,
+.rem.missed .rem-says {
+  color: var(--ink-2);
+}
+.rem-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  margin-top: var(--s3);
+}
+.rem-actions:empty {
+  display: none;
+}
+.rem-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  margin-bottom: var(--s5);
+}
+.rem-form > h2 {
+  margin-bottom: 0;
+}
+.rem-form .help {
+  margin: 0;
+  color: var(--ink-2);
+}
+.rem-form .seg {
+  align-self: flex-start;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.field > span,
+.field > legend {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  padding: 0;
+  margin-bottom: 6px;
+}
+.rem-form input:not([type="radio"], [type="checkbox"]) {
+  height: 40px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink);
+  font: 16px/1.2 var(--sans);
+  padding: 0 12px;
+  min-width: 0;
+}
+.rem-form input:focus {
+  outline: 2px solid var(--signal);
+  outline-offset: 0;
+  border-color: transparent;
+}
+.rem-form input[type="number"] {
+  width: 80px;
+}
+.field-row {
+  display: flex;
+  gap: var(--s4);
+  flex-wrap: wrap;
+}
+.field.when {
+  gap: var(--s2);
+}
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  min-height: 40px;
+}
+.choice input[type="radio"],
+.choice input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+.choice.off {
+  color: var(--ink-3);
+}
+.choice > span {
+  flex: 1;
+  min-width: 0;
+}
+.field-row.repeat {
+  padding-left: 26px;
+  gap: var(--s3);
+}
+.rem-form .row {
+  display: flex;
+  gap: var(--s2);
+}
+@media (max-width: 640px) {
+  .rem {
+    grid-template-columns: 1fr;
+    gap: var(--s1);
+    padding: var(--s4);
+  }
+  .rem-kind {
+    padding-top: 0;
+  }
+  .rem-form {
+    padding: var(--s4);
+  }
+  .field-row {
+    flex-direction: column;
+  }
+  .field-row.repeat {
+    flex-direction: row;
+    padding-left: 0;
+  }
+  .rem-form input[type="number"] {
+    width: 64px;
+  }
+  .rem-form .row .btn {
+    flex: 1;
+    height: var(--tap);
   }
 }

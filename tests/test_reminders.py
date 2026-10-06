@@ -22,6 +22,7 @@ from voice_assistant.reminders import (
     Reminders,
     late,
     line,
+    says_line,
 )
 
 NOW = 1_800_000_000.0
@@ -154,3 +155,19 @@ def test_said_late_it_says_when_it_was_due():
     assert late(r, now=due + 3600) == "This was due at 8:00 AM."
     assert late(r, now=due + 86400) == "This was due Tuesday at 8:00 AM."
     assert late({**r, "tries": 1}, now=due + 3600) is None and late({"tries": 0, "due": None}) is None
+
+
+def test_a_timer_rings_every_10_s_for_15_minutes_until_turned_off_whatever_was_asked(tmp_path):
+    reminders = Reminders(EventLog(tmp_path / "events").store)  # the real defaults
+    r = reminders.get(add(reminders, kind=TIMER, text="pasta", needs_ack=False))
+    assert (r["needs_ack"], r["repeat_every_s"], r["max_tries"]) == (1, 10, 90)
+    other = reminders.get(add(reminders))
+    assert (other["repeat_every_s"], other["max_tries"]) == (300, 4)
+    with pytest.raises(ValueError, match="at most every 5 seconds"):
+        add(reminders, kind=TIMER, repeat_every_s=1)
+
+
+def test_a_ringing_timer_says_its_line_on_the_first_ring_and_once_a_minute_and_only_chimes_between():
+    rings = [says_line({"kind": TIMER, "tries": n}) for n in range(13)]
+    assert [n for n, said in enumerate(rings) if said] == [0, 6, 12]
+    assert all(says_line({"kind": REMINDER, "tries": n}) for n in range(5))

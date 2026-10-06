@@ -1,7 +1,7 @@
 /* Functional check of the web UI against the real backend and a throwaway copy of the demo log. `npm run e2e`.
    The steps run in order in one page and depend on each other. */
 import { type APIRequestContext, type Locator, type Page, expect, test } from "@playwright/test";
-import type { ApiConversation, Cluster, Item, ModelsInfo, TarsEvent } from "../src/types";
+import type { ApiConversation, Cluster, Item, ModelsInfo, RemindersInfo, TarsEvent } from "../src/types";
 
 const api = (r: APIRequestContext) => {
   const json = async <T>(path: string) => (await (await r.get(path)).json()) as T;
@@ -84,6 +84,38 @@ test("each answer shows how long it took and who wrote it, and a failed one says
   await expect(turn(timed.id).locator(".turn-meta")).toHaveText(`${timed.timings!.total!.toFixed(1)} s · Qwen`);
   await expect(turn(failed.id).locator(".turn-failed")).toContainText("Failed while writing the answer");
   await expect(turn(failed.id).locator(".turn-error")).toHaveText(failed.error!);
+});
+
+test("Reminders: one waiting for a got it is acknowledged on the page; a new one is set; one is cancelled", async () => {
+  const list = async () => (await page.request.get("/api/reminders").then(r => r.json())) as RemindersInfo;
+  const row = (id: number) => page.locator(`.rem[data-id="${id}"]`);
+  await nav("Reminders").click();
+  const waiting = (await list()).reminders.find(r => r.status === "waiting");
+  if (!waiting) throw new Error("the demo log needs a reminder waiting for a got it");
+  await expect(nav("Reminders")).toContainText("1");
+  await expect(row(waiting.id).locator(".rem-says")).toHaveText(`“${waiting.says}”`);
+  await row(waiting.id).getByRole("button", { name: "Got it" }).click();
+  await expect(row(waiting.id).locator(".rem-status")).toContainText("Acknowledged on this page");
+  const acked = (await list()).reminders.find(r => r.id === waiting.id)!;
+  expect([acked.status, acked.acked_via]).toEqual(["acknowledged", "web"]);
+
+  await page.getByRole("button", { name: "New reminder" }).click();
+  const form = page.getByRole("form", { name: "New reminder" });
+  await form.getByRole("button", { name: "Message" }).click();
+  await form.getByLabel("What TARS says").fill("dinner's at eight");
+  await form.getByLabel("For").fill("alon");
+  await form.getByLabel("From (optional)").fill("Stacey");
+  await form.getByLabel("When Alon is next heard").check();
+  await form.getByRole("button", { name: "Set it" }).click();
+  await expect(toast()).toHaveText(/^Set\./);
+  const made = (await list()).reminders.find(r => r.text === "dinner's at eight")!;
+  expect([made.for_name, made.from_name, made.due, made.set_via]).toEqual(["alon", "Stacey", null, "web"]);
+  await expect(row(made.id).locator(".rem-status")).toHaveText("When Alon is next heard.");
+
+  await row(made.id).getByRole("button", { name: "Stop…" }).click();
+  await dialog().getByRole("button", { name: "Stop it" }).click();
+  await expect.poll(async () => (await list()).reminders.find(r => r.id === made.id)?.status).toBe("cancelled");
+  await nav("Home").click();
 });
 
 test("rating a reply saves it, and Undo clears it", async () => {

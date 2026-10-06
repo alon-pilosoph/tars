@@ -144,6 +144,18 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         pairs = pair_source(cfg, root)
     except (FileNotFoundError, ValueError) as e:
         raise ConfigError(str(e)) from None
+    from .reminders import Reminders
+
+    reminders = (
+        Reminders(
+            log.store,
+            cfg.reminders.repeat_every_min * 60,
+            cfg.reminders.max_tries,
+            cfg.reminders.timer_ring_min * 60,
+        )
+        if cfg.reminders.enabled
+        else None
+    )
     serve(
         log,
         host,
@@ -151,6 +163,8 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         recluster=partial(regroup, log, speaker_id),
         pairs=pairs,
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
+        reminders=reminders,
+        voice_names=speaker_id.names if speaker_id else list,
     )
 
 
@@ -247,8 +261,10 @@ def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
         return None
     from .reminders import Reminders, ReminderTools
 
-    reminders = Reminders(events.store, cfg.reminders.repeat_every_min * 60, cfg.reminders.max_tries)
-    return ReminderTools(reminders, voices=lambda: list(speaker_id.voiceprints) if speaker_id else [])
+    reminders = Reminders(
+        events.store, cfg.reminders.repeat_every_min * 60, cfg.reminders.max_tries, cfg.reminders.timer_ring_min * 60
+    )
+    return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list)
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):

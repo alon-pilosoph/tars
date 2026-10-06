@@ -46,6 +46,11 @@ class SpeakerID:
         self._loaded_mtime = None
         self._reload()
 
+    def names(self) -> list[str]:
+        """Everyone with a voiceprint, including any another process just saved."""
+        self._reload()
+        return list(self.voiceprints)
+
     def _reload(self) -> None:
         """Picks up voiceprints saved by another process (the web UI enrolls people by naming their voice).
         An unreadable file keeps the current ones."""

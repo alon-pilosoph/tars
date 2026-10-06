@@ -39,6 +39,7 @@ from voice_assistant.events import (
     EventLog,
 )
 from voice_assistant.llm import FALLBACK, LOOKED_UP, QUICK
+from voice_assistant.reminders import MESSAGE, MISSED, REMINDER, TIMER, VOICE, WEB, NewReminder, Reminders
 from voice_assistant.speaker import SpeakerID
 from voice_assistant.verify import ANSWER, ASK, IGNORE
 from voice_assistant.versions import ABOUT, CHECK, MODEL, ModelVersions
@@ -147,7 +148,21 @@ def build(folder: Path) -> None:
         log.set_label(r["id"], REAL if r["auto_label"] != NOT_REAL else NOT_REAL)
     log.set_label(relabeled, REAL)
     n = add_conversations(log, by_text, stacey)
+    add_reminders(Reminders(log.store), now)
     print(f"demo: {len(log.events())} events, {len(log.clusters())} voices, {n} conversations in {folder}")
+
+
+def add_reminders(reminders: Reminders, now: float) -> None:
+    """One of each: waiting for a got it, coming up, acknowledged, missed."""
+    plumber = NewReminder(MESSAGE, "the plumber is coming at four", "stacey", "alon", due=now - 180)
+    waiting = reminders.add(plumber, VOICE, now=now - 600)
+    reminders.said(waiting, now=now - 60)
+    reminders.add(NewReminder(TIMER, "pasta", due=now + 1200), VOICE, now=now)
+    acked = reminders.add(NewReminder(REMINDER, "take the pills", "alon", due=now - 3600), WEB, now=now - 7200)
+    reminders.said(acked, now=now - 3600)
+    reminders.ack(acked, "alon", VOICE, now=now - 3500)
+    missed = reminders.add(NewReminder(REMINDER, "take the bins out", due=now - 9000), WEB, now=now - 10_000)
+    reminders.store.write("UPDATE reminders SET status=?, tries=max_tries WHERE id=?", (MISSED, missed))
 
 
 def png(w: int, h: int) -> bytes:
@@ -433,7 +448,15 @@ def main() -> None:
         return
     log = EventLog(args.folder / "events")
     cfg = load_config(REPO / "config.toml")
-    serve(log, "127.0.0.1", args.port, recluster=lambda: recluster(log), pairs=demo_versions(cfg, args.folder))
+    serve(
+        log,
+        "127.0.0.1",
+        args.port,
+        recluster=lambda: recluster(log),
+        pairs=demo_versions(cfg, args.folder),
+        reminders=Reminders(log.store),
+        voice_names=lambda: ["alon"],  # the demo's voiceprints
+    )
 
 
 if __name__ == "__main__":

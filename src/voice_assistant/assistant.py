@@ -28,7 +28,7 @@ from .files import atomic_write
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
 from .recorder import UtteranceRecorder
-from .reminders import VOICE, Clock, ReminderTools, held_line, late
+from .reminders import VOICE, Clock, ReminderTools, held_line, late, says_line
 from .reminders import line as reminder_line
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
@@ -249,7 +249,7 @@ class Assistant:
         with self._mic_paused():
             self.speaker.play_pcm_stream(iter([chime(self.voice.sample_rate)]), self.voice.sample_rate)
         for r in due:
-            for text in filter(None, [reminder_line(r), late(r)]):
+            for text in filter(None, [reminder_line(r), late(r)] if says_line(r) else []):
                 print(f"Bot:  {text}  (reminder {r['id']})")
                 if self.say(text, keep=False):
                     self.journal.said(text)

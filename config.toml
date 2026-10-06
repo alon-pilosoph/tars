@@ -128,10 +128,13 @@ keep_audio_days = 60
 # Timers, reminders and messages, set by voice ("remind me to call the bank at nine", "tell Stacey dinner's ready")
 # or on the web UI's Reminders page (docs/reminders.md). Needs [learning] log_events.
 enabled = true
-# One that waits for an acknowledgement ("got it") is said again this often, at most this many times, then it shows
-# as missed. Each reminder can change both.
-repeat_every_min = 2.0
-max_tries = 10
+# A reminder or message that waits for an acknowledgement ("got it") is said again this often, at most this many
+# times, then it shows as missed. Each reminder can change both.
+repeat_every_min = 5.0
+max_tries = 4
+# A timer rings like a kitchen timer until someone turns it off ("stop", "hey TARS, turn the timer off"): a chime
+# every 10 s, for at most this long.
+timer_ring_min = 15.0
 # After saying one, how long TARS listens for "got it" without the wake word.
 ack_window_s = 6.0
 

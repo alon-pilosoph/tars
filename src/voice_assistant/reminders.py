@@ -6,6 +6,7 @@ in the event database (store.REMINDERS). The web UI is another process, so the a
 rather than keeping it in memory. See docs/reminders.md.
 """
 
+import math
 import threading
 import time
 from collections.abc import Callable, Collection
@@ -28,10 +29,18 @@ SCHEDULED, WAITING, ACKNOWLEDGED, SAID, MISSED, CANCELLED = (
 ACTIVE = (SCHEDULED, WAITING)
 VOICE, WEB = "voice", "web"
 
-REPEAT_EVERY_S = 120.0
-MAX_TRIES = 10
+# Reminders and messages are said again every 5 minutes, 4 times at most. A timer rings like a kitchen timer until
+# someone turns it off: a chime every 10 s (TARS listens in between, since it can't hear while it makes a sound), its
+# line on the first ring and about once a minute after, for at most 15 minutes.
+REPEAT_EVERY_S = 300.0
+MAX_TRIES = 4
+TIMER_EVERY_S = 10.0
+TIMER_RING_S = 15 * 60.0
+SAY_TIMER_EVERY = 6  # rings
 MIN_REPEAT_S = 30.0
+MIN_TIMER_EVERY_S = 5.0
 MAX_TRIES_LIMIT = 30
+MAX_RINGS = 360
 MAX_AHEAD_S = 366 * 24 * 3600
 # Said later than this after its time (TARS was off, or busy in a long conversation), a reminder says when it was due.
 LATE_S = 90.0
@@ -53,9 +62,16 @@ class NewReminder:
 
 
 class Reminders:
-    def __init__(self, store: Store, repeat_every_s: float = REPEAT_EVERY_S, max_tries: int = MAX_TRIES):
+    def __init__(
+        self,
+        store: Store,
+        repeat_every_s: float = REPEAT_EVERY_S,
+        max_tries: int = MAX_TRIES,
+        timer_ring_s: float = TIMER_RING_S,
+    ):
         self.store = store
         self.repeat_every_s, self.max_tries = repeat_every_s, max_tries
+        self.timer_ring_s = timer_ring_s
 
     def add(
         self,
@@ -112,6 +128,14 @@ class Reminders:
             raise ValueError("that time has already passed")
         elif new.due > now + MAX_AHEAD_S:
             raise ValueError("that's more than a year away")
+        if new.kind == TIMER:  # rings until someone turns it off, whatever was asked
+            repeat = TIMER_EVERY_S if new.repeat_every_s is None else new.repeat_every_s
+            tries = math.ceil(self.timer_ring_s / repeat) if new.max_tries is None else new.max_tries
+            if repeat < MIN_TIMER_EVERY_S:
+                raise ValueError(f"a timer can ring at most every {MIN_TIMER_EVERY_S:.0f} seconds")
+            if not 1 <= tries <= MAX_RINGS:
+                raise ValueError(f"a timer can ring 1 to {MAX_RINGS} times")
+            return NewReminder(new.kind, text, for_name, from_name, new.due, True, repeat, tries)
         repeat = self.repeat_every_s if new.repeat_every_s is None else new.repeat_every_s
         tries = self.max_tries if new.max_tries is None else new.max_tries
         if repeat < MIN_REPEAT_S:
@@ -270,6 +294,11 @@ def line(r: dict) -> str:
     return f"{head}: {_sentence(r['text'])}"
 
 
+def says_line(r: dict) -> bool:
+    """Whether this time it's said, or (a timer still ringing) only chimes."""
+    return r["kind"] != TIMER or r["tries"] % SAY_TIMER_EVERY == 0
+
+
 def held_line(r: dict) -> str:
     """A message that waited until its person was heard, said in the middle of a conversation with them."""
     return f"By the way, {line(r)}"
@@ -342,8 +371,8 @@ class ReminderTools:
         if any(r["status"] == WAITING for r in active):
             note += (
                 '\nWhen someone says they got one that\'s waiting, heard it or did it ("I got the message", "I took '
-                "the pills\"), start your reply with <ack N>, N being its number (the most recent one if it isn't "
-                "clear which), then say one short line."
+                "the pills\"), or asks to turn off a timer that's ringing, start your reply with <ack N>, N being its "
+                "number (the most recent one if it isn't clear which), then say one short line."
             )
         return note
 

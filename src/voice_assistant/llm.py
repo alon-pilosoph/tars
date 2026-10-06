@@ -38,8 +38,9 @@ ACK = "<ack>"
 ACK_MARK = re.compile(r"\s*<ack((?:[\s,]*\d+)*)\s*>")
 GOT_IT = "Got it."  # said for a bare <ack>
 ACK_RULES = (
-    f"Messages starting with {REMINDER_TAG} answer a reminder, timer or message you just said aloud. If it "
-    f"acknowledges it (got it, okay, thanks, will do, on it), reply with exactly {ACK} and nothing else. If it asks "
+    f"Messages starting with {REMINDER_TAG} answer a reminder, timer or message you just said aloud, or a timer "
+    f"that's ringing. If it acknowledges it (got it, okay, thanks, will do, on it; or stop, off, turn it off, for "
+    f"a timer), reply with exactly {ACK} and nothing else. If it asks "
     f"for something, like being reminded again later, just do it. If it isn't meant for you, reply with exactly "
     f"{SKIP} and nothing else."
 )
@@ -93,9 +94,10 @@ REMIND_RULES = (
     'the [Speaker: name] tag; "remind Stacey" is Stacey), and a message always needs someone it\'s for. Give the '
     'time as in_minutes for "in ten minutes", or at, the local date and time, for a clock time. Use when_back '
     "only when asked to wait until someone is back or next around. Set wait_for_ack, so it's said again until "
-    "someone says they got it, unless they say once is enough. After setting one, confirm it in one short line "
-    "with the time. To cancel one or put it off, use cancel_reminder or snooze_reminder with its number from the "
-    "list of what's set now. If a tool says there's an error, fix it or ask, and never say it's set when it isn't."
+    "someone says they got it, unless they say once is enough; a timer always rings until someone turns it off. "
+    "After setting one, confirm it in one short line with the time. To cancel one or put it off, use "
+    "cancel_reminder or snooze_reminder with its number from the list of what's set now. If a tool says there's an "
+    "error, fix it or ask, and never say it's set when it isn't."
 )
 REMIND_TOOLS = [
     {

@@ -653,3 +653,18 @@ def test_it_waits_while_anyone_else_talks(speaker, tmp_path, who):
     assistant, reminders, rid = holding(speaker, tmp_path, who, [b"q", None], ["what's the time"], ["Nine."])
     assistant.converse(follow_up_s=4.0)
     assert reminders.get(rid)["tries"] == 0 and reminders.held_for("stacey")
+
+
+def test_a_ringing_timer_only_chimes_between_its_lines_and_stop_turns_it_off(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(
+        speaker, tmp_path, [None, b"stop", None], ["stop"], replies=["<ack>"], kind=TIMER, text="pasta", for_name=None,
+        from_name=None,
+    )  # fmt: skip
+    assistant.say_reminders()  # the first ring: the chime and the line
+    assert spoken(played) == ["Your pasta timer is done."]
+    played.clear()
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() - 1, rid))
+    assistant.say_reminders(follow_up_s=4.0)  # the second: only the chime, then "stop"
+    assert spoken(played) == [] and played[0] == chime(24_000)
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"]) == (ACKNOWLEDGED, 2)

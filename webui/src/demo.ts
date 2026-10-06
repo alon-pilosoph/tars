@@ -4,6 +4,8 @@ import { DEMO_LINK } from "./demoParams";
 import type {
   AnsweredBy,
   FailedAt,
+  Reminder,
+  RemindersInfo,
   Cluster,
   Conversation,
   ConversationWake,
@@ -28,8 +30,50 @@ interface DemoData {
   convs: DemoConv[];
   items: Item[];
   models: ModelsInfo;
+  reminders: RemindersInfo;
 }
 let D: DemoData | null = null;
+
+/** What TARS says for a reminder; mirrors reminders.line. */
+function says(r: Pick<Reminder, "kind" | "text" | "for_name" | "from_name">) {
+  const name = (n: string) => n.replace(/\b\w/g, c => c.toUpperCase());
+  const who = r.for_name ? `${name(r.for_name)}, ` : "";
+  const sender = r.from_name && r.from_name.toLowerCase() !== r.for_name?.toLowerCase() ? r.from_name : null;
+  if (r.kind === "timer") {
+    const label = r.text ? `${r.text} timer` : "timer";
+    return who ? `${who}your ${label} is done.` : `Your ${label} is done.`;
+  }
+  const what = r.kind === "message" ? "a message" : "a reminder";
+  const head =
+    (who ? `${who}${what}` : what[0].toUpperCase() + what.slice(1)) + (sender ? ` from ${name(sender)}` : "");
+  const text = r.text || "";
+  return `${head}: ${/[.!?]$/.test(text) ? text : `${text}.`}`;
+}
+
+type ReminderRow = Partial<Reminder> & Pick<Reminder, "id" | "kind" | "status">;
+function reminder(r: ReminderRow, now: number): Reminder {
+  const full: Reminder = {
+    created: now - 3600,
+    text: null,
+    for_name: null,
+    from_name: null,
+    set_via: "web",
+    conversation_id: null,
+    due: now,
+    needs_ack: true,
+    repeat_every_s: r.kind === "timer" ? 10 : 300,
+    max_tries: r.kind === "timer" ? 90 : 4,
+    tries: 0,
+    next_at: null,
+    last_said: null,
+    acked_at: null,
+    acked_by: null,
+    acked_via: null,
+    says: "",
+    ...r,
+  };
+  return { ...full, says: says(full) };
+}
 
 const MISSED_WINDOW_S = 6; // mirrors events.py
 
@@ -531,12 +575,124 @@ function build(): DemoData {
         ]),
       ];
 
+  const tomorrowAt9 = yesterday(9, 0) + 2 * 86400;
+  const reminders: Reminder[] = (
+    empty
+      ? []
+      : ([
+          {
+            id: 7,
+            kind: "message",
+            status: "waiting",
+            text: "the plumber is coming at four",
+            for_name: "stacey",
+            from_name: "alon",
+            due: ago(3),
+            tries: 2,
+            last_said: ago(1),
+            next_at: ago(-4),
+          },
+          {
+            id: 10,
+            kind: "timer",
+            status: "waiting",
+            text: "eggs",
+            set_via: "voice",
+            due: ago(1),
+            tries: 6,
+            last_said: ago(0.1),
+            next_at: ago(-0.1),
+          },
+          {
+            id: 8,
+            kind: "timer",
+            status: "scheduled",
+            text: "pasta",
+            set_via: "voice",
+            due: ago(-7),
+            next_at: ago(-7),
+          },
+          {
+            id: 6,
+            kind: "message",
+            status: "scheduled",
+            text: "the parcel is at the Cohens'",
+            for_name: "stacey",
+            from_name: "alon",
+            set_via: "voice",
+            conversation_id: 2,
+            due: null,
+          },
+          {
+            id: 9,
+            kind: "reminder",
+            status: "scheduled",
+            text: "call the bank about the mortgage",
+            for_name: "alon",
+            due: tomorrowAt9,
+            next_at: tomorrowAt9,
+          },
+          {
+            id: 4,
+            kind: "timer",
+            status: "acknowledged",
+            set_via: "voice",
+            conversation_id: 4,
+            due: ago(93),
+            tries: 1,
+            last_said: ago(93),
+            acked_at: ago(92),
+            acked_by: "alon",
+            acked_via: "voice",
+          },
+          {
+            id: 5,
+            kind: "reminder",
+            status: "missed",
+            text: "take the bins out",
+            due: ago(140),
+            tries: 4,
+            last_said: ago(122),
+          },
+          {
+            id: 3,
+            kind: "message",
+            status: "acknowledged",
+            text: "pick up oat milk on the way",
+            for_name: "alon",
+            from_name: "stacey",
+            due: ago(200),
+            tries: 2,
+            last_said: ago(198),
+            acked_at: ago(190),
+            acked_via: "web",
+          },
+          {
+            id: 2,
+            kind: "reminder",
+            status: "said",
+            text: "the dishwasher is done",
+            needs_ack: false,
+            due: yesterday(21, 30),
+            tries: 1,
+            last_said: yesterday(21, 30),
+          },
+          { id: 1, kind: "timer", status: "cancelled", text: "tea", set_via: "voice", due: yesterday(16, 0) },
+        ] as ReminderRow[])
+  ).map(r => reminder(r, now));
+
   const pair = "voice_data/events/wake_models/generic/v2";
   return {
     events,
     clusters,
     convs,
     items: empty ? [] : items,
+    reminders: {
+      enabled: true,
+      reminders,
+      voices: ["alon", "stacey"],
+      defaults: { repeat_every_min: 5, max_tries: 4, timer_ring_min: 15 },
+    },
     models: {
       active: empty
         ? {
@@ -910,6 +1066,46 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
   if (p === "/api/recluster") {
     await sleep(1500);
     return { summary: MOCK_TOASTS.recluster };
+  }
+  if (p === "/api/reminders" && method === "GET") {
+    const active = (r: Reminder) => r.status === "scheduled" || r.status === "waiting";
+    const order = (a: Reminder, b: Reminder) =>
+      Number(active(b)) - Number(active(a)) ||
+      (active(a) ? (a.next_at ?? 1e18) - (b.next_at ?? 1e18) : b.created - a.created);
+    return { ...clone(d.reminders), reminders: clone(d.reminders.reminders).sort(order) };
+  }
+  if (p === "/api/reminders" && method === "POST") {
+    if (body.kind === "message" && !body.for_name) throw new Error("a message needs someone it's for");
+    const id = Math.max(0, ...d.reminders.reminders.map(r => r.id)) + 1;
+    const now = Date.now() / 1000;
+    const r = reminder(
+      {
+        id,
+        kind: body.kind,
+        status: "scheduled",
+        text: body.text,
+        for_name: body.for_name,
+        from_name: body.from_name,
+        due: body.due,
+        next_at: body.due,
+        needs_ack: body.needs_ack,
+        repeat_every_s: body.kind === "timer" ? 10 : (body.repeat_every_min ?? 5) * 60,
+        max_tries: body.kind === "timer" ? 90 : (body.max_tries ?? 4),
+        created: now,
+      },
+      now,
+    );
+    d.reminders.reminders.push(r);
+    return { id };
+  }
+  if ((m = p.match(/^\/api\/reminders\/(\d+)\/(ack|snooze|cancel)$/))) {
+    const r = d.reminders.reminders.find(x => x.id === Number(m![1]));
+    const now = Date.now() / 1000;
+    if (r && m[2] === "ack")
+      Object.assign(r, { status: "acknowledged", acked_at: now, acked_via: "web", next_at: null });
+    if (r && m[2] === "snooze") Object.assign(r, { status: "scheduled", tries: 0, next_at: now + body.minutes * 60 });
+    if (r && m[2] === "cancel") Object.assign(r, { status: "cancelled", next_at: null });
+    return ok;
   }
   if (p === "/api/models/use") {
     d.models.history = d.models.history.map(h => ({ ...h, active: h.version === body.version }));

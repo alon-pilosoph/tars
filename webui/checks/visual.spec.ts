@@ -48,6 +48,8 @@ const STATES = [
   "tab=voices&demo=empty",
   "tab=models",
   "tab=models&demo=empty",
+  "tab=reminders",
+  "tab=reminders&demo=empty",
 ];
 
 /** Click the i-th match, click the first match whose text starts with `text`, or type into a field. */
@@ -83,6 +85,8 @@ const ACTS: [string, string, Step[]][] = [
   ["Voices: card menu", "tab=voices", [{ click: ".voice .more", i: 2 }]],
   ["Voices: name dialog", "tab=voices", [{ click: ".voice-foot .btn" }]],
   ["Name this voice", "", [{ clickText: ".text-action", text: "Name this voice" }]],
+  ["Reminders: new", "tab=reminders", [{ clickText: ".head .btn", text: "New reminder" }]],
+  ["Reminders: stop", "tab=reminders", [{ clickText: ".rem-actions .btn", text: "Stop" }]],
 ];
 
 function act(steps: Step[]) {
@@ -125,6 +129,7 @@ const DARK = new Set([
   "tab-review",
   "tab-voices",
   "tab-models",
+  "tab-reminders",
   "demo-empty",
   "state-error",
   "tab-sent-modal-note-101",
