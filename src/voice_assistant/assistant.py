@@ -253,7 +253,7 @@ class Assistant:
                 print(f"Bot:  {text}  (reminder {r['id']})")
                 if self.say(text, keep=False):
                     self.journal.said(text)
-            self.reminders.said(r["id"])
+            self._mark_said(r["id"])
         if self._clock:
             self._clock.read()
         self._just_said = [r["id"] for r in due if r["needs_ack"]]
@@ -265,6 +265,12 @@ class Assistant:
             self.converse(follow_up_s, first=heard)
         finally:
             self._just_said = []
+
+    def _mark_said(self, reminder_id: int) -> None:
+        try:
+            self.reminders.said(reminder_id)
+        except Exception as e:  # noqa: BLE001 - it was said; unmarked, it's only said again on the next read
+            print(f"(couldn't mark reminder {reminder_id} as said: {e!r})")
 
     def _ack(self, ids: list[int], who: str | None) -> None:
         """A bare <ack> is for the reminders just said, or else the one said last."""
@@ -416,7 +422,7 @@ class Assistant:
             print(f"Bot:  {text}  (reminder {r['id']})")
             if self.say(text, keep=False):
                 self.journal.tars_said(text)
-            self.reminders.said(r["id"])
+            self._mark_said(r["id"])
         self._just_said = [r["id"] for r in held if r["needs_ack"]]
         if self._clock and held:
             self._clock.read()

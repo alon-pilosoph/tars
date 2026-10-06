@@ -106,6 +106,12 @@ test("Reminders: one waiting for a got it is acknowledged on the page; a new one
   await form.getByLabel("For").fill("alon");
   await form.getByLabel("From (optional)").fill("Stacey");
   await form.getByLabel("When Alon is next heard").check();
+  await form.getByLabel("For").fill("bo"); // someone TARS doesn't know by voice: no time was picked, so nothing is set
+  await form.getByRole("button", { name: "Set it" }).click();
+  await expect(toast()).toHaveText(/^TARS doesn't know Bo's voice yet/);
+  expect((await list()).reminders.some(r => r.text === "dinner's at eight")).toBe(false);
+  await form.getByLabel("For").fill("alon");
+  await form.getByLabel("When Alon is next heard").check();
   await form.getByRole("button", { name: "Set it" }).click();
   await expect(toast()).toHaveText(/^Set\./);
   const made = (await list()).reminders.find(r => r.text === "dinner's at eight")!;

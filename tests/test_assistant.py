@@ -668,3 +668,13 @@ def test_a_ringing_timer_only_chimes_between_its_lines_and_stop_turns_it_off(spe
     assert spoken(played) == [] and played[0] == chime(24_000)
     r = reminders.get(rid)
     assert (r["status"], r["tries"]) == (ACKNOWLEDGED, 2)
+
+
+def test_a_reminder_that_cant_be_marked_said_doesnt_stop_the_assistant(speaker, tmp_path, monkeypatch):
+    assistant, reminders, _, played = reminding(speaker, tmp_path, [None], [])
+    monkeypatch.setattr(reminders, "said", raising(OSError("disk full")))
+    assistant.say_reminders()
+    assert spoken(played) == ["Stacey, a message from Alon: dinner's at eight."]
+    assistant, reminders, _ = holding(speaker, tmp_path / "2", "stacey", [b"q", None], ["what's the time"], ["Nine."])
+    monkeypatch.setattr(reminders, "said", raising(OSError("disk full")))
+    assistant.converse(follow_up_s=4.0)  # the held message is said, and the conversation carries on

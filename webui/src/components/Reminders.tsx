@@ -1,6 +1,6 @@
 import { type FormEvent, type ReactNode, useState } from "react";
 import { REMINDER_KIND_LABEL, personName, plural, reminderMeta, reminderStatus } from "../format";
-import { ackReminder, cancelReminder, goConv, setReminder, snoozeReminder, useStore } from "../store";
+import { ackReminder, cancelReminder, goConv, setReminder, snoozeReminder, toast, useStore } from "../store";
 import type { Reminder, ReminderKind, RemindersInfo } from "../types";
 import { Empty, Group } from "./Blocks";
 
@@ -143,6 +143,12 @@ function ReminderForm({ info, people, onDone }: { info: RemindersInfo; people: s
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (whenMode === "back" && !known) {
+      // The name changed after "when they're next heard" was picked: never fall back to a time nobody chose.
+      const who = forName.trim() ? personName(forName) : "them";
+      toast(`TARS doesn't know ${who}'s voice yet, so it can't wait until they're back. Pick a time.`);
+      return;
+    }
     setSaving(true);
     const ok = await setReminder({
       kind,

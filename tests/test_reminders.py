@@ -23,6 +23,7 @@ from voice_assistant.reminders import (
     late,
     line,
     says_line,
+    when,
 )
 
 NOW = 1_800_000_000.0
@@ -150,11 +151,20 @@ def test_what_tars_says(r, said):
 
 def test_said_late_it_says_when_it_was_due():
     due = datetime(2026, 10, 6, 8, 0).timestamp()  # noqa: DTZ001 - local time, the way TARS says it
-    r = {"tries": 0, "due": due}
+    r = {"tries": 0, "due": due, "next_at": due}
     assert late(r, now=due + LATE_S - 1) is None
     assert late(r, now=due + 3600) == "This was due at 8:00 AM."
     assert late(r, now=due + 86400) == "This was due Tuesday at 8:00 AM."
-    assert late({**r, "tries": 1}, now=due + 3600) is None and late({"tries": 0, "due": None}) is None
+    assert late({**r, "tries": 1}, now=due + 3600) is None and late({"tries": 0, "next_at": None}) is None
+
+
+def test_a_snoozed_reminder_said_at_its_new_time_isnt_late(reminders):
+    rid = add(reminders)  # due at NOW + 60
+    reminders.said(rid, now=NOW + 60)
+    reminders.snooze(rid, 10, now=NOW + 70)
+    (r,) = reminders.due(NOW + 670)
+    assert late(r, now=NOW + 670) is None
+    assert late(r, now=NOW + 670 + 3600) == f"This was due at {when(NOW + 670, NOW + 670)}."  # then TARS was off
 
 
 def test_a_timer_rings_every_10_s_for_15_minutes_until_turned_off_whatever_was_asked(tmp_path):

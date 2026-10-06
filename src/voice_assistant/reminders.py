@@ -305,11 +305,12 @@ def held_line(r: dict) -> str:
 
 
 def late(r: dict, now: float | None = None) -> str | None:
-    """ "This was due at 8:00." when it's said for the first time well after its time, else None."""
+    """ "This was due at 8:00." when it's said for the first time well after it was meant to be (TARS was off, or in
+    a long conversation), else None. Meant to be is next_at, not due: a snoozed one is on time at its new time."""
     now = time.time() if now is None else now
-    if r["tries"] or r["due"] is None or now - r["due"] < LATE_S:
+    if r["tries"] or r["next_at"] is None or now - r["next_at"] < LATE_S:
         return None
-    due = datetime.fromtimestamp(r["due"]).astimezone()
+    due = datetime.fromtimestamp(r["next_at"]).astimezone()
     today = datetime.fromtimestamp(now).astimezone().date() == due.date()
     clock = f"{due:%I:%M %p}".lstrip("0")
     return f"This was due at {clock}." if today else f"This was due {due:%A} at {clock}."
