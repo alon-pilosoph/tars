@@ -14,6 +14,9 @@ built the way the send tool is.
 
 Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go).
 
+In progress alongside step 1: [reminders, timers and messages](reminders.md), since TARS couldn't set a timer
+and people will ask for one during the week of real use.
+
 ## 1. A week of real use
 
 With the speakerphone on the Mac (or the Pi), run the assistant and the web UI side by side for a week, starting
