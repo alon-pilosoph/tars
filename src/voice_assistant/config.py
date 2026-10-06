@@ -108,6 +108,17 @@ class WebConfig:
 
 
 @dataclass
+class RemindersConfig:
+    # Timers, reminders and messages, set by voice or on the web UI (docs/reminders.md). Needs [learning] log_events.
+    enabled: bool = True
+    # One that waits for an acknowledgement is said again this often, at most this many times, then it's missed.
+    repeat_every_min: float = 2.0
+    max_tries: int = 10
+    # After saying one, how long TARS listens for "got it" without the wake word.
+    ack_window_s: float = 6.0
+
+
+@dataclass
 class Config:
     audio: AudioConfig
     wake: WakeConfig
@@ -118,6 +129,7 @@ class Config:
     speaker: SpeakerConfig
     learning: LearningConfig
     web: WebConfig
+    reminders: RemindersConfig
 
 
 def load_config(path: Path) -> Config:
@@ -200,6 +212,10 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[recorder] vad_threshold must be between 0.2 and 0.95")
     if not 0 <= r.answer_early_s < r.end_silence_s:
         problems.append("[recorder] answer_early_s must be at least 0 and shorter than end_silence_s")
+    if cfg.reminders.repeat_every_min < 0.5:
+        problems.append("[reminders] repeat_every_min must be at least 0.5")
+    if not 1 <= cfg.reminders.max_tries <= 30:
+        problems.append("[reminders] max_tries must be between 1 and 30")
     if r.max_pause_s < r.end_silence_s:
         problems.append("[recorder] max_pause_s can't be shorter than end_silence_s")
     return problems

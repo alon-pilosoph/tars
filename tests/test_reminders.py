@@ -1,0 +1,156 @@
+"""Reminders, timers and messages: what can be set, when they're due, what TARS says, and how they end."""
+
+from datetime import datetime
+
+import pytest
+
+from voice_assistant.events import EventLog
+from voice_assistant.reminders import (
+    ACKNOWLEDGED,
+    CANCELLED,
+    LATE_S,
+    MESSAGE,
+    MISSED,
+    REMINDER,
+    SAID,
+    SCHEDULED,
+    TIMER,
+    VOICE,
+    WAITING,
+    WEB,
+    NewReminder,
+    Reminders,
+    late,
+    line,
+)
+
+NOW = 1_800_000_000.0
+
+
+@pytest.fixture
+def reminders(tmp_path):
+    return Reminders(EventLog(tmp_path / "events").store, repeat_every_s=120, max_tries=3)
+
+
+def add(reminders, voices=(), **kw):
+    kw.setdefault("kind", REMINDER)
+    kw.setdefault("text", "call the bank")
+    kw.setdefault("due", NOW + 60)
+    return reminders.add(NewReminder(**kw), VOICE, voices=voices, now=NOW)
+
+
+def test_a_reminder_is_scheduled_with_the_defaults(reminders):
+    r = reminders.get(add(reminders, for_name="  alon "))
+    assert r["status"] == SCHEDULED and r["next_at"] == NOW + 60 and r["for_name"] == "alon"
+    assert (r["repeat_every_s"], r["max_tries"], r["needs_ack"]) == (120, 3, 1)
+
+
+@pytest.mark.parametrize(
+    "kw, why",
+    [
+        ({"kind": "alarm"}, "kind must be"),
+        ({"text": "  "}, "needs something to say"),
+        ({"kind": MESSAGE}, "needs someone"),
+        ({"due": None}, "needs a time"),
+        ({"due": None, "for_name": "stacey"}, "doesn't know stacey's voice"),
+        ({"due": NOW - 3600}, "already passed"),
+        ({"due": NOW + 400 * 86400}, "more than a year"),
+        ({"repeat_every_s": 5}, "at most every"),
+        ({"max_tries": 0}, "1 to"),
+    ],
+)
+def test_what_cant_be_done_says_why(reminders, kw, why):
+    with pytest.raises(ValueError, match=why):
+        add(reminders, **kw)
+
+
+def test_a_timer_needs_no_text_and_waiting_for_someone_needs_their_voice(reminders):
+    assert add(reminders, kind=TIMER, text=None)
+    held = add(reminders, kind=MESSAGE, for_name="Stacey", due=None, voices=["stacey"])
+    assert reminders.get(held)["next_at"] is None and [r["id"] for r in reminders.held_for("STACEY")] == [held]
+    assert reminders.held_for("alon") == [] and reminders.held_for(None) == []
+
+
+def test_it_is_due_at_its_time_and_not_before(reminders):
+    rid = add(reminders)
+    assert reminders.due(NOW + 59) == [] and reminders.next_at() == NOW + 60
+    assert [r["id"] for r in reminders.due(NOW + 60)] == [rid]
+
+
+def test_waiting_for_an_acknowledgement_it_is_said_again_then_missed(reminders):
+    rid = add(reminders)
+    t = NOW + 60
+    for n in range(1, 4):
+        assert [r["id"] for r in reminders.due(t)] == [rid]
+        reminders.said(rid, now=t)
+        assert reminders.get(rid)["status"] == WAITING and reminders.get(rid)["tries"] == n
+        assert reminders.due(t + 119) == []
+        t += 120
+    assert reminders.due(t) == [] and reminders.get(rid)["status"] == MISSED and reminders.next_at() is None
+
+
+def test_one_that_doesnt_wait_is_said_once(reminders):
+    rid = add(reminders, needs_ack=False)
+    reminders.said(rid, now=NOW + 60)
+    assert reminders.get(rid)["status"] == SAID and reminders.due(NOW + 10_000) == []
+
+
+def test_acknowledging_records_who_and_how_and_only_counts_once(reminders):
+    rid = add(reminders)
+    reminders.said(rid, now=NOW + 60)
+    assert reminders.waiting()[0]["id"] == rid
+    assert reminders.ack(rid, "stacey", VOICE, now=NOW + 70)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_by"], r["acked_via"], r["acked_at"]) == (ACKNOWLEDGED, "stacey", VOICE, NOW + 70)
+    assert not reminders.ack(rid, None, WEB) and reminders.waiting() == [] and reminders.due(NOW + 10_000) == []
+
+
+def test_snoozing_starts_it_over_even_once_missed_and_cancelling_ends_it(reminders):
+    rid = add(reminders, max_tries=1)
+    reminders.said(rid, now=NOW + 60)
+    reminders.due(NOW + 180)
+    assert reminders.get(rid)["status"] == MISSED
+    assert reminders.snooze(rid, 10, now=NOW + 200)
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"], r["next_at"]) == (SCHEDULED, 0, NOW + 800)
+    assert reminders.cancel(rid) and reminders.get(rid)["status"] == CANCELLED and not reminders.cancel(rid)
+    with pytest.raises(ValueError):
+        reminders.snooze(add(reminders), 0)
+
+
+def test_the_active_ones_come_first_soonest_first(reminders):
+    later, sooner, done = add(reminders, due=NOW + 600), add(reminders, due=NOW + 60), add(reminders)
+    reminders.cancel(done)
+    assert [r["id"] for r in reminders.all()] == [sooner, later, done]
+    assert [r["id"] for r in reminders.active()] == [sooner, later]
+
+
+def row(**kw):
+    return {"kind": REMINDER, "text": "call the bank", "for_name": None, "from_name": None, **kw}
+
+
+@pytest.mark.parametrize(
+    "r, said",
+    [
+        (row(), "A reminder: call the bank."),
+        (row(for_name="alon"), "Alon, a reminder: call the bank."),
+        (row(for_name="alon", from_name="Alon"), "Alon, a reminder: call the bank."),  # their own, no "from"
+        (row(for_name="mary ann", from_name="alon"), "Mary Ann, a reminder from Alon: call the bank."),
+        (row(kind=MESSAGE, for_name="stacey", from_name="alon", text="Dinner's at eight!"),
+         "Stacey, a message from Alon: Dinner's at eight!"),
+        (row(kind=MESSAGE, for_name="stacey", text="dinner's at eight"), "Stacey, a message: dinner's at eight."),
+        (row(kind=TIMER, text=None), "Your timer is done."),
+        (row(kind=TIMER, text="pasta", for_name="alon"), "Alon, your pasta timer is done."),
+    ],
+)  # fmt: skip
+def test_what_tars_says(r, said):
+    assert line(r) == said
+
+
+def test_said_late_it_says_when_it_was_due():
+    due = datetime(2026, 10, 6, 8, 0).timestamp()  # noqa: DTZ001 - local time, the way TARS says it
+    r = {"tries": 0, "due": due}
+    assert late(r, now=due + LATE_S - 1) is None
+    assert late(r, now=due + 3600) == "This was due at 8:00 AM."
+    assert late(r, now=due + 86400) == "This was due Tuesday at 8:00 AM."
+    assert late({**r, "tries": 1}, now=due + 3600) is None and late({"tries": 0, "due": None}) is None

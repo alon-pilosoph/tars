@@ -16,6 +16,31 @@ import numpy as np
 
 from .audio import save_wav
 
+# Reminders, timers and messages (reminders.py). Shared with migration 3, which made it: a later change to it needs a
+# step of its own.
+REMINDERS = """CREATE TABLE reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created REAL NOT NULL,
+    kind TEXT NOT NULL,              -- timer | reminder | message
+    text TEXT,                       -- what to say; a timer's optional label
+    for_name TEXT,                   -- who it's for, by name; NULL = whoever is there
+    from_name TEXT,                  -- who set it, if known
+    set_via TEXT NOT NULL,           -- voice | web
+    conversation_id INTEGER,         -- the conversation it was set in, by voice
+    due REAL,                        -- when; NULL = when for_name's voice is next heard
+    needs_ack INTEGER NOT NULL,      -- 1 = said again until acknowledged
+    repeat_every_s REAL NOT NULL,
+    max_tries INTEGER NOT NULL,
+    status TEXT NOT NULL,            -- scheduled | waiting | acknowledged | said | missed | cancelled
+    tries INTEGER NOT NULL DEFAULT 0,
+    next_at REAL,                    -- when it's next said; NULL while waiting for someone's voice, or when over
+    last_said REAL,
+    acked_at REAL,
+    acked_by TEXT,                   -- the recognized voice; NULL = unknown voice, or the web UI
+    acked_via TEXT                   -- voice | web
+)"""
+REMINDERS_INDEX = "CREATE INDEX reminders_status ON reminders(status)"
+
 # AUTOINCREMENT so an id is never reused: the web UI deletes rows while the assistant adds them, and a reused id
 # would silently attach a new wake to an old conversation (or delete it along with one).
 TABLES = {
@@ -68,6 +93,7 @@ TABLES = {
     failed_at TEXT,                  -- tars turns that failed: stt | llm | tts | other
     error TEXT                       -- tars turns that failed: what went wrong
 )""",
+    "reminders": REMINDERS,
     "items": """CREATE TABLE items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER,
@@ -91,6 +117,7 @@ INDEXES = [
     "CREATE INDEX turns_conversation ON turns(conversation_id)",
     "CREATE INDEX turns_audio ON turns(audio)",  # the first request's audio is shared with its wake
     "CREATE INDEX items_conversation ON items(conversation_id)",
+    REMINDERS_INDEX,
 ]
 # Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
 # version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
@@ -107,6 +134,7 @@ MIGRATIONS = [
         "ALTER TABLE turns ADD COLUMN failed_at TEXT",
         "ALTER TABLE turns ADD COLUMN error TEXT",
     ],
+    [REMINDERS, REMINDERS_INDEX],
 ]
 
 
