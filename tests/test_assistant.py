@@ -618,3 +618,38 @@ def test_a_reminder_set_by_voice_is_made_once_the_answer_is_kept_in_its_conversa
     (r,) = tools.reminders.active()
     (conversation,) = convos.conversations()
     assert (r["text"], r["set_via"], r["conversation_id"]) == ("pasta", VOICE, conversation["id"])
+
+
+def holding(speaker, tmp_path, who, utterances, transcripts, replies):
+    """A logged assistant that hears `who`, with a message held for Stacey until she's heard."""
+    assistant, convos = logged_assistant(speaker, tmp_path, utterances, transcripts, replies)
+    assistant.speaker_id = FakeSpeakerID(who)
+    tools = ReminderTools(Reminders(convos.store), voices=lambda: ["stacey"])
+    assistant.reminder_tools, assistant.reminders = tools, tools.reminders
+    new = NewReminder(MESSAGE, "the plumber called", "stacey", "alon", due=None)
+    rid = tools.reminders.add(new, WEB, voices=["stacey"])
+    return assistant, tools.reminders, rid
+
+
+def test_a_message_waiting_for_someone_is_said_after_answering_them_and_their_got_it_counts(speaker, tmp_path):
+    assistant, reminders, rid = holding(
+        speaker, tmp_path, "stacey", [b"q", b"ok", None], ["what's the time", "got it"], ["Nine.", "<ack>"]
+    )
+    assistant.converse(follow_up_s=4.0)
+    assert assistant.brain.asked[1].startswith(REMINDER_TAG)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_by"], r["tries"]) == (ACKNOWLEDGED, "stacey", 1)
+    assert [t["text"] for t in turns_of(assistant.journal.conversations)] == [
+        "what's the time",
+        "Nine.",
+        "By the way, Stacey, a message from Alon: the plumber called.",
+        "got it",
+        "Got it.",
+    ]
+
+
+@pytest.mark.parametrize("who", ["alon", None])
+def test_it_waits_while_anyone_else_talks(speaker, tmp_path, who):
+    assistant, reminders, rid = holding(speaker, tmp_path, who, [b"q", None], ["what's the time"], ["Nine."])
+    assistant.converse(follow_up_s=4.0)
+    assert reminders.get(rid)["tries"] == 0 and reminders.held_for("stacey")

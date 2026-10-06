@@ -28,7 +28,7 @@ from .files import atomic_write
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
 from .recorder import UtteranceRecorder
-from .reminders import VOICE, Clock, ReminderTools, late
+from .reminders import VOICE, Clock, ReminderTools, held_line, late
 from .reminders import line as reminder_line
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
@@ -141,6 +141,7 @@ class Assistant:
         self.ack_window_s = ack_window_s
         self._clock = Clock(self.reminders, on_read=self._prepare_reminders) if reminders else None
         self._just_said: list[int] = []  # reminders just said, waiting for an acknowledgement
+        self._last_who: str | None = None  # whose request was answered last, by voice
 
     def run_forever(self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0) -> None:
         self.prepare_phrases()
@@ -232,7 +233,7 @@ class Assistant:
     def _prepare_reminders(self, active: list[dict]) -> None:
         """Makes each active reminder's line ahead, so it plays at once when it's due."""
         for r in active:
-            self._phrase(reminder_line(r), keep=False)
+            self._phrase(reminder_line(r) if r["due"] is not None else held_line(r), keep=False)
 
     def say_reminders(self, follow_up_s: float = 0.0) -> None:
         """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""
@@ -362,6 +363,7 @@ class Assistant:
         try:
             self._converse(follow_up_s, first, greet_after_s)
         finally:
+            self._just_said = []
             self.journal.end_conversation()
 
     def _converse(self, follow_up_s: float, first: Utterance | None, greet_after_s: float) -> None:
@@ -387,12 +389,38 @@ class Assistant:
                     traceback.print_exc()
                 self.say_error()
                 return
-            if not answered or follow_up_s <= 0:
+            held = answered and self._say_held(self._last_who)
+            if held:  # what's said next may well be about the message: listen for it, at least the ack window
+                heard = self.listen(
+                    start_timeout_s=max(follow_up_s, self.ack_window_s), follow_up=True, tag=REMINDER_TAG
+                )
+            elif not answered or follow_up_s <= 0:
                 return
-            print(f"(listening {follow_up_s:.0f}s for a follow-up)")
-            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True)
+            else:
+                print(f"(listening {follow_up_s:.0f}s for a follow-up)")
+                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True)
             if heard is None:
                 return
+
+    def _say_held(self, who: str | None) -> bool:
+        """Says the messages waiting until `who` was heard, if any; True if one waits for an acknowledgement."""
+        if not (self.reminders and who):
+            return False
+        try:
+            held = self.reminders.held_for(who)
+        except Exception as e:  # noqa: BLE001 - they wait for the next time
+            print(f"(couldn't read the reminders: {e!r})")
+            return False
+        for r in held:
+            text = held_line(r)
+            print(f"Bot:  {text}  (reminder {r['id']})")
+            if self.say(text, keep=False):
+                self.journal.tars_said(text)
+            self.reminders.said(r["id"])
+        self._just_said = [r["id"] for r in held if r["needs_ack"]]
+        if self._clock and held:
+            self._clock.read()
+        return bool(self._just_said)
 
     def handle(self, heard: Utterance) -> bool:
         """Returns False if there was nothing meant for TARS to answer."""
@@ -403,6 +431,7 @@ class Assistant:
         try:
             answer = heard.draft.take()
             name, score, embedding = answer.who
+            self._last_who = name
             who = f" ({name or 'unknown'})" if self.speaker_id else ""
             print(f"You{who}:  {answer.text!r}")
             # Only the request right after the wake says whether the wake was real.

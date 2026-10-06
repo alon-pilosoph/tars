@@ -73,6 +73,14 @@ class Journal:
         """TARS spoke before anyone asked anything."""
         self._said.append((time.time(), text))
 
+    def tars_said(self, text: str) -> None:
+        """TARS spoke in the middle of a conversation, unasked (a message it was holding for someone)."""
+        self.flush()
+        if self._conversation is None:
+            self.said(text)
+        elif not self._gone:
+            self._safe(self.conversations.add_tars_turn, self._conversation, text)
+
     def nobody_spoke(self) -> None:
         self.flush()
         self._nobody_spoke()

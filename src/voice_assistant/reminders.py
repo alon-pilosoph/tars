@@ -270,6 +270,11 @@ def line(r: dict) -> str:
     return f"{head}: {_sentence(r['text'])}"
 
 
+def held_line(r: dict) -> str:
+    """A message that waited until its person was heard, said in the middle of a conversation with them."""
+    return f"By the way, {line(r)}"
+
+
 def late(r: dict, now: float | None = None) -> str | None:
     """ "This was due at 8:00." when it's said for the first time well after its time, else None."""
     now = time.time() if now is None else now
