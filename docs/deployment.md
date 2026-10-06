@@ -101,7 +101,7 @@ minutes on this:
 
 | Do | Expect in the web UI (press Refresh) |
 | --- | --- |
-| 8× "hey TARS" plus a real request (weather, a timer…) | conversations on Home, each with your voice |
+| 8× "hey TARS" plus a real request (the weather, a quick fact…) | conversations on Home, each with your voice |
 | 2× "hey TARS", then say nothing | two wakes under Review: "Nobody spoke", no guess |
 | "hey cars", "hey Mars", "hey stars" | "Did you call me?" or nothing; answer "no" and the wake is guessed not real |
 | "hey TARS" quietly from across the room | maybe a near-miss; said again louder, it's guessed real |

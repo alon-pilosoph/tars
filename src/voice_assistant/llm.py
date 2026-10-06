@@ -30,6 +30,14 @@ SKIP_RULES = (
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
 )
+# TARS can only talk, search the web and send to the TARS page. Without this, a model asked for a timer says "Twelve
+# minutes, starting now." and nothing ever goes off.
+CANT_RULES = (
+    "You can only talk, look things up, and send things to the TARS page. You can't set timers, alarms or "
+    "reminders, play music or sounds, call or message anyone, or control anything in the house. When asked to, say "
+    "plainly in one short line that you can't do that yet, and offer what you can do instead if something fits "
+    "(for example, sending a note). Never say you did something you can't do."
+)
 SEND_RULES = (
     "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
     "send tool: a link, a note, a list, or a text file. Use it when asked to send, save or share something, or "
@@ -236,7 +244,8 @@ class OpenAIChat:
         self.sent: list[SentItem] = []
         self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
-        self._instructions = "\n\n".join([self._system_prompt, SKIP_RULES] + ([SEND_RULES] if cfg.send else []))
+        rules = [SKIP_RULES, CANT_RULES] + ([SEND_RULES] if cfg.send else [])
+        self._instructions = "\n\n".join([self._system_prompt, *rules])
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
         if cfg.service_tier:
@@ -377,7 +386,7 @@ class CerebrasChat(OpenAIChat):
         self._cerebras = cerebras
         self._cerebras_back_at = 0.0  # monotonic time; until then, Cerebras failed recently and OpenAI answers
         hand_off = [look_up_rules(cfg.web_search, cfg.send)] if cfg.web_search or cfg.send else []
-        self._quick_instructions = "\n\n".join([self._system_prompt, SKIP_RULES, *hand_off])
+        self._quick_instructions = "\n\n".join([self._system_prompt, SKIP_RULES, CANT_RULES, *hand_off])
         self._quick_extra = {"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_effort else {}
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:

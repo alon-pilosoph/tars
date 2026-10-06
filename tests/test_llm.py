@@ -463,3 +463,11 @@ def test_both_models_are_told_the_date_and_time_here(monkeypatch):
     "".join(brain.stream_reply("what's on tonight?"))
     assert cerebras.requests[0]["messages"][0]["content"].endswith(now)
     assert openai.requests[0]["instructions"].endswith(now)
+
+
+@pytest.mark.parametrize("send", [True, False])
+def test_both_models_are_told_what_they_cant_do_so_they_never_pretend(send):
+    brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP, send=send)
+    "".join(brain.stream_reply("set a timer for ten minutes"))
+    for instructions in (cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]):
+        assert llm.CANT_RULES in instructions
