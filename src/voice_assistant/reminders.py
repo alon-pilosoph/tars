@@ -6,6 +6,7 @@ in the event database (store.REMINDERS). The web UI is another process, so the a
 rather than keeping it in memory. See docs/reminders.md.
 """
 
+import dataclasses
 import math
 import threading
 import time
@@ -27,7 +28,10 @@ SCHEDULED, WAITING, ACKNOWLEDGED, SAID, MISSED, CANCELLED = (
     "cancelled",
 )
 ACTIVE = (SCHEDULED, WAITING)
+CANCELLABLE = ACTIVE
+SNOOZABLE = (*ACTIVE, MISSED)  # a missed one can be put off and tried again
 VOICE, WEB = "voice", "web"
+ADD, CANCEL, SNOOZE = "add", "cancel", "snooze"  # a Change
 
 # Reminders and messages are said again every 5 minutes, 4 times at most. A timer rings like a kitchen timer until
 # someone turns it off: a chime every 10 s (TARS listens in between, since it can't hear while it makes a sound), its
@@ -117,6 +121,8 @@ class Reminders:
             raise ValueError(f"a {new.kind} needs something to say")
         if new.kind == MESSAGE and not for_name:
             raise ValueError("a message needs someone it's for")
+        if not all(math.isfinite(x) for x in (new.due, new.repeat_every_s, new.max_tries) if x is not None):
+            raise ValueError("the numbers must be real numbers")
         if new.due is None:
             if not for_name:
                 raise ValueError("it needs a time, or someone to wait for")
@@ -221,17 +227,17 @@ class Reminders:
     def snooze(self, reminder_id: int, minutes: float, now: float | None = None) -> bool:
         """Said again in `minutes`, as if new: it gets its full number of tries again."""
         now = time.time() if now is None else now
-        if not 0 < minutes <= MAX_AHEAD_S / 60:
+        if not (math.isfinite(minutes) and 0 < minutes <= MAX_AHEAD_S / 60):
             raise ValueError("snooze for a positive number of minutes")
         return self._change(
-            "UPDATE reminders SET status=?, tries=0, next_at=? WHERE id=? AND status IN (?, ?, ?)",
-            (SCHEDULED, now + minutes * 60, reminder_id, *ACTIVE, MISSED),
+            f"UPDATE reminders SET status=?, tries=0, next_at=? WHERE id=? AND status IN ({_marks(SNOOZABLE)})",
+            (SCHEDULED, now + minutes * 60, reminder_id, *SNOOZABLE),
         )
 
     def cancel(self, reminder_id: int) -> bool:
         return self._change(
-            "UPDATE reminders SET status=?, next_at=NULL WHERE id=? AND status IN (?, ?)",
-            (CANCELLED, reminder_id, *ACTIVE),
+            f"UPDATE reminders SET status=?, next_at=NULL WHERE id=? AND status IN ({_marks(CANCELLABLE)})",
+            (CANCELLED, reminder_id, *CANCELLABLE),
         )
 
     def _change(self, sql: str, args: tuple) -> bool:
@@ -242,11 +248,18 @@ class Reminders:
 class Clock:
     """When the next reminder is due, read from the table every `every_s` on a thread of its own, so the wake loop's
     question, asked every 80 ms, costs a comparison. `on_read` gets the active reminders each time (to make their
-    audio ahead)."""
+    audio ahead).
+
+    The table can fail (a full disk, a broken file), and then what it says is due stays due. So the clock also keeps
+    its own holds: a reminder held isn't due again until the hold ends, whatever the table says, and nothing is due
+    while the clock is paused. Without them TARS would say the same line over and over, or never hear "hey TARS"
+    again (the wake loop stops the moment something is due)."""
 
     def __init__(self, reminders: Reminders, every_s: float = 2.0, on_read: Callable[[list[dict]], None] | None = None):
         self._reminders, self._every_s, self._on_read = reminders, every_s, on_read
         self._next: float | None = None
+        self._holds: dict[int, float] = {}
+        self._paused_until = 0.0
 
     def start(self) -> None:
         def loop():
@@ -257,18 +270,40 @@ class Clock:
         threading.Thread(target=loop, daemon=True, name="reminders").start()
 
     def read(self) -> None:
+        """Never raises: a failed read leaves nothing due until the next good one."""
         try:
             active = self._reminders.active()
-        except Exception as e:  # noqa: BLE001 - a locked or broken table: try again next time
+            now = time.time()
+            ids = {r["id"] for r in active}
+            self._holds = {i: until for i, until in self._holds.items() if i in ids and until > now}
+            self._next = min(
+                (max(r["next_at"], self._holds.get(r["id"], 0.0)) for r in active if r["next_at"] is not None),
+                default=None,
+            )
+            if self._on_read:
+                self._on_read(active)
+        except Exception as e:  # noqa: BLE001 - a locked or broken table, or the audio made ahead failing
+            self._next = None
             print(f"(couldn't read the reminders: {e!r})")
-            return
-        self._next = min((r["next_at"] for r in active if r["next_at"] is not None), default=None)
-        if self._on_read:
-            self._on_read(active)
+
+    def hold(self, reminder_id: int, until: float) -> None:
+        self._holds[reminder_id] = until
+        self.read()
+
+    def held(self, reminder_id: int, now: float | None = None) -> bool:
+        return self._holds.get(reminder_id, 0.0) > (time.time() if now is None else now)
+
+    def pause(self, seconds: float) -> None:
+        self._paused_until = time.time() + seconds
 
     def is_due(self, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
         at = self._next
-        return at is not None and at <= (time.time() if now is None else now)
+        return now >= self._paused_until and at is not None and at <= now
+
+
+def _marks(values: tuple) -> str:
+    return ",".join("?" * len(values))
 
 
 def name(n: str) -> str:
@@ -331,9 +366,6 @@ def when(at: float, now: float | None = None) -> str:
     return f"{t:%B} {t.day} at {clock}"
 
 
-ADD, CANCEL, SNOOZE = "add", "cancel", "snooze"
-
-
 @dataclass
 class Change:
     """A change asked for by voice. Made only once the turn is kept, so a draft thrown away changes nothing."""
@@ -342,6 +374,7 @@ class Change:
     reminder: NewReminder | None = None
     id: int | None = None
     minutes: float | None = None
+    asked_at: float = 0.0  # when the model asked: an ADD due "now" mustn't count as passed by the time it's kept
 
 
 class ReminderTools:
@@ -385,12 +418,14 @@ class ReminderTools:
                 return self._remind(args, now)
             if tool in ("cancel_reminder", "snooze_reminder"):
                 r = self.reminders.get(int(args.get("id")))
-                if not r or r["status"] not in (*ACTIVE, MISSED):
-                    return None, "error: there's no active reminder with that number"
                 if tool == "cancel_reminder":
+                    if not r or r["status"] not in CANCELLABLE:
+                        return None, "error: there's no active reminder with that number, so nothing to cancel"
                     return Change(CANCEL, id=r["id"]), f"cancelled: {line(r)}"
+                if not r or r["status"] not in SNOOZABLE:
+                    return None, "error: there's no active or missed reminder with that number"
                 minutes = float(args.get("minutes"))
-                if not 0 < minutes <= MAX_AHEAD_S / 60:
+                if not (math.isfinite(minutes) and 0 < minutes <= MAX_AHEAD_S / 60):
                     return None, "error: minutes must be more than 0"
                 return Change(SNOOZE, id=r["id"], minutes=minutes), f"snoozed until {when(now + minutes * 60, now)}"
         except (TypeError, ValueError) as e:
@@ -417,13 +452,15 @@ class ReminderTools:
         new = self.reminders.check(new, self._voices(), now)
         said = line({**new.__dict__, "from_name": None})
         at = when(due, now) if due is not None else f"when {name(new.for_name)} is next heard"
-        return Change(ADD, reminder=new), f'set for {at}; TARS will say: "{said}"'
+        return Change(ADD, reminder=new, asked_at=now), f'set for {at}; TARS will say: "{said}"'
 
     def apply(self, change: Change, from_name: str | None, conversation_id: int | None = None) -> None:
         """Makes a change once its turn is kept. A reminder set by voice is from whoever set it."""
         if change.action == ADD:
-            new = NewReminder(**{**change.reminder.__dict__, "from_name": from_name})
-            self.reminders.add(new, VOICE, voices=self._voices(), conversation_id=conversation_id)
+            new = dataclasses.replace(change.reminder, from_name=from_name)
+            self.reminders.add(
+                new, VOICE, voices=self._voices(), conversation_id=conversation_id, now=change.asked_at or None
+            )
         elif change.action == CANCEL:
             self.reminders.cancel(change.id)
         elif change.action == SNOOZE:
