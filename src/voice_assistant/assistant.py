@@ -22,13 +22,13 @@ from openai import OpenAIError
 
 from .audio import AudioDeviceError, Microphone, Speaker, chime
 from .config import LLMConfig, RemindersConfig, SpeakerConfig
-from .conversations import SentItem
+from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .files import atomic_write
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
 from .recorder import UtteranceRecorder
-from .reminders import VOICE, Clock, ReminderTools, held_line, late, says_line
+from .reminders import VOICE, Change, Clock, ReminderTools, held_line, late, says_line
 from .reminders import line as reminder_line
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
@@ -469,7 +469,7 @@ class Assistant:
         self._change_reminders(self.brain.changes, name)
         return True
 
-    def _change_reminders(self, changes: list, who: str | None) -> None:
+    def _change_reminders(self, changes: list[Change], who: str | None) -> None:
         """Sets, cancels or snoozes what the reply asked for, now that it was kept."""
         if not changes or not self.reminder_tools:
             return
@@ -483,7 +483,7 @@ class Assistant:
         if self._clock:
             self._clock.read()
 
-    def _log_failure(self, e: Exception, answer: "Answer | None") -> None:
+    def _log_failure(self, e: Exception, answer: Answer | None) -> None:
         """Kept in the conversation, where it failed and why, with what TARS got to say of the answer."""
         text = "".join(answer.spoken).strip() if answer else ""
         if answer:
@@ -502,7 +502,7 @@ class Assistant:
         try:
             text = session.transcript()
         except Exception as e:
-            mark_failed_at(e, "stt")
+            mark_failed_at(e, STT)
             raise
         stt_s = time.perf_counter() - t
         answer = Answer(text, Identified(*identifying.result()) if identifying else NOBODY, stt_s)
@@ -530,7 +530,7 @@ class Assistant:
             pieces = _tee(pieces, answer.spoken)
         except BaseException as e:
             self.brain.forget_last()  # a question that got no answer shouldn't linger either
-            mark_failed_at(e, "llm")
+            mark_failed_at(e, LLM)
             raise
         answer.reply = StreamedReply(
             pieces, self.voice, lambda sentence: answer.sentences.append((time.perf_counter(), sentence))
