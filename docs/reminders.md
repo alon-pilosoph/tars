@@ -4,14 +4,14 @@ TARS can set a timer, remind someone of something at a time, or pass a message f
 or from the web UI. Anything can wait for an acknowledgement: until someone says "got it", TARS says it again every
 couple of minutes, up to a limit, and the web UI shows who acknowledged it and how.
 
-**Status:** planned, being built on the `reminders` branch. Until it ships, TARS says it can't set timers or
-reminders (`CANT_RULES` in `llm.py`) instead of pretending it did.
+**Status:** built on the `reminders` branch, not yet tried on the Pi. With `[reminders] enabled = false` (or
+push-to-talk), TARS says it can't set timers or reminders (`CANT_RULES` in `llm.py`) instead of pretending it did.
 
 ## What it does
 
 | Kind | Said by voice | Spoken when it's due |
 |---|---|---|
-| **Timer** | "set a pasta timer for twelve minutes" | "Your pasta timer is done." |
+| **Timer** | "set a pasta timer for twelve minutes" | "Your pasta timer is done.", then it rings until turned off |
 | **Reminder** | "remind me to call the bank at nine" | "Alon, a reminder: call the bank." |
 | **Message** | "tell Stacey dinner's at eight, at seven thirty" | "Stacey, a message from Alon: dinner's at eight." |
 | **Message when they're back** | "tell Stacey the plumber called when she's back" | the next time TARS recognizes Stacey's voice, after answering her |
@@ -22,24 +22,32 @@ reminders (`CANT_RULES` in `llm.py`) instead of pretending it did.
 - **Waiting until they're back** needs that person's voiceprint (a named voice). Without one, TARS asks for a time
   instead, and the web UI doesn't offer it.
 - **Acknowledging.** Anyone can acknowledge anything; the status records who.
-  - Right after it's said, TARS listens for a few seconds without the wake word: "got it", "okay, thanks", "yep".
+  - Right after it's said, TARS listens for a few seconds without the wake word: "got it", "okay, thanks", "yep";
+    for a timer, "stop" or "turn it off".
   - Later: "hey TARS, I got the message" clears the reminder that's waiting (the most recent one, if there are
     several and it isn't clear which).
   - On the web UI: Acknowledge.
   - Who: the recognized voice, "an unknown voice", or "on the web UI".
-- **Repeating.** One that waits for an acknowledgement is said again every 2 minutes, at most 10 times, then it's
-  **Missed** (both changeable per reminder; defaults in `config.toml`). One that doesn't wait is said once.
+- **Repeating.** A reminder or message that waits for an acknowledgement is said again every 5 minutes, at most 4
+  times, then it's **Missed** (both changeable per reminder; defaults in `config.toml`). One that doesn't wait is
+  said once.
+- **Timers ring** like a kitchen timer until someone turns them off: a chime every 10 seconds, with "Your pasta
+  timer is done." on the first ring and about once a minute after, for at most 15 minutes (`timer_ring_min`), then
+  Missed. TARS can't hear while it makes a sound, so it rings in bursts and listens in between: "stop" works without
+  the wake word, and "hey TARS, turn the timer off" any time.
 - **By voice, also:** "what reminders do I have?", "cancel the pasta timer", "remind me again in ten minutes"
-  (snooze).
+  (snooze). Both models see every active reminder by number in their instructions, so listing needs no tool and
+  "I got the message" names the right one.
 - **A chime** before each one, so the first words don't land in silence.
 - **Never over a conversation.** If something comes due while someone is talking to TARS, it waits until the
   conversation is over. (Interrupting needs ["TARS stop"](roadmap.md#2-tars-stop-interrupting-a-reply).)
 - **After downtime.** Anything that came due while TARS was off is said when it starts again, with "This was due at
   8:00."
 - **The web UI's Reminders page** sets them (kind, text, for whom, from whom, when, wait for an acknowledgement,
-  repeat), and shows each one's status: scheduled, waiting (said 3 of 10 times, next at 9:14), acknowledged (by whom,
-  how, when), missed, or cancelled; with Acknowledge, Snooze and Cancel. Away from home, the page is reachable over
-  Tailscale, so that's how they're set remotely.
+  repeat), and shows each one's status: due, ringing, said 2 of 4 times, acknowledged (by whom, how, when), missed,
+  or stopped; with Got it (Turn off for a ringing timer), Again in 10 min, and Stop. Away from home, the page is
+  reachable over Tailscale, so that's how they're set remotely. It has no accounts, so a message set there asks who
+  it's from, and an acknowledgement made there shows as "on this page".
 - **In the conversations.** A reminder that was said, and what was said back, show on Home like any conversation.
 
 Later, not in the first version: quiet hours (nothing spoken overnight), messages shown only on the web UI and never
@@ -68,22 +76,23 @@ For a later "hey TARS, I got the message", the reminders waiting for an acknowle
 instructions (after the cached part, like the time of day), and the brain answers with `<ack 12>`. A model can say
 "okay thanks" a hundred ways; a phrase list would miss them.
 
-**Setting by voice goes through OpenAI.** Setting, listing, snoozing and cancelling are tools on OpenAI's model,
-and Qwen hands those turns over with `<look-up>`, as it does for sending. That costs a second or two on those turns
-only. Like sent items, a tool call doesn't change anything until the turn is kept: a draft thrown away because you
-kept talking leaves no reminder behind. Listing reads the table directly. Times are given either as minutes from
+**Setting by voice goes through OpenAI.** Setting, snoozing and cancelling are tools on OpenAI's model
+(`remind`, `snooze_reminder`, `cancel_reminder`), and Qwen hands those turns over with `<look-up>`, as it does for
+sending. That costs a second or two on those turns only. Like sent items, a tool call doesn't change anything until
+the turn is kept: a draft thrown away because you kept talking leaves no reminder behind. Listing needs no tool:
+what's set is in the instructions. Times are given either as minutes from
 now or a local date and time; the tool rejects the past and anything over a year away, so the model asks again.
 
 **Waiting until they're back** hooks into the conversation: after TARS answers someone whose voice matches (speaker
 ID's confident match), any message waiting for them is said ("By the way, Stacey, a message from Alon: …") and the
 follow-up listening that comes next is its acknowledgement window.
 
-**Settings** in `config.toml`'s new `[reminders]`: `enabled`, `repeat_every_min = 2`, `max_tries = 10`,
-`ack_window_s`. Push-to-talk and typed (`--text`) modes don't deliver reminders.
+**Settings** in `config.toml`'s `[reminders]`: `enabled`, `repeat_every_min = 5`, `max_tries = 4`,
+`timer_ring_min = 15`, `ack_window_s = 6`. Push-to-talk and typed (`--text`) modes don't deliver reminders.
 
-## Building it
+## How it was built
 
-Each stage has its tests and is committed on its own:
+Each stage has its tests and was committed on its own:
 
 1. **The table and `Reminders`:** the migration, creating, due times, what to say (names, sender, overdue),
    repeats and Missed, acknowledging, snoozing, cancelling.
@@ -94,6 +103,6 @@ Each stage has its tests and is committed on its own:
 5. **The web UI:** the Reminders page, its API, demo data, end-to-end and screenshot tests.
 6. **Docs:** this page's status, the architecture and web UI pages, the roadmap.
 
-**Measure on the Pi:** that "got it" and its variants are taken as acknowledgements and other replies aren't (a
+**Still to measure on the Pi:** that "got it" and its variants are taken as acknowledgements and other replies aren't (a
 dozen of each), that nothing is said in the middle of a conversation, and that a reminder set from the phone over
 Tailscale is said within a few seconds of its time.

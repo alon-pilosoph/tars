@@ -11,6 +11,7 @@ laptop on the home network. The design came from Claude Design, and screenshot t
 | **Home** | Conversations by day, newest first: who spoke (by voice), what they said (with audio), what TARS answered and sent, how long each answer took and which model wrote it, and where an answer failed. Anything TARS sent since the last Refresh sits on top. Rate an answer good or bad, fix a misheard transcript, name an unknown voice, and from a conversation's ⋯ menu: copy it, "Not meant for TARS", who was talking, delete. With two or more named people, a filter by person. |
 | **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. |
 | **Review** | Wakes no conversation explained (a near-miss, a "Did you call me?" nobody answered, a wake followed by silence). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted. |
+| **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice is back. The tab counts what's waiting for a got it. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
 
@@ -68,6 +69,11 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 | `POST /api/recluster` | Regroup the requests by voice and rebuild the voiceprints |
 | `GET /api/models` | The pair in use and its test results, the version history, and the labeled wakes since it was installed |
 | `POST /api/models/use` | `{"version": ...}` puts a version in use (`"installed"` is config.toml's) |
+| `GET /api/reminders` | Whether reminders are on, every one (active first) with what TARS will say, the names TARS knows by voice, and the defaults |
+| `POST /api/reminders` | `{"kind", "text", "for_name", "from_name", "due" (Unix time) or "when_back": true, "needs_ack", "repeat_every_min", "max_tries"}`; 400 says what's wrong |
+| `POST /api/reminders/{id}/ack` | Acknowledged on the page |
+| `POST /api/reminders/{id}/snooze` | `{"minutes": n}` said again then, with all its tries |
+| `POST /api/reminders/{id}/cancel` | Stopped before it's acknowledged |
 
 ## Working on it
 

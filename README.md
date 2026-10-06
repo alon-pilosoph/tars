@@ -18,6 +18,10 @@ Runs on a Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or o
 - **It starts answering 1.1 to 1.6 seconds after you stop talking.** Deepgram's Flux hears when you've finished from
   your words as well as the pause, Qwen on Cerebras starts the answer while Flux makes sure, and Deepgram's voice speaks
   it a sentence at a time ([response time](docs/latency.md)).
+- **It sets timers, reminders and messages.** "Remind me to call the bank at nine", "tell Stacey dinner's ready
+  when she's back": TARS says them when they're due and again until someone says "got it", and a timer rings until
+  someone turns it off. The web UI shows each one, who acknowledged it, and sets them from your phone
+  ([reminders](docs/reminders.md)).
 - **It can look things up and send you things.** Questions that need the web go to an OpenAI model with web search,
   and links, notes, lists and files it sends land in the web UI.
 - **It keeps the conversation going.** After answering it listens a few seconds for a follow-up without the wake
@@ -50,7 +54,7 @@ On a Pi, `deploy/install-pi.sh` does all of it and starts TARS and the web UI as
 ## The web UI
 
 Home shows the conversations by day, with what each person said and what TARS answered and sent. Sent lists the
-links, notes, lists and files. Review holds the wakes nothing explained, to answer "hey TARS" or "Not it". Voices
+links, notes, lists and files. Reminders shows every timer, reminder and message, and who said they got it. Review holds the wakes nothing explained, to answer "hey TARS" or "Not it". Voices
 groups requests by voice; name one and press Regroup voices to build that person's voiceprint. Models shows the wake
 models in use and can switch back to an earlier pair. It has no accounts, so keep it on the home network; away from
 home, use [Tailscale](docs/deployment.md#things-to-know).
@@ -68,6 +72,7 @@ the Pi needs no Node. Add `?demo` to the URL for sample data without a server.
 - [The web UI](docs/web-ui.md): pages, the Refresh rule, the API, development and checks
 - [Running TARS at home](docs/deployment.md): the Pi, services, storage, backup, a first test run
 - [Training the models](training/README.md): preparing the data, training a household's pair, rebuilding everything
+- [Reminders, timers and messages](docs/reminders.md): setting them, how they're said and acknowledged, the design
 - [What's next](docs/roadmap.md): a week of real use, interrupting TARS, a larger model for hard questions, memory
 
 ## Configure
