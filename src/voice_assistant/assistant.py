@@ -22,7 +22,7 @@ from openai import OpenAIError
 
 from .audio import AudioDeviceError, Microphone, Speaker
 from .config import LLMConfig, SpeakerConfig
-from .conversations import SentItem
+from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .files import atomic_write
 from .journal import Journal
@@ -364,7 +364,7 @@ class Assistant:
         self.journal.answered(said.text, said.sent, asker=name, timings=self.timings, answered_by=said.answered_by)
         return True
 
-    def _log_failure(self, e: Exception, answer: "Answer | None") -> None:
+    def _log_failure(self, e: Exception, answer: Answer | None) -> None:
         """Kept in the conversation, where it failed and why, with what TARS got to say of the answer."""
         text = "".join(answer.spoken).strip() if answer else ""
         if answer:
@@ -383,7 +383,7 @@ class Assistant:
         try:
             text = session.transcript()
         except Exception as e:
-            mark_failed_at(e, "stt")
+            mark_failed_at(e, STT)
             raise
         stt_s = time.perf_counter() - t
         answer = Answer(text, Identified(*identifying.result()) if identifying else NOBODY, stt_s)
@@ -408,7 +408,7 @@ class Assistant:
                     return answer
         except BaseException as e:
             self.brain.forget_last()  # a question that got no answer shouldn't linger either
-            mark_failed_at(e, "llm")
+            mark_failed_at(e, LLM)
             raise
         answer.reply = StreamedReply(
             pieces, self.voice, lambda sentence: answer.sentences.append((time.perf_counter(), sentence))
