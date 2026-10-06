@@ -14,6 +14,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import datetime
 
+from .config import RemindersConfig
 from .events import person_key
 from .store import Store
 
@@ -76,6 +77,10 @@ class Reminders:
         self.store = store
         self.repeat_every_s, self.max_tries = repeat_every_s, max_tries
         self.timer_ring_s = timer_ring_s
+
+    @classmethod
+    def from_config(cls, store: Store, cfg: RemindersConfig) -> "Reminders":
+        return cls(store, cfg.repeat_every_min * 60, cfg.max_tries, cfg.timer_ring_min * 60)
 
     def add(
         self,

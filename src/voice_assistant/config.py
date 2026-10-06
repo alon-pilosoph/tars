@@ -215,12 +215,14 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[recorder] vad_threshold must be between 0.2 and 0.95")
     if not 0 <= r.answer_early_s < r.end_silence_s:
         problems.append("[recorder] answer_early_s must be at least 0 and shorter than end_silence_s")
+    if r.max_pause_s < r.end_silence_s:
+        problems.append("[recorder] max_pause_s can't be shorter than end_silence_s")
     if cfg.reminders.repeat_every_min < 0.5:
         problems.append("[reminders] repeat_every_min must be at least 0.5")
     if not 1 <= cfg.reminders.max_tries <= 30:
         problems.append("[reminders] max_tries must be between 1 and 30")
     if not 1 <= cfg.reminders.timer_ring_min <= 60:
         problems.append("[reminders] timer_ring_min must be between 1 and 60")
-    if r.max_pause_s < r.end_silence_s:
-        problems.append("[recorder] max_pause_s can't be shorter than end_silence_s")
+    if not 2 <= cfg.reminders.ack_window_s <= 30:
+        problems.append("[reminders] ack_window_s must be between 2 and 30")
     return problems

@@ -522,7 +522,7 @@ def reminding(speaker, tmp_path, utterances, transcripts, replies=(), **kw):
 
 
 def spoken(played):
-    return [c.decode() for c in played if not c.startswith(b"\0\0")]  # the chime starts silent
+    return [c.decode() for c in played if c != chime(24_000)]
 
 
 def test_a_due_reminder_is_said_after_a_chime_and_got_it_acknowledges_it(speaker, tmp_path):
