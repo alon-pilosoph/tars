@@ -57,7 +57,7 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts both systemd user services, at boot too. The first run stops to ask for the keys `config.toml`'s choices
+starts both systemd user services, at boot too, then runs `voice-assistant --check`. The first run stops to ask for the keys `config.toml`'s choices
 need in `.env` (OpenAI, Deepgram and Cerebras, by default); run it again after. It's safe to rerun, and it restarts
 the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml` or a missing key stops a
 service instead of restarting it every few seconds: `journalctl` says what's wrong. The web UI's build is
@@ -80,6 +80,11 @@ committed, so the Pi needs no Node. By hand, the steps are at the top of
   encrypted copy of `voice_data/` and `models/personal/` to S3 or Backblaze B2 costs cents a month.
 - **Two processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
+- **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys, both
+  audio devices, the local models, OpenAI, Cerebras and Deepgram (each with how long it took), the voice (it says
+  "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both services.
+  Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
+  one that doesn't open in time is a failure.
 
 ## Where the learning happens
 

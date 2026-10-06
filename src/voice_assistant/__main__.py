@@ -187,6 +187,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="voice-assistant")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     parser.add_argument("--list-devices", action="store_true", help="show audio devices and exit")
+    parser.add_argument(
+        "--check", action="store_true", help="check everything TARS needs (keys, devices, services, models) and exit"
+    )
     parser.add_argument("--mic-test", action="store_true", help="live mic / VAD / wake-word meter (no API key)")
     parser.add_argument("--ptt", action="store_true", help="push-to-talk instead of wake word")
     parser.add_argument("--text", action="store_true", help="type questions instead of speaking them")
@@ -220,6 +223,10 @@ def main() -> None:
     root = args.config.resolve().parent
     try:
         cfg = load_config(args.config)
+        if args.check:
+            from .check import check_all
+
+            raise SystemExit(check_all(cfg, root))
         if args.mic_test:
             from .mic_test import mic_test
 
