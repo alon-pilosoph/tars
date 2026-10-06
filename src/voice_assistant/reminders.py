@@ -6,8 +6,9 @@ in the event database (store.REMINDERS). The web UI is another process, so the a
 rather than keeping it in memory. See docs/reminders.md.
 """
 
+import threading
 import time
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -212,6 +213,38 @@ class Reminders:
     def _change(self, sql: str, args: tuple) -> bool:
         with self.store.transaction() as db:
             return db.execute(sql, args).rowcount > 0
+
+
+class Clock:
+    """When the next reminder is due, read from the table every `every_s` on a thread of its own, so the wake loop's
+    question, asked every 80 ms, costs a comparison. `on_read` gets the active reminders each time (to make their
+    audio ahead)."""
+
+    def __init__(self, reminders: Reminders, every_s: float = 2.0, on_read: Callable[[list[dict]], None] | None = None):
+        self._reminders, self._every_s, self._on_read = reminders, every_s, on_read
+        self._next: float | None = None
+
+    def start(self) -> None:
+        def loop():
+            while True:
+                self.read()
+                time.sleep(self._every_s)
+
+        threading.Thread(target=loop, daemon=True, name="reminders").start()
+
+    def read(self) -> None:
+        try:
+            active = self._reminders.active()
+        except Exception as e:  # noqa: BLE001 - a locked or broken table: try again next time
+            print(f"(couldn't read the reminders: {e!r})")
+            return
+        self._next = min((r["next_at"] for r in active if r["next_at"] is not None), default=None)
+        if self._on_read:
+            self._on_read(active)
+
+    def is_due(self, now: float | None = None) -> bool:
+        at = self._next
+        return at is not None and at <= (time.time() if now is None else now)
 
 
 def name(n: str) -> str:

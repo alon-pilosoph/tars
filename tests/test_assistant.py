@@ -1,6 +1,7 @@
 """The conversation loop: follow-ups, "Did you call me?", greetings, error lines, and what's written down."""
 
 import threading
+import time
 import types
 
 import numpy as np
@@ -9,11 +10,22 @@ from openai import OpenAIError
 
 import voice_assistant.assistant as assistant_module
 from voice_assistant.assistant import ASK_PHRASE, ERROR_LINES, Assistant
-from voice_assistant.audio import SpeakerError
+from voice_assistant.audio import SpeakerError, chime
 from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, TIMINGS, SentItem
 from voice_assistant.events import EventLog
 from voice_assistant.journal import Journal
-from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK
+from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK, REMINDER_TAG
+from voice_assistant.reminders import (
+    ACKNOWLEDGED,
+    MESSAGE,
+    REMINDER,
+    SAID,
+    VOICE,
+    WAITING,
+    WEB,
+    NewReminder,
+    Reminders,
+)
 from voice_assistant.speech import StreamedReply
 from voice_assistant.stt import BufferedSession
 
@@ -490,3 +502,97 @@ def test_a_bug_is_kept_as_a_failure_too(speaker, tmp_path):
     assistant._speak = raising(KeyError("oops"))
     assistant.converse(follow_up_s=4.0)
     assert turns_of(convos)[-1]["failed_at"] == "other"
+
+
+def reminding(speaker, tmp_path, utterances, transcripts, replies=(), **kw):
+    """A logged assistant with one reminder due now; returns (assistant, reminders, its id, what was played)."""
+    assistant, convos = logged_assistant(speaker, tmp_path, utterances, transcripts, replies)
+    assistant.journal.end_conversation()  # a reminder comes due while TARS waits, not after a wake
+    assistant.reminders = Reminders(convos.store)
+    played = []
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    speaker.play_pcm_stream = lambda chunks, *a, **k: played.extend(chunks)
+    kw = {"kind": MESSAGE, "text": "dinner's at eight", "for_name": "stacey", "from_name": "alon", **kw}
+    rid = assistant.reminders.add(NewReminder(due=time.time(), **kw), WEB)
+    return assistant, assistant.reminders, rid, played
+
+
+def spoken(played):
+    return [c.decode() for c in played if not c.startswith(b"\0\0")]  # the chime starts silent
+
+
+def test_a_due_reminder_is_said_after_a_chime_and_got_it_acknowledges_it(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [b"ok", None], ["got it"], replies=["<ack>"])
+    assistant.say_reminders(follow_up_s=4.0)
+    assert spoken(played)[0] == "Stacey, a message from Alon: dinner's at eight."
+    assert len(played[0]) > 1000 and played[0] == chime(24_000)  # the chime first
+    assert assistant.brain.asked[0].startswith(REMINDER_TAG)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_via"], r["acked_by"], r["tries"]) == (ACKNOWLEDGED, VOICE, None, 1)
+    turns = turns_of(assistant.journal.conversations)
+    assert [(t["role"], t["text"]) for t in turns] == [
+        ("tars", "Stacey, a message from Alon: dinner's at eight."),
+        ("person", "got it"),
+        ("tars", "Got it."),
+    ]
+
+
+def test_nobody_answering_leaves_it_waiting_to_be_said_again(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [None], [])
+    assistant.say_reminders()
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"]) == (WAITING, 1) and r["next_at"] > time.time() + 60
+    assert assistant.journal.conversations.conversations() == []  # nothing said back, no conversation
+
+
+def test_a_reply_not_meant_for_tars_doesnt_acknowledge_it(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [b"chat"], ["pass the salt"], replies=["<skip>"])
+    assistant.say_reminders(follow_up_s=4.0)
+    assert reminders.get(rid)["status"] == WAITING
+
+
+def test_one_that_doesnt_wait_is_said_once_without_listening(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [], [], needs_ack=False)
+    assistant.say_reminders()  # the recorder has nothing scripted: listening would fail
+    assert reminders.get(rid)["status"] == SAID and spoken(played) == [
+        "Stacey, a message from Alon: dinner's at eight."
+    ]
+
+
+def test_said_late_it_says_when_it_was_due(speaker, tmp_path):
+    assistant, _, rid, played = reminding(speaker, tmp_path, [None], [])
+    assistant.reminders.store.write("UPDATE reminders SET due=due-3600, next_at=next_at-3600 WHERE id=?", (rid,))
+    assistant.say_reminders()
+    assert spoken(played)[1].startswith("This was due ")
+
+
+def test_later_i_got_the_message_acknowledges_the_one_waiting(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [None, b"q", None], ["I got the message"])
+    assistant.say_reminders()
+    assistant.brain.replies = iter([f"<ack {rid}> Good."])
+    assistant.converse(follow_up_s=4.0)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_via"]) == (ACKNOWLEDGED, VOICE)
+    assert turns_of(assistant.journal.conversations)[-1]["text"] == "Good."
+
+
+def test_a_bare_ack_in_conversation_is_for_the_one_said_last(speaker, tmp_path):
+    assistant, reminders, first, _ = reminding(speaker, tmp_path, [None, None, b"q", None], ["done"])
+    second = reminders.add(NewReminder(REMINDER, "pills", due=time.time()), WEB)
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() + 999, second))
+    assistant.say_reminders()
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() - 1, second))
+    assistant.say_reminders()
+    assistant.brain.replies = iter(["<ack>"])
+    assistant.converse(follow_up_s=4.0)
+    assert [reminders.get(i)["status"] for i in (first, second)] == [WAITING, ACKNOWLEDGED]
+
+
+def test_an_answer_thrown_away_acknowledges_nothing(speaker, tmp_path):
+    # They paused ("got...") and the draft said <ack>, then carried on ("got a question actually").
+    assistant, reminders, rid, _ = reminding(
+        speaker, tmp_path, [["pause", "resume", b"q"], None], ["got", "got a question actually"],
+        replies=["<ack>", "Go ahead."],
+    )  # fmt: skip
+    assistant.say_reminders(follow_up_s=4.0)
+    assert reminders.get(rid)["status"] == WAITING

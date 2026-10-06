@@ -4,9 +4,10 @@ streamed, and every reply can be stopped and forgotten."""
 
 import itertools
 import json
+import re
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
 from typing import Protocol
 
@@ -14,6 +15,7 @@ from openai import OpenAI, OpenAIError
 
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
+from .reminders import line
 
 # The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a marathon session from
 # growing the prompt forever.
@@ -30,6 +32,63 @@ SKIP_RULES = (
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
 )
+REMINDER_TAG = "[Reply to the reminder you just said]"
+# How a reply acknowledges reminders: "<ack>" for the ones just said, "<ack 12>" (or "<ack 12, 14>") by number.
+ACK = "<ack>"
+ACK_MARK = re.compile(r"\s*<ack((?:[\s,]*\d+)*)\s*>")
+GOT_IT = "Got it."  # said for a bare <ack>
+ACK_RULES = (
+    f"Messages starting with {REMINDER_TAG} answer a reminder, timer or message you just said aloud. If it "
+    f"acknowledges it (got it, okay, thanks, will do, on it), reply with exactly {ACK} and nothing else. If it asks "
+    f"for something, like being reminded again later, just do it. If it isn't meant for you, reply with exactly "
+    f"{SKIP} and nothing else."
+)
+
+
+def waiting_note(waiting: list[dict]) -> str:
+    """The reminders said aloud and still waiting for an acknowledgement, for the instructions; "" if none."""
+    if not waiting:
+        return ""
+    listed = "\n".join(f"[{r['id']}] {line(r)}" for r in waiting)
+    return (
+        "These were said aloud and are waiting for someone to acknowledge them:\n"
+        f"{listed}\n"
+        'When someone says they got one, heard it or did it ("I got the message", "I took the pills"), start '
+        "your reply with <ack N> for it, N being its number (the first one listed if it isn't clear which), then "
+        "say one short line."
+    )
+
+
+def split_ack(pieces: Iterable[str]) -> tuple[list[int] | None, Iterator[str]]:
+    """Peek at the start of a streamed reply: (the reminder numbers acknowledged, [] for a bare <ack>, the rest of
+    the reply) if it starts with an ack, else (None, the whole reply). A bare <ack> with nothing after it says
+    GOT_IT."""
+    stream = iter(pieces)
+    head = ""
+    for piece in stream:
+        head += piece
+        start = head.lstrip()
+        if not "<ack".startswith(start[:4]) or ">" in start or len(start) > 40:
+            break
+    if not (mark := ACK_MARK.match(head)):
+        return None, itertools.chain([head], stream)
+    ids = [int(n) for n in re.findall(r"\d+", mark.group(1))]
+    return ids, _or_else(itertools.chain([head[mark.end() :]], stream), GOT_IT)
+
+
+def _or_else(pieces: Iterable[str], default: str) -> Iterator[str]:
+    """The reply without its leading whitespace, or `default` if that's all there was."""
+    said = False
+    for piece in pieces:
+        if not said:
+            piece = piece.lstrip()
+            said = bool(piece)
+        if piece:
+            yield piece
+    if not said:
+        yield default
+
+
 # TARS can only talk, search the web and send to the TARS page. Without this, a model asked for a timer says "Twelve
 # minutes, starting now." and nothing ever goes off.
 CANT_RULES = (
@@ -232,9 +291,11 @@ class OpenAIChat:
 
     first_answerer = OPENAI
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig):
+    def __init__(self, client: OpenAI, cfg: LLMConfig, waiting: Callable[[], list[dict]] | None = None):
+        """`waiting`: the reminders said and waiting for an acknowledgement, when TARS has reminders."""
         self._client = client
         self._cfg = cfg
+        self._waiting = waiting
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -244,7 +305,7 @@ class OpenAIChat:
         self.sent: list[SentItem] = []
         self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
-        rules = [SKIP_RULES, CANT_RULES] + ([SEND_RULES] if cfg.send else [])
+        rules = [SKIP_RULES, CANT_RULES] + ([ACK_RULES] if waiting else []) + ([SEND_RULES] if cfg.send else [])
         self._instructions = "\n\n".join([self._system_prompt, *rules])
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
@@ -277,7 +338,7 @@ class OpenAIChat:
             _check(writing)
             stream = writing.stream = self._client.responses.create(
                 model=self._cfg.model,
-                instructions=f"{self._instructions}\n\n{local_time()}",
+                instructions=f"{self._instructions}\n\n{self._now()}",
                 input=context,
                 stream=True,
                 store=False,  # nothing kept on OpenAI's side beyond the request itself
@@ -320,6 +381,16 @@ class OpenAIChat:
         if not answer.strip() and not self.sent:
             raise ReplyFailed("the reply was empty")
         self._remember(answer, writing)
+
+    def _now(self) -> str:
+        """What changes from one request to the next, so it goes after the instructions that can be cached."""
+        parts = [local_time()]
+        if self._waiting:
+            try:
+                parts.append(waiting_note(self._waiting()))
+            except Exception as e:  # noqa: BLE001 - a reminder list that can't be read never costs a reply
+                print(f"(couldn't read the reminders waiting for an acknowledgement: {e!r})")
+        return "\n\n".join(p for p in parts if p)
 
     @property
     def answered_by(self) -> str | None:
@@ -381,12 +452,15 @@ class CerebrasChat(OpenAIChat):
 
     first_answerer = QUICK
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig, cerebras: OpenAI):
-        super().__init__(client, cfg)
+    def __init__(
+        self, client: OpenAI, cfg: LLMConfig, cerebras: OpenAI, waiting: Callable[[], list[dict]] | None = None
+    ):
+        super().__init__(client, cfg, waiting)
         self._cerebras = cerebras
         self._cerebras_back_at = 0.0  # monotonic time; until then, Cerebras failed recently and OpenAI answers
         hand_off = [look_up_rules(cfg.web_search, cfg.send)] if cfg.web_search or cfg.send else []
-        self._quick_instructions = "\n\n".join([self._system_prompt, SKIP_RULES, CANT_RULES, *hand_off])
+        acks = [ACK_RULES] if waiting else []
+        self._quick_instructions = "\n\n".join([self._system_prompt, SKIP_RULES, CANT_RULES, *acks, *hand_off])
         self._quick_extra = {"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_effort else {}
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
@@ -431,7 +505,7 @@ class CerebrasChat(OpenAIChat):
         stream = writing.stream = self._cerebras.chat.completions.create(
             model=self._cfg.cerebras_model,
             stream=True,
-            messages=[{"role": "system", "content": f"{self._quick_instructions}\n\n{local_time()}"}, *context],
+            messages=[{"role": "system", "content": f"{self._quick_instructions}\n\n{self._now()}"}, *context],
             **self._quick_extra,
         )
         with stream:

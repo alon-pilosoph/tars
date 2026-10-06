@@ -17,7 +17,7 @@ import numpy as np
 
 from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
 from .models import fetch
-from .wake import WakeModel, wake_word_trigger
+from .wake import DUE, Due, WakeModel, wake_word_trigger
 
 if TYPE_CHECKING:
     from .journal import Journal
@@ -236,8 +236,9 @@ class VerifiedTrigger:
         self._follow_versions(quiet=True)
         self.phrase = self._trigger.phrase
 
-    def wait(self, mic: Microphone) -> str:
-        """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite."""
+    def wait(self, mic: Microphone, due: Due | None = None) -> str:
+        """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite, DUE when `due` says a
+        reminder is due."""
         mic.clear()
 
         def fresh() -> tuple[RecentAudio, NearMisses, None]:
@@ -258,6 +259,8 @@ class VerifiedTrigger:
             if peak is not None and self._journal:
                 self._journal.near_miss(peak_audio, peak, self.pair.wake_model)
             if score < self._trigger.threshold:
+                if due and due():
+                    return DUE
                 continue
             self._trigger.reset()
             audio = recent.audio()

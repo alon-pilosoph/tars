@@ -20,20 +20,22 @@ from typing import NamedTuple
 import numpy as np
 from openai import OpenAIError
 
-from .audio import AudioDeviceError, Microphone, Speaker
-from .config import LLMConfig, SpeakerConfig
+from .audio import AudioDeviceError, Microphone, Speaker, chime
+from .config import LLMConfig, RemindersConfig, SpeakerConfig
 from .conversations import SentItem
 from .draft import Draft
 from .files import atomic_write
 from .journal import Journal
-from .llm import ASKED_TAG, FOLLOW_UP_TAG, Brain, split_skip
+from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
 from .recorder import UtteranceRecorder
+from .reminders import VOICE, Clock, Reminders, late
+from .reminders import line as reminder_line
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
 from .stt import Session, Transcriber
 from .tts import Voice
 from .verify import ASK
-from .wake import Trigger
+from .wake import DUE, Trigger
 
 ASK_PHRASE = "Did you call me?"
 ASK_TIMEOUT_S = 5.0  # how long to wait for an answer to it
@@ -92,6 +94,7 @@ class Answer:
     skipped: bool = False  # an overheard follow-up the brain chose not to answer
     spoken: list[str] = field(default_factory=list)
     error: Exception | None = None  # the brain failed to start the reply; raised once what was heard is written down
+    acks: list[int] | None = None  # the reply acknowledged reminders: these, or [] for the ones just said
     sentences: list[tuple[float, str]] = field(default_factory=list)  # (when it was written, the sentence)
 
 
@@ -112,6 +115,8 @@ class Assistant:
         journal: Journal | None = None,
         humor: int = LLMConfig.humor,
         phrases: Path | None = None,
+        reminders: Reminders | None = None,
+        ack_window_s: float = RemindersConfig.ack_window_s,
     ):
         self.mic = mic
         self.speaker = speaker
@@ -131,12 +136,22 @@ class Assistant:
         self._phrasing = ThreadPoolExecutor(max_workers=1, thread_name_prefix="phrases")
         self._phrases: dict[str, Future[list[bytes]]] = {}
         self._phrase_dir = phrases  # the short lines' audio for this voice, so they survive an offline restart
+        self.reminders = reminders
+        self.ack_window_s = ack_window_s
+        self._clock = Clock(reminders, on_read=self._prepare_reminders) if reminders else None
+        self._just_said: list[int] = []  # reminders just said, waiting for an acknowledgement
 
     def run_forever(self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0) -> None:
         self.prepare_phrases()
+        if self._clock:
+            self._clock.start()
         while True:
             print(f"\n{idle_message}")
-            if self.trigger.wait(self.mic) == ASK:
+            woke = self.trigger.wait(self.mic, due=self._clock.is_due if self._clock else None)
+            if woke == DUE:
+                self.say_reminders(follow_up_s)
+                continue
+            if woke == ASK:
                 self.ask_if_called(follow_up_s)
                 continue
             print("Listening...")
@@ -149,11 +164,14 @@ class Assistant:
         for line in [ASK_PHRASE, greeting(None), *self.error_lines] + [greeting(n) for n in names]:
             self._phrase(line)
 
-    def _phrase(self, text: str) -> Future[list[bytes]]:
-        """The line's audio: made already, being made, or queued now (again, if it failed before)."""
+    def _phrase(self, text: str, keep: bool = True) -> Future[list[bytes]]:
+        """The line's audio: made already, being made, or queued now (again, if it failed before). `keep`: saved
+        for the next run too (the fixed lines, not a reminder's)."""
         made = self._phrases.get(text)
         if made is None or (made.done() and made.exception()):
-            made = self._phrases[text] = self._saved_phrase(text) or self._phrasing.submit(self._make_phrase, text)
+            made = self._phrases[text] = self._saved_phrase(text) or self._phrasing.submit(
+                self._make_phrase, text, keep
+            )
         return made
 
     def _phrase_path(self, text: str) -> Path | None:
@@ -172,19 +190,19 @@ class Assistant:
         saved.set_result([audio])
         return saved
 
-    def _make_phrase(self, text: str) -> list[bytes]:
+    def _make_phrase(self, text: str, keep: bool = True) -> list[bytes]:
         audio = list(self.voice.stream(text))
-        if path := self._phrase_path(text):
+        if keep and (path := self._phrase_path(text)):
             try:
                 atomic_write(path, b"".join(audio))
             except OSError as e:  # only a head start for the next run
                 print(f"(couldn't save {text!r} for next time: {e!r})")
         return audio
 
-    def say(self, text: str) -> bool:
+    def say(self, text: str, keep: bool = True) -> bool:
         """Plays a short line, made ahead if possible. False if it couldn't be said."""
         try:
-            audio = self._phrase(text).result()
+            audio = self._phrase(text, keep).result()
         except Exception as e:  # noqa: BLE001 - a line TARS can't say is skipped, never fatal
             print(f"(couldn't say {text!r}: {e!r})")
             return False
@@ -209,6 +227,54 @@ class Assistant:
         line = random.choice(ready)
         print(f"Bot:  {line}")
         self.say(line)
+
+    def _prepare_reminders(self, active: list[dict]) -> None:
+        """Makes each active reminder's line ahead, so it plays at once when it's due."""
+        for r in active:
+            self._phrase(reminder_line(r), keep=False)
+
+    def say_reminders(self, follow_up_s: float = 0.0) -> None:
+        """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""
+        try:
+            due = self.reminders.due()
+        except Exception as e:  # noqa: BLE001 - try again on the clock's next read
+            print(f"(couldn't read the reminders: {e!r})")
+            due = []
+        if not due:
+            if self._clock:
+                self._clock.read()
+            return
+        with self._mic_paused():
+            self.speaker.play_pcm_stream(iter([chime(self.voice.sample_rate)]), self.voice.sample_rate)
+        for r in due:
+            for text in filter(None, [reminder_line(r), late(r)]):
+                print(f"Bot:  {text}  (reminder {r['id']})")
+                if self.say(text, keep=False):
+                    self.journal.said(text)
+            self.reminders.said(r["id"])
+        if self._clock:
+            self._clock.read()
+        self._just_said = [r["id"] for r in due if r["needs_ack"]]
+        try:
+            heard = self.listen(start_timeout_s=self.ack_window_s, tag=REMINDER_TAG) if self._just_said else None
+            if heard is None:
+                self.journal.nobody_spoke()
+                return
+            self.converse(follow_up_s, first=heard)
+        finally:
+            self._just_said = []
+
+    def _ack(self, ids: list[int], who: str | None) -> None:
+        """A bare <ack> is for the reminders just said, or else the one said last."""
+        try:
+            ids = ids or self._just_said or [r["id"] for r in self.reminders.waiting()[:1]]
+            for i in ids:
+                if self.reminders.ack(i, who, VOICE):
+                    print(f"(reminder {i} acknowledged by {who or 'an unknown voice'})")
+        except Exception as e:  # noqa: BLE001 - the reply was said; only the record of it failed
+            print(f"(couldn't mark the reminder acknowledged: {e!r})")
+        if self._clock:
+            self._clock.read()
 
     def wake_speaker(self) -> str | None:
         if not self.speaker_id or (audio := self.trigger.last_audio) is None:
@@ -362,6 +428,8 @@ class Assistant:
         finally:
             heard.session.close()
         self.journal.answered(said.text, said.sent, asker=name, timings=self.timings, answered_by=said.answered_by)
+        if answer.acks is not None and self.reminders:
+            self._ack(answer.acks, name)
         return True
 
     def _log_failure(self, e: Exception, answer: "Answer | None") -> None:
@@ -400,12 +468,15 @@ class Assistant:
     def _start_reply(self, answer: Answer, prompt: str, may_skip: bool) -> Answer:
         answer.asked, answer.t_asked = True, time.perf_counter()
         try:
-            pieces = _tee(self.brain.stream_reply(prompt), answer.spoken)
+            pieces = self.brain.stream_reply(prompt)
             if may_skip:
                 answer.skipped, pieces = split_skip(pieces)
                 if answer.skipped:
                     self.brain.forget_last()  # overheard conversation shouldn't linger in the history
                     return answer
+            if self.reminders:
+                answer.acks, pieces = split_ack(pieces)
+            pieces = _tee(pieces, answer.spoken)
         except BaseException as e:
             self.brain.forget_last()  # a question that got no answer shouldn't linger either
             mark_failed_at(e, "llm")

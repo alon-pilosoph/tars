@@ -89,6 +89,17 @@ class MicrophoneError(AudioDeviceError):
     pass
 
 
+def chime(sample_rate: int) -> bytes:
+    """Two soft rising notes, played before a reminder so its first words don't land in silence."""
+    parts = []
+    for freq, seconds in ((660.0, 0.14), (880.0, 0.22)):
+        t = np.arange(int(sample_rate * seconds)) / sample_rate
+        envelope = np.minimum(1.0, t / 0.01) * np.exp(-t * 9)  # a quick attack, then it rings out
+        parts.append(0.3 * envelope * np.sin(2 * np.pi * freq * t))
+    parts.append(np.zeros(int(sample_rate * 0.15)))
+    return (np.concatenate(parts) * 32767).astype(np.int16).tobytes()
+
+
 class SpeakerError(AudioDeviceError):
     pass
 

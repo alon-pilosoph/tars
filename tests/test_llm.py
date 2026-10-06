@@ -18,7 +18,7 @@ from voice_assistant.llm import (
     split_skip,
 )
 
-from .conftest import fake_openai_chat
+from .conftest import fake_openai_chat, raising
 
 
 @pytest.mark.parametrize(
@@ -471,3 +471,38 @@ def test_both_models_are_told_what_they_cant_do_so_they_never_pretend(send):
     "".join(brain.stream_reply("set a timer for ten minutes"))
     for instructions in (cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]):
         assert llm.CANT_RULES in instructions
+
+
+@pytest.mark.parametrize(
+    "reply, ids, said",
+    [
+        ("<ack>", [], llm.GOT_IT),
+        ("  <ack>  ", [], llm.GOT_IT),
+        ("<ack 12> Noted.", [12], "Noted."),
+        ("<ack 12, 14>Both done.", [12, 14], "Both done."),
+        ("A <ack> later on isn't one.", None, "A <ack> later on isn't one."),
+        ("<acknowledged>", None, "<acknowledged>"),
+        ("Okay.", None, "Okay."),
+    ],
+)
+def test_an_ack_is_read_off_the_start_of_a_reply(reply, ids, said):
+    acked, rest = llm.split_ack(iter(reply))  # one character at a time
+    assert acked == ids and "".join(rest) == said
+
+
+def test_with_reminders_both_models_are_told_how_to_ack_and_what_is_waiting():
+    waiting = [{"id": 7, "kind": "message", "text": "dinner's at eight", "for_name": "stacey", "from_name": "alon"}]
+    openai, cerebras = fake_openai_chat(lambda m: "ok"), fake_cerebras(lambda m: LOOK_UP)
+    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen"), cerebras, waiting=lambda: waiting)
+    "".join(brain.stream_reply("I got the message"))
+    for instructions in (cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]):
+        assert llm.ACK_RULES in instructions
+        assert "[7] Stacey, a message from Alon: dinner's at eight." in instructions
+    brain, openai, cerebras = cerebras_brain(lambda m: "ok")
+    "".join(brain.stream_reply("hi"))
+    assert "<ack" not in cerebras.requests[0]["messages"][0]["content"]  # no reminders, no word of them
+
+
+def test_a_reminder_list_that_cant_be_read_never_costs_a_reply():
+    brain = OpenAIChat(fake_openai_chat(lambda m: "Hi."), LLMConfig(), waiting=raising(OSError("disk")))
+    assert "".join(brain.stream_reply("hi")) == "Hi."
