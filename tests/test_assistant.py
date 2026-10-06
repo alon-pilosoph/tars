@@ -17,14 +17,18 @@ from voice_assistant.journal import Journal
 from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK, REMINDER_TAG
 from voice_assistant.reminders import (
     ACKNOWLEDGED,
+    ADD,
     MESSAGE,
     REMINDER,
     SAID,
+    TIMER,
     VOICE,
     WAITING,
     WEB,
+    Change,
     NewReminder,
     Reminders,
+    ReminderTools,
 )
 from voice_assistant.speech import StreamedReply
 from voice_assistant.stt import BufferedSession
@@ -596,3 +600,21 @@ def test_an_answer_thrown_away_acknowledges_nothing(speaker, tmp_path):
     )  # fmt: skip
     assistant.say_reminders(follow_up_s=4.0)
     assert reminders.get(rid)["status"] == WAITING
+
+
+def test_a_reminder_set_by_voice_is_made_once_the_answer_is_kept_in_its_conversation(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q", None], ["pasta timer, twelve minutes"])
+    tools = ReminderTools(Reminders(convos.store))
+    assistant.reminder_tools, assistant.reminders = tools, tools.reminders
+    change = Change(ADD, NewReminder(TIMER, "pasta", due=time.time() + 720))
+    stream = assistant.brain.stream_reply
+
+    def asking_for_a_timer(text):
+        assistant.brain.changes = [change]
+        return stream(text)
+
+    assistant.brain.stream_reply = asking_for_a_timer
+    assistant.converse(follow_up_s=4.0)
+    (r,) = tools.reminders.active()
+    (conversation,) = convos.conversations()
+    assert (r["text"], r["set_via"], r["conversation_id"]) == ("pasta", VOICE, conversation["id"])

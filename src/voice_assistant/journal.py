@@ -30,6 +30,11 @@ class Journal:
         # write for seconds.
         self._background = ThreadPoolExecutor(max_workers=1, thread_name_prefix="journal")
 
+    @property
+    def conversation_id(self) -> int | None:
+        """The conversation being kept, once something in it was written (call flush() first)."""
+        return None if self._gone else self._conversation
+
     def _safe(self, write, *args, **kwargs):
         if self.events is None:
             return None

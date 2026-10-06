@@ -240,19 +240,20 @@ def main() -> None:
         raise SystemExit(str(e)) from None
 
 
-def make_reminders(cfg: Config, events, push_to_talk: bool):
+def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
     """Reminders need the event log to keep them in, and the wake loop to say them: not with push-to-talk, which
-    waits on Enter instead."""
+    waits on Enter instead. Waiting until someone's back needs speaker ID's voiceprints."""
     if not (cfg.reminders.enabled and events) or push_to_talk or cfg.wake.mode == "push-to-talk":
         return None
-    from .reminders import Reminders
+    from .reminders import Reminders, ReminderTools
 
-    return Reminders(events.store, cfg.reminders.repeat_every_min * 60, cfg.reminders.max_tries)
+    reminders = Reminders(events.store, cfg.reminders.repeat_every_min * 60, cfg.reminders.max_tries)
+    return ReminderTools(reminders, voices=lambda: list(speaker_id.voiceprints) if speaker_id else [])
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
-    With `reminders`, the brain knows the ones waiting for an acknowledgement."""
+    With `reminders` (a ReminderTools), the brain can set them and knows what's set."""
     from .effects import apply_effect
     from .llm import CerebrasChat, OpenAIChat
     from .stt import (
@@ -267,11 +268,10 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     check_keys(cfg, env)
     client = make_openai_client(env)
     llm = brain_config(cfg, typed=typed)
-    waiting = reminders.waiting if reminders else None
     brain = (
-        CerebrasChat(client, llm, make_cerebras_client(env), waiting)
+        CerebrasChat(client, llm, make_cerebras_client(env), reminders)
         if llm.cerebras_model
-        else OpenAIChat(client, llm, waiting)
+        else OpenAIChat(client, llm, reminders)
     )
     speech = (
         DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
@@ -325,7 +325,8 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     from .journal import Journal
 
     events = make_event_log(cfg, root)
-    reminders = make_reminders(cfg, events, push_to_talk)
+    speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
+    reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders)
     recorder = make_recorder(cfg, root)
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s)
@@ -333,7 +334,6 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         journal = Journal(events)
         journal.keep_pruning(cfg.learning.keep_audio_days)
         trigger, idle_message = make_trigger(cfg, push_to_talk, root, journal)
-        speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
         assistant = Assistant(
             mic,
             speaker,

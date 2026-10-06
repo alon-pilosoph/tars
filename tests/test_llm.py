@@ -1,6 +1,8 @@
 """The brain: skipping overheard chatter, memory, the send tool, failures, and Cerebras handing turns to OpenAI."""
 
+import time
 import types
+from datetime import datetime
 
 import pytest
 from openai import OpenAIError
@@ -8,6 +10,7 @@ from openai import OpenAIError
 from voice_assistant import llm
 from voice_assistant.config import LLMConfig
 from voice_assistant.conversations import SentItem
+from voice_assistant.events import EventLog
 from voice_assistant.llm import (
     LOOK_UP,
     MAX_TOOL_ROUNDS,
@@ -17,6 +20,7 @@ from voice_assistant.llm import (
     ReplyFailed,
     split_skip,
 )
+from voice_assistant.reminders import MESSAGE, TIMER, WEB, NewReminder, Reminders, ReminderTools
 
 from .conftest import fake_openai_chat, raising
 
@@ -490,19 +494,102 @@ def test_an_ack_is_read_off_the_start_of_a_reply(reply, ids, said):
     assert acked == ids and "".join(rest) == said
 
 
-def test_with_reminders_both_models_are_told_how_to_ack_and_what_is_waiting():
-    waiting = [{"id": 7, "kind": "message", "text": "dinner's at eight", "for_name": "stacey", "from_name": "alon"}]
+def reminder_tools(tmp_path, voices=()):
+    return ReminderTools(Reminders(EventLog(tmp_path / "events").store), voices=lambda: voices)
+
+
+def test_with_reminders_both_models_know_whats_set_and_how_to_ack_and_only_openai_sets_them(tmp_path):
+    tools = reminder_tools(tmp_path)
+    rid = tools.reminders.add(NewReminder(MESSAGE, "dinner's at eight", "stacey", "alon", due=time.time()), WEB)
+    tools.reminders.said(rid)
     openai, cerebras = fake_openai_chat(lambda m: "ok"), fake_cerebras(lambda m: LOOK_UP)
-    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen"), cerebras, waiting=lambda: waiting)
+    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen"), cerebras, reminders=tools)
     "".join(brain.stream_reply("I got the message"))
-    for instructions in (cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]):
-        assert llm.ACK_RULES in instructions
-        assert "[7] Stacey, a message from Alon: dinner's at eight." in instructions
-    brain, openai, cerebras = cerebras_brain(lambda m: "ok")
+    quick, full = cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]
+    for instructions in (quick, full):
+        assert llm.ACK_RULES in instructions and llm.CANT_RULES_WITH_REMINDERS in instructions
+        assert f"[{rid}] " in instructions and "Stacey, a message from Alon: dinner's at eight." in instructions
+        assert "<ack N>" in instructions
+    assert llm.NEEDS_REMINDING in quick and llm.REMIND_RULES not in quick
+    assert llm.REMIND_RULES in full
+    assert {t["name"] for t in openai.requests[0]["tools"] if "name" in t} >= {"remind", "cancel_reminder"}
+
+
+def test_without_reminders_tars_says_it_cant_set_timers(tmp_path):
+    brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP)
     "".join(brain.stream_reply("hi"))
-    assert "<ack" not in cerebras.requests[0]["messages"][0]["content"]  # no reminders, no word of them
+    quick, full = cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]
+    assert llm.CANT_RULES in quick and llm.CANT_RULES in full and "<ack" not in quick + full
+    assert llm.NEEDS_REMINDING not in quick and "remind" not in str(openai.requests[0].get("tools"))
 
 
 def test_a_reminder_list_that_cant_be_read_never_costs_a_reply():
-    brain = OpenAIChat(fake_openai_chat(lambda m: "Hi."), LLMConfig(), waiting=raising(OSError("disk")))
+    tools = types.SimpleNamespace(note=raising(OSError("disk")))
+    brain = OpenAIChat(fake_openai_chat(lambda m: "Hi."), LLMConfig(), reminders=tools)
     assert "".join(brain.stream_reply("hi")) == "Hi."
+
+
+REMIND = {"kind": "timer", "text": "pasta", "for": None, "in_minutes": 12, "at": None, "when_back": False,
+          "wait_for_ack": True}  # fmt: skip
+
+
+def test_setting_one_by_voice_is_held_until_the_turn_is_kept(tmp_path):
+    tools = reminder_tools(tmp_path)
+
+    def calls_for(messages):
+        return [] if messages[-1].get("type") == "function_call_output" else [("remind", REMIND)]
+
+    client = fake_openai_chat(lambda m: "Twelve minutes." if m[-1].get("type") else "", calls_for)
+    brain = OpenAIChat(client, LLMConfig(), reminders=tools)
+    assert "".join(brain.stream_reply("pasta timer, twelve minutes")) == "Twelve minutes."
+    result = client.requests[1]["input"][-1]["output"]
+    assert result.startswith("set for ") and 'TARS will say: "Your pasta timer is done."' in result
+    assert tools.reminders.active() == []  # nothing yet: the assistant makes it once the turn is kept
+    (change,) = brain.changes
+    tools.apply(change, from_name="alon")
+    (r,) = tools.reminders.active()
+    assert (r["kind"], r["text"], r["from_name"], r["set_via"]) == ("timer", "pasta", "alon", "voice")
+    assert abs(r["due"] - (time.time() + 720)) < 5
+    brain.forget_last()
+    assert brain.changes == []
+
+
+@pytest.mark.parametrize(
+    "args, error",
+    [
+        ({**REMIND, "in_minutes": None}, "give in_minutes, at, or when_back"),
+        ({**REMIND, "kind": "message", "text": "hi"}, "needs someone"),
+        ({**REMIND, "in_minutes": None, "at": "2020-01-01T09:00"}, "already passed"),
+        ({**REMIND, "in_minutes": None, "at": "nine-ish"}, "Invalid isoformat"),
+        ({**REMIND, "for": "stacey", "kind": "message", "text": "hi", "when_back": True}, "doesn't know stacey"),
+    ],
+)
+def test_what_cant_be_set_goes_back_to_the_model_to_fix(tmp_path, args, error):
+    change, result = reminder_tools(tmp_path).call("remind", args)
+    assert change is None and result.startswith("error:") and error in result
+
+
+def test_a_clock_time_is_local_and_waiting_until_theyre_back_needs_their_voice(tmp_path):
+    tools = reminder_tools(tmp_path, voices=["Stacey"])
+    at = datetime.fromtimestamp(time.time() + 3600).astimezone().strftime("%Y-%m-%dT%H:%M")
+    change, _ = tools.call("remind", {**REMIND, "in_minutes": None, "at": at})
+    assert abs(change.reminder.due - datetime.fromisoformat(at).astimezone().timestamp()) < 1  # local, as asked
+    back = {**REMIND, "kind": "message", "text": "the plumber called", "for": "stacey", "in_minutes": None,
+            "when_back": True}  # fmt: skip
+    change, result = tools.call("remind", back)
+    assert change.reminder.due is None and "when Stacey is next heard" in result
+
+
+def test_cancelling_and_snoozing_by_number_wait_for_the_turn_too(tmp_path):
+    tools = reminder_tools(tmp_path)
+    rid = tools.reminders.add(NewReminder(TIMER, "pasta", due=time.time() + 60), WEB)
+    change, result = tools.call("cancel_reminder", {"id": rid})
+    assert result == "cancelled: Your pasta timer is done." and tools.reminders.get(rid)["status"] == "scheduled"
+    tools.apply(change, from_name=None)
+    assert tools.reminders.get(rid)["status"] == "cancelled"
+    assert tools.call("snooze_reminder", {"id": rid, "minutes": 5})[1].startswith("error: there's no active")
+    rid = tools.reminders.add(NewReminder(TIMER, due=time.time() + 60), WEB)
+    change, result = tools.call("snooze_reminder", {"id": rid, "minutes": 10})
+    assert result.startswith("snoozed until ")
+    tools.apply(change, from_name=None)
+    assert tools.reminders.get(rid)["next_at"] > time.time() + 590

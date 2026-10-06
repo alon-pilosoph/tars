@@ -28,7 +28,7 @@ from .files import atomic_write
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
 from .recorder import UtteranceRecorder
-from .reminders import VOICE, Clock, Reminders, late
+from .reminders import VOICE, Clock, ReminderTools, late
 from .reminders import line as reminder_line
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
@@ -115,7 +115,7 @@ class Assistant:
         journal: Journal | None = None,
         humor: int = LLMConfig.humor,
         phrases: Path | None = None,
-        reminders: Reminders | None = None,
+        reminders: ReminderTools | None = None,
         ack_window_s: float = RemindersConfig.ack_window_s,
     ):
         self.mic = mic
@@ -136,9 +136,10 @@ class Assistant:
         self._phrasing = ThreadPoolExecutor(max_workers=1, thread_name_prefix="phrases")
         self._phrases: dict[str, Future[list[bytes]]] = {}
         self._phrase_dir = phrases  # the short lines' audio for this voice, so they survive an offline restart
-        self.reminders = reminders
+        self.reminder_tools = reminders
+        self.reminders = reminders.reminders if reminders else None
         self.ack_window_s = ack_window_s
-        self._clock = Clock(reminders, on_read=self._prepare_reminders) if reminders else None
+        self._clock = Clock(self.reminders, on_read=self._prepare_reminders) if reminders else None
         self._just_said: list[int] = []  # reminders just said, waiting for an acknowledgement
 
     def run_forever(self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0) -> None:
@@ -430,7 +431,22 @@ class Assistant:
         self.journal.answered(said.text, said.sent, asker=name, timings=self.timings, answered_by=said.answered_by)
         if answer.acks is not None and self.reminders:
             self._ack(answer.acks, name)
+        self._change_reminders(self.brain.changes, name)
         return True
+
+    def _change_reminders(self, changes: list, who: str | None) -> None:
+        """Sets, cancels or snoozes what the reply asked for, now that it was kept."""
+        if not changes or not self.reminder_tools:
+            return
+        self.journal.flush()
+        for change in changes:
+            try:
+                self.reminder_tools.apply(change, from_name=who, conversation_id=self.journal.conversation_id)
+                print(f"(reminders: {change.action} done)")
+            except Exception as e:  # noqa: BLE001 - checked when the model asked; only a broken table gets here
+                print(f"(couldn't {change.action} the reminder: {e!r})")
+        if self._clock:
+            self._clock.read()
 
     def _log_failure(self, e: Exception, answer: "Answer | None") -> None:
         """Kept in the conversation, where it failed and why, with what TARS got to say of the answer."""
