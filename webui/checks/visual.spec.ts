@@ -2,7 +2,7 @@
    the main pages in dark), against the approved baselines in checks/screenshots/. `npm run visual`; after an
    intended change, `npm run visual:update` and look at what changed before committing the new images. */
 import { expect, test } from "@playwright/test";
-import { ORIGIN, SIZES, fontsReady, serveFromDisk } from "./serve";
+import { ORIGIN, SIZES, pageReady, serveFromDisk, settled } from "./serve";
 
 const STATES = [
   "",
@@ -145,10 +145,10 @@ for (const [name, q, steps] of jobs)
         await page.setViewportSize(viewport);
         const query = [q.includes("demo=") ? "" : "demo", q, `theme=${theme}`].filter(Boolean).join("&");
         await page.goto(`${ORIGIN}/index.html?${query}`);
-        await fontsReady(page);
+        await pageReady(page);
         if (steps) {
-          await expect(page.locator("main h1").first()).toBeVisible();
           await page.evaluate(act, [...steps]);
+          await settled(page);
         }
         await expect(page).toHaveScreenshot(`${name}--${size}-${theme}.png`);
       });

@@ -109,6 +109,17 @@ function queue(fresh: boolean, quiet = false) {
 export const refresh = () => queue(true);
 export const reload = (quiet = false) => queue(false, quiet);
 
+/** Once every change made so far has reached the server and every load it started has landed. The screenshot
+    tests wait for it, so a picture is never taken halfway through an action. */
+export async function settled() {
+  let writes;
+  do {
+    writes = writesMade();
+    await writesDone();
+    await loads;
+  } while (writes !== writesMade());
+}
+
 export async function refreshNow() {
   set({ refreshing: true });
   await refresh();

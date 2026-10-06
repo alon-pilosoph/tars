@@ -3,7 +3,7 @@ import "./styles.css";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { DEMO, LINK } from "./params";
-import { refresh, scrollToEl } from "./store";
+import { refresh, scrollToEl, settled } from "./store";
 
 if (LINK.theme) document.documentElement.dataset.theme = LINK.theme;
 const root = document.getElementById("root");
@@ -18,8 +18,15 @@ async function scrollToLinked() {
 
 (async function start() {
   const demo = DEMO ? await import("./linkStates") : null;
-  if (demo && !demo.openEarlyState()) return;
-  await refresh();
-  await scrollToLinked();
-  demo?.openLinkState();
+  try {
+    if (demo && !demo.openEarlyState()) return;
+    await refresh();
+    await scrollToLinked();
+    demo?.openLinkState();
+  } finally {
+    // For the screenshot tests: the page is loaded, scrolled to what the link points at, and any linked state open;
+    // and a way to wait for what a click set off.
+    if (DEMO) Object.assign(document.documentElement.dataset, { ready: "true" });
+    if (DEMO) Object.assign(window, { tarsSettled: settled });
+  }
 })();

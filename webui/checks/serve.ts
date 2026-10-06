@@ -19,3 +19,17 @@ export async function serveFromDisk(page: Page) {
 }
 
 export const fontsReady = (page: Page) => page.evaluate(() => document.fonts.ready.then(() => undefined));
+
+/** Loaded, scrolled to what the link points at, any linked state open, and the fonts in: what main.tsx marks. */
+export async function pageReady(page: Page) {
+  await page.waitForFunction(() => document.documentElement.dataset.ready === "true");
+  await fontsReady(page);
+}
+
+/** Everything a click set off has landed (main.tsx's tarsSettled), and the page has drawn it. */
+export async function settled(page: Page) {
+  await page.evaluate(async () => {
+    await (window as unknown as { tarsSettled: () => Promise<void> }).tarsSettled();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+}
