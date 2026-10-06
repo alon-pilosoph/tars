@@ -313,4 +313,4 @@ def test_acknowledged_on_the_page_snoozed_and_cancelled(reminding):
 def test_with_reminders_off_the_page_says_so(log):
     client = TestClient(create_app(log))
     assert client.get("/api/reminders").json()["enabled"] is False
-    assert client.post("/api/reminders", json={"kind": "timer", "due": time.time() + 60}).status_code == 404
+    assert client.post("/api/reminders", json={"kind": "timer", "due": time.time() + 60}).status_code == 501

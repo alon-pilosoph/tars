@@ -4,7 +4,6 @@ from datetime import datetime
 
 import pytest
 
-from voice_assistant.events import EventLog
 from voice_assistant.reminders import (
     ACKNOWLEDGED,
     CANCELLED,
@@ -30,8 +29,8 @@ NOW = 1_800_000_000.0
 
 
 @pytest.fixture
-def reminders(tmp_path):
-    return Reminders(EventLog(tmp_path / "events").store, repeat_every_s=120, max_tries=3)
+def reminders(log):
+    return Reminders(log.store, repeat_every_s=120, max_tries=3)
 
 
 def add(reminders, voices=(), **kw):
@@ -167,8 +166,8 @@ def test_a_snoozed_reminder_said_at_its_new_time_isnt_late(reminders):
     assert late(r, now=NOW + 670 + 3600) == f"This was due at {when(NOW + 670, NOW + 670)}."  # then TARS was off
 
 
-def test_a_timer_rings_every_10_s_for_15_minutes_until_turned_off_whatever_was_asked(tmp_path):
-    reminders = Reminders(EventLog(tmp_path / "events").store)  # the real defaults
+def test_a_timer_rings_every_10_s_for_15_minutes_until_turned_off_whatever_was_asked(log):
+    reminders = Reminders(log.store)  # the real defaults
     r = reminders.get(add(reminders, kind=TIMER, text="pasta", needs_ack=False))
     assert (r["needs_ack"], r["repeat_every_s"], r["max_tries"]) == (1, 10, 90)
     other = reminders.get(add(reminders))
@@ -181,3 +180,19 @@ def test_a_ringing_timer_says_its_line_on_the_first_ring_and_once_a_minute_and_o
     rings = [says_line({"kind": TIMER, "tries": n}) for n in range(13)]
     assert [n for n, said in enumerate(rings) if said] == [0, 6, 12]
     assert all(says_line({"kind": REMINDER, "tries": n}) for n in range(5))
+
+
+def test_numbers_that_arent_numbers_are_refused(reminders):
+    for kw in ({"due": float("nan")}, {"due": float("inf")}, {"repeat_every_s": float("nan")}):
+        with pytest.raises(ValueError, match="real numbers"):
+            add(reminders, **kw)
+    with pytest.raises(ValueError):
+        reminders.snooze(add(reminders), float("nan"))
+
+
+def test_only_an_active_one_can_be_cancelled_and_a_missed_one_can_still_be_snoozed(reminders):
+    rid = add(reminders, max_tries=1)
+    reminders.said(rid, now=NOW + 60)
+    reminders.due(NOW + 1000)
+    assert reminders.get(rid)["status"] == MISSED
+    assert not reminders.cancel(rid) and reminders.snooze(rid, 5, now=NOW + 1000)

@@ -69,6 +69,11 @@ class Journal:
                 self.events.add_wake, pcm, score, outcome, heard, confidence, wake_model, check_model
             )
 
+    def unprompted(self) -> None:
+        """TARS is about to speak with no wake behind it (a reminder): what's said back belongs to no wake."""
+        self.flush()
+        self._wake, self._first_pending = None, False
+
     def said(self, text: str) -> None:
         """TARS spoke before anyone asked anything."""
         self._said.append((time.time(), text))

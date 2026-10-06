@@ -5,6 +5,7 @@ import re
 import threading
 from collections.abc import Callable, Iterable, Iterator
 
+from .conversations import LLM, OTHER, TTS
 from .tts import Voice
 
 SENTENCE_END = re.compile(r"[.!?](?=\s)|\n")
@@ -16,15 +17,15 @@ _DONE = object()
 def mark_failed_at(e: BaseException, stage: str) -> None:
     """Notes where answering failed (conversations.STAGES) on the error itself, for the log. The first mark wins: it's
     the closest to where it happened."""
-    if failed_at(e) == "other":
+    if failed_at(e) == OTHER:
         try:
             e.failed_at = stage
-        except AttributeError:  # an error that takes no attributes stays "other"
+        except AttributeError:  # an error that takes no attributes stays OTHER
             pass
 
 
 def failed_at(e: BaseException) -> str:
-    return getattr(e, "failed_at", None) or "other"
+    return getattr(e, "failed_at", None) or OTHER
 
 
 # Web search answers cite sources inline as "([site](url))"; those are for the screen, not for reading out.
@@ -71,7 +72,7 @@ class _Prefetch:
             for chunk in voice.stream(text):
                 self._chunks.put(chunk)
         except Exception as e:  # noqa: BLE001 - raised again where the audio is played
-            mark_failed_at(e, "tts")
+            mark_failed_at(e, TTS)
             self._chunks.put(e)
         self._chunks.put(_DONE)
 
@@ -100,7 +101,7 @@ class StreamedReply:
                 on_sentence(sentence)
                 self._playlist.put(_Prefetch(voice, sentence))
         except Exception as e:  # noqa: BLE001 - raised again where the audio is played
-            mark_failed_at(e, "llm")  # writing the reply; the voice's errors come from _Prefetch
+            mark_failed_at(e, LLM)  # writing the reply; the voice's errors come from _Prefetch
             self._playlist.put(e)
         self._playlist.put(_DONE)
 

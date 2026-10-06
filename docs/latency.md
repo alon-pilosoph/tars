@@ -61,9 +61,9 @@ answers, on its own for the next two minutes. A failed answer is kept in its con
 (speech to text, the answer, or the voice) and why, and Home shows it.
 
 **Measured on every answer.** The same stages as the log line are kept with each of TARS's turns (`timings` in the
-`turns` table, in seconds), with which model wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed
-the turn over, `fallback` when Cerebras failed). Home shows the time to first sound and the model under each answer;
-hovering shows each stage. For a week's numbers:
+`turns` table, in seconds), with which model wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed the
+turn over, `fallback` when Cerebras failed or is resting, `openai` with no Cerebras set up). Home shows the time to
+first sound and the model under each answer; hovering shows each stage. For a week's numbers:
 `SELECT answered_by, avg(json_extract(timings, '$.total')) FROM turns WHERE role = 'tars' GROUP BY 1`.
 
 ## Settings

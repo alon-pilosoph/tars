@@ -593,3 +593,20 @@ def test_cancelling_and_snoozing_by_number_wait_for_the_turn_too(tmp_path):
     assert result.startswith("snoozed until ")
     tools.apply(change, from_name=None)
     assert tools.reminders.get(rid)["next_at"] > time.time() + 590
+
+
+def test_cancelling_a_missed_one_by_voice_is_refused_not_confirmed(tmp_path):
+    tools = reminder_tools(tmp_path)
+    rid = tools.reminders.add(NewReminder(TIMER, due=time.time() + 60), WEB)
+    tools.reminders.store.write("UPDATE reminders SET status='missed' WHERE id=?", (rid,))
+    change, result = tools.call("cancel_reminder", {"id": rid})
+    assert change is None and result.startswith("error:")
+    assert tools.call("snooze_reminder", {"id": rid, "minutes": 5})[0] is not None
+
+
+def test_a_reminder_due_now_is_still_set_when_the_turn_is_kept_a_while_later(tmp_path):
+    tools = reminder_tools(tmp_path)
+    asked = time.time() - 300  # the model asked five minutes ago (a long web search)
+    change, _ = tools.call("remind", {**REMIND, "in_minutes": 0}, now=asked)
+    tools.apply(change, from_name="alon")
+    assert len(tools.reminders.active()) == 1

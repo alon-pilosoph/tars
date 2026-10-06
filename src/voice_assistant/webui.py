@@ -23,7 +23,7 @@ from pydantic import BaseModel, field_validator
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, UNKNOWN, EventLog
-from .reminders import ACTIVE, MESSAGE, MISSED, REMINDER, TIMER, WEB, NewReminder, Reminders, line
+from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .versions import INSTALLED, FixedPair, ModelVersions
 
 STATIC = Path(__file__).with_name("webui_static")  # the React app in webui/, built with `npm run build`
@@ -196,6 +196,20 @@ def create_app(
         if not item:
             raise HTTPException(404, "no such item")
         return item
+
+    def reminders_or_501() -> Reminders:
+        if reminders is None:
+            raise HTTPException(501, "reminders are off ([reminders] enabled in config.toml)")
+        return reminders
+
+    def reminder_or_404(reminder_id: int) -> dict:
+        r = reminders_or_501().get(reminder_id)
+        if not r:
+            raise HTTPException(404, "no such reminder")
+        return r
+
+    def public_reminder(r: dict) -> dict:
+        return {**r, "needs_ack": bool(r["needs_ack"]), "says": line(r)}
 
     def file_or_404(rel: str | None) -> Path:
         path = (log.folder / rel).resolve() if rel else None
@@ -405,20 +419,6 @@ def create_app(
             raise HTTPException(404, "no such version, or it can't be loaded") from None
         return {"ok": True}
 
-    def reminders_or_404() -> Reminders:
-        if reminders is None:
-            raise HTTPException(404, "reminders are off ([reminders] enabled in config.toml)")
-        return reminders
-
-    def reminder_or_404(reminder_id: int) -> dict:
-        r = reminders_or_404().get(reminder_id)
-        if not r:
-            raise HTTPException(404, "no such reminder")
-        return r
-
-    def public_reminder(r: dict) -> dict:
-        return {**r, "needs_ack": bool(r["needs_ack"]), "says": line(r)}
-
     @app.get("/api/reminders")
     def list_reminders():
         if reminders is None:
@@ -443,32 +443,33 @@ def create_app(
             body.kind, body.text, body.for_name, body.from_name, body.due, body.needs_ack, repeat, body.max_tries
         )
         try:
-            return {"id": reminders_or_404().add(new, WEB, voices=voice_names())}
+            return {"id": reminders_or_501().add(new, WEB, voices=voice_names())}
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
 
     @app.post("/api/reminders/{reminder_id}/ack")
     def ack_reminder(reminder_id: int):
-        if reminder_or_404(reminder_id)["status"] not in ACTIVE:
+        reminder_or_404(reminder_id)
+        if not reminders_or_501().ack(reminder_id, None, WEB):
             raise HTTPException(409, "it's over already")
-        reminders_or_404().ack(reminder_id, None, WEB)
         return {"ok": True}
 
     @app.post("/api/reminders/{reminder_id}/snooze")
     def snooze_reminder(reminder_id: int, body: Snooze):
-        if reminder_or_404(reminder_id)["status"] not in (*ACTIVE, MISSED):
-            raise HTTPException(409, "it's over already")
+        reminder_or_404(reminder_id)
         try:
-            reminders_or_404().snooze(reminder_id, body.minutes)
+            snoozed = reminders_or_501().snooze(reminder_id, body.minutes)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+        if not snoozed:
+            raise HTTPException(409, "it's over already")
         return {"ok": True}
 
     @app.post("/api/reminders/{reminder_id}/cancel")
     def cancel_reminder(reminder_id: int):
-        if reminder_or_404(reminder_id)["status"] not in ACTIVE:
+        reminder_or_404(reminder_id)
+        if not reminders_or_501().cancel(reminder_id):
             raise HTTPException(409, "it's over already")
-        reminders_or_404().cancel(reminder_id)
         return {"ok": True}
 
     @app.get("/api/status")

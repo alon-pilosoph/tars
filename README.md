@@ -54,11 +54,11 @@ On a Pi, `deploy/install-pi.sh` does all of it and starts TARS and the web UI as
 
 ## The web UI
 
-Home shows the conversations by day, with what each person said and what TARS answered and sent. Sent lists the
-links, notes, lists and files. Reminders shows every timer, reminder and message, and who said they got it. Review holds the wakes nothing explained, to answer "hey TARS" or "Not it". Voices
-groups requests by voice; name one and press Regroup voices to build that person's voiceprint. Models shows the wake
-models in use and can switch back to an earlier pair. It has no accounts, so keep it on the home network; away from
-home, use [Tailscale](docs/deployment.md#things-to-know).
+Home shows the conversations by day, with what each person said and what TARS answered and sent. Sent lists the links,
+notes, lists and files. Reminders shows every timer, reminder and message, and who said they got it. Review holds the
+wakes nothing explained, to answer "hey TARS" or "Not it". Voices groups requests by voice; name one and press Regroup
+voices to build that person's voiceprint. Models shows the wake models in use and can switch back to an earlier pair. It
+has no accounts, so keep it on the home network; away from home, use [Tailscale](docs/deployment.md#things-to-know).
 
 The page is a React app in [`webui/`](webui/), and its build is committed in `src/voice_assistant/webui_static/`, so
 the Pi needs no Node. Add `?demo` to the URL for sample data without a server.

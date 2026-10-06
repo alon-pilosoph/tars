@@ -1,19 +1,20 @@
 /* Demo data for ?demo: a sample household, so every state can be opened from a link. */
 import type { Opts } from "./api";
 import { DEMO_LINK } from "./demoParams";
+import { personName } from "./format";
 import type {
   AnsweredBy,
-  FailedAt,
-  Reminder,
-  RemindersInfo,
   Cluster,
   Conversation,
   ConversationWake,
+  FailedAt,
   Item,
   Label,
   Metric,
   ModelsInfo,
   Outcome,
+  Reminder,
+  RemindersInfo,
   Speaker,
   TarsEvent,
   Turn,
@@ -36,7 +37,7 @@ let D: DemoData | null = null;
 
 /** What TARS says for a reminder; mirrors reminders.line. */
 function says(r: Pick<Reminder, "kind" | "text" | "for_name" | "from_name">) {
-  const name = (n: string) => n.replace(/\b\w/g, c => c.toUpperCase());
+  const name = personName;
   const who = r.for_name ? `${name(r.for_name)}, ` : "";
   const sender = r.from_name && r.from_name.toLowerCase() !== r.for_name?.toLowerCase() ? r.from_name : null;
   if (r.kind === "timer") {
@@ -526,14 +527,14 @@ function build(): DemoData {
         ]),
         conv(4, ago(105), ALON, wake(4, ALON, "hey tars", 0.95), [
           ["P", "Set a timer for twelve minutes."],
-          ["T", "Twelve minutes, starting now.", { took: 1.2, by: "quick" }],
+          ["T", "Twelve minutes, starting now.", { took: 2.4, by: "look_up" }],
           ["P", "Stacey, can you check the oven?", { aside: true }],
           ["P", "It's fine, leave it.", { aside: true, speaker: STACEY }],
         ]),
         conv(5, ago(130), ALON, wake(5, ALON, "hey cars", 0.18, "ask"), [
           ["T", "Did you call me?"],
           ["P", "Yes, set an alarm for seven."],
-          ["T", "Alarm set for 7:00 tomorrow morning.", { took: 1.4, by: "quick" }],
+          ["T", "Alarm set for 7:00 tomorrow morning.", { took: 2.5, by: "look_up" }],
         ]),
         conv(6, ago(160), VOICE_3, wake(6, VOICE_3, "hey darts", 0.74), [
           ["P", "What time is it in Tokyo?"],

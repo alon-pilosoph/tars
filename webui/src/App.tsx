@@ -9,7 +9,7 @@ import { Loading, Unreachable } from "./components/States";
 import { Toasts } from "./components/Toasts";
 import { Voices } from "./components/Voices";
 import type { Tab } from "./params";
-import { type State, refreshNow, reviewTodo, setTab, toggleMenu, unseen, useStore } from "./store";
+import { type State, refreshNow, remindersWaiting, reviewTodo, setTab, toggleMenu, unseen, useStore } from "./store";
 
 const VIEWS = { home: Home, sent: Sent, review: Review, reminders: Reminders, voices: Voices, models: Models };
 
@@ -49,7 +49,7 @@ export function App() {
   const ready = s.phase === "ready";
   const unseenCount = ready ? unseen(s).length : 0;
   const toReviewCount = ready ? reviewTodo(s).length : 0;
-  const waitingCount = ready ? (s.reminders?.reminders.filter(r => r.status === "waiting").length ?? 0) : 0;
+  const waitingCount = ready ? remindersWaiting(s).length : 0;
   useEffect(() => {
     document.title = unseenCount ? `TARS (${unseenCount})` : "TARS";
   }, [unseenCount]);

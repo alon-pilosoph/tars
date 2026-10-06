@@ -23,7 +23,7 @@ SCOPES = (PERSON, HOUSEHOLD)
 # speech to text, the brain's first sentence, the voice's first audio, and from the end of speech to first sound.
 TIMINGS = ("end_of_speech", "stt", "llm", "tts", "total")
 # Where answering failed: transcribing, the brain, the voice, or anything else.
-STAGES = ("stt", "llm", "tts", "other")
+STAGES = STT, LLM, TTS, OTHER = ("stt", "llm", "tts", "other")
 MAX_ERROR = 300
 
 

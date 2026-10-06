@@ -39,7 +39,7 @@ from voice_assistant.events import (
     EventLog,
 )
 from voice_assistant.llm import FALLBACK, LOOKED_UP, QUICK
-from voice_assistant.reminders import MESSAGE, MISSED, REMINDER, TIMER, VOICE, WEB, NewReminder, Reminders
+from voice_assistant.reminders import MESSAGE, REMINDER, TIMER, VOICE, WEB, NewReminder, Reminders
 from voice_assistant.speaker import SpeakerID
 from voice_assistant.verify import ANSWER, ASK, IGNORE
 from voice_assistant.versions import ABOUT, CHECK, MODEL, ModelVersions
@@ -161,8 +161,10 @@ def add_reminders(reminders: Reminders, now: float) -> None:
     acked = reminders.add(NewReminder(REMINDER, "take the pills", "alon", due=now - 3600), WEB, now=now - 7200)
     reminders.said(acked, now=now - 3600)
     reminders.ack(acked, "alon", VOICE, now=now - 3500)
-    missed = reminders.add(NewReminder(REMINDER, "take the bins out", due=now - 9000), WEB, now=now - 10_000)
-    reminders.store.write("UPDATE reminders SET status=?, tries=max_tries WHERE id=?", (MISSED, missed))
+    bins = NewReminder(REMINDER, "take the bins out", due=now - 9000, max_tries=1)
+    missed = reminders.add(bins, WEB, now=now - 10_000)
+    reminders.said(missed, now=now - 9000)
+    reminders.due(now)  # said once, never acknowledged: missed
 
 
 def png(w: int, h: int) -> bytes:
@@ -231,17 +233,17 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
     talk(
         "Set a timer for ten minutes.",
         [
-            tars("Ten minutes. Starting now.", took=1.2, by=QUICK),
+            tars("Ten minutes. Starting now.", took=2.4, by=LOOKED_UP),  # set with the remind tool
             person("Actually, make it fifteen."),
-            tars("Fifteen minutes. I've adjusted my expectations too.", took=1.3, by=QUICK),
+            tars("Fifteen minutes. I've adjusted my expectations too.", took=2.2, by=LOOKED_UP),
             person("And remind me to take the pasta out when it's done."),
-            tars("I'll remind you. The pasta has no say in it."),
+            tars("I'll remind you. The pasta has no say in it.", took=2.3, by=LOOKED_UP),
         ],
         "alon",
     )
     talk(
         "Remind me to call my mom after dinner.",
-        [tars("Reminder set for eight. I'll be subtle. I won't.", rating="bad")],
+        [tars("Reminder set for eight. I'll be subtle. I won't.", rating="bad", took=2.6, by=LOOKED_UP)],
         "alon",
     )
     talk(
@@ -264,7 +266,11 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
         ],
         "stacey",
     )
-    talk("Play some jazz.", [tars("Playing jazz. Try to look sophisticated.", took=2.1, by=FALLBACK)], "stacey")
+    talk(
+        "Play some jazz.",
+        [tars("I can't play music yet. I could send you a jazz playlist instead.", took=2.1, by=FALLBACK)],
+        "stacey",
+    )
     talk(
         "Is it going to rain?",
         [
@@ -321,7 +327,7 @@ def add_conversations(log: EventLog, by_text: dict, stacey: list) -> int:
     talk(
         "How many tablespoons in a quarter cup?",
         [
-            tars("Four."),
+            tars("Four.", took=1.1, by=QUICK),
             person(
                 "Great, and send me the pasta recipe from last Wednesday.",
                 corrected="Great, and send me the pasta recipe from last week.",

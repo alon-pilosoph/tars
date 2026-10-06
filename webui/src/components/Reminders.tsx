@@ -1,11 +1,19 @@
 import { type FormEvent, type ReactNode, useState } from "react";
 import { REMINDER_KIND_LABEL, personName, plural, reminderMeta, reminderStatus } from "../format";
-import { ackReminder, cancelReminder, goConv, setReminder, snoozeReminder, toast, useStore } from "../store";
+import {
+  ackReminder,
+  cancelReminder,
+  goConv,
+  isActiveReminder,
+  setReminder,
+  snoozeReminder,
+  toast,
+  useStore,
+} from "../store";
 import type { Reminder, ReminderKind, RemindersInfo } from "../types";
 import { Empty, Group } from "./Blocks";
 
 const SNOOZE_MIN = 10;
-const isActive = (r: Reminder) => r.status === "scheduled" || r.status === "waiting";
 
 export function Reminders() {
   const s = useStore();
@@ -16,7 +24,7 @@ export function Reminders() {
       <>
         <Head />
         <Empty
-          title="Reminders are off"
+          title="Reminders are off."
           text="Turn them on with enabled = true under [reminders] in config.toml, then restart TARS and this page."
         />
       </>
@@ -27,8 +35,8 @@ export function Reminders() {
       ...s.clusters.filter(c => c.kind === "person" && c.name).map(c => personName(c.name!)),
     ]),
   ].sort();
-  const active = info.reminders.filter(isActive);
-  const earlier = info.reminders.filter(r => !isActive(r));
+  const active = info.reminders.filter(isActiveReminder);
+  const earlier = info.reminders.filter(r => !isActiveReminder(r));
   return (
     <>
       <Head>
@@ -48,7 +56,7 @@ export function Reminders() {
           </ul>
         ) : (
           <Empty
-            title="Nothing set"
+            title="Nothing set."
             text="Say “hey TARS, set a pasta timer for twelve minutes”, or “tell Stacey dinner's ready when she's back”."
           />
         )}
@@ -100,7 +108,7 @@ function ReminderRow({ r }: { r: Reminder }) {
               Again in {SNOOZE_MIN} min
             </button>
           )}
-          {isActive(r) && !(r.kind === "timer" && r.status === "waiting") && (
+          {isActiveReminder(r) && !(r.kind === "timer" && r.status === "waiting") && (
             <button className="btn sm" onClick={() => cancelReminder(r)}>
               Stop…
             </button>
