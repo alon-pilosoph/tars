@@ -153,3 +153,49 @@ export interface Conversation {
 }
 
 export type ApiConversation = Omit<Conversation, "turns"> & { turns: ApiTurn[] };
+
+export type ReminderKind = "timer" | "reminder" | "message";
+export type ReminderStatus = "scheduled" | "waiting" | "acknowledged" | "said" | "missed" | "cancelled";
+
+export interface Reminder {
+  id: number;
+  created: number;
+  kind: ReminderKind;
+  text: string | null; // a timer's optional label
+  for_name: string | null; // null: whoever is there
+  from_name: string | null;
+  set_via: "voice" | "web";
+  conversation_id: number | null; // where it was set, by voice
+  due: number | null; // null: when for_name's voice is next heard
+  needs_ack: boolean;
+  repeat_every_s: number;
+  max_tries: number;
+  status: ReminderStatus;
+  tries: number;
+  next_at: number | null;
+  last_said: number | null;
+  acked_at: number | null;
+  acked_by: string | null; // the recognized voice; null: an unknown voice, or the page
+  acked_via: "voice" | "web" | null;
+  says: string; // what TARS says
+}
+
+export interface RemindersInfo {
+  enabled: boolean;
+  reminders: Reminder[];
+  voices: string[]; // names TARS knows by voice: only they can be waited for
+  defaults: { repeat_every_min: number; max_tries: number; timer_ring_min: number } | null;
+}
+
+/** What the page sends to set one. */
+export interface NewReminder {
+  kind: ReminderKind;
+  text: string | null;
+  for_name: string | null;
+  from_name: string | null;
+  due: number | null;
+  when_back: boolean;
+  needs_ack: boolean;
+  repeat_every_min: number | null;
+  max_tries: number | null;
+}

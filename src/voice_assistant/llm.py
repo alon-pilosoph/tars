@@ -4,6 +4,7 @@ streamed, and every reply can be stopped and forgotten."""
 
 import itertools
 import json
+import re
 import threading
 import time
 from collections.abc import Iterable, Iterator
@@ -14,6 +15,7 @@ from openai import OpenAI, OpenAIError
 
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
+from .reminders import Change, ReminderTools
 
 # The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a marathon session from
 # growing the prompt forever.
@@ -30,14 +32,123 @@ SKIP_RULES = (
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
 )
-# TARS can only talk, search the web and send to the TARS page. Without this, a model asked for a timer says "Twelve
-# minutes, starting now." and nothing ever goes off.
-CANT_RULES = (
-    "You can only talk, look things up, and send things to the TARS page. You can't set timers, alarms or "
-    "reminders, play music or sounds, call or message anyone, or control anything in the house. When asked to, say "
-    "plainly in one short line that you can't do that yet, and offer what you can do instead if something fits "
-    "(for example, sending a note). Never say you did something you can't do."
+REMINDER_TAG = "[Reply to the reminder you just said]"
+# How a reply acknowledges reminders: "<ack>" for the ones just said, "<ack 12>" (or "<ack 12, 14>") by number.
+ACK = "<ack>"
+ACK_MARK = re.compile(r"\s*<ack((?:[\s,]*\d+)*)\s*>")
+GOT_IT = "Got it."  # said for a bare <ack>
+ACK_RULES = (
+    f"Messages starting with {REMINDER_TAG} answer a reminder, timer or message you just said aloud, or a timer "
+    f"that's ringing. If it acknowledges it (got it, okay, thanks, will do, on it; or stop, off, turn it off, for "
+    f"a timer), reply with exactly {ACK} and nothing else. If it asks "
+    f"for something, like being reminded again later, just do it. If it isn't meant for you, reply with exactly "
+    f"{SKIP} and nothing else."
 )
+
+
+def split_ack(pieces: Iterable[str]) -> tuple[list[int] | None, Iterator[str]]:
+    """Peek at the start of a streamed reply: (the reminder numbers acknowledged, [] for a bare <ack>, the rest of
+    the reply) if it starts with an ack, else (None, the whole reply). A bare <ack> with nothing after it says
+    GOT_IT."""
+    stream = iter(pieces)
+    head = ""
+    for piece in stream:
+        head += piece
+        start = head.lstrip()
+        if not "<ack".startswith(start[:4]) or ">" in start or len(start) > 40:
+            break
+    if not (mark := ACK_MARK.match(head)):
+        return None, itertools.chain([head], stream)
+    ids = [int(n) for n in re.findall(r"\d+", mark.group(1))]
+    return ids, _or_else(itertools.chain([head[mark.end() :]], stream), GOT_IT)
+
+
+def _or_else(pieces: Iterable[str], default: str) -> Iterator[str]:
+    """The reply without its leading whitespace, or `default` if that's all there was."""
+    said = False
+    for piece in pieces:
+        if not said:
+            piece = piece.lstrip()
+            said = bool(piece)
+        if piece:
+            yield piece
+    if not said:
+        yield default
+
+
+# What TARS can't do. Without this, a model asked for a timer TARS can't set says "Twelve minutes, starting now." and
+# nothing ever goes off.
+CANT = "play music or sounds, call anyone, or control anything in the house"
+CANT_RULES = (
+    f"You can't set timers, alarms or reminders, {CANT}. When asked to, say plainly in one short line that you "
+    "can't do that yet, and offer what you can do instead if something fits (for example, sending a note). Never "
+    "say you did something you can't do."
+)
+CANT_RULES_WITH_REMINDERS = (
+    f"You can't {CANT}. When asked to, say plainly in one short line that you can't do that yet. Never say you did "
+    "something you can't do."
+)
+REMIND_RULES = (
+    "You can set timers, reminders and messages for people in the house with the remind tool; TARS says them aloud "
+    'when they\'re due. A reminder or message is for the person named ("remind me" is whoever is speaking, by '
+    'the [Speaker: name] tag; "remind Stacey" is Stacey), and a message always needs someone it\'s for. Give the '
+    'time as in_minutes for "in ten minutes", or at, the local date and time, for a clock time. Use when_back '
+    "only when asked to wait until someone is back or next around. Set wait_for_ack, so it's said again until "
+    "someone says they got it, unless they say once is enough; a timer always rings until someone turns it off. "
+    "After setting one, confirm it in one short line with the time. To cancel one or put it off, use "
+    "cancel_reminder or snooze_reminder with its number from the list of what's set now. If a tool says there's an "
+    "error, fix it or ask, and never say it's set when it isn't."
+)
+REMIND_TOOLS = [
+    {
+        "type": "function",
+        "name": "remind",
+        "description": "Set a timer, a reminder or a message for someone, said aloud by TARS when it's due.",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "text", "for", "in_minutes", "at", "when_back", "wait_for_ack"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["timer", "reminder", "message"]},
+                "text": {
+                    "type": ["string", "null"],
+                    "description": 'What to say, short, as said to them ("call the bank"). A timer\'s optional '
+                    'label ("pasta").',
+                },
+                "for": {"type": ["string", "null"], "description": "Who it's for, by name; null for whoever is there."},
+                "in_minutes": {"type": ["number", "null"], "description": "Due this many minutes from now."},
+                "at": {"type": ["string", "null"], "description": "Due at this local time: YYYY-MM-DDTHH:MM."},
+                "when_back": {"type": "boolean", "description": "Wait until their voice is next heard instead."},
+                "wait_for_ack": {"type": "boolean", "description": "Say it again until someone acknowledges it."},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "name": "cancel_reminder",
+        "description": "Cancel a timer, reminder or message, by its number.",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id"],
+            "properties": {"id": {"type": "integer"}},
+        },
+    },
+    {
+        "type": "function",
+        "name": "snooze_reminder",
+        "description": "Say a timer, reminder or message again later instead, by its number.",
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["id", "minutes"],
+            "properties": {"id": {"type": "integer"}, "minutes": {"type": "number"}},
+        },
+    },
+]
 SEND_RULES = (
     "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
     "send tool: a link, a note, a list, or a text file. Use it when asked to send, save or share something, or "
@@ -95,6 +206,7 @@ NEEDS_SENDING = (
     "sending, saving or sharing something to the household's TARS page: a recipe, a list, a note, a link "
     "or a file, or any answer too long to hear"
 )
+NEEDS_REMINDING = "setting, cancelling or putting off a timer, a reminder or a message for someone"
 
 
 def local_time() -> str:
@@ -104,8 +216,10 @@ def local_time() -> str:
     return f"It's {now:%A, %B} {now.day}, {now.year}, {clock} here ({now.tzname()}, UTC{now:%:z})."
 
 
-def look_up_rules(web_search: bool, send: bool) -> str:
-    needs = [need for need, can in [(NEEDS_THE_WEB, web_search), (NEEDS_SENDING, send)] if can]
+def look_up_rules(web_search: bool, send: bool, remind: bool = False) -> str:
+    needs = [
+        need for need, can in [(NEEDS_THE_WEB, web_search), (NEEDS_SENDING, send), (NEEDS_REMINDING, remind)] if can
+    ]
     return (
         f"You can't do these yourself, but another model can. When a message needs any of them, reply with "
         f"exactly {LOOK_UP} and nothing else, and it answers instead:\n"
@@ -161,6 +275,7 @@ class ReplyFailed(OpenAIError):
 class Brain(Protocol):
     sent: list[SentItem]  # what the last reply sent to the web UI
     answered_by: str | None  # who wrote the last reply (QUICK, LOOKED_UP, FALLBACK or OPENAI), once known
+    changes: list[Change]  # what the last reply asked to change in the reminders, made once it's kept
 
     def stream_reply(self, text: str) -> Iterator[str]:
         """Yield the reply in pieces as it's generated."""
@@ -232,9 +347,11 @@ class OpenAIChat:
 
     first_answerer = OPENAI
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig):
+    def __init__(self, client: OpenAI, cfg: LLMConfig, reminders: ReminderTools | None = None):
+        """`reminders`: TARS's timers, reminders and messages, when it has them."""
         self._client = client
         self._cfg = cfg
+        self._reminders = reminders
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -242,9 +359,14 @@ class OpenAIChat:
         self._lock = threading.Lock()
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
-        self._tools = ([{"type": "web_search"}] if cfg.web_search else []) + ([SEND_TOOL] if cfg.send else [])
+        self.changes: list[Change] = []  # what the last reply changed in the reminders, made once it's kept
+        self._tools = (
+            ([{"type": "web_search"}] if cfg.web_search else [])
+            + ([SEND_TOOL] if cfg.send else [])
+            + (REMIND_TOOLS if reminders else [])
+        )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
-        rules = [SKIP_RULES, CANT_RULES] + ([SEND_RULES] if cfg.send else [])
+        rules = [SKIP_RULES, *self._reminder_rules()] + ([SEND_RULES] if cfg.send else [])
         self._instructions = "\n\n".join([self._system_prompt, *rules])
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
@@ -261,7 +383,7 @@ class OpenAIChat:
             self._previous_turn_at, self._last_turn_at = self._last_turn_at, time.monotonic()
             self._asked = {"role": "user", "content": text}
             self._history.append(self._asked)
-            self.sent = []
+            self.sent, self.changes = [], []
             self._writing = writing = _Writing(self.first_answerer)
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
@@ -277,7 +399,7 @@ class OpenAIChat:
             _check(writing)
             stream = writing.stream = self._client.responses.create(
                 model=self._cfg.model,
-                instructions=f"{self._instructions}\n\n{local_time()}",
+                instructions=f"{self._instructions}\n\n{self._now()}",
                 input=context,
                 stream=True,
                 store=False,  # nothing kept on OpenAI's side beyond the request itself
@@ -321,6 +443,22 @@ class OpenAIChat:
             raise ReplyFailed("the reply was empty")
         self._remember(answer, writing)
 
+    def _reminder_rules(self, tools: bool = True) -> list[str]:
+        """`tools`: this model sets them itself (OpenAI's) rather than handing the turn over (Qwen)."""
+        if not self._reminders:
+            return [CANT_RULES]
+        return [CANT_RULES_WITH_REMINDERS, ACK_RULES] + ([REMIND_RULES] if tools else [])
+
+    def _now(self) -> str:
+        """What changes from one request to the next, so it goes after the instructions that can be cached."""
+        parts = [local_time()]
+        if self._reminders:
+            try:
+                parts.append(self._reminders.note())
+            except Exception as e:  # noqa: BLE001 - a reminder list that can't be read never costs a reply
+                print(f"(couldn't read the reminders: {e!r})")
+        return "\n\n".join(p for p in parts if p)
+
     @property
     def answered_by(self) -> str | None:
         return self._writing.answered_by
@@ -332,15 +470,24 @@ class OpenAIChat:
             self._history = self._history[-MAX_TURNS * 2 :]
 
     def _run_tool(self, call) -> str:
-        if call.name != "send":
-            return f"error: no tool called {call.name}"
         try:
-            item, result = check_send(json.loads(call.arguments or "{}"))
+            args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
             return "error: the arguments weren't valid JSON"
-        if item:
-            self.sent.append(item)
-        return result
+        if call.name == "send":
+            item, result = check_send(args)
+            if item:
+                self.sent.append(item)
+            return result
+        if self._reminders and call.name in ("remind", "cancel_reminder", "snooze_reminder"):
+            try:
+                change, result = self._reminders.call(call.name, args if isinstance(args, dict) else {})
+            except Exception as e:  # noqa: BLE001 - the table couldn't be read: the model says it didn't work
+                return f"error: couldn't reach the reminders ({e!r})"
+            if change:
+                self.changes.append(change)
+            return result
+        return f"error: no tool called {call.name}"
 
     def forget_last(self) -> None:
         with self._lock:
@@ -355,7 +502,7 @@ class OpenAIChat:
             self._asked = None
             # Overheard chatter shouldn't keep the memory alive either.
             self._last_turn_at = self._previous_turn_at
-            self.sent = []
+            self.sent, self.changes = [], []
 
     def interrupt(self) -> None:
         writing = self._writing
@@ -381,12 +528,14 @@ class CerebrasChat(OpenAIChat):
 
     first_answerer = QUICK
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig, cerebras: OpenAI):
-        super().__init__(client, cfg)
+    def __init__(self, client: OpenAI, cfg: LLMConfig, cerebras: OpenAI, reminders: ReminderTools | None = None):
+        super().__init__(client, cfg, reminders)
         self._cerebras = cerebras
         self._cerebras_back_at = 0.0  # monotonic time; until then, Cerebras failed recently and OpenAI answers
-        hand_off = [look_up_rules(cfg.web_search, cfg.send)] if cfg.web_search or cfg.send else []
-        self._quick_instructions = "\n\n".join([self._system_prompt, SKIP_RULES, CANT_RULES, *hand_off])
+        remind = reminders is not None
+        hand_off = [look_up_rules(cfg.web_search, cfg.send, remind)] if cfg.web_search or cfg.send or remind else []
+        rules = [SKIP_RULES, *self._reminder_rules(tools=False), *hand_off]
+        self._quick_instructions = "\n\n".join([self._system_prompt, *rules])
         self._quick_extra = {"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_effort else {}
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
@@ -431,7 +580,7 @@ class CerebrasChat(OpenAIChat):
         stream = writing.stream = self._cerebras.chat.completions.create(
             model=self._cfg.cerebras_model,
             stream=True,
-            messages=[{"role": "system", "content": f"{self._quick_instructions}\n\n{local_time()}"}, *context],
+            messages=[{"role": "system", "content": f"{self._quick_instructions}\n\n{self._now()}"}, *context],
             **self._quick_extra,
         )
         with stream:

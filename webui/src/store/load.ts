@@ -1,7 +1,16 @@
 /* Loading. refresh() is the page load and the Refresh button: everything as it is now, with finished things moved
    to where they belong. reload() runs after your own actions and stays within what the last Refresh showed. */
 import { getJson, writesDone, writesMade } from "../api";
-import type { ApiConversation, Cluster, Conversation, Item, ModelsInfo, Status, TarsEvent } from "../types";
+import type {
+  ApiConversation,
+  Cluster,
+  Conversation,
+  Item,
+  ModelsInfo,
+  RemindersInfo,
+  Status,
+  TarsEvent,
+} from "../types";
 import { type Snapshot, get, set, setNow } from "./core";
 import { errText, toast } from "./ui";
 
@@ -12,6 +21,7 @@ interface Data {
   status: Status;
   convs: Conversation[];
   items: Item[];
+  reminders: RemindersInfo;
 }
 
 /** The API puts sent items inside the turns that sent them; the page keeps each item once, and ids in the turns. */
@@ -54,15 +64,16 @@ export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap:
 }
 
 async function fetchData(): Promise<Data> {
-  const [events, clusters, models, status, convs, items] = await Promise.all([
+  const [events, clusters, models, status, convs, items, reminders] = await Promise.all([
     getJson<TarsEvent[]>("/api/events"),
     getJson<Cluster[]>("/api/clusters"),
     getJson<ModelsInfo>("/api/models"),
     getJson<Status>("/api/status"),
     getJson<ApiConversation[]>("/api/conversations"),
     getJson<Item[]>("/api/items"),
+    getJson<RemindersInfo>("/api/reminders"),
   ]);
-  return { events, clusters, models, status, ...normalize(convs, items) };
+  return { events, clusters, models, status, reminders, ...normalize(convs, items) };
 }
 
 /** True if it worked. `quiet`: a failed reload shows no toast, because the caller already showed one. */
@@ -97,6 +108,17 @@ function queue(fresh: boolean, quiet = false) {
 }
 export const refresh = () => queue(true);
 export const reload = (quiet = false) => queue(false, quiet);
+
+/** Once every change made so far has reached the server and every load it started has landed. The screenshot
+    tests wait for it, so a picture is never taken halfway through an action. */
+export async function settled() {
+  let writes;
+  do {
+    writes = writesMade();
+    await writesDone();
+    await loads;
+  } while (writes !== writesMade());
+}
 
 export async function refreshNow() {
   set({ refreshing: true });

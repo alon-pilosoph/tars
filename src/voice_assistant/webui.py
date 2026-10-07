@@ -23,6 +23,7 @@ from pydantic import BaseModel, field_validator
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, UNKNOWN, EventLog
+from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .versions import INSTALLED, FixedPair, ModelVersions
 
 STATIC = Path(__file__).with_name("webui_static")  # the React app in webui/, built with `npm run build`
@@ -69,6 +70,22 @@ class Tick(BaseModel):
 
 class UseVersion(BaseModel):
     version: str
+
+
+class ReminderBody(BaseModel):
+    kind: Literal[TIMER, REMINDER, MESSAGE]
+    text: str | None = None
+    for_name: str | None = None
+    from_name: str | None = None
+    due: float | None = None  # Unix time; None with when_back
+    when_back: bool = False
+    needs_ack: bool = True
+    repeat_every_min: float | None = None  # None: [reminders]'s
+    max_tries: int | None = None
+
+
+class Snooze(BaseModel):
+    minutes: float
 
 
 def allowed_host(host: str, extra: frozenset[str] = frozenset()) -> bool:
@@ -125,10 +142,14 @@ def create_app(
     recluster: Callable[[], dict] | None = None,
     pairs: ModelVersions | FixedPair | None = None,
     allowed_hosts: frozenset[str] = frozenset(),
+    reminders: Reminders | None = None,
+    voice_names: Callable[[], list[str]] = list,
 ) -> FastAPI:
     """`recluster` regroups the voices (see clustering.regroup); None hides the button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
-    `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts."""
+    `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts.
+    `reminders`: TARS's timers, reminders and messages; None when they're off. `voice_names`: the names TARS knows
+    by voice (speaker ID's voiceprints), which a message waiting until someone is back needs."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
@@ -175,6 +196,20 @@ def create_app(
         if not item:
             raise HTTPException(404, "no such item")
         return item
+
+    def reminders_or_501() -> Reminders:
+        if reminders is None:
+            raise HTTPException(501, "reminders are off ([reminders] enabled in config.toml)")
+        return reminders
+
+    def reminder_or_404(reminder_id: int) -> dict:
+        r = reminders_or_501().get(reminder_id)
+        if not r:
+            raise HTTPException(404, "no such reminder")
+        return r
+
+    def public_reminder(r: dict) -> dict:
+        return {**r, "needs_ack": bool(r["needs_ack"]), "says": line(r)}
 
     def file_or_404(rel: str | None) -> Path:
         path = (log.folder / rel).resolve() if rel else None
@@ -382,6 +417,59 @@ def create_app(
             pairs.use(body.version)
         except KeyError:
             raise HTTPException(404, "no such version, or it can't be loaded") from None
+        return {"ok": True}
+
+    @app.get("/api/reminders")
+    def list_reminders():
+        if reminders is None:
+            return {"enabled": False, "reminders": [], "voices": [], "defaults": None}
+        return {
+            "enabled": True,
+            "reminders": [public_reminder(r) for r in reminders.all()],
+            "voices": voice_names(),
+            "defaults": {
+                "repeat_every_min": reminders.repeat_every_s / 60,
+                "max_tries": reminders.max_tries,
+                "timer_ring_min": reminders.timer_ring_s / 60,
+            },
+        }
+
+    @app.post("/api/reminders")
+    def new_reminder(body: ReminderBody):
+        if body.when_back == (body.due is not None):
+            raise HTTPException(400, "give a time, or wait until they're back, not both")
+        repeat = body.repeat_every_min * 60 if body.repeat_every_min is not None else None
+        new = NewReminder(
+            body.kind, body.text, body.for_name, body.from_name, body.due, body.needs_ack, repeat, body.max_tries
+        )
+        try:
+            return {"id": reminders_or_501().add(new, WEB, voices=voice_names())}
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.post("/api/reminders/{reminder_id}/ack")
+    def ack_reminder(reminder_id: int):
+        reminder_or_404(reminder_id)
+        if not reminders_or_501().ack(reminder_id, None, WEB):
+            raise HTTPException(409, "it's over already")
+        return {"ok": True}
+
+    @app.post("/api/reminders/{reminder_id}/snooze")
+    def snooze_reminder(reminder_id: int, body: Snooze):
+        reminder_or_404(reminder_id)
+        try:
+            snoozed = reminders_or_501().snooze(reminder_id, body.minutes)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        if not snoozed:
+            raise HTTPException(409, "it's over already")
+        return {"ok": True}
+
+    @app.post("/api/reminders/{reminder_id}/cancel")
+    def cancel_reminder(reminder_id: int):
+        reminder_or_404(reminder_id)
+        if not reminders_or_501().cancel(reminder_id):
+            raise HTTPException(409, "it's over already")
         return {"ok": True}
 
     @app.get("/api/status")

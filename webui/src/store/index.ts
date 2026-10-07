@@ -4,6 +4,7 @@ export * from "./items";
 export * from "./load";
 export * from "./models";
 export * from "./nav";
+export * from "./reminders";
 export * from "./selectors";
 export * from "./ui";
 export * from "./voices";

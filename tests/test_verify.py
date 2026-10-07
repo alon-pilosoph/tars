@@ -23,6 +23,7 @@ from voice_assistant.verify import (
     ensure_model,
 )
 from voice_assistant.versions import INSTALLED, FixedPair, Pair
+from voice_assistant.wake import DUE
 
 from .conftest import GENERIC, FakeTrigger, SilentMic, needs_models
 
@@ -175,3 +176,14 @@ def test_learned_check_prefers_a_clear_hey_tars_over_a_clear_lookalike():
     cars = [{"text": "hey cars", "confidence": 194.2}]
     assert check.confidence(tars) > check.threshold > check.confidence(cars)
     assert check.confidence([]) < check.threshold
+
+
+def test_a_reminder_coming_due_ends_the_wait(hearing):
+    trigger = FakeTrigger(fire_at=[])
+    assert listening(trigger, hearing("hey tars")).wait(SilentMic(20), due=lambda: trigger.n >= 4) == DUE
+    assert trigger.n == 4
+
+
+def test_a_wake_in_the_same_block_as_a_due_reminder_wins(hearing):
+    trigger = FakeTrigger(fire_at=[1])
+    assert listening(trigger, hearing("hey tars")).wait(SilentMic(20), due=lambda: True) == ANSWER

@@ -14,6 +14,10 @@ built the way the send tool is.
 
 Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go).
 
+Built alongside step 1: [reminders, timers and messages](reminders.md), since TARS couldn't set a timer and
+people will ask for one during the week of real use. The week should check them too: "got it" and its variants
+taken as acknowledgements, nothing said over a conversation, and one set from a phone said on time.
+
 ## 1. A week of real use
 
 With the speakerphone on the Mac (or the Pi), run the assistant and the web UI side by side for a week, starting

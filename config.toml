@@ -124,6 +124,20 @@ folder = "voice_data/events"
 # like "a request followed") stays. 0 = keep all.
 keep_audio_days = 60
 
+[reminders]
+# Timers, reminders and messages, set by voice ("remind me to call the bank at nine", "tell Stacey dinner's ready")
+# or on the web UI's Reminders page (docs/reminders.md). Needs [learning] log_events.
+enabled = true
+# A reminder or message that waits for an acknowledgement ("got it") is said again this often, at most this many
+# times, then it shows as missed. Each reminder can change both.
+repeat_every_min = 5.0
+max_tries = 4
+# A timer rings like a kitchen timer until someone turns it off ("stop", "hey TARS, turn the timer off"): a chime
+# every 10 s, for at most this long.
+timer_ring_min = 15.0
+# After saying one, how long TARS listens for "got it" without the wake word.
+ack_window_s = 6.0
+
 [web]
 # The web UI only answers to IP addresses, localhost, *.local, *.ts.net and single-label names (tars, the Pi's
 # hostname), so a web page elsewhere can't reach it through someone's browser. Add any other name you use here.

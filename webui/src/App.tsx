@@ -3,14 +3,17 @@ import { Dialog } from "./components/Dialog";
 import { Home, Sent } from "./components/Home";
 import { Menu } from "./components/Menu";
 import { Models } from "./components/Models";
+import { Reminders } from "./components/Reminders";
 import { Review } from "./components/Review";
 import { Loading, Unreachable } from "./components/States";
 import { Toasts } from "./components/Toasts";
 import { Voices } from "./components/Voices";
 import type { Tab } from "./params";
-import { type State, refreshNow, reviewTodo, setTab, toggleMenu, unseen, useStore } from "./store";
+import { type State, refreshNow, remindersWaiting, reviewTodo, setTab, toggleMenu, unseen, useStore } from "./store";
 
-const VIEWS = { home: Home, sent: Sent, review: Review, voices: Voices, models: Models };
+const VIEWS = { home: Home, sent: Sent, review: Review, reminders: Reminders, voices: Voices, models: Models };
+
+const COUNTED: Partial<Record<Tab, string>> = { review: "to review", reminders: "waiting for got it" };
 
 function TabButton({
   s,
@@ -33,7 +36,7 @@ function TabButton({
     >
       {label}
       {count ? (
-        <span className="count" aria-label={`${count} ${tab === "review" ? "to review" : "new"}`}>
+        <span className="count" aria-label={`${count} ${COUNTED[tab] ?? "new"}`}>
           {count}
         </span>
       ) : null}
@@ -46,6 +49,7 @@ export function App() {
   const ready = s.phase === "ready";
   const unseenCount = ready ? unseen(s).length : 0;
   const toReviewCount = ready ? reviewTodo(s).length : 0;
+  const waitingCount = ready ? remindersWaiting(s).length : 0;
   useEffect(() => {
     document.title = unseenCount ? `TARS (${unseenCount})` : "TARS";
   }, [unseenCount]);
@@ -63,6 +67,7 @@ export function App() {
             <TabButton s={s} tab="home" label="Home" />
             <TabButton s={s} tab="sent" label="Sent" count={unseenCount} />
             <TabButton s={s} tab="review" label="Review" count={toReviewCount} />
+            <TabButton s={s} tab="reminders" label="Reminders" count={waitingCount} />
             <span className="nav-gap" />
             <TabButton s={s} tab="voices" label="Voices" secondary />
             <TabButton s={s} tab="models" label="Models" secondary />

@@ -1,6 +1,7 @@
 """The conversation loop: follow-ups, "Did you call me?", greetings, error lines, and what's written down."""
 
 import threading
+import time
 import types
 
 import numpy as np
@@ -9,11 +10,26 @@ from openai import OpenAIError
 
 import voice_assistant.assistant as assistant_module
 from voice_assistant.assistant import ASK_PHRASE, ERROR_LINES, Assistant
-from voice_assistant.audio import SpeakerError
+from voice_assistant.audio import SpeakerError, chime
 from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, TIMINGS, SentItem
 from voice_assistant.events import EventLog
 from voice_assistant.journal import Journal
-from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK
+from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK, REMINDER_TAG
+from voice_assistant.reminders import (
+    ACKNOWLEDGED,
+    ADD,
+    MESSAGE,
+    REMINDER,
+    SAID,
+    TIMER,
+    VOICE,
+    WAITING,
+    WEB,
+    Change,
+    NewReminder,
+    Reminders,
+    ReminderTools,
+)
 from voice_assistant.speech import StreamedReply
 from voice_assistant.stt import BufferedSession
 
@@ -490,3 +506,225 @@ def test_a_bug_is_kept_as_a_failure_too(speaker, tmp_path):
     assistant._speak = raising(KeyError("oops"))
     assistant.converse(follow_up_s=4.0)
     assert turns_of(convos)[-1]["failed_at"] == "other"
+
+
+def reminding(speaker, tmp_path, utterances, transcripts, replies=(), **kw):
+    """A logged assistant with one reminder due now; returns (assistant, reminders, its id, what was played)."""
+    assistant, convos = logged_assistant(speaker, tmp_path, utterances, transcripts, replies)
+    assistant.journal.end_conversation()  # a reminder comes due while TARS waits, not after a wake
+    assistant.use_reminders(ReminderTools(Reminders(convos.store)))
+    played = []
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    speaker.play_pcm_stream = lambda chunks, *a, **k: played.extend(chunks)
+    kw = {"kind": MESSAGE, "text": "dinner's at eight", "for_name": "stacey", "from_name": "alon", **kw}
+    rid = assistant.reminders.add(NewReminder(due=time.time(), **kw), WEB)
+    return assistant, assistant.reminders, rid, played
+
+
+def spoken(played):
+    return [c.decode() for c in played if c != chime(24_000)]
+
+
+def test_a_due_reminder_is_said_after_a_chime_and_got_it_acknowledges_it(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [b"ok", None], ["got it"], replies=["<ack>"])
+    assistant.say_reminders(follow_up_s=4.0)
+    assert spoken(played)[0] == "Stacey, a message from Alon: dinner's at eight."
+    assert len(played[0]) > 1000 and played[0] == chime(24_000)  # the chime first
+    assert assistant.brain.asked[0].startswith(REMINDER_TAG)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_via"], r["acked_by"], r["tries"]) == (ACKNOWLEDGED, VOICE, None, 1)
+    turns = turns_of(assistant.journal.conversations)
+    assert [(t["role"], t["text"]) for t in turns] == [
+        ("tars", "Stacey, a message from Alon: dinner's at eight."),
+        ("person", "got it"),
+        ("tars", "Got it."),
+    ]
+
+
+def test_nobody_answering_leaves_it_waiting_to_be_said_again(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [None], [])
+    assistant.say_reminders()
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"]) == (WAITING, 1) and r["next_at"] > time.time() + 60
+    assert assistant.journal.conversations.conversations() == []  # nothing said back, no conversation
+
+
+def test_a_reply_not_meant_for_tars_doesnt_acknowledge_it(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [b"chat"], ["pass the salt"], replies=["<skip>"])
+    assistant.say_reminders(follow_up_s=4.0)
+    assert reminders.get(rid)["status"] == WAITING
+
+
+def test_one_that_doesnt_wait_is_said_once_without_listening(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [], [], needs_ack=False)
+    assistant.say_reminders()  # the recorder has nothing scripted: listening would fail
+    assert reminders.get(rid)["status"] == SAID and spoken(played) == [
+        "Stacey, a message from Alon: dinner's at eight."
+    ]
+
+
+def test_said_late_it_says_when_it_was_due(speaker, tmp_path):
+    assistant, _, rid, played = reminding(speaker, tmp_path, [None], [])
+    assistant.reminders.store.write("UPDATE reminders SET due=due-3600, next_at=next_at-3600 WHERE id=?", (rid,))
+    assistant.say_reminders()
+    assert spoken(played)[1].startswith("This was due ")
+
+
+def test_later_i_got_the_message_acknowledges_the_one_waiting(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [None, b"q", None], ["I got the message"])
+    assistant.say_reminders()
+    assistant.brain.replies = iter([f"<ack {rid}> Good."])
+    assistant.converse(follow_up_s=4.0)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_via"]) == (ACKNOWLEDGED, VOICE)
+    assert turns_of(assistant.journal.conversations)[-1]["text"] == "Good."
+
+
+def test_a_bare_ack_in_conversation_is_for_the_one_said_last(speaker, tmp_path):
+    assistant, reminders, first, _ = reminding(speaker, tmp_path, [None, None, b"q", None], ["done"])
+    second = reminders.add(NewReminder(REMINDER, "pills", due=time.time()), WEB)
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() + 999, second))
+    assistant.say_reminders()
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() - 1, second))
+    assistant.say_reminders()
+    assistant.brain.replies = iter(["<ack>"])
+    assistant.converse(follow_up_s=4.0)
+    assert [reminders.get(i)["status"] for i in (first, second)] == [WAITING, ACKNOWLEDGED]
+
+
+def test_an_answer_thrown_away_acknowledges_nothing(speaker, tmp_path):
+    # They paused ("got...") and the draft said <ack>, then carried on ("got a question actually").
+    assistant, reminders, rid, _ = reminding(
+        speaker, tmp_path, [["pause", "resume", b"q"], None], ["got", "got a question actually"],
+        replies=["<ack>", "Go ahead."],
+    )  # fmt: skip
+    assistant.say_reminders(follow_up_s=4.0)
+    assert reminders.get(rid)["status"] == WAITING
+
+
+def test_a_reminder_set_by_voice_is_made_once_the_answer_is_kept_in_its_conversation(speaker, tmp_path):
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q", None], ["pasta timer, twelve minutes"])
+    tools = ReminderTools(Reminders(convos.store))
+    assistant.use_reminders(tools)
+    change = Change(ADD, NewReminder(TIMER, "pasta", due=time.time() + 720))
+    stream = assistant.brain.stream_reply
+
+    def asking_for_a_timer(text):
+        assistant.brain.changes = [change]
+        return stream(text)
+
+    assistant.brain.stream_reply = asking_for_a_timer
+    assistant.converse(follow_up_s=4.0)
+    (r,) = tools.reminders.active()
+    (conversation,) = convos.conversations()
+    assert (r["text"], r["set_via"], r["conversation_id"]) == ("pasta", VOICE, conversation["id"])
+
+
+def holding(speaker, tmp_path, who, utterances, transcripts, replies):
+    """A logged assistant that hears `who`, with a message held for Stacey until she's heard."""
+    assistant, convos = logged_assistant(speaker, tmp_path, utterances, transcripts, replies)
+    assistant.speaker_id = FakeSpeakerID(who)
+    tools = ReminderTools(Reminders(convos.store), voices=lambda: ["stacey"])
+    assistant.use_reminders(tools)
+    new = NewReminder(MESSAGE, "the plumber called", "stacey", "alon", due=None)
+    rid = tools.reminders.add(new, WEB, voices=["stacey"])
+    return assistant, tools.reminders, rid
+
+
+def test_a_message_waiting_for_someone_is_said_after_answering_them_and_their_got_it_counts(speaker, tmp_path):
+    assistant, reminders, rid = holding(
+        speaker, tmp_path, "stacey", [b"q", b"ok", None], ["what's the time", "got it"], ["Nine.", "<ack>"]
+    )
+    assistant.converse(follow_up_s=4.0)
+    assert assistant.brain.asked[1].startswith(REMINDER_TAG)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_by"], r["tries"]) == (ACKNOWLEDGED, "stacey", 1)
+    assert [t["text"] for t in turns_of(assistant.journal.conversations)] == [
+        "what's the time",
+        "Nine.",
+        "By the way, Stacey, a message from Alon: the plumber called.",
+        "got it",
+        "Got it.",
+    ]
+
+
+@pytest.mark.parametrize("who", ["alon", None])
+def test_it_waits_while_anyone_else_talks(speaker, tmp_path, who):
+    assistant, reminders, rid = holding(speaker, tmp_path, who, [b"q", None], ["what's the time"], ["Nine."])
+    assistant.converse(follow_up_s=4.0)
+    assert reminders.get(rid)["tries"] == 0 and reminders.held_for("stacey")
+
+
+def test_a_ringing_timer_only_chimes_between_its_lines_and_stop_turns_it_off(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(
+        speaker, tmp_path, [None, b"stop", None], ["stop"], replies=["<ack>"], kind=TIMER, text="pasta", for_name=None,
+        from_name=None,
+    )  # fmt: skip
+    assistant.say_reminders()  # the first ring: the chime and the line
+    assert spoken(played) == ["Your pasta timer is done."]
+    played.clear()
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() - 1, rid))
+    assistant.say_reminders(follow_up_s=4.0)  # the second: only the chime, then "stop"
+    assert spoken(played) == [] and played[0] == chime(24_000)
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"]) == (ACKNOWLEDGED, 2)
+
+
+def test_a_reminder_that_cant_be_marked_said_doesnt_stop_the_assistant_or_repeat_at_once(
+    speaker, tmp_path, monkeypatch
+):
+    assistant, reminders, _, played = reminding(speaker, tmp_path, [None], [], needs_ack=False)
+    monkeypatch.setattr(reminders, "said", raising(OSError("disk full")))
+    assistant.say_reminders()
+    assert spoken(played) == ["Stacey, a message from Alon: dinner's at eight."]
+    played.clear()
+    assistant.say_reminders()  # the table still says it's due, but it's held: said once, not in a loop
+    assert played == [] and not assistant._clock.is_due()
+    assistant, reminders, _ = holding(speaker, tmp_path / "2", "stacey", [b"q", None], ["what's the time"], ["Nine."])
+    monkeypatch.setattr(reminders, "said", raising(OSError("disk full")))
+    assistant.converse(follow_up_s=4.0)  # the held message is said, and the conversation carries on
+
+
+def test_a_got_it_to_a_reminder_never_lands_on_an_old_wake(speaker, tmp_path):
+    # TARS asked "Did you call me?" and nobody answered: a wake that wasn't real. Then a reminder, and "got it".
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [b"ok", None], ["got it"], replies=["<ack>"])
+    journal = assistant.journal
+    wake = journal.events.add_wake(AUDIO, 0.6, "ask", "hey cars", 0.4, "", "")
+    journal._wake = wake  # what the trigger leaves behind
+    journal.nobody_spoke()
+    assistant.say_reminders(follow_up_s=4.0)
+    event = journal.events.get(wake)
+    assert event["follow"] == "said_nothing" and event["transcript"] is None and not event["utterance_audio"]
+    (conversation,) = journal.conversations.conversations()
+    assert conversation["wake"] is None and reminders.get(rid)["status"] == ACKNOWLEDGED
+
+
+def test_a_reminder_the_voice_couldnt_say_isnt_counted_and_is_tried_again(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [], [])
+    assistant.voice.stream = raising(OSError("offline"))
+    assistant.say_reminders()  # only the chime: no line, so no listening for "got it" either
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"]) == ("scheduled", 0) and assistant._clock.held(rid)
+
+
+def test_when_the_table_fails_the_wake_word_keeps_working(speaker, tmp_path, monkeypatch):
+    assistant, reminders, _, _ = reminding(speaker, tmp_path, [], [])
+    assistant._clock.read()
+    assert assistant._clock.is_due()
+    monkeypatch.setattr(reminders, "due", raising(OSError("database disk image is malformed")))
+    assistant.say_reminders()
+    assert not assistant._clock.is_due()  # rested, rather than "due" on every block of audio
+    monkeypatch.setattr(reminders, "active", raising(OSError("malformed")))
+    assistant._clock.pause(0)
+    assistant._clock.read()
+    assert not assistant._clock.is_due()
+
+
+def test_a_bare_got_it_later_in_the_conversation_is_for_all_the_reminders_just_said(speaker, tmp_path):
+    assistant, reminders, first, _ = reminding(
+        speaker, tmp_path, [b"q", b"ok", None], ["what time is it", "got it"], replies=["Nine.", "<ack>"]
+    )
+    second = reminders.add(NewReminder(REMINDER, "pills", due=time.time()), WEB)
+    assistant.speaker_id = FakeSpeakerID("alon")  # someone known: TARS checks for messages held for them each turn
+    assistant.say_reminders(follow_up_s=4.0)
+    assert [reminders.get(i)["status"] for i in (first, second)] == [ACKNOWLEDGED, ACKNOWLEDGED]

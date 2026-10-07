@@ -2,7 +2,7 @@
    the main pages in dark), against the approved baselines in checks/screenshots/. `npm run visual`; after an
    intended change, `npm run visual:update` and look at what changed before committing the new images. */
 import { expect, test } from "@playwright/test";
-import { ORIGIN, SIZES, fontsReady, serveFromDisk } from "./serve";
+import { ORIGIN, SIZES, pageReady, serveFromDisk, settled } from "./serve";
 
 const STATES = [
   "",
@@ -48,6 +48,8 @@ const STATES = [
   "tab=voices&demo=empty",
   "tab=models",
   "tab=models&demo=empty",
+  "tab=reminders",
+  "tab=reminders&demo=empty",
 ];
 
 /** Click the i-th match, click the first match whose text starts with `text`, or type into a field. */
@@ -83,6 +85,8 @@ const ACTS: [string, string, Step[]][] = [
   ["Voices: card menu", "tab=voices", [{ click: ".voice .more", i: 2 }]],
   ["Voices: name dialog", "tab=voices", [{ click: ".voice-foot .btn" }]],
   ["Name this voice", "", [{ clickText: ".text-action", text: "Name this voice" }]],
+  ["Reminders: new", "tab=reminders", [{ clickText: ".head .btn", text: "New reminder" }]],
+  ["Reminders: stop", "tab=reminders", [{ clickText: ".rem-actions .btn", text: "Stop" }]],
 ];
 
 function act(steps: Step[]) {
@@ -125,6 +129,7 @@ const DARK = new Set([
   "tab-review",
   "tab-voices",
   "tab-models",
+  "tab-reminders",
   "demo-empty",
   "state-error",
   "tab-sent-modal-note-101",
@@ -140,21 +145,26 @@ for (const [name, q, steps] of jobs)
         await page.setViewportSize(viewport);
         const query = [q.includes("demo=") ? "" : "demo", q, `theme=${theme}`].filter(Boolean).join("&");
         await page.goto(`${ORIGIN}/index.html?${query}`);
-        await fontsReady(page);
+        await pageReady(page);
         if (steps) {
-          await expect(page.locator("main h1").first()).toBeVisible();
           await page.evaluate(act, [...steps]);
+          await settled(page);
         }
         await expect(page).toHaveScreenshot(`${name}--${size}-${theme}.png`);
       });
 
-test("the tabs get a row of their own at every phone width", async ({ page }) => {
+test("the tabs get a row of their own at every phone and tablet width, and nothing leaves the screen", async ({
+  page,
+}) => {
   await serveFromDisk(page);
-  for (const width of [360, 480, 560, 640]) {
+  for (const width of [360, 480, 560, 640, 700, 860, 861, 1000]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto(`${ORIGIN}/index.html?demo`);
     const refresh = (await page.locator(".refresh").boundingBox())!;
     const tabs = (await page.getByRole("navigation", { name: "Sections" }).boundingBox())!;
-    expect(tabs.y, `at ${width}px`).toBeGreaterThanOrEqual(refresh.y + refresh.height);
+    if (width <= 860) expect(tabs.y, `at ${width}px`).toBeGreaterThanOrEqual(refresh.y + refresh.height);
+    else expect(tabs.y, `at ${width}px`).toBeLessThan(refresh.y + refresh.height);
+    expect(refresh.x + refresh.width, `at ${width}px`).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `at ${width}px`).toBe(width);
   }
 });

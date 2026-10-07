@@ -1,5 +1,5 @@
 import type { PersonFilter } from "../params";
-import type { Cluster, Conversation, Item, Speaker, Turn } from "../types";
+import type { Cluster, Conversation, Item, Reminder, Speaker, Turn } from "../types";
 import type { MenuTarget, State } from "./core";
 
 export const eventById = (s: State, id: number) => s.events.find(e => e.id === id);
@@ -14,6 +14,11 @@ export const turnItems = (s: State, t: Turn) =>
   (t.items || []).map(id => itemById(s, id)).filter((i): i is Item => !!i);
 
 export const voiceName = (c: Pick<Cluster, "id" | "name">) => c.name || `Voice ${c.id}`;
+
+/** Scheduled or waiting for a got it: what TARS will still say. */
+export const isActiveReminder = (r: Reminder) => r.status === "scheduled" || r.status === "waiting";
+/** Said and waiting for someone to say they got it: the Reminders tab's count. */
+export const remindersWaiting = (s: State) => s.reminders?.reminders.filter(r => r.status === "waiting") ?? [];
 export function clusterName(s: State, id: number | null | undefined) {
   if (id == null) return null;
   return voiceName(clusterById(s, id) ?? { id, name: null });

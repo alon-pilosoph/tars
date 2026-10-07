@@ -144,6 +144,9 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         pairs = pair_source(cfg, root)
     except (FileNotFoundError, ValueError) as e:
         raise ConfigError(str(e)) from None
+    from .reminders import Reminders
+
+    reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
     serve(
         log,
         host,
@@ -151,6 +154,8 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         recluster=partial(regroup, log, speaker_id),
         pairs=pairs,
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
+        reminders=reminders,
+        voice_names=speaker_id.names if speaker_id else list,
     )
 
 
@@ -240,8 +245,20 @@ def main() -> None:
         raise SystemExit(str(e)) from None
 
 
-def make_pipeline(cfg: Config, root: Path, typed: bool = False):
-    """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions."""
+def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
+    """Reminders need the event log to keep them in, and the wake loop to say them: not with push-to-talk, which
+    waits on Enter instead. Waiting until someone's back needs speaker ID's voiceprints."""
+    if not (cfg.reminders.enabled and events) or push_to_talk or cfg.wake.mode == "push-to-talk":
+        return None
+    from .reminders import Reminders, ReminderTools
+
+    reminders = Reminders.from_config(events.store, cfg.reminders)
+    return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list)
+
+
+def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
+    """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
+    With `reminders` (a ReminderTools), the brain can set them and knows what's set."""
     from .effects import apply_effect
     from .llm import CerebrasChat, OpenAIChat
     from .stt import (
@@ -256,7 +273,11 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False):
     check_keys(cfg, env)
     client = make_openai_client(env)
     llm = brain_config(cfg, typed=typed)
-    brain = CerebrasChat(client, llm, make_cerebras_client(env)) if llm.cerebras_model else OpenAIChat(client, llm)
+    brain = (
+        CerebrasChat(client, llm, make_cerebras_client(env), reminders)
+        if llm.cerebras_model
+        else OpenAIChat(client, llm, reminders)
+    )
     speech = (
         DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
         if cfg.tts.provider == "deepgram"
@@ -308,14 +329,16 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     from .assistant import Assistant
     from .journal import Journal
 
-    transcriber, brain, voice = make_pipeline(cfg, root)
+    events = make_event_log(cfg, root)
+    speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
+    reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
+    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders)
     recorder = make_recorder(cfg, root)
     speaker = Speaker(find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s)
     with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
-        journal = Journal(make_event_log(cfg, root))
+        journal = Journal(events)
         journal.keep_pruning(cfg.learning.keep_audio_days)
         trigger, idle_message = make_trigger(cfg, push_to_talk, root, journal)
-        speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
         assistant = Assistant(
             mic,
             speaker,
@@ -329,6 +352,8 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             journal=journal,
             humor=cfg.llm.humor,
             phrases=phrase_folder(cfg, root),
+            reminders=reminders,
+            ack_window_s=cfg.reminders.ack_window_s,
         )
         assistant.run_forever(
             idle_message, follow_up_s=cfg.recorder.follow_up_s, greet_after_s=cfg.recorder.greet_after_s

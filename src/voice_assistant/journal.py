@@ -30,6 +30,11 @@ class Journal:
         # write for seconds.
         self._background = ThreadPoolExecutor(max_workers=1, thread_name_prefix="journal")
 
+    @property
+    def conversation_id(self) -> int | None:
+        """The conversation being kept, once something in it was written (call flush() first)."""
+        return None if self._gone else self._conversation
+
     def _safe(self, write, *args, **kwargs):
         if self.events is None:
             return None
@@ -64,9 +69,22 @@ class Journal:
                 self.events.add_wake, pcm, score, outcome, heard, confidence, wake_model, check_model
             )
 
+    def unprompted(self) -> None:
+        """TARS is about to speak with no wake behind it (a reminder): what's said back belongs to no wake."""
+        self.flush()
+        self._wake, self._first_pending = None, False
+
     def said(self, text: str) -> None:
         """TARS spoke before anyone asked anything."""
         self._said.append((time.time(), text))
+
+    def tars_said(self, text: str) -> None:
+        """TARS spoke in the middle of a conversation, unasked (a message it was holding for someone)."""
+        self.flush()
+        if self._conversation is None:
+            self.said(text)
+        elif not self._gone:
+            self._safe(self.conversations.add_tars_turn, self._conversation, text)
 
     def nobody_spoke(self) -> None:
         self.flush()

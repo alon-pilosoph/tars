@@ -39,15 +39,15 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
    local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
    `[Speaker: Alon]`.
-5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras first (about 0.3 s to its first sentence). When
-   the answer needs the web or the TARS page it replies `<look-up>`, and that turn goes to OpenAI's model (the
-   Responses API, with web search and the send tool), which also answers whenever Cerebras fails, and for two
-   minutes after, so an outage doesn't cost every turn Cerebras's timeout; both share one conversation. Each finished sentence goes to **text to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's
-   Onyx) straight away, and playback starts on the first audio chunk, so TARS starts talking while the reply is
-   still being written. The TARS effect (a speaker in a metal box) is applied as it streams. All of this starts
-   early, when Flux thinks you may be done, while the recording goes on: if you carry on talking the draft is thrown
-   away, and it's only played, logged and allowed to send anything once your turn is confirmed over (see
-   [response time](latency.md)).
+5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras first (about 0.3 s to its first sentence). When the
+   answer needs the web or the TARS page it replies `<look-up>`, and that turn goes to OpenAI's model (the Responses
+   API, with web search and the send tool), which also answers whenever Cerebras fails, and for two minutes after, so an
+   outage doesn't cost every turn Cerebras's timeout; both share one conversation. Each finished sentence goes to **text
+   to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's Onyx) straight away, and playback starts on the first audio
+   chunk, so TARS starts talking while the reply is still being written. The TARS effect (a speaker in a metal box) is
+   applied as it streams. All of this starts early, when Flux thinks you may be done, while the recording goes on: if
+   you carry on talking the draft is thrown away, and it's only played, logged and allowed to send anything once your
+   turn is confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
@@ -128,6 +128,7 @@ The assistant is `src/voice_assistant/`:
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Cerebras, OpenAI with its tools), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
+| Reminders | `reminders.py` (the table, what's due, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, the keys it needs) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |

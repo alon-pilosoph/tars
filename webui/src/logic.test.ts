@@ -1,11 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { post, writesDone, writesMade } from "./api";
 import { fold } from "./fold";
-import { answerMeta, failedLine, fmtSize, metricChange, sentence, timingsDetail } from "./format";
+import {
+  answerMeta,
+  failedLine,
+  fmtSize,
+  metricChange,
+  personName,
+  reminderMeta,
+  reminderStatus,
+  sentence,
+  timingsDetail,
+} from "./format";
 import { md, plain } from "./markdown";
 import { type State, forPerson, get, personShown } from "./store";
 import { normalize, snapshotOf, within } from "./store/load";
-import type { ApiConversation, Cluster, Item, TarsEvent } from "./types";
+import type { ApiConversation, Cluster, Item, Reminder, TarsEvent } from "./types";
 
 describe("md", () => {
   it("escapes before adding any tag", () => {
@@ -20,6 +30,67 @@ describe("md", () => {
   });
   it("has a plain-text version for copying", () => {
     expect(plain("**Serves 6**, *about* an hour")).toBe("Serves 6, about an hour");
+  });
+});
+
+describe("reminders", () => {
+  const r = (x: Partial<Reminder>): Reminder => ({
+    id: 1,
+    created: 0,
+    kind: "message",
+    text: "hi",
+    for_name: "stacey",
+    from_name: "alon",
+    set_via: "voice",
+    conversation_id: null,
+    due: null,
+    needs_ack: true,
+    repeat_every_s: 120,
+    max_tries: 10,
+    status: "scheduled",
+    tries: 0,
+    next_at: null,
+    last_said: null,
+    acked_at: null,
+    acked_by: null,
+    acked_via: null,
+    says: "",
+    ...x,
+  });
+  it("says where each one stands", () => {
+    vi.setSystemTime(new Date("2026-09-26T10:00:00"));
+    const at = (h: number, m = 0) => new Date(2026, 8, 26, h, m).getTime() / 1000;
+    expect(reminderStatus(r({}))).toBe("When Stacey is next heard.");
+    expect(reminderStatus(r({ next_at: at(19, 30) }))).toBe("Due today at 7:30 PM.");
+    expect(reminderStatus(r({ next_at: at(33) }))).toBe("Due tomorrow at 9:00 AM.");
+    expect(reminderStatus(r({ status: "waiting", tries: 2, next_at: at(10, 2) }))).toBe(
+      "Said 2 of 10 times, again today at 10:02 AM. Waiting for “got it”.",
+    );
+    expect(reminderStatus(r({ status: "acknowledged", acked_via: "voice", acked_by: "stacey", acked_at: at(9) }))).toBe(
+      "Acknowledged by Stacey, today at 9:00 AM.",
+    );
+    expect(reminderStatus(r({ status: "acknowledged", acked_via: "voice", acked_at: at(9) }))).toBe(
+      "Acknowledged by an unknown voice, today at 9:00 AM.",
+    );
+    expect(reminderStatus(r({ status: "acknowledged", acked_via: "web", acked_at: at(9) }))).toBe(
+      "Acknowledged on this page, today at 9:00 AM.",
+    );
+    expect(reminderStatus(r({ status: "missed", tries: 1 }))).toBe("Missed: said 1 time, and nobody said they got it.");
+    const timer = { kind: "timer" as const, repeat_every_s: 10 };
+    expect(reminderStatus(r({ ...timer, status: "waiting", due: at(9, 58), tries: 12 }))).toBe(
+      "Ringing since 9:58 AM, until someone turns it off.",
+    );
+    expect(reminderStatus(r({ ...timer, status: "missed", tries: 90 }))).toBe(
+      "Missed: rang for 15 minutes, and nobody turned it off.",
+    );
+    vi.useRealTimers();
+  });
+  it("says who it's for and from, and how it was set", () => {
+    expect(reminderMeta(r({}))).toBe("For Stacey · from Alon · set by voice");
+    expect(reminderMeta(r({ for_name: null, from_name: null, set_via: "web" }))).toBe(
+      "For whoever's there · set on this page",
+    );
+    expect(personName(" mary  ann ")).toBe("Mary Ann");
   });
 });
 

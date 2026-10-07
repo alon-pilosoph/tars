@@ -1,6 +1,7 @@
 """The web UI's API and voice clustering."""
 
 import re
+import time
 
 import numpy as np
 import pytest
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 from voice_assistant import webui
 from voice_assistant.clustering import MIN_REQUESTS_TO_ENROLL, enroll_named, recluster
 from voice_assistant.events import NOT_PERSON, PERSON, REAL, UNKNOWN
+from voice_assistant.reminders import NewReminder, Reminders
 from voice_assistant.verify import ANSWER
 from voice_assistant.webui import allowed_host, create_app
 
@@ -245,3 +247,70 @@ def test_the_api_works_without_the_built_page(log, monkeypatch, tmp_path):
     client = TestClient(create_app(log))
     assert client.get("/").status_code == 503 and "npm" in client.get("/").text
     assert client.get("/api/events").status_code == 200
+
+
+@pytest.fixture
+def reminding(log):
+    reminders = Reminders(log.store, repeat_every_s=120, max_tries=10)
+    return TestClient(create_app(log, reminders=reminders, voice_names=lambda: ["Stacey"])), reminders
+
+
+def test_reminders_are_set_on_the_page_and_listed_with_what_tars_will_say(reminding):
+    client, reminders = reminding
+    due = time.time() + 600
+    body = {"kind": "message", "text": "dinner's at eight", "for_name": "stacey", "from_name": "Alon", "due": due}
+    rid = client.post("/api/reminders", json=body).json()["id"]
+    got = client.get("/api/reminders").json()
+    assert got["enabled"] and got["voices"] == ["Stacey"]
+    assert got["defaults"] == {"repeat_every_min": 2, "max_tries": 10, "timer_ring_min": 15}
+    (r,) = got["reminders"]
+    assert (r["id"], r["set_via"], r["status"], r["needs_ack"]) == (rid, "web", "scheduled", True)
+    assert r["says"] == "Stacey, a message from Alon: dinner's at eight."
+    custom = {**body, "repeat_every_min": 5, "max_tries": 3, "needs_ack": False}
+    r = reminders.get(client.post("/api/reminders", json=custom).json()["id"])
+    assert (r["repeat_every_s"], r["max_tries"], r["needs_ack"]) == (300, 3, 0)
+
+
+@pytest.mark.parametrize(
+    "body, why",
+    [
+        ({"kind": "message", "text": "hi", "due": None}, "give a time"),
+        ({"kind": "message", "text": "hi", "for_name": "bo", "due": None, "when_back": True}, "doesn't know bo"),
+        ({"kind": "reminder", "text": "hi", "due": 1.0}, "already passed"),
+        ({"kind": "alarm", "due": 1.0}, "Input should be"),
+    ],
+)
+def test_what_cant_be_set_says_why(reminding, body, why):
+    r = reminding[0].post("/api/reminders", json=body)
+    assert r.status_code in (400, 422) and why in r.text
+
+
+def test_waiting_until_someone_is_back_needs_their_voice(reminding):
+    client, reminders = reminding
+    body = {"kind": "message", "text": "the plumber called", "for_name": "stacey", "when_back": True}
+    r = reminders.get(client.post("/api/reminders", json=body).json()["id"])
+    assert r["due"] is None and r["next_at"] is None
+
+
+def test_acknowledged_on_the_page_snoozed_and_cancelled(reminding):
+    client, reminders = reminding
+    rid = reminders.add(NewReminder("timer", due=time.time() + 60), "voice")
+    reminders.said(rid)
+    assert client.post(f"/api/reminders/{rid}/ack").status_code == 200
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_via"], r["acked_by"]) == ("acknowledged", "web", None)
+    assert client.post(f"/api/reminders/{rid}/ack").status_code == 409
+    rid = reminders.add(NewReminder("timer", due=time.time() + 60), "voice")
+    assert client.post(f"/api/reminders/{rid}/snooze", json={"minutes": 10}).status_code == 200
+    assert reminders.get(rid)["next_at"] > time.time() + 590
+    assert client.post(f"/api/reminders/{rid}/snooze", json={"minutes": 0}).status_code == 400
+    assert client.post(f"/api/reminders/{rid}/cancel").status_code == 200
+    assert reminders.get(rid)["status"] == "cancelled"
+    assert client.post(f"/api/reminders/{rid}/cancel").status_code == 409
+    assert client.post("/api/reminders/999/ack").status_code == 404
+
+
+def test_with_reminders_off_the_page_says_so(log):
+    client = TestClient(create_app(log))
+    assert client.get("/api/reminders").json()["enabled"] is False
+    assert client.post("/api/reminders", json={"kind": "timer", "due": time.time() + 60}).status_code == 501
