@@ -9,27 +9,26 @@ const WIDTH = 480;
 
 const PANELS: Record<string, { label: string; keep: string[] }> = {
   review: {
-    label: "The Review page: wakes TARS wasn't sure about, each with hey TARS and Not it, and TARS's guess highlighted",
-    keep: [
-      ".head",
-      ".group:first-of-type > .group-head",
-      ".group:first-of-type .wake-row:nth-child(2)",
-      ".group:first-of-type .wake-row:nth-child(4)",
-      ".group:first-of-type .wake-row:nth-child(5)",
-    ],
+    label: "The Review page: wakes TARS wasn't sure about, each with hey TARS and Not it, and TARS's guess shaded",
+    keep: [".page-head", "main > .wakes > .wake:nth-child(2)", "main > .wakes > .wake:nth-child(5)"],
   },
   voices: {
-    label: "The Voices page: the people TARS has heard, how close each is to a voiceprint, and a voice still to name",
-    keep: [
-      ".head",
-      ".group:nth-of-type(1)",
-      ".group:nth-of-type(2) > .group-head",
-      ".group:nth-of-type(2) .voice:first-child",
-    ],
+    label: "The Voices page: the people TARS has heard, and a voice still to name",
+    keep: [".page-head", ".head-hint + .sec-head", ".head-hint + .sec-head + .voices > .voice:nth-child(-n+3)"],
   },
   models: {
     label: "The Models page: the pair in use, and the history, where Use this switches back",
-    keep: [".head", ".models-grid > .panel:first-child", "main > .panel:has(.hist)"],
+    keep: [".page-head", ".page-head + .sec-head", "dl.kv", "main > .sec-head:has(+ .history)", ".history"],
+  },
+  reminders: {
+    label: "The Reminders page: what needs someone now, and what's coming up",
+    keep: [
+      ".page-head",
+      "main > .sec-head:has(+ .needs-list)",
+      ".needs-list",
+      ".needs-list + .sec-head",
+      ".needs-list + .sec-head + .rem-rows",
+    ],
   },
 };
 
@@ -67,8 +66,10 @@ function panel(page: Page, keep: string[]) {
       if (r instanceof CSSStyleRule) {
         const body = `{${r.style.cssText}}`;
         const text = r.selectorText.replace(/"/g, "");
-        if (text === "[data-theme=dark]") tokens.push(`[data-theme=dark] [data-app-panel]${body}`);
-        else if (selectors(text).every(s => ROOT.test(s)) && onlyTokens(r)) tokens.push(`[data-app-panel]${body}`);
+        if (text === "[data-theme=dark]") {
+          tokens.push(`[data-theme=dark] [data-app-panel]${body}`);
+          tokens.push(`@media (prefers-color-scheme: dark){:root:not([data-theme=light]) [data-app-panel]${body}}`);
+        } else if (selectors(text).every(s => ROOT.test(s)) && onlyTokens(r)) tokens.push(`[data-app-panel]${body}`);
         else {
           const all = selectors(text);
           const live = all.every(s => ROOT.test(s) || s === "*") ? all : all.filter(used);
@@ -100,8 +101,8 @@ function swap(text: string, find: string, put: string) {
 }
 
 const b64 = (file: string) => fs.readFileSync(path.join(REPO, file)).toString("base64");
-const font = (family: string, weight: string, file: string) =>
-  `@font-face{font-family:"${family}";font-style:normal;font-weight:${weight};font-display:swap;` +
+const font = (family: string, style: string, weight: string, file: string) =>
+  `@font-face{font-family:"${family}";font-style:${style};font-weight:${weight};font-display:swap;` +
   `src:url(data:font/woff2;base64,${b64(file)}) format("woff2")}`;
 
 test.describe.configure({ mode: "serial" });
@@ -123,15 +124,12 @@ test("page", async ({ page }) => {
   }
   text = swap(text, "</head>", `<style>\n${[...tokens].join("\n")}\n</style>\n</head>`);
   const fonts = [
-    font("IBM Plex Sans", "100 700", "webui/src/fonts/ibm-plex-sans-latin.woff2"),
-    font("IBM Plex Mono", "400", "webui/src/fonts/ibm-plex-mono-400-latin.woff2"),
-    font("IBM Plex Mono", "500", "webui/src/fonts/ibm-plex-mono-500-latin.woff2"),
+    font("Newsreader", "normal", "400 500", "webui/src/fonts/newsreader-latin.woff2"),
+    font("Newsreader", "italic", "400", "webui/src/fonts/newsreader-italic-latin.woff2"),
+    font("Instrument Sans", "normal", "400 600", "webui/src/fonts/instrument-sans-latin.woff2"),
   ];
-  text = swap(
-    text,
-    `<link rel="stylesheet" href="../webui/src/fonts.css" />`,
-    `<style>\n${fonts.join("\n")}\n</style>`,
-  );
+  const google = text.slice(text.indexOf("<!-- The only external request."), text.indexOf("<style>"));
+  text = swap(text, google, `<style>\n${fonts.join("\n")}\n</style>\n`);
   text = swap(
     text,
     `href="../webui/src/favicon.svg"`,

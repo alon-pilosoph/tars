@@ -1,4 +1,3 @@
-Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
 Copyright 2020 The Newsreader Project Authors (https://github.com/productiontype/Newsreader)
 Copyright 2022 The Instrument Sans Project Authors (https://github.com/Instrument/instrument-sans)
 
