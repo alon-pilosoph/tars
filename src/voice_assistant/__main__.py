@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from .audio import AudioDeviceError, Microphone, Speaker, find_device, list_devices
-from .config import OPENAI_STT_MODEL, Config, ConfigError, LLMConfig, load_config, required_keys
+from .config import OPENAI_STT_MODEL, WEB_PORT, Config, ConfigError, LLMConfig, load_config, required_keys
 from .recorder import make_recorder
 from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
@@ -195,7 +195,7 @@ def main() -> None:
     parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--port", type=int, default=WEB_PORT)
     parser.add_argument(
         "--install-models",
         type=Path,

@@ -113,3 +113,30 @@ def test_a_check_that_breaks_or_exits_is_a_failure_and_the_rest_still_run(capsys
     assert "✗ Broken: OSError: disk" in out and "! B: b\n    → do this" in out
     assert check.exit_code(results) == 1 and check.summary(results) == "2 problems to fix, and 1 thing to look at."
     assert check.exit_code(results[2:]) == 0 and check.summary(results[2:4]) == "Everything works."
+
+
+def test_deepgram_tells_a_refused_key_from_an_outage():
+    assert check.deepgram_status(200, 0.3).status == OK
+    refused = check.deepgram_status(401, 0.3)
+    assert refused.status == FAIL and "DEEPGRAM_API_KEY" in refused.fix
+    assert check.deepgram_status(503, 0.3).detail == "HTTP 503"
+
+
+def test_http_status_gives_any_status_and_raises_when_nothing_answers():
+    import http.server
+    import threading
+
+    class Refuse(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(401)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Refuse)
+    threading.Thread(target=server.handle_request, daemon=True).start()
+    assert check.http_status(f"http://127.0.0.1:{server.server_port}/") == 401
+    server.server_close()
+    with pytest.raises(OSError):
+        check.http_status(f"http://127.0.0.1:{server.server_port}/")

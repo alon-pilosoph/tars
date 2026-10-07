@@ -359,7 +359,7 @@ class OpenAIChat:
         self._lock = threading.Lock()
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
-        self.changes: list[Change] = []  # what the last reply changed in the reminders, made once it's kept
+        self.changes: list[Change] = []
         self._tools = (
             ([{"type": "web_search"}] if cfg.web_search else [])
             + ([SEND_TOOL] if cfg.send else [])

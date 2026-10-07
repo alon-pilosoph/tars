@@ -18,14 +18,16 @@ from pathlib import Path
 import numpy as np
 from dotenv import dotenv_values
 
-from .config import Config, required_keys
+from .clustering import MIN_REQUESTS_TO_ENROLL
+from .config import WEB_PORT, Config, required_keys
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
 MARKS = {OK: "✓", WARN: "!", FAIL: "✗", SKIP: "-"}
 LISTEN_S = 3.0
 QUIET_DBFS = -55.0  # a peak below this, with someone talking, is a mic that isn't the one in the room
 LOW_DISK_BYTES = 2 * 1024**3
-WEB_URL = "http://127.0.0.1:8080/api/status"
+WEB_URL = f"http://127.0.0.1:{WEB_PORT}/api/status"
+MODELS_S = 300.0  # long enough to download every local model on a slow line, the first time
 DEEPGRAM_PROJECTS = "https://api.deepgram.com/v1/projects"
 READY = "TARS is ready."
 
@@ -74,9 +76,6 @@ def summary(results: list[Result]) -> str:
         fix = f"{failed} problem{'s' if failed != 1 else ''} to fix"
         return f"{fix}, and {look}." if warned else f"{fix}."
     return f"Everything works, with {look}." if warned else "Everything works."
-
-
-# The checks. Each takes what it needs, so the tests can hand it fakes.
 
 
 def keys(cfg: Config, env: Path) -> Result:
@@ -202,7 +201,8 @@ def voiceprints(names: list[str]) -> Result:
             "Voiceprints",
             WARN,
             "none yet, so TARS can't greet anyone by name",
-            "name your voice in the web UI's Voices tab after 5 requests, or --record-voice NAME then --enroll NAME",
+            f"name your voice in the web UI's Voices tab after {MIN_REQUESTS_TO_ENROLL} requests, or --record-voice "
+            "NAME then --enroll NAME",
         )
     return Result("Voiceprints", OK, ", ".join(names))
 
@@ -219,7 +219,7 @@ def web(get: Callable[[str], int]) -> Result:
             "not running here",
             "systemctl --user start voice-assistant-web on the Pi, or voice-assistant --web",
         )
-    return Result("Web UI", OK, "running on port 8080")
+    return Result("Web UI", OK, f"running on port {WEB_PORT}")
 
 
 def systemd(unit: str, active: Callable[[str], str | None]) -> Result:
@@ -234,30 +234,46 @@ def systemd(unit: str, active: Callable[[str], str | None]) -> Result:
 def systemd_state(unit: str) -> str | None:
     if not shutil.which("systemctl"):
         return None
-    out = subprocess.run(["systemctl", "--user", "is-active", unit], capture_output=True, text=True, check=False)
+    try:
+        out = subprocess.run(
+            ["systemctl", "--user", "is-active", unit], capture_output=True, text=True, check=False, timeout=5
+        )
+    except subprocess.TimeoutExpired:
+        return "not answering"
     return out.stdout.strip() or "unknown"
 
 
 def http_status(url: str, headers: dict | None = None) -> int:
-    import httpx
+    """The HTTP status, whatever it is; OSError if nothing answered."""
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
 
-    return httpx.get(url, headers=headers or {}, timeout=5.0).status_code
+    try:
+        with urlopen(Request(url, headers=headers or {}), timeout=5) as response:
+            return response.status
+    except HTTPError as e:
+        return e.code
 
 
-# Putting them together, with the real things.
+def deepgram_status(status: int, took: float) -> Result:
+    if status in (401, 403):
+        return Result("Deepgram", FAIL, f"the API key was refused ({status})", "check DEEPGRAM_API_KEY in .env")
+    if status != 200:
+        return Result("Deepgram", FAIL, f"HTTP {status}", "check the network, and Deepgram's status page")
+    return Result("Deepgram", OK, f"answers ({took:.1f} s)")
 
 
 def check_all(cfg: Config, root: Path) -> int:
     from . import __main__ as cli
-    from .audio import BLOCK_SECONDS, Microphone, Speaker, find_device
+    from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
 
     env = root / ".env"
     have_keys = keys(cfg, env).status == OK
 
-    import sounddevice as sd
-
-    names = [d["name"] for d in sd.query_devices()]
-    default_in, default_out = sd.default.device
+    def audio_device(kind: str):
+        names, default_in, default_out = device_names()
+        wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
+        return device(kind, wanted, find_device, names, default_in if kind == "input" else default_out)
 
     def listen():
         print(f"(listening {LISTEN_S:.0f} s: say something)", flush=True)
@@ -312,35 +328,40 @@ def check_all(cfg: Config, root: Path) -> int:
         if not have_keys:
             return Result("Deepgram", SKIP, "needs the API keys")
         key = cli.api_key(env, "DEEPGRAM_API_KEY")
-
-        def projects():
-            status = http_status(DEEPGRAM_PROJECTS, {"Authorization": f"Token {key}"})
-            if status != 200:
-                raise RuntimeError(f"HTTP {status}")
-
+        t = time.perf_counter()
         try:
-            return timed("Deepgram", projects)
-        except RuntimeError as e:
-            if "401" in str(e) or "403" in str(e):
-                return Result("Deepgram", FAIL, f"the API key was refused ({e})", "check DEEPGRAM_API_KEY in .env")
+            status = http_status(DEEPGRAM_PROJECTS, {"Authorization": f"Token {key}"})
+        except OSError as e:
             return service_error("Deepgram", e)
+        return deepgram_status(status, time.perf_counter() - t)
 
     def models():
-        t = time.perf_counter()
-        cli.make_trigger(cfg, False, root)
-        cli.make_recorder(cfg, root)
-        took = time.perf_counter() - t
-        return Result("Local models", OK, f"wake word, double-check and speech detector loaded ({took:.0f} s)")
+        def load():
+            t = time.perf_counter()
+            cli.make_trigger(cfg, False, root)
+            cli.make_recorder(cfg, root)
+            took = time.perf_counter() - t
+            return Result("Local models", OK, f"wake word, double-check and speech detectors loaded ({took:.0f} s)")
+
+        why = "still not loaded (a download that stalled?)"
+        return within(MODELS_S, "Local models", load, why, "check the network and run it again")
 
     def speakers():
         if not cfg.speaker.enabled:
             return Result("Voiceprints", SKIP, "speaker ID is off")
-        return voiceprints(cli.make_speaker_id(cfg, root).names())
+        why = "the speaker model didn't load in time (a download that stalled?)"
+        return within(
+            MODELS_S,
+            "Voiceprints",
+            lambda: voiceprints(cli.make_speaker_id(cfg, root).names()),
+            why,
+            "check the network and run it again",
+        )
 
     checks: list[tuple[str, Check]] = [
         ("API keys", lambda: keys(cfg, env)),
-        ("Input device", lambda: device("input", cfg.audio.input_device, find_device, names, default_in)),
-        ("Output device", lambda: device("output", cfg.audio.output_device, find_device, names, default_out)),
+        ("Input device", lambda: audio_device("input")),
+        ("Output device", lambda: audio_device("output")),
         ("Local models", models),
         ("Voiceprints", speakers),
         ("OpenAI", openai),

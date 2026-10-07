@@ -69,6 +69,12 @@ def find_device(name: str, kind: str) -> int | None:
     raise SystemExit(f"No {kind} device matching {name!r}. Run with --list-devices to see what's available.")
 
 
+def device_names() -> tuple[list[str], int, int]:
+    """Every device's name, by index, and the system's default input and output."""
+    default_in, default_out = sd.default.device
+    return [d["name"] for d in sd.query_devices()], default_in, default_out
+
+
 def list_devices() -> None:
     default_in, default_out = sd.default.device
     for index, device in enumerate(sd.query_devices()):
