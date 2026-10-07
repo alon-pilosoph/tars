@@ -62,6 +62,10 @@ systemctl --user enable voice-assistant voice-assistant-web
 systemctl --user restart voice-assistant voice-assistant-web  # picks up new code on a rerun
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
 
+echo "== Checking everything (it says \"TARS is ready.\" and listens a moment)"
+sleep 3  # the services just restarted
+"$UV" run --frozen voice-assistant --check || echo "!! Fix what's marked ✗ above, then run this again."
+
 echo
 echo "Done. Say \"hey TARS\". The web UI is at http://$(hostname).local:8080"
 echo "Logs: journalctl --user -u voice-assistant -f   (and -u voice-assistant-web)"

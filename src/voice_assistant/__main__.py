@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 from .audio import AudioDeviceError, Microphone, Speaker, find_device, list_devices
-from .config import OPENAI_STT_MODEL, Config, ConfigError, LLMConfig, load_config, required_keys
+from .config import OPENAI_STT_MODEL, WEB_PORT, Config, ConfigError, LLMConfig, load_config, required_keys
 from .recorder import make_recorder
 from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
@@ -178,6 +178,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="voice-assistant")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     parser.add_argument("--list-devices", action="store_true", help="show audio devices and exit")
+    parser.add_argument(
+        "--check", action="store_true", help="check everything TARS needs (keys, devices, services, models) and exit"
+    )
     parser.add_argument("--mic-test", action="store_true", help="live mic / VAD / wake-word meter (no API key)")
     parser.add_argument("--ptt", action="store_true", help="push-to-talk instead of wake word")
     parser.add_argument("--text", action="store_true", help="type questions instead of speaking them")
@@ -192,7 +195,7 @@ def main() -> None:
     parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--port", type=int, default=WEB_PORT)
     parser.add_argument(
         "--install-models",
         type=Path,
@@ -211,6 +214,10 @@ def main() -> None:
     root = args.config.resolve().parent
     try:
         cfg = load_config(args.config)
+        if args.check:
+            from .check import check_all
+
+            raise SystemExit(check_all(cfg, root))
         if args.mic_test:
             from .mic_test import mic_test
 

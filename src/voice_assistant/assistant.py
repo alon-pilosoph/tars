@@ -71,7 +71,7 @@ NOBODY = Identified(None, None, None)
 class Said:
     text: str
     sent: list[SentItem]
-    answered_by: str | None = None  # which model wrote it (Brain.answered_by)
+    answered_by: str | None = None
 
 
 @dataclass
@@ -143,7 +143,7 @@ class Assistant:
         self._clock: Clock | None = None
         self.use_reminders(reminders)
         self._just_said: list[int] = []  # reminders just said, waiting for an acknowledgement
-        self._last_who: str | None = None  # whose request was answered last, by voice
+        self._last_who: str | None = None
 
     def use_reminders(self, tools: ReminderTools | None) -> None:
         self.reminder_tools = tools

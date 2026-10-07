@@ -16,6 +16,9 @@ class ConfigError(SystemExit):
 OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
 
 
+WEB_PORT = 8080  # the web UI's, unless --port says otherwise
+
+
 @dataclass
 class AudioConfig:
     input_device: str = ""
