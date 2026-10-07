@@ -28,3 +28,11 @@ export const LINK = {
   conv: idParam(PARAMS.get("conv")),
   item: idParam(PARAMS.get("item")),
 };
+
+export function linkTo(q: Record<string, string | number> = {}) {
+  const p = new URLSearchParams();
+  if (DEMO) p.set("demo", PARAMS.get("demo") || "");
+  if (LINK.theme) p.set("theme", LINK.theme);
+  for (const [k, v] of Object.entries(q)) p.set(k, String(v));
+  return "?" + p.toString().replace(/^demo=(&|$)/, "demo$1");
+}

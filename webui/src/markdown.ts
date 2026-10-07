@@ -15,7 +15,7 @@ export function md(src: string): string {
     list = null;
     return c;
   };
-  const inl = (t: string) => t.replace(BOLD, "<b>$1</b>").replace(ITALIC, "<i>$1</i>");
+  const inl = (t: string) => t.replace(BOLD, "<strong>$1</strong>").replace(ITALIC, "<em>$1</em>");
   const item = (kind: "ul" | "ol", text: string) => {
     if (list !== kind) {
       out += close() + `<${kind}>`;

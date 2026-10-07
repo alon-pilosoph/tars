@@ -1,28 +1,29 @@
 import { closeToast, useStore } from "../store";
+import { Icon } from "./Icon";
 
 export function Toasts() {
   const { toast } = useStore();
   return (
-    <div className="toasts" role="status" aria-live="polite">
+    <div role="status" aria-live="polite">
       {toast && (
         <div className="toast" key={toast.id}>
-          <span>{toast.msg}</span>
-          {toast.undo && <Undo undo={toast.undo} />}
+          <span className="msg">{toast.msg}</span>
+          {toast.undo && (
+            <button
+              onClick={() => {
+                const undo = toast.undo!;
+                closeToast();
+                undo();
+              }}
+            >
+              Undo
+            </button>
+          )}
+          <button className="icon-btn" aria-label="Close" onClick={closeToast}>
+            <Icon name="close" size="s" />
+          </button>
         </div>
       )}
     </div>
-  );
-}
-
-function Undo({ undo }: { undo: () => void }) {
-  return (
-    <button
-      onClick={() => {
-        closeToast();
-        undo();
-      }}
-    >
-      Undo
-    </button>
   );
 }

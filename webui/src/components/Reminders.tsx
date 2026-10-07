@@ -1,31 +1,26 @@
-import { type FormEvent, type ReactNode, useState } from "react";
-import { REMINDER_KIND_LABEL, personName, plural, reminderMeta, reminderStatus } from "../format";
-import {
-  ackReminder,
-  cancelReminder,
-  goConv,
-  isActiveReminder,
-  setReminder,
-  snoozeReminder,
-  toast,
-  useStore,
-} from "../store";
+import { type FormEvent, useState } from "react";
+import { DEMO_LINK } from "../demoParams";
+import { personName, reminderEnded, reminderFor, reminderNow, reminderWhen, stamp } from "../format";
+import { DEMO, linkTo } from "../params";
+import { ackReminder, cancelReminder, convById, goConv, setReminder, snoozeReminder, useStore } from "../store";
 import type { Reminder, ReminderKind, RemindersInfo } from "../types";
-import { Empty, Group } from "./Blocks";
+import { Empty, PageHead, SecHead } from "./Blocks";
+import { Icon } from "./Icon";
 
 const SNOOZE_MIN = 10;
+const SUB = "Timers, reminders and messages TARS says aloud, and says again until someone says “got it”.";
 
 export function Reminders() {
   const s = useStore();
   const info = s.reminders;
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(() => DEMO && !!DEMO_LINK.form);
   if (!info?.enabled)
     return (
       <>
-        <Head />
+        <PageHead title="Reminders" sub={SUB} />
         <Empty
-          title="Reminders are off."
-          text="Turn them on with enabled = true under [reminders] in config.toml, then restart TARS and this page."
+          title="Reminders are off"
+          text="TARS isn't saying reminders aloud, and won't take new ones. Turn reminders on in TARS's settings on the Pi, then restart TARS and press Refresh."
         />
       </>
     );
@@ -35,258 +30,423 @@ export function Reminders() {
       ...s.clusters.filter(c => c.kind === "person" && c.name).map(c => personName(c.name!)),
     ]),
   ].sort();
-  const active = info.reminders.filter(isActiveReminder);
-  const earlier = info.reminders.filter(r => !isActiveReminder(r));
+  const rs = info.reminders;
+  const now = rs.filter(r => r.status === "waiting");
+  const next = rs.filter(r => r.status === "scheduled");
+  const past = rs.filter(r => r.status !== "waiting" && r.status !== "scheduled");
   return (
     <>
-      <Head>
-        {adding ? null : (
-          <button className="btn primary" onClick={() => setAdding(true)}>
+      <PageHead title="Reminders" sub={SUB}>
+        {!adding && (
+          <button className="btn primary big" onClick={() => setAdding(true)}>
             New reminder
           </button>
         )}
-      </Head>
+      </PageHead>
       {adding && <ReminderForm info={info} people={people} onDone={() => setAdding(false)} />}
-      <Group title="Active" count={active.length}>
-        {active.length ? (
-          <ul className="rems">
-            {active.map(r => (
-              <ReminderRow key={r.id} r={r} />
+      {!rs.length && <Empty title="No reminders" text="Say “hey TARS, remind me…”, or set one here." />}
+      {now.length > 0 && (
+        <>
+          <SecHead title="Needs someone now" />
+          <div className="needs-list">
+            {now.map(r => (
+              <article key={r.id} className="needs" data-id={r.id}>
+                <div className="status">
+                  <Icon name={r.kind === "timer" ? "timer" : "message"} size="s" />
+                  {reminderNow(r)}
+                </div>
+                <p className="says">{`“${r.says}”`}</p>
+                <Meta r={r} />
+                <div className="btns rem-actions">
+                  {r.kind === "timer" ? (
+                    <button className="btn primary big" onClick={() => ackReminder(r)}>
+                      Turn off
+                    </button>
+                  ) : (
+                    <>
+                      <button className="btn primary big" onClick={() => ackReminder(r)}>
+                        Got it
+                      </button>
+                      <button className="btn" onClick={() => snoozeReminder(r, SNOOZE_MIN)}>
+                        {`Again in ${SNOOZE_MIN} min`}
+                      </button>
+                      <button className="btn ghost" onClick={() => cancelReminder(r)}>
+                        Stop
+                      </button>
+                    </>
+                  )}
+                </div>
+              </article>
             ))}
-          </ul>
-        ) : (
-          <Empty
-            title="Nothing set."
-            text="Say “hey TARS, set a pasta timer for twelve minutes”, or “tell Stacey dinner's ready when she's back”."
-          />
-        )}
-      </Group>
-      {earlier.length > 0 && (
-        <Group title="Earlier" count={earlier.length}>
-          <ul className="rems">
-            {earlier.map(r => (
-              <ReminderRow key={r.id} r={r} />
+          </div>
+        </>
+      )}
+      {next.length > 0 && (
+        <>
+          <SecHead title="Coming up" />
+          <div className="rem-rows">
+            {next.map(r => (
+              <article key={r.id} className="rem" data-id={r.id}>
+                <div className="rem-when">{reminderWhen(r)}</div>
+                <div>
+                  <p className="says">{`“${r.says}”`}</p>
+                  <Meta r={r} />
+                </div>
+                <button className="btn ghost" onClick={() => cancelReminder(r)}>
+                  Stop
+                </button>
+              </article>
             ))}
-          </ul>
-        </Group>
+          </div>
+        </>
+      )}
+      {past.length > 0 && (
+        <>
+          <SecHead title="Earlier" />
+          <div className="rem-rows">
+            {past.map(r => (
+              <article key={r.id} className="rem past" data-id={r.id}>
+                <div className="rem-when">{r.due != null ? stamp(r.due) : ""}</div>
+                <div>
+                  <p className="says">{`“${r.says}”`}</p>
+                  <div className={`rem-state${r.status === "missed" ? " missed" : ""}`}>{reminderEnded(r)}</div>
+                  <Meta r={r} />
+                </div>
+                {r.status === "missed" && r.kind !== "timer" ? (
+                  <button className="btn ghost" onClick={() => snoozeReminder(r, SNOOZE_MIN)}>
+                    {`Again in ${SNOOZE_MIN} min`}
+                  </button>
+                ) : (
+                  <span />
+                )}
+              </article>
+            ))}
+          </div>
+        </>
       )}
     </>
   );
 }
 
-function Head({ children }: { children?: ReactNode }) {
+function Meta({ r }: { r: Reminder }) {
+  const s = useStore();
+  const conv = r.set_via === "voice" && r.conversation_id != null && convById(s, r.conversation_id);
   return (
-    <div className="head">
-      <div>
-        <h1>Reminders</h1>
-        <p>
-          Timers, reminders and messages TARS says aloud, and says again until someone says “got it”. Say “hey TARS,
-          remind me…”, or set one here.
-        </p>
-      </div>
-      {children}
+    <div className="r-meta">
+      {conv
+        ? `${reminderFor(r)}, `
+        : `${reminderFor(r)}, ${r.set_via === "voice" ? "set by voice" : "set on this page"}.`}
+      {conv && (
+        <>
+          <a
+            href={linkTo({ conv: conv.id })}
+            onClick={e => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+              e.preventDefault();
+              goConv(conv.id);
+            }}
+          >
+            set by voice
+          </a>
+          .
+        </>
+      )}
     </div>
   );
 }
 
-function ReminderRow({ r }: { r: Reminder }) {
-  return (
-    <li className={`rem ${r.status}`} data-id={r.id}>
-      <div className="rem-kind">{REMINDER_KIND_LABEL[r.kind]}</div>
-      <div className="rem-body">
-        <p className="rem-says">“{r.says}”</p>
-        <p className="rem-meta">{reminderMeta(r)}</p>
-        <p className="rem-status">{reminderStatus(r)}</p>
-        <div className="rem-actions">
-          {r.status === "waiting" && (
-            <button className="btn sm primary" onClick={() => ackReminder(r)}>
-              {r.kind === "timer" ? "Turn off" : "Got it"}
-            </button>
-          )}
-          {(r.status === "waiting" || r.status === "missed") && r.kind !== "timer" && (
-            <button className="btn sm" onClick={() => snoozeReminder(r, SNOOZE_MIN)}>
-              Again in {SNOOZE_MIN} min
-            </button>
-          )}
-          {isActiveReminder(r) && !(r.kind === "timer" && r.status === "waiting") && (
-            <button className="btn sm" onClick={() => cancelReminder(r)}>
-              Stop…
-            </button>
-          )}
-          {r.conversation_id != null && (
-            <button className="text-action" onClick={() => goConv(r.conversation_id)}>
-              Show the conversation
-            </button>
-          )}
-        </div>
-      </div>
-    </li>
-  );
+type When = "minutes" | "time" | "back";
+
+interface Form {
+  kind: ReminderKind;
+  text: string;
+  forName: string;
+  forOther: string;
+  fromName: string;
+  when: When;
+  minutes: string;
+  at: string;
+  needsAck: boolean;
+  error: string | null;
 }
 
-type When = "in" | "at" | "back";
+const OTHER = "__other";
 
-/** An hour from now, on the minute, as a datetime-local input wants it. */
-function inAnHour() {
-  const d = new Date(Date.now() + 3600_000);
-  d.setSeconds(0, 0);
+const local = (d: Date) => {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+function tomorrowAt(hour: number) {
+  const d = new Date(Date.now() + 864e5);
+  d.setHours(hour, 0, 0, 0);
+  return local(d);
 }
 
+function freshForm(): Form {
+  const base: Form = {
+    kind: "reminder",
+    text: "",
+    forName: "",
+    forOther: "",
+    fromName: "",
+    when: "minutes",
+    minutes: "10",
+    at: "",
+    needsAck: true,
+    error: null,
+  };
+  if (!DEMO || !DEMO_LINK.form) return base;
+  const presets: Record<NonNullable<typeof DEMO_LINK.form>, Partial<Form>> = {
+    minutes: { kind: "timer", text: "pasta", when: "minutes", minutes: "12" },
+    time: {
+      kind: "reminder",
+      text: "water the plants on the balcony",
+      forName: "Alon",
+      when: "time",
+      at: tomorrowAt(18),
+    },
+    back: { kind: "message", text: "the parcel is at the Cohens'", forName: "Stacey", fromName: "Alon", when: "back" },
+    error: {
+      kind: "message",
+      text: "dinner's at eight",
+      fromName: "Stacey",
+      minutes: "30",
+      error: "a message needs someone it's for",
+    },
+  };
+  return { ...base, ...presets[DEMO_LINK.form] };
+}
+
+const names = (list: string[]) =>
+  list.length < 2 ? list.join("") : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+
 function ReminderForm({ info, people, onDone }: { info: RemindersInfo; people: string[]; onDone: () => void }) {
-  const [kind, setKind] = useState<ReminderKind>("reminder");
-  const [text, setText] = useState("");
-  const [forName, setFor] = useState("");
-  const [fromName, setFrom] = useState("");
-  const [whenMode, setWhen] = useState<When>("in");
-  const [minutes, setMinutes] = useState("10");
-  const [at, setAt] = useState(inAnHour);
-  const [needsAck, setNeedsAck] = useState(true);
-  const [repeat, setRepeat] = useState(String(info.defaults?.repeat_every_min ?? 5));
-  const [tries, setTries] = useState(String(info.defaults?.max_tries ?? 4));
-  const [saving, setSaving] = useState(false);
-  const known = info.voices.some(v => v.toLowerCase() === forName.trim().toLowerCase());
-  const back = whenMode === "back" && known;
+  const [f, setF] = useState(freshForm);
+  const [busy, setBusy] = useState(false);
+  const put = (patch: Partial<Form>) => setF(x => ({ ...x, ...patch, error: null }));
+  const timer = f.kind === "timer";
+  const forName = (f.forName === OTHER ? f.forOther.trim() : f.forName) || null;
+  const known = !!forName && info.voices.includes(forName.toLowerCase());
+  const voices = info.voices.map(personName);
+  const backProblem =
+    f.when !== "back"
+      ? null
+      : !forName
+        ? "Pick who it's for, so TARS knows whose voice to wait for."
+        : !known
+          ? `TARS doesn't know ${personName(forName)}'s voice yet, so it can't wait for them. Pick a time instead.`
+          : null;
+  const problem =
+    backProblem ||
+    (!timer && !f.text.trim()
+      ? "Say what TARS should say."
+      : f.when === "minutes" && !(Number(f.minutes) > 0)
+        ? "How many minutes from now?"
+        : f.when === "time" && !f.at
+          ? "Pick a date and time."
+          : null);
+
+  function says() {
+    const who = forName ? `${personName(forName)}, ` : "";
+    const text = f.text.trim();
+    if (timer) {
+      const label = text ? `${text} timer` : "timer";
+      return who ? `${who}your ${label} is done.` : `Your ${label} is done.`;
+    }
+    const sender = f.fromName && f.fromName.toLowerCase() !== (forName || "").toLowerCase() ? f.fromName : null;
+    const what = f.kind === "message" ? "a message" : "a reminder";
+    const head = (who ? who + what : what[0].toUpperCase() + what.slice(1)) + (sender ? ` from ${sender}` : "");
+    return `${head}: ${text ? (/[.!?]$/.test(text) ? text : `${text}.`) : "…"}`;
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (whenMode === "back" && !known) {
-      // The name changed after "when they're next heard" was picked: never fall back to a time nobody chose.
-      const who = forName.trim() ? personName(forName) : "them";
-      toast(`TARS doesn't know ${who}'s voice yet, so it can't wait until they're back. Pick a time.`);
-      return;
-    }
-    setSaving(true);
-    const ok = await setReminder({
-      kind,
-      text: text.trim() || null,
-      for_name: forName.trim() || null,
-      from_name: kind === "timer" ? null : fromName.trim() || null,
-      due: back ? null : whenMode === "at" ? new Date(at).getTime() / 1000 : Date.now() / 1000 + Number(minutes) * 60,
-      when_back: back,
-      needs_ack: kind === "timer" || needsAck,
-      repeat_every_min: needsAck && kind !== "timer" ? Number(repeat) : null,
-      max_tries: needsAck && kind !== "timer" ? Number(tries) : null,
+    if (problem) return;
+    setBusy(true);
+    const error = await setReminder({
+      kind: f.kind,
+      text: f.text.trim() || null,
+      for_name: forName,
+      from_name: timer ? null : f.fromName || null,
+      due:
+        f.when === "back"
+          ? null
+          : f.when === "time"
+            ? new Date(f.at).getTime() / 1000
+            : Date.now() / 1000 + Number(f.minutes) * 60,
+      when_back: f.when === "back",
+      needs_ack: timer || f.needsAck,
+      repeat_every_min: null,
+      max_tries: null,
     });
-    setSaving(false);
-    if (ok) onDone();
+    setBusy(false);
+    if (error) setF(x => ({ ...x, error }));
+    else onDone();
   }
 
+  const pill = <K extends "kind" | "when">(field: K, value: Form[K], label: string) => (
+    <button
+      type="button"
+      className="btn"
+      aria-pressed={f[field] === value}
+      onClick={() =>
+        put(
+          field === "kind" && value === "timer" && f.when === "back"
+            ? { kind: "timer", when: "minutes" }
+            : { [field]: value },
+        )
+      }
+    >
+      {label}
+    </button>
+  );
+
   return (
-    <form className="panel rem-form" onSubmit={submit} aria-label="New reminder">
-      <h2>New</h2>
-      <div className="seg" role="group" aria-label="Kind">
-        {(["reminder", "message", "timer"] as const).map(k => (
-          <button type="button" key={k} aria-pressed={kind === k} onClick={() => setKind(k)}>
-            {REMINDER_KIND_LABEL[k]}
-          </button>
-        ))}
+    <form className="form" onSubmit={submit} noValidate aria-label="New reminder">
+      <div className="form-head">
+        <h2>New reminder</h2>
+        <button type="button" className="icon-btn" aria-label="Close" onClick={onDone}>
+          <Icon name="close" />
+        </button>
+      </div>
+      <div className="field">
+        <span className="lbl">Kind</span>
+        <div className="pills">
+          {pill("kind", "timer", "Timer")}
+          {pill("kind", "reminder", "Reminder")}
+          {pill("kind", "message", "Message")}
+        </div>
       </div>
       <label className="field">
-        <span>{kind === "timer" ? "Label (optional)" : "What TARS says"}</span>
-        <input
-          value={text}
-          onChange={e => setText(e.target.value)}
-          placeholder={kind === "timer" ? "pasta" : kind === "message" ? "dinner's at eight" : "call the bank"}
-          required={kind !== "timer"}
-          maxLength={300}
-        />
+        <span className="lbl">{timer ? "Label, if you like" : "What should TARS say?"}</span>
+        {timer ? (
+          <input
+            type="text"
+            value={f.text}
+            placeholder="eggs"
+            maxLength={300}
+            onChange={e => put({ text: e.target.value })}
+          />
+        ) : (
+          <textarea
+            rows={2}
+            value={f.text}
+            maxLength={300}
+            placeholder={f.kind === "message" ? "the plumber is coming at four" : "call the bank about the mortgage"}
+            onChange={e => put({ text: e.target.value })}
+          />
+        )}
       </label>
       <div className="field-row">
         <label className="field">
-          <span>For{kind === "message" ? "" : " (optional)"}</span>
-          <input
-            value={forName}
-            onChange={e => setFor(e.target.value)}
-            list="rem-people"
-            placeholder="whoever's there"
-            required={kind === "message"}
-            maxLength={60}
-          />
+          <span className="lbl">For</span>
+          <select value={f.forName} onChange={e => put({ forName: e.target.value })}>
+            <option value="">Whoever's there</option>
+            {people.map(p => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+            <option value={OTHER}>Someone else…</option>
+          </select>
+          {f.forName === OTHER && (
+            <input
+              type="text"
+              value={f.forOther}
+              placeholder="Their name"
+              maxLength={60}
+              aria-label="Their name"
+              style={{ marginTop: 8 }}
+              onChange={e => put({ forOther: e.target.value })}
+            />
+          )}
         </label>
-        {kind !== "timer" && (
+        {!timer && (
           <label className="field">
-            <span>From (optional)</span>
-            <input value={fromName} onChange={e => setFrom(e.target.value)} list="rem-people" maxLength={60} />
+            <span className="lbl">From, if you like</span>
+            <select value={f.fromName} onChange={e => put({ fromName: e.target.value })}>
+              <option value="">Nobody</option>
+              {people.map(p => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
           </label>
         )}
-        <datalist id="rem-people">
-          {people.map(p => (
-            <option key={p} value={p} />
-          ))}
-        </datalist>
       </div>
-      <fieldset className="field when">
-        <legend>When</legend>
-        <label className="choice">
-          <input type="radio" checked={whenMode === "in"} onChange={() => setWhen("in")} />
-          In
-          <input
-            type="number"
-            min={1}
-            step="any"
-            value={minutes}
-            onChange={e => {
-              setMinutes(e.target.value);
-              setWhen("in");
-            }}
-            aria-label="Minutes from now"
-          />
-          minutes
-        </label>
-        <label className="choice">
-          <input type="radio" checked={whenMode === "at"} onChange={() => setWhen("at")} />
-          At
+      <div className="field">
+        <span className="lbl">When</span>
+        <div className="pills">
+          {pill("when", "minutes", "In a few minutes")}
+          {pill("when", "time", "At a time")}
+          {!timer &&
+            pill("when", "back", forName ? `When ${personName(forName)} is next heard` : "When they're next heard")}
+        </div>
+        {f.when === "minutes" && (
+          <div className="inline">
+            <input
+              type="number"
+              min={1}
+              step="any"
+              value={f.minutes}
+              aria-label="Minutes from now"
+              onChange={e => put({ minutes: e.target.value })}
+            />
+            <span className="muted">minutes from now</span>
+          </div>
+        )}
+        {f.when === "time" && (
           <input
             type="datetime-local"
-            value={at}
-            onChange={e => {
-              setAt(e.target.value);
-              setWhen("at");
-            }}
+            value={f.at}
             aria-label="Date and time"
+            onChange={e => put({ at: e.target.value })}
           />
-        </label>
-        <label className={`choice${known ? "" : " off"}`}>
-          <input type="radio" checked={back} disabled={!known} onChange={() => setWhen("back")} />
-          <span>
-            {known
-              ? `When ${personName(forName)} is next heard`
-              : "When they're next heard (needs someone TARS knows by voice)"}
-          </span>
-        </label>
-      </fieldset>
-      {kind === "timer" ? (
-        <p className="help">
-          It rings until someone says “stop” or taps Turn off, for up to{" "}
-          {plural(info.defaults?.timer_ring_min ?? 15, "minute")}.
-        </p>
+        )}
+        {f.when === "back" && (
+          <div className={`hint${backProblem ? " warn" : ""}`}>
+            {backProblem ??
+              `TARS says it the next time it hears ${personName(forName!)}'s voice. It only knows ${names(voices)} by voice.`}
+          </div>
+        )}
+      </div>
+      {timer ? (
+        <div className="hint">
+          {`Rings for up to ${info.defaults?.timer_ring_min ?? 15} minutes, until someone turns it off.`}
+        </div>
       ) : (
-        <label className="choice">
-          <input type="checkbox" checked={needsAck} onChange={e => setNeedsAck(e.target.checked)} />
-          Say it again until someone says “got it”
-        </label>
+        <button
+          type="button"
+          className="tick"
+          role="checkbox"
+          aria-checked={f.needsAck}
+          onClick={() => put({ needsAck: !f.needsAck })}
+        >
+          <span className="box">{f.needsAck ? <Icon name="check" size="s" /> : null}</span>
+          <span>
+            Say it again until someone says “got it”
+            <span className="hint" style={{ display: "block" }}>
+              {`Every ${info.defaults?.repeat_every_min ?? 5} minutes, up to ${info.defaults?.max_tries ?? 4} times.`}
+            </span>
+          </span>
+        </button>
       )}
-      {needsAck && kind !== "timer" && (
-        <div className="field-row repeat">
-          <label className="choice">
-            Every
-            <input type="number" min={0.5} step="any" value={repeat} onChange={e => setRepeat(e.target.value)} />
-            min,
-          </label>
-          <label className="choice">
-            up to
-            <input type="number" min={1} max={30} value={tries} onChange={e => setTries(e.target.value)} />
-            {plural(Number(tries) || 0, "time").replace(/^\S+ /, "")}
-          </label>
+      <div className="preview-line">
+        {"TARS will say "}
+        <q>{`“${says()}”`}</q>
+      </div>
+      {f.error && (
+        <div className="form-error" role="alert">
+          <Icon name="alert" size="s" />
+          <span>{`Couldn't set it: ${f.error.replace(/\.$/, "")}.`}</span>
         </div>
       )}
-      <div className="row">
-        <button className="btn primary" type="submit" disabled={saving}>
-          Set it
+      <div className="btns">
+        <button type="submit" className="btn primary big" disabled={!!problem || busy}>
+          {busy ? "Setting…" : "Set it"}
         </button>
-        <button className="btn" type="button" onClick={onDone}>
+        <button type="button" className="btn ghost big" onClick={onDone}>
           Cancel
         </button>
       </div>

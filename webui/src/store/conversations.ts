@@ -19,7 +19,16 @@ const patchWakeLabel = (id: number, label: Label | null) =>
     convs: s.convs.map(c => (c.wake?.event_id === id ? { ...c, wake: { ...c.wake, label } } : c)),
   }));
 
-export const expand = (id: number) => set(s => ({ open: new Set([...s.open, id]) }));
+export function toggleOpen(id: number) {
+  set(s => {
+    const open = new Set(s.open);
+    if (!open.delete(id)) open.add(id);
+    const editing = s.edit != null && s.convs.find(c => c.id === id)?.turns.some(t => t.id === s.edit);
+    return { open, edit: editing && !open.has(id) ? null : s.edit };
+  });
+}
+
+export const showMoreTurns = (id: number) => set(s => ({ moreTurns: new Set([...s.moreTurns, id]) }));
 
 export function goConv(id: number | null) {
   if (id == null) return;
@@ -28,15 +37,11 @@ export function goConv(id: number | null) {
 }
 
 export async function delConv(id: number) {
-  const s = get();
-  const c = s.convs.find(x => x.id === id);
-  const who = c && speakerName(s, c.speaker);
-  const which = c ? `**${stamp(c.started)}${who ? `, ${who}` : ""}**. ` : "";
   await confirmDelete(
     "Delete this conversation?",
-    `${which}Its audio and transcript are deleted for everyone at home. This can't be undone.`,
+    "Its recordings go too, and so does what TARS sent in it. This can't be undone.",
     `/api/conversations/${id}`,
-    "Conversation deleted.",
+    "Deleted the conversation.",
   );
 }
 
@@ -54,7 +59,16 @@ export async function rate(id: number, value: "good" | "bad") {
   );
 }
 
-export const startFix = (id: number) => set({ edit: id });
+let focusFix = false;
+export function startFix(id: number) {
+  focusFix = true;
+  set({ edit: id });
+}
+export function takeFixFocus() {
+  const was = focusFix;
+  focusFix = false;
+  return was;
+}
 export const cancelFix = () => set({ edit: null });
 
 export async function saveFix(id: number, value: string) {

@@ -13,7 +13,8 @@ export function findTurn(s: State, id: number): [Turn, Conversation] | [] {
 export const turnItems = (s: State, t: Turn) =>
   (t.items || []).map(id => itemById(s, id)).filter((i): i is Item => !!i);
 
-export const voiceName = (c: Pick<Cluster, "id" | "name">) => c.name || `Voice ${c.id}`;
+export const voiceName = (c: Pick<Cluster, "id" | "name"> & { kind?: Cluster["kind"] }) =>
+  c.name || (c.kind === "not_person" ? "Not a person" : `Voice ${c.id}`);
 
 /** Scheduled or waiting for a got it: what TARS will still say. */
 export const isActiveReminder = (r: Reminder) => r.status === "scheduled" || r.status === "waiting";
@@ -27,7 +28,7 @@ export const speakerName = (s: State, sp: Speaker | null | undefined) =>
   sp ? sp.name || clusterName(s, sp.cluster_id) || "Unknown voice" : null;
 
 export const people = (s: State) =>
-  s.clusters.filter((c): c is Cluster & { name: string } => !!c.name && c.kind !== "not_person");
+  s.clusters.filter((c): c is Cluster & { name: string } => !!c.name && c.kind === "person");
 export const unnamedVoices = (s: State) => s.clusters.filter(c => !c.name && c.kind !== "not_person");
 export const notPeople = (s: State) => s.clusters.filter(c => c.kind === "not_person");
 
@@ -55,5 +56,5 @@ export function forLabel(s: State, i: Item) {
   return `For ${i.for?.name || clusterName(s, i.for?.cluster_id) || "whoever asked"}`;
 }
 
-const menuKey = (t: MenuTarget) => [t.kind, "id" in t ? t.id : "", "place" in t ? t.place : ""].join(":");
+const menuKey = (t: MenuTarget) => [t.kind, "id" in t ? t.id : ""].join(":");
 export const menuOpen = (s: State, target: MenuTarget) => !!s.menu && menuKey(s.menu) === menuKey(target);

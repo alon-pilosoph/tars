@@ -1,11 +1,12 @@
 import { post } from "../api";
-import { ITEM_KIND_LABEL, itemName } from "../format";
+import { stopAudio } from "../audio";
+import { itemName } from "../format";
 import { plain } from "../markdown";
 import type { Item } from "../types";
 import { confirmDelete, run } from "./actions";
-import { get, set } from "./core";
+import { get, set, setNow } from "./core";
 import { itemById } from "./selectors";
-import { copyText, openItem } from "./ui";
+import { copyText, openItem, scrollToEl } from "./ui";
 
 const patchItem = (id: number, patch: (i: Item) => Partial<Item>) =>
   set(s => ({ items: s.items.map(i => (i.id === id ? { ...i, ...patch(i) } : i)) }));
@@ -52,7 +53,7 @@ function asText(i: Item) {
     case "list":
       return `${i.title}\n${(i.entries || []).map(e => `${e.done ? "[x]" : "[ ]"} ${e.text}`).join("\n")}`;
     case "file":
-      return i.name || "";
+      return i.url ? new URL(i.url, location.href).href : i.name || "";
   }
 }
 
@@ -75,15 +76,28 @@ export async function tick(id: number, index: number, done: boolean) {
   await run(() => post(`/api/items/${id}/entries/${index}`, { done }), { revert: () => show(!done, item.seen) });
 }
 
-export const showWholeList = (id: number) => set(s => ({ lists: new Set([...s.lists, id]) }));
+export function toggleWholeList(id: number) {
+  set(s => {
+    const lists = new Set(s.lists);
+    if (!lists.delete(id)) lists.add(id);
+    return { lists };
+  });
+}
+
+export function goItem(id: number) {
+  stopAudio();
+  setNow(s => ({ tab: "sent", person: "all", lists: new Set([...s.lists, id]), menu: null }));
+  scrollToEl(`.item[data-id="${id}"]`);
+  markSeen(itemById(get(), id));
+}
 
 export async function delItem(id: number) {
   const i = itemById(get(), id);
   if (!i) return;
   await confirmDelete(
     `Delete “${itemName(i)}”?`,
-    "It disappears from Sent and from its conversation, for everyone at home. This can't be undone.",
+    "It goes from Sent for everyone at home. This can't be undone.",
     `/api/items/${id}`,
-    `${ITEM_KIND_LABEL[i.kind]} deleted.`,
+    "Deleted.",
   );
 }

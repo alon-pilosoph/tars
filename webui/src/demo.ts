@@ -689,7 +689,7 @@ function build(): DemoData {
     convs,
     items: empty ? [] : items,
     reminders: {
-      enabled: true,
+      enabled: !DEMO_LINK.remindersOff,
       reminders,
       voices: ["alon", "stacey"],
       defaults: { repeat_every_min: 5, max_tries: 4, timer_ring_min: 15 },

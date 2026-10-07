@@ -7,7 +7,6 @@ import {
   useRef,
 } from "react";
 import { createPortal } from "react-dom";
-import { COPY_LABEL, ITEM_KIND_LABEL } from "../format";
 import {
   type MenuState,
   type State,
@@ -17,27 +16,22 @@ import {
   clusterName,
   convById,
   copyItem,
-  copyTranscript,
-  delConv,
   delEvent,
   delItem,
-  download,
   eventById,
   goConv,
   itemById,
   markSeen,
-  merge,
   moveTo,
   newVoice,
-  openLink,
+  openMerge,
   rename,
   setTab,
-  showItem,
   toggleNotPerson,
-  toggleWakeNotForTars,
   useStore,
 } from "../store";
-import type { Cluster, Conversation, Item, TarsEvent } from "../types";
+import type { Cluster, Item, TarsEvent } from "../types";
+import { Icon, type IconName } from "./Icon";
 
 export function Menu() {
   const s = useStore();
@@ -53,14 +47,18 @@ function menuBody(s: State, m: MenuState) {
       return voiceMenu(s, clusterById(s, m.id));
     case "item":
       return itemMenu(s, itemById(s, m.id));
-    case "conversation":
-      return convMenu(s, convById(s, m.id));
+    case "who": {
+      const wake = convById(s, m.id)?.wake;
+      return wake ? voicePicker(s, wake.event_id, wake.cluster_id) : null;
+    }
     case "more":
       return moreMenu(s);
     case "event":
-      return eventMenu(s, eventById(s, m.id), false);
-    case "eventVoice":
-      return eventMenu(s, eventById(s, m.id), true);
+      return eventMenu(eventById(s, m.id));
+    case "eventVoice": {
+      const e = eventById(s, m.id);
+      return e ? voicePicker(s, e.id, e.cluster_id) : null;
+    }
   }
 }
 
@@ -68,19 +66,13 @@ const buttons = (el: HTMLElement) => [...el.querySelectorAll<HTMLButtonElement>(
 
 function Popup({ m, children }: { m: MenuState; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const root = document.getElementById("root") ?? document.body;
+  const host = m.anchor.closest<HTMLElement>(".anchor") ?? root;
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (!m.sheet) {
-      const r = m.anchor.getBoundingClientRect();
-      const height = el.offsetHeight;
-      const width = el.offsetWidth;
-      const below = r.bottom + height + 8 < innerHeight;
-      el.style.top = (below ? r.bottom + 4 : Math.max(8, r.top - height - 4)) + scrollY + "px";
-      el.style.left = Math.max(8, Math.min(r.right - width, innerWidth - width - 8)) + scrollX + "px";
-    }
-    buttons(el)[0]?.focus({ preventScroll: true });
+    if (m.anchor.matches(":focus-visible")) buttons(el)[0]?.focus({ preventScroll: true });
   }, [m]);
 
   useEffect(() => {
@@ -118,31 +110,33 @@ function Popup({ m, children }: { m: MenuState; children: ReactNode }) {
     if (e.relatedTarget && !ref.current?.contains(e.relatedTarget as Node)) closeMenu();
   };
 
-  return createPortal(
+  return (
     <>
-      {m.sheet && <div className="scrim" onClick={() => closeMenu()} />}
-      <div ref={ref} className={`menu${m.sheet ? " sheet" : ""}`} role="menu" onKeyDown={keys} onBlur={blur}>
-        {children}
-      </div>
-    </>,
-    document.body,
+      {createPortal(<div className="scrim clear" onClick={() => closeMenu()} />, root)}
+      {createPortal(
+        <div ref={ref} className={host === root ? "menu more-menu" : "menu"} role="menu" onKeyDown={keys} onBlur={blur}>
+          <div className="grabber" />
+          {children}
+        </div>,
+        host,
+      )}
+    </>
   );
 }
 
 function MenuItem({
   act,
-  className,
+  icon,
   checked,
   children,
 }: {
   act: () => void;
-  className?: string;
+  icon: IconName;
   checked?: boolean;
   children: ReactNode;
 }) {
   return (
     <button
-      className={className}
       role={checked === undefined ? "menuitem" : "menuitemradio"}
       aria-checked={checked}
       onClick={() => {
@@ -150,58 +144,48 @@ function MenuItem({
         act();
       }}
     >
+      <Icon name={icon} />
       {children}
     </button>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div role="group" aria-label={title}>
-      <h4 aria-hidden="true">{title}</h4>
-      {children}
-    </div>
-  );
-}
-
-function voices(s: State, title: string, current: number | null, move: (clusterId: number) => void, fresh: () => void) {
-  return (
-    <Section title={title}>
-      {s.clusters.map(c => (
-        <MenuItem key={c.id} act={() => move(c.id)} checked={current === c.id}>
-          {clusterName(s, c.id)}
-          <span className="menu-count">{c.size}</span>
-        </MenuItem>
-      ))}
-      <MenuItem act={fresh}>New voice…</MenuItem>
-    </Section>
-  );
-}
-
-function eventMenu(s: State, e: TarsEvent | undefined, voiceOnly: boolean) {
-  if (!e) return null;
-  const label = e.label;
-  const voice = e.has_request_audio
-    ? voices(
-        s,
-        "This request's voice",
-        e.cluster_id,
-        id => moveTo(e.id, id),
-        () => newVoice(e.id),
-      )
-    : null;
-  if (voiceOnly) return voice;
+function voicePicker(s: State, eventId: number, current: number | null) {
   return (
     <>
-      {voice && (
-        <>
-          {voice}
-          <hr />
-        </>
+      <div className="menu-title">Whose voice is it?</div>
+      {s.clusters
+        .filter(c => c.kind !== "not_person" || c.id === current)
+        .map(c => (
+          <MenuItem
+            key={c.id}
+            icon={c.id === current ? "check" : "person"}
+            checked={c.id === current}
+            act={() => moveTo(eventId, c.id)}
+          >
+            {clusterName(s, c.id)}
+          </MenuItem>
+        ))}
+      <hr />
+      <MenuItem icon="edit" act={() => newVoice(eventId)}>
+        Someone new…
+      </MenuItem>
+    </>
+  );
+}
+
+function eventMenu(e: TarsEvent | undefined) {
+  if (!e) return null;
+  const label = e.label;
+  return (
+    <>
+      {label && (
+        <MenuItem icon="close" act={() => answerWake(e.id, label)}>
+          Clear my answer
+        </MenuItem>
       )}
-      {label && <MenuItem act={() => answerWake(e.id, label)}>Clear my answer</MenuItem>}
-      <MenuItem className="bad" act={() => delEvent(e.id)}>
-        Delete wake…
+      <MenuItem icon="trash" act={() => delEvent(e.id)}>
+        Delete this wake
       </MenuItem>
     </>
   );
@@ -209,76 +193,46 @@ function eventMenu(s: State, e: TarsEvent | undefined, voiceOnly: boolean) {
 
 function voiceMenu(s: State, c: Cluster | undefined) {
   if (!c) return null;
-  const others = s.clusters.filter(x => x.id !== c.id);
+  const others = s.clusters.filter(x => x.id !== c.id && x.kind !== "not_person");
   return (
     <>
-      <MenuItem act={() => rename(c.id)}>{c.name ? "Rename…" : "Name…"}</MenuItem>
-      <MenuItem act={() => toggleNotPerson(c.id)}>
-        {c.kind === "not_person" ? "It's a person" : "Not a person (TV, radio…)"}
+      <MenuItem icon="edit" act={() => rename(c.id)}>
+        {c.name ? "Rename" : "Name it"}
       </MenuItem>
       {others.length > 0 && (
-        <>
-          <hr />
-          <Section title="Same person as…">
-            {others.map(o => (
-              <MenuItem key={o.id} act={() => merge(c.id, o.id)}>
-                {clusterName(s, o.id)}
-                <span className="menu-count">{o.size}</span>
-              </MenuItem>
-            ))}
-          </Section>
-        </>
+        <MenuItem icon="merge" act={() => openMerge(c.id)}>
+          Merge with another voice…
+        </MenuItem>
       )}
+      <MenuItem icon="notfor" act={() => toggleNotPerson(c.id)}>
+        {c.kind === "not_person" ? "It's a person after all" : "Not a person"}
+      </MenuItem>
     </>
   );
 }
+
+const COPY = { link: "Copy link", note: "Copy text", list: "Copy list", file: "Copy the file's address" };
 
 function itemMenu(s: State, i: Item | undefined) {
   if (!i) return null;
   return (
     <>
-      {i.kind === "link" && <MenuItem act={() => openLink(i)}>Open link ↗</MenuItem>}
-      {i.kind === "note" && <MenuItem act={() => showItem(i)}>Open</MenuItem>}
-      {i.kind === "file" && <MenuItem act={() => download(i)}>Download</MenuItem>}
-      {i.kind !== "file" && <MenuItem act={() => copyItem(i)}>{COPY_LABEL[i.kind]}</MenuItem>}
-      {!i.seen && <MenuItem act={() => markSeen(i)}>Mark seen</MenuItem>}
-      {convById(s, i.conversation_id) && (
-        <MenuItem act={() => goConv(i.conversation_id)}>Show the conversation</MenuItem>
-      )}
-      <hr />
-      <MenuItem className="bad" act={() => delItem(i.id)}>
-        Delete {ITEM_KIND_LABEL[i.kind].toLowerCase()}…
+      <MenuItem icon="copy" act={() => copyItem(i)}>
+        {COPY[i.kind]}
       </MenuItem>
-    </>
-  );
-}
-
-function convMenu(s: State, c: Conversation | undefined) {
-  if (!c) return null;
-  const wake = c.wake;
-  return (
-    <>
-      <MenuItem act={() => copyTranscript(c)}>Copy transcript</MenuItem>
-      {wake && (
-        <MenuItem act={() => toggleWakeNotForTars(c)}>
-          {wake.label === "not_real" ? "It was for TARS" : "Not meant for TARS"}
+      {!i.seen && (
+        <MenuItem icon="check" act={() => markSeen(i)}>
+          Mark seen
         </MenuItem>
       )}
-      {wake?.has_request_audio && (
-        <>
-          <hr />
-          {voices(
-            s,
-            "Who was talking",
-            wake.cluster_id,
-            id => moveTo(wake.event_id, id),
-            () => newVoice(wake.event_id),
-          )}
-        </>
+      {convById(s, i.conversation_id) && (
+        <MenuItem icon="message" act={() => goConv(i.conversation_id)}>
+          The conversation
+        </MenuItem>
       )}
       <hr />
-      <MenuItem className="bad" act={() => delConv(c.id)}>
-        Delete conversation…
+      <MenuItem icon="trash" act={() => delItem(i.id)}>
+        Delete
       </MenuItem>
     </>
   );
@@ -287,10 +241,10 @@ function convMenu(s: State, c: Conversation | undefined) {
 function moreMenu(s: State) {
   return (
     <>
-      <MenuItem act={() => setTab("voices")} checked={s.tab === "voices"}>
+      <MenuItem icon="voices" act={() => setTab("voices")} checked={s.tab === "voices"}>
         Voices
       </MenuItem>
-      <MenuItem act={() => setTab("models")} checked={s.tab === "models"}>
+      <MenuItem icon="chip" act={() => setTab("models")} checked={s.tab === "models"}>
         Models
       </MenuItem>
     </>

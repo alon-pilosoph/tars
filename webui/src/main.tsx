@@ -5,7 +5,10 @@ import { App } from "./App";
 import { DEMO, LINK } from "./params";
 import { refresh, scrollToEl, settled } from "./store";
 
-if (LINK.theme) document.documentElement.dataset.theme = LINK.theme;
+if (!LINK.theme) {
+  const dark = matchMedia("(prefers-color-scheme: dark)");
+  dark.addEventListener("change", () => (document.documentElement.dataset.theme = dark.matches ? "dark" : "light"));
+}
 const root = document.getElementById("root");
 if (root) createRoot(root).render(<App />);
 
@@ -22,7 +25,7 @@ async function scrollToLinked() {
     if (demo && !demo.openEarlyState()) return;
     await refresh();
     await scrollToLinked();
-    demo?.openLinkState();
+    await demo?.openLinkState();
   } finally {
     // For the screenshot tests: the page is loaded, scrolled to what the link points at, and any linked state open;
     // and a way to wait for what a click set off.
