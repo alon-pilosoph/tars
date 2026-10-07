@@ -1,5 +1,6 @@
-import { day, plural } from "../format";
-import type { PersonFilter } from "../params";
+import { Fragment } from "react";
+import { day, isRecent, longDate } from "../format";
+import { type PersonFilter, linkTo } from "../params";
 import {
   type State,
   clusterName,
@@ -13,145 +14,123 @@ import {
   useStore,
 } from "../store";
 import type { Conversation, Item } from "../types";
-import { Empty, Group } from "./Blocks";
-import { ConversationCard } from "./Conversation";
-import { ItemCard } from "./Items";
+import { Empty } from "./Blocks";
+import { ConversationRow } from "./Conversation";
+import { NewRow, SentItem } from "./Items";
 
-function PersonSeg({ s, shown, household }: { s: State; shown: PersonFilter; household: boolean }) {
+export function PersonSeg({ s, shown, household }: { s: State; shown: PersonFilter; household: boolean }) {
+  const named = people(s);
+  if (named.length < 2 && !household) return null;
   const options: { value: PersonFilter; label: string }[] = [
     { value: "all", label: "Everyone" },
-    ...people(s).map(c => ({ value: c.id, label: c.name })),
+    ...named.map(c => ({ value: c.id, label: c.name })),
     ...(household ? [{ value: "household" as const, label: "Household" }] : []),
   ];
   return (
-    <div className="seg" role="group" aria-label="Show">
+    <div className="seg" role="group" aria-label="Whose">
       {options.map(({ value, label }) => (
-        <button key={value} aria-pressed={shown === value} onClick={() => setPerson(value)} title={label}>
-          <span className="seg-label">{label}</span>
+        <button key={value} aria-pressed={shown === value} onClick={() => setPerson(value)}>
+          {label}
         </button>
       ))}
     </div>
   );
 }
 
-function ByDay({ convs, s }: { convs: Conversation[]; s: State }) {
-  const days: { day: string; convs: Conversation[] }[] = [];
+function byDay(convs: Conversation[]) {
+  const days: { day: string; ts: number; convs: Conversation[] }[] = [];
   for (const c of convs) {
     const d = day(c.started);
-    if (days[days.length - 1]?.day !== d) days.push({ day: d, convs: [] });
+    if (days[days.length - 1]?.day !== d) days.push({ day: d, ts: c.started, convs: [] });
     days[days.length - 1].convs.push(c);
   }
-  return (
-    <>
-      {days.map(g => (
-        <Group key={g.day} title={g.day} count={g.convs.length}>
-          <div className="conv-list">
-            {g.convs.map(c => (
-              <ConversationCard key={c.id} c={c} s={s} />
-            ))}
-          </div>
-        </Group>
-      ))}
-    </>
-  );
-}
-
-function HomeHead({ unseenCount, newCount, name }: { unseenCount: number; newCount: number; name: string | null }) {
-  if (unseenCount)
-    return (
-      <div>
-        <h1>
-          <span className="head-count">{unseenCount}</span> new from TARS
-        </h1>
-        <p>What TARS sent since you last looked.</p>
-      </div>
-    );
-  if (newCount)
-    return (
-      <div>
-        <h1>Nothing new</h1>
-        <p>You've seen everything TARS sent. Refresh to clear this.</p>
-      </div>
-    );
-  return (
-    <div>
-      <h1>Conversations</h1>
-      <p>{name ? `What ${name} asked TARS, and what it said back.` : "What you asked TARS, and what it said back."}</p>
-    </div>
-  );
+  return days;
 }
 
 export function Home() {
   const s = useStore();
   if (!s.convs.length && !s.items.length)
     return (
-      <>
-        <div className="head">
-          <div>
-            <h1>Conversations</h1>
-            <p>What you asked TARS, and what it said back.</p>
-          </div>
-        </div>
-        <Empty
-          slabs
-          title="Nothing yet."
-          quip="humor 75%, discretion 100%"
-          text={
-            "Say “hey TARS” and ask for something. The conversation shows up here, and so does anything TARS sends " +
-            "you."
-          }
-        />
-      </>
+      <Empty
+        title="Nothing yet"
+        text="TARS is plugged in, listening, and so far nobody has asked it anything. Say “hey TARS” and ask for something. It will show up here after a Refresh."
+      />
     );
   const who = personShown(s, false);
   const name = typeof who === "number" ? clusterName(s, who) : null;
+  const anyNew = s.items.some(i => s.snapshot.newItems.has(i.id));
   const newItems = s.items.filter(i => s.snapshot.newItems.has(i.id) && forPerson(i, who));
-  const unseenCount = newItems.filter(i => !i.seen).length;
   const convs = s.convs.filter(c => convPerson(c, who));
   const toReview = reviewTodo(s).length;
+  const seg = <PersonSeg s={s} shown={who} household={false} />;
   return (
     <>
-      <div className="head">
-        <HomeHead unseenCount={unseenCount} newCount={newItems.length} name={name} />
-        <div className="head-side">
-          {people(s).length > 1 ? <PersonSeg s={s} shown={who} household={false} /> : null}
+      {anyNew && (
+        <>
+          <div className="sec-head">
+            <h2 className="sec-title">New from TARS</h2>
+            {seg}
+          </div>
+          {newItems.length ? (
+            <div className="rows">
+              {newItems.map(i => (
+                <NewRow key={i.id} i={i} s={s} />
+              ))}
+            </div>
+          ) : (
+            <p className="muted">{`Nothing new for ${name}.`}</p>
+          )}
+        </>
+      )}
+      {toReview > 0 && (
+        <div className="nudge">
+          {`${toReview} wake${toReview === 1 ? "" : "s"} TARS wasn't sure about. `}
+          <a
+            href={linkTo({ tab: "review" })}
+            onClick={e => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+              e.preventDefault();
+              setTab("review");
+            }}
+          >
+            {toReview === 1 ? "Review it" : "Review them"}
+          </a>
         </div>
-      </div>
-      {newItems.length ? (
-        <div className="item-grid">
-          {newItems.map(i => (
-            <ItemCard key={i.id} i={i} place="home" s={s} />
-          ))}
-        </div>
-      ) : null}
-      {toReview && who === "all" ? (
-        <button className="nudge" onClick={() => setTab("review")}>
-          <span className="count">{toReview}</span>
-          <span>
-            <b>{plural(toReview, "wake")} to check.</b> TARS wasn't sure {toReview === 1 ? "it was" : "they were"} meant
-            for it.
-          </span>
-          <span className="nudge-arrow">Review →</span>
-        </button>
-      ) : null}
+      )}
       {convs.length ? (
-        <ByDay convs={convs} s={s} />
-      ) : name ? (
-        <Empty
-          className="spaced"
-          title={`No conversations with ${name} yet.`}
-          text={`When TARS recognizes ${name}'s voice, their conversations show up here.`}
-        >
-          <button className="link" onClick={() => setPerson("all")}>
-            Show everyone
-          </button>
-        </Empty>
+        byDay(convs).map((g, n) => (
+          <section key={g.day}>
+            <div className="day-head">
+              <div>
+                <h2>{g.day}</h2>
+                {isRecent(g.ts) && <span className="date">{longDate(g.ts)}</span>}
+              </div>
+              {n === 0 && !anyNew && seg}
+            </div>
+            <div className="convs">
+              {g.convs.map(c => (
+                <ConversationRow key={c.id} c={c} s={s} />
+              ))}
+            </div>
+          </section>
+        ))
       ) : (
         <Empty
-          className="spaced"
-          title="No conversations yet."
-          text="Say “hey TARS” and ask for something. The conversation shows up here."
-        />
+          title={name ? `No conversations with ${name}` : "No conversations yet"}
+          text={
+            name
+              ? `When TARS recognises ${name}'s voice, their conversations show up here.`
+              : "Conversations show up here after a Refresh."
+          }
+        >
+          {name && (
+            <div className="btns">
+              <button className="btn" onClick={() => setPerson("all")}>
+                Show everyone
+              </button>
+            </div>
+          )}
+        </Empty>
       )}
     </>
   );
@@ -161,63 +140,59 @@ export function Sent() {
   const s = useStore();
   const who = personShown(s, true);
   const head = (
-    <div className="head">
+    <div className="page-head">
       <div>
-        <h1>Sent</h1>
-        <p>Everything TARS sent. Everyone at home sees the same list.</p>
+        <h1 className="page-title">Sent</h1>
+        <p className="page-sub">Everything TARS sent. Everyone at home sees the same list.</p>
       </div>
-      <div className="head-side">{s.items.length ? <PersonSeg s={s} shown={who} household /> : null}</div>
+      {s.items.length > 0 && <PersonSeg s={s} shown={who} household />}
     </div>
   );
   if (!s.items.length)
     return (
       <>
         {head}
-        <Empty
-          slabs
-          title="Nothing sent yet."
-          quip="it's very quiet in here"
-          text="Ask for something TARS can't say out loud: “send me that recipe”, “make a packing list”."
-        />
+        <Empty title="Nothing sent yet" text="Ask TARS to send you a recipe, a link or a list, and it lands here." />
       </>
     );
   const list = s.items.filter(i => forPerson(i, who)).sort((a, b) => b.ts - a.ts);
   if (!list.length) {
-    const house = who === "household";
-    const name = house ? "the household" : clusterName(s, typeof who === "number" ? who : null);
+    const target = who === "household" ? "the household" : clusterName(s, typeof who === "number" ? who : null);
     return (
       <>
         {head}
-        <Empty
-          title={`Nothing for ${name} yet.`}
-          text={`Things TARS sends ${house ? "to the whole house" : `to ${name}`} show up here.`}
-        >
-          <button className="link" onClick={() => setPerson("all")}>
-            Show everything
-          </button>
+        <Empty title={`Nothing for ${target}`} text="Try Everyone to see the rest.">
+          <div className="btns">
+            <button className="btn" onClick={() => setPerson("all")}>
+              Show everything
+            </button>
+          </div>
         </Empty>
       </>
     );
   }
-  // Opened items stay under New until Refresh; its count is how many are still unseen.
+  // What was new at the last Refresh stays under New until the next one, even once it's been opened.
   const isNew = (i: Item) => s.snapshot.newItems.has(i.id);
   const fresh = list.filter(isNew);
   const earlier = list.filter(i => !isNew(i));
-  const section = (title: string, items: Item[], count: number) =>
+  const section = (title: string, items: Item[]) =>
     items.length > 0 && (
-      <Group title={title} count={count}>
-        <div className="item-grid">
+      <Fragment key={title}>
+        <div className="sec-head">
+          <h2 className="sec-title">{title}</h2>
+        </div>
+        <div className="items">
           {items.map(i => (
-            <ItemCard key={i.id} i={i} place="sent" s={s} />
+            <SentItem key={i.id} i={i} s={s} />
           ))}
         </div>
-      </Group>
+      </Fragment>
     );
   return (
     <>
       {head}
-      {section("New", fresh, fresh.filter(i => !i.seen).length)}
-      {section("Earlier", earlier, earlier.length)}
+      {section("New", fresh)}
+      {section(fresh.length ? "Earlier" : "Everything", earlier)}
     </>
   );
 }

@@ -5,10 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>TARS</title>
-<link rel="icon" type="image/svg+xml" href="/assets/favicon-BxGJT4nP.svg">
-<link rel="apple-touch-icon" href="/assets/apple-touch-icon-TE7_1g12.png">
-  <script type="module" crossorigin src="/assets/index-CsYCiejq.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-BOzk01cY.css">
+<link rel="icon" type="image/svg+xml" href="/assets/favicon-CyHy-YES.svg">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon-C_i1iMEv.png">
+<script>
+  (function () {
+    var t = new URLSearchParams(location.search).get("theme");
+    if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+  <script type="module" crossorigin src="/assets/index-C1eD-_G5.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DoFqTLud.css">
 </head>
 <body>
 <div id="root"></div>

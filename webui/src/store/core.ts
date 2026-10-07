@@ -2,7 +2,7 @@
 import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { LINK, type PersonFilter, type Tab } from "../params";
-import type { Cluster, Conversation, Item, ModelsInfo, RemindersInfo, Status, TarsEvent } from "../types";
+import type { Cluster, Conversation, Item, ModelsInfo, RemindersInfo, Status, TarsEvent, VoiceSample } from "../types";
 
 export interface Toast {
   id: number;
@@ -11,7 +11,15 @@ export interface Toast {
 }
 
 export type DialogState =
-  | { kind: "confirm"; title: string; text?: string; ok?: string; danger?: boolean; resolve: (ok: boolean) => void }
+  | {
+      kind: "confirm";
+      title: string;
+      text?: string;
+      ok?: string;
+      no?: string;
+      danger?: boolean;
+      resolve: (ok: boolean) => void;
+    }
   | {
       kind: "prompt";
       title: string;
@@ -21,17 +29,14 @@ export type DialogState =
       ok?: string;
       required?: boolean;
       maxLength?: number;
+      samples?: VoiceSample[];
       resolve: (value: string | null) => void;
     }
+  | { kind: "merge"; id: number }
   | { kind: "note"; item: Item }
   | { kind: "image"; item: Item };
 
-export type ItemPlace = "thread" | "home" | "sent";
-
-export type MenuTarget =
-  | { kind: "event" | "eventVoice" | "voice" | "conversation"; id: number }
-  | { kind: "item"; id: number; place: ItemPlace } // the same item can be on the page twice
-  | { kind: "more" };
+export type MenuTarget = { kind: "event" | "eventVoice" | "voice" | "item" | "who"; id: number } | { kind: "more" };
 export type MenuState = MenuTarget & { anchor: HTMLElement; sheet: boolean };
 
 /** What the page showed at the last Refresh or page load. Reloads after your own actions only update these, so
@@ -58,7 +63,8 @@ export interface State {
   items: Item[];
   reminders: RemindersInfo | null; // always as the server has them: they change by the minute
   snapshot: Snapshot;
-  open: Set<number>; // conversations shown with every turn
+  open: Set<number>; // conversations opened up, with their details
+  moreTurns: Set<number>;
   lists: Set<number>; // lists shown with every entry
   edit: number | null; // the turn whose transcript is being corrected
   refreshing: boolean;
@@ -89,7 +95,8 @@ let current: State = {
     review: new Set(),
   },
   open: new Set(LINK.conv != null ? [LINK.conv] : []),
-  lists: new Set(),
+  moreTurns: new Set(),
+  lists: new Set(LINK.item != null ? [LINK.item] : []),
   edit: null,
   refreshing: false,
   reclustering: false,

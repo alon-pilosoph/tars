@@ -2,20 +2,22 @@
 
 The household's window into TARS: what was said, what TARS sent, the wakes it wasn't sure about, and the voices it
 has heard. It runs on the same machine as the assistant (`voice-assistant --web`) and is opened from a phone or
-laptop on the home network. The design came from Claude Design, and screenshot tests hold the page where it is.
+laptop on the home network. The design came from Claude Design (the Day journal direction, in the Linen and ink
+blue palette), and screenshot tests hold the page where it is.
 
 ## Pages
 
 | Page | What's there |
 |---|---|
-| **Home** | Conversations by day, newest first: who spoke (by voice), what they said (with audio), what TARS answered and sent, how long each answer took and which model wrote it, and where an answer failed. Anything TARS sent since the last Refresh sits on top. Rate an answer good or bad, fix a misheard transcript, name an unknown voice, and from a conversation's ⋯ menu: copy it, "Not meant for TARS", who was talking, delete. With two or more named people, a filter by person. |
-| **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. |
+| **Home** | What TARS sent since the last Refresh, then conversations by day, newest first: who spoke (by voice), what they said, what TARS answered and the things it sent, and where an answer failed. Rate an answer with the thumbs, play what was said, name an unknown voice. Tap a conversation to open it: the recordings with a player, Fix text for a misheard transcript, Good and Bad, what TARS sent, how long each answer took and which model wrote it, what TARS heard, and Copy, "Not meant for TARS", Who was talking and Delete. With two or more named people, a filter by person. |
+| **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. Opening, copying or ticking something marks it seen; it stays under New until the next Refresh. |
 | **Review** | Wakes no conversation explained (a near-miss, a "Did you call me?" nobody answered, a wake followed by silence). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted. |
 | **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice is back. The tab counts what's waiting for a got it. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
 
-On a phone, Voices and Models sit under "More". The tab title counts what's new: "TARS (3)".
+On a phone the pages are tabs along the bottom, Voices and Models sit under the ⋯ at the top, and menus and dialogs
+open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
 
 | Home | Review, on a phone |
 |---|---|

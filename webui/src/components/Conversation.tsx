@@ -1,155 +1,306 @@
-import { useEffect, useRef } from "react";
-import { fold } from "../fold";
-import { answerMeta, failedLine, heardText, plural, stamp, time, timingsDetail } from "../format";
+import { Fragment, type MouseEvent, useEffect, useRef } from "react";
+import { failedLine, stamp, time, timingLine, wakeLine } from "../format";
 import {
-  type MenuTarget,
   type State,
   cancelFix,
-  expand,
+  copyTranscript,
+  delConv,
   menuOpen,
   rate,
   rename,
   saveFix,
+  showMoreTurns,
   speakerName,
   startFix,
+  takeFixFocus,
   toggleMenu,
+  toggleOpen,
+  toggleWakeNotForTars,
   turnItems,
 } from "../store";
-import type { Conversation, ConversationWake, Turn } from "../types";
-import { ItemCard } from "./Items";
-import { PlayButton } from "./PlayButton";
+import type { Conversation, Speaker, Turn } from "../types";
+import { Icon } from "./Icon";
+import { ItemCard, SentLink } from "./Items";
+import { PlaySmall, Player } from "./PlayButton";
 
-function wakeLine(w: ConversationWake | null) {
-  if (!w) return "";
-  const parts = [
-    w.heard != null ? `heard “${heardText(w.heard)}”` : "",
-    w.confidence != null ? `${Math.round(w.confidence * 100)}% sure` : "",
-  ];
-  return parts.filter(Boolean).join(", ") + (w.outcome === "ask" ? ", so TARS asked first" : "");
+type Unit = { turn: Turn } | { aside: Turn[] };
+
+function units(c: Conversation): Unit[] {
+  const out: Unit[] = [];
+  for (const t of c.turns) {
+    const last = out[out.length - 1];
+    if (t.role === "person" && t.not_for_tars) {
+      if (last && "aside" in last) last.aside.push(t);
+      else out.push({ aside: [t] });
+    } else out.push({ turn: t });
+  }
+  return out;
 }
 
-export function ConversationCard({ c, s }: { c: Conversation; s: State }) {
-  const who = speakerName(s, c.speaker) ?? "Unknown voice";
-  const unnamed = !c.speaker?.name;
-  const unnamedVoice = unnamed ? c.speaker?.cluster_id : null;
-  const { head, hidden, tail } = fold(c.turns, s.open.has(c.id), t => turnItems(s, t).length > 0 || t.id === s.edit);
-  const row = (t: Turn) => <TurnRow key={t.id} t={t} c={c} first={t === c.turns[0]} s={s} />;
-  const menu: MenuTarget = { kind: "conversation", id: c.id };
+const said = (t: Turn) => t.corrected_text || t.text;
+const stop = (e: MouseEvent) => e.stopPropagation();
+const isUnknown = (sp: Speaker | null | undefined) => !!sp && !sp.name && sp.cluster_id != null;
+
+function asideLabel(s: State, c: Conversation, turns: Turn[]) {
+  const names = [...new Set(turns.map(t => speakerName(s, t.speaker ?? c.speaker) || "Someone"))];
+  if (names.length < 2) return `${names[0]}, not to TARS`;
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}, to each other`;
+}
+
+const rateable = (c: Conversation, t: Turn) => !(c.wake?.outcome === "ask" && t === c.turns[0]);
+
+export function ConversationRow({ c, s }: { c: Conversation; s: State }) {
+  const open = s.open.has(c.id);
   return (
-    <article className="conv" data-id={c.id} aria-label={`Conversation with ${who}, ${stamp(c.started)}`}>
-      <header className="conv-head">
-        <span className="conv-time">{time(c.started)}</span>
-        <span className={`conv-who${unnamed ? " unnamed" : ""}`}>{who}</span>
-        {unnamedVoice != null ? (
-          <button className="text-action" onClick={() => rename(unnamedVoice)}>
-            Name this voice
-          </button>
-        ) : null}
-        <span className="conv-wake">{wakeLine(c.wake)}</span>
-        <button
-          className="more"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen(s, menu)}
-          aria-label="More for this conversation"
-          onClick={e => toggleMenu(menu, e.currentTarget)}
-        />
-      </header>
-      <div className="turns">
-        {head.map(row)}
-        {hidden > 0 && (
-          <button className="more-turns" onClick={() => expand(c.id)}>
-            {plural(hidden, "more turn")}
-          </button>
-        )}
-        {tail.map(row)}
-      </div>
+    <article className="conv" data-id={c.id} aria-label={`Conversation, ${stamp(c.started)}`}>
+      <div className="conv-time">{time(c.started)}</div>
+      {open ? <Panel c={c} s={s} /> : <Closed c={c} s={s} />}
     </article>
   );
 }
 
-function TurnRow({ t, c, first, s }: { t: Turn; c: Conversation; first: boolean; s: State }) {
-  if (t.role === "tars") {
-    const isAsk = c.wake?.outcome === "ask" && first;
-    const items = turnItems(s, t);
-    const meta = answerMeta(t);
-    return (
-      <div className="turn tars" data-turn={t.id}>
-        <div className="turn-who">
-          <span className="turn-mark" aria-hidden="true">
-            <i />
-            <i />
-          </span>
-          TARS
-        </div>
-        <div className="turn-body">
-          {t.text ? <p className="turn-text">{t.text}</p> : null}
-          {t.failed_at ? (
-            <p className="turn-failed">
-              {failedLine(t)}
-              {t.error ? <span className="turn-error">{t.error}</span> : null}
-            </p>
-          ) : null}
-          {isAsk ? null : (
-            <div className="turn-actions">
-              <div className="rate" role="group" aria-label="Was this a good answer?">
-                <button className="rate-good" aria-pressed={t.rating === "good"} onClick={() => rate(t.id, "good")}>
-                  {t.rating === "good" ? "✓ Good" : "Good"}
-                </button>
-                <button className="rate-bad" aria-pressed={t.rating === "bad"} onClick={() => rate(t.id, "bad")}>
-                  {t.rating === "bad" ? "✗ Bad" : "Bad"}
-                </button>
-              </div>
-              {meta ? (
-                <span className="turn-meta" title={timingsDetail(t.timings) || undefined}>
-                  {meta}
-                </span>
-              ) : null}
-            </div>
-          )}
-          {items.length ? (
-            <div className="turn-items">
-              {items.map(i => (
-                <ItemCard key={i.id} i={i} place="thread" s={s} />
+function Who({ c, t, s }: { c: Conversation; t: Turn; s: State }) {
+  const sp = t.speaker ?? c.speaker;
+  const unknown = isUnknown(sp) ? sp!.cluster_id : null;
+  return (
+    <>
+      <b>{speakerName(s, sp) || "Someone"}</b>
+      {unknown != null && (
+        <>
+          {" "}
+          <button
+            className="name-link"
+            onClick={e => {
+              stop(e);
+              rename(unknown);
+            }}
+          >
+            Name this voice
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+function Rate({ t }: { t: Turn }) {
+  return (
+    <div className="rate" role="group" aria-label="Was this a good answer?">
+      {(["good", "bad"] as const).map(v => (
+        <button
+          key={v}
+          className={`icon-btn rate-${v}`}
+          aria-label={v === "good" ? "Good answer" : "Bad answer"}
+          aria-pressed={t.rating === v}
+          onClick={e => {
+            stop(e);
+            rate(t.id, v);
+          }}
+        >
+          <Icon name={v === "good" ? "up" : "down"} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Closed({ c, s }: { c: Conversation; s: State }) {
+  let shown: (Unit | { more: number })[] = units(c);
+  if (shown.length > 4 && !s.moreTurns.has(c.id))
+    shown = [shown[0], shown[1], { more: shown.length - 3 }, shown[shown.length - 1]];
+  return (
+    <div
+      className="conv-body tap"
+      role="button"
+      tabIndex={0}
+      aria-expanded={false}
+      aria-label={`Open the conversation, ${stamp(c.started)}`}
+      onClick={() => toggleOpen(c.id)}
+      onKeyDown={e => {
+        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          toggleOpen(c.id);
+        }
+      }}
+    >
+      {shown.map((u, n) => {
+        if ("more" in u)
+          return (
+            <button
+              key="more"
+              className="more-turns"
+              onClick={e => {
+                stop(e);
+                showMoreTurns(c.id);
+              }}
+            >
+              {`${u.more} more turns`}
+              <Icon name="chev-down" size="s" />
+            </button>
+          );
+        if ("aside" in u)
+          return (
+            <div key={n} className="aside">
+              <span className="lbl">{asideLabel(s, c, u.aside)}</span>
+              {u.aside.map((t, k) => (
+                <Fragment key={t.id}>
+                  {k > 0 && <br />}
+                  {said(t)}
+                </Fragment>
               ))}
             </div>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
-  const name = speakerName(s, t.speaker) || speakerName(s, c.speaker) || "Someone";
-  const text = t.corrected_text || t.text;
-  const aside = !!t.not_for_tars;
-  const play = t.has_audio ? <PlayButton clip={{ turn: t.id }} label={`what ${name} said`} small /> : null;
-  if (s.edit === t.id)
-    return (
-      <div className="turn person" data-turn={t.id}>
-        <div className="turn-who">{name}</div>
-        <div className="turn-body">
-          <div className="turn-line">
-            {play}
-            <Editor t={t} text={text} />
+          );
+        const t = u.turn;
+        if (t.role === "person")
+          return (
+            <div key={t.id} className="turn" data-turn={t.id}>
+              {t.has_audio && <PlaySmall clip={{ turn: t.id }} label="what was said" />}
+              <div className="said">
+                <Who c={c} t={t} s={s} />
+                {` ${said(t)}`}
+              </div>
+            </div>
+          );
+        const items = turnItems(s, t);
+        return (
+          <div key={t.id} className="tars-unit" data-turn={t.id}>
+            <div className="turn tars">
+              <div className="said tars">{t.text}</div>
+              {rateable(c, t) && <Rate t={t} />}
+            </div>
+            {t.failed_at && (
+              <div className="fail">
+                <Icon name="alert" size="s" />
+                {failedLine(t)}
+              </div>
+            )}
+            {items.length > 0 && (
+              <div className="sent-links">
+                {items.map(i => (
+                  <SentLink key={i.id} i={i} />
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      </div>
-    );
+        );
+      })}
+      {c.wake?.label === "not_real" && <div className="labelled-not indented">Marked as not meant for TARS.</div>}
+    </div>
+  );
+}
+
+function Panel({ c, s }: { c: Conversation; s: State }) {
+  const notReal = c.wake?.label === "not_real";
+  const who = { kind: "who", id: c.id } as const;
+  const name = speakerName(s, c.speaker);
   return (
-    <div className={`turn person${aside ? " aside" : ""}`} data-turn={t.id}>
-      <div className="turn-who">{name}</div>
-      <div className="turn-body">
-        <div className="turn-line">
-          {play}
-          <p className="turn-text">“{text}”</p>
+    <div className="panel">
+      <div className="panel-head">
+        <span className="who">{`${name || "Someone"}, ${stamp(c.started)}`}</span>
+        <button className="icon-btn" aria-label="Close the conversation" onClick={() => toggleOpen(c.id)}>
+          <Icon name="chev-up" />
+        </button>
+      </div>
+      {units(c).map((u, n) => {
+        if ("aside" in u)
+          return (
+            <div key={n} className="p-turn">
+              <div className="aside flush">
+                <span className="lbl">{asideLabel(s, c, u.aside)}</span>
+                {u.aside.map(t => (
+                  <span key={t.id} className="aside-line">
+                    {t.has_audio && <PlaySmall clip={{ turn: t.id }} label="what was said" />}
+                    <span>{said(t)}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        const t = u.turn;
+        if (t.role === "person")
+          return (
+            <div key={t.id} className="p-turn" data-turn={t.id}>
+              {s.edit === t.id ? (
+                <Editor t={t} />
+              ) : (
+                <>
+                  <div className="said">
+                    <Who c={c} t={t} s={s} />
+                    {` ${said(t)}`}
+                  </div>
+                  {t.corrected_text && <div className="fixed-note">{`Fixed. TARS first heard “${t.text}”`}</div>}
+                  <div className="p-row">
+                    {t.has_audio && <Player clip={{ turn: t.id }} label="what was said" />}
+                    <button className="btn text-action" onClick={() => startFix(t.id)}>
+                      <Icon name="edit" size="s" />
+                      Fix text
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        const info = timingLine(t);
+        return (
+          <div key={t.id} className="p-turn" data-turn={t.id}>
+            <div className="said tars">{t.text}</div>
+            {t.failed_at && (
+              <div className="fail">
+                <Icon name="alert" size="s" />
+                {failedLine(t)}
+              </div>
+            )}
+            {rateable(c, t) && (
+              <div className="btns" role="group" aria-label="Was this a good answer?">
+                <button className="btn rate-good" aria-pressed={t.rating === "good"} onClick={() => rate(t.id, "good")}>
+                  <Icon name="up" size="s" />
+                  Good
+                </button>
+                <button className="btn rate-bad" aria-pressed={t.rating === "bad"} onClick={() => rate(t.id, "bad")}>
+                  <Icon name="down" size="s" />
+                  Bad
+                </button>
+              </div>
+            )}
+            {turnItems(s, t).map(i => (
+              <ItemCard key={i.id} i={i} s={s} />
+            ))}
+            {info && <div className="p-info">{info}</div>}
+          </div>
+        );
+      })}
+      <div className="p-foot">
+        <div className="p-info">
+          {wakeLine(c.wake, { name: c.speaker?.name ?? null, known: !isUnknown(c.speaker) }) +
+            (notReal ? " Marked as not meant for TARS." : "")}
         </div>
-        <div className="turn-actions">
-          {aside ? <span>Not for TARS, so it stayed quiet</span> : null}
-          {t.corrected_text ? (
-            <span className="fixed">
-              Corrected from <s>“{t.text}”</s>
-            </span>
-          ) : null}
-          <button className="text-action" onClick={() => startFix(t.id)}>
-            {t.corrected_text ? "Edit fix" : "Fix text"}
+        <div className="p-actions">
+          <button className="btn ghost" onClick={() => copyTranscript(c)}>
+            <Icon name="copy" size="s" />
+            Copy
+          </button>
+          {c.wake && (
+            <button className="btn ghost" onClick={() => toggleWakeNotForTars(c)}>
+              <Icon name="notfor" size="s" />
+              {notReal ? "Meant for TARS after all" : "Not meant for TARS"}
+            </button>
+          )}
+          {c.wake?.has_request_audio && (
+            <div className="anchor">
+              <button
+                className="btn ghost"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen(s, who)}
+                onClick={e => toggleMenu(who, e.currentTarget)}
+              >
+                <Icon name="person" size="s" />
+                Who was talking
+              </button>
+            </div>
+          )}
+          <button className="btn ghost" onClick={() => delConv(c.id)}>
+            <Icon name="trash" size="s" />
+            Delete
           </button>
         </div>
       </div>
@@ -157,11 +308,11 @@ function TurnRow({ t, c, first, s }: { t: Turn; c: Conversation; first: boolean;
   );
 }
 
-function Editor({ t, text }: { t: Turn; text: string }) {
+function Editor({ t }: { t: Turn }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const area = ref.current;
-    if (!area) return;
+    if (!area || !takeFixFocus()) return;
     area.focus({ preventScroll: true });
     area.setSelectionRange(area.value.length, area.value.length);
   }, []);
@@ -174,8 +325,8 @@ function Editor({ t, text }: { t: Turn; text: string }) {
       <textarea
         ref={ref}
         id={`fix-${t.id}`}
-        rows={2}
-        defaultValue={text}
+        rows={3}
+        defaultValue={said(t)}
         onKeyDown={e => {
           if (e.nativeEvent.isComposing) return;
           if (e.key === "Escape") cancelFix();
@@ -185,14 +336,14 @@ function Editor({ t, text }: { t: Turn; text: string }) {
           }
         }}
       />
-      <div className="row">
-        <button className="btn sm primary" onClick={save}>
+      <div className="btns">
+        <button className="btn primary" onClick={save}>
           Save
         </button>
-        <button className="btn sm" onClick={cancelFix}>
+        <button className="btn ghost" onClick={cancelFix}>
           Cancel
         </button>
-        <span className="hint">TARS heard “{t.text}”</span>
+        <span className="hint">Enter saves, Escape cancels.</span>
       </div>
     </div>
   );

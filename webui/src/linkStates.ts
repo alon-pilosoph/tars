@@ -2,17 +2,27 @@
 import { showPlaying } from "./audio";
 import { MOCK_TOASTS } from "./demo";
 import { DEMO_LINK } from "./demoParams";
+import { LINK } from "./params";
 import {
+  type MenuTarget,
+  answerWake,
+  cancelReminder,
+  closeToast,
   delConv,
   delEvent,
   delItem,
+  findTurn,
   get,
   itemById,
-  merge,
   newVoice,
+  openMerge,
+  refresh,
+  rename,
   reviewEvents,
   rollback,
+  scrollToEl,
   set,
+  setNow,
   showItem,
   toast,
   toggleMenu,
@@ -21,22 +31,77 @@ import {
 /** States that show before the data loads. False when the state replaces the data entirely. */
 export function openEarlyState() {
   if (DEMO_LINK.state === "error") {
-    set({ phase: "error", error: "Failed to fetch" });
+    set({ phase: "error", error: "No answer from the server (timed out after 10 s)" });
     return false;
   }
   if (DEMO_LINK.state === "loading") return false;
-  set({ reclustering: DEMO_LINK.reclustering, edit: DEMO_LINK.edit });
+  set({ reclustering: DEMO_LINK.reclustering });
   return true;
 }
 
-export function openLinkState() {
-  if (DEMO_LINK.playing) showPlaying(DEMO_LINK.playing, 0.35);
+const openConv = (id: number) => setNow(s => ({ open: new Set([...s.open, id]) }));
+
+export async function openLinkState() {
+  await document.fonts.ready;
+  if (DEMO_LINK.answered != null) {
+    await answerWake(DEMO_LINK.answered, DEMO_LINK.answer);
+    closeToast();
+    if (DEMO_LINK.refreshed) await refresh();
+    else scrollToEl(`.wake[data-id="${DEMO_LINK.answered}"]`);
+  }
+  if (DEMO_LINK.edit != null) {
+    const [, c] = findTurn(get(), DEMO_LINK.edit);
+    if (c) {
+      openConv(c.id);
+      setNow({ edit: DEMO_LINK.edit });
+      scrollToEl(`.conv[data-id="${c.id}"]`);
+    }
+  }
+  if (DEMO_LINK.playing) {
+    const turn = DEMO_LINK.playing.match(/^turn-(\d+)$/);
+    const [, c] = turn ? findTurn(get(), Number(turn[1])) : [];
+    if (c && LINK.conv == null) {
+      openConv(c.id);
+      scrollToEl(`.conv[data-id="${c.id}"]`);
+    }
+    showPlaying(DEMO_LINK.playing, 0.35, 3);
+  }
   if (DEMO_LINK.toast) toast(MOCK_TOASTS[DEMO_LINK.toast], undefined, 0);
   if (DEMO_LINK.more) {
-    const button = document.querySelector<HTMLElement>(".more-tab");
-    if (button && getComputedStyle(button).display !== "none") toggleMenu({ kind: "more" }, button);
+    const button = document.querySelector<HTMLElement>(".more-btn");
+    if (button) toggleMenu({ kind: "more" }, button);
   }
+  if (DEMO_LINK.menu && DEMO_LINK.menuId != null) linkedMenu(DEMO_LINK.menu, DEMO_LINK.menuId);
   openModal();
+  await new Promise(r => setTimeout(r, 0));
+  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+}
+
+function openMenu(target: MenuTarget, button: string, around?: string) {
+  if (around) scrollToEl(around);
+  const el = document.querySelector<HTMLElement>(button);
+  if (el && getComputedStyle(el).display !== "none") toggleMenu(target, el);
+}
+
+function linkedMenu(kind: NonNullable<typeof DEMO_LINK.menu>, id: number) {
+  const wake = `.wake[data-id="${id}"]`;
+  switch (kind) {
+    case "item":
+      return openMenu({ kind: "item", id }, `.item[data-id="${id}"] [aria-haspopup=menu]`, `.item[data-id="${id}"]`);
+    case "wake":
+      return openMenu({ kind: "event", id }, `${wake} .wake-head [aria-haspopup=menu]`, wake);
+    case "reply":
+      return openMenu({ kind: "eventVoice", id }, `${wake} .chip`, wake);
+    case "voice":
+      return openMenu({ kind: "voice", id }, `.voice[data-id="${id}"] [aria-haspopup=menu]`, `.voice[data-id="${id}"]`);
+    case "who":
+      openConv(id);
+      return openMenu(
+        { kind: "who", id },
+        `.conv[data-id="${id}"] .p-actions [aria-haspopup=menu]`,
+        `.conv[data-id="${id}"]`,
+      );
+  }
 }
 
 function openModal() {
@@ -62,19 +127,29 @@ function openModal() {
       break;
     }
     case "newvoice": {
-      const event = s.events.find(e => e.has_request_audio);
-      if (event) newVoice(event.id);
+      if (s.tab === "review") {
+        const event = id ?? s.events.find(e => e.has_request_audio)?.id;
+        if (event != null) newVoice(event);
+      } else {
+        const cluster = id ?? s.clusters.find(c => c.kind === "unknown")?.id;
+        if (cluster != null) rename(cluster);
+      }
       break;
     }
     case "merge": {
-      const last = s.clusters[s.clusters.length - 1];
-      const other = s.clusters.find(c => c.id !== last?.id);
-      if (last && other) merge(last.id, other.id);
+      const cluster = id ?? s.clusters.find(c => c.kind === "unknown")?.id;
+      if (cluster != null) openMerge(cluster);
       break;
     }
     case "rollback": {
-      const version = s.models?.history.find(h => !h.active)?.version;
+      const version = (id == null && DEMO_LINK.modalArg) || s.models?.history.find(h => !h.active)?.version;
       if (version) rollback(version);
+      break;
+    }
+    case "stop": {
+      const all = s.reminders?.reminders ?? [];
+      const r = all.find(x => x.id === id) ?? all.find(x => x.status === "scheduled");
+      if (r) cancelReminder(r);
       break;
     }
   }

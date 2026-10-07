@@ -1,8 +1,8 @@
 import type { Item } from "../types";
 import { type DialogState, type MenuTarget, get, set } from "./core";
 
-const PHONE = "(max-width: 640px)"; // must match the phone breakpoint in styles.css
-const headerOffset = () => (document.querySelector(".top")?.getBoundingClientRect().height ?? 60) + 16;
+const PHONE = "(max-width: 720px)"; // must match the phone breakpoint in styles.css
+const HEADER_OFFSET = 84;
 
 export const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -21,7 +21,7 @@ export const closeToast = () => set({ toast: null });
 
 export function toggleMenu(target: MenuTarget, anchor: HTMLElement) {
   if (get().menu?.anchor === anchor) return closeMenu();
-  set({ menu: { ...target, anchor, sheet: target.kind !== "more" && matchMedia(PHONE).matches } });
+  set({ menu: { ...target, anchor, sheet: matchMedia(PHONE).matches } });
 }
 /** `refocus` puts focus back on the ⋯ button, so a dialog the menu opens returns focus there too. */
 export function closeMenu(refocus = false) {
@@ -43,7 +43,7 @@ export const openItem = (kind: "note" | "image", item: Item) => set({ dialog: { 
 export function scrollToEl(selector: string) {
   const el = document.querySelector(selector);
   if (!el) return;
-  scrollTo(0, el.getBoundingClientRect().top + scrollY - headerOffset());
+  scrollTo(0, el.getBoundingClientRect().top + scrollY - HEADER_OFFSET);
   document.querySelectorAll(".hit").forEach(x => x.classList.remove("hit"));
   el.classList.add("hit");
   addEventListener("pointerdown", () => el.classList.remove("hit"), { once: true });

@@ -1,47 +1,42 @@
 import type { ReactNode } from "react";
 
-export function Group({ title, count, children }: { title: string; count: number; children: ReactNode }) {
-  return (
-    <section className="group">
-      <h2 className="group-head">
-        <b>{title}</b>
-        {count}
-      </h2>
-      {children}
-    </section>
-  );
-}
-
 export function Empty({
   title,
   text,
-  quip,
-  slabs,
-  className,
   role,
   children,
 }: {
   title: string;
   text: ReactNode;
-  quip?: string;
-  slabs?: boolean;
-  className?: string;
   role?: "alert";
   children?: ReactNode;
 }) {
   return (
-    <div className={className ? `empty ${className}` : "empty"} role={role}>
-      {slabs && (
-        <div className="slabs">
-          <i />
-          <i />
-          <i />
-        </div>
-      )}
+    <div className="empty" role={role}>
       <h2>{title}</h2>
       <p>{text}</p>
       {children}
-      {quip && <div className="quip">{quip}</div>}
+    </div>
+  );
+}
+
+export function SecHead({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="sec-head">
+      <h2 className="sec-title">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+export function PageHead({ title, sub, children }: { title: ReactNode; sub?: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="page-head">
+      <div>
+        <h1 className="page-title">{title}</h1>
+        {sub && <p className="page-sub">{sub}</p>}
+      </div>
+      {children}
     </div>
   );
 }

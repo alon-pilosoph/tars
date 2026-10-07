@@ -3,7 +3,7 @@ import { test } from "@playwright/test";
 import path from "node:path";
 import { ORIGIN, REPO, SIZES, pageReady, serveFromDisk } from "./serve";
 
-const PAGES = ["home", "sent", "review", "voices", "models"];
+const PAGES = ["home", "sent", "review", "reminders", "voices", "models"];
 
 for (const tab of PAGES)
   for (const [size, viewport] of Object.entries(SIZES))

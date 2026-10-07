@@ -1,4 +1,4 @@
-import type { AnsweredBy, FailedAt, Item, Metric, Reminder, TarsEvent, Timings, Turn } from "./types";
+import type { AnsweredBy, ConversationWake, FailedAt, Item, Metric, Reminder, TarsEvent, Turn } from "./types";
 
 export type Kind = "answer" | "ask" | "ignore" | "near_miss";
 
@@ -25,29 +25,24 @@ const date = (ts: number) => new Date(ts * 1000);
 export const isToday = (ts: number) => sameDay(date(ts), new Date());
 const isYesterday = (ts: number) => sameDay(date(ts), new Date(Date.now() - 864e5));
 const isTomorrow = (ts: number) => sameDay(date(ts), new Date(Date.now() + 864e5));
-export const time = (ts: number) => date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+export const time = (ts: number) => date(ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = "January February March April May June July August September October November December".split(" ");
+export function longDate(ts: number) {
+  const d = date(ts);
+  return `${WEEKDAYS[d.getDay()]}, ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
 
 export function day(ts: number) {
   if (isToday(ts)) return "Today";
   if (isYesterday(ts)) return "Yesterday";
   if (isTomorrow(ts)) return "Tomorrow";
-  return date(ts).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  return longDate(ts);
 }
-
-export function shortDay(ts: number) {
-  if (isToday(ts) || isYesterday(ts)) return day(ts);
-  return date(ts).toLocaleDateString([], { weekday: "long" });
-}
+export const isRecent = (ts: number) => isToday(ts) || isYesterday(ts);
 
 export const stamp = (ts: number) => `${day(ts)}, ${time(ts)}`;
-
-export function shortStamp(ts: number) {
-  const dayPart =
-    isToday(ts) || isYesterday(ts)
-      ? day(ts)
-      : date(ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-  return `${dayPart}, ${time(ts)}`;
-}
 
 export function when(ts: number) {
   const dayPart = isToday(ts) ? "today" : isYesterday(ts) ? "yesterday" : isTomorrow(ts) ? "tomorrow" : `on ${day(ts)}`;
@@ -67,44 +62,51 @@ export function fmtSize(bytes: number | null | undefined) {
 export const itemName = (i: Item) => i.title || i.name || "";
 
 const ANSWERED_BY: Record<AnsweredBy, string> = {
-  quick: "Qwen",
-  look_up: "OpenAI, handed over",
-  fallback: "OpenAI, as backup",
-  openai: "OpenAI",
-};
-const STAGE: Record<keyof Timings, string> = {
-  end_of_speech: "waited",
-  stt: "speech to text",
-  llm: "first sentence",
-  tts: "first audio",
-  total: "to first sound",
+  quick: "Answered on the Pi by the quick model.",
+  look_up: "Handed over to OpenAI, which looked it up.",
+  fallback: "Answered by OpenAI, as a backup.",
+  openai: "Answered by OpenAI.",
 };
 const FAILED_AT: Record<FailedAt, string> = {
-  stt: "turning speech into text",
-  llm: "writing the answer",
-  tts: "speaking the answer",
-  other: "answering",
+  stt: "Failed while hearing what was said.",
+  llm: "Failed while writing the answer.",
+  tts: "Failed while saying the answer.",
+  other: "Failed before it could answer.",
 };
-const secs = (s: number) => `${s.toFixed(1)} s`;
+const secs = (s: number) => (s < 1 ? s.toFixed(2) : s.toFixed(1));
 
-/** A TARS turn's response time and who wrote it, e.g. "1.4 s · Qwen"; "" if neither was kept. */
-export function answerMeta(t: Turn) {
-  const total = t.timings?.total;
-  return [total != null ? secs(total) : "", t.answered_by ? (ANSWERED_BY[t.answered_by] ?? t.answered_by) : ""]
-    .filter(Boolean)
-    .join(" · ");
+export const failedLine = (t: Turn) => (t.failed_at ? (FAILED_AT[t.failed_at] ?? FAILED_AT.other) : "");
+
+export function timingLine(t: Turn) {
+  const x = t.timings;
+  const out: string[] = [];
+  if (x?.total != null) {
+    const parts = [
+      x.end_of_speech != null ? `${secs(x.end_of_speech)} s of silence` : "",
+      x.stt != null ? `${secs(x.stt)} s to write down what was said` : "",
+      x.llm != null ? `${secs(x.llm)} s to think of the first sentence` : "",
+      x.tts != null ? `${secs(x.tts)} s to start speaking` : "",
+    ].filter(Boolean);
+    out.push(
+      `Took ${secs(x.total)} s from the end of speech to the first sound${parts.length ? `: ${parts.join(", ")}` : ""}.`,
+    );
+  }
+  if (t.answered_by) out.push(ANSWERED_BY[t.answered_by] ?? "");
+  if (t.error) out.push(`The error was “${t.error}”.`);
+  return out.filter(Boolean).join(" ");
 }
 
-/** Every stage's time, for a tooltip: "waited 0.25 s, speech to text 0.10 s, …". */
-export function timingsDetail(timings: Timings | null | undefined) {
-  if (!timings) return "";
-  return (Object.keys(STAGE) as (keyof Timings)[])
-    .filter(k => timings[k] != null)
-    .map(k => `${STAGE[k]} ${timings[k]!.toFixed(2)} s`)
-    .join(", ");
+export function wakeLine(w: ConversationWake | null, voice: { name: string | null; known: boolean }) {
+  if (!w) return "";
+  const heard = w.heard ? `“${heardText(w.heard)}”` : "its name";
+  const sure = w.confidence != null ? `${Math.round(w.confidence * 100)}%` : null;
+  const line =
+    w.outcome === "ask"
+      ? `TARS heard ${heard}, was only ${sure ?? "a little"} sure, so it asked “Did you call me?” first.`
+      : `TARS heard ${heard}${sure ? ` and was ${sure} sure` : ""}.`;
+  if (voice.name) return `${line} It recognised ${voice.name} by voice.`;
+  return voice.known ? line : `${line} It didn't recognise the voice.`;
 }
-
-export const failedLine = (t: Turn) => (t.failed_at ? `Failed while ${FAILED_AT[t.failed_at] ?? FAILED_AT.other}` : "");
 
 export type Verdict = "better" | "same" | "worse";
 
@@ -127,42 +129,40 @@ export const personName = (n: string) =>
     .map(w => w[0].toUpperCase() + w.slice(1))
     .join(" ");
 
-/** Where a reminder stands, in a sentence. */
-export function reminderStatus(r: Reminder) {
+export function reminderNow(r: Reminder) {
+  if (r.kind === "timer") return `Ringing since ${time(r.due ?? r.last_said ?? r.created)}`;
+  const again = r.next_at != null ? `, again at ${time(r.next_at)}` : "";
+  return `Said ${r.tries} of ${r.max_tries} times${again}. Waiting for “got it”.`;
+}
+
+export function reminderWhen(r: Reminder) {
+  if (r.next_at == null) return `When ${personName(r.for_name || "they")} is next heard`;
+  if (r.due != null && r.next_at > r.due + 30) return `Snoozed until ${time(r.next_at)}`;
+  return stamp(r.next_at);
+}
+
+export function reminderEnded(r: Reminder) {
   switch (r.status) {
-    case "scheduled":
-      return r.next_at == null
-        ? `When ${personName(r.for_name || "they")} is next heard.`
-        : sentence(`due ${when(r.next_at)}`);
-    case "waiting": {
-      if (r.kind === "timer")
-        return `Ringing since ${time(r.due ?? r.last_said ?? r.created)}, until someone turns it off.`;
-      const again = r.next_at != null ? `, again ${when(r.next_at)}` : "";
-      return `Said ${r.tries} of ${r.max_tries} times${again}. Waiting for “got it”.`;
-    }
     case "acknowledged": {
-      const by =
-        r.acked_via === "web" ? "on this page" : `by ${r.acked_by ? personName(r.acked_by) : "an unknown voice"}`;
-      return `Acknowledged ${by}, ${r.acked_at != null ? when(r.acked_at) : "earlier"}.`;
+      const at = r.acked_at != null ? ` ${when(r.acked_at)}` : "";
+      if (r.acked_via === "web") return `Got it on this page${at}.`;
+      return `${r.acked_by ? personName(r.acked_by) : "An unknown voice"} said “got it”${at}.`;
     }
     case "said":
       return `Said ${r.last_said != null ? when(r.last_said) : "earlier"}.`;
     case "missed":
       return r.kind === "timer"
-        ? `Missed: rang for ${plural(Math.round((r.tries * r.repeat_every_s) / 60), "minute")}, and nobody turned it off.`
-        : `Missed: said ${plural(r.tries, "time")}, and nobody said they got it.`;
+        ? `Missed. It rang for ${plural(Math.round((r.tries * r.repeat_every_s) / 60), "minute")} and nobody turned it off.`
+        : `Missed. Said ${plural(r.tries, "time")} and nobody said “got it”.`;
     case "cancelled":
-      return "Stopped.";
+      return r.due != null ? `Stopped. It was due ${when(r.due)}.` : "Stopped.";
+    default:
+      return "";
   }
 }
 
-/** For whom, from whom, and how it was set: "For Stacey · from Alon · set by voice". */
-export function reminderMeta(r: Reminder) {
-  return [
-    r.for_name ? `For ${personName(r.for_name)}` : "For whoever's there",
-    r.from_name ? `from ${personName(r.from_name)}` : "",
-    r.set_via === "voice" ? "set by voice" : "set on this page",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+export function reminderFor(r: Reminder) {
+  const parts = [`${REMINDER_KIND_LABEL[r.kind]} for ${r.for_name ? personName(r.for_name) : "whoever's there"}`];
+  if (r.from_name) parts.push(`from ${personName(r.from_name)}`);
+  return parts.join(", ");
 }
