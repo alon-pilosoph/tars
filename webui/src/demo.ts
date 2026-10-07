@@ -2,6 +2,8 @@
 import type { Opts } from "./api";
 import { DEMO_LINK } from "./demoParams";
 import type {
+  AnsweredBy,
+  FailedAt,
   Cluster,
   Conversation,
   ConversationWake,
@@ -401,7 +403,17 @@ function build(): DemoData {
     });
 
   // [who: "P" (person) or "T" (TARS), what was said, extras]
-  type TurnExtra = { rating?: "good" | "bad"; items?: number[]; speaker?: Speaker; fix?: string; aside?: boolean };
+  // took: seconds to first sound; by: who wrote it; failed: where answering failed, and why
+  type TurnExtra = {
+    rating?: "good" | "bad";
+    items?: number[];
+    speaker?: Speaker;
+    fix?: string;
+    aside?: boolean;
+    took?: number;
+    by?: AnsweredBy;
+    failed?: [FailedAt, string];
+  };
   type TurnRow = [string, string, TurnExtra?];
   const conv = (id: number, started: number, speaker: Speaker, wake: ConversationWake, turns: TurnRow[]): DemoConv => ({
     id,
@@ -414,7 +426,14 @@ function build(): DemoData {
       role: who === "T" ? "tars" : "person",
       text,
       ...(who === "T"
-        ? { rating: extra?.rating ?? null, items: extra?.items || [] }
+        ? {
+            rating: extra?.rating ?? null,
+            items: extra?.items || [],
+            timings: extra?.took != null ? timings(extra.took) : null,
+            answered_by: extra?.by ?? null,
+            failed_at: extra?.failed?.[0] ?? null,
+            error: extra?.failed?.[1] ?? null,
+          }
         : {
             has_audio: true,
             speaker: extra?.speaker ?? speaker,
@@ -423,6 +442,12 @@ function build(): DemoData {
           }),
     })),
   });
+  // A plausible split of `took` seconds: a pause, a quick transcript, then the brain and the voice.
+  const timings = (took: number) => {
+    const [waited, stt] = [0.25, 0.06];
+    const llm = +((took - waited - stt) * 0.55).toFixed(2);
+    return { end_of_speech: waited, stt, llm, tts: +(took - waited - stt - llm).toFixed(2), total: took };
+  };
   // A conversation's wake isn't one of the wakes above (they'd change the voices' counts): ids from 1000 up.
   const wake = (convId: number, speaker: Speaker, heard: string, confidence: number, outcome: Outcome = "answer") => ({
     event_id: 1000 + convId,
@@ -439,36 +464,36 @@ function build(): DemoData {
     : [
         conv(1, ago(21), STACEY, wake(1, STACEY, "hey tars", 0.96), [
           ["P", "Can you send me the lasagna recipe from last Sunday?"],
-          ["T", SENT, { items: [101] }],
+          ["T", SENT, { items: [101], took: 3.0, by: "look_up" }],
         ]),
         conv(2, ago(52), ALON, wake(2, ALON, "hey tars", 0.97), [
           ["P", "What's the weather tomorrow morning?"],
-          ["T", "Cloudy, 14 degrees. Rain from about four."],
+          ["T", "Cloudy, 14 degrees. Rain from about four.", { took: 2.9, by: "look_up" }],
           ["P", "Should I take the bike?"],
-          ["T", "I'd take the bus. The rain is heaviest around six."],
+          ["T", "I'd take the bus. The rain is heaviest around six.", { took: 1.3, by: "quick" }],
           ["P", "When's the next 18 from Herzl?"],
-          ["T", "7:52, then 8:07."],
+          ["T", "7:52, then 8:07.", { took: 3.1, by: "look_up" }],
           ["P", "Send me the timetable."],
-          ["T", SENT, { items: [102] }],
+          ["T", SENT, { items: [102], took: 3.4, by: "look_up" }],
         ]),
         conv(3, ago(82), STACEY, wake(3, STACEY, "hey tars", 0.94), [
           ["P", "Add eggs, milk and toffee to the shopping list."],
-          ["T", "Added eggs, milk and toffee. The list has seven things.", { items: [103] }],
+          ["T", "Added eggs, milk and toffee. The list has seven things.", { items: [103], took: 2.6, by: "look_up" }],
         ]),
         conv(4, ago(105), ALON, wake(4, ALON, "hey tars", 0.95), [
           ["P", "Set a timer for twelve minutes."],
-          ["T", "Twelve minutes, starting now."],
+          ["T", "Twelve minutes, starting now.", { took: 1.2, by: "quick" }],
           ["P", "Stacey, can you check the oven?", { aside: true }],
           ["P", "It's fine, leave it.", { aside: true, speaker: STACEY }],
         ]),
         conv(5, ago(130), ALON, wake(5, ALON, "hey cars", 0.18, "ask"), [
           ["T", "Did you call me?"],
           ["P", "Yes, set an alarm for seven."],
-          ["T", "Alarm set for 7:00 tomorrow morning."],
+          ["T", "Alarm set for 7:00 tomorrow morning.", { took: 1.4, by: "quick" }],
         ]),
         conv(6, ago(160), VOICE_3, wake(6, VOICE_3, "hey darts", 0.74), [
           ["P", "What time is it in Tokyo?"],
-          ["T", "12:40 at night. Tomorrow already, over there."],
+          ["T", "12:40 at night. Tomorrow already, over there.", { took: 1.1, by: "quick" }],
         ]),
         conv(7, ago(212), ALON, wake(7, ALON, "hey tars", 0.97), [
           ["P", "Send me everything for the Galilee trip."],
@@ -476,12 +501,12 @@ function build(): DemoData {
             "T",
             "Sent four things: the booking, directions, the packing list and the campsite map. They're on the TARS " +
               "page.",
-            { items: [104, 105, 106, 107] },
+            { items: [104, 105, 106, 107], took: 4.2, by: "look_up" },
           ],
         ]),
         conv(8, yesterday(21, 2), STACEY, wake(8, STACEY, "hey tars", 0.95), [
           ["P", "Send me the warranty for the dishwasher."],
-          ["T", "Sent it. It's a PDF, on the TARS page.", { items: [108] }],
+          ["T", "Sent it. It's a PDF, on the TARS page.", { items: [108], took: 2.7, by: "look_up" }],
         ]),
         conv(9, yesterday(20, 15), ALON, wake(9, ALON, "hey tars", 0.97), [
           ["P", "Tell me something about black holes."],
@@ -489,16 +514,20 @@ function build(): DemoData {
             "T",
             "If you fell into one, you'd see the whole future of the universe flash past. Probably. Nobody's come back " +
               "to confirm.",
-            { rating: "good" },
+            { rating: "good", took: 1.5, by: "quick" },
           ],
         ]),
         conv(10, yesterday(19, 40), ALON, wake(10, ALON, "hey tars", 0.97), [
           ["P", "Remind me to call Tracy after dinner.", { fix: "Remind me to call Stacey after dinner." }],
-          ["T", "I'll remind you to call Tracy at 8:30.", { rating: "bad" }],
+          ["T", "I'll remind you to call Tracy at 8:30.", { rating: "bad", took: 1.3, by: "quick" }],
         ]),
         conv(11, yesterday(18, 0), STACEY, wake(11, STACEY, "hey tars", 0.9), [
           ["P", "Is it going to rain?"],
-          ["T", "Not today. Clear until Thursday."],
+          ["T", "Not today. Clear until Thursday.", { took: 2.2, by: "fallback" }],
+        ]),
+        conv(12, yesterday(17, 10), ALON, wake(12, ALON, "hey tars", 0.96), [
+          ["P", "What's on at the cinema tonight?"],
+          ["T", "Looking it up.", { took: 0.9, by: "look_up", failed: ["llm", "APITimeoutError: Request timed out."] }],
         ]),
       ];
 

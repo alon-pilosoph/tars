@@ -164,6 +164,7 @@ class RecordingBrain:
         self.asked = []
         self.forgotten = 0
         self.sent = []
+        self.answered_by = None
 
     def warm(self):
         pass

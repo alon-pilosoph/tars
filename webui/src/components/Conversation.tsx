@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { fold } from "../fold";
-import { heardText, plural, stamp, time } from "../format";
+import { answerMeta, failedLine, heardText, plural, stamp, time, timingsDetail } from "../format";
 import {
   type MenuTarget,
   type State,
@@ -71,6 +71,7 @@ function TurnRow({ t, c, first, s }: { t: Turn; c: Conversation; first: boolean;
   if (t.role === "tars") {
     const isAsk = c.wake?.outcome === "ask" && first;
     const items = turnItems(s, t);
+    const meta = answerMeta(t);
     return (
       <div className="turn tars" data-turn={t.id}>
         <div className="turn-who">
@@ -81,7 +82,13 @@ function TurnRow({ t, c, first, s }: { t: Turn; c: Conversation; first: boolean;
           TARS
         </div>
         <div className="turn-body">
-          <p className="turn-text">{t.text}</p>
+          {t.text ? <p className="turn-text">{t.text}</p> : null}
+          {t.failed_at ? (
+            <p className="turn-failed">
+              {failedLine(t)}
+              {t.error ? <span className="turn-error">{t.error}</span> : null}
+            </p>
+          ) : null}
           {isAsk ? null : (
             <div className="turn-actions">
               <div className="rate" role="group" aria-label="Was this a good answer?">
@@ -92,6 +99,11 @@ function TurnRow({ t, c, first, s }: { t: Turn; c: Conversation; first: boolean;
                   {t.rating === "bad" ? "✗ Bad" : "Bad"}
                 </button>
               </div>
+              {meta ? (
+                <span className="turn-meta" title={timingsDetail(t.timings) || undefined}>
+                  {meta}
+                </span>
+              ) : null}
             </div>
           )}
           {items.length ? (

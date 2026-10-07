@@ -62,7 +62,11 @@ TABLES = {
     speaker TEXT,                    -- person turns: speaker ID's guess at the time
     not_for_tars INTEGER DEFAULT 0,  -- person turns: overheard, TARS stayed quiet
     corrected_text TEXT,             -- person turns: what they really said, typed in the web UI
-    rating TEXT                      -- tars turns: good | bad, from the web UI
+    rating TEXT,                     -- tars turns: good | bad, from the web UI
+    timings TEXT,                    -- tars turns: JSON seconds by stage, as in the assistant's log (see TIMINGS)
+    answered_by TEXT,                -- tars turns: quick | look_up | fallback | openai (llm.QUICK...)
+    failed_at TEXT,                  -- tars turns that failed: stt | llm | tts | other
+    error TEXT                       -- tars turns that failed: what went wrong
 )""",
     "items": """CREATE TABLE items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,6 +100,12 @@ MIGRATIONS = [
         "ALTER TABLE turns DROP COLUMN embedding",
         "CREATE INDEX events_cluster ON events(cluster_id)",
         "CREATE INDEX turns_audio ON turns(audio)",
+    ],
+    [
+        "ALTER TABLE turns ADD COLUMN timings TEXT",
+        "ALTER TABLE turns ADD COLUMN answered_by TEXT",
+        "ALTER TABLE turns ADD COLUMN failed_at TEXT",
+        "ALTER TABLE turns ADD COLUMN error TEXT",
     ],
 ]
 

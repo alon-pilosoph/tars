@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { post, writesDone, writesMade } from "./api";
 import { fold } from "./fold";
-import { fmtSize, metricChange, sentence } from "./format";
+import { answerMeta, failedLine, fmtSize, metricChange, sentence, timingsDetail } from "./format";
 import { md, plain } from "./markdown";
 import { type State, forPerson, get, personShown } from "./store";
 import { normalize, snapshotOf, within } from "./store/load";
@@ -24,6 +24,15 @@ describe("md", () => {
 });
 
 describe("format", () => {
+  it("says how long an answer took and who wrote it", () => {
+    const base = { id: 1, ts: 0, role: "tars", text: "Late." } as const;
+    expect(answerMeta({ ...base, timings: { total: 1.43 }, answered_by: "quick" })).toBe("1.4 s · Qwen");
+    expect(answerMeta({ ...base, answered_by: "fallback" })).toBe("OpenAI, as backup");
+    expect(answerMeta(base)).toBe("");
+    expect(timingsDetail({ total: 1.4, stt: 0.1 })).toBe("speech to text 0.10 s, to first sound 1.40 s");
+    expect(failedLine({ ...base, failed_at: "tts" })).toBe("Failed while speaking the answer");
+    expect(failedLine(base)).toBe("");
+  });
   it("ends a sentence once", () => {
     expect(sentence("a request followed")).toBe("A request followed.");
     expect(sentence("they answered “Did you call me?”")).toBe("They answered “Did you call me?”");

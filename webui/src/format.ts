@@ -1,4 +1,4 @@
-import type { Item, Metric, TarsEvent } from "./types";
+import type { AnsweredBy, FailedAt, Item, Metric, TarsEvent, Timings, Turn } from "./types";
 
 export type Kind = "answer" | "ask" | "ignore" | "near_miss";
 
@@ -63,6 +63,46 @@ export function fmtSize(bytes: number | null | undefined) {
 }
 
 export const itemName = (i: Item) => i.title || i.name || "";
+
+const ANSWERED_BY: Record<AnsweredBy, string> = {
+  quick: "Qwen",
+  look_up: "OpenAI, handed over",
+  fallback: "OpenAI, as backup",
+  openai: "OpenAI",
+};
+const STAGE: Record<keyof Timings, string> = {
+  end_of_speech: "waited",
+  stt: "speech to text",
+  llm: "first sentence",
+  tts: "first audio",
+  total: "to first sound",
+};
+const FAILED_AT: Record<FailedAt, string> = {
+  stt: "turning speech into text",
+  llm: "writing the answer",
+  tts: "speaking the answer",
+  other: "answering",
+};
+const secs = (s: number) => `${s.toFixed(1)} s`;
+
+/** A TARS turn's response time and who wrote it, e.g. "1.4 s · Qwen"; "" if neither was kept. */
+export function answerMeta(t: Turn) {
+  const total = t.timings?.total;
+  return [total != null ? secs(total) : "", t.answered_by ? (ANSWERED_BY[t.answered_by] ?? t.answered_by) : ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** Every stage's time, for a tooltip: "waited 0.25 s, speech to text 0.10 s, …". */
+export function timingsDetail(timings: Timings | null | undefined) {
+  if (!timings) return "";
+  return (Object.keys(STAGE) as (keyof Timings)[])
+    .filter(k => timings[k] != null)
+    .map(k => `${STAGE[k]} ${timings[k]!.toFixed(2)} s`)
+    .join(", ");
+}
+
+export const failedLine = (t: Turn) => (t.failed_at ? `Failed while ${FAILED_AT[t.failed_at] ?? FAILED_AT.other}` : "");
 
 export type Verdict = "better" | "same" | "worse";
 

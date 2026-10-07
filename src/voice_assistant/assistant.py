@@ -22,14 +22,14 @@ from openai import OpenAIError
 
 from .audio import AudioDeviceError, Microphone, Speaker
 from .config import LLMConfig, SpeakerConfig
-from .conversations import SentItem
+from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .files import atomic_write
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, Brain, split_skip
 from .recorder import UtteranceRecorder
 from .speaker import SpeakerID
-from .speech import StreamedReply
+from .speech import StreamedReply, failed_at, mark_failed_at
 from .stt import Session, Transcriber
 from .tts import Voice
 from .verify import ASK
@@ -67,6 +67,7 @@ NOBODY = Identified(None, None, None)
 class Said:
     text: str
     sent: list[SentItem]
+    answered_by: str | None = None  # which model wrote it (Brain.answered_by)
 
 
 @dataclass
@@ -90,6 +91,7 @@ class Answer:
     reply: StreamedReply | None = None  # None: nothing to say (no words, or not meant for TARS)
     skipped: bool = False  # an overheard follow-up the brain chose not to answer
     spoken: list[str] = field(default_factory=list)
+    error: Exception | None = None  # the brain failed to start the reply; raised once what was heard is written down
     sentences: list[tuple[float, str]] = field(default_factory=list)  # (when it was written, the sentence)
 
 
@@ -329,6 +331,8 @@ class Assistant:
         """Returns False if there was nothing meant for TARS to answer."""
         # Latency counts from when the speaker actually stopped, including the silence waited through.
         t_stopped_talking = time.perf_counter() - heard.silence_s
+        self.timings = {}
+        answer: Answer | None = None
         try:
             answer = heard.draft.take()
             name, score, embedding = answer.who
@@ -339,6 +343,8 @@ class Assistant:
             if not answer.text:
                 heard.draft.keep()
                 return False
+            if answer.error:
+                raise answer.error
             if answer.skipped:
                 print("(not meant for me, going quiet)")
                 self.journal.not_for_tars()
@@ -347,14 +353,24 @@ class Assistant:
             self.timings = {"end_of_speech": heard.silence_s, "stt": answer.stt_s}
             said = self._speak(answer, t_stopped_talking)
             heard.draft.keep()
-        except BaseException:
+        except BaseException as e:
             # Unheard, or only half heard: stop it, and leave the brain as if it was never asked.
             heard.draft.cancel()
+            if isinstance(e, Exception) and not isinstance(e, AudioDeviceError):
+                self._log_failure(e, answer)
             raise
         finally:
             heard.session.close()
-        self.journal.answered(said.text, said.sent, asker=name)
+        self.journal.answered(said.text, said.sent, asker=name, timings=self.timings, answered_by=said.answered_by)
         return True
+
+    def _log_failure(self, e: Exception, answer: Answer | None) -> None:
+        """Kept in the conversation, where it failed and why, with what TARS got to say of the answer."""
+        text = "".join(answer.spoken).strip() if answer else ""
+        if answer:
+            self._measure(answer, answer.t_asked, None)
+        by = self.brain.answered_by if answer and answer.t_asked else None
+        self.journal.failed(text, failed_at(e), f"{type(e).__name__}: {e}", dict(self.timings), by)
 
     def _draft(self, pcm: bytes, session: Session, follow_up: bool, tag: str | None) -> Draft[Answer]:
         return Draft(self._thinking, lambda d: self._prepare(d, pcm, session, follow_up, tag), self._discard)
@@ -364,14 +380,22 @@ class Assistant:
         # Speaker ID runs while the audio is transcribed, so it adds no latency.
         identifying = self._identifying.submit(self.speaker_id.describe, pcm) if self.speaker_id else None
         t = time.perf_counter()
-        text = session.transcript()
+        try:
+            text = session.transcript()
+        except Exception as e:
+            mark_failed_at(e, STT)
+            raise
         stt_s = time.perf_counter() - t
         answer = Answer(text, Identified(*identifying.result()) if identifying else NOBODY, stt_s)
         if not text or draft.cancelled:
             return answer
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
-        # A follow-up, or a reply to "Did you call me?" (maybe a "no"), may not be meant for TARS at all.
-        return self._start_reply(answer, prompt, may_skip=follow_up or tag is not None)
+        try:
+            # A follow-up, or a reply to "Did you call me?" (maybe a "no"), may not be meant for TARS at all.
+            return self._start_reply(answer, prompt, may_skip=follow_up or tag is not None)
+        except Exception as e:  # noqa: BLE001 - raised again in handle(), after what was heard is kept
+            answer.asked, answer.error = False, e  # already forgotten
+            return answer
 
     def _start_reply(self, answer: Answer, prompt: str, may_skip: bool) -> Answer:
         answer.asked, answer.t_asked = True, time.perf_counter()
@@ -382,8 +406,9 @@ class Assistant:
                 if answer.skipped:
                     self.brain.forget_last()  # overheard conversation shouldn't linger in the history
                     return answer
-        except BaseException:
+        except BaseException as e:
             self.brain.forget_last()  # a question that got no answer shouldn't linger either
+            mark_failed_at(e, LLM)
             raise
         answer.reply = StreamedReply(
             pieces, self.voice, lambda sentence: answer.sentences.append((time.perf_counter(), sentence))
@@ -436,16 +461,19 @@ class Assistant:
         sent = list(self.brain.sent)
         for item in sent:
             print(f"(sent to the TARS page: {item.kind} '{item.title}')")
-        self._report(answer, t_start, first_audio[0] if first_audio else None)
-        return Said("".join(answer.spoken).strip(), sent)
+        self._measure(answer, t_start, first_audio[0] if first_audio else None)
+        self._report()
+        return Said("".join(answer.spoken).strip(), sent, self.brain.answered_by)
 
-    def _report(self, answer: Answer, t_start: float, t_sound: float | None) -> None:
+    def _measure(self, answer: Answer, t_start: float, t_sound: float | None) -> None:
         if answer.sentences:
             self.timings["llm"] = answer.sentences[0][0] - answer.t_asked
         if answer.sentences and t_sound:
             self.timings["tts"] = max(0.0, t_sound - answer.sentences[0][0])
         if t_sound:
             self.timings["total"] = t_sound - t_start
+
+    def _report(self) -> None:
         labels = {"end_of_speech": "waited", "stt": "stt", "llm": "llm first sentence", "tts": "tts first audio"}
         parts = [f"{labels[k]} {v:.2f}s" for k, v in self.timings.items() if k in labels]
         if "total" in self.timings:

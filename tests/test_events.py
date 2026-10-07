@@ -22,7 +22,7 @@ from voice_assistant.events import (
     learning_label,
 )
 from voice_assistant.journal import Journal
-from voice_assistant.store import MIGRATIONS
+from voice_assistant.store import MIGRATIONS, TABLES
 from voice_assistant.verify import ANSWER, ASK, IGNORE, NEAR_QUIET_S
 
 from .conftest import AUDIO, FakeTrigger, SilentMic, make_assistant, speech
@@ -202,6 +202,19 @@ def test_an_older_database_is_upgraded_keeping_every_row(tmp_path):
     assert "speaker_score" not in {r["name"] for r in log.store.rows("PRAGMA table_info(turns)")}
     assert log.store.rows("PRAGMA user_version")[0]["user_version"] == len(MIGRATIONS)
     EventLog(folder)  # opening it again changes nothing
+
+
+def test_an_upgraded_database_has_the_same_columns_as_a_new_one(tmp_path):
+    old = tmp_path / "old"
+    old.mkdir()
+    with sqlite3.connect(old / "events.db") as db:
+        for statement in UNVERSIONED:
+            db.execute(statement)
+
+    def columns(log):
+        return {t: [r["name"] for r in log.store.rows(f"PRAGMA table_info({t})")] for t in TABLES}
+
+    assert columns(EventLog(old)) == columns(EventLog(tmp_path / "new"))
 
 
 def test_a_new_database_starts_at_the_latest_version(log):
