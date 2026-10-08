@@ -174,4 +174,7 @@ them, and the end-to-end test then uses all 30 (`--all-user`).
 The experiments that led here (openWakeWord, earlier microWakeWord schedules, stage 1 on cleaned, converted or
 accented clips, other recognizers as the check) are summarized in
 [docs/wake-word.md](../docs/wake-word.md#tried-and-dropped); only the scripts behind the shipped models are here.
-The clip generators still take `tars_stop`: its models were parked ([roadmap](../docs/roadmap.md), step 2).
+"TARS stop" ([roadmap](../docs/roadmap.md), step 2) is on its second try: the first became a detector for the word
+"stop", so its rejects now include "stop" on its own and in sentences, and `stage1/train.py generic --phrase
+tars_stop` trains it. The generators add to what's there, so on a data folder from the first try, delete
+`DATA/clips/{kokoro,piper_voices,openai}/tars_stop/near_miss` first, or the new rejects are never made.
