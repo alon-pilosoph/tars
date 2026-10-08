@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
+from openai import RateLimitError
+
 from voice_assistant.__main__ import brain_config, make_cerebras_client
 from voice_assistant.config import load_config
 from voice_assistant.events import EventLog
@@ -77,6 +79,7 @@ class Run:
     changes: list = field(default_factory=list)
     sent: list = field(default_factory=list)
     error: str = ""
+    tool_errors: list[str] = field(default_factory=list)  # what the tools answered that was an error
 
 
 def in_minutes(minutes: float, kind: str = TIMER) -> Callable[[Run], str]:
@@ -178,6 +181,7 @@ CASES = [
 ]
 GROUPS = {REMIND: "reminders", CANCELLED: "reminders", SNOOZED: "reminders", SENT: "sending", LOOK_UP: "the web"}
 GROUPS |= {PONDER: "thinking", ANSWER: "itself"}
+FIRST_GROUPS = {case.text: GROUPS[case.want] for case in CASES}  # by what each was meant for, before any flags
 
 
 def handed_over_client():
@@ -192,8 +196,35 @@ def handed_over_client():
     return types.SimpleNamespace(responses=types.SimpleNamespace(create=create))
 
 
-def run_once(make_brain: Callable[[], CerebrasChat], text: str) -> Run:
-    brain = make_brain()
+class Watched:
+    """Cerebras's client, noting a "too many requests" on its way to the brain (which hands the turn to OpenAI)."""
+
+    def __init__(self, client):
+        self._client, self.limited = client, False
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=self._create))
+        self.models = client.models
+
+    def _create(self, **kw):
+        try:
+            return self._client.chat.completions.create(**kw)
+        except RateLimitError:
+            self.limited = True
+            raise
+
+
+def run_once(make_brain: Callable[[Watched], CerebrasChat], cerebras, text: str) -> Run:
+    """One run, tried again after a pause while Cerebras says "too many requests": that's the free tier's limit on
+    tokens a minute, not an answer."""
+    for wait in (10, 20, 40, 60, 60, 60):
+        watched = Watched(cerebras)
+        run = _run_once(make_brain(watched), text)
+        if not watched.limited:
+            return run
+        time.sleep(wait)
+    return dataclasses.replace(run, error="still rate-limited after 4 minutes")
+
+
+def _run_once(brain: CerebrasChat, text: str) -> Run:
     start, first, said = time.monotonic(), None, ""
     try:
         for piece in brain.stream_reply(SPEAKER + text):
@@ -213,19 +244,34 @@ def run_once(make_brain: Callable[[], CerebrasChat], text: str) -> Run:
         did = {ADD: REMIND, CANCEL: CANCELLED, SNOOZE: SNOOZED}[brain.changes[0].action]
     else:
         did = SENT if brain.sent else ANSWER
-    return Run(did, said.strip(), first, total, list(brain.changes), list(brain.sent))
+    errors = [c["output"] for c in brain._writing.quick_calls if str(c.get("output", "")).startswith("error")]
+    return Run(did, said.strip(), first, total, list(brain.changes), list(brain.sent), tool_errors=errors)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runs", type=int, default=6, help="how many times to ask each (default 6)")
-    parser.add_argument("--parallel", type=int, default=4, help="requests at once (default 4)")
+    parser.add_argument("--parallel", type=int, default=2, help="requests at once (default 2)")
+    parser.add_argument("--no-tools", action="store_true", help="today's way: Qwen hands reminders and sending over")
+    parser.add_argument("--no-ponder", action="store_true", help="no <ponder>: Qwen answers hard questions itself")
+    parser.add_argument("--effort", help="Qwen's reasoning effort, instead of [llm] reasoning_effort")
     args = parser.parse_args()
 
     cfg = load_config(REPO / "config.toml")
     if not cfg.llm.cerebras_model:
         sys.exit("[llm] cerebras_model is empty: there's no quick model to test.")
-    llm = dataclasses.replace(brain_config(cfg, typed=False), quick_tools=True, send=True)
+    llm = dataclasses.replace(brain_config(cfg, typed=False), quick_tools=not args.no_tools, send=True)
+    if args.no_ponder:
+        llm = dataclasses.replace(llm, think_effort="")
+    if args.effort is not None:
+        llm = dataclasses.replace(llm, reasoning_effort=args.effort)
+    # What each request should get, this time: without its own tools Qwen hands those over; without <ponder> it
+    # answers hard questions itself.
+    for case in CASES:
+        if args.no_tools and case.want in (REMIND, CANCELLED, SNOOZED, SENT):
+            case.want, case.check = LOOK_UP, None
+        if args.no_ponder and case.want == PONDER:
+            case.want = ANSWER
     cerebras = make_cerebras_client(REPO / ".env")
     folder = Path(tempfile.mkdtemp(prefix="tars-bench-"))
     reminders = Reminders(EventLog(folder / "events").store)
@@ -233,13 +279,15 @@ def main() -> None:
     SEEDED["bank"] = reminders.add(NewReminder(REMINDER, "call the bank", "alon", due=time.time() + 1800), WEB)
     tools = ReminderTools(reminders, voices=lambda: VOICES)
 
-    def make_brain() -> CerebrasChat:
-        return CerebrasChat(handed_over_client(), llm, cerebras, reminders=tools)
+    def make_brain(client: Watched) -> CerebrasChat:
+        return CerebrasChat(handed_over_client(), llm, client, reminders=tools)
 
-    print(f"{cfg.llm.cerebras_model} on Cerebras, its own tools on; {len(CASES)} requests x {args.runs}\n")
+    own = "off" if args.no_tools else "on"
+    print(f"{cfg.llm.cerebras_model} on Cerebras, its own tools {own}, <ponder> {'off' if args.no_ponder else 'on'},")
+    print(f"reasoning effort {llm.reasoning_effort or 'default'}; {len(CASES)} requests x {args.runs}\n")
     jobs = [(case, n) for case in CASES for n in range(args.runs)]
     with ThreadPoolExecutor(args.parallel) as pool:
-        runs = list(pool.map(lambda job: run_once(make_brain, job[0].text), jobs))
+        runs = list(pool.map(lambda job: run_once(make_brain, cerebras, job[0].text), jobs))
 
     by_case: dict[str, list[Run]] = {}
     for (case, _), run in zip(jobs, runs, strict=True):
@@ -250,11 +298,12 @@ def main() -> None:
         wrong = []
         for run in results:
             if run.did != case.want:
-                wrong.append(f"{run.did}{f' ({run.error})' if run.error else ''}: {run.said[:70]!r}")
+                why = run.error or "; ".join(run.tool_errors)
+                wrong.append(f"{run.did}{f' ({why})' if why else ''}: {run.said[:70]!r}")
             elif case.check and (why := case.check(run)):
                 wrong.append(f"{run.did}, but {why}")
         right = len(results) - len(wrong)
-        tally = groups.setdefault(GROUPS[case.want], [0, 0])
+        tally = groups.setdefault(FIRST_GROUPS[case.text], [0, 0])
         tally[0] += right
         tally[1] += len(results)
         mark = "✓" if not wrong else "✗"
