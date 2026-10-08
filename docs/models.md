@@ -86,8 +86,14 @@ should go (answer, reminders, send, web, ponder, can't), 6 times each, one at a 
   pancakes" went to *answer* (a recipe can be said), and the savings question to *answer*, as with every model above.
 - **Its confidence tells right from wrong**: never under 0.90 when right, never over 0.88 when wrong. Acting only on
   picks of 0.9 or more, 36 of the 42 web and hard-question requests would have gone straight on, and none wrongly.
-- **In front of every turn, it would make TARS slower**: its 0.29 s, then the quick model's own (Qwen without
-  reasoning: 0.34 s to first words), is about 0.63 s, against 0.40 s for Qwen at low reasoning on its own.
+- **Jev itself is fast; the distance isn't.** Of its 0.29 s, about 0.22 s is the round trip to TypeSafe's servers
+  (an empty request on the same kept-open connection takes that long; requests leave through Cloudflare in Tel Aviv),
+  and about 0.065 s is Jev. For comparison, the same empty round trip takes 0.16 s to Cerebras and 0.20 s to OpenAI,
+  and Qwen takes about 0.26 s of its 0.42 s to decide on a hand-off. Measured from where TARS runs; closer to
+  TypeSafe's servers, the picture changes.
+- **In front of every turn, it would make TARS slower**, because a router in front adds a whole round trip before the
+  quick model's own: its 0.29 s, then Qwen without reasoning (0.34 s to first words), is about 0.63 s, against 0.40 s
+  for Qwen at low reasoning on its own.
 - **Beside the quick model**, started at the same moment: a web or hard-question pick at 0.9 or more sends the turn on
   without waiting for the quick model's `<look-up>` or `<ponder>` (0.42 s median, 0.71-0.80 s at the 90th percentile,
   against Jev's 0.29 / 0.35 s), and anything else is left to the quick model. Those turns gain about 0.13 s at the
