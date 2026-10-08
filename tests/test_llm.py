@@ -818,3 +818,20 @@ def test_claude_hands_over_like_qwen_and_fails_over_to_openai(tmp_path):
     down = anthropic.APIConnectionError(request=httpx2.Request("POST", "https://api.anthropic.com"))
     brain, _, _ = claude_brain(tmp_path, lambda m: down)
     assert "".join(brain.stream_reply("hi")) == "From OpenAI." and brain.answered_by == llm.FALLBACK
+
+
+@pytest.mark.parametrize(
+    "body, refused",
+    [
+        ("BBC weather: https://www.bbc.co.uk/weather", True),
+        ("It's at bbc.com/weather", True),
+        ("Look up www.metoffice.gov.uk", True),
+        ("Pancakes: 200 g flour, 2 eggs, 300 ml milk. Whisk, rest, fry.", False),
+    ],
+)
+def test_qwen_cant_slip_a_link_into_a_note_either(tmp_path, body, refused):
+    note = {"kind": "note", "title": "Weather", "for": "person", "body": body}
+    brain, _, cerebras, _ = quick_with_tools(tmp_path, [("send", note)], then="Done.")
+    "".join(brain.stream_reply("send me that"))
+    result = cerebras.requests[-1]["messages"][-1]["content"]
+    assert result.startswith("error: a link needs web search") == refused and (brain.sent == []) == refused

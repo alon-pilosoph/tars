@@ -87,8 +87,8 @@ something it could have done. Turning a feature off in config changes both promp
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links,
 which need web search) and uses them itself, saving those turns the hand-off. What its tools did goes along if it
-hands the turn over after all, so nothing is done twice. `tools/capability_bench.py` checks it gets them right before
-it's turned on. The marker isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
+hands the turn over after all, so nothing is done twice. `tools/capability_bench.py` checks it gets them right; [choosing the
+quick model](models.md) has every model and reasoning effort tried, and how to try the next. The marker isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
 
 ## What it keeps, and where
 

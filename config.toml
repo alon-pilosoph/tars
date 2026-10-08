@@ -69,9 +69,9 @@ cerebras_model = "qwen-3.8-27b"
 # The model above sets reminders and sends notes, lists and files itself, saving those turns the hand-off.
 # `uv run python tools/capability_bench.py` checks it gets them right.
 quick_tools = true
-# How much it thinks before answering. "low": every reminder right and nothing claimed that wasn't done, for about
-# 0.7 s more before its first sentence; "none" is fast but got half the reminders wrong, often saying a timer was set
-# when it wasn't (capability_bench, October 2026). Empty = reasoning_effort below.
+# How much it thinks before answering. "low": reminders right and nothing claimed that wasn't done, for about 0.06 s
+# more before its first words; "none" got a third of reminders wrong, often saying a timer was set when it wasn't.
+# Every model and effort tried: docs/models.md. Empty = reasoning_effort below.
 quick_reasoning_effort = "low"
 # Questions that need real thinking (planning, comparing, several steps) go to this model at this reasoning effort,
 # for at most think_timeout_s; TARS says "Let me think about that for a moment." first. Empty think_model = `model`;

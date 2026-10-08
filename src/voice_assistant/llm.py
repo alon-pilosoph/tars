@@ -169,8 +169,9 @@ SEND_RULES = (
 QUICK_SEND_RULES = (
     "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
     "send tool: a note, a list, or a text file. Use it when asked to send, save or share something, or when the "
-    "answer is a recipe, a list or anything too long to hear. After sending, say in one short line that you sent "
-    "it and that it's on the TARS page. In anything you send, write like a person: no middots (·) or em dashes."
+    "answer is a recipe, a list or anything too long to hear. Never put a link or a web address in it: for a link, "
+    "reply <look-up>. After sending, say in one short line that you sent it and that it's on the TARS page. In "
+    "anything you send, write like a person: no middots (·) or em dashes."
 )
 
 # Strict mode needs every field listed as required; the ones a kind doesn't use are nullable instead.
@@ -321,6 +322,15 @@ def check_send(args: dict) -> tuple[SentItem | None, str]:
     else:
         return None, f"error: kind must be one of {', '.join(KINDS)}"
     return item, "sent"
+
+
+# A web address, in anything the quick model sends: it has no web search, so any link would be from memory.
+WEB_ADDRESS = re.compile(r"https?://|www\.|\b[\w-]+\.(?:com|org|net|io|gov|edu|co\.uk)\b", re.IGNORECASE)
+
+
+def _has_link(args: dict) -> bool:
+    """Whether a send call is a link or has a web address anywhere in it."""
+    return args.get("kind") == LINK or bool(WEB_ADDRESS.search(json.dumps(args, ensure_ascii=False)))
 
 
 def _text(value) -> str:
@@ -556,7 +566,7 @@ class OpenAIChat:
             args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
             return "error: the arguments weren't valid JSON"
-        if call.name == "send" and not links and isinstance(args, dict) and args.get("kind") == LINK:
+        if call.name == "send" and not links and isinstance(args, dict) and _has_link(args):
             return f"error: a link needs web search, which you can't do: reply {LOOK_UP} instead"
         if call.name == "send":
             item, result = check_send(args)
