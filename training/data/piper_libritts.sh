@@ -24,9 +24,17 @@ die() { log "FAILED: $*"; exit 1; }
 [ -d "$DATA/mww/piper-sample-generator" ] || die "run training/setup/mww_env.sh first"
 mkdir -p "$W" && cd "$W"
 
-if [ ! -f .setup_done ]; then
+STALE=0
+if [ -x .venv/bin/python ] && ! .venv/bin/python -c 'import sys; sys.exit(sys.version_info[:2] != (3, 12))'; then
+  STALE=1
+fi
+if [ ! -f .setup_done ] || [ "$STALE" = 1 ]; then
   log "installing openWakeWord in $W/.venv"
   # Python 3.12: the newest piper-phonemize-cross has builds for. Versions: training/setup/oww-constraints.txt.
+  if [ "$STALE" = 1 ]; then
+    log "replacing $W/.venv: it isn't Python 3.12"
+    uv venv -q --clear -p 3.12 .venv || die venv
+  fi
   [ -d .venv ] || uv venv -q -p 3.12 .venv || die venv
   source .venv/bin/activate
   [ -d openwakeword ] || git clone -q https://github.com/dscripka/openwakeword || die clone

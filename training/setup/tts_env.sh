@@ -3,12 +3,16 @@
 #
 #     bash training/setup/tts_env.sh [DATA]        (DATA defaults to $TARS_TRAINING_DATA or ~/tars-training)
 #
-# Creates DATA/tts/.venv (Python 3.12). Kokoro also needs espeak-ng for its fallback G2P (brew install espeak-ng).
+# Creates DATA/tts/.venv (Python 3.14). Kokoro also needs espeak-ng for its fallback G2P (brew install espeak-ng).
 set -euo pipefail
 DATA=${1:-${TARS_TRAINING_DATA:-$HOME/tars-training}}
 log() { echo "[$(date +%T)] $*"; }
 die() { log "FAILED: $*"; exit 1; }
 mkdir -p "$DATA/tts" && cd "$DATA/tts"
+if [ -x .venv/bin/python ] && ! .venv/bin/python -c 'import sys; sys.exit(sys.version_info[:2] != (3, 14))'; then
+  log "replacing $DATA/tts/.venv: it isn't Python 3.14"
+  uv venv -q --clear -p 3.14 .venv || die "venv"
+fi
 [ -d .venv ] || uv venv -q -p 3.14 .venv || die "venv"
 source .venv/bin/activate
 uv pip install -q "kokoro==0.9.4" "misaki[en]==0.9.4" "piper-tts==1.8.0" "onnxruntime==1.30.0" "soundfile==0.14.0" \

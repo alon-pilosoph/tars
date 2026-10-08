@@ -19,6 +19,10 @@ die() { log "FAILED: $*"; exit 1; }
 install() { uv pip install -q -c "$CONSTRAINTS" "$@"; }
 
 log "python env in $W/.venv"
+if [ -x .venv/bin/python ] && ! .venv/bin/python -c 'import sys; sys.exit(sys.version_info[:2] != (3, 13))'; then
+  log "replacing $W/.venv: it isn't Python 3.13"
+  uv venv -q --clear -p 3.13 .venv || die "venv"
+fi
 [ -d .venv ] || uv venv -q -p 3.13 .venv || die "venv"
 source .venv/bin/activate
 install 'git+https://github.com/whatsnowplaying/audio-metadata@d4ebb238e6a401bb1a5aaaac60c9e2b3cb30929f' || die "audio-metadata"

@@ -74,7 +74,7 @@ requires-dist = ["onnxruntime>=1.10,<2", "tqdm>=4,<5", "scipy>=1.3,<2", "scikit-
 line-length = 120
 # The training scripts, and the benches run beside them, run in the training environments' older Pythons
 # (training/setup), where a forward reference still needs its quotes.
-per-file-target-version = { "training/**" = "py313", "tools/wakeword_bench.py" = "py313", "tools/verifier_bench.py" = "py313" }
+per-file-target-version = { "training/**" = "py313", "tools/wakeword_bench.py" = "py313" }
 
 [tool.ruff.lint]
 extend-select = ["I", "B", "BLE", "RUF100", "E501"]

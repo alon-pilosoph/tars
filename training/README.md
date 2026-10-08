@@ -65,8 +65,9 @@ Every environment is pinned to exact versions, kept at the newest that work: `se
 on 2026-10-08). Where the Python isn't the newest, something holds it back: microWakeWord's environment is on 3.13
 until TensorFlow 2.22 is out (only its release candidate has 3.14 builds), and openWakeWord's clip generator on 3.12,
 the newest piper-phonemize-cross has builds for. The microWakeWord, piper-sample-generator and openWakeWord checkouts
-are pinned to commits, each its newest. The "hey TARS" models in `models/` were
-made with the versions before this move, which a rebuild won't reproduce exactly.
+are pinned to commits, each its newest. The "hey TARS" models in `models/` were made with the versions before this
+move, which a rebuild won't reproduce exactly. Rerun on a data folder from before, each setup script replaces an
+environment on another Python, and `data/piper_libritts.sh` sets openWakeWord's up again.
 
 Everything goes into one data folder: `--data DIR` on every script, or `TARS_TRAINING_DATA`, default
 `~/tars-training`. The scripts run from the repo root as modules (`python -m training.stage1.train ...`), each in
