@@ -492,7 +492,7 @@ class OpenAIChat:
                 if event.type == "response.output_text.delta" and event.delta:
                     said += event.delta
                     yield event.delta
-                elif event.type == "response.web_search_call.in_progress" and not (answer or said):
+                elif event.type == "response.web_search_call.in_progress" and not (answer.strip() or said):
                     said = f"{SEARCHING} "
                     yield said
                 elif event.type == "response.output_item.done" and event.item.type == "function_call":

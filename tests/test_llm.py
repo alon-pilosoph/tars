@@ -863,3 +863,10 @@ def test_luna_as_the_quick_model_reasons_and_sets_a_reminder_on_its_own_tier(tmp
 def test_luna_as_the_quick_model_hands_over_like_qwen(tmp_path):
     brain, _ = responses_brain(tmp_path, fake_openai_chat(lambda m: LOOK_UP))
     assert "".join(brain.stream_reply("weather?")) == "From OpenAI." and brain.answered_by == llm.LOOKED_UP
+
+
+def test_a_blank_line_before_the_hand_off_still_gets_looking_it_up_said():
+    openai = fake_openai_chat(lambda m: "Sunny.", search_for=lambda m: ["response.web_search_call.in_progress"])
+    cerebras = fake_cerebras(lambda m: f"\n\n{LOOK_UP}")  # Qwen sometimes writes a blank line first
+    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen"), cerebras)
+    assert "".join(brain.stream_reply("weather?")).strip() == f"{llm.SEARCHING} Sunny."
