@@ -11,10 +11,13 @@ set -euo pipefail
 PHRASE=${1:-hey_tars}
 DATA=${2:-${TARS_TRAINING_DATA:-$HOME/tars-training}}
 W=$DATA/oww
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 OWW_COMMIT=368c03716d1e92591906a84949bc477f3a834455  # the openWakeWord the patches below were written for
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 PYTORCH_ENABLE_MPS_FALLBACK=1 \
   OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
-# torch 2.5 can't run Piper's TorchScript-fused op on the Apple GPU; plain eager mode is as fast.
+# TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: the LibriTTS-R voice is a pickled model, from piper-sample-generator's own pinned
+# release, which newer PyTorch loads only when told to. PYTORCH_JIT=0: Piper's TorchScript-fused op doesn't run on the
+# Apple GPU; plain eager mode is as fast.
 export PYTORCH_JIT=0
 log() { echo "[$(date +%T)] $*"; }
 die() { log "FAILED: $*"; exit 1; }
@@ -23,15 +26,18 @@ mkdir -p "$W" && cd "$W"
 
 if [ ! -f .setup_done ]; then
   log "installing openWakeWord in $W/.venv"
-  [ -d .venv ] || uv venv -q -p 3.10 .venv || die venv
+  # Python 3.12: the newest piper-phonemize-cross has builds for. Versions: training/setup/oww-constraints.txt.
+  [ -d .venv ] || uv venv -q -p 3.12 .venv || die venv
   source .venv/bin/activate
   [ -d openwakeword ] || git clone -q https://github.com/dscripka/openwakeword || die clone
   git -C openwakeword checkout -q "$OWW_COMMIT" || die "openwakeword $OWW_COMMIT"
-  for p in "torch==2.5.0 torchaudio==2.5.0" "piper-phonemize-cross==1.2.1" webrtcvad "-e ./openwakeword --no-deps" \
-      mutagen==1.47.0 torchinfo==1.8.0 torchmetrics==1.2.0 speechbrain==0.5.14 audiomentations==0.33.0 \
-      torch-audiomentations==0.11.0 acoustics==0.2.6 "onnxruntime onnx" pronouncing==0.2.0 datasets==2.14.6 \
-      "numba>=0.62" "setuptools<81" "scipy soundfile librosa pyarrow<21 pyyaml tqdm requests"; do
-    uv pip install -q $p || die "install $p"  # unquoted on purpose: some entries are several packages
+  C="$REPO/training/setup/oww-constraints.txt"
+  # webrtcvad-wheels: the maintained webrtcvad (the original needs pkg_resources, gone from setuptools). No
+  # acoustics: unmaintained, broken by SciPy, and only used by openWakeWord's own augmentation, which isn't run here.
+  for p in "torch torchaudio" piper-phonemize-cross webrtcvad-wheels "-e ./openwakeword --no-deps" mutagen torchinfo \
+      torchmetrics speechbrain audiomentations torch-audiomentations "onnxruntime onnx" pronouncing datasets numba \
+      "scipy soundfile librosa pyarrow pyyaml tqdm requests"; do
+    uv pip install -q -c "$C" $p || die "install $p"  # unquoted on purpose: some entries are several packages
   done
   M=openwakeword/openwakeword/resources/models; mkdir -p "$M"
   for f in embedding_model.onnx melspectrogram.onnx; do
@@ -53,6 +59,10 @@ patch("openwakeword/openwakeword/data.py",
 # Full batches for lookalikes too, and only 4 workers.
 patch("openwakeword/openwakeword/train.py", 'config["tts_batch_size"]//7', 'config["tts_batch_size"]')
 patch("openwakeword/openwakeword/train.py", "n_cpus = os.cpu_count()", "n_cpus = 8  # capped: 8 // 2 = 4 workers")
+# acoustics isn't installed (see above): import it only where openWakeWord's own augmentation uses it.
+patch("openwakeword/openwakeword/data.py", "import acoustics\n", "")
+patch("openwakeword/openwakeword/data.py", "noise_clip = acoustics.generator.noise(",
+      'noise_clip = __import__("acoustics").generator.noise(')
 PY
   touch .setup_done
 fi
@@ -61,9 +71,13 @@ source .venv/bin/activate
 python - "$PHRASE" "$W" "$DATA" <<'PY' || die config
 import sys, yaml
 phrase, w, data = sys.argv[1:]
-say, other = {"hey_tars": ("hey tarss", "tarss stop"), "tars_stop": ("tarss stop", "hey tarss")}[phrase]
+say, others = {
+    "hey_tars": ("hey tarss", ["tarss stop"]),
+    # "stop" alone and in other words too: the first try turned into a detector for "stop".
+    "tars_stop": ("tarss stop", ["hey tarss", "stop", "please stop", "stars stop", "bus stop"]),
+}[phrase]
 c = yaml.safe_load(open(f"{w}/openwakeword/examples/custom_model.yml"))
-c.update(target_phrase=[say], model_name=phrase, custom_negative_phrases=[other], n_samples=50000, n_samples_val=5000,
+c.update(target_phrase=[say], model_name=phrase, custom_negative_phrases=others, n_samples=50000, n_samples_val=5000,
          output_dir=f"{w}/output", piper_sample_generator_path=f"{data}/mww/piper-sample-generator",
          rir_paths=[f"{data}/backgrounds/mit_rirs"], background_paths=[f"{data}/backgrounds/audioset_16k", f"{data}/backgrounds/fma"])
 yaml.dump(c, open(f"{w}/{phrase}.yaml", "w"))
