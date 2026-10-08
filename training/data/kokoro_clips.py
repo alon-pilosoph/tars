@@ -139,6 +139,18 @@ NEAR_MISS = {
         "Carts stop.",
         "Darts, stop.",
         "Stop it, stars.",
+        "Top.",
+        "Stop talking.",
+        "Please stop.",
+        "Okay, stop.",
+        "Stop it.",
+        "Stop there.",
+        "I can't stop laughing.",
+        "Star, stop.",
+        "Timer stopped.",
+        "I'll stop there.",
+        "Stop me if you've heard this.",
+        f"{T}, start.",
     ],
 }
 

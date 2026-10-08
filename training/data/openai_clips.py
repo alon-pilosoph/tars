@@ -140,6 +140,18 @@ NEAR_EXTRA = {  # training voices only
         "Cards, stop.",
         "Stop the stars.",
         "Hearts stop.",
+        "Top.",
+        "Stop talking.",
+        "Please stop.",
+        "Okay, stop.",
+        "Stop it.",
+        "Stop there.",
+        "I can't stop laughing.",
+        "Star, stop.",
+        "Timer stopped.",
+        "I'll stop there.",
+        "Stop me if you've heard this.",
+        "Tars, start.",
     ],
 }
 

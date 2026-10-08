@@ -130,6 +130,18 @@ NEAR_MISS = {
         "Hey tarss.",
         "Tarss.",
         "Carts stop.",
+        "Top.",
+        "Stop talking.",
+        "Please stop.",
+        "Okay, stop.",
+        "Stop it.",
+        "Stop there.",
+        "I can't stop laughing.",
+        "Star, stop.",
+        "Timer stopped.",
+        "I'll stop there.",
+        "Stop me if you've heard this.",
+        "Tarss, start.",
     ],
 }
 NEAR_MISS_RATIO = 1.2
