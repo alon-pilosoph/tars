@@ -738,3 +738,83 @@ def test_the_thinking_model_is_given_a_time_limit():
     assert next(reply) == f"{llm.THINKING} "
     with pytest.raises(ReplyFailed, match="no answer within 0 s"):
         list(reply)
+
+
+def test_qwen_can_think_more_than_openai_without_slowing_openai_down():
+    brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP, reasoning_effort="none", quick_reasoning_effort="low")
+    "".join(brain.stream_reply("weather?"))
+    assert cerebras.requests[0]["reasoning_effort"] == "low"
+    assert openai.requests[0]["reasoning"] == {"effort": "none"}
+    brain, _, cerebras = cerebras_brain(lambda m: "ok", reasoning_effort="none")
+    "".join(brain.stream_reply("hi"))
+    assert cerebras.requests[0]["reasoning_effort"] == "none"  # unset, it's the same as OpenAI's
+
+
+class FakeClaudeStream:
+    """A Messages API stream: text events, then the final message, with any tool calls in it."""
+
+    def __init__(self, text="", uses=()):
+        self.text, self.uses, self.closed = text, list(uses), False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+
+    def __iter__(self):
+        for piece in [self.text[:3], self.text[3:]] if self.text else []:
+            yield types.SimpleNamespace(type="text", text=piece)
+
+    def close(self):
+        self.closed = True
+
+    def get_final_message(self):
+        blocks = [types.SimpleNamespace(type="text", text=self.text)] if self.text else []
+        for i, (name, args) in enumerate(self.uses):
+            blocks.append(types.SimpleNamespace(type="tool_use", id=f"toolu_{i}", name=name, input=args))
+        return types.SimpleNamespace(stop_reason="tool_use" if self.uses else "end_turn", content=blocks)
+
+
+def claude_brain(tmp_path, reply_for, **cfg):
+    """A brain whose quick model is Claude: `reply_for(messages)` gives each request's FakeClaudeStream, or an error."""
+    openai, requests = fake_openai_chat(lambda m: "From OpenAI."), []
+
+    def stream(**kw):
+        requests.append(kw)
+        reply = reply_for(kw["messages"])
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    claude = types.SimpleNamespace(messages=types.SimpleNamespace(stream=stream))
+    config = LLMConfig(cerebras_model="claude-haiku-5-5", quick_tools=True, **cfg)
+    return llm.ClaudeQuickChat(openai, config, claude, reminder_tools(tmp_path)), openai, requests
+
+
+def test_with_claude_as_the_quick_model_it_sets_a_reminder_itself(tmp_path):
+    def reply_for(messages):
+        if messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
+            return FakeClaudeStream("Twelve minutes.")
+        return FakeClaudeStream(uses=[("remind", REMIND)])
+
+    brain, openai, requests = claude_brain(tmp_path, reply_for, quick_reasoning_effort="none")
+    assert "".join(brain.stream_reply("pasta timer, twelve minutes")) == "Twelve minutes."
+    assert openai.requests == [] and brain.answered_by == llm.QUICK and len(brain.changes) == 1
+    first, second = requests
+    assert first["output_config"] == {"effort": "low"}  # Claude's thinking can't be off: low is the least
+    assert {t["name"] for t in first["tools"]} >= {"remind", "send"} and all(t["strict"] for t in first["tools"])
+    assert first["system"][0]["cache_control"] == {"type": "ephemeral"}  # the instructions, cached
+    (result,) = second["messages"][-1]["content"]
+    assert result["tool_use_id"] == "toolu_0" and result["content"].startswith("set for ")
+
+
+def test_claude_hands_over_like_qwen_and_fails_over_to_openai(tmp_path):
+    brain, _, _ = claude_brain(tmp_path, lambda m: FakeClaudeStream(LOOK_UP))
+    assert "".join(brain.stream_reply("weather?")) == "From OpenAI." and brain.answered_by == llm.LOOKED_UP
+    import anthropic
+    import httpx2
+
+    down = anthropic.APIConnectionError(request=httpx2.Request("POST", "https://api.anthropic.com"))
+    brain, _, _ = claude_brain(tmp_path, lambda m: down)
+    assert "".join(brain.stream_reply("hi")) == "From OpenAI." and brain.answered_by == llm.FALLBACK

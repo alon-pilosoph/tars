@@ -626,7 +626,8 @@ class CerebrasChat(OpenAIChat):
         rules = [SKIP_RULES, *self._reminder_rules(tools=own_remind)] + [QUICK_SEND_RULES] * own_send
         rules.append(abilities(can, hand_offs, self._cant()))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules])
-        self._quick_extra = {"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_effort else {}
+        effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
+        self._quick_extra = {"reasoning_effort": effort} if effort else {}
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
         if time.monotonic() < self._cerebras_back_at:
@@ -741,6 +742,88 @@ class CerebrasChat(OpenAIChat):
         except OpenAIError:
             pass  # only a head start
         super().warm()
+
+
+class QuickFailed(OpenAIError):
+    """The quick model's service failed (whichever it is), so OpenAI answers instead."""
+
+
+class ClaudeQuickChat(CerebrasChat):
+    """CerebrasChat with a Claude model (Haiku) as the quick model, through Anthropic's Messages API: the same tools,
+    hand-offs and fallback to OpenAI. `claude` is an anthropic.Anthropic client; `cerebras_model` names the model."""
+
+    MAX_TOKENS = 8000  # a spoken reply is short, but thinking counts too
+
+    def __init__(self, client: OpenAI, cfg: LLMConfig, claude, reminders: ReminderTools | None = None):
+        super().__init__(client, cfg, claude, reminders)
+        self._claude_tools = [
+            {
+                "name": t["function"]["name"],
+                "description": t["function"]["description"],
+                "input_schema": t["function"]["parameters"],
+                "strict": True,
+            }
+            for t in self._quick_tools
+        ]
+        effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
+        # Claude's thinking can't be turned off; at low effort it skips it on simple requests.
+        effort = "low" if effort in ("none", "minimal") else effort
+        self._quick_extra = {"output_config": {"effort": effort}} if effort else {}
+
+    def _quick_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+        import anthropic
+
+        # The instructions are cached; the time and the reminders change every request, so they come after.
+        system = [
+            {"type": "text", "text": self._quick_instructions, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": self._now()},
+        ]
+        messages = list(context)
+        for round_ in range(MAX_TOOL_ROUNDS):
+            tools = {"tools": self._claude_tools} if self._claude_tools else {}
+            if tools and round_ == MAX_TOOL_ROUNDS - 1:
+                tools["tool_choice"] = {"type": "none"}  # the last round has to say something
+            _check(writing)
+            try:
+                with self._cerebras.messages.stream(
+                    model=self._cfg.cerebras_model,
+                    max_tokens=self.MAX_TOKENS,
+                    system=system,
+                    messages=messages,
+                    **self._quick_extra,
+                    **tools,
+                ) as stream:
+                    writing.stream = stream
+                    for event in stream:
+                        _check(writing)
+                        if event.type == "text" and event.text:
+                            yield event.text
+                    final = stream.get_final_message()
+            except anthropic.APIError as e:
+                raise QuickFailed(f"Claude: {e!r}") from e
+            writing.stream = None
+            if final.stop_reason == "refusal":
+                raise QuickFailed("Claude declined")
+            uses = [b for b in final.content if b.type == "tool_use"]
+            if not uses:
+                return
+            messages.append({"role": "assistant", "content": final.content})
+            results = []
+            with self._lock:
+                _check(writing)
+                for use in uses:
+                    arguments = json.dumps(use.input)
+                    output = self._run_tool(types.SimpleNamespace(name=use.name, arguments=arguments), links=False)
+                    result = {"type": "tool_result", "tool_use_id": use.id, "content": output}
+                    results.append(result | ({"is_error": True} if output.startswith("error") else {}))
+                    writing.quick_calls += [
+                        {"type": "function_call", "call_id": use.id, "name": use.name, "arguments": arguments},
+                        {"type": "function_call_output", "call_id": use.id, "output": output},
+                    ]
+            messages.append({"role": "user", "content": results})
+
+    def warm(self) -> None:
+        OpenAIChat.warm(self)  # Claude has no request cheap enough to be worth it
 
 
 def _chat_tool(tool: dict) -> dict:

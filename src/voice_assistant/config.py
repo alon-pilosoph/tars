@@ -64,7 +64,8 @@ class LLMConfig:
     # Answers first, on Cerebras; turns that need the web or the TARS page go to `model`. Empty = `model` answers all.
     cerebras_model: str = ""
     service_tier: str = ""
-    reasoning_effort: str = ""  # sent to both models: OpenAI's and Cerebras's
+    reasoning_effort: str = ""  # OpenAI's model's, and the quick model's unless quick_reasoning_effort is set
+    quick_reasoning_effort: str = ""  # the quick model's (Cerebras); empty = reasoning_effort
     memory_minutes: float = 10.0
     system_prompt: str = "You are a helpful voice assistant. Answer in one to three short sentences."
     humor: int = 75  # percent; "{humor}" in the system prompt is replaced with it

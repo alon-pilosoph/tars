@@ -32,6 +32,11 @@ Repository = "https://github.com/alon-pilosoph/tars"
 [project.scripts]
 voice-assistant = "voice_assistant.__main__:main"
 
+[project.optional-dependencies]
+claude = [
+    "anthropic>=1",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -41,6 +46,7 @@ packages = ["src/voice_assistant"]
 
 [dependency-groups]
 dev = [
+    "anthropic>=1",
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff==0.16.9",

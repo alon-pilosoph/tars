@@ -2,6 +2,8 @@
 
     uv run python tools/capability_bench.py              # every request, 6 times each
     uv run python tools/capability_bench.py --runs 2     # a quicker look
+    uv run python tools/capability_bench.py --brain claude --model claude-haiku-5-5    # another quick model
+    uv run python tools/capability_bench.py --brain openai --model gpt-6-luna
 
 Qwen on Cerebras, with its own tools (quick_tools on, whatever config.toml says), hears each request with no
 conversation before it, and each answer is sorted by what it did: set, cancelled or snoozed a reminder, sent
@@ -15,6 +17,7 @@ Turn quick_tools on when every request comes out right (or nearly: say 6/6 and a
 
 import argparse
 import dataclasses
+import json
 import statistics
 import sys
 import tempfile
@@ -28,10 +31,10 @@ from pathlib import Path
 
 from openai import RateLimitError
 
-from voice_assistant.__main__ import brain_config, make_cerebras_client
+from voice_assistant.__main__ import api_key, brain_config, make_cerebras_client, make_openai_client
 from voice_assistant.config import load_config
 from voice_assistant.events import EventLog
-from voice_assistant.llm import LOOKED_UP, PONDERED, QUICK, CerebrasChat
+from voice_assistant.llm import LOOKED_UP, PONDERED, QUICK, CerebrasChat, ClaudeQuickChat
 from voice_assistant.reminders import (
     ADD,
     CANCEL,
@@ -80,6 +83,7 @@ class Run:
     sent: list = field(default_factory=list)
     error: str = ""
     tool_errors: list[str] = field(default_factory=list)  # what the tools answered that was an error
+    tiers: list[str] = field(default_factory=list)  # the service tier the responses say they were served on
 
 
 def in_minutes(minutes: float, kind: str = TIMER) -> Callable[[Run], str]:
@@ -197,27 +201,78 @@ def handed_over_client():
 
 
 class Watched:
-    """Cerebras's client, noting a "too many requests" on its way to the brain (which hands the turn to OpenAI)."""
+    """The quick model's client, noting on the way to the brain a "too many requests" (which the brain answers by
+    handing the turn to OpenAI) and the service tier each response says it was served on."""
 
     def __init__(self, client):
-        self._client, self.limited = client, False
-        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=self._create))
-        self.models = client.models
+        self._client, self.limited, self.tiers = client, False, set()
+        if hasattr(client, "chat"):  # Chat Completions: Cerebras, OpenAI
+            self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=self._create))
+        else:  # Anthropic's Messages API
+            self.messages = types.SimpleNamespace(stream=self._stream)
 
     def _create(self, **kw):
         try:
-            return self._client.chat.completions.create(**kw)
+            return _Tiers(self._client.chat.completions.create(**kw), self.tiers)
         except RateLimitError:
             self.limited = True
             raise
 
+    def _stream(self, **kw):
+        import anthropic
 
-def run_once(make_brain: Callable[[Watched], CerebrasChat], cerebras, text: str) -> Run:
-    """One run, tried again after a pause while Cerebras says "too many requests": that's the free tier's limit on
-    tokens a minute, not an answer."""
+        try:
+            return self._client.messages.stream(**kw)
+        except anthropic.RateLimitError:
+            self.limited = True
+            raise
+
+
+class _Tiers:
+    """A streamed chat completion, noting the service tier its chunks say they were served on."""
+
+    def __init__(self, stream, seen: set):
+        self._stream, self._seen = stream, seen
+
+    def __enter__(self):
+        self._stream.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._stream.__exit__(*exc)
+
+    def close(self):
+        self._stream.close()
+
+    def __iter__(self):
+        for chunk in self._stream:
+            if tier := getattr(chunk, "service_tier", None):
+                self._seen.add(tier)
+            yield chunk
+
+
+BRAINS = ("cerebras", "openai", "claude")
+
+
+def make_quick_client(brain: str):
+    """(the quick model's client, the brain class that uses it). Keys come from .env, as TARS's do."""
+    env = REPO / ".env"
+    if brain == "cerebras":
+        return make_cerebras_client(env), CerebrasChat
+    if brain == "openai":
+        return make_openai_client(env), CerebrasChat  # Chat Completions, as Cerebras's API is
+    import anthropic
+
+    return anthropic.Anthropic(api_key=api_key(env, "ANTHROPIC_API_KEY"), max_retries=2), ClaudeQuickChat
+
+
+def run_once(make_brain: Callable, client, text: str) -> Run:
+    """One run, tried again after a pause while the service says "too many requests" (a rate limit, not an answer):
+    only the attempt that went through is timed."""
     for wait in (10, 20, 40, 60, 60, 60):
-        watched = Watched(cerebras)
+        watched = Watched(client)
         run = _run_once(make_brain(watched), text)
+        run.tiers = sorted(watched.tiers)
         if not watched.limited:
             return run
         time.sleep(wait)
@@ -251,20 +306,40 @@ def _run_once(brain: CerebrasChat, text: str) -> Run:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--runs", type=int, default=6, help="how many times to ask each (default 6)")
-    parser.add_argument("--parallel", type=int, default=2, help="requests at once (default 2)")
+    parser.add_argument(
+        "--parallel", type=int, default=1, help="requests at once (default 1, so waiting in a queue isn't timed)"
+    )
     parser.add_argument("--no-tools", action="store_true", help="today's way: Qwen hands reminders and sending over")
     parser.add_argument("--no-ponder", action="store_true", help="no <ponder>: Qwen answers hard questions itself")
-    parser.add_argument("--effort", help="Qwen's reasoning effort, instead of [llm] reasoning_effort")
+    parser.add_argument("--effort", help="the quick model's reasoning effort, instead of quick_reasoning_effort")
+    parser.add_argument(
+        "--brain",
+        choices=BRAINS,
+        default="cerebras",
+        help="where the quick model runs: cerebras (default), openai (Chat Completions, e.g. Luna) or claude",
+    )
+    parser.add_argument("--model", help="the quick model, instead of [llm] cerebras_model (e.g. claude-haiku-5-5)")
+    parser.add_argument("--save", help="add the result, as a line of JSON, to this file (docs/models.jsonl)")
+    parser.add_argument("--table", metavar="JSONL", help="print the table of saved results in this file, and stop")
     args = parser.parse_args()
+    if args.table:
+        print(TABLE_HEAD)
+        rows = [json.loads(line) for line in Path(args.table).read_text().splitlines() if line.strip()]
+        for r in sorted(rows, key=lambda r: (r["where"], r["model"], EFFORTS.index(r["effort"]), r["date"])):
+            print(table_row(r))
+        return
 
     cfg = load_config(REPO / "config.toml")
-    if not cfg.llm.cerebras_model:
-        sys.exit("[llm] cerebras_model is empty: there's no quick model to test.")
-    llm = dataclasses.replace(brain_config(cfg, typed=False), quick_tools=not args.no_tools, send=True)
+    model = args.model or cfg.llm.cerebras_model
+    if not model:
+        sys.exit("No quick model: give --model, or set [llm] cerebras_model.")
+    llm = dataclasses.replace(
+        brain_config(cfg, typed=False), cerebras_model=model, quick_tools=not args.no_tools, send=True
+    )
     if args.no_ponder:
         llm = dataclasses.replace(llm, think_effort="")
     if args.effort is not None:
-        llm = dataclasses.replace(llm, reasoning_effort=args.effort)
+        llm = dataclasses.replace(llm, quick_reasoning_effort=args.effort)
     # What each request should get, this time: without its own tools Qwen hands those over; without <ponder> it
     # answers hard questions itself.
     for case in CASES:
@@ -272,22 +347,26 @@ def main() -> None:
             case.want, case.check = LOOK_UP, None
         if args.no_ponder and case.want == PONDER:
             case.want = ANSWER
-    cerebras = make_cerebras_client(REPO / ".env")
+    client, brain_class = make_quick_client(args.brain)
     folder = Path(tempfile.mkdtemp(prefix="tars-bench-"))
     reminders = Reminders(EventLog(folder / "events").store)
     SEEDED["pasta"] = reminders.add(NewReminder(TIMER, "pasta", due=time.time() + 600), WEB)
     SEEDED["bank"] = reminders.add(NewReminder(REMINDER, "call the bank", "alon", due=time.time() + 1800), WEB)
     tools = ReminderTools(reminders, voices=lambda: VOICES)
 
-    def make_brain(client: Watched) -> CerebrasChat:
-        return CerebrasChat(handed_over_client(), llm, client, reminders=tools)
+    def make_brain(quick) -> CerebrasChat:
+        brain = brain_class(handed_over_client(), llm, quick, reminders=tools)
+        if args.brain == "openai" and cfg.llm.service_tier:
+            brain._quick_extra["service_tier"] = cfg.llm.service_tier  # as TARS asks OpenAI
+        return brain
 
     own = "off" if args.no_tools else "on"
-    print(f"{cfg.llm.cerebras_model} on Cerebras, its own tools {own}, <ponder> {'off' if args.no_ponder else 'on'},")
-    print(f"reasoning effort {llm.reasoning_effort or 'default'}; {len(CASES)} requests x {args.runs}\n")
+    print(f"{model} on {args.brain}, its own tools {own}, <ponder> {'off' if args.no_ponder else 'on'},")
+    effort = llm.quick_reasoning_effort or llm.reasoning_effort or "default"
+    print(f"reasoning effort {effort}; {len(CASES)} requests x {args.runs}\n")
     jobs = [(case, n) for case in CASES for n in range(args.runs)]
     with ThreadPoolExecutor(args.parallel) as pool:
-        runs = list(pool.map(lambda job: run_once(make_brain, cerebras, job[0].text), jobs))
+        runs = list(pool.map(lambda job: run_once(make_brain, client, job[0].text), jobs))
 
     by_case: dict[str, list[Run]] = {}
     for (case, _), run in zip(jobs, runs, strict=True):
@@ -314,15 +393,79 @@ def main() -> None:
     print("\nBy kind:")
     for group, (right, total) in groups.items():
         print(f"  {group:<10} {right}/{total}")
-    for name, did in [("tool turns", (REMIND, CANCELLED, SNOOZED, SENT)), ("own answers", (ANSWER,))]:
-        firsts = [r.first_s for r in runs if r.did in did and r.first_s is not None]
-        totals = [r.total_s for r in runs if r.did in did]
-        if firsts:
-            print(
-                f"\n{name}: first words after {statistics.median(firsts):.2f} s (median), "
-                f"done after {statistics.median(totals):.2f} s"
-            )
+    timing = {
+        # To the first words of an answer it wrote itself, and of a reminder or send turn (tool, then words).
+        "answer": spread([r.first_s for r in runs if r.did == ANSWER and r.first_s is not None]),
+        "tool": spread([r.first_s for r in runs if r.did in TOOL_TURNS and r.first_s is not None]),
+        # To the hand-off marker: the run ends there, since OpenAI isn't really asked.
+        "hand_off": spread([r.total_s for r in runs if r.did in (LOOK_UP, PONDER)]),
+    }
+    for name, (median, p90) in timing.items():
+        if median is not None:
+            print(f"{name:>9}: {median:.2f} s median, {p90:.2f} s at the 90th percentile")
+    tiers = sorted({t for r in runs for t in r.tiers})
+    if tiers:
+        print(f"Served on: {', '.join(tiers)}")
+    result = {
+        "date": time.strftime("%Y-%m-%d"),
+        "model": model,
+        "where": args.brain,
+        "effort": effort,
+        "tier": ", ".join(tiers) or None,
+        "runs": args.runs,
+        "groups": groups,
+        "timing": timing,
+        "wrong": sum(t - r for r, t in groups.values()),
+        "total": sum(t for _, t in groups.values()),
+    }
+    print("\nThe row for docs/models.md:\n" + table_row(result))
+    if args.save:
+        with open(args.save, "a") as f:
+            f.write(json.dumps(result) + "\n")
+        print(f"(Saved to {args.save})")
     print(f"\n(Its event database, for a look: {folder})")
+
+
+TOOL_TURNS = (REMIND, CANCELLED, SNOOZED, SENT)
+EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "default")
+TABLE_HEAD = (
+    "| Model | Where | Reasoning | Reminders | Sending | Web hand-off | Hard questions | Itself | All "
+    "| First words, own answer (s) | First words, reminder or send (s) | Hand-off decided (s) | Date |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+)
+
+
+def spread(seconds: list[float]) -> tuple[float | None, float | None]:
+    """(median, 90th percentile), or (None, None) if nothing to measure."""
+    if not seconds:
+        return None, None
+    p90 = statistics.quantiles(seconds, n=10, method="inclusive")[-1] if len(seconds) > 1 else seconds[0]
+    return round(statistics.median(seconds), 2), round(p90, 2)
+
+
+def table_row(r: dict) -> str:
+    def score(group: str) -> str:
+        right, total = r["groups"].get(group, (0, 0))
+        return f"{right}/{total}"
+
+    def secs(key: str) -> str:
+        median, p90 = r["timing"][key]
+        return "–" if median is None else f"{median:.2f} / {p90:.2f}"
+
+    where = r["where"] + (f" ({r['tier']})" if r["tier"] and r["tier"] != "default" else "")
+    right = r["total"] - r["wrong"]
+    cells = [
+        f"`{r['model']}`",
+        where,
+        r["effort"],
+        *(score(g) for g in ("reminders", "sending", "the web", "thinking", "itself")),
+        f"**{right}/{r['total']}**",
+        secs("answer"),
+        secs("tool"),
+        secs("hand_off"),
+        r["date"],
+    ]
+    return "| " + " | ".join(cells) + " |"
 
 
 if __name__ == "__main__":
