@@ -120,7 +120,7 @@ SPEAKER_STALL_S = 3.0
 
 
 class Microphone:
-    def __init__(self, device: int | None, echo: "EchoCanceller | None" = None):
+    def __init__(self, device: int | None, echo: EchoCanceller | None = None):
         """`echo`: takes TARS's own sound out of what's heard, so the mic can stay open while TARS makes one."""
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self._muted = False
@@ -189,7 +189,7 @@ class Speaker:
     stuttering.
     """
 
-    def __init__(self, device: int | None, sample_rate: int, prebuffer_s: float, echo: "EchoCanceller | None" = None):
+    def __init__(self, device: int | None, sample_rate: int, prebuffer_s: float, echo: EchoCanceller | None = None):
         """`echo`: told everything played, silence too, so it can take it back out of what the mic hears."""
         self.sample_rate = sample_rate
         self._echo = echo

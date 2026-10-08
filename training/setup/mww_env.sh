@@ -4,7 +4,7 @@
 #
 #     bash training/setup/mww_env.sh [DATA]        (DATA defaults to $TARS_TRAINING_DATA or ~/tars-training)
 #
-# Creates DATA/mww/.venv (Python 3.10), clones microWakeWord and piper-sample-generator (with the LibriTTS-R
+# Creates DATA/mww/.venv (Python 3.13), clones microWakeWord and piper-sample-generator (with the LibriTTS-R
 # voice the openWakeWord clip generator uses), and fills DATA/mww/negative_datasets. Safe to rerun.
 set -euo pipefail
 DATA=${1:-${TARS_TRAINING_DATA:-$HOME/tars-training}}
@@ -19,7 +19,11 @@ die() { log "FAILED: $*"; exit 1; }
 install() { uv pip install -q -c "$CONSTRAINTS" "$@"; }
 
 log "python env in $W/.venv"
-[ -d .venv ] || uv venv -q -p 3.10 .venv || die "venv"
+if [ -x .venv/bin/python ] && ! .venv/bin/python -c 'import sys; sys.exit(sys.version_info[:2] != (3, 13))'; then
+  log "replacing $W/.venv: it isn't Python 3.13"
+  uv venv -q --clear -p 3.13 .venv || die "venv"
+fi
+[ -d .venv ] || uv venv -q -p 3.13 .venv || die "venv"
 source .venv/bin/activate
 install 'git+https://github.com/whatsnowplaying/audio-metadata@d4ebb238e6a401bb1a5aaaac60c9e2b3cb30929f' || die "audio-metadata"
 [ -d microWakeWord ] || git clone -q https://github.com/kahrendt/microWakeWord || die "clone microWakeWord"
@@ -34,9 +38,10 @@ if [ ! -f "$VOICE" ]; then
     https://github.com/rhasspy/piper-sample-generator/releases/download/v2.0.0/en_US-libritts_r-medium.pt \
     && mv "$VOICE.part" "$VOICE" || die "piper model"
 fi
-install torch torchaudio piper-phonemize-cross==1.2.1 soundfile librosa pyarrow scipy datasets pyyaml tensorboard \
-  || die "deps"
-python -c "import microwakeword, torch, piper_phonemize, tensorflow as tf; print('imports ok, tf', tf.__version__)" \
+# torchcodec: newer datasets decode audio with it (needs FFmpeg). The phonemizer lives in the clip generator's own
+# environment (piper_libritts.sh); this one only keeps piper-sample-generator's code and voice for it.
+install torch torchaudio torchcodec soundfile librosa pyarrow scipy datasets pyyaml tensorboard || die "deps"
+python -c "import microwakeword, torch, torchcodec, tensorflow as tf; print('imports ok, tf', tf.__version__)" \
   || die "imports"
 
 log "negative feature sets"

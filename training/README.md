@@ -51,7 +51,8 @@ gives a model of the same quality, not the same file.
 
 ## What you need
 
-- macOS or Linux, [uv](https://docs.astral.sh/uv/), git, curl, and espeak-ng for Kokoro (`brew install espeak-ng`).
+- macOS or Linux, [uv](https://docs.astral.sh/uv/), git, curl, espeak-ng for Kokoro and FFmpeg for reading audio
+  (`brew install espeak-ng ffmpeg`).
 - About 130 GB of disk. The biggest parts are microWakeWord's negative sets (a 20 GB download, 41 GB unpacked),
   stage 1 features (30 GB),
   MUSAN and the room responses (17 GB), and the clips (16 GB).
@@ -59,9 +60,14 @@ gives a model of the same quality, not the same file.
 - A day or two of mostly unattended CPU time. Everything here ran on a MacBook at 4 threads and `nice`.
 - For the personal setup only: the owner's recordings (below). They never leave the machine.
 
-The microWakeWord, piper-sample-generator and openWakeWord checkouts are pinned to the commits the models were made
-with, the microWakeWord environment to exact versions (`setup/mww-constraints.txt`), and the other environments to
-the versions that made the current models.
+Every environment is pinned to exact versions, kept at the newest that work: `setup/mww-constraints.txt` and
+`setup/oww-constraints.txt`, and the versions in `setup/tts_env.sh` and `setup/eval_env.sh` (all moved to the newest
+on 2026-10-08). Where the Python isn't the newest, something holds it back: microWakeWord's environment is on 3.13
+until TensorFlow 2.22 is out (only its release candidate has 3.14 builds), and openWakeWord's clip generator on 3.12,
+the newest piper-phonemize-cross has builds for. The microWakeWord, piper-sample-generator and openWakeWord checkouts
+are pinned to commits, each its newest. The "hey TARS" models in `models/` were made with the versions before this
+move, which a rebuild won't reproduce exactly. Rerun on a data folder from before, each setup script replaces an
+environment on another Python, and `data/piper_libritts.sh` sets openWakeWord's up again.
 
 Everything goes into one data folder: `--data DIR` on every script, or `TARS_TRAINING_DATA`, default
 `~/tars-training`. The scripts run from the repo root as modules (`python -m training.stage1.train ...`), each in
@@ -69,9 +75,9 @@ one of four environments, because their dependencies don't mix:
 
 | Environment | Made by | Used for |
 |---|---|---|
-| `DATA/tts/.venv` (Python 3.12) | `setup/tts_env.sh` | Piper, Kokoro, OpenAI clips, pitch/tempo |
-| `DATA/mww/.venv` (Python 3.10) | `setup/mww_env.sh` | microWakeWord features and training, backgrounds, interference |
-| `DATA/eval/.venv` (Python 3.12) | `setup/eval_env.sh` | stage 2, voice conversion, forced alignment, end-to-end tests |
+| `DATA/tts/.venv` (Python 3.14) | `setup/tts_env.sh` | Piper, Kokoro, OpenAI clips, pitch/tempo |
+| `DATA/mww/.venv` (Python 3.13) | `setup/mww_env.sh` | microWakeWord features and training, backgrounds, interference |
+| `DATA/eval/.venv` (Python 3.14) | `setup/eval_env.sh` | stage 2, voice conversion, forced alignment, end-to-end tests |
 | the repo's own (`uv run --group training`) | `uv sync --group training` | `household.py`, `hub.py`, `data/clean.py` (uses the assistant's Vosk model) |
 
 `data/piper_libritts.sh` makes a fifth, openWakeWord's, just to generate the Piper LibriTTS clips.
