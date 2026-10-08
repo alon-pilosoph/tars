@@ -336,6 +336,11 @@ def main() -> None:
     parser.add_argument("--model", help="the quick model, instead of [llm] cerebras_model (e.g. claude-haiku-5-5)")
     parser.add_argument("--save", help="add the result, as a line of JSON, to this file (docs/models.jsonl)")
     parser.add_argument("--table", metavar="JSONL", help="print the table of saved results in this file, and stop")
+    parser.add_argument(
+        "--follow",
+        action="store_true",
+        help="really ask OpenAI after a hand-off (OPENAI_API_KEY), and time the first words the person would hear",
+    )
     args = parser.parse_args()
     if args.table:
         print(TABLE_HEAD)
@@ -369,8 +374,10 @@ def main() -> None:
     SEEDED["bank"] = reminders.add(NewReminder(REMINDER, "call the bank", "alon", due=time.time() + 1800), WEB)
     tools = ReminderTools(reminders, voices=lambda: VOICES)
 
+    openai_side = make_openai_client(REPO / ".env") if args.follow else None
+
     def make_brain(quick) -> CerebrasChat:
-        brain = brain_class(handed_over_client(), llm, quick, reminders=tools)
+        brain = brain_class(openai_side or handed_over_client(), llm, quick, reminders=tools)
         if args.brain == "openai" and cfg.llm.service_tier:
             brain._quick_extra["service_tier"] = cfg.llm.service_tier  # as TARS asks OpenAI
         return brain
@@ -415,6 +422,8 @@ def main() -> None:
         # To the hand-off marker: the run ends there, since OpenAI isn't really asked.
         "hand_off": spread([r.total_s for r in runs if r.did in (LOOK_UP, PONDER)]),
     }
+    if args.follow:  # then a hand-off's run goes on to OpenAI's reply: its first words are what's heard
+        timing["hand_off"] = spread([r.first_s for r in runs if r.did == LOOK_UP and r.first_s is not None])
     for name, (median, p90) in timing.items():
         if median is not None:
             print(f"{name:>9}: {median:.2f} s median, {p90:.2f} s at the 90th percentile")
