@@ -86,14 +86,14 @@ Different from the plan: the marker isn't `<think>` (Qwen 3 writes its own reaso
 think" line goes through the voice like any sentence, rather than being made ahead of time; and running out of time
 says the usual error line, not a line of its own.
 
-**Left to do:**
+**Measured** ([choosing the quick model](models.md)): Qwen with its own tools at low reasoning gets reminders,
+sends and web hand-offs right, where without reasoning it often said a timer was set when it wasn't. It stays the
+quick model, against gpt-oss-120b, Haiku 5.5 and Luna; Jev, tried as a router in front, would save little.
 
-1. `uv run python tools/capability_bench.py` with the keys: Qwen with its own tools, on 26 requests, 6 times
-   each. Turn `quick_tools` on if it gets them right.
-2. **Measure** on 50 typical questions from step 1's log: how often it hands off to the thinking model (it should be
-   rare, and never for the simple ones), the time to the "let me think" line (should be the usual time to first
-   sound), and the cost per call. If Qwen hands off too often or too rarely, a stricter line in its prompt comes
-   first; a separate classifier only if that fails.
+**Left to do:** measure on 50 typical questions from step 1's log how often it hands off to the thinking model (it
+should be rare, and never for the simple ones), the time to the "let me think" line (should be the usual time to
+first sound), and the cost per call. If Qwen hands off too often or too rarely, a stricter line in its prompt comes
+first. Then try Jev on TARS's yes/no decisions (an overheard follow-up, an acknowledgement), where it fits better.
 
 ## 4. Long-term memory and personalization
 

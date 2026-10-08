@@ -70,6 +70,34 @@ fast candidates were also asked the same everyday questions:
 - The first Qwen none and medium rows, Haiku's, and Luna's Chat Completions row were measured before quick models were
   told not to put links in what they send (and refused when they do).
 
+## Routers
+
+A router decides where a request goes before anything answers it, so the turn could go straight to the right model.
+Tried: **Jev** (`jev-1.13.0`, [TypeSafe](https://docs.typesafe.ai/api)), a decision model: it doesn't write text,
+it answers a typed question with a probability for each option. Asked which of six ways each of the same 26 requests
+should go (answer, reminders, send, web, ponder, can't), 6 times each, one at a time on a kept-open connection
+(`tools/router_bench.py`, 2026-10-08):
+
+| Router | Reminders | Sending | Web | Hard questions | Itself | All | Decided in (s) | Confidence when right / wrong |
+|---|---|---|---|---|---|---|---|---|
+| `jev-1.13.0` | 60/60 | 12/18 | 24/24 | 12/18 | 36/36 | **144/156** | 0.29 / 0.35 | 0.90 or more / 0.88 or less |
+
+- **Every request got the same pick all six times**, and its two misses are arguable: "send me a recipe for
+  pancakes" went to *answer* (a recipe can be said), and the savings question to *answer*, as with every model above.
+- **Its confidence tells right from wrong**: never under 0.90 when right, never over 0.88 when wrong. Acting only on
+  picks of 0.9 or more, 36 of the 42 web and hard-question requests would have gone straight on, and none wrongly.
+- **In front of every turn, it would make TARS slower**: its 0.29 s, then the quick model's own (Qwen without
+  reasoning: 0.34 s to first words), is about 0.63 s, against 0.40 s for Qwen at low reasoning on its own.
+- **Beside the quick model**, started at the same moment: a web or hard-question pick at 0.9 or more sends the turn on
+  without waiting for the quick model's `<look-up>` or `<ponder>` (0.42 s median, 0.71-0.80 s at the 90th percentile,
+  against Jev's 0.29 / 0.35 s), and anything else is left to the quick model. Those turns gain about 0.13 s at the
+  median and 0.4 s in the slow tail, nothing gets slower, and it costs one Jev request a turn (TypeSafe doesn't
+  publish prices). Not built: the gain is small next to what the quick model already does.
+- **Better suited, not yet tried**: TARS's yes/no decisions, like whether an overheard follow-up was meant for it, or
+  whether a reply acknowledges a reminder. Several questions in one Jev request take about as long as one.
+- TypeSafe's own notes on where Jev is weak: arithmetic, dates and times, counting, and long inputs with irrelevant
+  material in them. Routing needs none of these, as long as Jev is given the request alone and never asked for a time.
+
 ## Method
 
 `tools/capability_bench.py`, 26 requests, each asked 6 times with no conversation before it, as Alon (the
@@ -101,6 +129,7 @@ uv run python tools/capability_bench.py --brain cerebras --model <id> --effort l
 uv run python tools/capability_bench.py --brain responses --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --brain claude --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --table docs/models.jsonl      # the table above, from every saved run
+uv run python tools/router_bench.py                                     # Jev as a router (TYPESAFE_API_KEY)
 ```
 
 `--brain` is where it runs: `cerebras` and `openai` through the Chat Completions API (any compatible service works the
