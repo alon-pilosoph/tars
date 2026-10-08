@@ -72,6 +72,14 @@ class LLMConfig:
     web_search: bool = True
     # Let it send links, notes, lists and text files to the web UI (needs [learning] log_events).
     send: bool = True
+    # The quick model (Cerebras) sets reminders and sends notes, lists and files itself, with its own tools, instead
+    # of handing those turns to `model`. Off until tools/capability_bench.py shows it gets them right.
+    quick_tools: bool = False
+    # Questions that need real thinking go from the quick model to `think_model` (empty = `model`) at this reasoning
+    # effort, for at most think_timeout_s. Empty think_effort = no such hand-off.
+    think_model: str = ""
+    think_effort: str = "high"
+    think_timeout_s: float = 45.0
 
 
 @dataclass
@@ -203,6 +211,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[stt] model must be a Deepgram model (e.g. nova-3) for provider deepgram, not {stt.model!r}")
     elif stt.provider == "flux" and stt.language and not stt.language.lower().startswith("en"):
         problems.append(f"[stt] provider flux only understands English, not language {stt.language!r}")
+    if cfg.llm.think_timeout_s <= 0:
+        problems.append("[llm] think_timeout_s must be more than 0")
     if cfg.tts.provider not in ("openai", "deepgram"):
         problems.append(f"[tts] provider must be openai or deepgram, not {cfg.tts.provider!r}")
     elif cfg.tts.provider == "deepgram" and not cfg.tts.model.startswith(("flux-", "aura-")):

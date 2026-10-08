@@ -64,7 +64,7 @@ TABLES = {
     corrected_text TEXT,             -- person turns: what they really said, typed in the web UI
     rating TEXT,                     -- tars turns: good | bad, from the web UI
     timings TEXT,                    -- tars turns: JSON seconds by stage, as in the assistant's log (see TIMINGS)
-    answered_by TEXT,                -- tars turns: quick | look_up | fallback | openai (llm.QUICK...)
+    answered_by TEXT,                -- tars turns: quick | look_up | ponder | fallback | openai (llm.QUICK...)
     failed_at TEXT,                  -- tars turns that failed: stt | llm | tts | other
     error TEXT                       -- tars turns that failed: what went wrong
 )""",

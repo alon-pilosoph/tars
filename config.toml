@@ -63,9 +63,18 @@ language = "en"
 
 [llm]
 # Answers first, on Cerebras (CEREBRAS_API_KEY in .env): about 0.3 s to its first sentence, against about 0.7 s for
-# OpenAI's. Anything that needs the web or the TARS page goes to `model` below, and so does everything while Cerebras
-# fails. Empty = `model` answers everything.
+# OpenAI's. Anything that needs the web, or a tool it doesn't have, goes to `model` below, and so does everything while
+# Cerebras fails. Empty = `model` answers everything.
 cerebras_model = "qwen-3.8-27b"
+# The model above sets reminders and sends notes, lists and files itself, saving those turns the hand-off. Turn on
+# once `uv run python tools/capability_bench.py` shows it gets them right.
+quick_tools = false
+# Questions that need real thinking (planning, comparing, several steps) go to this model at this reasoning effort,
+# for at most think_timeout_s; TARS says "Let me think about that for a moment." first. Empty think_model = `model`;
+# empty think_effort = no such hand-off.
+think_model = ""
+think_effort = "high"
+think_timeout_s = 45
 # OpenAI's model: web search, sending things, and a backup for the one above.
 model = "gpt-6-luna"
 # "fast" = OpenAI's priority processing: lower latency, higher price per token. Empty = default tier.

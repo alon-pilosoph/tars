@@ -1,5 +1,6 @@
 """The brain: skipping overheard chatter, memory, the send tool, failures, and Cerebras handing turns to OpenAI."""
 
+import json
 import time
 import types
 from datetime import datetime
@@ -457,7 +458,7 @@ def test_a_hand_off_after_a_sentence_says_the_sentence_then_openai_answers_and_b
 
 @pytest.mark.parametrize("text", ["3 < 5, obviously.", "It ends in <", "<look", "A <b>bold</b> claim."])
 def test_text_that_only_looks_like_the_start_of_a_hand_off_is_said_whole(text):
-    assert "".join(llm._UpTo(iter(text), LOOK_UP)) == text  # one character at a time
+    assert "".join(llm._UpTo(iter(text), (LOOK_UP, llm.PONDER))) == text  # one character at a time
 
 
 def test_both_models_are_told_the_date_and_time_here(monkeypatch):
@@ -474,7 +475,8 @@ def test_both_models_are_told_what_they_cant_do_so_they_never_pretend(send):
     brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP, send=send)
     "".join(brain.stream_reply("set a timer for ten minutes"))
     for instructions in (cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]):
-        assert llm.CANT_RULES in instructions
+        assert f"You can't {llm.CANT_REMIND}, " in instructions and llm.CANT in instructions
+        assert "Never say you did something you can't do." in instructions
 
 
 @pytest.mark.parametrize(
@@ -507,7 +509,7 @@ def test_with_reminders_both_models_know_whats_set_and_how_to_ack_and_only_opena
     "".join(brain.stream_reply("I got the message"))
     quick, full = cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]
     for instructions in (quick, full):
-        assert llm.ACK_RULES in instructions and llm.CANT_RULES_WITH_REMINDERS in instructions
+        assert llm.ACK_RULES in instructions and llm.CANT in instructions and llm.CANT_REMIND not in instructions
         assert f"[{rid}] " in instructions and "Stacey, a message from Alon: dinner's at eight." in instructions
         assert "<ack N>" in instructions
     assert llm.NEEDS_REMINDING in quick and llm.REMIND_RULES not in quick
@@ -519,7 +521,7 @@ def test_without_reminders_tars_says_it_cant_set_timers(tmp_path):
     brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP)
     "".join(brain.stream_reply("hi"))
     quick, full = cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]
-    assert llm.CANT_RULES in quick and llm.CANT_RULES in full and "<ack" not in quick + full
+    assert llm.CANT_REMIND in quick and llm.CANT_REMIND in full and "<ack" not in quick + full
     assert llm.NEEDS_REMINDING not in quick and "remind" not in str(openai.requests[0].get("tools"))
 
 
@@ -611,3 +613,128 @@ def test_a_reminder_due_now_is_still_set_when_the_turn_is_kept_a_while_later(tmp
     change, _ = tools.call("remind", {**REMIND, "in_minutes": 0}, now=asked)
     tools.apply(change, from_name="alon")
     assert len(tools.reminders.active()) == 1
+
+
+class ToolCallStream(FakeStream):
+    """A streamed chat completion that calls tools, the arguments arriving in two pieces, as Cerebras streams them."""
+
+    def __init__(self, calls):
+        super().__init__("")
+        self.calls = calls
+
+    def __iter__(self):
+        for i, (name, args) in enumerate(self.calls):
+            text = json.dumps(args)
+            for n, piece in enumerate([text[:5], text[5:]]):
+                function = types.SimpleNamespace(name=name if n == 0 else None, arguments=piece)
+                part = types.SimpleNamespace(index=i, id=f"qc_{i}" if n == 0 else None, function=function)
+                delta = types.SimpleNamespace(content=None, tool_calls=[part])
+                yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+
+def quick_with_tools(tmp_path, calls, then="Pasta timer, twelve minutes.", **cfg):
+    """A brain whose Qwen has its own tools: it makes `calls` first, then says `then` once it has their results."""
+    openai, tools = fake_openai_chat(lambda m: "From OpenAI."), reminder_tools(tmp_path)
+    cerebras = fake_cerebras(lambda m: then)
+    plain = cerebras.chat.completions.create
+
+    def create(**kw):
+        if kw["messages"][-1]["role"] == "tool" or kw.get("tool_choice") == "none":
+            return plain(**kw)
+        cerebras.requests.append(kw)
+        return ToolCallStream(calls)
+
+    cerebras.chat.completions.create = create
+    config = LLMConfig(cerebras_model="qwen", quick_tools=True, **cfg)
+    return CerebrasChat(openai, config, cerebras, reminders=tools), openai, cerebras, tools
+
+
+def test_with_its_own_tools_qwen_sets_a_reminder_and_openai_is_never_asked(tmp_path):
+    brain, openai, cerebras, tools = quick_with_tools(tmp_path, [("remind", REMIND)])
+    assert "".join(brain.stream_reply("pasta timer, twelve minutes")) == "Pasta timer, twelve minutes."
+    assert openai.requests == [] and brain.answered_by == llm.QUICK
+    first, second = cerebras.requests
+    assert {t["function"]["name"] for t in first["tools"]} == {"remind", "cancel_reminder", "snooze_reminder", "send"}
+    asked_for, result = second["messages"][-2:]
+    assert json.loads(asked_for["tool_calls"][0]["function"]["arguments"]) == REMIND  # put back together whole
+    assert result["role"] == "tool" and result["content"].startswith("set for ")
+    (change,) = brain.changes
+    tools.apply(change, from_name="alon")
+    assert [r["text"] for r in tools.reminders.active()] == ["pasta"]
+
+
+def test_with_its_own_tools_qwen_is_told_it_can_and_hands_over_only_the_web(tmp_path):
+    brain, _, cerebras, _ = quick_with_tools(tmp_path, [])
+    "".join(brain.stream_reply("hi"))
+    system = cerebras.requests[0]["messages"][0]["content"]
+    assert llm.CAN_REMIND in system and llm.CAN_SEND_NO_LINKS in system and llm.QUICK_SEND_RULES in system
+    assert llm.REMIND_RULES in system and llm.NEEDS_THE_WEB in system
+    assert llm.NEEDS_REMINDING not in system and llm.NEEDS_SENDING not in system and "to-do list" not in system
+
+
+def test_without_its_own_tools_qwen_gets_none_and_hands_reminders_over():
+    brain, _, cerebras = cerebras_brain(lambda m: "ok")
+    "".join(brain.stream_reply("hi"))
+    assert "tools" not in cerebras.requests[0]
+    assert llm.NEEDS_SENDING in cerebras.requests[0]["messages"][0]["content"]
+
+
+def test_qwen_cant_send_a_link_it_didnt_find_on_the_web(tmp_path):
+    link = {"kind": "link", "title": "Rome", "for": "person", "url": "https://made.up/rome"}
+    brain, _, cerebras, _ = quick_with_tools(tmp_path, [("send", link)], then="Sent.")
+    "".join(brain.stream_reply("send me a link about Rome"))
+    assert cerebras.requests[-1]["messages"][-1]["content"].startswith("error: a link needs web search")
+    assert brain.sent == []
+    send = next(t for t in cerebras.requests[0]["tools"] if t["function"]["name"] == "send")["function"]
+    assert (
+        "link" not in send["parameters"]["properties"]["kind"]["enum"] and "url" not in send["parameters"]["required"]
+    )
+
+
+def test_what_qwens_tools_did_goes_with_a_hand_off_so_it_isnt_done_twice(tmp_path):
+    brain, openai, _, _ = quick_with_tools(tmp_path, [("remind", REMIND)], then=LOOK_UP)
+    assert "".join(brain.stream_reply("pasta timer, and what's the weather?")) == "From OpenAI."
+    kinds = [m.get("type") for m in openai.requests[0]["input"]]
+    assert kinds == [None, "function_call", "function_call_output"] and len(brain.changes) == 1
+
+
+def test_a_hard_question_goes_to_the_thinking_model_which_takes_its_time():
+    brain, openai, _ = cerebras_brain(lambda m: llm.PONDER, think_model="o-big", think_effort="high")
+    said = "".join(brain.stream_reply("plan three days in Rome"))
+    assert said == f"{llm.THINKING} From OpenAI." and brain.answered_by == llm.PONDERED
+    (request,) = openai.requests
+    assert request["model"] == "o-big" and request["reasoning"] == {"effort": "high"}
+    assert llm.THINK_RULES in request["instructions"]
+    assert asked(openai) == ["plan three days in Rome", llm.THINKING]  # it knows what TARS already said
+
+
+def test_a_question_for_the_web_doesnt_go_to_the_thinking_model():
+    brain, openai, _ = cerebras_brain(lambda m: LOOK_UP, think_model="o-big", reasoning_effort="none")
+    "".join(brain.stream_reply("weather?"))
+    assert openai.requests[0]["model"] == "gpt-4.1-mini" and openai.requests[0]["reasoning"] == {"effort": "none"}
+    assert llm.THINK_RULES not in openai.requests[0]["instructions"]
+
+
+def test_qwen_is_told_when_to_hand_over_a_hard_question_unless_thats_off():
+    brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP)
+    "".join(brain.stream_reply("hi"))
+    assert llm.PONDER in cerebras.requests[0]["messages"][0]["content"]
+    assert llm.PONDER not in openai.requests[0]["instructions"]  # OpenAI never hands over
+    brain, _, cerebras = cerebras_brain(lambda m: "ok", think_effort="")
+    "".join(brain.stream_reply("hi"))
+    assert llm.PONDER not in cerebras.requests[0]["messages"][0]["content"]
+
+
+def test_the_thinking_model_is_given_a_time_limit():
+    brain, openai, _ = cerebras_brain(lambda m: llm.PONDER, think_timeout_s=0.05)
+
+    def slow(**kw):
+        for _ in range(100):
+            time.sleep(0.01)
+            yield types.SimpleNamespace(type="response.in_progress")
+
+    openai.responses.create = slow
+    reply = brain.stream_reply("plan three days in Rome")
+    assert next(reply) == f"{llm.THINKING} "
+    with pytest.raises(ReplyFailed, match="no answer within 0 s"):
+        list(reply)

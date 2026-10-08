@@ -1,12 +1,15 @@
-"""The brain. Qwen on Cerebras answers first (CerebrasChat) and hands the turns it can't do (the web, the TARS page)
-to OpenAI's model and its tools (OpenAIChat). One shared history, kept until the conversation goes quiet. Replies are
-streamed, and every reply can be stopped and forgotten."""
+"""The brain. Qwen on Cerebras answers first (CerebrasChat), with its own tools for reminders and the TARS page when
+`quick_tools` is on, and hands over the turns it can't do (the web, and whatever it has no tool for) to OpenAI's model
+and its tools (OpenAIChat), and the questions that need real thinking to the thinking model. Each model is told
+exactly what it can do, what it hands over, and what TARS can't do at all (abilities()). One shared history, kept
+until the conversation goes quiet. Replies are streamed, and every reply can be stopped and forgotten."""
 
 import itertools
 import json
 import re
 import threading
 import time
+import types
 from collections.abc import Iterable, Iterator
 from datetime import datetime
 from typing import Protocol
@@ -76,18 +79,17 @@ def _or_else(pieces: Iterable[str], default: str) -> Iterator[str]:
         yield default
 
 
-# What TARS can't do. Without this, a model asked for a timer TARS can't set says "Twelve minutes, starting now." and
-# nothing ever goes off.
+# What TARS can't do. Without saying so, a model asked for a timer TARS can't set says "Twelve minutes, starting
+# now." and nothing ever goes off.
 CANT = "play music or sounds, call anyone, or control anything in the house"
-CANT_RULES = (
-    f"You can't set timers, alarms or reminders, {CANT}. When asked to, say plainly in one short line that you "
-    "can't do that yet, and offer what you can do instead if something fits (for example, sending a note). Never "
-    "say you did something you can't do."
-)
-CANT_RULES_WITH_REMINDERS = (
-    f"You can't {CANT}. When asked to, say plainly in one short line that you can't do that yet. Never say you did "
-    "something you can't do."
-)
+CANT_REMIND = "set timers, alarms or reminders"
+CANT_WEB = "look anything up on the web"
+CANT_SEND = "send anything to a phone or the TARS page"
+# What a model can do itself, with its tools.
+CAN_WEB = "look things up on the web, with web search"
+CAN_SEND = "send a link, a note, a list or a text file to the household's TARS page, with the send tool"
+CAN_SEND_NO_LINKS = "send a note, a list or a text file to the household's TARS page, with the send tool"
+CAN_REMIND = "set, cancel and put off timers, reminders and messages for people in the house, with your tools"
 REMIND_RULES = (
     "You can set timers, reminders and messages for people in the house with the remind tool; TARS says them aloud "
     'when they\'re due. A reminder or message is for the person named ("remind me" is whoever is speaking, by '
@@ -163,6 +165,13 @@ SEND_RULES = (
     "search, never made-up ones. After sending, say in one short line that you sent it and that it's on the TARS "
     "page; never read a link out loud. In anything you send, write like a person: no middots (·) or em dashes."
 )
+# The quick model has no web search, so no real links: those turns are handed over.
+QUICK_SEND_RULES = (
+    "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
+    "send tool: a note, a list, or a text file. Use it when asked to send, save or share something, or when the "
+    "answer is a recipe, a list or anything too long to hear. After sending, say in one short line that you sent "
+    "it and that it's on the TARS page. In anything you send, write like a person: no middots (·) or em dashes."
+)
 
 # Strict mode needs every field listed as required; the ones a kind doesn't use are nullable instead.
 SEND_TOOL = {
@@ -195,25 +204,53 @@ SEND_TOOL = {
         },
     },
 }
+# The send tool without links, for the quick model.
+LINK_FIELDS = ("url", "site", "description")
+QUICK_SEND_TOOL = {
+    **SEND_TOOL,
+    "description": "Send a note, list or text file to the household's TARS page.",
+    "parameters": {
+        **SEND_TOOL["parameters"],
+        "required": [f for f in SEND_TOOL["parameters"]["required"] if f not in LINK_FIELDS],
+        "properties": {
+            **{k: v for k, v in SEND_TOOL["parameters"]["properties"].items() if k not in LINK_FIELDS},
+            "kind": {"type": "string", "enum": [k for k in KINDS if k != LINK]},
+        },
+    },
+}
 # A web search takes several seconds: say something the moment one starts, instead of going silent.
 SEARCHING = "Looking it up."
+# Said the moment a question goes to the thinking model, which can take a while before its first word.
+THINKING = "Let me think about that for a moment."
 FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
 MAX_TOOL_ROUNDS = 3
 CEREBRAS_URL = "https://api.cerebras.ai/v1"
 # What the quick model replies when a turn needs OpenAI's tools; that turn is then OpenAI's to answer.
 LOOK_UP = "<look-up>"
+# What it replies when a question needs real thinking; the thinking model answers it. Not "<think>": Qwen 3 models
+# write their own reasoning between <think> tags.
+PONDER = "<ponder>"
 # After Cerebras fails (down, slow, "too many requests"), OpenAI answers on its own for this long, so each turn
 # doesn't wait out Cerebras's timeout first.
 CEREBRAS_COOLDOWN_S = 120.0
 # Who answered a reply (Brain.answered_by), kept with the turn: Qwen on Cerebras, OpenAI because Qwen handed the turn
-# over, OpenAI because Cerebras failed or is cooling down, or OpenAI as the only brain.
-QUICK, LOOKED_UP, FALLBACK, OPENAI = "quick", "look_up", "fallback", "openai"
+# over, the thinking model because Qwen handed it a hard question, OpenAI because Cerebras failed or is cooling
+# down, or OpenAI as the only brain.
+QUICK, LOOKED_UP, PONDERED, FALLBACK, OPENAI = "quick", "look_up", "ponder", "fallback", "openai"
 NEEDS_THE_WEB = "anything current or live: the weather, news, sports results, prices or opening hours, or a real link"
 NEEDS_SENDING = (
     "sending, saving or sharing something to the household's TARS page: a recipe, a list, a note, a link "
     "or a file, or any answer too long to hear"
 )
 NEEDS_REMINDING = "setting, cancelling or putting off a timer, a reminder or a message for someone"
+NEEDS_THINKING = (
+    "a question that needs real thinking: planning something, comparing options, or working through several steps "
+    "or a tricky calculation; never small talk, a plain fact, or anything the web answers"
+)
+THINK_RULES = (
+    "This question was handed to you because it needs real thinking. Work it through carefully, then answer in a "
+    "few short sentences; send anything longer to the TARS page."
+)
 
 
 def local_time() -> str:
@@ -223,17 +260,32 @@ def local_time() -> str:
     return f"It's {now:%A, %B} {now.day}, {now.year}, {clock} here ({now.tzname()}, UTC{now:%:z})."
 
 
-def look_up_rules(web_search: bool, send: bool, remind: bool = False) -> str:
-    needs = [
-        need for need, can in [(NEEDS_THE_WEB, web_search), (NEEDS_SENDING, send), (NEEDS_REMINDING, remind)] if can
-    ]
-    return (
-        f"You can't do these yourself, but another model can. When a message needs any of them, reply with "
-        f"exactly {LOOK_UP} and nothing else, and it answers instead:\n"
-        + "\n".join(f"- {n}" for n in needs)
-        + f"\nNever say you can't do one of these: reply {LOOK_UP}. For example, \"add batteries to my to-do "
-        f'list" or "how much is a flight to Rome?" get {LOOK_UP}. Answer everything else yourself.'
+# How each hand-off is introduced: the quick model can't do the first at all, and does the second less well.
+LOOK_UP_INTRO = "You can't do these yourself, but another model can."
+PONDER_INTRO = "A stronger model, which takes longer, does these better than you."
+
+
+def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[str]]], cant: list[str]) -> str:
+    """What a model can do itself (`can`), what it hands over and how ((marker, intro, what for, examples)), and what
+    TARS can't do at all, from one place, so it never claims what it can't do or hands over what it could have done."""
+    parts = [f"What you can do yourself: {'; '.join(can)}."] if can else []
+    for marker, intro, needs, examples in hand_offs:
+        quoted = " or ".join(f'"{e}"' for e in examples)
+        parts.append(
+            f"{intro} When a message needs any of them, reply with exactly {marker} and nothing else, and it "
+            "answers instead:\n"
+            + "\n".join(f"- {n}" for n in needs)
+            + f"\nFor example, {quoted} get{'s' * (len(examples) == 1)} {marker}."
+        )
+    if hand_offs:
+        parts.append(
+            "Never say you can't do something you can hand over: hand it over. Answer everything else yourself."
+        )
+    parts.append(
+        f"You can't {', '.join(cant)}. When asked to, say plainly in one short line that you can't do that yet, and "
+        "offer what you can do instead if something fits. Never say you did something you can't do."
     )
+    return "\n\n".join(parts)
 
 
 def check_send(args: dict) -> tuple[SentItem | None, str]:
@@ -314,23 +366,24 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
 
 
 class _UpTo:
-    """A streamed reply up to `marker`, holding back only what might be the start of it. `found`: whether it came."""
+    """A streamed reply up to the first of `markers` (each starts with "<"), holding back only what might be the start
+    of one. `found`: the marker that came, if one did."""
 
-    def __init__(self, pieces: Iterable[str], marker: str):
-        self._pieces, self._marker = pieces, marker
-        self.found = False
+    def __init__(self, pieces: Iterable[str], markers: tuple[str, ...]):
+        self._pieces, self._markers = pieces, markers
+        self.found: str | None = None
 
     def __iter__(self) -> Iterator[str]:
         pending = ""
         for piece in self._pieces:
             pending += piece
-            if (at := pending.find(self._marker)) >= 0:
-                self.found = True
+            if hits := [(at, m) for m in self._markers if (at := pending.find(m)) >= 0]:
+                at, self.found = min(hits)
                 if at:
                     yield pending[:at]
                 return
-            hold = pending.rfind(self._marker[0])
-            if hold < 0 or not self._marker.startswith(pending[hold:]):
+            hold = pending.rfind("<")
+            if hold < 0 or not any(m.startswith(pending[hold:]) for m in self._markers):
                 hold = len(pending)
             if hold:
                 yield pending[:hold]
@@ -344,9 +397,11 @@ class _Writing:
     touch the conversation after the next one has started."""
 
     def __init__(self, answered_by: str | None = None):
-        self.stopped = False
+        self.stopped: str | None = None  # why, once it's stopped
         self.stream = None  # the response being read, so interrupt() can close it
         self.answered_by = answered_by
+        # The quick model's tool calls and their results, as Responses API items, for a model it hands over to.
+        self.quick_calls: list[dict] = []
 
 
 class OpenAIChat:
@@ -373,7 +428,8 @@ class OpenAIChat:
             + (REMIND_TOOLS if reminders else [])
         )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
-        rules = [SKIP_RULES, *self._reminder_rules()] + ([SEND_RULES] if cfg.send else [])
+        can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
+        rules = [SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send + [abilities(can, [], self._cant())]
         self._instructions = "\n\n".join([self._system_prompt, *rules])
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
@@ -395,9 +451,17 @@ class OpenAIChat:
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
 
-    def _stream_reply(self, context: list, writing: _Writing, said_first: str = "") -> Iterator[str]:
-        """`said_first`: what TARS already said of this reply (a hand-off's first sentence), for the history."""
+    def _stream_reply(
+        self, context: list, writing: _Writing, said_first: str = "", think: bool = False
+    ) -> Iterator[str]:
+        """`said_first`: what TARS already said of this reply (a hand-off's first sentence), for the history.
+        `think`: a hard question, for the thinking model at its reasoning effort."""
         answer = said_first
+        model, extra, instructions = self._cfg.model, self._extra, self._instructions
+        if think:
+            model = self._cfg.think_model or self._cfg.model
+            extra = {**self._extra, "reasoning": {"effort": self._cfg.think_effort}}
+            instructions = f"{self._instructions}\n\n{THINK_RULES}"
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
             tools = {"tools": self._tools} if self._tools else {}
@@ -405,12 +469,12 @@ class OpenAIChat:
                 tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
             _check(writing)
             stream = writing.stream = self._client.responses.create(
-                model=self._cfg.model,
-                instructions=f"{self._instructions}\n\n{self._now()}",
+                model=model,
+                instructions=f"{instructions}\n\n{self._now()}",
                 input=context,
                 stream=True,
                 store=False,  # nothing kept on OpenAI's side beyond the request itself
-                **self._extra,
+                **extra,
                 **tools,
             )
             for event in stream:
@@ -451,10 +515,20 @@ class OpenAIChat:
         self._remember(answer, writing)
 
     def _reminder_rules(self, tools: bool = True) -> list[str]:
-        """`tools`: this model sets them itself (OpenAI's) rather than handing the turn over (Qwen)."""
+        """`tools`: this model sets them itself, rather than handing the turn over."""
         if not self._reminders:
-            return [CANT_RULES]
-        return [CANT_RULES_WITH_REMINDERS, ACK_RULES] + ([REMIND_RULES] if tools else [])
+            return []
+        return [ACK_RULES] + ([REMIND_RULES] if tools else [])
+
+    def _cant(self) -> list[str]:
+        """What TARS can't do at all, whichever model answers."""
+        cfg = self._cfg
+        return (
+            [CANT_REMIND] * (not self._reminders)
+            + [CANT_WEB] * (not cfg.web_search)
+            + [CANT_SEND] * (not cfg.send)
+            + [CANT]
+        )
 
     def _now(self) -> str:
         """What changes from one request to the next, so it goes after the instructions that can be cached."""
@@ -476,11 +550,14 @@ class OpenAIChat:
             self._history.append({"role": "assistant", "content": answer.strip()})
             self._history = self._history[-MAX_TURNS * 2 :]
 
-    def _run_tool(self, call) -> str:
+    def _run_tool(self, call, links: bool = True) -> str:
+        """`links`: whether this model can send links, which need web search."""
         try:
             args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
             return "error: the arguments weren't valid JSON"
+        if call.name == "send" and not links and isinstance(args, dict) and args.get("kind") == LINK:
+            return f"error: a link needs web search, which you can't do: reply {LOOK_UP} instead"
         if call.name == "send":
             item, result = check_send(args)
             if item:
@@ -512,13 +589,7 @@ class OpenAIChat:
             self.sent, self.changes = [], []
 
     def interrupt(self) -> None:
-        writing = self._writing
-        writing.stopped = True
-        if (stream := writing.stream) is not None:
-            try:
-                stream.close()
-            except Exception as e:  # noqa: BLE001 - a stream already closed is as good as closing it
-                print(f"(couldn't close the reply's stream: {e!r})")
+        _stop(self._writing, "interrupted")
 
     def warm(self) -> None:
         # The cheapest request there is; the OpenAI voice reuses the same connection.
@@ -529,9 +600,10 @@ class OpenAIChat:
 
 
 class CerebrasChat(OpenAIChat):
-    """Answers on Cerebras (about 0.3 s to the first sentence, against about 0.7 s for OpenAI's), and hands a turn to
-    OpenAI's model, tools and all, when it needs the web or the TARS page, or when Cerebras fails. One conversation:
-    each sees what the other said."""
+    """Answers on Cerebras (about 0.3 s to the first sentence, against about 0.7 s for OpenAI's), with its own tools
+    when `quick_tools` is on, and hands a turn to OpenAI's model, tools and all, when it needs the web (or anything
+    it has no tool for), to the thinking model when it needs real thinking, and to OpenAI when Cerebras fails. One
+    conversation: each sees what the other said."""
 
     first_answerer = QUICK
 
@@ -539,9 +611,20 @@ class CerebrasChat(OpenAIChat):
         super().__init__(client, cfg, reminders)
         self._cerebras = cerebras
         self._cerebras_back_at = 0.0  # monotonic time; until then, Cerebras failed recently and OpenAI answers
-        remind = reminders is not None
-        hand_off = [look_up_rules(cfg.web_search, cfg.send, remind)] if cfg.web_search or cfg.send or remind else []
-        rules = [SKIP_RULES, *self._reminder_rules(tools=False), *hand_off]
+        own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
+        tools = REMIND_TOOLS * own_remind + [QUICK_SEND_TOOL] * own_send
+        self._quick_tools = [_chat_tool(t) for t in tools]
+        can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
+        look_up = [NEEDS_THE_WEB] * cfg.web_search + [NEEDS_SENDING] * (cfg.send and not own_send)
+        look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind)
+        examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
+        hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
+        if cfg.think_effort:
+            ponder = ["plan three days in Rome for us", "should we lease the car or buy it?"]
+            hand_offs.append((PONDER, PONDER_INTRO, [NEEDS_THINKING], ponder))
+        self._markers = tuple(marker for marker, *_ in hand_offs)
+        rules = [SKIP_RULES, *self._reminder_rules(tools=own_remind)] + [QUICK_SEND_RULES] * own_send
+        rules.append(abilities(can, hand_offs, self._cant()))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules])
         self._quick_extra = {"reasoning_effort": cfg.reasoning_effort} if cfg.reasoning_effort else {}
 
@@ -554,14 +637,14 @@ class CerebrasChat(OpenAIChat):
         quick = self._quick_reply(context, writing)
         # Usually the whole reply is the marker; now and then it comes after a sentence ("I can't check that.
         # <look-up>").
-        reply = _UpTo(quick, LOOK_UP)
-        handed_off = False
+        reply = _UpTo(quick, self._markers)
+        handed_off = None
         try:
             for piece in reply:
                 answer += piece
                 yield piece
             handed_off = reply.found
-            writing.answered_by = LOOKED_UP if handed_off else QUICK
+            writing.answered_by = {LOOK_UP: LOOKED_UP, PONDER: PONDERED}.get(handed_off, QUICK)
         except OpenAIError as e:  # ReplyFailed is one too: an interrupted reply stays interrupted
             if isinstance(e, ReplyFailed):
                 raise
@@ -569,33 +652,88 @@ class CerebrasChat(OpenAIChat):
             if answer.strip():
                 raise
             print(f"(Cerebras failed: {e!r}; OpenAI answers instead, and for the next {CEREBRAS_COOLDOWN_S:.0f} s)")
-            handed_off, writing.answered_by = True, FALLBACK
+            handed_off, writing.answered_by = LOOK_UP, FALLBACK
         finally:
             quick.close()
         if not handed_off and not answer.strip():
             print("(Cerebras said nothing; OpenAI answers instead)")
-            handed_off, writing.answered_by = True, FALLBACK
+            handed_off, writing.answered_by = LOOK_UP, FALLBACK
         if not handed_off:
             self._remember(answer, writing)
             return
+        context.extend(writing.quick_calls)  # what Qwen's tools already did, so it isn't done twice
+        if handed_off == PONDER:
+            thinking = f"{' ' * bool(answer.strip())}{THINKING} "
+            answer += thinking
+            yield thinking
         if answer.strip():  # OpenAI carries on from what TARS already said, rather than repeating it
             context.append({"role": "assistant", "content": answer.strip()})
-        yield from super()._stream_reply(context, writing, said_first=answer)
+        if handed_off != PONDER:
+            yield from super()._stream_reply(context, writing, said_first=answer)
+            return
+        limit = self._cfg.think_timeout_s
+        timer = threading.Timer(limit, _stop, (writing, f"no answer within {limit:.0f} s"))
+        timer.daemon = True
+        timer.start()
+        try:
+            yield from super()._stream_reply(context, writing, said_first=answer, think=True)
+        finally:
+            timer.cancel()
 
     def _quick_reply(self, context: list, writing: _Writing) -> Iterator[str]:
-        _check(writing)
-        stream = writing.stream = self._cerebras.chat.completions.create(
-            model=self._cfg.cerebras_model,
-            stream=True,
-            messages=[{"role": "system", "content": f"{self._quick_instructions}\n\n{self._now()}"}, *context],
-            **self._quick_extra,
-        )
-        with stream:
-            for event in stream:
+        """Qwen's reply, streamed, with as many rounds of its tools as it needs (up to MAX_TOOL_ROUNDS)."""
+        messages = [{"role": "system", "content": f"{self._quick_instructions}\n\n{self._now()}"}, *context]
+        for round_ in range(MAX_TOOL_ROUNDS):
+            tools = {"tools": self._quick_tools} if self._quick_tools else {}
+            if tools and round_ == MAX_TOOL_ROUNDS - 1:
+                tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
+            _check(writing)
+            stream = writing.stream = self._cerebras.chat.completions.create(
+                model=self._cfg.cerebras_model, stream=True, messages=messages, **self._quick_extra, **tools
+            )
+            said, calls = "", {}  # calls: index -> {"id", "name", "arguments"}, put together from the stream
+            with stream:
+                for event in stream:
+                    _check(writing)
+                    if not event.choices:
+                        continue
+                    delta = event.choices[0].delta
+                    if delta.content:
+                        said += delta.content
+                        yield delta.content
+                    for part in getattr(delta, "tool_calls", None) or []:
+                        call = calls.setdefault(part.index, {"id": "", "name": "", "arguments": ""})
+                        call["id"] = part.id or call["id"]
+                        if part.function:
+                            call["name"] = part.function.name or call["name"]
+                            call["arguments"] += part.function.arguments or ""
+            writing.stream = None
+            if not calls:
+                return
+            calls = [{**c, "id": c["id"] or f"call_{round_}_{i}"} for i, c in sorted(calls.items())]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": said or None,
+                    "tool_calls": [
+                        {
+                            "id": c["id"],
+                            "type": "function",
+                            "function": {"name": c["name"], "arguments": c["arguments"]},
+                        }
+                        for c in calls
+                    ],
+                }
+            )
+            with self._lock:
                 _check(writing)
-                if event.choices and (delta := event.choices[0].delta.content):
-                    yield delta
-        writing.stream = None
+                for c in calls:
+                    output = self._run_tool(types.SimpleNamespace(**c), links=False)
+                    messages.append({"role": "tool", "tool_call_id": c["id"], "content": output})
+                    writing.quick_calls += [
+                        {"type": "function_call", "call_id": c["id"], "name": c["name"], "arguments": c["arguments"]},
+                        {"type": "function_call_output", "call_id": c["id"], "output": output},
+                    ]
 
     def warm(self) -> None:
         try:
@@ -605,9 +743,24 @@ class CerebrasChat(OpenAIChat):
         super().warm()
 
 
+def _chat_tool(tool: dict) -> dict:
+    """A Responses API function tool, as the Chat Completions API (Cerebras's) takes it."""
+    return {"type": "function", "function": {k: v for k, v in tool.items() if k != "type"}}
+
+
 def _check(writing: _Writing) -> None:
     if writing.stopped:
-        raise ReplyFailed("interrupted")
+        raise ReplyFailed(writing.stopped)
+
+
+def _stop(writing: _Writing, why: str) -> None:
+    """Stops a reply being written, from any thread: its stream ends with ReplyFailed(why)."""
+    writing.stopped = writing.stopped or why
+    if (stream := writing.stream) is not None:
+        try:
+            stream.close()
+        except Exception as e:  # noqa: BLE001 - a stream already closed is as good as closing it
+            print(f"(couldn't close the reply's stream: {e!r})")
 
 
 def _why(event) -> str:
