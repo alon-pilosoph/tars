@@ -89,7 +89,7 @@ class BufferedSession:
 
 
 class OpenAITranscriber:
-    def __init__(self, client: "OpenAI", cfg: STTConfig):
+    def __init__(self, client: OpenAI, cfg: STTConfig):
         self._client = client
         self._cfg = cfg
 

@@ -265,7 +265,7 @@ class ConversationLog:
         for c in convs:
             c["turns"] = by_conv.get(c["id"], [])
 
-    def _voices(self, conversation_ids: list[int | None]) -> dict[int, "Voice"]:
+    def _voices(self, conversation_ids: list[int | None]) -> dict[int, Voice]:
         ids = sorted({i for i in conversation_ids if i is not None})
         if not ids:
             return {}

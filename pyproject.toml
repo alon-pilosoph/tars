@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "TARS, a household voice assistant for a Raspberry Pi 5 that answers in about a second and a half and learns its wake word from the household."
 readme = "README.md"
 authors = [{ name = "Alon Pilosoph" }]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "MIT"  # the code; the trained models in models/ are CC BY-NC-SA 4.0 (models/LICENSE.md)
 license-files = ["LICENSE"]
 dependencies = [
@@ -17,7 +17,7 @@ dependencies = [
     "kaldi-native-fbank>=1.20",
     "pymicro-features>=2",
     "ai-edge-litert>=2.2.0",
-    "vosk==0.3.44",
+    "vosk==0.3.44",  # the newest with an Apple Silicon build (0.3.45 is Linux and Windows only)
     "fastapi>=0.141.1",
     "pydantic>=2",
     "uvicorn>=0.30",
@@ -53,7 +53,7 @@ dev = [
     "httpx>=0.28.1",
     "livekit>=1.1",
     "pytest>=9.1.1",
-    "ruff==0.16.9",
+    "ruff==0.16.10",
     "soundfile>=0.14.0",
 ]
 # What training/ needs from this environment (training.household, training.hub): uv run --group training ...
@@ -72,6 +72,9 @@ requires-dist = ["onnxruntime>=1.10,<2", "tqdm>=4,<5", "scipy>=1.3,<2", "scikit-
 
 [tool.ruff]
 line-length = 120
+# The training scripts, and the benches run beside them, run in the training environments' older Pythons
+# (training/setup), where a forward reference still needs its quotes.
+per-file-target-version = { "training/**" = "py313", "tools/wakeword_bench.py" = "py313", "tools/verifier_bench.py" = "py313" }
 
 [tool.ruff.lint]
 extend-select = ["I", "B", "BLE", "RUF100", "E501"]

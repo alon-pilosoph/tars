@@ -70,7 +70,7 @@ REMIND, CANCELLED, SNOOZED, SENT, LOOK_UP, PONDER, ANSWER, FAILED = (
 class Case:
     text: str
     want: str
-    check: Callable[["Run"], str] | None = None  # "" if the details are right, else what's wrong
+    check: Callable[[Run], str] | None = None  # "" if the details are right, else what's wrong
 
 
 @dataclass

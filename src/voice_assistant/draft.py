@@ -19,7 +19,7 @@ class Draft[T]:
     conversation at once.
     """
 
-    def __init__(self, turn: threading.Lock, prepare: Callable[["Draft[T]"], T], discard: Callable[[T], None]):
+    def __init__(self, turn: threading.Lock, prepare: Callable[[Draft[T]], T], discard: Callable[[T], None]):
         self.cancelled = False
         self._ready, self._settled = threading.Event(), threading.Event()
         self._result: T | None = None
@@ -27,11 +27,11 @@ class Draft[T]:
         self._discard = discard
         threading.Thread(target=self._run, args=(turn, prepare), daemon=True, name="draft").start()
 
-    def _run(self, turn: threading.Lock, prepare: Callable[["Draft[T]"], T]) -> None:
+    def _run(self, turn: threading.Lock, prepare: Callable[[Draft[T]], T]) -> None:
         with turn:
             self._work(prepare)
 
-    def _work(self, prepare: Callable[["Draft[T]"], T]) -> None:
+    def _work(self, prepare: Callable[[Draft[T]], T]) -> None:
         if not self.cancelled:
             try:
                 self._result = prepare(self)

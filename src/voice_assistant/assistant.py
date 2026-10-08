@@ -80,7 +80,7 @@ class Said:
 class Utterance:
     pcm: bytes
     session: Session  # transcribing it, fed while it was recorded
-    draft: "Draft[Answer]"
+    draft: Draft[Answer]
     silence_s: float  # how long ago they stopped talking when the recording ended
     follow_up: bool = False
     echo_of: str | None = None  # what TARS was saying, with the mic open, while this was recorded

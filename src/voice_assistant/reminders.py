@@ -81,7 +81,7 @@ class Reminders:
         self.timer_ring_s = timer_ring_s
 
     @classmethod
-    def from_config(cls, store: Store, cfg: RemindersConfig) -> "Reminders":
+    def from_config(cls, store: Store, cfg: RemindersConfig) -> Reminders:
         return cls(store, cfg.repeat_every_min * 60, cfg.max_tries, cfg.timer_ring_min * 60)
 
     def add(
@@ -400,7 +400,7 @@ def due_at(day: str | None, clock: str, now: float | None = None) -> float:
         if match[3]:  # "6:30 pm", though HH:MM was asked for
             hour = hour % 12 + (12 if match[3].lower() == "p" else 0)
         at = clock_time(hour, minute)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise ValueError('time must be HH:MM, 24-hour, like "18:30"') from None
     today = datetime.fromtimestamp(now).astimezone().date()
     name = str(day or "").strip().lower()

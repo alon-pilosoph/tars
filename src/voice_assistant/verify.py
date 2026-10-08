@@ -218,13 +218,13 @@ class NearMisses:
 
 class VerifiedTrigger:
     last_audio: np.ndarray | None = None  # what woke it, for speaker ID
-    pair: "Pair"
+    pair: Pair
 
     def __init__(
         self,
-        pairs: "PairSource",
+        pairs: PairSource,
         models_dir: Path,
-        journal: "Journal | None" = None,
+        journal: Journal | None = None,
         make_trigger: Callable[[str, float], WakeModel] = wake_word_trigger,
         make_verifier: Callable[[str, Path], PhraseVerifier] = PhraseVerifier,
     ):
@@ -310,7 +310,7 @@ class VerifiedTrigger:
             print(f"(couldn't switch the wake models, keeping {self.pair.version}: {e!r})")
             return False
 
-    def _listen_with(self, pair: "Pair") -> None:
+    def _listen_with(self, pair: Pair) -> None:
         trigger = self._make_trigger(str(pair.model_path), pair.threshold)
         if self._verifier is None:
             self._verifier = self._make_verifier(trigger.phrase, self._models_dir)

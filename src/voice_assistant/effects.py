@@ -62,7 +62,7 @@ EFFECTS = {"tars": SpeakerBox}
 
 
 class VoiceWithEffect:
-    def __init__(self, voice: "Voice", effect: str):
+    def __init__(self, voice: Voice, effect: str):
         self._voice = voice
         self._make_effect = EFFECTS[effect]
         self.sample_rate = voice.sample_rate
@@ -82,5 +82,5 @@ class VoiceWithEffect:
         yield effect.process(bytes(int(RING_OUT_S * self.sample_rate) * 2))
 
 
-def apply_effect(voice: "Voice", effect: str) -> "Voice":
+def apply_effect(voice: Voice, effect: str) -> Voice:
     return VoiceWithEffect(voice, effect) if effect else voice
