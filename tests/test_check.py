@@ -140,3 +140,9 @@ def test_http_status_gives_any_status_and_raises_when_nothing_answers():
     server.server_close()
     with pytest.raises(OSError):
         check.http_status(f"http://127.0.0.1:{server.server_port}/")
+
+
+def test_echo_cancellation_warns_when_the_devices_delay_is_more_than_it_can_take():
+    assert check.echo_delay(0.1, 0.2).status == OK
+    late = check.echo_delay(0.3, 0.3)
+    assert late.status == WARN and "echo_bench" in late.fix

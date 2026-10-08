@@ -64,8 +64,10 @@ being lost. If a trace of the greeting gets through, its words are taken off the
 (`echo.without_echo`); if that's all there was, TARS keeps listening. On recorded speech through a simulated room it
 removed about 30 dB once it had learned the room (a second or two), and speech recognition heard nothing of TARS's
 own voice; when you talk over it, some of the overlapping words can be lost, as with any echo canceller. Measure it
-in the room with `uv run python tools/echo_bench.py` (`--talk` to talk over it). `greet = "pause"` is the old way:
-"Yes, <name>?" only once nothing has followed the wake word for `greet_after_s`.
+in the room with `uv run python tools/echo_bench.py` (`--talk` to talk over it); until it has been, both are off, and
+`greet = "pause"`, the default, says "Yes, <name>?" only once nothing has followed the wake word for `greet_after_s`.
+If the canceller can't start or fails, TARS carries on with the mic closed while it speaks, as before; `--check`
+says so, and warns when the devices' delay is more than the 0.5 s it can take.
 
 **Failures.** The voice gives up after 4 s without audio instead of the client's 15 s, and TARS says so in its own
 voice, from lines synthesized at startup ("I lost that one somewhere between here and the server. Ask me again.";
@@ -89,8 +91,8 @@ first sound and the model under each answer; hovering shows each stage. For a we
 | `[recorder] end_silence_s` | `0.8` | without Flux: silence that ends your turn |
 | `[recorder] max_pause_s` | `1.6` | without Flux: how long a pause may be when you sounded mid-thought |
 | `[recorder] end_of_turn` | `"smart"` | without Flux: `silence` turns Smart Turn off |
-| `[recorder] greet` | `"always"` | when to say "Yes, <name>?" after the wake word: `always` at once, `pause` only after `greet_after_s` of nothing, `never` |
-| `[audio] echo_cancel` | `true` | take TARS's own sound out of what the mic hears, so the mic stays open while it greets you |
+| `[recorder] greet` | `"pause"` | when to say "Yes, <name>?" after the wake word: `always` at once, `pause` only after `greet_after_s` of nothing, `never` |
+| `[audio] echo_cancel` | `false` | take TARS's own sound out of what the mic hears, so the mic stays open while it greets you; off until checked in the room with `tools/echo_bench.py` |
 | `[recorder] answer_early_s` | `0.25` | without Flux: when the answer starts being prepared; `0` waits for the end |
 | `[recorder] vad_threshold` | `0.5` | how sure the speech detector must be |
 | `[llm] humor` | `75` | the persona's humor setting, and which error lines TARS uses |

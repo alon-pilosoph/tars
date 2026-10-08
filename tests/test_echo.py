@@ -1,6 +1,7 @@
 """Echo cancellation: TARS's own sound taken out of what the mic hears, and a leftover trace taken off a transcript."""
 
 import queue
+import types
 
 import numpy as np
 import pytest
@@ -16,7 +17,10 @@ from .test_audio import FakeOutput
     "text, said, left",
     [
         ("Yes, Alon? What's the weather", "Yes, Alon?", "What's the weather"),
-        ("yes what's the weather", "Yes, Alon?", "what's the weather"),  # only part of it got through
+        ("Yes, Alan? What time is it", "Yes, Alon?", "What time is it"),
+        ("yes what's the weather", "Yes, Alon?", "yes what's the weather"),
+        ("Yes, turn on the lights", "Yes?", "Yes, turn on the lights"),
+        ("Yes.", "Yes?", ""),
         ("yes alon", "Yes, Alon?", ""),
         ("What's the weather", "Yes, Alon?", "What's the weather"),
         ("Alon wants to know", "Yes, Alon?", "Alon wants to know"),  # only from the start, in order
@@ -86,3 +90,37 @@ def test_the_mic_keeps_cleaning_while_closed_so_the_canceller_keeps_learning():
     mic._muted = False
     mic._on_audio(np.ones(BLOCK_SAMPLES, np.int16).tobytes(), BLOCK_SAMPLES, None, None)
     assert mic.echo.heard_blocks == 2 and mic._queue.get_nowait().sum() == BLOCK_SAMPLES
+
+
+def test_a_delay_longer_than_the_canceller_takes_is_capped_instead_of_failing():
+    canceller = EchoCanceller(16_000)
+    canceller.set_delay(0.9)
+    assert canceller._delay_ms == 500
+    canceller.heard(np.zeros(1280, np.int16))
+    assert canceller.working
+
+
+def test_a_canceller_that_fails_hands_back_what_the_mic_heard_and_stays_off():
+    canceller = EchoCanceller(16_000)
+
+    def broken(frame):
+        raise RuntimeError("boom")
+
+    canceller._apm.process_stream = broken
+    block = np.arange(1280, dtype=np.int16)
+    assert np.array_equal(canceller.heard(block), block)
+    assert not canceller.working
+    canceller.played(bytes(4800), 24_000)
+
+
+def test_tars_starts_without_echo_cancellation_when_it_cant_load(monkeypatch, capsys):
+    from voice_assistant import __main__ as cli
+    from voice_assistant.config import AudioConfig
+
+    def missing():
+        raise RuntimeError('needs the optional extra "echo"')
+
+    monkeypatch.setattr(cli, "load_echo_canceller", missing)
+    cfg = types.SimpleNamespace(audio=AudioConfig(echo_cancel=True))
+    assert cli.make_echo_canceller(cfg) is None
+    assert "couldn't start" in capsys.readouterr().out

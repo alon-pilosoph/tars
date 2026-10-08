@@ -735,7 +735,7 @@ def greeting_at_once(speaker, utterances, transcripts, echo=False):
     assistant, brain = make_assistant(speaker, utterances, transcripts)
     assistant.trigger = types.SimpleNamespace(last_audio=np.zeros(32000, np.int16))
     assistant.speaker_id = FakeSpeakerID("alon")
-    assistant.mic.echo = object() if echo else None
+    assistant.mic.echo = types.SimpleNamespace(working=True) if echo else None
     assistant._woke_at = time.monotonic()
     played = []
 
@@ -766,8 +766,11 @@ def test_with_echo_cancellation_the_greeting_is_said_with_the_mic_open_and_its_t
 
 def test_if_all_it_heard_was_its_own_greeting_it_keeps_listening(speaker):
     assistant, brain, _ = greeting_at_once(speaker, [b"q", b"q", None], ["yes alon", "what time is it"], echo=True)
+    heard = []
+    assistant.journal.heard = lambda pcm, text, name, score, embedding, first: heard.append((text, name, embedding))
     assistant.converse(follow_up_s=4.0, greet="always")
     assert len(brain.asked) == 1 and brain.asked[0].endswith("what time is it")
+    assert heard[0] == ("", None, None)
 
 
 def test_never_greeting_waits_quietly(speaker):

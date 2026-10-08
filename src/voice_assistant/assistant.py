@@ -338,7 +338,7 @@ class Assistant:
         """Says "Yes, <name>?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
         waits for the greeting, as for anything TARS says."""
-        if not (self.mic and self.mic.echo):
+        if not (self.mic and self.mic.echo and self.mic.echo.working):
             self.greet()
             return self.listen()
         text = greeting(self.wake_speaker())
@@ -528,6 +528,8 @@ class Assistant:
         try:
             answer = heard.draft.take()
             name, score, embedding = answer.who
+            if heard.echo_of and not answer.text:
+                name, score, embedding = None, None, None
             self._last_who = name
             who = f" ({name or 'unknown'})" if self.speaker_id else ""
             print(f"You{who}:  {answer.text!r}")

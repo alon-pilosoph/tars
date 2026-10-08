@@ -70,18 +70,25 @@ def make_event_log(cfg: Config, root: Path):
     return EventLog(root / cfg.learning.folder)
 
 
-def make_echo_canceller(cfg: Config):
-    """Takes TARS's own sound out of what the mic hears ([audio] echo_cancel), or None."""
-    if not cfg.audio.echo_cancel:
-        return None
+def load_echo_canceller():
     try:
         from .echo import EchoCanceller
 
         return EchoCanceller(SAMPLE_RATE)
     except ImportError:
-        raise ConfigError(
-            '[audio] echo_cancel needs the optional extra "echo": run uv sync --extra echo (or set it to false).'
-        ) from None
+        raise RuntimeError('needs the optional extra "echo": run uv sync --extra echo') from None
+
+
+def make_echo_canceller(cfg: Config):
+    """Takes TARS's own sound out of what the mic hears ([audio] echo_cancel), or None: without it, the mic closes
+    while TARS speaks, as it always did."""
+    if not cfg.audio.echo_cancel:
+        return None
+    try:
+        return load_echo_canceller()
+    except Exception as e:  # noqa: BLE001 - TARS works without it
+        print(f"(echo cancellation is on but couldn't start, so the mic closes while TARS speaks: {e})")
+        return None
 
 
 def brain_config(cfg: Config, typed: bool) -> LLMConfig:
