@@ -63,14 +63,28 @@ language = "en"
 
 [llm]
 # Answers first, on Cerebras (CEREBRAS_API_KEY in .env): about 0.3 s to its first sentence, against about 0.7 s for
-# OpenAI's. Anything that needs the web or the TARS page goes to `model` below, and so does everything while Cerebras
-# fails. Empty = `model` answers everything.
+# OpenAI's. Anything that needs the web, or a tool it doesn't have, goes to `model` below, and so does everything while
+# Cerebras fails. Empty = `model` answers everything.
 cerebras_model = "qwen-3.8-27b"
+# The model above sets reminders and sends notes, lists and files itself, saving those turns the hand-off.
+# `uv run python tools/capability_bench.py` checks it gets them right.
+quick_tools = true
+# How much it thinks before answering. "low": reminders right and nothing claimed that wasn't done, for about 0.06 s
+# more before its first words (0.3 s on a reminder or a send); "none" got a third of reminders wrong, often saying a
+# timer was set when it wasn't.
+# Every model and effort tried: docs/models.md. Empty = reasoning_effort below.
+quick_reasoning_effort = "low"
+# Questions that need real thinking (planning, comparing, several steps) go to this model at this reasoning effort,
+# for at most think_timeout_s; TARS says "Let me think about that for a moment." first. Empty think_model = `model`;
+# empty think_effort = no such hand-off.
+think_model = ""
+think_effort = "high"
+think_timeout_s = 45
 # OpenAI's model: web search, sending things, and a backup for the one above.
 model = "gpt-6-luna"
 # "fast" = OpenAI's priority processing: lower latency, higher price per token. Empty = default tier.
 service_tier = "fast"
-# For reasoning models; both models above get it. Empty = each model's default.
+# OpenAI's model's reasoning effort (and the quick model's, if quick_reasoning_effort is empty). Empty = the default.
 reasoning_effort = "none"
 # Percent, like TARS's in the film. It goes into the system prompt ({humor}) and picks how TARS says something
 # went wrong: dry at 50 and up, plain below. (Asking TARS to change it only lasts for the conversation.)

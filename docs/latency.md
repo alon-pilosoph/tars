@@ -62,7 +62,7 @@ answers, on its own for the next two minutes. A failed answer is kept in its con
 
 **Measured on every answer.** The same stages as the log line are kept with each of TARS's turns (`timings` in the
 `turns` table, in seconds), with which model wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed the
-turn over, `fallback` when Cerebras failed or is resting, `openai` with no Cerebras set up). Home shows the time to
+turn over, `ponder` when it went to the thinking model, `fallback` when Cerebras failed or is resting, `openai` with no Cerebras set up). Home shows the time to
 first sound and the model under each answer; hovering shows each stage. For a week's numbers:
 `SELECT answered_by, avg(json_extract(timings, '$.total')) FROM turns WHERE role = 'tars' GROUP BY 1`.
 
@@ -124,9 +124,10 @@ the 54 paused ones: about one extra brain call in three.
 **Choosing the brain.** First sentence with TARS's prompt over 24 questions: Cerebras Qwen 0.27 s (slowest 0.41
 s), Groq Qwen 0.16 s, Groq gpt-oss-20b 0.35 s, Groq gpt-oss-120b 0.38 s, Cerebras gpt-oss-120b 0.27 s. Qwen
 sounded the most like TARS; gpt-oss was correct but plain. On a free key Groq allows 8,000 tokens a minute (about 10
-of TARS's requests) and Cerebras gpt-oss-120b 5 requests a minute; Cerebras Qwen allows 450. Qwen gets no tools: for
+of TARS's requests) and Cerebras gpt-oss-120b 5 requests a minute; Cerebras Qwen allows 450. Qwen had no tools then: for
 the web or the TARS page it replies `<look-up>` and the turn goes to Luna. Asked 12 questions that need them and 12
-that don't, six times each, it handed off 70 of the 72 it should have and answered all 72 others itself.
+that don't, six times each, it handed off 70 of the 72 it should have and answered all 72 others itself. With
+`quick_tools` it has its own for reminders and sending; `tools/capability_bench.py` checks them.
 
 **Choosing the voice.** Time to first audio: Onyx 0.97-1.19 s, Aura-2 Zeus 0.34-0.48 s, Flux Cliff 0.39-0.44 s.
 Flux Cliff now and then opens a sentence with about a second of silence, which undoes the gain. Onyx sounds best and

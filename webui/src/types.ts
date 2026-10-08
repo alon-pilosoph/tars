@@ -129,7 +129,7 @@ export interface Timings {
   total?: number; // from the end of speech to the first sound
 }
 
-export type AnsweredBy = "quick" | "look_up" | "fallback" | "openai";
+export type AnsweredBy = "quick" | "look_up" | "ponder" | "fallback" | "openai";
 export type FailedAt = "stt" | "llm" | "tts" | "other";
 
 export type ApiTurn = Omit<Turn, "items"> & { items?: (Item | number)[] };
