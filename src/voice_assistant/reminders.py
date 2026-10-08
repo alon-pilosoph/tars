@@ -385,7 +385,8 @@ class Change:
 
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
-CLOCK = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?\s*m?\.?", re.IGNORECASE)
+CLOCK = re.compile(r"(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap])?\.?\s*m?\.?", re.IGNORECASE)
+SMALL_HOURS_END = 4
 
 
 def due_at(day: str | None, clock: str, now: float | None = None) -> float:
@@ -411,8 +412,11 @@ def due_at(day: str | None, clock: str, now: float | None = None) -> float:
         ahead = (WEEKDAYS.index(name) - today.weekday()) % 7 if name else 0
         due = on(today + timedelta(days=ahead))
         return due if due > now else on(today + timedelta(days=ahead + (7 if name else 1)))
-    if name in ("today", "tomorrow"):
-        return on(today + timedelta(days=name == "tomorrow"))
+    if name in ("today", "tonight"):
+        return on(today)
+    if name == "tomorrow":
+        small_hours = datetime.fromtimestamp(now).astimezone().hour < SMALL_HOURS_END and on(today) > now
+        return on(today if small_hours else today + timedelta(days=1))
     try:
         return on(date.fromisoformat(name))
     except ValueError:

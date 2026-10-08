@@ -343,7 +343,7 @@ class ReplyFailed(OpenAIError):
 
 class Brain(Protocol):
     sent: list[SentItem]  # what the last reply sent to the web UI
-    answered_by: str | None  # who wrote the last reply (QUICK, LOOKED_UP, FALLBACK or OPENAI), once known
+    answered_by: str | None  # who wrote the last reply (QUICK, LOOKED_UP, PONDERED, FALLBACK or OPENAI), once known
     changes: list[Change]  # what the last reply asked to change in the reminders, made once it's kept
 
     def stream_reply(self, text: str) -> Iterator[str]:
@@ -470,7 +470,11 @@ class OpenAIChat:
         model, extra, instructions = self._cfg.model, self._extra, self._instructions
         if think:
             model = self._cfg.think_model or self._cfg.model
-            extra = {**self._extra, "reasoning": {"effort": self._cfg.think_effort}}
+            extra = {
+                **self._extra,
+                "reasoning": {"effort": self._cfg.think_effort},
+                "timeout": self._cfg.think_timeout_s,
+            }
             instructions = f"{self._instructions}\n\n{THINK_RULES}"
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
@@ -742,6 +746,8 @@ class CerebrasChat(OpenAIChat):
                 for c in calls:
                     output = self._run_tool(types.SimpleNamespace(**c), links=False)
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": output})
+                    if output.startswith("error"):
+                        continue
                     writing.quick_calls += [
                         {"type": "function_call", "call_id": c["id"], "name": c["name"], "arguments": c["arguments"]},
                         {"type": "function_call_output", "call_id": c["id"], "output": output},
@@ -813,7 +819,8 @@ class ResponsesQuickChat(CerebrasChat):
                         {"type": "function_call_output", "call_id": call.call_id, "output": output},
                     ]
                     items += done
-                    writing.quick_calls += done
+                    if not output.startswith("error"):
+                        writing.quick_calls += done
 
 
 class ClaudeQuickChat(CerebrasChat):
@@ -884,6 +891,8 @@ class ClaudeQuickChat(CerebrasChat):
                     output = self._run_tool(types.SimpleNamespace(name=use.name, arguments=arguments), links=False)
                     result = {"type": "tool_result", "tool_use_id": use.id, "content": output}
                     results.append(result | ({"is_error": True} if output.startswith("error") else {}))
+                    if output.startswith("error"):
+                        continue
                     writing.quick_calls += [
                         {"type": "function_call", "call_id": use.id, "name": use.name, "arguments": arguments},
                         {"type": "function_call_output", "call_id": use.id, "output": output},

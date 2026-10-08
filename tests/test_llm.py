@@ -691,6 +691,14 @@ def test_qwen_cant_send_a_link_it_didnt_find_on_the_web(tmp_path):
     )
 
 
+def test_a_refused_link_isnt_passed_on_with_the_hand_off_that_follows_it(tmp_path):
+    link = {"kind": "link", "title": "Rome", "for": "person", "url": "https://made.up/rome"}
+    brain, openai, _, _ = quick_with_tools(tmp_path, [("send", link)], then=LOOK_UP)
+    assert "".join(brain.stream_reply("send me a link about Rome")) == "From OpenAI."
+    assert all(m.get("type") is None for m in openai.requests[0]["input"])
+    assert LOOK_UP not in json.dumps(openai.requests[0]["input"])
+
+
 def test_what_qwens_tools_did_goes_with_a_hand_off_so_it_isnt_done_twice(tmp_path):
     brain, openai, _, _ = quick_with_tools(tmp_path, [("remind", REMIND)], then=LOOK_UP)
     assert "".join(brain.stream_reply("pasta timer, and what's the weather?")) == "From OpenAI."
