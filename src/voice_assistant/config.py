@@ -19,11 +19,17 @@ OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
 WEB_PORT = 8080  # the web UI's, unless --port says otherwise
 
 
+GREETS = ("pause", "always", "never")  # [recorder] greet
+
+
 @dataclass
 class AudioConfig:
     input_device: str = ""
     output_device: str = ""
     playback_prebuffer_s: float = 0.3
+    # Take TARS's own sound out of what the mic hears, so the mic can stay open while TARS makes one (the optional
+    # extra "echo": uv sync --extra echo).
+    echo_cancel: bool = False
 
 
 @dataclass
@@ -45,6 +51,9 @@ class RecorderConfig:
     max_utterance_s: float = 15.0
     follow_up_s: float = 4.0
     greet_after_s: float = 1.5  # say "Yes, <name>?" if nothing follows the wake word this long; 0 = off
+    # When to say "Yes, <name>?" after the wake word: "pause" (if nothing follows it for greet_after_s), "always" (at
+    # once), or "never".
+    greet: str = "pause"
     end_of_turn: str = "smart"  # silence: end_silence_s ends it | smart: a model may extend it to max_pause_s
     max_pause_s: float = 1.6
     answer_early_s: float = 0.25  # start preparing the answer after this much silence; it plays only once you're done
@@ -212,6 +221,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[stt] model must be a Deepgram model (e.g. nova-3) for provider deepgram, not {stt.model!r}")
     elif stt.provider == "flux" and stt.language and not stt.language.lower().startswith("en"):
         problems.append(f"[stt] provider flux only understands English, not language {stt.language!r}")
+    if cfg.recorder.greet not in GREETS:
+        problems.append(f"[recorder] greet must be {', '.join(GREETS)}, not {cfg.recorder.greet!r}")
     if cfg.llm.think_timeout_s <= 0:
         problems.append("[llm] think_timeout_s must be more than 0")
     if cfg.tts.provider not in ("openai", "deepgram"):

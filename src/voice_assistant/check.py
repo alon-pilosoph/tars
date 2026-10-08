@@ -346,6 +346,15 @@ def check_all(cfg: Config, root: Path) -> int:
         why = "still not loaded (a download that stalled?)"
         return within(MODELS_S, "Local models", load, why, "check the network and run it again")
 
+    def echo():
+        if not cfg.audio.echo_cancel:
+            return Result("Echo cancellation", SKIP, "off ([audio] echo_cancel)")
+        try:
+            cli.make_echo_canceller(cfg)
+        except cli.ConfigError as e:
+            return Result("Echo cancellation", FAIL, "not installed", str(e))
+        return Result("Echo cancellation", OK, "loaded: TARS's own sound is taken out of what the mic hears")
+
     def speakers():
         if not cfg.speaker.enabled:
             return Result("Voiceprints", SKIP, "speaker ID is off")
@@ -363,6 +372,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Input device", lambda: audio_device("input")),
         ("Output device", lambda: audio_device("output")),
         ("Local models", models),
+        ("Echo cancellation", echo),
         ("Voiceprints", speakers),
         ("OpenAI", openai),
         ("Cerebras", cerebras),

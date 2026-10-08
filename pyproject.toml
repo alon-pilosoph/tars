@@ -36,6 +36,9 @@ voice-assistant = "voice_assistant.__main__:main"
 claude = [
     "anthropic>=1",
 ]
+echo = [
+    "livekit>=1.1",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -48,6 +51,7 @@ packages = ["src/voice_assistant"]
 dev = [
     "anthropic>=1",
     "httpx>=0.28.1",
+    "livekit>=1.1",
     "pytest>=9.1.1",
     "ruff==0.16.9",
     "soundfile>=0.14.0",

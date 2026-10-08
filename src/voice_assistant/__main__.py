@@ -10,7 +10,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from .audio import AudioDeviceError, Microphone, Speaker, find_device, list_devices
+from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, Speaker, find_device, list_devices
 from .config import OPENAI_STT_MODEL, WEB_PORT, Config, ConfigError, LLMConfig, load_config, required_keys
 from .recorder import make_recorder
 from .versions import UNUSABLE, model_versions, pair_source
@@ -68,6 +68,20 @@ def make_event_log(cfg: Config, root: Path):
     from .events import EventLog
 
     return EventLog(root / cfg.learning.folder)
+
+
+def make_echo_canceller(cfg: Config):
+    """Takes TARS's own sound out of what the mic hears ([audio] echo_cancel), or None."""
+    if not cfg.audio.echo_cancel:
+        return None
+    try:
+        from .echo import EchoCanceller
+
+        return EchoCanceller(SAMPLE_RATE)
+    except ImportError:
+        raise ConfigError(
+            '[audio] echo_cancel needs the optional extra "echo": run uv sync --extra echo (or set it to false).'
+        ) from None
 
 
 def brain_config(cfg: Config, typed: bool) -> LLMConfig:
@@ -341,8 +355,13 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders)
     recorder = make_recorder(cfg, root)
-    speaker = Speaker(find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s)
-    with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
+    echo = make_echo_canceller(cfg)
+    speaker = Speaker(
+        find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s, echo
+    )
+    with Microphone(find_device(cfg.audio.input_device, "input"), echo) as mic, speaker:
+        if echo:
+            echo.set_delay(mic.latency + speaker.latency)
         journal = Journal(events)
         journal.keep_pruning(cfg.learning.keep_audio_days)
         trigger, idle_message = make_trigger(cfg, push_to_talk, root, journal)
@@ -363,7 +382,10 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
         )
         assistant.run_forever(
-            idle_message, follow_up_s=cfg.recorder.follow_up_s, greet_after_s=cfg.recorder.greet_after_s
+            idle_message,
+            follow_up_s=cfg.recorder.follow_up_s,
+            greet_after_s=cfg.recorder.greet_after_s,
+            greet=cfg.recorder.greet,
         )
 
 

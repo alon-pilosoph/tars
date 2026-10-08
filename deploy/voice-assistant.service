@@ -16,7 +16,7 @@ After=pipewire.service
 [Service]
 # Assumes the repo is cloned to ~/voice-assistant and uv is installed in ~/.local/bin.
 WorkingDirectory=%h/voice-assistant
-ExecStart=%h/.local/bin/uv run --frozen voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=3

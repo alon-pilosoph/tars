@@ -27,7 +27,7 @@ UV="$HOME/.local/bin/uv"
 [ -x "$UV" ] || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 echo "== Python packages (uv installs its own Python)"
-"$UV" sync --frozen
+"$UV" sync --frozen --all-extras  # echo cancellation and Claude are extras
 
 echo "== API keys (the ones config.toml's choices need)"
 KEYS=$("$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config, \

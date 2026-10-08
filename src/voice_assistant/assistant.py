@@ -21,9 +21,10 @@ import numpy as np
 from openai import OpenAIError
 
 from .audio import AudioDeviceError, Microphone, Speaker, chime
-from .config import LLMConfig, RemindersConfig, SpeakerConfig
+from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
 from .conversations import LLM, STT, SentItem
 from .draft import Draft
+from .echo import without_echo
 from .files import atomic_write
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
@@ -49,6 +50,7 @@ ERROR_LINES = {
     "plain": ["Something went wrong. Please try again.", "That didn't work. Please ask again."],
 }
 DRY_FROM_HUMOR = 50  # percent
+PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes, <name>?" after the wake word
 ERROR_LINE_WAIT_S = 1.0
 VOICE_RETRY_S = 60.0  # a reminder the voice couldn't say is tried again after this
 REMINDERS_REST_S = 30.0  # after the reminders table fails, nothing is said for this long
@@ -81,6 +83,7 @@ class Utterance:
     draft: "Draft[Answer]"
     silence_s: float  # how long ago they stopped talking when the recording ended
     follow_up: bool = False
+    echo_of: str | None = None  # what TARS was saying, with the mic open, while this was recorded
 
 
 @dataclass
@@ -132,6 +135,9 @@ class Assistant:
         self.journal = journal or Journal()
         self.error_lines = ERROR_LINES["dry" if humor >= DRY_FROM_HUMOR else "plain"]
         self.timings: dict[str, float] = {}  # the last answer's latency by stage, in seconds
+        self._woke_at: float | None = None  # when the wake word was confirmed, for how soon TARS greeted it
+        self._greet_s: float | None = None
+        self._only_echo = False  # the last request heard was nothing but a trace of TARS's own greeting
         self._identifying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="speaker-id")
         self._thinking = threading.Lock()  # drafts take turns
         # Its own pool, so making phrases never delays speaker ID, which an answer waits on.
@@ -153,7 +159,9 @@ class Assistant:
     def reminders(self) -> Reminders | None:
         return self.reminder_tools.reminders if self.reminder_tools else None
 
-    def run_forever(self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0) -> None:
+    def run_forever(
+        self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0, greet: str = PAUSE
+    ) -> None:
         self.prepare_phrases()
         if self._clock:
             self._clock.start()
@@ -166,8 +174,9 @@ class Assistant:
             if woke == ASK:
                 self.ask_if_called(follow_up_s)
                 continue
+            self._woke_at, self._greet_s = time.monotonic(), None
             print("Listening...")
-            self.converse(follow_up_s, greet_after_s=greet_after_s)
+            self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet)
 
     def prepare_phrases(self) -> None:
         """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
@@ -211,7 +220,7 @@ class Assistant:
                 print(f"(couldn't save {text!r} for next time: {e!r})")
         return audio
 
-    def say(self, text: str, keep: bool = True) -> bool:
+    def say(self, text: str, keep: bool = True, on_first_audio: Callable[[], None] | None = None) -> bool:
         """Plays a short line, made ahead if possible. False if it couldn't be said."""
         try:
             audio = self._phrase(text, keep).result()
@@ -219,7 +228,7 @@ class Assistant:
             print(f"(couldn't say {text!r}: {e!r})")
             return False
         with self._mic_paused():
-            self.speaker.play_pcm_stream(iter(audio), self.voice.sample_rate)
+            self.speaker.play_pcm_stream(iter(audio), self.voice.sample_rate, on_first_audio=on_first_audio)
         return True
 
     def _mic_paused(self):
@@ -322,8 +331,47 @@ class Assistant:
     def greet(self) -> None:
         text = greeting(self.wake_speaker())
         print(f"Bot:  {text}")
-        if self.say(text):
+        if self.say(text, on_first_audio=self._greeted):
             self.journal.said(text)
+
+    def greet_and_listen(self) -> Utterance | None:
+        """Says "Yes, <name>?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
+        said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
+        waits for the greeting, as for anything TARS says."""
+        if not (self.mic and self.mic.echo):
+            self.greet()
+            return self.listen()
+        text = greeting(self.wake_speaker())
+        print(f"Bot:  {text}  (listening while it's said)")
+        try:
+            audio = self._phrase(text).result()
+        except Exception as e:  # noqa: BLE001 - no greeting, but still listening
+            print(f"(couldn't say {text!r}: {e!r})")
+            return self.listen()
+        failed: list[BaseException] = []
+
+        def play() -> None:
+            try:
+                self.speaker.play_pcm_stream(iter(audio), self.voice.sample_rate, on_first_audio=self._greeted)
+            except BaseException as e:  # noqa: BLE001 - raised again once listening is over
+                failed.append(e)
+
+        playing = threading.Thread(target=play, daemon=True, name="greeting")
+        playing.start()
+        try:
+            heard = self.listen(echo_of=text)
+        finally:
+            playing.join()
+        if failed:
+            raise failed[0]
+        self.journal.said(text)
+        return heard
+
+    def _greeted(self) -> None:
+        """The greeting's first sound: how long after the wake word it came, for the turn's timings."""
+        if self._woke_at is not None:
+            self._greet_s = time.monotonic() - self._woke_at
+            print(f"(greeted {self._greet_s:.2f}s after the wake word)")
 
     def ask_if_called(self, follow_up_s: float) -> None:
         """The wake sounded almost right ("hey cars"?): ask, and only carry on if someone answers."""
@@ -339,7 +387,11 @@ class Assistant:
         self.converse(follow_up_s, first=heard)
 
     def listen(
-        self, start_timeout_s: float | None = None, follow_up: bool = False, tag: str | None = None
+        self,
+        start_timeout_s: float | None = None,
+        follow_up: bool = False,
+        tag: str | None = None,
+        echo_of: str | None = None,
     ) -> Utterance | None:
         """Records one utterance, transcribing it as it comes, and starts answering at each pause in case it's the
         end."""
@@ -348,7 +400,7 @@ class Assistant:
 
         def paused(pcm: bytes) -> None:
             nonlocal draft
-            draft = self._draft(pcm, session, follow_up, tag)
+            draft = self._draft(pcm, session, follow_up, tag, echo_of)
 
         def resumed() -> None:
             nonlocal draft
@@ -381,30 +433,35 @@ class Assistant:
         return Utterance(
             pcm,
             session,
-            draft or self._draft(pcm, session, follow_up, tag),
+            draft or self._draft(pcm, session, follow_up, tag, echo_of),
             self.recorder.trailing_silence_s,
             follow_up,
+            echo_of,
         )
 
-    def converse(self, follow_up_s: float, first: Utterance | None = None, greet_after_s: float = 0.0) -> None:
+    def converse(
+        self, follow_up_s: float, first: Utterance | None = None, greet_after_s: float = 0.0, greet: str = PAUSE
+    ) -> None:
         """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
 
-        `first` is an already-recorded request (a reply to "Did you call me?"). With `greet_after_s`, a pause that
-        long after the wake word gets a "Yes, <name>?" before TARS keeps waiting.
+        `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes, <name>?":
+        ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER.
         """
         # While they're still talking, get the reply's connections ready.
         threading.Thread(target=self.brain.warm, daemon=True, name="brain-warm").start()
         self.voice.warm()
         self.prepare_phrases()
         try:
-            self._converse(follow_up_s, first, greet_after_s)
+            self._converse(follow_up_s, first, greet_after_s, greet)
         finally:
             self._just_said = []
             self.journal.end_conversation()
 
-    def _converse(self, follow_up_s: float, first: Utterance | None, greet_after_s: float) -> None:
+    def _converse(self, follow_up_s: float, first: Utterance | None, greet_after_s: float, greet: str) -> None:
         heard = first
-        if heard is None and greet_after_s:
+        if heard is None and greet == ALWAYS:
+            heard = self.greet_and_listen()
+        elif heard is None and greet == PAUSE and greet_after_s:
             heard = self.listen(start_timeout_s=greet_after_s)
             if heard is None:
                 self.greet()
@@ -425,6 +482,12 @@ class Assistant:
                     traceback.print_exc()
                 self.say_error()
                 return
+            if not answered and heard.echo_of and self._only_echo:
+                # All it heard was a trace of its own greeting: the request is still to come.
+                heard = self.listen()
+                if heard is None:
+                    return
+                continue
             held = answered and self._say_held(self._last_who)
             if held:  # what's said next may well be about the message: listen for it, at least the ack window
                 heard = self.listen(
@@ -470,6 +533,7 @@ class Assistant:
             print(f"You{who}:  {answer.text!r}")
             # Only the request right after the wake says whether the wake was real.
             self.journal.heard(heard.pcm, answer.text, name, score, embedding, first=not heard.follow_up)
+            self._only_echo = not answer.text
             if not answer.text:
                 heard.draft.keep()
                 return False
@@ -481,6 +545,8 @@ class Assistant:
                 heard.draft.keep()
                 return False
             self.timings = {"end_of_speech": heard.silence_s, "stt": answer.stt_s}
+            if self._greet_s is not None:  # the conversation's first request: how soon TARS greeted the wake word
+                self.timings["greet"], self._greet_s = self._greet_s, None
             said = self._speak(answer, t_stopped_talking)
             heard.draft.keep()
         except BaseException as e:
@@ -518,16 +584,20 @@ class Assistant:
         by = self.brain.answered_by if answer and answer.t_asked else None
         self.journal.failed(text, failed_at(e), f"{type(e).__name__}: {e}", dict(self.timings), by)
 
-    def _draft(self, pcm: bytes, session: Session, follow_up: bool, tag: str | None) -> Draft[Answer]:
-        return Draft(self._thinking, lambda d: self._prepare(d, pcm, session, follow_up, tag), self._discard)
+    def _draft(
+        self, pcm: bytes, session: Session, follow_up: bool, tag: str | None, echo_of: str | None = None
+    ) -> Draft[Answer]:
+        return Draft(self._thinking, lambda d: self._prepare(d, pcm, session, follow_up, tag, echo_of), self._discard)
 
-    def _prepare(self, draft: Draft, pcm: bytes, session: Session, follow_up: bool, tag: str | None) -> Answer:
+    def _prepare(
+        self, draft: Draft, pcm: bytes, session: Session, follow_up: bool, tag: str | None, echo_of: str | None = None
+    ) -> Answer:
         """Transcribe, identify the speaker, and set the brain and voice to work, all without a sound."""
         # Speaker ID runs while the audio is transcribed, so it adds no latency.
         identifying = self._identifying.submit(self.speaker_id.describe, pcm) if self.speaker_id else None
         t = time.perf_counter()
         try:
-            text = session.transcript()
+            text = without_echo(session.transcript(), echo_of)
         except Exception as e:
             mark_failed_at(e, STT)
             raise
@@ -623,7 +693,13 @@ class Assistant:
             self.timings["total"] = t_sound - t_start
 
     def _report(self) -> None:
-        labels = {"end_of_speech": "waited", "stt": "stt", "llm": "llm first sentence", "tts": "tts first audio"}
+        labels = {
+            "greet": "greeted",
+            "end_of_speech": "waited",
+            "stt": "stt",
+            "llm": "llm first sentence",
+            "tts": "tts first audio",
+        }
         parts = [f"{labels[k]} {v:.2f}s" for k, v in self.timings.items() if k in labels]
         if "total" in self.timings:
             # With the answer started during the pause, the stages overlap the wait instead of adding to it.
