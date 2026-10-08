@@ -82,11 +82,16 @@ ten minutes"). Every active reminder is in both models' instructions by number (
 like the time of day), so "what reminders do I have?" needs no tool, and a later "hey TARS, I got the message" gets
 `<ack 12>`. A model can say "okay thanks" a hundred ways; a phrase list would miss them.
 
-**Setting by voice goes through OpenAI.** Setting, snoozing and cancelling are tools on OpenAI's model (`remind`,
-`snooze_reminder`, `cancel_reminder`), and Qwen hands those turns over with `<look-up>`, as it does for sending. That
-costs a second or two on those turns only. Like sent items, a tool call changes nothing until the turn is kept: a
-draft thrown away because you kept talking leaves no reminder behind. Times are given as minutes from now or a local
-date and time; the tool turns down the past and anything over a year away, so the model asks again.
+**Setting by voice** uses three tools (`remind`, `snooze_reminder`, `cancel_reminder`). They're OpenAI's, and Qwen
+hands those turns over with `<look-up>`, which costs a second or two; with `[llm] quick_tools` on, Qwen has them
+too and the hand-off is skipped (see [the brain](architecture.md#the-llms-tools)). Like sent items, a tool call
+changes nothing until the turn is kept: a draft thrown away because you kept talking leaves no reminder behind.
+
+**Times are worked out by TARS, not the model.** The model gives minutes from now, or a clock time (`HH:MM`) and the
+day as it was said: `today`, `tomorrow`, a weekday, a date, or none for the next time the clock shows it.
+`reminders.due_at` turns that into the moment, so "Friday" over a month's end can't come out wrong. The tool's
+answer says when it's set for ("tomorrow at 9:00 AM"), and TARS confirms with that, so a misheard time is heard
+straight away. It turns down the past and anything over a year away, so the model asks again.
 
 **Waiting until they're back** hooks into the conversation: after TARS answers someone whose voice matches (speaker
 ID's confident match), any message waiting for them is said ("By the way, Stacey, a message from Alon: …"), and the

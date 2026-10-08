@@ -71,8 +71,24 @@ stops delivering audio exits so systemd restarts it.
   things appear in the web UI; TARS says "It's on the TARS page." It never reads a link aloud. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
 
+- **Reminders** (`remind`, `cancel_reminder`, `snooze_reminder`): see [reminders](reminders.md).
+
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.
+
+**Who does what.** Each model is told, from one list (`abilities()` in `llm.py`), what it can do itself, what it
+hands over and how, and what TARS can't do at all, so it never claims something it can't do and never hands over
+something it could have done. Turning a feature off in config changes both prompts. Qwen hands over:
+
+| Marker | When | To | TARS says first |
+|---|---|---|---|
+| `<look-up>` | the web: weather, news, prices, a real link; and reminders and sending, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
+| `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
+
+With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links,
+which need web search) and uses them itself, saving those turns the hand-off. What its tools did goes along if it
+hands the turn over after all, so nothing is done twice. `tools/capability_bench.py` checks it gets them right before
+it's turned on. The marker isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
 
 ## What it keeps, and where
 

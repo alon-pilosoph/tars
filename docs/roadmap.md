@@ -9,7 +9,7 @@ built the way the send tool is.
 |---|---|---|---|
 | 1 | [A week of real use](#1-a-week-of-real-use) | the first real wakes, voices and conversations; everything after needs them | no code, a checklist |
 | 2 | ["TARS stop": interrupting a reply](#2-tars-stop-interrupting-a-reply) | the one daily annoyance left; longer answers make it worse | medium |
-| 3 | [Handing hard questions to a larger model](#3-handing-hard-questions-to-a-larger-model) | smallest new feature, self-contained, keeps the brain swappable | small |
+| 3 | [Handing hard questions to a larger model](#3-handing-hard-questions-to-a-larger-model) | built; measuring is left | small |
 | 4 | [Long-term memory and personalization](#4-long-term-memory-and-personalization) | the biggest one, and it leans on speaker ID being right | large |
 
 Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go).
@@ -76,30 +76,24 @@ should (the wake model is tiny), but it's the first time both run together.
 
 ## 3. Handing hard questions to a larger model
 
-When a question needs real thinking (planning a trip, comparing options, a tricky calculation), TARS says
-"Let me think about that for a moment." and comes back with an answer from a larger, slower model.
+**Built**, alongside Qwen's own tools: see [who does what](architecture.md#the-llms-tools). Qwen replies `<ponder>`
+for a question that needs real thinking (planning, comparing options, several steps), TARS says "Let me think about
+that for a moment.", and `[llm] think_model` (default: `model`) answers at `think_effort` (default high), with the
+same conversation, tools and web search. It gets `think_timeout_s` (45 s). The web UI marks those turns. Each model is
+now told, from one list, what it can do itself, what it hands over, and what TARS can't do at all.
 
-**Design:**
+Different from the plan: the marker isn't `<think>` (Qwen 3 writes its own reasoning between those tags); the "let me
+think" line goes through the voice like any sentence, rather than being made ahead of time; and running out of time
+says the usual error line, not a line of its own.
 
-- **A `<think>` hand-off**, next to `<look-up>` in `llm.py`. Qwen on Cerebras gets no tools: for the web or the TARS
-  page it already replies `<look-up>` and the turn goes to OpenAI's model. A second marker sends a turn to the larger
-  model instead. Its line in Qwen's prompt decides when: questions that need several steps of reasoning, never small
-  talk, facts or anything web search answers.
-- **No silence.** The moment the hand-off starts, TARS plays a line made ahead of time, like the spoken error lines
-  (`ERROR_LINES` in `assistant.py`), dry or plain by the humor setting.
-- **The larger model is a second brain**, set in config (`[llm] think_model`, with its own reasoning effort), with
-  the same conversation and web search. Its answer is streamed and spoken like any other, so the brain stays
-  swappable: any model can be the thinker.
-- **Its own time limit** (`think_timeout_s`, around 45 s), with a spoken "I couldn't work that one out in time."
-  when it runs out. With step 2 done, "hey TARS" interrupts a long answer too.
-- **Visible in the web UI:** a turn that went to the larger model is marked, with how long it took.
+**Left to do:**
 
-**Measure:** on 50 typical questions from step 1's log, how often it hands off (it should be rare, and never for
-the simple ones), the time to the "let me think" line (should be the usual time to first sound), and the cost per
-call.
-
-**Open question:** whether Qwen hands off when it should, and only then. If it doesn't, a stricter line in its
-prompt comes first; a separate classifier only if that fails.
+1. `uv run python tools/capability_bench.py` with the keys: Qwen with its own tools, on 26 requests, 6 times
+   each. Turn `quick_tools` on if it gets them right.
+2. **Measure** on 50 typical questions from step 1's log: how often it hands off to the thinking model (it should be
+   rare, and never for the simple ones), the time to the "let me think" line (should be the usual time to first
+   sound), and the cost per call. If Qwen hands off too often or too rarely, a stricter line in its prompt comes
+   first; a separate classifier only if that fails.
 
 ## 4. Long-term memory and personalization
 
