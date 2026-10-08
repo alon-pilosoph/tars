@@ -92,12 +92,14 @@ REMIND_RULES = (
     "You can set timers, reminders and messages for people in the house with the remind tool; TARS says them aloud "
     'when they\'re due. A reminder or message is for the person named ("remind me" is whoever is speaking, by '
     'the [Speaker: name] tag; "remind Stacey" is Stacey), and a message always needs someone it\'s for. Give the '
-    'time as in_minutes for "in ten minutes", or at, the local date and time, for a clock time. Use when_back '
+    'time as in_minutes for "in ten minutes", or for a clock time, time as HH:MM on a 24-hour clock, with day as '
+    'it was said ("friday", "tomorrow"; null if no day was said): never work out a date yourself. Morning is 9:00, '
+    "afternoon 15:00, evening 19:00 and tonight 20:00, unless a time was said. Use when_back "
     "only when asked to wait until someone is back or next around. Set wait_for_ack, so it's said again until "
     "someone says they got it, unless they say once is enough; a timer always rings until someone turns it off. "
-    "After setting one, confirm it in one short line with the time. To cancel one or put it off, use "
-    "cancel_reminder or snooze_reminder with its number from the list of what's set now. If a tool says there's an "
-    "error, fix it or ask, and never say it's set when it isn't."
+    "After setting one, confirm it in one short line with the time the tool says it's set for. To cancel one or "
+    "put it off, use cancel_reminder or snooze_reminder with its number from the list of what's set now. If a tool "
+    "says there's an error, fix it or ask, and never say it's set when it isn't."
 )
 REMIND_TOOLS = [
     {
@@ -108,7 +110,7 @@ REMIND_TOOLS = [
         "parameters": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["kind", "text", "for", "in_minutes", "at", "when_back", "wait_for_ack"],
+            "required": ["kind", "text", "for", "in_minutes", "day", "time", "when_back", "wait_for_ack"],
             "properties": {
                 "kind": {"type": "string", "enum": ["timer", "reminder", "message"]},
                 "text": {
@@ -118,7 +120,12 @@ REMIND_TOOLS = [
                 },
                 "for": {"type": ["string", "null"], "description": "Who it's for, by name; null for whoever is there."},
                 "in_minutes": {"type": ["number", "null"], "description": "Due this many minutes from now."},
-                "at": {"type": ["string", "null"], "description": "Due at this local time: YYYY-MM-DDTHH:MM."},
+                "day": {
+                    "type": ["string", "null"],
+                    "description": "With time: the day as said: today, tomorrow, a weekday (monday...sunday), or "
+                    "YYYY-MM-DD for a date. null: the next time the clock shows that time.",
+                },
+                "time": {"type": ["string", "null"], "description": "Due at this clock time, HH:MM, 24-hour."},
                 "when_back": {"type": "boolean", "description": "Wait until their voice is next heard instead."},
                 "wait_for_ack": {"type": "boolean", "description": "Say it again until someone acknowledges it."},
             },

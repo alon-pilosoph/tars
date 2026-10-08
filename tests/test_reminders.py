@@ -19,6 +19,7 @@ from voice_assistant.reminders import (
     WEB,
     NewReminder,
     Reminders,
+    due_at,
     late,
     line,
     says_line,
@@ -196,3 +197,37 @@ def test_only_an_active_one_can_be_cancelled_and_a_missed_one_can_still_be_snooz
     reminders.due(NOW + 1000)
     assert reminders.get(rid)["status"] == MISSED
     assert not reminders.cancel(rid) and reminders.snooze(rid, 5, now=NOW + 1000)
+
+
+def local(text: str) -> float:
+    return datetime.fromisoformat(text).astimezone().timestamp()
+
+
+WEDNESDAY_5PM = "2026-10-07T17:00"
+
+
+@pytest.mark.parametrize(
+    "now, day, clock, due",
+    [
+        (WEDNESDAY_5PM, None, "18:30", "2026-10-07T18:30"),  # still to come today
+        (WEDNESDAY_5PM, None, "16:00", "2026-10-08T16:00"),  # gone today: the next time the clock shows it
+        (WEDNESDAY_5PM, "today", "16:00", "2026-10-07T16:00"),  # as said; check() then says it's passed
+        (WEDNESDAY_5PM, "tomorrow", "07:00", "2026-10-08T07:00"),
+        (WEDNESDAY_5PM, "Friday", "09:00", "2026-10-09T09:00"),
+        (WEDNESDAY_5PM, "wednesday", "18:00", "2026-10-07T18:00"),  # today's, since it's still to come
+        (WEDNESDAY_5PM, "wednesday", "16:00", "2026-10-14T16:00"),  # gone today: next week's
+        (WEDNESDAY_5PM, "2026-11-03", "08:15", "2026-11-03T08:15"),
+        (WEDNESDAY_5PM, None, "6:30 pm", "2026-10-07T18:30"),  # forgiven, though HH:MM was asked for
+        ("2026-10-30T12:00", "monday", "09:00", "2026-11-02T09:00"),  # over a month's end
+        ("2026-12-31T22:00", "tomorrow", "09:00", "2027-01-01T09:00"),  # and a year's
+        ("2026-12-31T22:00", None, "08:00", "2027-01-01T08:00"),
+    ],
+)
+def test_a_day_and_time_as_said_become_the_right_moment(now, day, clock, due):
+    assert due_at(day, clock, local(now)) == local(due)
+
+
+@pytest.mark.parametrize("clock", ["25:00", "9-ish", "", None, "12:75"])
+def test_a_time_that_isnt_one_is_refused(clock):
+    with pytest.raises(ValueError, match="HH:MM"):
+        due_at(None, clock, local(WEDNESDAY_5PM))

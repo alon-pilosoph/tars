@@ -8,11 +8,13 @@ rather than keeping it in memory. See docs/reminders.md.
 
 import dataclasses
 import math
+import re
 import threading
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from datetime import time as clock_time
 
 from .config import RemindersConfig
 from .events import person_key
@@ -382,6 +384,41 @@ class Change:
     asked_at: float = 0.0  # when the model asked: an ADD due "now" mustn't count as passed by the time it's kept
 
 
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+CLOCK = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?\s*m?\.?", re.IGNORECASE)
+
+
+def due_at(day: str | None, clock: str, now: float | None = None) -> float:
+    """When `clock` (HH:MM, 24-hour) on `day` is, in local time. `day` is today, tomorrow, a weekday (the next one:
+    today's only if the time is still to come) or YYYY-MM-DD; none is the next time the clock shows it. The model only
+    copies what was said, and the date arithmetic, where a model gets things wrong, is done here."""
+    now = time.time() if now is None else now
+    match = CLOCK.fullmatch(str(clock or "").strip())
+    try:
+        hour, minute = int(match[1]), int(match[2] or 0)
+        if match[3]:  # "6:30 pm", though HH:MM was asked for
+            hour = hour % 12 + (12 if match[3].lower() == "p" else 0)
+        at = clock_time(hour, minute)
+    except (TypeError, ValueError):
+        raise ValueError('time must be HH:MM, 24-hour, like "18:30"') from None
+    today = datetime.fromtimestamp(now).astimezone().date()
+    name = str(day or "").strip().lower()
+
+    def on(d: date) -> float:
+        return datetime.combine(d, at).astimezone().timestamp()  # a time without a zone is local
+
+    if not name or name in WEEKDAYS:
+        ahead = (WEEKDAYS.index(name) - today.weekday()) % 7 if name else 0
+        due = on(today + timedelta(days=ahead))
+        return due if due > now else on(today + timedelta(days=ahead + (7 if name else 1)))
+    if name in ("today", "tomorrow"):
+        return on(today + timedelta(days=name == "tomorrow"))
+    try:
+        return on(date.fromisoformat(name))
+    except ValueError:
+        raise ValueError("day must be today, tomorrow, a weekday, YYYY-MM-DD, or null") from None
+
+
 class ReminderTools:
     """The brain's side of reminders: what's set now, for its instructions, and its tools, which check what the model
     asks for and say what's wrong so it can try again."""
@@ -442,11 +479,10 @@ class ReminderTools:
             due = None
         elif args.get("in_minutes") is not None:
             due = now + float(args["in_minutes"]) * 60
-        elif args.get("at"):
-            at = datetime.fromisoformat(str(args["at"]))
-            due = (at if at.tzinfo else at.astimezone()).timestamp()  # a time without a zone is local
+        elif args.get("time"):
+            due = due_at(args.get("day"), args["time"], now)
         else:
-            raise ValueError("give in_minutes, at, or when_back")
+            raise ValueError("give in_minutes, a time (and day), or when_back")
         new = NewReminder(
             kind=args.get("kind"),
             text=args.get("text"),

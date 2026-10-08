@@ -529,8 +529,8 @@ def test_a_reminder_list_that_cant_be_read_never_costs_a_reply():
     assert "".join(brain.stream_reply("hi")) == "Hi."
 
 
-REMIND = {"kind": "timer", "text": "pasta", "for": None, "in_minutes": 12, "at": None, "when_back": False,
-          "wait_for_ack": True}  # fmt: skip
+REMIND = {"kind": "timer", "text": "pasta", "for": None, "in_minutes": 12, "day": None, "time": None,
+          "when_back": False, "wait_for_ack": True}  # fmt: skip
 
 
 def test_setting_one_by_voice_is_held_until_the_turn_is_kept(tmp_path):
@@ -557,10 +557,11 @@ def test_setting_one_by_voice_is_held_until_the_turn_is_kept(tmp_path):
 @pytest.mark.parametrize(
     "args, error",
     [
-        ({**REMIND, "in_minutes": None}, "give in_minutes, at, or when_back"),
+        ({**REMIND, "in_minutes": None}, "give in_minutes, a time (and day), or when_back"),
         ({**REMIND, "kind": "message", "text": "hi"}, "needs someone"),
-        ({**REMIND, "in_minutes": None, "at": "2020-01-01T09:00"}, "already passed"),
-        ({**REMIND, "in_minutes": None, "at": "nine-ish"}, "Invalid isoformat"),
+        ({**REMIND, "in_minutes": None, "day": "2020-01-01", "time": "09:00"}, "already passed"),
+        ({**REMIND, "in_minutes": None, "time": "nine-ish"}, "time must be HH:MM"),
+        ({**REMIND, "in_minutes": None, "day": "someday", "time": "09:00"}, "day must be"),
         ({**REMIND, "for": "stacey", "kind": "message", "text": "hi", "when_back": True}, "doesn't know stacey"),
     ],
 )
@@ -571,9 +572,9 @@ def test_what_cant_be_set_goes_back_to_the_model_to_fix(tmp_path, args, error):
 
 def test_a_clock_time_is_local_and_waiting_until_theyre_back_needs_their_voice(tmp_path):
     tools = reminder_tools(tmp_path, voices=["Stacey"])
-    at = datetime.fromtimestamp(time.time() + 3600).astimezone().strftime("%Y-%m-%dT%H:%M")
-    change, _ = tools.call("remind", {**REMIND, "in_minutes": None, "at": at})
-    assert abs(change.reminder.due - datetime.fromisoformat(at).astimezone().timestamp()) < 1  # local, as asked
+    at = datetime.fromtimestamp(time.time() + 3600).astimezone()
+    change, _ = tools.call("remind", {**REMIND, "in_minutes": None, "day": f"{at:%Y-%m-%d}", "time": f"{at:%H:%M}"})
+    assert abs(change.reminder.due - at.replace(second=0, microsecond=0).timestamp()) < 1  # local, as asked
     back = {**REMIND, "kind": "message", "text": "the plumber called", "for": "stacey", "in_minutes": None,
             "when_back": True}  # fmt: skip
     change, result = tools.call("remind", back)
