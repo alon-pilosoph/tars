@@ -21,14 +21,18 @@ AUDIO = np.zeros(SAMPLE_RATE, np.int16)
 
 
 class FakeMic:
+    echo = None  # no echo cancellation: the mic closes while TARS makes a sound
+
     def __init__(self, blocks=()):
         self.blocks = iter(blocks)
+        self.pauses = 0
 
     def read(self):
         return next(self.blocks)
 
     @contextmanager
     def paused(self, tail_s=0.3):
+        self.pauses += 1
         yield
 
 

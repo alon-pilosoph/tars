@@ -122,6 +122,7 @@ export interface Turn {
 }
 
 export interface Timings {
+  greet?: number; // from the wake word to the first sound of "Yes, <name>?"
   end_of_speech?: number; // the silence waited through
   stt?: number;
   llm?: number; // to the brain's first sentence

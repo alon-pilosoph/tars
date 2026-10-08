@@ -18,7 +18,7 @@ Description=TARS web UI
 
 [Service]
 WorkingDirectory=%h/voice-assistant
-ExecStart=%h/.local/bin/uv run --frozen voice-assistant --web --host 0.0.0.0 --port 8080
+ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --web --host 0.0.0.0 --port 8080
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=3

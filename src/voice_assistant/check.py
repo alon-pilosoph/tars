@@ -20,6 +20,7 @@ from dotenv import dotenv_values
 
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .config import WEB_PORT, Config, required_keys
+from .echo import MAX_DELAY_S
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
 MARKS = {OK: "✓", WARN: "!", FAIL: "✗", SKIP: "-"}
@@ -183,6 +184,15 @@ def cerebras_has(models: Iterable, wanted: str) -> str:
     return wanted
 
 
+def echo_delay(mic_s: float, speaker_s: float) -> Result:
+    delay = mic_s + speaker_s
+    room = "check it in the room: uv run python tools/echo_bench.py"
+    if delay > MAX_DELAY_S:
+        why = f"the devices' delay ({delay:.2f} s) is more than the canceller can take ({MAX_DELAY_S:.1f} s)"
+        return Result("Echo cancellation", WARN, why, f"expect echo; {room}")
+    return Result("Echo cancellation", OK, f"loaded, devices' delay {delay:.2f} s; {room}")
+
+
 def disk(folder: Path, usage: Callable[[Path], tuple] = shutil.disk_usage) -> Result:
     folder.mkdir(parents=True, exist_ok=True)
     probe = folder / ".check"
@@ -264,6 +274,8 @@ def deepgram_status(status: int, took: float) -> Result:
 
 
 def check_all(cfg: Config, root: Path) -> int:
+    import sounddevice as sd
+
     from . import __main__ as cli
     from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
 
@@ -346,6 +358,19 @@ def check_all(cfg: Config, root: Path) -> int:
         why = "still not loaded (a download that stalled?)"
         return within(MODELS_S, "Local models", load, why, "check the network and run it again")
 
+    def echo():
+        if not cfg.audio.echo_cancel:
+            return Result("Echo cancellation", SKIP, "off ([audio] echo_cancel)")
+        try:
+            cli.load_echo_canceller()
+        except Exception as e:  # noqa: BLE001 - what went wrong is the result
+            return Result("Echo cancellation", FAIL, f"can't start: {e}", "or set [audio] echo_cancel = false")
+        return echo_delay(device_delay("input"), device_delay("output"))
+
+    def device_delay(kind: str) -> float:
+        wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
+        return sd.query_devices(find_device(wanted, kind), kind)[f"default_high_{kind}_latency"]
+
     def speakers():
         if not cfg.speaker.enabled:
             return Result("Voiceprints", SKIP, "speaker ID is off")
@@ -363,6 +388,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Input device", lambda: audio_device("input")),
         ("Output device", lambda: audio_device("output")),
         ("Local models", models),
+        ("Echo cancellation", echo),
         ("Voiceprints", speakers),
         ("OpenAI", openai),
         ("Cerebras", cerebras),

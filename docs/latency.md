@@ -54,6 +54,21 @@ sounded) may extend the wait to 1.6 s, and a draft starts a quarter second into 
 starts a reply on (0.2-0.5 s for Zeus) and hands the mic back at the last sound, so a short "Yes?" frees the mic
 0.9 s after it starts, of which 0.3 s is a margin for the room's echo.
 
+<a id="the-greeting-and-the-open-mic"></a>**The greeting and the open mic.** With `[recorder] greet = "always"`, TARS says "Yes, <name>?" the moment the
+wake word passes its double-check, so you always know it's listening: the double-check (21 ms on the development
+Mac) and speaker ID for the name (43 ms) are all it waits for, and the line is made ahead. Each turn keeps how long
+after the wake word the greeting started (`greet` in its timings). With `[audio] echo_cancel`, it's said with the mic
+open: WebRTC's echo canceller (`echo.py`, AEC3, through LiveKit's SDK) is given everything the speaker plays and
+takes it back out of what the mic hears, so you can carry straight on from "hey TARS" without your first words
+being lost. If a trace of the greeting gets through, its words are taken off the start of what was heard
+(`echo.without_echo`); if that's all there was, TARS keeps listening. On recorded speech through a simulated room it
+removed about 30 dB once it had learned the room (a second or two), and speech recognition heard nothing of TARS's
+own voice; when you talk over it, some of the overlapping words can be lost, as with any echo canceller. Measure it
+in the room with `uv run python tools/echo_bench.py` (`--talk` to talk over it); until it has been, both are off, and
+`greet = "pause"`, the default, says "Yes, <name>?" only once nothing has followed the wake word for `greet_after_s`.
+If the canceller can't start or fails, TARS carries on with the mic closed while it speaks, as before; `--check`
+says so, and warns when the devices' delay is more than the 0.5 s it can take.
+
 **Failures.** The voice gives up after 4 s without audio instead of the client's 15 s, and TARS says so in its own
 voice, from lines synthesized at startup ("I lost that one somewhere between here and the server. Ask me again.";
 plainer below 50% humor). If Deepgram fails, OpenAI transcribes the same recording, and if Cerebras fails, Luna
@@ -76,6 +91,8 @@ first sound and the model under each answer; hovering shows each stage. For a we
 | `[recorder] end_silence_s` | `0.8` | without Flux: silence that ends your turn |
 | `[recorder] max_pause_s` | `1.6` | without Flux: how long a pause may be when you sounded mid-thought |
 | `[recorder] end_of_turn` | `"smart"` | without Flux: `silence` turns Smart Turn off |
+| `[recorder] greet` | `"pause"` | when to say "Yes, <name>?" after the wake word: `always` at once, `pause` only after `greet_after_s` of nothing, `never` |
+| `[audio] echo_cancel` | `false` | take TARS's own sound out of what the mic hears, so the mic stays open while it greets you; off until checked in the room with `tools/echo_bench.py` |
 | `[recorder] answer_early_s` | `0.25` | without Flux: when the answer starts being prepared; `0` waits for the end |
 | `[recorder] vad_threshold` | `0.5` | how sure the speech detector must be |
 | `[llm] humor` | `75` | the persona's humor setting, and which error lines TARS uses |

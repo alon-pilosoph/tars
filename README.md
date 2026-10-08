@@ -37,7 +37,7 @@ Needs [uv](https://docs.astral.sh/uv/). On Linux (a Pi included), first `sudo ap
 
 ```bash
 git clone https://github.com/alon-pilosoph/tars.git && cd tars
-uv sync
+uv sync --all-extras                   # echo cancellation and Claude are extras
 cp .env.example .env                   # then add your OpenAI, Deepgram and Cerebras API keys
 uv run voice-assistant --check         # keys, devices, models, services, the voice and the mic: what's wrong, and what to do
 uv run voice-assistant --mic-test      # loudness, speech and wake-word meters; no API key needed

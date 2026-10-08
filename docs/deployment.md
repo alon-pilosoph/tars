@@ -26,7 +26,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync && cp .env.example .env    # then put your OpenAI, Deepgram and Cerebras API keys in .env
+uv sync --all-extras && cp .env.example .env    # then put your OpenAI, Deepgram and Cerebras API keys in .env
 uv run voice-assistant --list-devices
 ```
 

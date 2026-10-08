@@ -92,6 +92,7 @@ export function timingLine(t: Turn) {
       `Took ${secs(x.total)} s from the end of speech to the first sound${parts.length ? `: ${parts.join(", ")}` : ""}.`,
     );
   }
+  if (x?.greet != null) out.push(`Greeted ${secs(x.greet)} s after the wake word.`);
   if (t.answered_by) out.push(ANSWERED_BY[t.answered_by] ?? "");
   if (t.error) out.push(`The error was “${t.error}”.`);
   return out.filter(Boolean).join(" ");

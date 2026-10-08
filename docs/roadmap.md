@@ -48,15 +48,17 @@ wakes, false wakes or wrong names are the real problem, they come first.
 
 ## 2. "TARS stop": interrupting a reply
 
-**Today:** the mic is muted while TARS speaks (`Microphone.paused()` around playback in `assistant.py`), so nothing
-can interrupt it. A "TARS stop" wake phrase was trained alongside "hey TARS" and parked: it turned into a detector
+**Today:** TARS takes its own sound back out of what the mic hears (`echo.py`, `[audio] echo_cancel`: WebRTC's echo
+canceller, on any mic and speaker), and keeps the mic open while it says "Yes, <name>?", so what you say straight
+after "hey TARS" isn't lost (see [the greeting](latency.md#the-greeting-and-the-open-mic)). For answers, the mic is
+still muted while TARS speaks (`Microphone.paused()` around playback in `assistant.py`), so nothing can interrupt it. A "TARS stop" wake phrase was trained alongside "hey TARS" and parked: it turned into a detector
 for the word "stop" ([wake word](wake-word.md), tried and dropped).
 
 **Plan:**
 
-1. **Listen while speaking.** Keep the mic open during playback and run the wake model on it. This is what the
-   speakerphone makes possible: its echo cancellation removes most of TARS's own voice from what the mic hears,
-   which a laptop mic and speaker can't.
+1. **Listen while speaking.** Keep the mic open during answers too, and run the wake model on it. The echo
+   cancellation it needs is built (above); `tools/echo_bench.py` measures it in the room, and the speakerphone's own
+   cancellation adds to it.
 2. **Start with "hey TARS" as the interrupt.** It's the phrase that already works, and it means what people expect:
    "hey TARS" in the middle of an answer stops it and listens for a new request. The double-check still has to
    agree, so a lookalike in TARS's own answer doesn't cut it off.

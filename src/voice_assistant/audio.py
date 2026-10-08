@@ -10,10 +10,13 @@ import wave
 from collections.abc import Callable, Iterable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import sounddevice as sd
+
+if TYPE_CHECKING:
+    from .echo import EchoCanceller
 
 SAMPLE_RATE = 16_000
 BLOCK_SAMPLES = 1280  # 80 ms, the frame size openWakeWord is built around
@@ -117,9 +120,11 @@ SPEAKER_STALL_S = 3.0
 
 
 class Microphone:
-    def __init__(self, device: int | None):
+    def __init__(self, device: int | None, echo: "EchoCanceller | None" = None):
+        """`echo`: takes TARS's own sound out of what's heard, so the mic can stay open while TARS makes one."""
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self._muted = False
+        self.echo = echo
         self._stream = sd.RawInputStream(
             samplerate=SAMPLE_RATE,
             blocksize=BLOCK_SAMPLES,
@@ -130,10 +135,13 @@ class Microphone:
         )
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
+        block = np.frombuffer(indata, dtype=np.int16).copy()
+        if self.echo:  # even while muted, so it keeps learning the room
+            block = self.echo.heard(block)
         if self._muted:
             return
         try:
-            self._queue.put_nowait(np.frombuffer(indata, dtype=np.int16).copy())
+            self._queue.put_nowait(block)
         except queue.Full:
             pass  # the consumer fell behind; dropping audio beats unbounded latency
 
@@ -144,6 +152,10 @@ class Microphone:
     def __exit__(self, *exc) -> None:
         self._stream.stop()
         self._stream.close()
+
+    @property
+    def latency(self) -> float:
+        return self._stream.latency
 
     def read(self) -> np.ndarray:
         try:
@@ -177,8 +189,10 @@ class Speaker:
     stuttering.
     """
 
-    def __init__(self, device: int | None, sample_rate: int, prebuffer_s: float):
+    def __init__(self, device: int | None, sample_rate: int, prebuffer_s: float, echo: "EchoCanceller | None" = None):
+        """`echo`: told everything played, silence too, so it can take it back out of what the mic hears."""
         self.sample_rate = sample_rate
+        self._echo = echo
         self._prebuffer_bytes = int(prebuffer_s * sample_rate) * 2
         self._lock = threading.Lock()
         self._buffer = bytearray()
@@ -199,6 +213,11 @@ class Speaker:
         self._stream.close()
 
     def _fill(self, outdata, frames, time_info, status) -> None:
+        self._fill_from_buffer(outdata)
+        if self._echo:  # every frame, silence too: the canceller needs them all, in time
+            self._echo.played(bytes(outdata), self.sample_rate)
+
+    def _fill_from_buffer(self, outdata) -> None:
         wanted = len(outdata)
         with self._lock:
             if self._buffering:
@@ -218,6 +237,10 @@ class Speaker:
                     self._drained.set()
                 elif n < wanted:
                     self._buffering = True
+
+    @property
+    def latency(self) -> float:
+        return self._stream.latency
 
     def play_pcm_stream(
         self,
