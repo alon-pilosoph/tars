@@ -104,6 +104,29 @@ should go (answer, reminders, send, web, ponder, can't), 6 times each, one at a 
 - TypeSafe's own notes on where Jev is weak: arithmetic, dates and times, counting, and long inputs with irrelevant
   material in them. Routing needs none of these, as long as Jev is given the request alone and never asked for a time.
 
+## Where the requests go from
+
+Every request crosses from the house to the services' servers, and back. From TARS's home in Israel, through
+Cloudflare in Tel Aviv, an empty request on a kept-open connection takes 0.16 s to Cerebras, 0.20 s to OpenAI and
+0.22 s to TypeSafe; from a cloud machine in Ashburn, Virginia (US East), 0.06, 0.08 and 0.11 s, and Jev's whole
+decision 0.18 s instead of 0.30 s (2026-10-08). So being next to the servers saves about 0.1 s a request.
+
+**A relay there doesn't pay.** The idea: run TARS's brain on a server near the services, so the house makes one
+crossing a turn and the chained requests happen next door. But the house still crosses to the relay (about 0.15-0.2
+s), and TARS's chains are two requests long at most (a reminder's tool call and its confirmation; Qwen's `<look-up>`
+and OpenAI's answer). That comes out about even for those turns, and slower for answers Qwen gives itself, which
+are one request now. It pays from three requests in a chain, like a router in front (Jev, then the quick model), and
+even then: 0.16 + 0.18 + 0.24 ≈ 0.58 s, against Qwen at low on its own, 0.40 s. Whole turns from the cloud machine
+came out slower than from home (0.68 s to first words against 0.50 s), most likely the cloud session's own network
+proxy, which every request goes through there; the round trips above are the part to trust.
+
+**Web questions: what's slow is the search.** Followed through to OpenAI (`capability_bench --follow`), a web
+question's first words came 4.3-4.5 s after the request, from home and from the US alike: Qwen hands over in about
+0.4 s, OpenAI starts searching about a second later, and the search takes 1-3 s more. TARS says "Looking it up."
+the moment a search starts, but didn't when Qwen's hand-off began with a blank line, which it often does; fixed, the
+first words come after 1.5 s (median), and the answer itself after 4.3 s. Also seen: asked for tomorrow's weather,
+OpenAI once asked which city, taking the house to be in the United States.
+
 ## Method
 
 `tools/capability_bench.py`, 26 requests, each asked 6 times with no conversation before it, as Alon (the
