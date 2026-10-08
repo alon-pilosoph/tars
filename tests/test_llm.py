@@ -835,3 +835,31 @@ def test_qwen_cant_slip_a_link_into_a_note_either(tmp_path, body, refused):
     "".join(brain.stream_reply("send me that"))
     result = cerebras.requests[-1]["messages"][-1]["content"]
     assert result.startswith("error: a link needs web search") == refused and (brain.sent == []) == refused
+
+
+def responses_brain(tmp_path, quick, **cfg):
+    """A brain whose quick model is an OpenAI model through the Responses API (`quick`: a fake_openai_chat)."""
+    openai = fake_openai_chat(lambda m: "From OpenAI.")
+    config = LLMConfig(cerebras_model="gpt-6-luna", quick_tools=True, **cfg)
+    return llm.ResponsesQuickChat(openai, config, quick, reminder_tools(tmp_path)), openai
+
+
+def test_luna_as_the_quick_model_reasons_and_sets_a_reminder_on_its_own_tier(tmp_path):
+    def calls_for(messages):
+        return [] if messages[-1].get("type") == "function_call_output" else [("remind", REMIND)]
+
+    quick = fake_openai_chat(lambda m: "Twelve minutes." if m[-1].get("type") else "", calls_for)
+    brain, openai = responses_brain(tmp_path, quick, quick_reasoning_effort="low", service_tier="fast")
+    assert "".join(brain.stream_reply("pasta timer, twelve minutes")) == "Twelve minutes."
+    assert openai.requests == [] and brain.answered_by == llm.QUICK and len(brain.changes) == 1
+    first, second = quick.requests
+    assert (
+        first["model"] == "gpt-6-luna" and first["reasoning"] == {"effort": "low"} and first["service_tier"] == "fast"
+    )
+    assert {t["name"] for t in first["tools"]} >= {"remind", "send"} and first["store"] is False
+    assert second["input"][-1]["output"].startswith("set for ")
+
+
+def test_luna_as_the_quick_model_hands_over_like_qwen(tmp_path):
+    brain, _ = responses_brain(tmp_path, fake_openai_chat(lambda m: LOOK_UP))
+    assert "".join(brain.stream_reply("weather?")) == "From OpenAI." and brain.answered_by == llm.LOOKED_UP

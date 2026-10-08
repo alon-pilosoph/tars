@@ -12,45 +12,63 @@ requests, measured the same way. When a new model comes along, run it and add it
 
 | Model | Where | Reasoning | Reminders | Sending | Web hand-off | Hard questions | Itself | All | First words, own answer (s) | First words, reminder or send (s) | Hand-off decided (s) | Date |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `qwen-3.8-27b` | cerebras | none | 36/60 | 10/18 | 22/24 | 11/18 | 36/36 | **115/156** | 0.34 / 0.57 | 0.68 / 1.04 | 0.40 / 0.70 | 2026-10-08 |
-| `qwen-3.8-27b` | cerebras | low | 59/60 | 18/18 | 24/24 | 12/18 | 36/36 | **149/156** | 0.40 / 0.74 | 0.99 / 1.51 | 0.42 / 0.71 | 2026-10-08 |
-| `qwen-3.8-27b` | cerebras | medium | 58/60 | 18/18 | 24/24 | 12/18 | 36/36 | **148/156** | 0.39 / 0.89 | 1.17 / 1.84 | 0.53 / 0.85 | 2026-10-08 |
+| `gpt-oss-120b` | cerebras (paid) | low | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.30 / 0.44 | 0.67 / 1.09 | 0.30 / 0.60 | 2026-10-08 |
+| `gpt-oss-120b` | cerebras (paid) | medium | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.37 / 0.57 | 0.73 / 1.03 | 0.34 / 0.45 | 2026-10-08 |
+| `qwen-3.8-27b` | cerebras (free tier) | none | 36/60 | 10/18 | 22/24 | 11/18 | 36/36 | **115/156** | 0.34 / 0.57 | 0.68 / 1.04 | 0.40 / 0.70 | 2026-10-08 |
+| `qwen-3.8-27b` | cerebras (paid) | none | 30/60 | 7/18 | 24/24 | 11/18 | 36/36 | **108/156** | 0.34 / 0.68 | 0.80 / 1.48 | 0.35 / 0.45 | 2026-10-08 |
+| `qwen-3.8-27b` | cerebras (free tier) | low | 59/60 | 18/18 | 24/24 | 12/18 | 36/36 | **149/156** | 0.40 / 0.74 | 0.99 / 1.51 | 0.42 / 0.71 | 2026-10-08 |
+| `qwen-3.8-27b` | cerebras (paid) | low | 59/60 | 18/18 | 24/24 | 12/18 | 36/36 | **149/156** | 0.42 / 1.35 | 1.05 / 1.70 | 0.41 / 0.80 | 2026-10-08 |
+| `qwen-3.8-27b` | cerebras (free tier) | medium | 58/60 | 18/18 | 24/24 | 12/18 | 36/36 | **148/156** | 0.39 / 0.89 | 1.17 / 1.84 | 0.53 / 0.85 | 2026-10-08 |
+| `qwen-3.8-27b` | cerebras (paid) | medium | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.43 / 0.87 | 1.12 / 1.67 | 0.41 / 0.77 | 2026-10-08 |
 | `claude-haiku-5-5` | claude | low | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.68 / 1.79 | 2.32 / 4.73 | 0.79 / 1.42 | 2026-10-08 |
 | `claude-haiku-5-5` | claude | medium | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.75 / 2.26 | 2.58 / 4.07 | 0.67 / 1.40 | 2026-10-08 |
 | `gpt-6-luna` | openai (fast) | none | 60/60 | 18/18 | 24/24 | 9/18 | 36/36 | **147/156** | 0.68 / 0.94 | 1.66 / 2.41 | 0.74 / 1.69 | 2026-10-08 |
+| `gpt-6-luna` | responses (fast) | none | 60/60 | 18/18 | 24/24 | 13/18 | 36/36 | **151/156** | 0.72 / 1.11 | 1.79 / 2.57 | 0.67 / 0.82 | 2026-10-08 |
+| `gpt-6-luna` | responses (fast) | low | 60/60 | 18/18 | 24/24 | 14/18 | 36/36 | **152/156** | 0.58 / 1.18 | 1.88 / 2.80 | 0.74 / 0.86 | 2026-10-08 |
+| `gpt-6-luna` | responses (fast) | medium | 60/60 | 18/18 | 24/24 | 13/18 | 36/36 | **151/156** | 0.80 / 1.49 | 1.76 / 2.15 | 0.84 / 1.32 | 2026-10-08 |
 
 **Reading it.** Scores are right answers out of runs (each request six times). *Itself* is answering without a tool
 or a hand-off, including saying plainly that TARS can't play music or turn off lights. Times are the median / the 90th
 percentile, in seconds, from the request to the first words TARS would speak (the voice adds about 0.4 s, see
 [response time](latency.md)); *hand-off decided* is how long the quick model takes to reply `<look-up>` or `<ponder>`,
-before the stronger model even starts. *Where* is the service, with the tier the responses said they were served on.
+before the stronger model even starts. *Where* is the service and the API (`openai` is Chat Completions, `responses`
+OpenAI's Responses API), with the tier: the one responses said they were served on (OpenAI's `fast`), or the
+account's (Cerebras's free tier, then paid).
 
 **What TARS uses: Qwen on Cerebras at low reasoning** (`cerebras_model = "qwen-3.8-27b"`,
-`quick_reasoning_effort = "low"`, `quick_tools = true`). As right as anything tried, and the fastest by a distance,
-on every kind of turn and in the slow tail too.
+`quick_reasoning_effort = "low"`, `quick_tools = true`). Within a request or two of the best on the score, among the
+fastest, and the only fast one that sounds like TARS. The bench scores what a model does, not how it sounds, so the
+fast candidates were also asked the same everyday questions:
 
-- **Qwen without reasoning is fast and untrustworthy.** About one reminder in three goes wrong, and the worst way:
+| Asked | Qwen, low | gpt-oss-120b, low |
+|---|---|---|
+| tell me something interesting about Saturn | "Saturn's average density is less than water. It would float in a bathtub, if you had the bathtub." | "Saturn's rings are made mostly of ice particles ... and they could fit inside Earth. ... `<skip>`" |
+| I burned the toast again | "Consistency is a virtue, Alon. The toast at least has a reliable schedule." | "Try lowering the heat and watching it closely." |
+| how are you today? | "Functioning within expected parameters. Slightly less interesting than yesterday, but that's a constant." | "I'm operational. Nothing particularly interesting today.`<skip>`" |
+
+- **Qwen without reasoning is fast and untrustworthy.** A third to half of reminders go wrong, and the worst way:
   "Pasta timer is set for 10:54." with no timer set. It also writes tool calls and tags as text
   (`<reminder id=2 ...>`, `<retry/>`), which TARS would say aloud. Low reasoning fixes both for about 0.06 s.
-- **Medium is no better than low**, and slower on reminders.
-- **Haiku 5.5 makes the fewest mistakes** (all its misses are the savings question, below), but its first words come
-  about 0.3 s later, a reminder's 1.3 s later, and its slow tail is long. The one to switch to if Cerebras's free
-  tier stops being enough.
-- **Luna (in fast mode) is slower and too keen on its tools**: in an earlier run it set a reminder nobody asked for
-  ("I've set a reminder for 11:08 AM to compare leasing and buying") and put a link from memory into a note. With any
-  reasoning it can't have tools at all through Chat Completions (OpenAI: "use /v1/responses"), so that wasn't run.
-- **gpt-oss-120b isn't in the table**: Cerebras's free tier allows it 5 requests a minute and a small daily amount,
-  and stopped with "402 Payment required" ten runs in. It needs a paid Cerebras key to be measured.
-- **The savings question** ("300 a month at 4 percent for ten years") goes to `<ponder>` from no model: every one
-  works it out itself, correctly (about 44,200). That's fine for TARS; the request is probably too easy to test the
+  Medium is about as right, and slower on reminders.
+- **Paying Cerebras didn't make Qwen faster**; it lifts the free tier's daily allowance, past which Qwen answers
+  "402" and OpenAI takes over (slower, but it answers) until the next day.
+- **gpt-oss-120b is the fastest** (first words in 0.30 s, a reminder in 0.67 s) and scores 150, but it's plain where
+  Qwen is TARS, it adds `<skip>` to the end of ordinary answers (TARS only looks for one at the start, so it would say
+  it), it once repeated its answer twice over, says "$" for every amount, and writes numbers with narrow spaces
+  ("44 000"). Measured on the paid tier while Cerebras warned of high traffic on it.
+- **Luna through the Responses API is the most accurate** (152 at low, and the only model that sometimes hands the
+  savings question to `<ponder>`), but its first words come 0.2-0.4 s later than Qwen's, and a reminder's 0.8 s later.
+  Through Chat Completions it can't use tools with any reasoning, and without reasoning it was too keen on its tools
+  (a reminder nobody asked for, a link from memory in a note) before quick models were refused links.
+- **Haiku 5.5 scores 150 at low and medium**, with every miss the savings question, but its first words come about
+  0.3 s later than Qwen's, a reminder's 1.3 s later, and its slow tail is the longest.
+- **The savings question** ("300 a month at 4 percent for ten years") nearly always gets worked out on the spot,
+  correctly (about 44,200), rather than handed to `<ponder>`. That's fine for TARS; it's probably too easy to test the
   hand-off, and a harder one should replace it.
-- Qwen's one wrong reminder on low set "November 3rd at 10" for 9:50, ten minutes early. TARS confirms with the
-  time it's set for, so it's heard.
-- All but Qwen on low were measured before quick models were told not to put links in what they send (and refused
-  when they do); run them again before choosing one of them.
-
-The Cerebras free tier is also a limit for TARS itself: past the day's allowance, Qwen answers "402" and OpenAI takes
-over (slower, but it answers) until it resets.
+- Qwen's one wrong reminder on low set "November 3rd at 10" for 9:50, ten minutes early. TARS confirms with the time
+  it's set for, so it's heard.
+- The first Qwen none and medium rows, Haiku's, and Luna's Chat Completions row were measured before quick models were
+  told not to put links in what they send (and refused when they do).
 
 ## Method
 
@@ -72,21 +90,22 @@ over (slower, but it answers) until it resets.
   timed or scored.
 - **The same prompts TARS uses**, from `config.toml` and `llm.py`, so a change to either can move the numbers: run the
   current model again after one.
-- Cerebras's free tier allows Qwen about 450 requests a minute, but few tokens a minute; gpt-oss-120b, 5 requests a
-  minute. Paid keys for OpenAI (Luna, in fast mode as TARS uses it) and Anthropic (Haiku). A full run costs nothing on
-  Cerebras's free tier, a few cents on Haiku, and under a dollar on Luna.
+- Cerebras's free tier allows Qwen about 450 requests a minute but few tokens a minute, and gpt-oss-120b 5 requests a
+  minute and a small daily amount (it ran out ten runs in); the rows marked paid came after a top-up. OpenAI's Luna
+  runs in fast mode, as TARS uses it. A full run costs cents on Cerebras and Haiku, and under a dollar on Luna.
 
 ## Adding a model
 
 ```
 uv run python tools/capability_bench.py --brain cerebras --model <id> --effort low --save docs/models.jsonl
-uv run python tools/capability_bench.py --brain openai --model <id> --effort none --save docs/models.jsonl
+uv run python tools/capability_bench.py --brain responses --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --brain claude --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --table docs/models.jsonl      # the table above, from every saved run
 ```
 
 `--brain` is where it runs: `cerebras` and `openai` through the Chat Completions API (any compatible service works the
-same way), `claude` through Anthropic's Messages API (`ClaudeQuickChat`, needs `uv sync --extra claude`). Keys come
+same way), `responses` through OpenAI's Responses API (`ResponsesQuickChat`: OpenAI's models only take tools with
+reasoning there), `claude` through Anthropic's Messages API (`ClaudeQuickChat`, needs `uv sync --extra claude`). Keys come
 from `.env`: `CEREBRAS_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Try each reasoning effort the model has,
 lowest first, and paste the new rows in. Before switching TARS to a new model, read its wrong answers in the run's
 output too, not only its score: what it gets wrong matters as much as how often.

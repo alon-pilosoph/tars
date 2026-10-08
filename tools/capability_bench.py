@@ -34,7 +34,7 @@ from openai import RateLimitError
 from voice_assistant.__main__ import api_key, brain_config, make_cerebras_client, make_openai_client
 from voice_assistant.config import load_config
 from voice_assistant.events import EventLog
-from voice_assistant.llm import LOOKED_UP, PONDERED, QUICK, CerebrasChat, ClaudeQuickChat
+from voice_assistant.llm import LOOKED_UP, PONDERED, QUICK, CerebrasChat, ClaudeQuickChat, ResponsesQuickChat
 from voice_assistant.reminders import (
     ADD,
     CANCEL,
@@ -206,14 +206,22 @@ class Watched:
 
     def __init__(self, client):
         self._client, self.limited, self.tiers = client, False, set()
-        if hasattr(client, "chat"):  # Chat Completions: Cerebras, OpenAI
+        if hasattr(client, "chat"):  # Chat Completions (Cerebras, OpenAI) and the Responses API (OpenAI)
             self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=self._create))
+            self.responses = types.SimpleNamespace(create=self._respond)
         else:  # Anthropic's Messages API
             self.messages = types.SimpleNamespace(stream=self._stream)
 
     def _create(self, **kw):
         try:
             return _Tiers(self._client.chat.completions.create(**kw), self.tiers)
+        except RateLimitError:
+            self.limited = True
+            raise
+
+    def _respond(self, **kw):
+        try:
+            return _Tiers(self._client.responses.create(**kw), self.tiers)
         except RateLimitError:
             self.limited = True
             raise
@@ -246,12 +254,16 @@ class _Tiers:
 
     def __iter__(self):
         for chunk in self._stream:
-            if tier := getattr(chunk, "service_tier", None):
+            # A chat completion chunk has it; a Responses API event has it on the response it's about.
+            tier = getattr(chunk, "service_tier", None) or getattr(
+                getattr(chunk, "response", None), "service_tier", None
+            )
+            if tier:
                 self._seen.add(tier)
             yield chunk
 
 
-BRAINS = ("cerebras", "openai", "claude")
+BRAINS = ("cerebras", "openai", "responses", "claude")
 
 
 def make_quick_client(brain: str):
@@ -261,6 +273,8 @@ def make_quick_client(brain: str):
         return make_cerebras_client(env), CerebrasChat
     if brain == "openai":
         return make_openai_client(env), CerebrasChat  # Chat Completions, as Cerebras's API is
+    if brain == "responses":
+        return make_openai_client(env), ResponsesQuickChat  # OpenAI's Responses API: reasoning and tools together
     import anthropic
 
     return anthropic.Anthropic(api_key=api_key(env, "ANTHROPIC_API_KEY"), max_retries=2), ClaudeQuickChat
@@ -316,7 +330,8 @@ def main() -> None:
         "--brain",
         choices=BRAINS,
         default="cerebras",
-        help="where the quick model runs: cerebras (default), openai (Chat Completions, e.g. Luna) or claude",
+        help="where the quick model runs: cerebras (default), openai (Chat Completions), responses (OpenAI's "
+        "Responses API: Luna with reasoning) or claude",
     )
     parser.add_argument("--model", help="the quick model, instead of [llm] cerebras_model (e.g. claude-haiku-5-5)")
     parser.add_argument("--save", help="add the result, as a line of JSON, to this file (docs/models.jsonl)")

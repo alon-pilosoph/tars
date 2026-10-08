@@ -623,6 +623,7 @@ class CerebrasChat(OpenAIChat):
         self._cerebras_back_at = 0.0  # monotonic time; until then, Cerebras failed recently and OpenAI answers
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         tools = REMIND_TOOLS * own_remind + [QUICK_SEND_TOOL] * own_send
+        self._quick_tool_defs = tools  # as the Responses API takes them
         self._quick_tools = [_chat_tool(t) for t in tools]
         can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
         look_up = [NEEDS_THE_WEB] * cfg.web_search + [NEEDS_SENDING] * (cfg.send and not own_send)
@@ -756,6 +757,63 @@ class CerebrasChat(OpenAIChat):
 
 class QuickFailed(OpenAIError):
     """The quick model's service failed (whichever it is), so OpenAI answers instead."""
+
+
+class ResponsesQuickChat(CerebrasChat):
+    """CerebrasChat with an OpenAI model (Luna) as the quick model, through the Responses API: unlike Chat Completions,
+    it lets the model reason and use tools in the same request. `quick` is an OpenAI client (it can be the same one);
+    `cerebras_model` names the model, and service_tier applies to it as to OpenAI's other requests."""
+
+    def __init__(self, client: OpenAI, cfg: LLMConfig, quick: OpenAI, reminders: ReminderTools | None = None):
+        super().__init__(client, cfg, quick, reminders)
+        effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
+        self._quick_extra = {"reasoning": {"effort": effort}} if effort else {}
+        if cfg.service_tier:
+            self._quick_extra["service_tier"] = cfg.service_tier
+
+    def _quick_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+        items = list(context)
+        for round_ in range(MAX_TOOL_ROUNDS):
+            tools = {"tools": self._quick_tool_defs} if self._quick_tool_defs else {}
+            if tools and round_ == MAX_TOOL_ROUNDS - 1:
+                tools["tool_choice"] = "none"  # the last round has to say something
+            _check(writing)
+            stream = writing.stream = self._cerebras.responses.create(
+                model=self._cfg.cerebras_model,
+                instructions=f"{self._quick_instructions}\n\n{self._now()}",
+                input=items,
+                stream=True,
+                store=False,
+                **self._quick_extra,
+                **tools,
+            )
+            calls = []
+            for event in stream:
+                _check(writing)
+                if event.type == "response.output_text.delta" and event.delta:
+                    yield event.delta
+                elif event.type == "response.output_item.done" and event.item.type == "function_call":
+                    calls.append(event.item)
+                elif event.type in ("error", "response.failed", "response.incomplete"):
+                    raise QuickFailed(f"{event.type}: {_why(event)}")
+            writing.stream = None
+            if not calls:
+                return
+            with self._lock:
+                _check(writing)
+                for call in calls:
+                    output = self._run_tool(call, links=False)
+                    done = [
+                        {
+                            "type": "function_call",
+                            "call_id": call.call_id,
+                            "name": call.name,
+                            "arguments": call.arguments,
+                        },
+                        {"type": "function_call_output", "call_id": call.call_id, "output": output},
+                    ]
+                    items += done
+                    writing.quick_calls += done
 
 
 class ClaudeQuickChat(CerebrasChat):
