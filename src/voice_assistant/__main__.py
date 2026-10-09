@@ -13,6 +13,7 @@ from dotenv import dotenv_values
 
 from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, Speaker, find_device, list_devices
 from .config import (
+    OPENAI_KEY,
     OPENAI_STT_MODEL,
     QUICK_PROVIDERS,
     WEB_PORT,
@@ -21,7 +22,7 @@ from .config import (
     LLMConfig,
     QuickProvider,
     load_config,
-    required_keys,
+    with_keys,
 )
 from .recorder import make_recorder
 from .versions import UNUSABLE, model_versions, pair_source
@@ -46,11 +47,16 @@ def api_key(env_path: Path, name: str) -> str:
     return key
 
 
-def check_keys(cfg: Config, env_path: Path) -> None:
-    """Checks every key at once, so missing ones don't surface one run at a time."""
-    keys = dotenv_values(env_path) if env_path.exists() else {}
-    if missing := [name for name in required_keys(cfg) if not keys.get(name)]:
-        raise ConfigError(f"Put {', '.join(missing)} in {env_path} (see .env.example).")
+def env_keys(env_path: Path) -> set[str]:
+    return {name for name, key in dotenv_values(env_path).items() if key} if env_path.exists() else set()
+
+
+def keyed(cfg: Config, root: Path) -> Config:
+    """config.toml's setup, cut down to the services .env has keys for, saying what runs differently."""
+    cfg, notes = with_keys(cfg, env_keys(root / ".env"))
+    for note in notes:
+        print(f"({note})")
+    return cfg
 
 
 def make_openai_client(env_path: Path):
@@ -282,9 +288,9 @@ def main() -> None:
             install_models(cfg, root, args.install_models, args.based_on)
             return
         if args.text:
-            typed(cfg, root)
+            typed(keyed(cfg, root), root)
             return
-        run(cfg, args.ptt, root)
+        run(keyed(cfg, root), args.ptt, root)
     except KeyboardInterrupt:
         print("\nBye.")
     except ConfigError as e:
@@ -320,10 +326,13 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     from .tts import DeepgramSpeech, OpenAISpeech
 
     env = root / ".env"
-    check_keys(cfg, env)
-    client = make_openai_client(env)
+    keys = env_keys(env)
+    cfg, _ = with_keys(cfg, keys)
+    client = make_openai_client(env) if OPENAI_KEY in keys else None
     llm = brain_config(cfg, typed=typed)
     quick = quick_services(llm, env)
+    if client is None and not llm.quick_tools:
+        reminders = None
     brain = QuickChat(client, llm, quick, reminders) if quick else OpenAIChat(client, llm, reminders)
     speech = (
         DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
@@ -335,9 +344,11 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
         return None, brain, voice
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt), brain, voice
-    backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
     key = api_key(env, "DEEPGRAM_API_KEY")
     streaming = FluxTranscriber(key, cfg.stt) if cfg.stt.provider == "flux" else DeepgramTranscriber(key, cfg.stt)
+    if client is None:
+        return streaming, brain, voice
+    backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
     return FallbackTranscriber(streaming, backup), brain, voice
 
 

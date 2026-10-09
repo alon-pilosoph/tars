@@ -18,15 +18,14 @@ def cfg():
     return load_config(Path(__file__).parents[1] / "config.toml")  # the repo's: OpenAI, Deepgram, Groq and Cerebras
 
 
-def test_missing_keys_are_named_and_where_to_put_them(cfg, tmp_path):
+def test_missing_keys_say_what_runs_instead_and_where_to_put_them(cfg, tmp_path):
     env = tmp_path / ".env"
     env.write_text("OPENAI_API_KEY=sk-1\nDEEPGRAM_API_KEY=\n")
     r = check.keys(cfg, env)
-    assert (
-        r.status == FAIL
-        and r.detail == "missing DEEPGRAM_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY"
-        and str(env) in r.fix
-    )
+    assert r.status == WARN and str(env) in r.fix
+    assert "no DEEPGRAM_API_KEY" in r.detail and "no GROQ_API_KEY" in r.detail
+    env.write_text("GROQ_API_KEY=g\n")
+    assert check.keys(cfg, env).status == FAIL
     env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nGROQ_API_KEY=g\nCEREBRAS_API_KEY=c\n")
     assert check.keys(cfg, env).status == OK
 

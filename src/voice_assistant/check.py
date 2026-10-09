@@ -19,7 +19,7 @@ import numpy as np
 from dotenv import dotenv_values
 
 from .clustering import MIN_REQUESTS_TO_ENROLL
-from .config import QUICK_PROVIDERS, WEB_PORT, Config, QuickProvider, required_keys
+from .config import DEEPGRAM_KEY, OPENAI_KEY, QUICK_PROVIDERS, WEB_PORT, Config, ConfigError, QuickProvider, with_keys
 from .echo import MAX_DELAY_S
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
@@ -78,11 +78,20 @@ def summary(results: list[Result]) -> str:
     return f"Everything works, with {look}." if warned else "Everything works."
 
 
+def present_keys(env: Path) -> set[str]:
+    return {name for name, key in dotenv_values(env).items() if key} if env.exists() else set()
+
+
 def keys(cfg: Config, env: Path) -> Result:
-    have = dotenv_values(env) if env.exists() else {}
-    if missing := [k for k in required_keys(cfg) if not have.get(k)]:
-        return Result("API keys", FAIL, f"missing {', '.join(missing)}", f"put them in {env} (see .env.example)")
-    return Result("API keys", OK, ", ".join(required_keys(cfg)))
+    have = present_keys(env)
+    try:
+        _, notes = with_keys(cfg, have)
+    except ConfigError as e:
+        return Result("API keys", FAIL, str(e.code), f"put them in {env} (see .env.example)")
+    if notes:
+        return Result("API keys", WARN, "; ".join(notes), f"for all of config.toml's setup, put the keys in {env}")
+    used = [OPENAI_KEY, DEEPGRAM_KEY, *(provider.key_name for provider in QUICK_PROVIDERS)]
+    return Result("API keys", OK, ", ".join(name for name in used if name in have))
 
 
 def device(kind: str, wanted: str, find: Callable[[str, str], int | None], names: list[str], default: int) -> Result:
@@ -279,7 +288,12 @@ def check_all(cfg: Config, root: Path) -> int:
     from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
 
     env = root / ".env"
-    have_keys = keys(cfg, env).status == OK
+    have = present_keys(env)
+    try:
+        cfg, _ = with_keys(cfg, have)
+        have_keys = True
+    except ConfigError:
+        have_keys = False
 
     def audio_device(kind: str):
         names, default_in, default_out = device_names()
@@ -315,6 +329,8 @@ def check_all(cfg: Config, root: Path) -> int:
         return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")
 
     def openai():
+        if OPENAI_KEY not in have:
+            return Result("OpenAI", SKIP, f"not used (no {OPENAI_KEY})")
         if not have_keys:
             return Result("OpenAI", SKIP, "needs the API keys")
         try:
@@ -325,7 +341,8 @@ def check_all(cfg: Config, root: Path) -> int:
     def quick(provider: QuickProvider):
         model = getattr(cfg.llm, provider.setting)
         if not model:
-            return Result(provider.name, SKIP, f"not used ([llm] {provider.setting} is empty)")
+            why = f"no {provider.key_name}" if provider.key_name not in have else f"[llm] {provider.setting} is empty"
+            return Result(provider.name, SKIP, f"not used ({why})")
         if not have_keys:
             return Result(provider.name, SKIP, "needs the API keys")
         try:
@@ -335,7 +352,7 @@ def check_all(cfg: Config, root: Path) -> int:
             return service_error(provider.name, e)
 
     def deepgram():
-        if "DEEPGRAM_API_KEY" not in required_keys(cfg):
+        if "openai" == cfg.stt.provider == cfg.tts.provider:
             return Result("Deepgram", SKIP, "not used")
         if not have_keys:
             return Result("Deepgram", SKIP, "needs the API keys")
