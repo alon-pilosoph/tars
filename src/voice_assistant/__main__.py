@@ -7,17 +7,31 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import dotenv_values
 
 from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, Speaker, find_device, list_devices
-from .config import OPENAI_STT_MODEL, WEB_PORT, Config, ConfigError, LLMConfig, load_config, required_keys
+from .config import (
+    OPENAI_STT_MODEL,
+    QUICK_PROVIDERS,
+    WEB_PORT,
+    Config,
+    ConfigError,
+    LLMConfig,
+    QuickProvider,
+    load_config,
+    required_keys,
+)
 from .recorder import make_recorder
 from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
 
+if TYPE_CHECKING:
+    from .llm import QuickService
+
 OPENAI_TIMEOUT_S = 15.0
-CEREBRAS_TIMEOUT_S = 4.0  # its replies take well under a second
+QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
 EX_CONFIG = 78
@@ -48,18 +62,26 @@ def make_openai_client(env_path: Path):
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
 
 
-def make_cerebras_client(env_path: Path):
+def make_quick_client(env_path: Path, provider: QuickProvider):
     from openai import OpenAI, Timeout
 
-    from .llm import CEREBRAS_URL
-
-    # No retries and a short wait: when Cerebras is slow or says "too many requests", OpenAI answers instead.
+    # No retries and a short wait: when one is slow or says "too many requests", the next one answers instead.
     return OpenAI(
-        base_url=CEREBRAS_URL,
-        api_key=api_key(env_path, "CEREBRAS_API_KEY"),
-        timeout=Timeout(CEREBRAS_TIMEOUT_S, connect=2.0),
+        base_url=provider.url,
+        api_key=api_key(env_path, provider.key_name),
+        timeout=Timeout(QUICK_TIMEOUT_S, connect=2.0),
         max_retries=0,
     )
+
+
+def quick_services(llm: LLMConfig, env_path: Path) -> list[QuickService]:
+    from .llm import QuickService
+
+    return [
+        QuickService(provider.name, make_quick_client(env_path, provider), model)
+        for provider in QUICK_PROVIDERS
+        if (model := getattr(llm, provider.setting))
+    ]
 
 
 def make_event_log(cfg: Config, root: Path):
@@ -288,7 +310,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set."""
     from .effects import apply_effect
-    from .llm import CerebrasChat, OpenAIChat
+    from .llm import OpenAIChat, QuickChat
     from .stt import (
         DeepgramTranscriber,
         FallbackTranscriber,
@@ -301,11 +323,8 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     check_keys(cfg, env)
     client = make_openai_client(env)
     llm = brain_config(cfg, typed=typed)
-    brain = (
-        CerebrasChat(client, llm, make_cerebras_client(env), reminders)
-        if llm.cerebras_model
-        else OpenAIChat(client, llm, reminders)
-    )
+    quick = quick_services(llm, env)
+    brain = QuickChat(client, llm, quick, reminders) if quick else OpenAIChat(client, llm, reminders)
     speech = (
         DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
         if cfg.tts.provider == "deepgram"
@@ -318,7 +337,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
         return OpenAITranscriber(client, cfg.stt), brain, voice
     backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
     key = api_key(env, "DEEPGRAM_API_KEY")
-    streaming = FluxTranscriber(key) if cfg.stt.provider == "flux" else DeepgramTranscriber(key, cfg.stt)
+    streaming = FluxTranscriber(key, cfg.stt) if cfg.stt.provider == "flux" else DeepgramTranscriber(key, cfg.stt)
     return FallbackTranscriber(streaming, backup), brain, voice
 
 
