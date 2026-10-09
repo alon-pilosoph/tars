@@ -20,6 +20,7 @@ requests, measured the same way. When a new model comes along, run it and add it
 | `qwen-3.8-27b` | cerebras (paid) | low | 59/60 | 18/18 | 24/24 | 12/18 | 36/36 | **149/156** | 0.42 / 1.35 | 1.05 / 1.70 | 0.41 / 0.80 | 2026-10-08 |
 | `qwen-3.8-27b` | cerebras (free tier) | medium | 58/60 | 18/18 | 24/24 | 12/18 | 36/36 | **148/156** | 0.39 / 0.89 | 1.17 / 1.84 | 0.53 / 0.85 | 2026-10-08 |
 | `qwen-3.8-27b` | cerebras (paid) | medium | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.43 / 0.87 | 1.12 / 1.67 | 0.41 / 0.77 | 2026-10-08 |
+| `qwen/qwen3.8-27b` | groq (free tier) | low | 6/10 | 2/3 | 4/4 | 3/3 | 6/6 | **21/26** | 0.34 / 0.40 | 1.00 / 1.09 | 0.31 / 0.35 | 2026-10-09 |
 | `claude-haiku-5-5` | claude | low | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.68 / 1.79 | 2.32 / 4.73 | 0.79 / 1.42 | 2026-10-08 |
 | `claude-haiku-5-5` | claude | medium | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.75 / 2.26 | 2.58 / 4.07 | 0.67 / 1.40 | 2026-10-08 |
 | `gpt-6-luna` | openai (fast) | none | 60/60 | 18/18 | 24/24 | 9/18 | 36/36 | **147/156** | 0.68 / 0.94 | 1.66 / 2.41 | 0.74 / 1.69 | 2026-10-08 |
@@ -34,6 +35,13 @@ percentile, in seconds, from the request to the first words TARS would speak (th
 before the stronger model even starts. *Where* is the service and the API (`openai` is Chat Completions, `responses`
 OpenAI's Responses API), with the tier: the one responses said they were served on (OpenAI's `fast`), or the
 account's (Cerebras's free tier, then paid).
+
+The Groq row is one run of each request, not six: Groq's free key allows 8,000 tokens a minute, about two requests
+with TARS's instructions, so the full six would take most of its daily allowance. Two of its five misses are the
+benchmark's: one request was still rate-limited after four minutes, and "remind me at 6pm" ran after 6 pm, which Qwen
+rightly said had passed. Of the other three, one turned "tomorrow at 7:30" down, one spoke its reasoning instead of
+sending Stacey's message, and one handed a pancake recipe over instead of sending it. Six runs, over a few days, will
+tell whether that's Groq or chance; the latency it saves is measured in [response time](latency.md#how-it-got-here).
 
 **What TARS uses: Qwen at low reasoning, on Groq first and Cerebras second** (`groq_model = "qwen/qwen3.8-27b"`,
 `cerebras_model = "qwen-3.8-27b"`, the same model under each service's name; `quick_reasoning_effort = "low"`,
