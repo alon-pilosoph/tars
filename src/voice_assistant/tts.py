@@ -17,7 +17,7 @@ from .stt import deepgram_connect
 # pre-made clip instead of going quiet for the client's full timeout.
 STALL_S = 4.0
 CONNECT_S = 3.0
-SPEAK_URL = "wss://api.deepgram.com/{version}/speak"
+SPEAK_URL = "wss://{host}/{version}/speak"
 
 
 class Voice(Protocol):
@@ -71,7 +71,7 @@ class DeepgramSpeech:
     def __init__(self, api_key: str, cfg: TTSConfig):
         version = "v2" if cfg.model.startswith("flux-") else "v1"
         params = {"model": cfg.model, "encoding": "linear16", "sample_rate": self.sample_rate}
-        self._url = f"{SPEAK_URL.format(version=version)}?{urlencode(params)}"
+        self._url = f"{SPEAK_URL.format(host=cfg.deepgram_host, version=version)}?{urlencode(params)}"
         # Aura-2 sends a sentence's audio, then Flushed; Flux sends Flushed, the audio, then SpeechMetadata.
         self._last = "SpeechMetadata" if version == "v2" else "Flushed"
         self._key = api_key

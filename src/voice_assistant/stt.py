@@ -19,8 +19,8 @@ from .config import STTConfig
 if TYPE_CHECKING:
     from openai import OpenAI
 
-DEEPGRAM_URL = "wss://api.deepgram.com/v1/listen"
-FLUX_URL = "wss://api.deepgram.com/v2/listen"
+DEEPGRAM_URL = "wss://{host}/v1/listen"
+FLUX_URL = "wss://{host}/v2/listen"
 CONNECT_S = 5.0
 # How sure Flux must be that the turn is over, and how sure for an early "maybe" (where a draft starts).
 FLUX_EOT, FLUX_EAGER_EOT = 0.7, 0.5
@@ -121,7 +121,7 @@ class DeepgramTranscriber:
         }
         if cfg.language:
             params["language"] = cfg.language
-        self._url = f"{DEEPGRAM_URL}?{urlencode(params)}"
+        self._url = f"{DEEPGRAM_URL.format(host=cfg.deepgram_host)}?{urlencode(params)}"
 
     def session(self) -> Session:
         return DeepgramSession(self._url, self._key)
@@ -214,7 +214,7 @@ class FluxTranscriber:
     """Deepgram's Flux: transcribes while you talk and also decides when you're done, from how you sound and what
     you've said."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, cfg: STTConfig):
         self._key = api_key
         params = {
             "model": "flux-general-en",
@@ -224,7 +224,7 @@ class FluxTranscriber:
             "eager_eot_threshold": FLUX_EAGER_EOT,
             "eot_timeout_ms": FLUX_TIMEOUT_MS,
         }
-        self._url = f"{FLUX_URL}?{urlencode(params)}"
+        self._url = f"{FLUX_URL.format(host=cfg.deepgram_host)}?{urlencode(params)}"
 
     def session(self) -> Session:
         return FluxSession(self._url, self._key)

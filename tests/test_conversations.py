@@ -254,3 +254,11 @@ def test_deleting_a_conversation_through_the_api(log, convos, client):
     assert client.get(f"/api/conversations/{c}").status_code == 404
     assert client.delete(f"/api/conversations/{c}").status_code == 404
     assert client.get("/api/conversations").json() == []
+
+
+def test_a_quick_answer_keeps_the_service_it_ran_on(log, convos):
+    c = convos.start(log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.95))
+    convos.add_tars_turn(c, "Canberra.", answered_by="quick", quick_service="Groq")
+    convos.add_tars_turn(c, "Looking it up.", answered_by="look_up")
+    turns = convos.get(c)["turns"]
+    assert [t["quick_service"] for t in turns] == ["Groq", None]

@@ -15,15 +15,19 @@ from .conftest import raising
 
 @pytest.fixture
 def cfg():
-    return load_config(Path(__file__).parents[1] / "config.toml")  # the repo's: OpenAI, Deepgram and Cerebras
+    return load_config(Path(__file__).parents[1] / "config.toml")  # the repo's: OpenAI, Deepgram, Groq and Cerebras
 
 
 def test_missing_keys_are_named_and_where_to_put_them(cfg, tmp_path):
     env = tmp_path / ".env"
     env.write_text("OPENAI_API_KEY=sk-1\nDEEPGRAM_API_KEY=\n")
     r = check.keys(cfg, env)
-    assert r.status == FAIL and r.detail == "missing DEEPGRAM_API_KEY, CEREBRAS_API_KEY" and str(env) in r.fix
-    env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nCEREBRAS_API_KEY=c\n")
+    assert (
+        r.status == FAIL
+        and r.detail == "missing DEEPGRAM_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY"
+        and str(env) in r.fix
+    )
+    env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nGROQ_API_KEY=g\nCEREBRAS_API_KEY=c\n")
     assert check.keys(cfg, env).status == OK
 
 
@@ -63,14 +67,14 @@ def test_a_service_says_whether_the_key_or_the_model_is_wrong():
     assert check.timed("OpenAI", lambda: "gpt-x").detail.startswith("answers (")
 
 
-def test_cerebras_must_have_the_model_config_asks_for():
+def test_a_quick_service_must_have_the_model_config_asks_for():
     class M:
         def __init__(self, id):
             self.id = id
 
-    assert check.cerebras_has([M("qwen"), M("llama")], "qwen") == "qwen"
+    assert check.has_model([M("qwen"), M("llama")], "qwen") == "qwen"
     with pytest.raises(ValueError, match="no model 'gpt'"):
-        check.cerebras_has([M("qwen")], "gpt")
+        check.has_model([M("qwen")], "gpt")
 
 
 def test_storage_is_written_to_and_low_space_is_flagged(tmp_path):

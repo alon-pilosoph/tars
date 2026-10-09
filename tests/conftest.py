@@ -170,6 +170,7 @@ class RecordingBrain:
         self.sent = []
         self.changes = []
         self.answered_by = None
+        self.quick_service = None
 
     def warm(self):
         pass

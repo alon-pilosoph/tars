@@ -28,7 +28,7 @@ from latency_bench import RoomTone
 
 from voice_assistant.__main__ import api_key
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
-from voice_assistant.config import load_config
+from voice_assistant.config import STTConfig, load_config
 from voice_assistant.recorder import BACKSTOP_S, make_recorder
 from voice_assistant.stt import FLUX_EAGER_EOT, FLUX_EOT, FLUX_TIMEOUT_MS, FluxTranscriber
 
@@ -155,12 +155,12 @@ def local_end(recorder, clip: Clip) -> float | None:
     return mic.read_count * BLOCK_SAMPLES / SAMPLE_RATE if pcm else None
 
 
-def flux_end(key: str, clip: Clip) -> dict:
+def flux_end(key: str, stt: STTConfig, clip: Clip) -> dict:
     """Streams the clip to Flux at real-time pace with the assistant's settings. Records each event's arrival time
     and, for EndOfTurn, where in the audio Flux was (audio_window_end), both from the clip's start."""
     from websockets.sync.client import connect
 
-    url = FluxTranscriber(key)._url
+    url = FluxTranscriber(key, stt)._url
     seen: dict = {"eager": [], "resumed": [], "end": None, "end_audio": None, "error": None}
     try:
         with connect(url, additional_headers={"Authorization": f"Token {key}"}, open_timeout=10) as ws:
@@ -239,7 +239,7 @@ def main():
         )
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = dict(zip([c.name for c in todo], pool.map(lambda c: flux_end(key, c), todo), strict=True))
+        results = dict(zip([c.name for c in todo], pool.map(lambda c: flux_end(key, cfg.stt, c), todo), strict=True))
     failed = {n: r["error"] for n, r in results.items() if r["error"]}
     if failed:
         print(f"\n{len(failed)} clips couldn't reach Flux, left out: {next(iter(failed.values()))}")

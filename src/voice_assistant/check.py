@@ -19,7 +19,7 @@ import numpy as np
 from dotenv import dotenv_values
 
 from .clustering import MIN_REQUESTS_TO_ENROLL
-from .config import WEB_PORT, Config, required_keys
+from .config import QUICK_PROVIDERS, WEB_PORT, Config, QuickProvider, required_keys
 from .echo import MAX_DELAY_S
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
@@ -29,7 +29,6 @@ QUIET_DBFS = -55.0  # a peak below this, with someone talking, is a mic that isn
 LOW_DISK_BYTES = 2 * 1024**3
 WEB_URL = f"http://127.0.0.1:{WEB_PORT}/api/status"
 MODELS_S = 300.0  # long enough to download every local model on a slow line, the first time
-DEEPGRAM_PROJECTS = "https://api.deepgram.com/v1/projects"
 READY = "TARS is ready."
 
 
@@ -177,7 +176,7 @@ def service_error(name: str, e: Exception) -> Result:
     return Result(name, FAIL, f"{type(e).__name__}: {e}", "check the network, and the service's status page")
 
 
-def cerebras_has(models: Iterable, wanted: str) -> str:
+def has_model(models: Iterable, wanted: str) -> str:
     ids = [m.id for m in models]
     if wanted not in ids:
         raise ValueError(f"no model {wanted!r} here (it has: {', '.join(ids[:8])})")
@@ -323,16 +322,17 @@ def check_all(cfg: Config, root: Path) -> int:
         except Exception as e:  # noqa: BLE001 - what went wrong is the result
             return service_error("OpenAI", e)
 
-    def cerebras():
-        if not cfg.llm.cerebras_model:
-            return Result("Cerebras", SKIP, "not used ([llm] cerebras_model is empty)")
+    def quick(provider: QuickProvider):
+        model = getattr(cfg.llm, provider.setting)
+        if not model:
+            return Result(provider.name, SKIP, f"not used ([llm] {provider.setting} is empty)")
         if not have_keys:
-            return Result("Cerebras", SKIP, "needs the API keys")
+            return Result(provider.name, SKIP, "needs the API keys")
         try:
-            client = cli.make_cerebras_client(env)
-            return timed("Cerebras", lambda: cerebras_has(client.models.list(), cfg.llm.cerebras_model))
+            client = cli.make_quick_client(env, provider)
+            return timed(provider.name, lambda: has_model(client.models.list(), model))
         except Exception as e:  # noqa: BLE001
-            return service_error("Cerebras", e)
+            return service_error(provider.name, e)
 
     def deepgram():
         if "DEEPGRAM_API_KEY" not in required_keys(cfg):
@@ -342,7 +342,8 @@ def check_all(cfg: Config, root: Path) -> int:
         key = cli.api_key(env, "DEEPGRAM_API_KEY")
         t = time.perf_counter()
         try:
-            status = http_status(DEEPGRAM_PROJECTS, {"Authorization": f"Token {key}"})
+            host = cfg.stt.deepgram_host if cfg.stt.provider in ("deepgram", "flux") else cfg.tts.deepgram_host
+            status = http_status(f"https://{host}/v1/projects", {"Authorization": f"Token {key}"})
         except OSError as e:
             return service_error("Deepgram", e)
         return deepgram_status(status, time.perf_counter() - t)
@@ -391,7 +392,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Echo cancellation", echo),
         ("Voiceprints", speakers),
         ("OpenAI", openai),
-        ("Cerebras", cerebras),
+        *((provider.name, lambda provider=provider: quick(provider)) for provider in QUICK_PROVIDERS),
         ("Deepgram", deepgram),
         ("Voice", speaking),
         ("Microphone", listen),

@@ -66,7 +66,8 @@ TABLES = {
     timings TEXT,                    -- tars turns: JSON seconds by stage, as in the assistant's log (see TIMINGS)
     answered_by TEXT,                -- tars turns: quick | look_up | ponder | fallback | openai (llm.QUICK...)
     failed_at TEXT,                  -- tars turns that failed: stt | llm | tts | other
-    error TEXT                       -- tars turns that failed: what went wrong
+    error TEXT,                      -- tars turns that failed: what went wrong
+    quick_service TEXT               -- tars turns: the service whose quick reply was used (Groq, Cerebras)
 )""",
     "reminders": """CREATE TABLE reminders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,6 +140,7 @@ MIGRATIONS = [
         ),
         "CREATE INDEX reminders_status ON reminders(status)",
     ],
+    ["ALTER TABLE turns ADD COLUMN quick_service TEXT"],
 ]
 
 

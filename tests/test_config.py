@@ -42,6 +42,7 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ('[tts]\neffect = "robot"', "[tts] effect"),
         ('[stt]\nprovider = "flux"\nlanguage = "he"', "English"),
         ('[stt]\nprovider = "deepgram"\nmodel = "gpt-4o-mini-transcribe"', "Deepgram model"),
+        ('[tts]\ndeepgram_host = "https://api.eu.deepgram.com"', "[tts] deepgram_host"),
         ("[recorder]\nend_silence = 0.8", "[recorder] has no setting end_silence"),
         ('[recorder]\nend_silence_s = "0.8"', "[recorder] end_silence_s must be a number"),
         ("[speaker]\nenabled = 1", "[speaker] enabled must be true or false"),
@@ -67,6 +68,7 @@ def test_a_whole_number_is_a_fine_number(tmp_path):
         ('[stt]\nprovider = "flux"', ["OPENAI_API_KEY", "DEEPGRAM_API_KEY"]),
         ('[tts]\nprovider = "deepgram"\nmodel = "aura-2-zeus-en"', ["OPENAI_API_KEY", "DEEPGRAM_API_KEY"]),
         ('[llm]\ncerebras_model = "qwen"', ["OPENAI_API_KEY", "CEREBRAS_API_KEY"]),
+        ('[llm]\ngroq_model = "qwen"', ["OPENAI_API_KEY", "GROQ_API_KEY"]),
     ],
 )
 def test_only_the_keys_the_setup_uses_are_required(tmp_path, setting, keys):
