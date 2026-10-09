@@ -24,6 +24,7 @@ from training.audio import CONDITIONS, Interference, conditioned, long_speech, q
 from training.common import REPO, SR, Layout, add_user_arg, log, parser, test_sets
 
 MUTE_BLOCKS = 25  # 2 s after a wake before another counts, so one phrase is one wake
+BLOCK_S = 0.08
 
 
 def make_check(spec: str, phrase: str = "hey tars"):
@@ -33,19 +34,30 @@ def make_check(spec: str, phrase: str = "hey tars"):
     return lambda pcm: verifier.check(pcm)[0]
 
 
-def stream(wake, audio, checks, window_s, stop_at_first=True):
-    """Returns (times the wake model fired, {check: how many of those wakes it answered})."""
+def stream(wake, audio, checks, window_s, stop_at_first=True, delay_blocks=0):
+    """Returns (times the wake model fired, {check: how many of those wakes it answered}). `delay_blocks`: how long
+    after the wake model fires the check runs, so the rest of a two-word phrase ("TARS stop") is in what it hears."""
     from voice_assistant.audio import BLOCK_SAMPLES
     from voice_assistant.verify import RecentAudio
 
     wake.reset()
     recent = RecentAudio(window_s)
     answered = {name: 0 for name in checks}
-    fired, mute = 0, 0
+    fired, mute, pending = 0, 0, None
     for i in range(0, len(audio) - BLOCK_SAMPLES + 1, BLOCK_SAMPLES):
         block = audio[i : i + BLOCK_SAMPLES]
         recent.add(block)
         score = wake.score(block)
+        if pending is not None:
+            pending -= 1
+            if pending > 0:
+                continue
+            pending = None
+            pcm = recent.audio()
+            for name, check in checks.items():
+                answered[name] += bool(check(pcm))
+            if stop_at_first:
+                break
         if mute:
             mute -= 1
             continue
@@ -53,6 +65,9 @@ def stream(wake, audio, checks, window_s, stop_at_first=True):
             fired += 1
             wake.reset()
             mute = MUTE_BLOCKS
+            if delay_blocks:
+                pending = delay_blocks
+                continue
             pcm = recent.audio()
             for name, check in checks.items():
                 answered[name] += bool(check(pcm))
@@ -69,6 +84,7 @@ def main():
     p.add_argument("--hours", type=float, default=1.0, help="hours of audiobooks for false answers per hour")
     p.add_argument("--window", type=float, default=3.0, help="seconds of audio the check hears")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
+    p.add_argument("--check-delay", type=float, default=0.0, help="seconds after the wake before the check runs")
     p.add_argument(
         "--all-user", action="store_true", help="test on ALL the owner's clips (for setups that never saw them)"
     )
@@ -86,19 +102,22 @@ def main():
     log(f"{sum(len(files) for files, _ in sets.values())} clips in {len(CONDITIONS)} conditions")
     for cond, name, _should, clip in conditioned(sets, Interference(layout.interference), rng):
         pad = quiet_room(rng)
-        fired, answered = stream(wake, np.concatenate([pad, clip, pad]), checks, args.window)
+        delay = round(args.check_delay / BLOCK_S)
+        fired, answered = stream(wake, np.concatenate([pad, clip, pad]), checks, args.window, delay_blocks=delay)
         rows.append({"cond": cond, "set": name, "fired": fired > 0, **{k: v > 0 for k, v in answered.items()}})
     long = {}
     tv = np.concatenate([read_wav(f) for f in sorted((layout.interference / "tv_hour").glob("*.wav"))])
     for label, audio in [("TV hour", tv), ("audiobooks", long_speech(layout.librispeech_test, args.hours))]:
-        fired, answered = stream(wake, audio, checks, args.window, stop_at_first=False)
+        fired, answered = stream(
+            wake, audio, checks, args.window, stop_at_first=False, delay_blocks=round(args.check_delay / BLOCK_S)
+        )
         hours = len(audio) / SR / 3600
         long[label] = {
             "wake model fired /h": round(fired / hours, 1),
             **{k: round(v / hours, 1) for k, v in answered.items()},
         }
     layout.results.mkdir(parents=True, exist_ok=True)
-    out = layout.results / f"pipeline_{args.wake_model.stem}_t{args.threshold}_w{args.window}.json"
+    out = layout.results / f"pipeline_{args.wake_model.stem}_t{args.threshold}_w{args.window}_d{args.check_delay}.json"
     out.write_text(json.dumps({"rows": rows, "long": long, "checks": args.checks}))
     conds = [c for c, *_ in CONDITIONS]
     for col in ["fired"] + args.checks:

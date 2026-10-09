@@ -50,10 +50,12 @@ def feature_set(path, sampling, truth, truncation="truncate_start"):
     }
 
 
-def features(layout: Layout, setup: str, run: str | None = None, phrase: str = "hey_tars") -> list[dict]:
+def features(
+    layout: Layout, setup: str, run: str | None = None, phrase: str = "hey_tars", near_miss_scale: float = 1.0
+) -> list[dict]:
     root, neg = layout.features / phrase, layout.mww / "negative_datasets"
     fs = [feature_set(root / "positive" / n, w, True) for n, w in POSITIVE_WEIGHTS.items()]
-    fs += [feature_set(root / "near_miss" / n, w, False) for n, w in NEAR_MISS_WEIGHTS.items()]
+    fs += [feature_set(root / "near_miss" / n, w * near_miss_scale, False) for n, w in NEAR_MISS_WEIGHTS.items()]
     if setup in ("generic", "household") and phrase == "hey_tars":
         fs.append(feature_set(root / "near_miss" / "real", 2.0, False))
     fs += [feature_set(neg / n, w, False, "random") for n, w in NEGATIVES.items()]
@@ -78,6 +80,12 @@ def main():
     p.add_argument("--run", help="household: the training run's name")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     p.add_argument(
+        "--near-miss-scale",
+        type=float,
+        default=1.0,
+        help="multiply the lookalikes' weights: lower makes the model less wary of them (the check turns them down)",
+    )
+    p.add_argument(
         "--resume",
         action="store_true",
         help="carry on from the last checkpoint of an interrupted run (otherwise it starts over)",
@@ -92,13 +100,15 @@ def main():
     cap_threads()
     layout = Layout(args.data)
     name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{args.setup}"
+    if args.near_miss_scale != 1.0:
+        name += f"_nm{args.near_miss_scale:g}"
     train_dir = layout.trained_models / name
     if not args.resume:
         shutil.rmtree(train_dir, ignore_errors=True)  # a finished run's checkpoint would be "restored" as done
     config = {
         "window_step_ms": 10,
         "train_dir": str(train_dir),
-        "features": features(layout, args.setup, args.run, args.phrase),
+        "features": features(layout, args.setup, args.run, args.phrase, args.near_miss_scale),
         "training_steps": [20000],
         "positive_class_weight": [1],
         "negative_class_weight": [20],
@@ -159,7 +169,9 @@ def main():
         check=True,
         cwd=layout.mww,
     )
-    out = (layout.household / args.run / "pair" if args.run else layout.models / args.setup) / f"{args.phrase}.tflite"
+    variant = f"_nm{args.near_miss_scale:g}" if args.near_miss_scale != 1.0 else ""
+    folder = layout.household / args.run / "pair" if args.run else layout.models / args.setup
+    out = folder / f"{args.phrase}{variant}.tflite"
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(train_dir / "tflite_stream_state_internal/stream_state_internal.tflite", out)
     log(f"DONE: {out}" + ("" if args.run else f" (copy it to the repo's models/{args.setup}/)"))
