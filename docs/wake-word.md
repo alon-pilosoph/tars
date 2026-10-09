@@ -181,9 +181,9 @@ Both stages, the way the assistant runs them, on the held-out OpenAI voices (`ev
 | 0.3, 2 s | 0%: stage 1 fires on the noise before the phrase | | | | | | 0, 0 |
 
 It never answered "hey TARS", and of the lookalikes, only "tar stop", "tarts stop" and "guitars stop" (which sound the
-same); "stop", "bus stop", "stars stop" and "please stop" are turned down. Stage 1 fires after the phrase ends, so the
+same); "stop", "bus stop" and "stars stop" are turned down. Stage 1 fires after the phrase ends, so the
 check needs 3 s, as for "hey TARS" (waiting 0.4 s more before the check halved what it caught). Weighting the
-lookalikes half as much (`--near-miss-scale 0.5`) made it worse in noise (TV 5 dB 18%). Safe, then, but it misses
+lookalikes half as much in stage 1 made it worse in noise (TV 5 dB 18%). Safe, then, but it misses
 more than "hey TARS", most in loud noise. Next: a learned layer in the check, as "hey TARS" has; the owner's own takes;
 and a test while TARS is talking, with echo cancellation, which is where it will be used.
 

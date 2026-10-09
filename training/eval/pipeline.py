@@ -5,7 +5,7 @@ of test TV and on audiobooks (LibriSpeech test-clean).
     DATA/eval/.venv/bin/python -m training.eval.pipeline models/generic/hey_tars.tflite \
         --checks models/generic/hey_tars_check.json plain --window 3.0 [--user voice_data/<name>/laptop --all-user]
     DATA/eval/.venv/bin/python -m training.eval.pipeline DATA/models/generic/tars_stop.tflite --phrase tars_stop \
-        --threshold 0.3 --window 2.0
+        --threshold 0.4 --window 3.0
 
 A check is a learned layer (.json, loaded by the assistant's own PhraseVerifier) or "plain" (Vosk with the phrase
 grammar and no learned layer). Every test clip gets 2 s of faint noise before and after it, as in a live stream.
@@ -21,10 +21,9 @@ from pathlib import Path
 import numpy as np
 
 from training.audio import CONDITIONS, Interference, conditioned, long_speech, quiet_room, read_wav
-from training.common import REPO, SR, Layout, add_user_arg, log, parser, test_sets
+from training.common import PHRASES, REPO, SR, Layout, add_user_arg, log, parser, test_sets
 
 MUTE_BLOCKS = 25  # 2 s after a wake before another counts, so one phrase is one wake
-BLOCK_S = 0.08
 
 
 def make_check(spec: str, phrase: str = "hey tars"):
@@ -34,30 +33,19 @@ def make_check(spec: str, phrase: str = "hey tars"):
     return lambda pcm: verifier.check(pcm)[0]
 
 
-def stream(wake, audio, checks, window_s, stop_at_first=True, delay_blocks=0):
-    """Returns (times the wake model fired, {check: how many of those wakes it answered}). `delay_blocks`: how long
-    after the wake model fires the check runs, so the rest of a two-word phrase ("TARS stop") is in what it hears."""
+def stream(wake, audio, checks, window_s, stop_at_first=True):
+    """Returns (times the wake model fired, {check: how many of those wakes it answered})."""
     from voice_assistant.audio import BLOCK_SAMPLES
     from voice_assistant.verify import RecentAudio
 
     wake.reset()
     recent = RecentAudio(window_s)
     answered = {name: 0 for name in checks}
-    fired, mute, pending = 0, 0, None
+    fired, mute = 0, 0
     for i in range(0, len(audio) - BLOCK_SAMPLES + 1, BLOCK_SAMPLES):
         block = audio[i : i + BLOCK_SAMPLES]
         recent.add(block)
         score = wake.score(block)
-        if pending is not None:
-            pending -= 1
-            if pending > 0:
-                continue
-            pending = None
-            pcm = recent.audio()
-            for name, check in checks.items():
-                answered[name] += bool(check(pcm))
-            if stop_at_first:
-                break
         if mute:
             mute -= 1
             continue
@@ -65,9 +53,6 @@ def stream(wake, audio, checks, window_s, stop_at_first=True, delay_blocks=0):
             fired += 1
             wake.reset()
             mute = MUTE_BLOCKS
-            if delay_blocks:
-                pending = delay_blocks
-                continue
             pcm = recent.audio()
             for name, check in checks.items():
                 answered[name] += bool(check(pcm))
@@ -83,13 +68,14 @@ def main():
     p.add_argument("--checks", nargs="+", default=["plain"])
     p.add_argument("--hours", type=float, default=1.0, help="hours of audiobooks for false answers per hour")
     p.add_argument("--window", type=float, default=3.0, help="seconds of audio the check hears")
-    p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
-    p.add_argument("--check-delay", type=float, default=0.0, help="seconds after the wake before the check runs")
+    p.add_argument("--phrase", default="hey_tars", choices=PHRASES)
     p.add_argument(
         "--all-user", action="store_true", help="test on ALL the owner's clips (for setups that never saw them)"
     )
     add_user_arg(p)
     args = p.parse_args()
+    if args.phrase != "hey_tars" and (args.user or args.all_user):
+        p.error("the owner's takes are tested for hey_tars only")
     sys.path.insert(0, str(REPO / "src"))
     from voice_assistant.wake import MicroWakeWordTrigger
 
@@ -102,22 +88,19 @@ def main():
     log(f"{sum(len(files) for files, _ in sets.values())} clips in {len(CONDITIONS)} conditions")
     for cond, name, _should, clip in conditioned(sets, Interference(layout.interference), rng):
         pad = quiet_room(rng)
-        delay = round(args.check_delay / BLOCK_S)
-        fired, answered = stream(wake, np.concatenate([pad, clip, pad]), checks, args.window, delay_blocks=delay)
+        fired, answered = stream(wake, np.concatenate([pad, clip, pad]), checks, args.window)
         rows.append({"cond": cond, "set": name, "fired": fired > 0, **{k: v > 0 for k, v in answered.items()}})
     long = {}
     tv = np.concatenate([read_wav(f) for f in sorted((layout.interference / "tv_hour").glob("*.wav"))])
     for label, audio in [("TV hour", tv), ("audiobooks", long_speech(layout.librispeech_test, args.hours))]:
-        fired, answered = stream(
-            wake, audio, checks, args.window, stop_at_first=False, delay_blocks=round(args.check_delay / BLOCK_S)
-        )
+        fired, answered = stream(wake, audio, checks, args.window, stop_at_first=False)
         hours = len(audio) / SR / 3600
         long[label] = {
             "wake model fired /h": round(fired / hours, 1),
             **{k: round(v / hours, 1) for k, v in answered.items()},
         }
     layout.results.mkdir(parents=True, exist_ok=True)
-    out = layout.results / f"pipeline_{args.wake_model.stem}_t{args.threshold}_w{args.window}_d{args.check_delay}.json"
+    out = layout.results / f"pipeline_{args.wake_model.stem}_t{args.threshold}_w{args.window}.json"
     out.write_text(json.dumps({"rows": rows, "long": long, "checks": args.checks}))
     conds = [c for c, *_ in CONDITIONS]
     for col in ["fired"] + args.checks:

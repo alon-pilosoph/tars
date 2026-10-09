@@ -177,4 +177,4 @@ accented clips, other recognizers as the check) are summarized in
 "TARS stop" ([roadmap](../docs/roadmap.md), step 2) is on its second try: the first became a detector for the word
 "stop", so its rejects now include "stop" on its own and in sentences, and `stage1/train.py generic --phrase
 tars_stop` trains it. The generators add to what's there, so on a data folder from the first try, delete
-`DATA/clips/{kokoro,piper_voices,openai}/tars_stop/near_miss` first, or the new rejects are never made.
+`DATA/clips/{kokoro,piper_voices}/tars_stop/near_miss` first, or the new rejects are never made.

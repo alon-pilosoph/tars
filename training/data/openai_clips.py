@@ -3,7 +3,7 @@
     OPENAI_API_KEY=... DATA/tts/.venv/bin/python -m training.data.openai_clips
 
 Each training voice says the phrase in 20 styles x 4 spellings, 12 more styles x 2, and 60 mood/pace/distance
-combinations (164 clips per voice and phrase), plus 38 lookalikes (30 for "TARS stop"). The held-out voices (coral,
+combinations (164 clips per voice and phrase), plus 38 lookalikes (42 for "TARS stop"). The held-out voices (coral,
 sage, verse) say it in 10 styles x 3 spellings, plus 14 lookalikes; nothing ever trains on them.
 Output: DATA/clips/openai/PHRASE/{positive,near_miss}, and DATA/bench/clips_heldout/{PHRASE,PHRASE_near_miss}.
 """
