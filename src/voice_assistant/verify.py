@@ -72,6 +72,28 @@ PHRASES = {
             "tar",
         ],
     },
+    # The interrupt, said while TARS talks. Run together it's often heard as "tar stop", which nobody says otherwise;
+    # "stop" on its own, or after another word, mustn't count (the first "TARS stop" model fired on any "stop").
+    "tars stop": {
+        "accept": ["tars stop", "tar stop", "darts stop"],
+        "lookalikes": [
+            "stop",
+            "stars stop",
+            "star stop",
+            "cars stop",
+            "car stop",
+            "bus stop",
+            "pit stop",
+            "hard stop",
+            "please stop",
+            "don't stop",
+            "stop it",
+            "hey tars",
+            "tars",
+            "stars",
+        ],
+        "ask_after_hey": [],
+    },
 }
 
 ANSWER, ASK, IGNORE = "answer", "ask", "ignore"
