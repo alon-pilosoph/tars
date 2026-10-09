@@ -35,10 +35,12 @@ before the stronger model even starts. *Where* is the service and the API (`open
 OpenAI's Responses API), with the tier: the one responses said they were served on (OpenAI's `fast`), or the
 account's (Cerebras's free tier, then paid).
 
-**What TARS uses: Qwen on Cerebras at low reasoning** (`cerebras_model = "qwen-3.8-27b"`,
-`quick_reasoning_effort = "low"`, `quick_tools = true`). Within a request or two of the best on the score, among the
-fastest, and the only fast one that sounds like TARS. The bench scores what a model does, not how it sounds, so the
-fast candidates were also asked the same everyday questions:
+**What TARS uses: Qwen at low reasoning, on Groq first and Cerebras second** (`groq_model = "qwen/qwen3.8-27b"`,
+`cerebras_model = "qwen-3.8-27b"`, the same model under each service's name; `quick_reasoning_effort = "low"`,
+`quick_tools = true`). Within a request or two of the best on the score, among the fastest, and the only fast one that
+sounds like TARS. Groq starts answering sooner, so it's asked first ([why Groq first](latency.md#how-it-got-here)).
+The bench scores what a model does, not how it sounds, so the fast candidates were also asked the same everyday
+questions:
 
 | Asked | Qwen, low | gpt-oss-120b, low |
 |---|---|---|
@@ -50,8 +52,9 @@ fast candidates were also asked the same everyday questions:
   "Pasta timer is set for 10:54." with no timer set. It also writes tool calls and tags as text
   (`<reminder id=2 ...>`, `<retry/>`), which TARS would say aloud. Low reasoning fixes both for about 0.06 s.
   Medium is about as right, and slower on reminders.
-- **Paying Cerebras didn't make Qwen faster**; it lifts the free tier's daily allowance, past which Qwen answers
-  "402" and OpenAI takes over (slower, but it answers) until the next day.
+- **Paying Cerebras didn't make Qwen faster**; it lifts the free tier's daily allowance, past which Cerebras answers
+  "402" until the next day. With Groq first, that matters only when Groq is busy or slow; with both out, OpenAI takes
+  over (slower, but it answers).
 - **gpt-oss-120b is the fastest** (first words in 0.30 s, a reminder in 0.67 s) and scores 150, but it's plain where
   Qwen is TARS, it adds `<skip>` to the end of ordinary answers (TARS only looks for one at the start, so it would say
   it), it once repeated its answer twice over, says "$" for every amount, and writes numbers with narrow spaces
@@ -148,22 +151,26 @@ OpenAI once asked which city, taking the house to be in the United States.
 - **The same prompts TARS uses**, from `config.toml` and `llm.py`, so a change to either can move the numbers: run the
   current model again after one.
 - Cerebras's free tier allows Qwen about 450 requests a minute but few tokens a minute, and gpt-oss-120b 5 requests a
-  minute and a small daily amount (it ran out ten runs in); the rows marked paid came after a top-up. OpenAI's Luna
-  runs in fast mode, as TARS uses it. A full run costs cents on Cerebras and Haiku, and under a dollar on Luna.
+  minute and a small daily amount (it ran out ten runs in); the rows marked paid came after a top-up. Groq's free key
+  allows 8,000 tokens a minute, 1,000 of them written, and a daily allowance, and refuses a request that doesn't cap
+  its reply (TARS asks for at most 500 tokens). OpenAI's Luna runs in fast mode, as TARS uses it. A full run costs
+  cents on Cerebras and Haiku, and under a dollar on Luna.
 
 ## Adding a model
 
 ```
 uv run python tools/capability_bench.py --brain cerebras --model <id> --effort low --save docs/models.jsonl
+uv run python tools/capability_bench.py --brain groq --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --brain responses --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --brain claude --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --table docs/models.jsonl      # the table above, from every saved run
 uv run python tools/router_bench.py                                     # Jev as a router (TYPESAFE_API_KEY)
 ```
 
-`--brain` is where it runs: `cerebras` and `openai` through the Chat Completions API (any compatible service works the
-same way), `responses` through OpenAI's Responses API (`ResponsesQuickChat`: OpenAI's models only take tools with
-reasoning there), `claude` through Anthropic's Messages API (`ClaudeQuickChat`, needs `uv sync --extra claude`). Keys come
-from `.env`: `CEREBRAS_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Try each reasoning effort the model has,
+`--brain` is where it runs: `cerebras`, `groq` and `openai` through the Chat Completions API (any compatible service
+works the same way; without `--model`, `cerebras` and `groq` take their `[llm]` model), `responses` through OpenAI's
+Responses API (`ResponsesQuickChat`: OpenAI's models only take tools with reasoning there), `claude` through
+Anthropic's Messages API (`ClaudeQuickChat`, needs `uv sync --extra claude`). Keys come from `.env`:
+`CEREBRAS_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Try each reasoning effort the model has,
 lowest first, and paste the new rows in. Before switching TARS to a new model, read its wrong answers in the run's
 output too, not only its score: what it gets wrong matters as much as how often.

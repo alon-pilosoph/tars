@@ -15,9 +15,9 @@ Runs on a Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or o
 - **The wake word is trained for it and runs locally.** A small [microWakeWord](https://github.com/kahrendt/microWakeWord)
   model hears "hey TARS", and a [Vosk](https://alphacephei.com/vosk/) double-check with a learned layer tells it from
   "hey cars". Nothing leaves the machine before that.
-- **It starts answering 1.1 to 1.6 seconds after you stop talking.** Deepgram's Flux hears when you've finished from
-  your words as well as the pause, Qwen on Cerebras starts the answer while Flux makes sure, and Deepgram's voice speaks
-  it a sentence at a time ([response time](docs/latency.md)).
+- **It starts answering 1.3 to 1.4 seconds after you stop talking.** Deepgram's Flux hears when you've finished from
+  your words as well as the pause, Qwen on Groq (or Cerebras, when Groq is busy) starts the answer while Flux makes
+  sure, and Deepgram's voice speaks it a sentence at a time ([response time](docs/latency.md)).
 - **It sets timers, reminders and messages.** "Remind me to call the bank at nine", "tell Stacey dinner's ready
   when she's back": TARS says them when they're due and again until someone says "got it", and a timer rings until
   someone turns it off. The web UI shows each one, who acknowledged it, and sets them from your phone

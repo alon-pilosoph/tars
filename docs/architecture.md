@@ -17,6 +17,7 @@ flowchart LR
     journal --> data
     api <--> data
     stt & tts <-.-> deepgram["Deepgram"]
+    llm <-.-> groq["Groq"]
     llm <-.-> cerebras["Cerebras"]
     llm <-.-> openai["OpenAI"]
     phone["Phone / laptop browser"] <--> page
@@ -39,26 +40,27 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
    local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
    `[Speaker: Alon]`.
-5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras first (about 0.3 s to its first sentence). When the
-   answer needs the web or the TARS page it replies `<look-up>`, and that turn goes to OpenAI's model (the Responses
-   API, with web search and the send tool), which also answers whenever Cerebras fails, and for two minutes after, so an
-   outage doesn't cost every turn Cerebras's timeout; both share one conversation. Each finished sentence goes to **text
-   to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's Onyx) straight away, and playback starts on the first audio
-   chunk, so TARS starts talking while the reply is still being written. The TARS effect (a speaker in a metal box) is
-   applied as it streams. All of this starts early, when Flux thinks you may be done, while the recording goes on: if
-   you carry on talking the draft is thrown away, and it's only played, logged and allowed to send anything once your
-   turn is confirmed over (see [response time](latency.md)).
+5. **The LLM** answers in TARS's voice, streamed: Qwen on Groq first (about 0.4 s to its first sentence). If Groq hasn't
+   started answering within 0.5 s, the same Qwen on Cerebras is asked too, the first to say anything is kept, and the
+   other is closed before any of its tools run. A service that fails is skipped for two minutes, or after "too many
+   requests" for as long as it asks, so an outage doesn't cost every turn its timeout. When the answer needs the web or
+   the TARS page Qwen replies `<look-up>`, and that turn goes to OpenAI's model (the Responses API, with web search and
+   the send tool), which also answers whenever Groq and Cerebras both fail; all share one conversation. Each finished
+   sentence goes to **text to speech** (Deepgram's Aura-2 Zeus voice, from its EU servers, or OpenAI's Onyx) straight
+   away, and playback starts on the first audio chunk, so TARS starts talking while the reply is still being written.
+   The TARS effect (a speaker in a metal box) is applied as it streams. All of this starts early, when Flux thinks you
+   may be done, while the recording goes on: if you carry on talking the draft is thrown away, and it's only played,
+   logged and allowed to send anything once your turn is confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one
 new class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it
-end to end. When TARS wakes, it connects to Cerebras, OpenAI and Deepgram's voice while you're still talking. A
-failed request gets a
-spoken line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it
-plays even when the voice service is what failed; the voice gives up after 4 s without audio. A microphone that
-stops delivering audio exits so systemd restarts it.
+end to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and Deepgram's voice while you're still talking.
+A failed request gets a spoken line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor),
+made at startup so it plays even when the voice service is what failed; the voice gives up after 4 s without audio. A
+microphone that stops delivering audio exits so systemd restarts it.
 
 ### The LLM's tools
 
@@ -103,15 +105,17 @@ changing the voice effect's code (`effects.py`), delete that folder so the lines
 
 - **Before the wake is confirmed, nothing.** Stage 1, stage 2, the speech detector and the end-of-turn model run
   locally.
-- **After it,** three services each get part of the turn (with the default `config.toml`):
-  - **Deepgram** gets your request's audio, streamed for speech to text from when you start speaking after a wake,
-    and TARS's reply text, to speak it.
-  - **Cerebras** gets the conversation so far (its text, with each request's `[Speaker: name]` tag and TARS's
-    replies) and answers first.
-  - **OpenAI** gets the same conversation for the turns Cerebras hands over (anything that needs the web or the
-    TARS page) or can't answer, and runs those turns' web searches. It also transcribes a request's recording when
-    Deepgram's stream fails. With `[stt]` or `[tts] provider = "openai"`, it gets the audio or the reply text instead
-    of Deepgram.
+- **After it,** four services each get part of the turn (with the default `config.toml`), and one without a key in
+  `.env` gets nothing:
+  - **Deepgram**, on its EU servers (`deepgram_host`), gets your request's audio, streamed for speech to text from
+    when you start speaking after a wake, and TARS's reply text, to speak it.
+  - **Groq** gets the conversation so far (its text, with each request's `[Speaker: name]` tag and TARS's replies)
+    and answers first. **Cerebras** gets the same when Groq is resting, fails, or hasn't started answering within
+    0.5 s.
+  - **OpenAI** gets the same conversation for the turns Qwen hands over (anything that needs the web or the TARS
+    page) or can't answer, and runs those turns' web searches. It also transcribes a request's recording when
+    Deepgram's stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio or the
+    reply text instead of Deepgram.
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
   served from the same machine and talks to nothing else.
 
@@ -143,10 +147,10 @@ The assistant is `src/voice_assistant/`:
 | Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
-| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Cerebras, OpenAI with its tools), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
+| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen on Groq and Cerebras, OpenAI with its tools), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
 | Reminders | `reminders.py` (the table, what's due, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
-| The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, the keys it needs) |
+| The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, cut down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
 | Downloads | `models.py` (the small local models, on first use) |
 | Checking a setup | `check.py` (`--check`: keys, devices, models, services, voice, mic, storage) |

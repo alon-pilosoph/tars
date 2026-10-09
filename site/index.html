@@ -14,7 +14,7 @@
     <meta property="og:title" content="How TARS works" />
     <meta
       property="og:description"
-      content="A household voice assistant that answers in about 1.2 seconds, and nothing leaves the house until it's sure it heard “hey TARS”."
+      content="A household voice assistant that answers in about 1.4 seconds, and nothing leaves the house until it's sure it heard “hey TARS”."
     />
     <meta property="og:image" content="https://tars.alonp.dev/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -1557,7 +1557,7 @@
           </p>
           <div class="facts">
             <a class="fact" href="#timeline"
-              ><span class="k">Time</span><b>About 1.2 s</b
+              ><span class="k">Time</span><b>About 1.4 s</b
               ><span
                 >from your last word to its first sound. It starts answering before you finish, so the work
                 overlaps.</span
@@ -1625,18 +1625,18 @@
         <div class="wide-only">
           <div class="chart" id="chart"></div>
           <p class="note b">
-            A typical run, built from measured medians. Real answers take 1.1 to 1.6 s to the first sound. Detailed
+            A typical run, built from measured medians. Real answers take 1.3 to 1.4 s to the first sound. Detailed
             shows every lane.
           </p>
           <p class="note d">
-            A typical run, built from measured medians; measured 1.1 to 1.6 s to the first sound. After 0 the axis is 3
+            A typical run, built from measured medians; measured 1.3 to 1.4 s to the first sound. After 0 the axis is 3
             times wider per second, so the dense part is readable; the follow-up at the far right is not to scale. Drag
             the playhead along the seconds row to scrub, or tap anything to jump to it. Play moves the playhead at an
             even, slow pace, and Space plays or pauses.
           </p>
           <p class="note d measured">
             Every real answer is measured the same way. Each one is kept with how long each stage took and which model
-            wrote it, so the 1.1 to 1.6 s range is checked against a real week of use, not only a benchmark.
+            wrote it, so the 1.3 to 1.4 s range is checked against a real week of use, not only a benchmark.
           </p>
         </div>
 
@@ -1680,28 +1680,28 @@
             </div>
           </li>
           <li class="step" data-step="6">
-            <span class="n">6</span><span class="t">0.55 s</span>
-            <div>
-              <p>Qwen on Cerebras has the first sentence, about 0.3 s later, streamed.</p>
-              <span class="w d">Cerebras</span>
-            </div>
-          </li>
-          <li class="step" data-step="7">
-            <span class="n">7</span><span class="t">0.6 s</span>
+            <span class="n">6</span><span class="t">0.5 s</span>
             <div>
               <p>Flux says “done”. Now the draft may be played, logged and allowed to send anything.</p>
               <span class="w d">Flux</span>
             </div>
           </li>
+          <li class="step" data-step="7">
+            <span class="n">7</span><span class="t">0.65 s</span>
+            <div>
+              <p>Qwen on Groq has the first sentence, about 0.4 s after “maybe done”, streamed.</p>
+              <span class="w d">Groq</span>
+            </div>
+          </li>
           <li class="step" data-step="8">
-            <span class="n">8</span><span class="t">0.95 s</span>
+            <span class="n">8</span><span class="t">1.05 s</span>
             <div>
               <p>Zeus, the Aura-2 voice, has the first sentence's audio.</p>
               <span class="w d">Aura-2</span>
             </div>
           </li>
           <li class="step" data-step="9">
-            <span class="n">9</span><span class="t">1.2 s</span>
+            <span class="n">9</span><span class="t">1.4 s</span>
             <div>
               <p>First sound: “Cloudy, 14 degrees. Rain from about four.”</p>
               <span class="w d">Pi</span>
@@ -1722,7 +1722,7 @@
             cloud stays hatched, closed, until stage 2 says yes, and the blue line marks the moment it opens.
           </p>
           <ol class="runs" id="runs"></ol>
-          <p class="note">A typical run, built from measured medians; measured 1.1 to 1.6 s to the first sound.</p>
+          <p class="note">A typical run, built from measured medians; measured 1.3 to 1.4 s to the first sound.</p>
           <p class="note d measured">
             Every real answer is kept with how long each stage took and which model wrote it, so that range is checked
             against a real week of use, not only a benchmark.
@@ -2031,11 +2031,12 @@
             </tr>
             <tr>
               <td>Brain</td>
-              <td>Qwen on Cerebras</td>
+              <td>Qwen on Groq</td>
               <td>
-                OpenAI answers<span class="small"
-                  >If Cerebras fails, OpenAI answers on its own for the next two minutes, so an outage doesn't cost
-                  every turn Cerebras's timeout.</span
+                Qwen on Cerebras, then OpenAI<span class="small"
+                  >If Groq hasn't started answering within half a second, Cerebras is asked too and the first to answer
+                  is kept. A service that fails is skipped for the next two minutes, so an outage doesn't cost every
+                  turn its timeout; with both out, OpenAI answers.</span
                 >
               </td>
             </tr>
@@ -2084,9 +2085,9 @@
           <div>
             <h3>Every answer is measured</h3>
             <p>
-              Each answer is kept with how long each stage took, which model wrote it (Qwen on Cerebras, OpenAI handed
-              over, the thinking model, or OpenAI as backup) and, if it failed, where and why: speech to text, the
-              answer, or the voice.
+              Each answer is kept with how long each stage took, which model wrote it (Qwen on Groq or Cerebras, OpenAI
+              handed over, the thinking model, or OpenAI as backup) and, if it failed, where and why: speech to text,
+              the answer, or the voice.
             </p>
           </div>
           <div>
@@ -2168,7 +2169,7 @@
           T_END = 3.0,
           PACE = 100 / 30,
           CROSS = 3;
-        const AT = [-3.4, -2.8, -2.7, -2.5, 0.25, 0.55, 0.6, 0.95, 1.2, 1.9];
+        const AT = [-3.4, -2.8, -2.7, -2.5, 0.25, 0.5, 0.65, 1.05, 1.4, 1.9];
         const X = t =>
           t <= 0
             ? Math.max(0, ((t + 3.6) / 3.6) * 36)
@@ -2216,14 +2217,14 @@
               {
                 k: "bar",
                 t0: -2.7,
-                t1: 0.6,
-                s: [4, 5, 7],
+                t1: 0.5,
+                s: [4, 5, 6],
                 soft: 1,
                 label: "recording; VAD hears you start",
                 lt: -2.64,
               },
               { k: "point", t0: -2.5, s: [4] },
-              { k: "muted", t0: 1.2, t1: 1.6, s: [9], label: "mic muted" },
+              { k: "muted", t0: 1.4, t1: 1.6, s: [9], label: "mic muted" },
               { k: "bar", t0: 1.9, t1: 2.95, s: [10], soft: 1, label: "listening" },
             ],
           },
@@ -2238,7 +2239,7 @@
             basic: 1,
             name: "Speaker",
             sub: "playback",
-            items: [{ k: "bar", t0: 1.2, t1: 1.85, s: [9], label: "first sound" }],
+            items: [{ k: "bar", t0: 1.4, t1: 1.85, s: [9], label: "first sound" }],
           },
           {
             g: "home",
@@ -2246,8 +2247,8 @@
             sub: "SQLite",
             items: [
               { k: "point", t0: -2.7, s: [3], label: "wake" },
-              { k: "point", t0: 0.6, s: [7], label: "turn" },
-              { k: "point", t0: 1.2, s: [9], label: "reply" },
+              { k: "point", t0: 0.5, s: [6], label: "turn" },
+              { k: "point", t0: 1.4, s: [9], label: "reply" },
             ],
           },
           {
@@ -2258,22 +2259,22 @@
             items: [
               { k: "closed", t0: -3.6, t1: -2.7, label: "closed" },
               { k: "point", t0: -2.7, s: [3] },
-              { k: "bar", t0: -2.5, t1: 0.6, s: [4], soft: 1, label: "your audio, streamed", lt: -2.45 },
+              { k: "bar", t0: -2.5, t1: 0.5, s: [4], soft: 1, label: "your audio, streamed", lt: -2.45 },
               { k: "point", t0: 0.25, s: [5], label: "maybe done" },
-              { k: "point", t0: 0.6, s: [7], label: "done", lt: 0.68 },
+              { k: "point", t0: 0.5, s: [6], label: "done", lt: 0.58 },
             ],
           },
           {
             g: "cloud",
             basic: 1,
-            name: "Cerebras",
+            name: "Groq",
             sub: "Qwen, fast brain",
             items: [
               { k: "closed", t0: -3.6, t1: -2.7 },
               { k: "idle", t0: -2.7, t1: 0.25 },
               { k: "point", t0: -2.7, s: [3], label: "open" },
-              { k: "bar", t0: 0.25, t1: 0.55, s: [5, 6], label: "first sentence" },
-              { k: "bar", t0: 0.56, t1: 0.95, s: [6], soft: 1 },
+              { k: "bar", t0: 0.25, t1: 0.65, s: [5, 7], label: "first sentence" },
+              { k: "bar", t0: 0.66, t1: 1.05, s: [7], soft: 1 },
             ],
           },
           {
@@ -2293,11 +2294,11 @@
             sub: "the voice, “Zeus”",
             items: [
               { k: "closed", t0: -3.6, t1: -2.7 },
-              { k: "idle", t0: -2.7, t1: 0.55 },
+              { k: "idle", t0: -2.7, t1: 0.65 },
               { k: "point", t0: -2.7, s: [3], label: "two connections open" },
-              { k: "bar", t0: 0.55, t1: 0.95, s: [8], label: "sentence 1" },
-              { k: "bar", t0: 0.97, t1: 1.37, soft: 1, label: "sentence 2" },
-              { k: "bar", t0: 1.39, t1: 1.6, soft: 1 },
+              { k: "bar", t0: 0.65, t1: 1.05, s: [8], label: "sentence 1" },
+              { k: "bar", t0: 1.07, t1: 1.47, soft: 1, label: "sentence 2" },
+              { k: "bar", t0: 1.49, t1: 1.6, soft: 1 },
             ],
           },
         ];
