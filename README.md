@@ -74,7 +74,7 @@ the Pi needs no Node. Add `?demo` to the URL for sample data without a server.
 - [Running TARS at home](docs/deployment.md): the Pi, services, storage, backup, a first test run
 - [Training the models](training/README.md): preparing the data, training a household's pair, rebuilding everything
 - [Reminders, timers and messages](docs/reminders.md): setting them, how they're said and acknowledged, the design
-- [What's next](docs/roadmap.md): a week of real use, interrupting TARS, a larger model for hard questions, memory
+- [What's next](docs/roadmap.md): a week of real use, interrupting TARS, measuring the hard-question hand-off, memory
 
 ## Configure
 

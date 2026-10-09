@@ -82,10 +82,10 @@ ten minutes"). Every active reminder is in both models' instructions by number (
 like the time of day), so "what reminders do I have?" needs no tool, and a later "hey TARS, I got the message" gets
 `<ack 12>`. A model can say "okay thanks" a hundred ways; a phrase list would miss them.
 
-**Setting by voice** uses three tools (`remind`, `snooze_reminder`, `cancel_reminder`). They're OpenAI's, and Qwen
-hands those turns over with `<look-up>`, which costs a second or two; with `[llm] quick_tools` on, Qwen has them
-too and the hand-off is skipped (see [the brain](architecture.md#the-llms-tools)). Like sent items, a tool call
-changes nothing until the turn is kept: a draft thrown away because you kept talking leaves no reminder behind.
+**Setting by voice** uses three tools (`remind`, `snooze_reminder`, `cancel_reminder`). Qwen has them itself
+(`[llm] quick_tools`, on by default); with it off, they're OpenAI's, and Qwen hands those turns over with
+`<look-up>`, which costs a second or two (see [the brain](architecture.md#the-llms-tools)). Like sent items, a tool
+call changes nothing until the turn is kept: a draft thrown away because you kept talking leaves no reminder behind.
 
 **Times are worked out by TARS, not the model.** The model gives minutes from now, or a clock time (`HH:MM`) and the
 day as it was said: `today`, `tomorrow`, a weekday, a date, or none for the next time the clock shows it.

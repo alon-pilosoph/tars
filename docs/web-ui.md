@@ -97,9 +97,9 @@ use.
 
 **Layout:** `src/store/` holds the state (`core.ts`), what views derive from it (`selectors.ts`), loading and the
 Refresh snapshot (`load.ts`), tabs and filters (`nav.ts`), menus, dialogs and scrolling (`ui.ts`), and the actions
-by area (`items.ts`, `conversations.ts`, `voices.ts`, `models.ts`, with the shared shapes in `actions.ts`);
-`index.ts` exports them all. `src/components/` has one file per page or part. `src/demo.ts`, `src/demoParams.ts`
-and `src/linkStates.ts` are only loaded with `?demo`.
+by area (`items.ts`, `conversations.ts`, `voices.ts`, `models.ts`, `reminders.ts`, with the shared shapes in
+`actions.ts`); `index.ts` exports them all. `src/components/` has one file per page or part. `src/demo.ts`,
+`src/demoParams.ts` and `src/linkStates.ts` are only loaded with `?demo`.
 
 ## The checks
 

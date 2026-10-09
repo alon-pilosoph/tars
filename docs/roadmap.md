@@ -1,9 +1,9 @@
 # What's next
 
 Four steps, in this order. Each one makes the next one better: real use shows whether speaker ID and the wake word
-hold up on the speakerphone (memory depends on the first); interrupting matters more once answers can run long (the
-larger model); the larger model is one more hand-off, built the way `<look-up>` already is, and memory is a tool,
-built the way the send tool is.
+hold up on the speakerphone (memory depends on the first); interrupting matters more now that answers can run long
+(the larger model, built as one more hand-off the way `<look-up>` is, and left to measure in real use); and memory is
+a tool, built the way the send tool is.
 
 | | Step | Why now | Size |
 |---|---|---|---|
@@ -48,11 +48,16 @@ wakes, false wakes or wrong names are the real problem, they come first.
 
 ## 2. "TARS stop": interrupting a reply
 
-**Today:** TARS takes its own sound back out of what the mic hears (`echo.py`, `[audio] echo_cancel`: WebRTC's echo
-canceller, on any mic and speaker), and keeps the mic open while it says "Yes, <name>?", so what you say straight
-after "hey TARS" isn't lost (see [the greeting](latency.md#the-greeting-and-the-open-mic)). For answers, the mic is
-still muted while TARS speaks (`Microphone.paused()` around playback in `assistant.py`), so nothing can interrupt it. A "TARS stop" wake phrase was trained alongside "hey TARS" and parked: it turned into a detector
-for the word "stop" ([wake word](wake-word.md), tried and dropped).
+**Today:** TARS can take its own sound back out of what the mic hears (`echo.py`, `[audio] echo_cancel`: WebRTC's
+echo canceller, on any mic and speaker), and keep the mic open while it says "Yes, <name>?", so what you say straight
+after "hey TARS" isn't lost (`[recorder] greet = "always"`; see
+[the greeting](latency.md#the-greeting-and-the-open-mic)). Both are built but off by default until they've been
+measured in the room with `tools/echo_bench.py`: `echo_cancel = false`, and `greet = "pause"` says "Yes, <name>?"
+only after a pause. For answers, the mic is still muted while TARS speaks (`Microphone.paused()` around playback in
+`assistant.py`), so nothing can interrupt it. "TARS stop" is on its second try (the first turned into a detector for
+the word "stop"): on the held-out voices it catches 83% in quiet and 81-86% with TV or babble, with no false answers
+on an hour of TV or audiobooks, and never answers "stop" alone or "hey TARS"
+([wake word](wake-word.md#tars-stop-second-try)). It isn't in use yet.
 
 **Plan:**
 
@@ -65,9 +70,9 @@ for the word "stop" ([wake word](wake-word.md), tried and dropped).
 3. **On an interrupt:** stop the playback, the reply (`StreamedReply.stop()`) and the brain (`brain.interrupt()`),
    all of which exist; keep what was already said in the conversation, marked as cut off; then record the new
    request, with no greeting.
-4. **"TARS stop" later, if still wanted.** Retrain it with the stage 1 recipe that worked for "hey TARS",
-   with "stop", "top", "star stop" and TARS's own voice saying them as negatives, which is what the first try lacked.
-   A bare stop (no new request) is then its own action: cut the reply and go back to waiting.
+4. **Then "TARS stop".** Its second try (above) still needs a learned layer in the check, the owner's own takes, and
+   a test with TARS talking, where it will be used. A bare stop (no new request) is then its own action: cut the reply
+   and go back to waiting.
 
 **Measure before turning it on:** false interrupts per hour of TARS talking (play an hour of its own answers through the
 speakerphone, with and without the TV on), and how long from the phrase to silence. Done when false interrupts are about
@@ -109,10 +114,11 @@ each person's settings, and the persona part of the system prompt.
 - **Storage:** a `memories` table in the event database (`store.py`, with the usual automatic upgrade): the text,
   whose it is (a person, by the same names speaker ID uses, or the household), the conversation turn it came from,
   and when it was made and last changed.
-- **Writing:** `remember` and `forget` tools, like the send tool, so those turns go to OpenAI's model the way
-  `<look-up>` turns do. TARS offers only for lasting facts and
-  preferences, at most once a conversation, and never for anything said to someone else. The call doesn't hold
-  up the reply: TARS speaks what the model said and saves in the background, without another round to the model.
+- **Writing:** `remember` and `forget` tools, given to Qwen with its reminder and send tools (`[llm] quick_tools`),
+  so those turns skip the hand-off; with `quick_tools` off they go to OpenAI's model the way `<look-up>` turns do.
+  TARS offers only for lasting facts and preferences, at most once a conversation, and never for anything said to
+  someone else. The call doesn't hold up the reply: TARS speaks what the model said and saves in the background,
+  without another round to the model.
 - **Reading:** everything kept for the person speaking, plus the household's, goes into the prompt as a short
   "what you know" block. No search system: a household's memories fit in the prompt for a long time (with a cap
   and a warning well before they don't).

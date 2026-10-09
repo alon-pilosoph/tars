@@ -81,8 +81,9 @@ committed, so the Pi needs no Node. By hand, the steps are at the top of
 - **Two processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys, both
-  audio devices, the local models, OpenAI, Cerebras and Deepgram (each with how long it took), the voice (it says
-  "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both services.
+  audio devices, the local models, echo cancellation (only when it's on; it warns when the devices' delay is over
+  0.5 s), the voiceprints, OpenAI, Cerebras and Deepgram (each with how long it took), the voice (it says "TARS is
+  ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both services.
   Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
   one that doesn't open in time is a failure.
 
@@ -94,9 +95,11 @@ committed, so the Pi needs no Node. By hand, the steps are at the top of
 | **The wake model and its double-check**, as a pair | synthetic voices plus the household's labeled wakes and near-misses | a bigger machine, now and then | tens of minutes ([`training/`](../training/README.md)) |
 
 The Pi only runs the pairs; see [self-learning](self-learning.md#learning-from-it) for how they're installed and
-switched. Given what the experiments showed (more wake model training made it worse, and accented clips hurt it),
-a new pair should be trained rarely, once there's a good number of new labeled wakes, and always tested end to end
-before it's installed.
+switched. The experiments where more wake model training made it worse, and accented clips hurt it, were single
+runs, and stage 1 varies widely from run to run
+([training](../training/README.md#rebuilding-everything-from-scratch)). So a new pair should be trained rarely, once
+there's a good number of new labeled wakes, more than once per attempt, and always tested end to end before it's
+installed.
 
 ## A first test run
 

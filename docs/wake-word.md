@@ -81,7 +81,7 @@ The weak spots are loud babble, distance, and in the generic setup, voices unlik
 soft *t* is the main reason for the generic setup's missed takes, most of which stage 1 never fired on. That gap is
 what [self-learning](self-learning.md) is for.
 
-Cost on the development Mac (Apple Silicon): stage 1 takes 0.09 ms per 80 ms block; the check takes about 16 ms and
+Cost on the development Mac (Apple Silicon): stage 1 takes 0.09 ms per 80 ms block; the check takes about 21 ms and
 only runs on a wake. Even a few times slower on a Raspberry Pi 5 that's comfortable (not measured on the Pi yet).
 
 ## How the models were trained
@@ -161,10 +161,12 @@ they stay in stage 1, which needs variety, and are left out of stage 2, which ne
 
 ## Where to go from here
 
-Offline tuning has hit diminishing returns: every recent experiment moved one or two takes. The next gains come from
-real use: every wake and near-miss is saved with its audio and labeled (mostly automatically), and both stages are
-retrained together on the household's own clips, especially the near-misses that were a missed "hey TARS": an
-occasional job on a bigger machine, tested end to end before it's installed. See [self-learning](self-learning.md).
+Offline tuning has hit diminishing returns: every recent experiment moved one or two takes. Stage 1 also varies from
+run to run ([training](../training/README.md#rebuilding-everything-from-scratch)), so a one-run difference of a take or
+two is within that spread. The next gains come from real use: every wake and near-miss is saved with its audio and
+labeled (mostly automatically), and both stages are retrained together on the household's own clips, especially the
+near-misses that were a missed "hey TARS": an occasional job on a bigger machine, tested end to end before it's
+installed. See [self-learning](self-learning.md).
 
 ## "TARS stop", second try
 

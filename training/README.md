@@ -40,14 +40,18 @@ seconds, and its Models page can switch back. Each run is kept in `DATA/househol
 On the owner's 72 recordings (30 real, 42 lookalikes), a run took 19 minutes: other voices went from 94.4% to 97.8%
 answered in quiet and 83.5% to 88.3% in noise, but lookalikes let through went from 3.0% to 4.8% and audiobooks
 brought one false answer per hour, so it wasn't installed. That's the rule doing its job: more data per run, or a
-review of what it got wrong, and the next run is compared the same way.
+review of what it got wrong, and the next run is compared the same way. Another run on the same data can differ that
+much on its own (see below).
 
 ## Rebuilding everything from scratch
 
 The rest of this page is how the generic and personal models were made, from nothing. Stage 2 is deterministic:
 `stage2/train_check.py generic` on the same data, in the environment `setup/eval_env.sh` pins, gives the same
-weights and bias. Stage 1 isn't bit-for-bit reproducible, because microWakeWord's augmentation isn't seeded; a rerun
-gives a model of the same quality, not the same file.
+weights and bias. Stage 1 isn't reproducible: microWakeWord's augmentation isn't seeded, and runs vary widely in
+quality. Across 30 retrains with the same data and recipe, both stages together answered from 19% to 73% of the
+owner's takes (the shipped model: 64%), and the best answered 68% of a 342-speaker panel of cloned LibriSpeech and VCTK
+voices reliably, against the shipped model's 61%. So train several and keep the best on the end-to-end test; one
+retrain is a lottery.
 
 ## What you need
 
@@ -66,8 +70,8 @@ on 2026-10-08). Where the Python isn't the newest, something holds it back: micr
 until TensorFlow 2.22 is out (only its release candidate has 3.14 builds), and openWakeWord's clip generator on 3.12,
 the newest piper-phonemize-cross has builds for. The microWakeWord, piper-sample-generator and openWakeWord checkouts
 are pinned to commits, each its newest. The "hey TARS" models in `models/` were made with the versions before this
-move, which a rebuild won't reproduce exactly. Rerun on a data folder from before, each setup script replaces an
-environment on another Python, and `data/piper_libritts.sh` sets openWakeWord's up again.
+move; stage 1 wouldn't reproduce on those either (see above). Rerun on a data folder from before, each setup script
+replaces an environment on another Python, and `data/piper_libritts.sh` sets openWakeWord's up again.
 
 Everything goes into one data folder: `--data DIR` on every script, or `TARS_TRAINING_DATA`, default
 `~/tars-training`. The scripts run from the repo root as modules (`python -m training.stage1.train ...`), each in
