@@ -429,8 +429,9 @@ class OpenAIChat:
 
     first_answerer = OPENAI
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig, reminders: ReminderTools | None = None):
-        """`reminders`: TARS's timers, reminders and messages, when it has them."""
+    def __init__(self, client: OpenAI | None, cfg: LLMConfig, reminders: ReminderTools | None = None):
+        """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
+        QuickChat, whose Qwen then answers everything."""
         self._client = client
         self._cfg = cfg
         self._reminders = reminders
@@ -620,6 +621,8 @@ class OpenAIChat:
         _stop(self._writing, "interrupted")
 
     def warm(self) -> None:
+        if self._client is None:
+            return
         # The cheapest request there is; the OpenAI voice reuses the same connection.
         try:
             self._client.models.retrieve(self._cfg.model)
@@ -655,7 +658,7 @@ class QuickChat(OpenAIChat):
     first_answerer = QUICK
 
     def __init__(
-        self, client: OpenAI, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
     ):
         super().__init__(client, cfg, reminders)
         self._quick = quick
@@ -723,6 +726,11 @@ class QuickChat(OpenAIChat):
         if not handed_off and answer.strip() and not cut_off:
             self._remember(answer, writing)
             return
+        if self._client is None:
+            if answer.strip():
+                self._remember(answer, writing)
+                return
+            raise QuickFailed("no quick service answered, and there's no OpenAI to fall back on")
         if not ready:
             print("(no quick service can answer; OpenAI answers)")
         if not handed_off:
@@ -898,7 +906,7 @@ class ResponsesQuickChat(QuickChat):
     be the same one), and service_tier applies to it as to OpenAI's other requests."""
 
     def __init__(
-        self, client: OpenAI, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
     ):
         super().__init__(client, cfg, quick, reminders)
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
@@ -964,7 +972,7 @@ class ClaudeQuickChat(QuickChat):
     MAX_TOKENS = 8000  # a spoken reply is short, but thinking counts too
 
     def __init__(
-        self, client: OpenAI, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
     ):
         super().__init__(client, cfg, quick, reminders)
         self._claude_tools = [

@@ -486,6 +486,21 @@ def test_a_reply_cut_off_at_the_token_cap_is_carried_on_by_openai_without_benchi
     assert len(groq.requests) == 2
 
 
+def test_without_openai_qwen_answers_alone_and_a_failure_is_an_error(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
+    down = [False]
+    groq = fake_cerebras(lambda m: OpenAIError("down") if down[0] else "From Groq.")
+    cfg = LLMConfig(web_search=False, send=False, think_effort="")
+    brain = QuickChat(None, cfg, [QuickService("Groq", groq, "qwen")])
+    OpenAIChat.warm(brain)
+    assert "".join(brain.stream_reply("hi")) == "From Groq."
+    assert LOOK_UP not in groq.requests[0]["messages"][0]["content"]
+    down[0] = True
+    with pytest.raises(OpenAIError):
+        "".join(brain.stream_reply("again"))
+
+
 def test_a_service_that_ends_without_a_word_doesnt_win_over_one_that_answers():
     brain, _, _ = groq_then_cerebras(lambda m: "")
     assert "".join(brain.stream_reply("hi")) == "From Cerebras." and brain.quick_service == "Cerebras"

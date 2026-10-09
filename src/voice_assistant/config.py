@@ -18,6 +18,9 @@ class ConfigError(SystemExit):
 OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
 
 DEEPGRAM_HOST = "api.deepgram.com"
+DEEPGRAM_STT_MODEL = "nova-3"
+DEEPGRAM_VOICE = "aura-2-zeus-en"
+OPENAI_KEY, DEEPGRAM_KEY = "OPENAI_API_KEY", "DEEPGRAM_API_KEY"
 
 
 class QuickProvider(NamedTuple):
@@ -192,15 +195,39 @@ def load_config(path: Path) -> Config:
     return cfg
 
 
-def required_keys(cfg: Config) -> list[str]:
-    keys = ["OPENAI_API_KEY"]  # always: OpenAI's model answers what needs the web or the TARS page, and backs up STT
-    if cfg.stt.provider in ("deepgram", "flux") or cfg.tts.provider == "deepgram":
-        keys.append("DEEPGRAM_API_KEY")
-    if cfg.llm.groq_model:
-        keys.append("GROQ_API_KEY")
-    if cfg.llm.cerebras_model:
-        keys.append("CEREBRAS_API_KEY")
-    return keys
+def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
+    """config.toml's setup, cut down to the services there are API keys for (`keys`, the names set in .env): (the setup
+    that runs, a line for each thing done differently). Every paid service is optional, as long as each stage has one:
+    a missing quick provider is skipped, Deepgram's stages fall to OpenAI's and OpenAI's to Deepgram's, and without
+    OpenAI Qwen answers everything itself."""
+    stt, tts, llm, notes = cfg.stt, cfg.tts, cfg.llm, []
+    openai, deepgram = OPENAI_KEY in keys, DEEPGRAM_KEY in keys
+    if not (openai or deepgram):
+        raise ConfigError(f"Hearing and speaking need {DEEPGRAM_KEY} or {OPENAI_KEY} in .env (see .env.example).")
+    if stt.provider != "openai" and not deepgram:
+        stt = dataclasses.replace(stt, provider="openai", model=OPENAI_STT_MODEL)
+        notes.append(f"no {DEEPGRAM_KEY}: OpenAI transcribes, once you've stopped talking")
+    elif stt.provider == "openai" and not openai:
+        english = stt.language.lower().startswith("en")
+        stt = dataclasses.replace(stt, provider="flux" if english else "deepgram", model=DEEPGRAM_STT_MODEL)
+        notes.append(f"no {OPENAI_KEY}: Deepgram transcribes")
+    if tts.provider == "deepgram" and not deepgram:
+        tts = dataclasses.replace(tts, provider="openai", model=TTSConfig.model)
+        notes.append(f"no {DEEPGRAM_KEY}: OpenAI's {tts.voice} voice speaks")
+    elif tts.provider == "openai" and not openai:
+        tts = dataclasses.replace(tts, provider="deepgram", model=DEEPGRAM_VOICE)
+        notes.append(f"no {OPENAI_KEY}: Deepgram's {DEEPGRAM_VOICE} voice speaks")
+    for provider in QUICK_PROVIDERS:
+        if getattr(llm, provider.setting) and provider.key_name not in keys:
+            llm = dataclasses.replace(llm, **{provider.setting: ""})
+            notes.append(f"no {provider.key_name}: Qwen doesn't run on {provider.name}")
+    if not openai:
+        if not any(getattr(llm, provider.setting) for provider in QUICK_PROVIDERS):
+            names = ", ".join(provider.key_name for provider in QUICK_PROVIDERS)
+            raise ConfigError(f"The brain needs {OPENAI_KEY}, or one of {names} with its [llm] model set.")
+        llm = dataclasses.replace(llm, web_search=False, think_effort="", send=llm.send and llm.quick_tools)
+        notes.append(f"no {OPENAI_KEY}: Qwen answers everything, with no web search, thinking model or backup")
+    return dataclasses.replace(cfg, stt=stt, tts=tts, llm=llm), notes
 
 
 _KINDS = {str: "text", bool: "true or false", int: "a whole number", float: "a number", list: "a list"}
