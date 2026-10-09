@@ -26,7 +26,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync --all-extras && cp .env.example .env    # then put your OpenAI, Deepgram and Cerebras API keys in .env
+uv sync --all-extras && cp .env.example .env    # then put your API keys in .env (any of OpenAI, Deepgram, Groq, Cerebras)
 uv run voice-assistant --list-devices
 ```
 
@@ -57,8 +57,9 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts both systemd user services, at boot too, then runs `voice-assistant --check`. The first run stops to ask for the keys `config.toml`'s choices
-need in `.env` (OpenAI, Deepgram and Cerebras, by default); run it again after. It's safe to rerun, and it restarts
+starts both systemd user services, at boot too, then runs `voice-assistant --check`. It says what TARS does without
+the keys that aren't in `.env`, and stops only when it can't hear, think or speak at all; run it again after adding
+them. It's safe to rerun, and it restarts
 the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml` or a missing key stops a
 service instead of restarting it every few seconds: `journalctl` says what's wrong. The web UI's build is
 committed, so the Pi needs no Node. By hand, the steps are at the top of

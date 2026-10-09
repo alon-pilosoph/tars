@@ -331,8 +331,6 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     client = make_openai_client(env) if OPENAI_KEY in keys else None
     llm = brain_config(cfg, typed=typed)
     quick = quick_services(llm, env)
-    if client is None and not llm.quick_tools:
-        reminders = None
     brain = QuickChat(client, llm, quick, reminders) if quick else OpenAIChat(client, llm, reminders)
     speech = (
         DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)

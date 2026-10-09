@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from dotenv import dotenv_values
 
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .config import DEEPGRAM_KEY, OPENAI_KEY, QUICK_PROVIDERS, WEB_PORT, Config, ConfigError, QuickProvider, with_keys
@@ -78,12 +77,10 @@ def summary(results: list[Result]) -> str:
     return f"Everything works, with {look}." if warned else "Everything works."
 
 
-def present_keys(env: Path) -> set[str]:
-    return {name for name, key in dotenv_values(env).items() if key} if env.exists() else set()
-
-
 def keys(cfg: Config, env: Path) -> Result:
-    have = present_keys(env)
+    from .__main__ import env_keys
+
+    have = env_keys(env)
     try:
         _, notes = with_keys(cfg, have)
     except ConfigError as e:
@@ -288,7 +285,7 @@ def check_all(cfg: Config, root: Path) -> int:
     from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
 
     env = root / ".env"
-    have = present_keys(env)
+    have, asked = cli.env_keys(env), cfg
     try:
         cfg, _ = with_keys(cfg, have)
         have_keys = True
@@ -402,7 +399,7 @@ def check_all(cfg: Config, root: Path) -> int:
         )
 
     checks: list[tuple[str, Check]] = [
-        ("API keys", lambda: keys(cfg, env)),
+        ("API keys", lambda: keys(asked, env)),
         ("Input device", lambda: audio_device("input")),
         ("Output device", lambda: audio_device("output")),
         ("Local models", models),

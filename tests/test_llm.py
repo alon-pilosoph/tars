@@ -1,5 +1,6 @@
 """The brain: skipping overheard chatter, memory, the send tool, failures, and Qwen handing turns to OpenAI."""
 
+import dataclasses
 import json
 import threading
 import time
@@ -499,6 +500,26 @@ def test_without_openai_qwen_answers_alone_and_a_failure_is_an_error(monkeypatch
     down[0] = True
     with pytest.raises(OpenAIError):
         "".join(brain.stream_reply("again"))
+    down[0] = False
+    assert "".join(brain.stream_reply("and now?")) == "From Groq."  # no cooldown with nothing else to answer
+
+
+def test_without_openai_qwen_is_told_it_cant_send_links_or_set_what_it_has_no_tool_for(tmp_path):
+    groq = fake_cerebras(lambda m: "Done.")
+    cfg = LLMConfig(web_search=False, think_effort="", quick_tools=True)
+    brain = QuickChat(None, cfg, [QuickService("Groq", groq, "qwen")], reminder_tools(tmp_path))
+    "".join(brain.stream_reply("hi"))
+    system = groq.requests[0]["messages"][0]["content"]
+    assert LOOK_UP not in system and llm.QUICK_SEND_RULES.format(links=llm.NO_LINKS) in system
+    alone = QuickChat(
+        None,
+        dataclasses.replace(cfg, quick_tools=False, send=False),
+        [QuickService("Groq", groq, "q")],
+        reminder_tools(tmp_path),
+    )
+    "".join(alone.stream_reply("hi"))
+    system = groq.requests[-1]["messages"][0]["content"]
+    assert LOOK_UP not in system and llm.CANT_REMIND in system and "<ack>" in system
 
 
 def test_a_service_that_ends_without_a_word_doesnt_win_over_one_that_answers():
@@ -780,7 +801,8 @@ def test_with_its_own_tools_qwen_is_told_it_can_and_hands_over_only_the_web(tmp_
     brain, _, cerebras, _ = quick_with_tools(tmp_path, [])
     "".join(brain.stream_reply("hi"))
     system = cerebras.requests[0]["messages"][0]["content"]
-    assert llm.CAN_REMIND in system and llm.CAN_SEND_NO_LINKS in system and llm.QUICK_SEND_RULES in system
+    assert llm.CAN_REMIND in system and llm.CAN_SEND_NO_LINKS in system
+    assert llm.QUICK_SEND_RULES.format(links=llm.LINK_HAND_OFF) in system
     assert llm.REMIND_RULES in system and llm.NEEDS_THE_WEB in system
     assert llm.NEEDS_REMINDING not in system and llm.NEEDS_SENDING not in system and "to-do list" not in system
 
