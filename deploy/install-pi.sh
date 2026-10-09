@@ -29,13 +29,11 @@ UV="$HOME/.local/bin/uv"
 echo "== Python packages (uv installs its own Python)"
 "$UV" sync --frozen --all-extras  # echo cancellation and Claude are extras
 
-echo "== API keys (the ones config.toml's choices need)"
-KEYS=$("$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config, \
-required_keys; print(' '.join(required_keys(load_config(Path('config.toml')))))")
+echo "== API keys (TARS uses the services there are keys for, and says what it does without the others)"
 [ -e .env ] || cp .env.example .env
-unset_keys=$(for key in $KEYS; do grep -q "^$key=." .env || echo "$key"; done)
-if [ -n "$unset_keys" ]; then
-  echo "!! Put these in $REPO/.env, then run this again:" $unset_keys
+if ! "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.__main__ import keyed; \
+from voice_assistant.config import load_config; keyed(load_config(Path('config.toml')), Path('.'))"; then
+  echo "!! Put the keys in $REPO/.env (see .env.example), then run this again"
   exit 1
 fi
 

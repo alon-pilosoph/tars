@@ -171,10 +171,12 @@ SEND_RULES = (
 QUICK_SEND_RULES = (
     "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
     "send tool: a note, a list, or a text file. Use it when asked to send, save or share something, or when the "
-    "answer is a recipe, a list or anything too long to hear. Never put a link or a web address in it: for a link, "
-    "reply <look-up>. After sending, say in one short line that you sent it and that it's on the TARS page. In "
-    "anything you send, write like a person: no middots (·) or em dashes."
+    "answer is a recipe, a list or anything too long to hear. Never put a link or a web address in it{links}. After "
+    "sending, say in one short line that you sent it and that it's on the TARS page. In anything you send, write like "
+    "a person: no middots (·) or em dashes."
 )
+# How the quick model is told it can't send a link: hand the turn over, or say so when nothing can.
+LINK_HAND_OFF, NO_LINKS = ": for a link, reply <look-up>", ": you can't send links"
 
 # Strict mode needs every field listed as required; the ones a kind doesn't use are nullable instead.
 SEND_TOOL = {
@@ -579,14 +581,15 @@ class OpenAIChat:
             self._history.append({"role": "assistant", "content": answer.strip()})
             self._history = self._history[-MAX_TURNS * 2 :]
 
-    def _run_tool(self, call, links: bool = True) -> str:
-        """`links`: whether this model can send links, which need web search."""
+    def _run_tool(self, call, no_links: str = "") -> str:
+        """`no_links`: what this model should do instead of sending a link, which needs web search; empty if it
+        can."""
         try:
             args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
             return "error: the arguments weren't valid JSON"
-        if call.name == "send" and not links and isinstance(args, dict) and _has_link(args):
-            return f"error: a link needs web search, which you can't do: reply {LOOK_UP} instead"
+        if call.name == "send" and no_links and isinstance(args, dict) and _has_link(args):
+            return f"error: a link needs web search, which you can't do: {no_links}"
         if call.name == "send":
             item, result = check_send(args)
             if item:
@@ -668,15 +671,19 @@ class QuickChat(OpenAIChat):
         self._quick_tools = [_chat_tool(t) for t in tools]
         can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
         look_up = [NEEDS_THE_WEB] * cfg.web_search + [NEEDS_SENDING] * (cfg.send and not own_send)
-        look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind)
+        look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind and client is not None)
         examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:
             ponder = ["plan three days in Rome for us", "should we lease the car or buy it?"]
             hand_offs.append((PONDER, PONDER_INTRO, [NEEDS_THINKING], ponder))
         self._markers = tuple(marker for marker, *_ in hand_offs)
-        rules = [SKIP_RULES, *self._reminder_rules(tools=own_remind)] + [QUICK_SEND_RULES] * own_send
-        rules.append(abilities(can, hand_offs, self._cant()))
+        self._no_links = f"reply {LOOK_UP} instead" if LOOK_UP in self._markers else "say you can't send links"
+        links = LINK_HAND_OFF if LOOK_UP in self._markers else NO_LINKS
+        rules = [SKIP_RULES, *self._reminder_rules(tools=own_remind)]
+        rules += [QUICK_SEND_RULES.format(links=links)] * own_send
+        cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and client is None)
+        rules.append(abilities(can, hand_offs, cant))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules])
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
         self._quick_extra = {"max_completion_tokens": QUICK_MAX_TOKENS} | (
@@ -686,6 +693,8 @@ class QuickChat(OpenAIChat):
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
         answer, handed_off, cut_off = "", None, False
         ready = [service for service in self._quick if time.monotonic() >= service.back_at]
+        if not ready and self._client is None:
+            ready = list(self._quick)
         while ready:
             service, opened, failed = self._first_to_answer(ready, context, writing)
             for gone, e in failed:
@@ -705,7 +714,7 @@ class QuickChat(OpenAIChat):
                 handed_off = reply.found
                 writing.answered_by = {LOOK_UP: LOOKED_UP, PONDER: PONDERED}.get(handed_off, QUICK)
             except _CutOff:
-                print(f"({service.name}'s reply ran into its {QUICK_MAX_TOKENS} tokens; OpenAI carries on)")
+                print(f"({service.name}'s reply ran into its {QUICK_MAX_TOKENS} tokens)")
                 cut_off = True
             except OpenAIError as e:
                 _check(writing)  # an interrupted reply stays interrupted: closing its stream makes it fail
@@ -720,7 +729,7 @@ class QuickChat(OpenAIChat):
             finally:
                 quick.close()
             if not handed_off and not answer.strip():
-                print(f"({service.name} said nothing; OpenAI answers instead)")
+                print(f"({service.name} said nothing)")
                 writing.quick_service = None
             break
         if not handed_off and answer.strip() and not cut_off:
@@ -874,7 +883,7 @@ class QuickChat(OpenAIChat):
             with self._lock:
                 _check(writing)
                 for c in calls:
-                    output = self._run_tool(types.SimpleNamespace(**c), links=False)
+                    output = self._run_tool(types.SimpleNamespace(**c), self._no_links)
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": output})
                     if output.startswith("error"):
                         continue
@@ -950,7 +959,7 @@ class ResponsesQuickChat(QuickChat):
             with self._lock:
                 _check(writing)
                 for call in calls:
-                    output = self._run_tool(call, links=False)
+                    output = self._run_tool(call, self._no_links)
                     done = [
                         {
                             "type": "function_call",
@@ -1037,7 +1046,7 @@ class ClaudeQuickChat(QuickChat):
                 _check(writing)
                 for use in uses:
                     arguments = json.dumps(use.input)
-                    output = self._run_tool(types.SimpleNamespace(name=use.name, arguments=arguments), links=False)
+                    output = self._run_tool(types.SimpleNamespace(name=use.name, arguments=arguments), self._no_links)
                     result = {"type": "tool_result", "tool_use_id": use.id, "content": output}
                     results.append(result | ({"is_error": True} if output.startswith("error") else {}))
                     if output.startswith("error"):

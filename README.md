@@ -59,7 +59,7 @@ Needs [uv](https://docs.astral.sh/uv/). On Linux (a Pi included), first `sudo ap
 ```bash
 git clone https://github.com/alon-pilosoph/tars.git && cd tars
 uv sync --all-extras                   # echo cancellation and Claude are extras
-cp .env.example .env                   # then add your OpenAI, Deepgram and Cerebras API keys
+cp .env.example .env                   # then add your API keys: OpenAI, Deepgram, Groq, Cerebras, or some of them
 uv run voice-assistant --check         # keys, devices, models, services, the voice and the mic: what's wrong, and what to do
 uv run voice-assistant --mic-test      # loudness, speech and wake-word meters; no API key needed
 uv run voice-assistant                 # say "hey TARS", then ask something
@@ -78,8 +78,10 @@ home, use [Tailscale](docs/deployment.md#things-to-know).
 
 Everything is in [`config.toml`](config.toml): audio devices (matched by name, so one file works on the Mac and the
 Pi), the wake models and their sensitivity, turn-taking, and the model and voice for each stage. Keys are read from
-`.env` only. The OpenAI key is always needed; Deepgram's only while `[stt]` or `[tts] provider` uses it, and
-Cerebras's only while `[llm] cerebras_model` is set.
+`.env` only, and each is optional, as long as something can hear, think and speak: without Groq's or Cerebras's, Qwen
+runs on the other (or OpenAI answers everything); without Deepgram's, OpenAI hears and speaks; without OpenAI's,
+Deepgram does, and Qwen answers everything itself, with no web search or thinking model. TARS says at startup what it
+does without the missing ones.
 
 The default persona is TARS from *Interstellar*: deadpan, with a humor setting, and a filter that makes the voice
 sound like a speaker in a metal box. For a plain assistant, set `[tts] effect = ""` and edit the system prompt.
