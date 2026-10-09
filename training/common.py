@@ -126,10 +126,17 @@ def cap_onnxruntime_threads(threads: int = 4) -> None:
     onnxruntime.InferenceSession = capped
 
 
-def test_sets(layout: Layout, user: Path | None, all_user: bool = False) -> dict:
+def test_sets(layout: Layout, user: Path | None, all_user: bool = False, phrase: str = "hey_tars") -> dict:
     """{name: (files, should the check accept them?)}: the owner's test half (or every take, for a setup that never
-    trained on them) and the held-out OpenAI voices. The order fixes which noise each clip gets."""
+    trained on them) and the held-out OpenAI voices. The order fixes which noise each clip gets. For "TARS stop",
+    the held-out voices only, with "hey TARS" among what mustn't count."""
     held = layout.heldout
+    if phrase == "tars_stop":
+        return {
+            "other voices TARS stop": (sorted((held / "tars_stop").glob("*.wav")), True),
+            "other lookalikes": (sorted((held / "tars_stop_near_miss").glob("*.wav")), False),
+            "other voices hey TARS": (sorted((held / "hey_tars").glob("*.wav")), False),
+        }
     other = {
         "other voices hey TARS": (sorted((held / "hey_tars").glob("*.wav")), True),
         "other lookalikes": (sorted((held / "hey_tars_near_miss").glob("*.wav")), False),

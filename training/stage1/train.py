@@ -3,6 +3,7 @@
     DATA/mww/.venv/bin/python -m training.stage1.train generic       # never hears the owner: models/generic
     DATA/mww/.venv/bin/python -m training.stage1.train personal      # adds the owner's training half: models/personal
     DATA/mww/.venv/bin/python -m training.stage1.train household --run RUN   # adds a household's wakes
+    DATA/mww/.venv/bin/python -m training.stage1.train generic --phrase tars_stop    # "TARS stop", the interrupt
 
 The recipe: 20k steps, learning rate 0.001, negative class weight 20, SpecAugment (2 time masks of up to 5 frames,
 2 frequency masks of up to 3 bins), batch 128, 1.5 s clips. The checkpoint kept is the one with the best average
@@ -13,8 +14,9 @@ filters, kernels [5], [7,11], [9,15], [23], stride 3). All setups use the unclea
   household: generic + a household's real wakes and missed "hey TARS" (weight 1.5) and what wasn't for TARS
              (weight 2), as training.household sets them out; the same weights as the owner's in personal
 20 to 45 minutes on the development Mac at 4 threads. Needs features.py synthetic (and user, for personal).
-Output: DATA/models/<setup>/hey_tars.tflite (household: DATA/household/<run>/pair/), the full-precision streaming
-model (float32 in and out, 69 KB).
+Output: DATA/models/<setup>/<phrase>.tflite (household: DATA/household/<run>/pair/), the full-precision streaming
+model (float32 in and out, 69 KB). "TARS stop" has no real lookalikes (they're cut for "hey TARS" only); its own
+near-misses include "stop" on its own and in sentences, since its first try turned into a detector for "stop".
 """
 
 import os
@@ -22,7 +24,7 @@ import shutil
 import subprocess
 import sys
 
-from training.common import Layout, cap_threads, log, parser
+from training.common import PHRASES, Layout, cap_threads, log, parser
 
 POSITIVE_WEIGHTS = {"piper_libritts": 1.0, "piper_voices": 1.5, "kokoro": 1.5, "openai": 0.75, "prosody": 1.5}
 NEAR_MISS_WEIGHTS = {"piper_libritts": 3.0, "piper_voices": 3.0, "kokoro": 3.0, "openai": 1.0}
@@ -48,16 +50,16 @@ def feature_set(path, sampling, truth, truncation="truncate_start"):
     }
 
 
-def features(layout: Layout, setup: str, run: str | None = None) -> list[dict]:
-    root, neg = layout.features / "hey_tars", layout.mww / "negative_datasets"
+def features(layout: Layout, setup: str, run: str | None = None, phrase: str = "hey_tars") -> list[dict]:
+    root, neg = layout.features / phrase, layout.mww / "negative_datasets"
     fs = [feature_set(root / "positive" / n, w, True) for n, w in POSITIVE_WEIGHTS.items()]
     fs += [feature_set(root / "near_miss" / n, w, False) for n, w in NEAR_MISS_WEIGHTS.items()]
-    if setup in ("generic", "household"):
+    if setup in ("generic", "household") and phrase == "hey_tars":
         fs.append(feature_set(root / "near_miss" / "real", 2.0, False))
     fs += [feature_set(neg / n, w, False, "random") for n, w in NEGATIVES.items()]
     fs.append(feature_set(neg / VALIDATION_NEGATIVES, 0.0, False, "split"))  # validation and testing only
     if setup == "personal":
-        user = layout.features / "user" / "hey_tars"
+        user = layout.features / "user" / phrase
         fs += [feature_set(user / "positive", 1.5, True), feature_set(user / "negative", 2.0, False, "random")]
     if setup == "household":
         house = layout.features / "household" / run
@@ -74,6 +76,7 @@ def main():
     p = parser(__doc__)
     p.add_argument("setup", choices=["generic", "personal", "household"])
     p.add_argument("--run", help="household: the training run's name")
+    p.add_argument("--phrase", default="hey_tars", choices=PHRASES)
     p.add_argument(
         "--resume",
         action="store_true",
@@ -82,18 +85,20 @@ def main():
     args = p.parse_args()
     if (args.setup == "household") != bool(args.run):
         p.error("--run goes with the household setup, and only with it")
+    if args.setup == "household" and args.phrase != "hey_tars":
+        p.error("a household's wakes are for hey_tars")
     import yaml
 
     cap_threads()
     layout = Layout(args.data)
-    name = f"hey_tars_household_{args.run}" if args.run else f"hey_tars_{args.setup}"
+    name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{args.setup}"
     train_dir = layout.trained_models / name
     if not args.resume:
         shutil.rmtree(train_dir, ignore_errors=True)  # a finished run's checkpoint would be "restored" as done
     config = {
         "window_step_ms": 10,
         "train_dir": str(train_dir),
-        "features": features(layout, args.setup, args.run),
+        "features": features(layout, args.setup, args.run, args.phrase),
         "training_steps": [20000],
         "positive_class_weight": [1],
         "negative_class_weight": [20],
@@ -154,7 +159,8 @@ def main():
         check=True,
         cwd=layout.mww,
     )
-    out = (layout.household / args.run / "pair" if args.run else layout.models / args.setup) / "hey_tars.tflite"
+    folder = layout.household / args.run / "pair" if args.run else layout.models / args.setup
+    out = folder / f"{args.phrase}.tflite"
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(train_dir / "tflite_stream_state_internal/stream_state_internal.tflite", out)
     log(f"DONE: {out}" + ("" if args.run else f" (copy it to the repo's models/{args.setup}/)"))

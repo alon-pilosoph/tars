@@ -4,6 +4,8 @@ of test TV and on audiobooks (LibriSpeech test-clean).
 
     DATA/eval/.venv/bin/python -m training.eval.pipeline models/generic/hey_tars.tflite \
         --checks models/generic/hey_tars_check.json plain --window 3.0 [--user voice_data/<name>/laptop --all-user]
+    DATA/eval/.venv/bin/python -m training.eval.pipeline DATA/models/generic/tars_stop.tflite --phrase tars_stop \
+        --threshold 0.4 --window 3.0
 
 A check is a learned layer (.json, loaded by the assistant's own PhraseVerifier) or "plain" (Vosk with the phrase
 grammar and no learned layer). Every test clip gets 2 s of faint noise before and after it, as in a live stream.
@@ -19,15 +21,15 @@ from pathlib import Path
 import numpy as np
 
 from training.audio import CONDITIONS, Interference, conditioned, long_speech, quiet_room, read_wav
-from training.common import REPO, SR, Layout, add_user_arg, log, parser, test_sets
+from training.common import PHRASES, REPO, SR, Layout, add_user_arg, log, parser, test_sets
 
 MUTE_BLOCKS = 25  # 2 s after a wake before another counts, so one phrase is one wake
 
 
-def make_check(spec: str):
+def make_check(spec: str, phrase: str = "hey tars"):
     from voice_assistant.verify import PhraseVerifier
 
-    verifier = PhraseVerifier("hey tars", REPO / "models", None if spec == "plain" else Path(spec))
+    verifier = PhraseVerifier(phrase, REPO / "models", None if spec == "plain" else Path(spec))
     return lambda pcm: verifier.check(pcm)[0]
 
 
@@ -66,18 +68,21 @@ def main():
     p.add_argument("--checks", nargs="+", default=["plain"])
     p.add_argument("--hours", type=float, default=1.0, help="hours of audiobooks for false answers per hour")
     p.add_argument("--window", type=float, default=3.0, help="seconds of audio the check hears")
+    p.add_argument("--phrase", default="hey_tars", choices=PHRASES)
     p.add_argument(
         "--all-user", action="store_true", help="test on ALL the owner's clips (for setups that never saw them)"
     )
     add_user_arg(p)
     args = p.parse_args()
+    if args.phrase != "hey_tars" and (args.user or args.all_user):
+        p.error("the owner's takes are tested for hey_tars only")
     sys.path.insert(0, str(REPO / "src"))
     from voice_assistant.wake import MicroWakeWordTrigger
 
     layout = Layout(args.data)
-    sets = test_sets(layout, args.user, args.all_user)
+    sets = test_sets(layout, args.user, args.all_user, args.phrase)
     wake = MicroWakeWordTrigger(str(args.wake_model), args.threshold)
-    checks = {c: make_check(c) for c in args.checks}
+    checks = {c: make_check(c, args.phrase.replace("_", " ")) for c in args.checks}
     rng = np.random.default_rng(0)
     rows = []
     log(f"{sum(len(files) for files, _ in sets.values())} clips in {len(CONDITIONS)} conditions")

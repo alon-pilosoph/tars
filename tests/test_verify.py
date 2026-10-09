@@ -38,8 +38,8 @@ def hearing(monkeypatch, tmp_path):
     monkeypatch.setattr(vosk, "Model", lambda path: None)
     monkeypatch.setattr(verify, "ensure_model", lambda folder: folder)
 
-    def verifier(text: str) -> PhraseVerifier:
-        v = PhraseVerifier("hey tars", tmp_path)
+    def verifier(text: str, phrase: str = "hey tars") -> PhraseVerifier:
+        v = PhraseVerifier(phrase, tmp_path)
         v.heard = lambda pcm: text
         return v
 
@@ -73,6 +73,23 @@ def listening(trigger, verifier, journal=None, wake_model: str = "") -> Verified
 )
 def test_only_the_wake_phrase_passes_whole_words_not_substrings(hearing, text, ok):
     assert hearing(text).check(SILENCE)[0] is ok
+
+
+@pytest.mark.parametrize(
+    "text, ok",
+    [
+        ("tars stop", True),
+        ("tar stop", True),
+        ("darts stop", True),
+        ("stop", False),
+        ("bus stop", False),
+        ("please stop", False),
+        ("stars stop", False),
+        ("hey tars", False),
+    ],
+)
+def test_tars_stop_passes_but_stop_alone_or_after_another_word_does_not(hearing, text, ok):
+    assert hearing(text, "tars stop").check(SILENCE)[0] is ok
 
 
 @pytest.mark.parametrize(

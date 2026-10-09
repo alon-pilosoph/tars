@@ -154,7 +154,7 @@ Benchmarks: `tools/wakeword_bench.py` (stage 1 alone), `tools/verifier_bench.py`
 | Moonshine-tiny forced-choice features in the layer | better in noise (babble 5 dB 33% → 60%), but +550 MB of PyTorch, ~55 ms per check | not wired in |
 | Waiting 240 ms before the check | slightly worse | no |
 | A 2 s check window | cut off the "hey" for the generic model | 3 s |
-| "TARS stop" as a second wake phrase | trained alongside, never good enough | parked |
+| "TARS stop" as a second wake phrase | trained alongside, never good enough | parked; second try below |
 
 Pitch and tempo variants were a mixed case: Vosk heard 72% of them as something else ("hey cars", "haters"), so
 they stay in stage 1, which needs variety, and are left out of stage 2, which needs clean labels.
@@ -165,3 +165,25 @@ Offline tuning has hit diminishing returns: every recent experiment moved one or
 real use: every wake and near-miss is saved with its audio and labeled (mostly automatically), and both stages are
 retrained together on the household's own clips, especially the near-misses that were a missed "hey TARS": an
 occasional job on a bigger machine, tested end to end before it's installed. See [self-learning](self-learning.md).
+
+## "TARS stop", second try
+
+The interrupt, for saying while TARS talks. The first try became a detector for "stop"; the second (2026-10-09,
+`stage1/train.py generic --phrase tars_stop`, about 3 hours on the development Mac with every step) adds "stop" on its
+own and in sentences to what mustn't wake it, and a "tars stop" grammar to the double-check that turns those down.
+Both stages, the way the assistant runs them, on the held-out OpenAI voices (`eval/pipeline.py --phrase tars_stop`):
+
+| Threshold, check window | Quiet | TV 15 dB | Babble 15 dB | Far room + TV | TV 5 dB | Babble 5 dB | False answers per hour (TV, audiobooks) |
+|---|---|---|---|---|---|---|---|
+| **0.4, 3 s** | **83%** | **86%** | **81%** | 60% | 53% | 37% | **0, 0** |
+| 0.4, 2 s | 80% | 82% | 79% | 60% | 51% | 39% | 0, 0 |
+| 0.5, 2 s | 76% | 77% | 71% | 51% | 48% | 30% | 0, 0 |
+| 0.3, 2 s | 0%: stage 1 fires on the noise before the phrase | | | | | | 0, 0 |
+
+It never answered "hey TARS", and of the lookalikes, only "tar stop", "tarts stop" and "guitars stop" (which sound the
+same); "stop", "bus stop" and "stars stop" are turned down. Stage 1 fires after the phrase ends, so the
+check needs 3 s, as for "hey TARS" (waiting 0.4 s more before the check halved what it caught). Weighting the
+lookalikes half as much in stage 1 made it worse in noise (TV 5 dB 18%). Safe, then, but it misses
+more than "hey TARS", most in loud noise. Next: a learned layer in the check, as "hey TARS" has; the owner's own takes;
+and a test while TARS is talking, with echo cancellation, which is where it will be used.
+
