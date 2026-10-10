@@ -59,9 +59,9 @@ wakes or wrong names are the real problem, they come first.
   [the greeting](latency.md#the-greeting-and-the-open-mic)). Both are off by default until they've been measured in
   the room with `tools/echo_bench.py`: `echo_cancel = false`, and `greet = "pause"` says "Yes, <name>?" only after a
   pause.
-- **A "TARS stop" model**, trained with "stop" on its own and in sentences as negatives. On the held-out voices it
-  catches 83% in quiet, 81-86% at 15 dB and 37-53% at 5 dB of TV or babble, with no false answers on an hour of TV
-  or audiobooks, and it didn't answer "stop" alone or "hey TARS" on the held-out voices
+- **A "TARS stop" model**, trained with "stop" on its own and in sentences as negatives. It catches 99% of the
+  held-out voices in quiet and 87% at 5 dB of TV, and 76% of the owner's held-out takes across all 8 conditions,
+  with no false answers in an hour of TV or audiobooks and no false interrupts in 23 minutes of TARS's own replies
   ([wake word](wake-word.md#tars-stop)). It isn't in use yet.
 
 **Plan:**
@@ -75,8 +75,8 @@ wakes or wrong names are the real problem, they come first.
 3. **On an interrupt:** stop the playback, the reply (`StreamedReply.stop()`) and the brain (`brain.interrupt()`),
    all of which exist; keep what was already said in the conversation, marked as cut off; then record the new
    request, with no greeting.
-4. **Then "TARS stop".** It still needs a learned layer in the check, the owner's own takes, and a test with TARS
-   talking, where it will be used. A bare stop (no new request) is then its own action: cut the reply and go back
+4. **Then "TARS stop".** It still needs a test with TARS talking and echo cancellation on, where it will be used
+   (with TARS's voice still in the signal it catches about half), and the owner's own takes. A bare stop (no new request) is then its own action: cut the reply and go back
    to waiting.
 
 **Measure before turning it on:** false interrupts per hour of TARS talking (play an hour of its own answers through
