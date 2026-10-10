@@ -1,9 +1,8 @@
 # What's next
 
-Four steps, in this order. Each one makes the next one better: real use shows whether speaker ID and the wake word
-hold up on the speakerphone (memory depends on the first); interrupting matters more once answers can run long (the
-larger model); the larger model is one more hand-off, built the way `<look-up>` already is, and memory is a tool,
-built the way the send tool is.
+Four steps, in this order, each feeding the next. Real use shows whether speaker ID and the wake word hold up on the
+speakerphone, and memory depends on speaker ID being right. Interrupting matters more now that a hand-off to a larger
+model can make answers run long. Memory is the largest step, built as a tool the way the send tool is.
 
 | | Step | Why now | Size |
 |---|---|---|---|
@@ -14,15 +13,15 @@ built the way the send tool is.
 
 Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go).
 
-Built alongside step 1: [reminders, timers and messages](reminders.md), since TARS couldn't set a timer and
-people will ask for one during the week of real use. The week should check them too: "got it" and its variants
-taken as acknowledgements, nothing said over a conversation, and one set from a phone said on time.
+[Reminders, timers and messages](reminders.md) were built alongside step 1, because people will ask for a timer
+during the week of real use and TARS couldn't set one. The week checks them too: "got it" and its variants taken as
+acknowledgements, nothing said over a conversation, and one set from a phone said on time.
 
 ## 1. A week of real use
 
-With the speakerphone on the Mac (or the Pi), run the assistant and the web UI side by side for a week, starting
-with the 20-minute [first test run](deployment.md#a-first-test-run). No new code: the point is data and a list of
-what actually goes wrong.
+**Goal:** data, and a list of what actually goes wrong. With the speakerphone on the Mac (or the Pi), run the
+assistant and the web UI side by side for a week, starting with the 20-minute
+[first test run](deployment.md#a-first-test-run). No new code.
 
 **Before starting:** set `input_device` and `output_device` in `config.toml` to the speakerphone's name
 (`uv run voice-assistant --list-devices`), and check it with `--mic-test` from across the room. Speaker ID's
@@ -30,7 +29,7 @@ voiceprint was made on the laptop mic; if TARS doesn't greet you by name, record
 (`--record-voice alon --mic powerconf`, then `--enroll alon --mic powerconf`), or name your voice in the Voices tab
 once it has 5 requests.
 
-**Keep track of:**
+**What to track:**
 
 | What | Where it shows | Good enough |
 |---|---|---|
@@ -42,22 +41,32 @@ once it has 5 requests.
 | Failed answers | Home, in red: where it failed (speech to text, the answer, the voice) and why | rare, and no one stage over and over |
 | Answers you'd rate bad | Home's good / bad buttons | a list, for steps 3 and 4 |
 
-**At the end of the week:** answer what's left in Review and name the voices. The Models page then shows how
-many real, missed and not-real wakes there are to train on. Decide whether the order below still holds: if missed
-wakes, false wakes or wrong names are the real problem, they come first.
+**At the end of the week:** answer what's left in Review and name the voices. The Models page then shows how many
+real, missed and not-real wakes there are to train on. Then check the order below still holds: if missed wakes, false
+wakes or wrong names are the real problem, they come first.
 
 ## 2. "TARS stop": interrupting a reply
 
-**Today:** TARS takes its own sound back out of what the mic hears (`echo.py`, `[audio] echo_cancel`: WebRTC's echo
-canceller, on any mic and speaker), and keeps the mic open while it says "Yes, <name>?", so what you say straight
-after "hey TARS" isn't lost (see [the greeting](latency.md#the-greeting-and-the-open-mic)). For answers, the mic is
-still muted while TARS speaks (`Microphone.paused()` around playback in `assistant.py`), so nothing can interrupt it. A "TARS stop" wake phrase was trained alongside "hey TARS" and parked: it turned into a detector
-for the word "stop" ([wake word](wake-word.md), tried and dropped).
+**Goal:** say "hey TARS" (later, "TARS stop") while TARS is answering, and it stops.
+
+**Where it stands.** For answers, the mic is muted while TARS speaks (`Microphone.paused()` around playback in
+`assistant.py`), so nothing can interrupt it. The pieces for listening while speaking are built:
+
+- **Echo cancellation.** TARS can take its own sound back out of what the mic hears (`echo.py`,
+  `[audio] echo_cancel`: WebRTC's echo canceller, on any mic and speaker), and keep the mic open while it says
+  "Yes, <name>?", so what you say straight after "hey TARS" isn't lost (`[recorder] greet = "always"`; see
+  [the greeting](latency.md#the-greeting-and-the-open-mic)). Both are off by default until they've been measured in
+  the room with `tools/echo_bench.py`: `echo_cancel = false`, and `greet = "pause"` says "Yes, <name>?" only after a
+  pause.
+- **A "TARS stop" model**, trained with "stop" on its own and in sentences as negatives. On the held-out voices it
+  catches 83% in quiet, 81-86% at 15 dB and 37-53% at 5 dB of TV or babble, with no false answers on an hour of TV
+  or audiobooks, and it didn't answer "stop" alone or "hey TARS" on the held-out voices
+  ([wake word](wake-word.md#tars-stop)). It isn't in use yet.
 
 **Plan:**
 
 1. **Listen while speaking.** Keep the mic open during answers too, and run the wake model on it. The echo
-   cancellation it needs is built (above); `tools/echo_bench.py` measures it in the room, and the speakerphone's own
+   cancellation it needs is built; `tools/echo_bench.py` measures it in the room, and the speakerphone's own
    cancellation adds to it.
 2. **Start with "hey TARS" as the interrupt.** It's the phrase that already works, and it means what people expect:
    "hey TARS" in the middle of an answer stops it and listens for a new request. The double-check still has to
@@ -65,13 +74,13 @@ for the word "stop" ([wake word](wake-word.md), tried and dropped).
 3. **On an interrupt:** stop the playback, the reply (`StreamedReply.stop()`) and the brain (`brain.interrupt()`),
    all of which exist; keep what was already said in the conversation, marked as cut off; then record the new
    request, with no greeting.
-4. **"TARS stop" later, if still wanted.** Retrain it with the stage 1 recipe that worked for "hey TARS",
-   with "stop", "top", "star stop" and TARS's own voice saying them as negatives, which is what the first try lacked.
-   A bare stop (no new request) is then its own action: cut the reply and go back to waiting.
+4. **Then "TARS stop".** It still needs a learned layer in the check, the owner's own takes, and a test with TARS
+   talking, where it will be used. A bare stop (no new request) is then its own action: cut the reply and go back
+   to waiting.
 
-**Measure before turning it on:** false interrupts per hour of TARS talking (play an hour of its own answers through the
-speakerphone, with and without the TV on), and how long from the phrase to silence. Done when false interrupts are about
-zero and it stops within half a second.
+**Measure before turning it on:** false interrupts per hour of TARS talking (play an hour of its own answers through
+the speakerphone, with and without the TV on), and how long from the phrase to silence. **Done when** false
+interrupts are about zero and it stops within half a second.
 
 **Open question:** whether the Pi can run the wake model and the voice's playback at once without glitches. It
 should (the wake model is tiny), but it's the first time both run together.
@@ -81,38 +90,39 @@ should (the wake model is tiny), but it's the first time both run together.
 **Built**, alongside Qwen's own tools: see [who does what](architecture.md#the-llms-tools). Qwen replies `<ponder>`
 for a question that needs real thinking (planning, comparing options, several steps), TARS says "Let me think about
 that for a moment.", and `[llm] think_model` (default: `model`) answers at `think_effort` (default high), with the
-same conversation, tools and web search. It gets `think_timeout_s` (45 s). The web UI marks those turns. Each model is
-now told, from one list, what it can do itself, what it hands over, and what TARS can't do at all.
+same conversation, tools and web search, within `think_timeout_s` (45 s). The web UI marks those turns. Each model is
+told, from one list, what it can do itself, what it hands over, and what TARS can't do at all.
 
-Different from the plan: the marker isn't `<think>` (Qwen 3 writes its own reasoning between those tags); the "let me
-think" line goes through the voice like any sentence, rather than being made ahead of time; and running out of time
-says the usual error line, not a line of its own.
+**Design notes.** The marker isn't `<think>`, because Qwen 3 writes its own reasoning between those tags. The "let me
+think" line goes through the voice like any sentence rather than being made ahead of time, and running out of time
+says the usual error line rather than one of its own.
 
 **Measured** ([choosing the quick model](models.md)): Qwen with its own tools at low reasoning gets reminders,
 sends and web hand-offs right, where without reasoning it often said a timer was set when it wasn't. It stays the
 quick model, against gpt-oss-120b, Haiku 5.5 and Luna; Jev, tried as a router in front, would save little.
 
-**Left to do:** measure on 50 typical questions from step 1's log how often it hands off to the thinking model (it
-should be rare, and never for the simple ones), the time to the "let me think" line (should be the usual time to
+**Left to do:** on 50 typical questions from step 1's log, measure how often it hands off to the thinking model (it
+should be rare, and never for the simple ones), the time to the "let me think" line (it should be the usual time to
 first sound), and the cost per call. If Qwen hands off too often or too rarely, a stricter line in its prompt comes
 first. Then try Jev on TARS's yes/no decisions (an overheard follow-up, an acknowledgement), where it fits better.
 
 ## 4. Long-term memory and personalization
 
-TARS remembers things that matter over time, per person: "Stacey is vegetarian", "Alon's standup is at 9:30",
-"the car is a 2019 Corolla". It can offer to remember something, anyone can say "remember this" or "forget that",
-and the web UI shows exactly what it keeps, where it can be edited or deleted. Personalization is the same page:
-each person's settings, and the persona part of the system prompt.
+**Goal:** TARS remembers things that matter over time, per person: "Stacey is vegetarian", "Alon's standup is at
+9:30", "the car is a 2019 Corolla". It can offer to remember something, anyone can say "remember this" or "forget
+that", and the web UI shows exactly what it keeps, where it can be edited or deleted. Personalization is the same
+page: each person's settings, and the persona part of the system prompt.
 
 **Design:**
 
 - **Storage:** a `memories` table in the event database (`store.py`, with the usual automatic upgrade): the text,
   whose it is (a person, by the same names speaker ID uses, or the household), the conversation turn it came from,
   and when it was made and last changed.
-- **Writing:** `remember` and `forget` tools, like the send tool, so those turns go to OpenAI's model the way
-  `<look-up>` turns do. TARS offers only for lasting facts and
-  preferences, at most once a conversation, and never for anything said to someone else. The call doesn't hold
-  up the reply: TARS speaks what the model said and saves in the background, without another round to the model.
+- **Writing:** `remember` and `forget` tools, given to Qwen with its reminder and send tools (`[llm] quick_tools`),
+  so those turns skip the hand-off; with `quick_tools` off they go to OpenAI's model the way `<look-up>` turns do.
+  TARS offers only for lasting facts and preferences, at most once a conversation, and never for anything said to
+  someone else. The call doesn't hold up the reply: TARS speaks what the model said and saves in the background,
+  without another round to the model.
 - **Reading:** everything kept for the person speaking, plus the household's, goes into the prompt as a short
   "what you know" block. No search system: a household's memories fit in the prompt for a long time (with a cap
   and a warning well before they don't).
@@ -136,7 +146,7 @@ facts come up again.
 ## Benched: learning from how conversations go
 
 An offline job that reads the logged conversations and finds where TARS did badly: answers rated bad, transcripts
-people corrected, "not meant for TARS", the same question asked again right after an answer, interruptions (after
-step 2). It groups them, and suggests prompt changes, tested by replaying past conversations through the old and the
-new prompt, the way new wake models are tested before they're installed. That's more telling than sentiment scores on
-transcripts. Benched until there are a few hundred real conversations to learn from.
+people corrected, "not meant for TARS", the same question asked again right after an answer, and interruptions
+(after step 2). It groups them and suggests prompt changes, tested by replaying past conversations through the old
+and the new prompt, the way new wake models are tested before they're installed. That's more telling than sentiment
+scores on transcripts. **Benched** until there are a few hundred real conversations to learn from.

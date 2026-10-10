@@ -3,15 +3,17 @@ hears the last few seconds. A clip counts as answered only when both say yes. Al
 of test TV and on audiobooks (LibriSpeech test-clean).
 
     DATA/eval/.venv/bin/python -m training.eval.pipeline models/generic/hey_tars.tflite \
-        --checks models/generic/hey_tars_check.json plain --window 3.0 [--user voice_data/<name>/laptop --all-user]
+        --checks models/generic/hey_tars_check.json plain --window 3.0 [--user voice_data/<name>/laptop --all-user] \
+        [--cloned DIR]
     DATA/eval/.venv/bin/python -m training.eval.pipeline DATA/models/generic/tars_stop.tflite --phrase tars_stop \
         --threshold 0.4 --window 3.0
 
 A check is a learned layer (.json, loaded by the assistant's own PhraseVerifier) or "plain" (Vosk with the phrase
 grammar and no learned layer). Every test clip gets 2 s of faint noise before and after it, as in a live stream.
 Test sets: the held-out OpenAI voices and, with --user, the owner's recordings (the test half, or all of them with
---all-user for a setup that never trained on them), in 8 conditions.
-Writes DATA/results/pipeline_<model>_t<threshold>_w<window>.json.
+--all-user for a setup that never trained on them), in 8 conditions. With --cloned DIR (positive/ and near_miss/ of
+<speaker>_<k>.wav), one wake phrase and one lookalike per speaker replace those sets, for hey_tars only.
+Writes DATA/results/pipeline_<model>[_cloned]_t<threshold>_w<window>.json.
 """
 
 import json
@@ -24,6 +26,17 @@ from training.audio import CONDITIONS, Interference, conditioned, long_speech, q
 from training.common import PHRASES, REPO, SR, Layout, add_user_arg, log, parser, test_sets
 
 MUTE_BLOCKS = 25  # 2 s after a wake before another counts, so one phrase is one wake
+
+
+def cloned_sets(folder: Path) -> dict:
+    """One wake phrase and one lookalike per speaker, rotating the take (k) over the ones present by speaker."""
+    speakers = sorted({f.name.rsplit("_", 1)[0] for f in (folder / "positive").glob("*.wav")})
+
+    def one(kind):
+        takes = [sorted((folder / kind).glob(f"{s}_*.wav")) for s in speakers]
+        return [files[i % len(files)] for i, files in enumerate(takes) if files]
+
+    return {"cloned hey TARS": (one("positive"), True), "cloned lookalikes": (one("near_miss"), False)}
 
 
 def make_check(spec: str, phrase: str = "hey tars"):
@@ -72,15 +85,21 @@ def main():
     p.add_argument(
         "--all-user", action="store_true", help="test on ALL the owner's clips (for setups that never saw them)"
     )
+    p.add_argument("--cloned", type=Path, help="test on this folder's positive/ and near_miss/ voices only")
     add_user_arg(p)
     args = p.parse_args()
     if args.phrase != "hey_tars" and (args.user or args.all_user):
         p.error("the owner's takes are tested for hey_tars only")
+    if args.cloned and (args.user or args.all_user or args.phrase != "hey_tars"):
+        p.error("--cloned tests hey_tars on its own voices: no --user, --all-user or other --phrase")
     sys.path.insert(0, str(REPO / "src"))
     from voice_assistant.wake import MicroWakeWordTrigger
 
     layout = Layout(args.data)
-    sets = test_sets(layout, args.user, args.all_user, args.phrase)
+    if args.cloned:
+        sets = cloned_sets(args.cloned)
+    else:
+        sets = test_sets(layout, args.user, args.all_user, args.phrase)
     wake = MicroWakeWordTrigger(str(args.wake_model), args.threshold)
     checks = {c: make_check(c, args.phrase.replace("_", " ")) for c in args.checks}
     rng = np.random.default_rng(0)
@@ -100,7 +119,8 @@ def main():
             **{k: round(v / hours, 1) for k, v in answered.items()},
         }
     layout.results.mkdir(parents=True, exist_ok=True)
-    out = layout.results / f"pipeline_{args.wake_model.stem}_t{args.threshold}_w{args.window}.json"
+    tag = "_cloned" if args.cloned else ""
+    out = layout.results / f"pipeline_{args.wake_model.stem}{tag}_t{args.threshold}_w{args.window}.json"
     out.write_text(json.dumps({"rows": rows, "long": long, "checks": args.checks}))
     conds = [c for c, *_ in CONDITIONS]
     for col in ["fired"] + args.checks:

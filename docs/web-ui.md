@@ -1,9 +1,11 @@
 # The web UI
 
-The household's window into TARS: what was said, what TARS sent, the wakes it wasn't sure about, and the voices it
-has heard. It runs on the same machine as the assistant (`voice-assistant --web`) and is opened from a phone or
-laptop on the home network. The design came from Claude Design (the Day journal direction, in the Linen and ink
-blue palette), and screenshot tests hold the page where it is.
+The household's window into TARS: what was said, what TARS sent, the wakes it wasn't sure about, the reminders it's
+holding, and the voices it has heard. It runs on the same machine as the assistant (`voice-assistant --web`) and is
+opened from a phone or laptop on the home network. It is a React app over a small FastAPI API, its build is
+committed so the Pi needs no Node, and it is covered by unit tests, an end-to-end check against a real backend in CI,
+and screenshot tests. The design came from Claude Design (the Day journal direction, in the Linen and ink blue
+palette).
 
 ## Pages
 
@@ -26,18 +28,34 @@ open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
 Every page in light and dark, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo data, made with
 `npm run screenshots`).
 
-## Nothing moves by itself
+## Design decisions
 
-The page only changes when someone asks it to. There's no polling and no refresh on focus: the **Refresh** button
-(and reloading the page) is the only thing that brings in new conversations and wakes, and the only thing that moves
-finished items: seen things leave Home's strip and Sent's "New", answered wakes move from "To check" to
-"Reviewed". Your own taps update what they touched and nothing else, so a card never jumps out from under your
-finger.
+### Nothing moves by itself
+
+**Constraint:** a card must never jump out from under your finger. So the page only changes when someone asks it
+to. There's no polling and no refresh on focus: the **Refresh** button (and reloading the page) is the only thing
+that brings in new conversations and wakes, and the only thing that moves finished items: seen things leave Home's
+strip and Sent's "New", answered wakes move from "To check" to "Reviewed". Your own taps update what they touched and
+nothing else.
 
 In code this is one snapshot of ids taken at each Refresh (`store/load.ts`): reloads after an action only update
 what the snapshot showed. Changes go to the server one at a time, in the order they were made, and a reload waits
 for them, so two quick taps can't arrive out of order and a Refresh never reads what was there before your last
 tap.
+
+### No accounts, guarded by host and origin
+
+TARS serves one household on its own network, so the web UI has no accounts. Instead, the server only answers to
+local addresses and names, Tailscale names and `[web] allowed_hosts` (421 otherwise), and only accepts changes from
+its own page (403 otherwise). That closes the two ways a page elsewhere could reach it through someone's browser
+([how](architecture.md#the-web-ui)).
+**Trade-off:** anyone on the home network can use it, and Sent is one list for the whole house.
+
+### A committed build
+
+`npm run build` writes the page into `src/voice_assistant/webui_static/`, which is committed, so the Pi runs the web
+UI with Python alone. CI rebuilds it and fails if the result differs from what's committed, so the build can't drift
+from the source.
 
 ## The API
 
@@ -97,9 +115,9 @@ use.
 
 **Layout:** `src/store/` holds the state (`core.ts`), what views derive from it (`selectors.ts`), loading and the
 Refresh snapshot (`load.ts`), tabs and filters (`nav.ts`), menus, dialogs and scrolling (`ui.ts`), and the actions
-by area (`items.ts`, `conversations.ts`, `voices.ts`, `models.ts`, with the shared shapes in `actions.ts`);
-`index.ts` exports them all. `src/components/` has one file per page or part. `src/demo.ts`, `src/demoParams.ts`
-and `src/linkStates.ts` are only loaded with `?demo`.
+by area (`items.ts`, `conversations.ts`, `voices.ts`, `models.ts`, `reminders.ts`, with the shared shapes in
+`actions.ts`); `index.ts` exports them all. `src/components/` has one file per page or part. `src/demo.ts`,
+`src/demoParams.ts` and `src/linkStates.ts` are only loaded with `?demo`.
 
 ## The checks
 
@@ -117,6 +135,15 @@ Both run headless in the installed Chrome with Playwright.
   disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.
 
 After a change that's meant to look different, run `npm run visual:update`, look at the new images in the diff,
-and commit them with the change. The baselines are per platform because fonts render differently on macOS and
-Linux; the committed ones are macOS (`darwin`). `npm test` runs the unit tests (Vitest) and `npm run lint` the linter
-([oxlint](https://oxc.rs), with React's hooks rules); CI runs both.
+and commit them with the change. `npm test` runs the unit tests (Vitest), `npm run lint` the linter
+([oxlint](https://oxc.rs), with React's hooks rules) and `npm run format` Prettier.
+
+**In CI**, on every push: lint, the Prettier check, the unit tests, the committed-build check and the end-to-end
+check.
+
+## Limitations
+
+- **The screenshot tests run locally only.** The baselines are per platform because fonts render differently on
+  macOS and Linux, and the committed ones are macOS (`darwin`).
+- **No accounts:** see [above](#no-accounts-guarded-by-host-and-origin).
+- **No live updates**, by design: new conversations and wakes appear on Refresh.
