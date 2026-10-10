@@ -527,14 +527,14 @@ function build(): DemoData {
         ]),
         conv(4, ago(105), ALON, wake(4, ALON, "hey tars", 0.95), [
           ["P", "Set a timer for twelve minutes."],
-          ["T", "Twelve minutes, starting now.", { took: 2.4, by: "look_up" }],
+          ["T", "Twelve minutes, starting now.", { took: 2.4, by: "quick" }],
           ["P", "Stacey, can you check the oven?", { aside: true }],
           ["P", "It's fine, leave it.", { aside: true, speaker: STACEY }],
         ]),
         conv(5, ago(130), ALON, wake(5, ALON, "hey cars", 0.18, "ask"), [
           ["T", "Did you call me?"],
           ["P", "Yes, set an alarm for seven."],
-          ["T", "Alarm set for 7:00 tomorrow morning.", { took: 2.5, by: "look_up" }],
+          ["T", "Alarm set for 7:00 tomorrow morning.", { took: 2.5, by: "quick" }],
         ]),
         conv(6, ago(160), VOICE_3, wake(6, VOICE_3, "hey darts", 0.74), [
           ["P", "What time is it in Tokyo?"],

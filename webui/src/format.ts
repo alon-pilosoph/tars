@@ -62,7 +62,7 @@ export function fmtSize(bytes: number | null | undefined) {
 export const itemName = (i: Item) => i.title || i.name || "";
 
 const ANSWERED_BY: Record<AnsweredBy, string> = {
-  quick: "Answered on the Pi by the quick model.",
+  quick: "Answered by the quick model (Qwen).",
   look_up: "Handed over to OpenAI, which looked it up.",
   ponder: "Handed over to the thinking model, to work it through.",
   fallback: "Answered by OpenAI, as a backup.",
