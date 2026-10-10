@@ -789,7 +789,7 @@
       }
       .run {
         display: grid;
-        grid-template-columns: 74px 30px minmax(0, 1fr);
+        grid-template-columns: 92px 30px minmax(0, 1fr);
         gap: 0 12px;
         cursor: pointer;
         border-radius: 12px;
@@ -799,6 +799,7 @@
         color: var(--muted);
         padding: 14px 0 0 10px;
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
       .run .lanes {
         position: relative;
@@ -1539,7 +1540,7 @@
           <div class="kicker">One request, second by second</div>
           <h2>0 is the moment you stop talking</h2>
           <p class="lead">
-            Everything left of 0 happens while you are still speaking. That is why the answer comes so fast: by the time
+            Everything before 0 happens while you are still speaking. That is why the answer comes so fast: by the time
             you finish, the connections are open, the speaker is known and the reply is already being drafted.
           </p>
         </div>
@@ -1567,7 +1568,7 @@
             </button>
             <span class="clock" id="clock" aria-live="off"></span>
             <div class="dots" id="dots"></div>
-            <button type="button" class="reset" data-act="reset">Show the whole run</button>
+            <button type="button" class="reset" data-act="reset" hidden>Reset</button>
           </div>
           <div class="now" id="now" aria-live="polite">
             <span class="n" id="now-n"></span
@@ -1589,7 +1590,7 @@
           </p>
           <p class="note d measured">
             Every real answer is measured the same way. Each one is kept with how long each stage took and which model
-            wrote it, so the 1.3 to 1.4 s range is checked against a real week of use, not only a benchmark.
+            wrote it, so the 1.3 to 1.4 s range can be checked against real use, not only a benchmark.
           </p>
         </div>
 
@@ -1677,8 +1678,8 @@
           <ol class="runs" id="runs"></ol>
           <p class="note">A typical run, built from measured medians; measured 1.3 to 1.4 s to the first sound.</p>
           <p class="note d measured">
-            Every real answer is kept with how long each stage took and which model wrote it, so that range is checked
-            against a real week of use, not only a benchmark.
+            Every real answer is kept with how long each stage took and which model wrote it, so that range can be
+            checked against real use, not only a benchmark.
           </p>
         </div>
       </section>
@@ -2038,9 +2039,7 @@
           <div>
             <h3>Every answer is measured</h3>
             <p>
-              Each answer is kept with how long each stage took, which model wrote it (Qwen on Groq or Cerebras, OpenAI
-              handed over, the thinking model, or OpenAI as backup) and, if it failed, where and why: speech to text,
-              the answer, or the voice.
+              Each answer is kept with how long each stage took, which model wrote it and, if it failed, where and why.
             </p>
           </div>
           <div>
@@ -2269,7 +2268,8 @@
           controls = $("#controls");
         const playBtn = $("[data-act=play]"),
           clock = $("#clock"),
-          now = $("#now");
+          now = $("#now"),
+          resetBtn = $("[data-act=reset]");
         const cards = [...document.querySelectorAll("#steps .step")];
         const stepTime = n => cards[n - 1].querySelector(".t").textContent;
         const stepWhere = n => cards[n - 1].querySelector(".w").textContent;
@@ -2423,6 +2423,7 @@
           cards.forEach((c, i) => c.classList.toggle("on", i + 1 === step));
           runs.forEach((r, i) => r.classList.toggle("on", i + 1 === step));
           now.classList.toggle("has-step", step > 0);
+          resetBtn.hidden = t == null;
           $("#now-n").textContent = step ? `Step ${step}, ${stepTime(step)}` : "";
           $("#now-line").textContent = step
             ? stepLine(step)
@@ -2516,7 +2517,25 @@
           } else if (e.key === "ArrowRight" && onScreen()) next();
           else if (e.key === "ArrowLeft" && onScreen()) prev();
         });
+        function fitNow() {
+          const n = $("#now-n"),
+            line = $("#now-line"),
+            keep = [n.textContent, line.textContent, now.className];
+          now.style.minHeight = "";
+          now.classList.add("has-step");
+          let tallest = 0;
+          for (let i = 1; i <= cards.length; i++) {
+            n.textContent = `Step ${i}, ${stepTime(i)}`;
+            line.textContent = stepLine(i);
+            tallest = Math.max(tallest, now.offsetHeight);
+          }
+          [n.textContent, line.textContent, now.className] = keep;
+          now.style.minHeight = Math.max(tallest, now.offsetHeight) + "px";
+        }
         render();
+        fitNow();
+        document.fonts.ready.then(fitNow);
+        addEventListener("resize", fitNow);
       }
     </script>
   </body>
