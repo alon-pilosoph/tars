@@ -1,7 +1,10 @@
 # Running TARS at home
 
-TARS is local-first: the Raspberry Pi 5 listens, records, serves the web UI and learns voiceprints. Nothing leaves
-the house until a wake is confirmed, and then only the turn itself:
+How to run TARS on a Mac while working on it, and on a Raspberry Pi 5 as the household's assistant: install,
+operation, storage and backup, and a first test run.
+
+TARS is local-first: the Pi listens, records, serves the web UI and learns voiceprints. Nothing leaves the house
+until a wake is confirmed, and then only the turn itself:
 
 - **Deepgram:** your request's audio, for speech to text, and TARS's reply text, for its voice.
 - **Cerebras:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
@@ -57,11 +60,11 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts both systemd user services, at boot too, then runs `voice-assistant --check`. The first run stops to ask for the keys `config.toml`'s choices
-need in `.env` (OpenAI, Deepgram and Cerebras, by default); run it again after. It's safe to rerun, and it restarts
-the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml` or a missing key stops a
-service instead of restarting it every few seconds: `journalctl` says what's wrong. The web UI's build is
-committed, so the Pi needs no Node. By hand, the steps are at the top of
+starts both systemd user services, at boot too, then runs `voice-assistant --check`. The first run stops to ask
+for the keys `config.toml`'s choices need in `.env` (OpenAI, Deepgram and Cerebras, by default); run it again after.
+It's safe to rerun, and it restarts the services, so after a `git pull` it puts the new code in use. A mistake in
+`config.toml` or a missing key stops a service instead of restarting it every few seconds: `journalctl` says what's
+wrong. The web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service).
 
@@ -87,20 +90,6 @@ committed, so the Pi needs no Node. By hand, the steps are at the top of
   Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
   one that doesn't open in time is a failure.
 
-## Where the learning happens
-
-| What | Learns from | Where | How long |
-| --- | --- | --- | --- |
-| **Voiceprints** (who's talking) | requests in a named voice (5+) | the Pi, on Regroup voices | seconds (built) |
-| **The wake model and its double-check**, as a pair | synthetic voices plus the household's labeled wakes and near-misses | a bigger machine, now and then | tens of minutes ([`training/`](../training/README.md)) |
-
-The Pi only runs the pairs; see [self-learning](self-learning.md#learning-from-it) for how they're installed and
-switched. The experiments where more wake model training made it worse, and accented clips hurt it, were single
-runs, and stage 1 varies widely from run to run
-([training](../training/README.md#rebuilding-everything-from-scratch)). So a new pair should be trained rarely, once
-there's a good number of new labeled wakes, more than once per attempt, and always tested end to end before it's
-installed.
-
 ## A first test run
 
 With `[learning] log_events = true` and speaker ID on, run the assistant and the web UI side by side
@@ -120,9 +109,35 @@ minutes on this:
 Then answer the wakes in Review, and in Voices name your voice and press Regroup voices: the next bare "hey TARS"
 should get "Yes, <name>?". Note down false wakes from the TV, missed wakes, wrong guesses, and anything that felt slow.
 
-## If this ever became a product
+## Design decisions
+
+### Where the learning happens
+
+| What | Learns from | Where | How long |
+| --- | --- | --- | --- |
+| **Voiceprints** (who's talking) | requests in a named voice (5+) | the Pi, on Regroup voices | seconds |
+| **The wake model and its double-check**, as a pair | synthetic voices plus the household's labeled wakes and near-misses | a bigger machine, now and then | tens of minutes ([`training/`](../training/README.md)) |
+
+**Decision: the Pi runs the models; a bigger machine trains them.** Voiceprints rebuild in seconds, so the Pi does
+that itself. Training a wake pair takes tens of minutes and needs the training data folder, so it runs elsewhere and
+the Pi only runs the pairs; see [self-learning](self-learning.md#learning-from-it) for how they're installed and
+switched. The experiments where more wake model training made it worse, and accented clips hurt it, were single
+runs, and stage 1 varies widely from run to run
+([training](../training/README.md#reproducibility)). So a new pair should be trained rarely, once
+there's a good number of new labeled wakes, more than once per attempt, and always tested end to end before it's
+installed.
+
+### If this ever became a product
 
 For many households the picture flips: devices upload events to cloud storage, the UI is hosted with accounts, and
 training runs as cloud jobs, where the payoff is a generic model improving from every household's opted-in labels.
 That brings authentication, consent and retention for recordings made inside homes, and hosting costs. For one
-household, the Pi-only setup is simpler and private.
+household, the Pi-only setup is simpler and private, which is why TARS is built that way.
+
+## Limitations
+
+- **No accounts.** The web UI is for the home network, or a tailnet away from home; never forward its port.
+- **Backup is yours to set up.** `install-pi.sh` doesn't install the nightly copy described above.
+- **Measured on the development Mac.** The wake stages' cost and the response times come from the Mac; the Pi should
+  be comfortable (stage 1 is tiny), but running the wake model and the voice's playback at once on the Pi is still to
+  be checked ([what's next](roadmap.md#2-tars-stop-interrupting-a-reply)).

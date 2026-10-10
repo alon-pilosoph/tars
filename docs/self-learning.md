@@ -1,7 +1,20 @@
 # Self-learning TARS
 
-TARS starts from the generic wake models (see [hearing "hey TARS"](wake-word.md)) and improves from the way the
-household actually uses it. Everything it learns from stays on the machine it runs on.
+The generic wake models are trained without any household's voices, so they start out weakest on the voices they
+will hear most: the owner's soft *t* is the main reason the generic setup misses a take. Self-learning closes that
+gap from real use. TARS keeps every wake and near-miss with its audio, labels most of them automatically from what
+happened next, and groups requests by voice for speaker ID. Both wake stages are then retrained together, as a pair,
+on a bigger machine, and the new pair is installed only if it tests better end to end than the one in use, with
+every version kept and one tap to switch back. Everything it learns from stays on the machine it runs on.
+
+## The problem
+
+- **The models need the household's own wakes**, especially the ones they missed, and those only exist once TARS is
+  in use ([hearing "hey TARS"](wake-word.md)).
+- **Labeling has to be nearly free.** Nobody reviews hundreds of wakes, so most labels must come from what happened
+  next, and a person's answer is only asked for when nothing else explains a wake.
+- **Logging must never cost a reply**, and a bad or half-copied model must never stop TARS listening.
+- **The Pi doesn't train.** It runs the pairs; training happens elsewhere and comes back as a tested pair.
 
 ## What it keeps
 
@@ -60,8 +73,9 @@ conversation explained, so reviewing is a few taps a day. A wake that led to a c
 
 The voice embedding of each wake's first request (WeSpeaker ResNet34, the model speaker ID uses) goes into leader
 clustering: each request joins the closest voice if it's similar enough (cosine similarity 0.5), or else starts a
-new one, oldest requests first so voice numbers stay stable. Whatever a person decided stays put when the Voices page's Regroup voices runs: a request moved to a
-voice by hand, merged voices, names, and voices marked "not a person".
+new one, oldest requests first so voice numbers stay stable. Whatever a person decided stays put when the Voices
+page's Regroup voices runs: a request moved to a voice by hand, merged voices, names, and voices marked "not a
+person".
 
 Regrouping also rebuilds the voiceprints speaker ID uses, from exactly the named people with 5 or more requests
 (two voices with the same name count as one person). A name that's gone (renamed, merged away, marked not a person)
@@ -71,18 +85,22 @@ greeting or request, without a restart.
 
 Correcting a conversation's voice ("that was Stacey, not Alon") applies to the request that came with the wake, to
 the conversation's other turns speaker ID heard the same way, and to what TARS sent "for whoever asked". Regrouping
-alone doesn't override speaker ID's name for a conversation: only a voice a person pinned,
-named or marked counts.
+alone doesn't override speaker ID's name for a conversation: only a voice a person pinned, named or marked counts.
 
 Code: `clustering.py`, `speaker.py`.
 
 ## Learning from it
 
-Both stages are retrained together, as a pair, on a bigger machine than the Pi, with `uv run --group training python -m
-training.household --pi <pi>`: the wake model's training takes tens of minutes and needs the training data folder, which
-`training/setup/prepare.sh` fills (see [`training/`](../training/README.md#training-a-households-own-models)). The web
-UI doesn't train anything. Its Models page shows the pair in use and how it tested, how much new labeled data is
-waiting, and the version history, where "Use this" switches back.
+Both stages are retrained together, as a pair, on a bigger machine than the Pi, with `uv run --group training python
+-m training.household --pi <pi>`: the wake model's training takes tens of minutes and needs the training data
+folder, which `training/setup/prepare.sh` fills
+(see [`training/`](../training/README.md#training-a-households-own-models)).
+Each run trains one candidate pair, tests it and the pair in use side by side on the household's held-out wakes and
+the standard test sets, and installs it only if it answers more of the household's real wakes (or lets fewer
+through that weren't for TARS) and is no worse on anything else
+([how candidates are compared](wake-word.md#closing-the-loop-the-household-retrain)). The web UI doesn't train
+anything. Its Models page shows the pair in use and how it tested, how much new labeled data is waiting, and the
+version history, where "Use this" switches back.
 
 **What training learns from** (`events.learning_label`): every labeled wake and near-miss, with a person's label
 winning over the automatic one. Near-misses labeled real (a near-miss followed within seconds by a real wake) are the
@@ -106,3 +124,23 @@ read, a pair is missing or damaged, or the installed pair has changed since the 
 replaced it), TARS uses the installed pair and the Models page says why; the next install or "Use this" starts a new
 history and keeps the old file aside. Version numbers are never reused. If a new pair fails to load while TARS runs,
 it keeps listening with the one it has.
+
+## Limitations
+
+- **Labels come from behavior, not from listening.** The automatic rules can be wrong (a request that followed a TV
+  wake, for example), and a wake the double-check wrongly turned down teaches nothing until someone answers it in
+  Review.
+- **One candidate per run.** Stage 1 training varies from run to run, so a run that isn't installed says little on
+  its own; running it again gives another candidate, compared the same way.
+- **The gate is strict on purpose.** A candidate that does better on some tests but worse on any other, such as one
+  more lookalike or false answer let through, isn't installed without a person's yes. On the owner's 72 recordings, a
+  run that improved other voices from 94.4% to 97.8% in quiet but let more lookalikes through (3.0% to 4.8%) and gave
+  one false answer an hour on audiobooks wasn't installed
+  ([details](../training/README.md#training-a-households-own-models)).
+- **Training needs a second machine** with the prepared data folder (about 80 GB); the Pi can't retrain itself.
+
+## Next steps
+
+The first real household data comes from a week of real use ([roadmap](roadmap.md), step 1). At the end of it, what's
+left in Review is answered and the voices are named, and the Models page shows how many real, missed and not-real
+wakes there are to train on, which is what the household retrain learns from.

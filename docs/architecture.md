@@ -1,6 +1,19 @@
 # How TARS fits together
 
-Two processes on one machine (a Mac while developing, a Raspberry Pi 5 at home), sharing one folder of data.
+TARS is two processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of data:
+the assistant, which listens and answers, and the web UI, which shows and edits what the assistant kept. Four
+principles shape the design:
+
+- **Local until it's sure.** The wake word, the double-check, the speech detector and speaker ID run on the machine.
+  Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)). After a wake,
+  Deepgram's Flux, in the cloud, decides when you're done by default; the local end of turn (silence, then Smart
+  Turn) is the fallback.
+- **Streamed and overlapped.** Speech to text runs while you talk, the answer is drafted before your turn is
+  confirmed over, and the voice speaks a sentence at a time ([response time](latency.md)).
+- **Every stage behind a small interface**, so a provider or a local model is one class and a config change.
+- **A failure costs at most a turn.** Each cloud stage has a fallback or a spoken error, and a failed write never
+  costs a reply. A microphone that stops delivering audio is the exception: the assistant exits, and systemd
+  restarts it ([when something fails](#when-something-fails)).
 
 ```mermaid
 flowchart LR
@@ -36,29 +49,35 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes, Alon?" (speaker ID from the
    wake alone) and waits.
 4. **Speech to text** is Flux too, streamed while you talk, so the words come with its decision; if the stream
-   fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX,
-   local) runs at the same time, so knowing who's talking adds no latency. The request reaches the LLM tagged
-   `[Speaker: Alon]`.
-5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras first (about 0.3 s to its first sentence). When the
+   fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX, local) runs at the same
+   time, so knowing who's talking adds no latency. The request reaches the LLM tagged `[Speaker: Alon]`.
+5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras first (about 0.4 s to its first sentence). When the
    answer needs the web or the TARS page it replies `<look-up>`, and that turn goes to OpenAI's model (the Responses
-   API, with web search and the send tool), which also answers whenever Cerebras fails, and for two minutes after, so an
-   outage doesn't cost every turn Cerebras's timeout; both share one conversation. Each finished sentence goes to **text
-   to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's Onyx) straight away, and playback starts on the first audio
-   chunk, so TARS starts talking while the reply is still being written. The TARS effect (a speaker in a metal box) is
-   applied as it streams. All of this starts early, when Flux thinks you may be done, while the recording goes on: if
-   you carry on talking the draft is thrown away, and it's only played, logged and allowed to send anything once your
-   turn is confirmed over (see [response time](latency.md)).
+   API, with web search and the send tool), which also answers whenever Cerebras fails, and for two minutes after, so
+   an outage doesn't cost every turn Cerebras's timeout; both share one conversation. Each finished sentence goes to
+   **text to speech** (Deepgram's Aura-2 Zeus voice, or OpenAI's Onyx) straight away, and playback starts on the
+   first audio chunk, so TARS starts talking while the reply is still being written. The TARS effect (a speaker in a
+   metal box) is applied as it streams. All of this starts early, when Flux thinks you may be done, while the
+   recording goes on: if you carry on talking the draft is thrown away, and it's only played, logged and allowed to
+   send anything once your turn is confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
 
-Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one
-new class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it
-end to end. When TARS wakes, it connects to Cerebras, OpenAI and Deepgram's voice while you're still talking. A
-failed request gets a
-spoken line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it
-plays even when the voice service is what failed; the voice gives up after 4 s without audio. A microphone that
-stops delivering audio exits so systemd restarts it.
+Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
+class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
+to end. When TARS wakes, it connects to Cerebras, OpenAI and Deepgram's voice while you're still talking.
+
+### When something fails
+
+| What fails | What TARS does |
+|---|---|
+| Deepgram's speech-to-text stream | OpenAI transcribes the same recording |
+| Flux's end of turn | the local rules (Silero VAD, then Smart Turn) take over for that turn |
+| Cerebras | OpenAI's model answers, and keeps answering for two minutes |
+| The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed |
+| The microphone stops delivering audio | the assistant exits so systemd restarts it |
+| A write to the event log | `journal.py` absorbs it; the reply goes ahead |
 
 ### The LLM's tools
 
@@ -70,7 +89,6 @@ stops delivering audio exits so systemd restarts it.
   the model, which gets up to three rounds; the last round can't call tools, so TARS always says something. Sent
   things appear in the web UI; TARS says "It's on the TARS page." It never reads a link aloud. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
-
 - **Reminders** (`remind`, `cancel_reminder`, `snooze_reminder`): see [reminders](reminders.md).
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
@@ -87,22 +105,28 @@ something it could have done. Turning a feature off in config changes both promp
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links,
 which need web search) and uses them itself, saving those turns the hand-off. What its tools did goes along if it
-hands the turn over after all, so nothing is done twice. `tools/capability_bench.py` checks it gets them right; [choosing the
-quick model](models.md) has every model and reasoning effort tried, and how to try the next. The marker isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
+hands the turn over after all, so nothing is done twice. `tools/capability_bench.py` checks it gets them right;
+[choosing the quick model](models.md) has every model and reasoning effort tried, and how to try the next. The marker
+isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
+
+**Why a quick model that hands off, rather than one model for everything:** Qwen on Cerebras starts its first
+sentence in about 0.4 s against about 0.7 s for OpenAI's model, and answers what it can itself. The turns that need
+the web or real thinking go to models that are slower but stronger, and TARS says so first, so the wait isn't
+silent.
 
 ## What it keeps, and where
 
 Everything the assistant writes goes to `voice_data/events/` (gitignored) through `journal.py`, whose writes can
 fail without costing a reply. The layout, retention and labeling rules are in [self-learning](self-learning.md).
-Voiceprints live in `voice_data/voiceprints.npz`; the personal wake models in `models/personal/` (gitignored).
-The short lines made ahead ("Yes?", "Did you call me?", the error lines) are kept in `voice_data/phrases/`, one
-folder per `[tts]` setup, so TARS can still say something went wrong after a restart with the network down. After
-changing the voice effect's code (`effects.py`), delete that folder so the lines are made again.
+Voiceprints live in `voice_data/voiceprints.npz`; the personal wake models in `models/personal/` (gitignored). The
+short lines made ahead ("Yes?", "Did you call me?", the error lines) are kept in `voice_data/phrases/`, one folder per
+`[tts]` setup, so TARS can still say something went wrong after a restart with the network down. After changing the
+voice effect's code (`effects.py`), delete that folder so the lines are made again.
 
 ## What leaves the machine
 
-- **Before the wake is confirmed, nothing.** Stage 1, stage 2, the speech detector and the end-of-turn model run
-  locally.
+- **Before the wake is confirmed, nothing.** Stage 1, stage 2, the speech detector and the fallback end-of-turn
+  model run locally.
 - **After it,** three services each get part of the turn (with the default `config.toml`):
   - **Deepgram** gets your request's audio, streamed for speech to text from when you start speaking after a wake,
     and TARS's reply text, to speak it.
