@@ -36,11 +36,13 @@ script.
 | ... alan (all rights reserved), and amy, danny, kusal (no license found) | none usable | not used: no clip from them, or derived from them, is in the models or the hosted sets |
 | ... non-English voices, for the double-check's accented clips | per voice | used locally for stage 2, never hosted; left out for no usable license or a source built on one above: ar_JO-kareem, zh_CN-huayan, sv_SE-lisa, eu_ES-antton, eu_ES-maider (from amy), ka_GE-natia, ru_RU-irina, es_MX-claude |
 | [piper-sample-generator](https://github.com/rhasspy/piper-sample-generator) | MIT | generates the Piper LibriTTS clips |
+| [Chatterbox Turbo](https://github.com/resemble-ai/chatterbox) | MIT | clones Common Voice speakers: test clips, and the large pair's training clips; never hosted |
 
 ## Speech, noise and rooms
 
 | Source | License | How it's used |
 |---|---|---|
+| [Mozilla Common Voice](https://commonvoice.mozilla.org/) (via the Mozilla Data Collective) | CC0 | downloaded; the speakers cloned for testing and for the large pair |
 | [LibriSpeech](https://www.openslr.org/12/) | CC BY 4.0 (read from LibriVox, public domain) | downloaded; lookalike words cut from it are hosted |
 | [LibriTTS-R](https://www.openslr.org/141/) | CC BY 4.0 | the base of Piper's libritts_r voice |
 | [VCTK 0.92](https://datashare.ed.ac.uk/handle/10283/3443) | CC BY 4.0 | downloaded; voice conversions into its speakers are made locally and never hosted |

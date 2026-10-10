@@ -1,6 +1,6 @@
 # The wake models' license
 
-The trained "hey TARS" models in this folder (`generic/hey_tars.tflite` and `generic/hey_tars_check.json`) are
+The trained "hey TARS" models in this folder (`generic/` and the optional large pair in `generic-large/`) are
 licensed under [Creative Commons Attribution-NonCommercial-ShareAlike 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 (CC BY-NC-SA 4.0), unlike the code, which is MIT (see `../LICENSE`).
 

@@ -66,6 +66,16 @@ def test_microwakeword_scores_do_not_depend_on_block_size():
     assert peaks[0] < 0.95  # noise isn't "hey TARS"
 
 
+@needs_models
+def test_a_reset_microwakeword_model_scores_nothing_on_silence():
+    """A fresh model's zeroed streaming state scored about 0.16 at first, which a low threshold took for a wake."""
+    trigger = MicroWakeWordTrigger(str(HEY_TARS), 0.2)
+    silence = np.zeros(1280, np.int16)
+    for _ in range(3):
+        trigger.reset()
+        assert max(trigger.score(silence) for _ in range(5)) < 0.05
+
+
 @pytest.mark.skipif(not SPEAKER_MODEL.exists(), reason="speaker model not downloaded yet")
 def test_speaker_id_enrolls_saves_and_rejects_short_clips(tmp_path):
     rng = np.random.default_rng(0)

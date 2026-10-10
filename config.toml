@@ -22,7 +22,7 @@ mode = "wakeword"
 # A path to a custom .onnx (openWakeWord) or .tflite (microWakeWord) model, or a pretrained openWakeWord name.
 model = "models/generic/hey_tars.tflite"
 # Low on purpose: the double-check below throws out lookalikes, so the model mustn't miss the real phrase.
-threshold = 0.5
+threshold = 0.2
 # Double-check each wake with a small offline speech recognizer, so "hey cars" doesn't wake it.
 verify = true
 # The double-check's learned layer ("" = plain phrase match). These settings are the installed pair; models trained

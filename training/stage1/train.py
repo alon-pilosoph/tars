@@ -4,6 +4,7 @@
     DATA/mww/.venv/bin/python -m training.stage1.train personal      # adds the owner's training half: models/personal
     DATA/mww/.venv/bin/python -m training.stage1.train household --run RUN   # adds a household's wakes
     DATA/mww/.venv/bin/python -m training.stage1.train generic --phrase tars_stop    # "TARS stop", the interrupt
+    DATA/mww/.venv/bin/python -m training.stage1.train generic --large --cloned      # the large pair
 
 The recipe: 20k steps, learning rate 0.001, negative class weight 20, SpecAugment (2 time masks of up to 5 frames,
 2 frequency masks of up to 3 bins), batch 128, 1.5 s clips. The checkpoint kept is the one with the best average
@@ -13,6 +14,8 @@ filters, kernels [5], [7,11], [9,15], [23], stride 3). All setups use the unclea
   personal: + the owner's training half (positives weight 1.5, sentences weight 2)
   household: generic + a household's real wakes and missed "hey TARS" (weight 1.5) and what wasn't for TARS
              (weight 2), as training.household sets them out; the same weights as the owner's in personal
+  --large:  4 blocks of 256 filters and a first layer of 96 (372 KB); --cloned adds the cloned Common Voice
+            speakers (features.py cloned; positives weight 1.5, lookalikes 3)
 20 to 45 minutes on the development Mac at 4 threads. Needs features.py synthetic (and user, for personal).
 Output: DATA/models/<setup>/<phrase>.tflite (household: DATA/household/<run>/pair/), the full-precision streaming
 model (float32 in and out, 69 KB). "TARS stop" has no real lookalikes (they're cut for "hey TARS" only); its own
@@ -50,10 +53,15 @@ def feature_set(path, sampling, truth, truncation="truncate_start"):
     }
 
 
-def features(layout: Layout, setup: str, run: str | None = None, phrase: str = "hey_tars") -> list[dict]:
+def features(
+    layout: Layout, setup: str, run: str | None = None, phrase: str = "hey_tars", cloned: bool = False
+) -> list[dict]:
     root, neg = layout.features / phrase, layout.mww / "negative_datasets"
-    fs = [feature_set(root / "positive" / n, w, True) for n, w in POSITIVE_WEIGHTS.items()]
-    fs += [feature_set(root / "near_miss" / n, w, False) for n, w in NEAR_MISS_WEIGHTS.items()]
+    positives, near_misses = POSITIVE_WEIGHTS, NEAR_MISS_WEIGHTS
+    if cloned:
+        positives, near_misses = {**positives, "cloned": 1.5}, {**near_misses, "cloned": 3.0}
+    fs = [feature_set(root / "positive" / n, w, True) for n, w in positives.items()]
+    fs += [feature_set(root / "near_miss" / n, w, False) for n, w in near_misses.items()]
     if setup in ("generic", "household") and phrase == "hey_tars":
         fs.append(feature_set(root / "near_miss" / "real", 2.0, False))
     fs += [feature_set(neg / n, w, False, "random") for n, w in NEGATIVES.items()]
@@ -77,6 +85,8 @@ def main():
     p.add_argument("setup", choices=["generic", "personal", "household"])
     p.add_argument("--run", help="household: the training run's name")
     p.add_argument("--phrase", default="hey_tars", choices=PHRASES)
+    p.add_argument("--large", action="store_true", help="generic: the large model, four times as wide")
+    p.add_argument("--cloned", action="store_true", help="generic: add the cloned Common Voice speakers")
     p.add_argument(
         "--resume",
         action="store_true",
@@ -87,18 +97,21 @@ def main():
         p.error("--run goes with the household setup, and only with it")
     if args.setup == "household" and args.phrase != "hey_tars":
         p.error("a household's wakes are for hey_tars")
+    if (args.large or args.cloned) and (args.setup != "generic" or args.phrase != "hey_tars"):
+        p.error("--large and --cloned are for the generic hey_tars model")
     import yaml
 
     cap_threads()
     layout = Layout(args.data)
-    name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{args.setup}"
+    setup = "generic-large" if args.large else args.setup
+    name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{setup}"
     train_dir = layout.trained_models / name
     if not args.resume:
         shutil.rmtree(train_dir, ignore_errors=True)  # a finished run's checkpoint would be "restored" as done
     config = {
         "window_step_ms": 10,
         "train_dir": str(train_dir),
-        "features": features(layout, args.setup, args.run, args.phrase),
+        "features": features(layout, args.setup, args.run, args.phrase, args.cloned),
         "training_steps": [20000],
         "positive_class_weight": [1],
         "negative_class_weight": [20],
@@ -142,7 +155,7 @@ def main():
             "best_weights",
             "mixednet",
             "--pointwise_filters",
-            "64,64,64,64",
+            "256,256,256,256" if args.large else "64,64,64,64",
             "--repeat_in_block",
             "1, 1, 1, 1",
             "--mixconv_kernel_sizes",
@@ -150,7 +163,7 @@ def main():
             "--residual_connection",
             "0,0,0,0",
             "--first_conv_filters",
-            "32",
+            "96" if args.large else "32",
             "--first_conv_kernel_size",
             "5",
             "--stride",
@@ -159,11 +172,11 @@ def main():
         check=True,
         cwd=layout.mww,
     )
-    folder = layout.household / args.run / "pair" if args.run else layout.models / args.setup
+    folder = layout.household / args.run / "pair" if args.run else layout.models / setup
     out = folder / f"{args.phrase}.tflite"
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(train_dir / "tflite_stream_state_internal/stream_state_internal.tflite", out)
-    log(f"DONE: {out}" + ("" if args.run else f" (copy it to the repo's models/{args.setup}/)"))
+    log(f"DONE: {out}" + ("" if args.run else f" (copy it to the repo's models/{setup}/)"))
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ from typing import Protocol
 
 import numpy as np
 
-from .audio import Microphone
+from .audio import BLOCK_SAMPLES, Microphone
 
 # What wait() returns when a reminder came due while it waited, instead of a wake.
 DUE = "due"
@@ -71,10 +71,12 @@ class MicroWakeWordTrigger:
     """A microWakeWord streaming model (.tflite), like the ones trained for "hey TARS".
 
     Audio goes through the micro_speech frontend in 10 ms steps. The model scores every few steps and keeps its own
-    streaming state, so a fresh interpreter is the only clean reset.
+    streaming state, so a fresh interpreter is the only clean reset. A fresh one's zeroed state scores about 0.16 on
+    its first block, even on silence, which a low threshold takes for a wake; so reset() primes it with faint noise.
     """
 
     STEP_BYTES = 160 * 2  # 10 ms of 16-bit audio
+    PRIMER = np.random.default_rng(0).normal(0, 40, 3 * BLOCK_SAMPLES).astype(np.int16)
     last_audio = None
 
     def __init__(self, model: str, threshold: float):
@@ -99,6 +101,7 @@ class MicroWakeWordTrigger:
         self._frontend = MicroFrontend()
         self._pending = b""
         self._features = []
+        self.score(self.PRIMER)
 
     def _run(self, chunk: np.ndarray) -> float:
         if self._quantized:

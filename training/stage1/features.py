@@ -3,6 +3,7 @@
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic      # every voice source + real lookalikes
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
+    DATA/mww/.venv/bin/python -m training.stage1.features cloned         # cloned speakers, for the large pair
 
 Augmentation: room echoes (MIT + 5,000 simulated rooms), MUSAN music/speech/noise, synthesized
 babble and TV, AudioSet and FMA at -5 to 15 dB, plus EQ, distortion, pitch and gain changes. Each source is split
@@ -28,6 +29,7 @@ POSITIVE_SPECTROGRAMS, NEGATIVE_SPECTROGRAMS = 2250, 800
 POSITIVES = {"piper_libritts": 50_000, "kokoro": 20_000, "openai": 1_312, "piper_voices": 22_000, "prosody": 25_000}
 NEAR_MISSES = {"piper_libritts": 30_000, "kokoro": 16_000, "openai": 304, "piper_voices": 26_000}
 REAL_LOOKALIKES = 5_000
+CLONED = 50_000
 
 
 def augmenter(layout: Layout, owner: bool = False):
@@ -132,6 +134,12 @@ def synthetic(layout: Layout, phrase: str) -> None:
         build(layout, layout.real_lookalikes, root / "near_miss" / "real", REAL_LOOKALIKES, slide=1)
 
 
+def cloned(layout: Layout) -> None:
+    root = layout.features / "hey_tars"
+    for kind, slide in [("positive", 5), ("near_miss", 1)]:
+        build(layout, layout.clip_dir("cloned", "hey_tars", kind), root / kind / "cloned", CLONED, slide)
+
+
 def user(layout: Layout, phrase: str, recordings: Path) -> None:
     """Only 15 takes, so each is augmented many times over."""
     for set_name, kind, slide, repeat in [(phrase, "positive", 5, 150), ("speech", "negative", None, 60)]:
@@ -174,7 +182,7 @@ def augmented(layout: Layout, folder: Path, out: Path, slide: int | None, repeat
 
 def main():
     p = parser(__doc__)
-    p.add_argument("what", choices=["synthetic", "user", "household"])
+    p.add_argument("what", choices=["synthetic", "user", "household", "cloned"])
     p.add_argument("run", nargs="?", help="household: the training run's name")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     add_user_arg(p)
@@ -183,6 +191,8 @@ def main():
     layout = Layout(args.data)
     if args.what == "synthetic":
         synthetic(layout, args.phrase)
+    elif args.what == "cloned":
+        cloned(layout)
     elif args.what == "user":
         if not (args.user and args.user.is_dir()):
             p.error("user: pass --user, the owner's recordings")
