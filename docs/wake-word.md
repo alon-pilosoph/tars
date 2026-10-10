@@ -6,8 +6,8 @@ lenient microWakeWord streaming model, then a Vosk double-check with a small lea
 lookalikes. Both were trained without any household recordings, on synthetic speech from more than 2,000 voices, 342
 real speakers reached through voice conversion and real lookalike words cut from audiobooks, and evaluated end to
 end on voices and recordings they never trained on, in 8 listening conditions. The shipped pair answers 97% of
-held-out synthetic voices in quiet, 93% of the owner's takes in quiet (a voice it never heard) and 64% of 486 cloned
-real speakers across all 8 conditions, lets 0–5% of lookalikes through, and gave one false answer in an hour of TV
+held-out synthetic voices in quiet, 97% of the owner's takes in quiet (a voice it never heard) and 73% of 486 cloned
+real speakers across all 8 conditions, lets 0–10% of lookalikes through, and gave one false answer in an hour of TV
 and none in an hour of audiobooks.
 
 This page covers the problem, the design, how the models were built and measured, the results, the design decisions
@@ -30,8 +30,8 @@ and their evidence, the limitations, and the interrupt phrase "TARS stop" under 
 ```mermaid
 flowchart LR
     mic[Mic, 80 ms blocks] --> s1["Stage 1: wake model<br/>microWakeWord, always on"]
-    s1 -- "score ≥ 0.5" --> win["Last 3 s of audio"]
-    s1 -- "0.3 ≤ score < 0.5, then quiet" --> near["Logged as a near-miss"]
+    s1 -- "score ≥ 0.2" --> win["Last 3 s of audio"]
+    s1 -- "0.12 ≤ score < 0.2, then quiet" --> near["Logged as a near-miss"]
     win --> s2["Stage 2: the double-check<br/>Vosk + a learned layer"]
     s2 -- "hey TARS" --> answer["Answer: listen"]
     s2 -- "'hey' + an unlikely word<br/>(hey cars, hey Mars…)" --> ask["Ask: 'Did you call me?'"]
@@ -40,7 +40,7 @@ flowchart LR
 
 **Stage 1** is a [microWakeWord](https://github.com/kahrendt/microWakeWord) streaming model
 (`models/generic/hey_tars.tflite`, 69 KB). It sees every 80 ms block and costs almost nothing, so it can be lenient:
-the threshold is 0.5, low on purpose, because stage 2 filters what gets through. A score that comes close (60% of
+the threshold is 0.2, low on purpose, because stage 2 filters what gets through. A score that comes close (60% of
 the threshold) and then falls away is logged as a near-miss, which is often a real "hey TARS" said too softly.
 
 **Stage 2** runs only when stage 1 fires. [Vosk](https://alphacephei.com/vosk/) (small English model, 0.15) listens
@@ -95,7 +95,7 @@ down.
 | Voice conversion | the synthetic clips turned into real people's voices with kNN-VC: 342 speakers, 249 from LibriSpeech and 93 from VCTK (many English accents) with usable conversions | stage 2 |
 | Real lookalikes | real people saying "stars", "cars", "guards"… cut from LibriSpeech train-clean-100 with a forced aligner (MMS) | both |
 | microWakeWord negatives | the standard negative sets (speech, music, noise) | stage 1 |
-| Cloned Common Voice speakers | 486 real speakers, cloned zero-shot (see [the evaluation](#how-it-was-measured)) | evaluation only |
+| Cloned Common Voice speakers | 486 real speakers, cloned zero-shot (see [the evaluation](#how-it-was-measured)) | evaluation; stage 1 of the [large pair](#a-larger-stage-1-as-an-option) |
 
 "TARS" is spelled `tarss` for espeak-based voices so it's said with an S, the way the household says it. Which
 source goes into which stage was decided by measurement; see [what stage 1 learns from](#what-stage-1-learns-from)
@@ -200,11 +200,11 @@ The shipped pairs, measured as [above](#how-it-was-measured).
 | Test | Answered |
 |---|---|
 | Held-out synthetic voices, quiet | 97% |
-| Same voices, TV or babble at 10–15 dB | 87–97% |
-| The owner, whom it never heard, quiet (30 takes) | 93% |
-| Cloned Common Voice speakers, all 8 conditions | 64% |
-| Lookalikes let through: held-out voices | 0–5% |
-| Lookalikes let through: cloned Common Voice speakers | 0.5% |
+| Same voices, TV or babble at 10–15 dB | 92–97% |
+| The owner, whom it never heard, quiet (30 takes) | 97% |
+| Cloned Common Voice speakers, all 8 conditions | 73% |
+| Lookalikes let through: held-out voices | 0–10% |
+| Lookalikes let through: cloned Common Voice speakers | 1.6% |
 | False answers in an hour of TV | 1 (Vosk heard "hey darts") |
 | False answers in an hour of audiobooks | 0 |
 
@@ -231,6 +231,20 @@ trade-off accepted. Most options were trained or built and scored on held-out da
 open transcription in the double-check was ruled out from what it wrote, and voice conversion in stage 1 gave mixed
 results rather than one number.
 
+### How lenient stage 1 is
+
+**Constraint:** most of the owner's missed takes were stage 1 never firing, but every wake the check turns down still
+lands in Review.
+
+A fresh wake model scored about 0.16 on silence, so a low threshold woke on its own resets. `reset()` now primes it
+with a moment of faint noise, which made lower thresholds usable:
+
+| Threshold | The owner, all 8 conditions | False answers per hour (TV, audiobooks) | Wakes per hour of TV for Review | Decision |
+|---|---|---|---|---|
+| 0.5 | 52% | 1, 0 | 6 | the old setting |
+| **0.2** | **60%** | **1, 0** | **30** | **used** |
+| 0.1 | 63% | 1, 0 | 56 | not used: twice the Review load for 3 points |
+
 ### Why two stages
 
 **Constraint:** a detector that runs on every 80 ms block must be tiny, and a tiny model can't reliably tell "hey
@@ -238,7 +252,7 @@ TARS" from "hey cars"; and answering the TV has to stay rare.
 
 | Option | Evidence | Decision |
 |---|---|---|
-| A lenient detector, then a check on each wake | stage 1 alone fires about 6 times an hour on TV and 3 on audiobooks; with the check, 1 and 0 | used |
+| A lenient detector, then a check on each wake | stage 1 alone fires about 30 times an hour on TV and 14 on audiobooks; with the check, 1 and 0 | used |
 
 A single detector made strict on its own wasn't trained as an option. Getting stage 1 alone from 6 fires an hour to
 1 would take a much stricter detector, and the one attempt to make stage 1 stricter, training it only on positives
@@ -246,7 +260,7 @@ Vosk hears clearly, cost the owner's quiet takes 93% → 77% ([what stage 1 lear
 That suggests, without proving it, that one strict detector would miss more real wakes than the pair.
 
 **Trade-off:** a check of about 21 ms after each wake, and a second model to train and keep in step with the first.
-In return, stage 1 can be tuned for recall (threshold 0.5) and stage 2 for precision.
+In return, stage 1 can be tuned for recall (threshold 0.2) and stage 2 for precision.
 
 ### Choosing the detector
 
@@ -271,13 +285,24 @@ follows. So it is given variety, even at the cost of label noise.
 | Accented Piper voices | other voices in quiet 96% → 72% | stage 2 only, where they help a little |
 | Voice conversions into real speakers | mixed results | stage 2 only |
 | Pitch and tempo variants | Vosk hears 72% of them as something else ("hey cars", "haters") | stage 1 only |
-| Cloned Common Voice speakers | 5 candidates with, 5 without, same recipe: no measurable difference (an opt-in source, not kept) | evaluation only |
+| Cloned Common Voice speakers | 5 candidates with, 5 without, same recipe: no measurable difference | not in the generic model |
 | A longer schedule: 60k steps, a second phase with negative weight 50 | worse everywhere (owner 80%) | 20k steps; its augmentation is kept |
 | Twice the training steps | overfit to the owner's voice | 20k steps |
 
 **Trade-off:** stage 1 lets through more lookalikes than a strict model would, by design; stage 2 turns them down.
 The cloned voices add nothing to training, so they serve where they add the most: as speakers no candidate has
 heard.
+
+### A larger stage 1, as an option
+
+Larger wake models were trained with the cloned Common Voice speakers added: twice and four times as wide, and eight
+times wider or deeper, eight runs in all. Scored on the speaker panel at the shipped pair's strictness (speakers
+answered at least 80% of the time; the shipped model: 61%), only one beat it, a four-times-wide run at 69% (372 KB,
+about 40% more time per block); the other two runs of that size scored 64% and 17%, so size alone doesn't guarantee
+it. That model answers more of the owner's takes in loud noise (all 8 conditions 60% → 67%) but lets more lookalikes
+through (others 4% → 10%), so it's a second pair rather than the default: `voice-assistant --install-models
+models/generic-large` puts it in use, and the Models page switches back. It's rebuilt with `stage1.train generic
+--large --cloned` ([commands](../training/README.md)).
 
 ### What the double-check needs
 

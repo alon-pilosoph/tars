@@ -11,7 +11,7 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 
 | Part | Result |
 |---|---|
-| [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 93% of the owner's (never heard), 1 false answer in an hour of TV |
+| [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 97% of the owner's (never heard), 1 false answer in an hour of TV |
 | [Response time](docs/latency.md) | 1.3-1.4 s from you stopping to the first sound, down from about 3.5 s |
 | [Quick model](docs/models.md) | Qwen on Groq, then Cerebras, hedged at 0.5 s; 149/156 on the capability benchmark at low reasoning |
 | [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |

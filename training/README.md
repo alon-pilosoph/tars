@@ -145,6 +145,10 @@ $E -m training.eval.candidates rank --baseline shipped
 
 # 7. Install: copy DATA/models/<setup>/* into the repo's models/<setup>/
 
+# 7b. (optional) The large pair, stage 1 four times as wide with the cloned speakers added (RAW: below)
+$E -m training.data.cloned_clips $RAW && $M -m training.stage1.features cloned
+$M -m training.stage1.train generic --large --cloned     # DATA/models/generic-large/hey_tars.tflite, ~3 h
+
 # 8. (maintainer) the hosted clips, from this data folder (needs a Hugging Face write token to upload)
 uv run --group training python -m training.hub export OUT && uv run --group training python -m training.hub upload OUT
 ```
@@ -198,7 +202,8 @@ Everything up to the clips runs in one Colab notebook, `training/data/clone_voic
    ```
 
 7. **Evaluate on the raw clips as they are**: one wake phrase and one lookalike per speaker, in all 8 test
-   conditions. Filtering test clips would flatter the check:
+   conditions (the large pair trains on these speakers, so they don't test it). Filtering test clips would flatter
+   the check:
 
    ```bash
    $E -m training.eval.pipeline CANDIDATE.tflite --checks CHECK.json --window 3.0 --set cloned --cloned $RAW
