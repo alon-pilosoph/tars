@@ -1,5 +1,5 @@
-/* Screenshot tests: every state a demo link can open, and the page after each interaction, on desktop and phone (and
-   the main pages in dark), against the approved baselines in checks/screenshots/. `npm run visual`; after an
+/* Screenshot tests: every state a demo link can open, and the page after each interaction, on desktop and phone,
+   against the approved baselines in checks/screenshots/. `npm run visual`; after an
    intended change, `npm run visual:update` and look at what changed before committing the new images. */
 import { expect, test } from "@playwright/test";
 import { ORIGIN, SIZES, pageReady, serveFromDisk, settled } from "./serve";
@@ -141,38 +141,19 @@ const jobs = [
 
 test.beforeEach(({ page }) => serveFromDisk(page));
 
-// Dark mode swaps the colour tokens only, so it's checked on each page and on the overlays, not on every state.
-const DARK = new Set([
-  "home",
-  "conv-1",
-  "tab-sent",
-  "tab-review",
-  "tab-voices",
-  "tab-models",
-  "tab-reminders",
-  "tab-reminders-form-back",
-  "demo-empty",
-  "state-error",
-  "tab-sent-modal-note-101",
-  "conv-1-modal-delete-conv-1",
-  "tab-sent-menu-item-104",
-  "tab-voices-modal-merge-3",
-]);
-
 for (const [name, q, steps] of jobs)
-  for (const theme of DARK.has(name) ? ["light", "dark"] : ["light"])
-    for (const [size, viewport] of Object.entries(SIZES))
-      test(`${name}, ${size} ${theme}`, async ({ page }) => {
-        await page.setViewportSize(viewport);
-        const query = [q.includes("demo=") ? "" : "demo", q, `theme=${theme}`].filter(Boolean).join("&");
-        await page.goto(`${ORIGIN}/index.html?${query}`);
-        await pageReady(page);
-        if (steps) {
-          await page.evaluate(act, [...steps]);
-          await settled(page);
-        }
-        await expect(page).toHaveScreenshot(`${name}--${size}-${theme}.png`);
-      });
+  for (const [size, viewport] of Object.entries(SIZES))
+    test(`${name}, ${size}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      const query = [q.includes("demo=") ? "" : "demo", q].filter(Boolean).join("&");
+      await page.goto(`${ORIGIN}/index.html?${query}`);
+      await pageReady(page);
+      if (steps) {
+        await page.evaluate(act, [...steps]);
+        await settled(page);
+      }
+      await expect(page).toHaveScreenshot(`${name}--${size}.png`);
+    });
 
 test("the header fits at every width: the tab bar below on a phone, the tabs on top above it, and nothing leaves the screen", async ({
   page,

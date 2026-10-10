@@ -45,7 +45,7 @@ function panel(page: Page, keep: string[]) {
     };
     prune(main);
 
-    const ROOT = /^(:root|html|body|\[data-theme(=light)?\])$/;
+    const ROOT = /^(:root|html|body)$/;
     const selectors = (list: string) => list.split(/,(?![^(]*\))/).map(s => s.trim());
     const used = (sel: string) => {
       const bare = sel
@@ -66,10 +66,7 @@ function panel(page: Page, keep: string[]) {
       if (r instanceof CSSStyleRule) {
         const body = `{${r.style.cssText}}`;
         const text = r.selectorText.replace(/"/g, "");
-        if (text === "[data-theme=dark]") {
-          tokens.push(`[data-theme=dark] [data-app-panel]${body}`);
-          tokens.push(`@media (prefers-color-scheme: dark){:root:not([data-theme=light]) [data-app-panel]${body}}`);
-        } else if (selectors(text).every(s => ROOT.test(s)) && onlyTokens(r)) tokens.push(`[data-app-panel]${body}`);
+        if (selectors(text).every(s => ROOT.test(s)) && onlyTokens(r)) tokens.push(`[data-app-panel]${body}`);
         else {
           const all = selectors(text);
           const live = all.every(s => ROOT.test(s) || s === "*") ? all : all.filter(used);
@@ -77,12 +74,7 @@ function panel(page: Page, keep: string[]) {
         }
       } else if (r instanceof CSSMediaRule) {
         const cond = r.conditionText;
-        if (cond.includes("prefers-color-scheme")) {
-          const dark = [...r.cssRules].filter(x => x instanceof CSSStyleRule) as CSSStyleRule[];
-          tokens.push(
-            `@media ${cond}{${dark.map(x => `:root:not([data-theme=light]) [data-app-panel]{${x.style.cssText}}`).join("")}}`,
-          );
-        } else if (cond.includes("prefers-reduced-motion")) {
+        if (cond.includes("prefers-reduced-motion")) {
           const inner: string[] = [];
           for (const x of r.cssRules) add(x, inner);
           if (inner.length) into.push(`@media ${cond}{${inner.join("")}}`);
@@ -113,7 +105,7 @@ test("page", async ({ page }) => {
   for (const [name, { label, keep }] of Object.entries(PANELS)) {
     await serveFromDisk(page);
     await page.setViewportSize({ width: WIDTH, height: 1400 });
-    await page.goto(`${ORIGIN}/index.html?demo&tab=${name}&theme=light`);
+    await page.goto(`${ORIGIN}/index.html?demo&tab=${name}`);
     await page.locator("main h1").first().waitFor();
     const p = await panel(page, keep);
     p.tokens.forEach(r => tokens.add(r));
@@ -145,7 +137,7 @@ test("page", async ({ page }) => {
 });
 
 test("link preview", async ({ page }) => {
-  await page.emulateMedia({ colorScheme: "light" });
+  await page.emulateMedia({ colorScheme: "dark" });
   await page.setViewportSize({ width: 1200, height: 630 });
   await page.goto("file://" + path.join(OUT, "index.html"));
   await fontsReady(page);

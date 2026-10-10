@@ -1,6 +1,6 @@
 /* The page's link parameters, for linking to a view:
 
-   ?tab=home|sent|review|reminders|voices|models     ?person=all|household|<voice id>     ?theme=light|dark
+   ?tab=home|sent|review|reminders|voices|models     ?person=all|household|<voice id>
    ?conv=<id>     that conversation, open and scrolled to
    ?item=<id>     scrolled to that item
    ?demo          built-in sample data, no server; demoParams.ts adds more parameters for the screenshot tests */
@@ -24,7 +24,6 @@ export const DEMO = PARAMS.has("demo");
 export const LINK = {
   tab: oneOf(PARAMS.get("tab"), TABS) ?? "home",
   person: personParam(PARAMS.get("person")),
-  theme: oneOf(PARAMS.get("theme"), ["light", "dark"] as const),
   conv: idParam(PARAMS.get("conv")),
   item: idParam(PARAMS.get("item")),
 };
@@ -32,7 +31,6 @@ export const LINK = {
 export function linkTo(q: Record<string, string | number> = {}) {
   const p = new URLSearchParams();
   if (DEMO) p.set("demo", PARAMS.get("demo") || "");
-  if (LINK.theme) p.set("theme", LINK.theme);
   for (const [k, v] of Object.entries(q)) p.set(k, String(v));
   return "?" + p.toString().replace(/^demo=(&|$)/, "demo$1");
 }

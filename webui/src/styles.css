@@ -1,21 +1,21 @@
 /* ---------- Tokens ---------- */
 :root {
-  --paper: #f6f6f3; /* page */
-  --ink: #1a2130; /* people's words, titles, primary buttons */
-  --tars: #565e6e; /* TARS's answers, asides */
-  --muted: #687080; /* times, meta, secondary labels */
-  --faint: #9ea4af; /* placeholders, disabled, decorative only */
-  --line: #e1e4e8; /* hairlines (tables, sheet grabber) */
-  --line-strong: #c7ccd3; /* field and outlined-answer borders */
-  --tint: #ecedee; /* opened conversation, form, quiet buttons on paper */
-  --tint-2: #e1e4e8; /* quiet buttons on tint, shaded guess */
-  --raised: #ffffff; /* cards inside a tinted panel, menus, dialogs */
-  --accent: #2f5c9a; /* only: New, ringing, failures */
-  --accent-tint: #e8eef6; /* "Needs someone now" cards */
-  --on-ink: #f6f6f3;
-  --scrim: rgba(17, 21, 28, 0.32);
-  --shadow: 0 1px 2px rgba(26, 33, 48, 0.06), 0 12px 32px rgba(26, 33, 48, 0.12);
-  --focus: 0 0 0 3px rgba(47, 92, 154, 0.35);
+  --paper: #11151c; /* page */
+  --ink: #e6e9ef; /* people's words, titles, primary buttons */
+  --tars: #a2a8b4; /* TARS's answers, asides */
+  --muted: #9399a6; /* times, meta, secondary labels */
+  --faint: #646b78; /* placeholders, disabled, decorative only */
+  --line: #252b36; /* hairlines (tables, sheet grabber) */
+  --line-strong: #3c4350; /* field and outlined-answer borders */
+  --tint: #1b2029; /* opened conversation, form, quiet buttons on paper */
+  --tint-2: #262c37; /* quiet buttons on tint, shaded guess */
+  --raised: #222834; /* cards inside a tinted panel, menus, dialogs */
+  --accent: #8cb0e6; /* only: New, ringing, failures */
+  --accent-tint: #1a2537; /* "Needs someone now" cards */
+  --on-ink: #11151c;
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.45);
+  --focus: 0 0 0 3px rgba(140, 176, 230, 0.4);
 
   --serif: "Newsreader", Georgia, "Times New Roman", serif;
   --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -31,25 +31,6 @@
   --r-xl: 22px;
   --r-pill: 999px;
   --tap: 44px;
-  color-scheme: light;
-}
-[data-theme="dark"] {
-  --paper: #11151c;
-  --ink: #e6e9ef;
-  --tars: #a2a8b4;
-  --muted: #9399a6;
-  --faint: #646b78;
-  --line: #252b36;
-  --line-strong: #3c4350;
-  --tint: #1b2029;
-  --tint-2: #262c37;
-  --raised: #222834;
-  --accent: #8cb0e6;
-  --accent-tint: #1a2537;
-  --on-ink: #11151c;
-  --scrim: rgba(0, 0, 0, 0.5);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 40px rgba(0, 0, 0, 0.45);
-  --focus: 0 0 0 3px rgba(140, 176, 230, 0.4);
   color-scheme: dark;
 }
 

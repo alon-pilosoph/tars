@@ -18,14 +18,12 @@
     />
     <meta property="og:image" content="https://tars.alonp.dev/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark" />
     <link rel="icon" type="image/svg+xml" href="../webui/src/favicon.svg" />
     <link rel="apple-touch-icon" href="../webui/src/apple-touch-icon.png" />
     <script>
       try {
-        var th = localStorage.getItem("tars-about-theme"),
-          lv = localStorage.getItem("tars-about-level");
-        if (th === "light" || th === "dark") document.documentElement.dataset.theme = th;
+        var lv = localStorage.getItem("tars-about-level");
         document.documentElement.dataset.level = lv === "detailed" ? "detailed" : "basic";
       } catch (e) {
         document.documentElement.dataset.level = "basic";
@@ -39,29 +37,9 @@
       href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap"
     />
     <style>
-      /* Tokens: the web app's Day journal system, palette 2b Linen and ink blue.
+      /* Tokens: the web app's Day journal system, in its dark palette.
      The same names as app.css, so the app panels inside their shadow roots inherit them. */
-      :root,
-      [data-theme="light"] {
-        --paper: #f6f6f3;
-        --ink: #1a2130;
-        --tars: #565e6e;
-        --muted: #687080;
-        --faint: #9ea4af;
-        --line: #e1e4e8;
-        --line-strong: #c7ccd3;
-        --tint: #ecedee;
-        --tint-2: #e1e4e8;
-        --raised: #ffffff;
-        --accent: #2f5c9a;
-        --accent-tint: #e8eef6;
-        --on-ink: #f6f6f3;
-        --work: #aab1bc;
-        --work-soft: #d3d7dd;
-        --shadow: 0 1px 2px rgba(26, 33, 48, 0.05), 0 14px 40px rgba(26, 33, 48, 0.09);
-        color-scheme: light;
-      }
-      [data-theme="dark"] {
+      :root {
         --paper: #11151c;
         --ink: #e6e9ef;
         --tars: #a2a8b4;
@@ -79,27 +57,6 @@
         --work-soft: #333b49;
         --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 44px rgba(0, 0, 0, 0.4);
         color-scheme: dark;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root:not([data-theme="light"]) {
-          --paper: #11151c;
-          --ink: #e6e9ef;
-          --tars: #a2a8b4;
-          --muted: #9399a6;
-          --faint: #646b78;
-          --line: #252b36;
-          --line-strong: #3c4350;
-          --tint: #1b2029;
-          --tint-2: #262c37;
-          --raised: #222834;
-          --accent: #8cb0e6;
-          --accent-tint: #1a2537;
-          --on-ink: #11151c;
-          --work: #5a6375;
-          --work-soft: #333b49;
-          --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 44px rgba(0, 0, 0, 0.4);
-          color-scheme: dark;
-        }
       }
       :root {
         --serif: "Newsreader", Georgia, serif;
@@ -1531,10 +1488,6 @@
             <button type="button" data-level-pick="basic">Basic</button>
             <button type="button" data-level-pick="detailed">Detailed</button>
           </div>
-          <div class="seg" role="group" aria-label="Theme">
-            <button type="button" data-theme-pick="light">Light</button>
-            <button type="button" data-theme-pick="dark">Dark</button>
-          </div>
           <div class="ext">
             <a href="https://github.com/alon-pilosoph/tars">Repo ↗</a
             ><a
@@ -1575,7 +1528,7 @@
         <div class="request">
           <span class="k">The request we follow</span>
           <p class="said"><b>Alon</b> Hey TARS, how long do I boil an egg?</p>
-          <p class="said tars">Nine minutes for hard, six for soft.</p>
+          <p class="said tars"><b>TARS</b> Nine minutes for hard, six for soft.</p>
           <p class="said"><b>Alon</b> And for a runny one?</p>
           <span class="foot">The second question needs no wake word.</span>
         </div>
@@ -2122,26 +2075,13 @@
 
     <script>
       "use strict";
-      /* Theme and detail level: remembered on this device. */
+      /* Detail level: remembered on this device. */
       {
-        const root = document.documentElement,
-          dark = matchMedia("(prefers-color-scheme: dark)");
-        const tb = document.querySelectorAll("[data-theme-pick]"),
-          lb = document.querySelectorAll("[data-level-pick]");
+        const root = document.documentElement;
+        const lb = document.querySelectorAll("[data-level-pick]");
         const show = () => {
-          const theme = root.dataset.theme || (dark.matches ? "dark" : "light");
-          tb.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.themePick === theme)));
           lb.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.levelPick === root.dataset.level)));
         };
-        tb.forEach(b =>
-          b.addEventListener("click", () => {
-            root.dataset.theme = b.dataset.themePick;
-            try {
-              localStorage.setItem("tars-about-theme", b.dataset.themePick);
-            } catch (e) {}
-            show();
-          }),
-        );
         lb.forEach(b =>
           b.addEventListener("click", () => {
             root.dataset.level = b.dataset.levelPick;
@@ -2151,7 +2091,6 @@
             show();
           }),
         );
-        dark.addEventListener("change", show);
         show();
       }
 

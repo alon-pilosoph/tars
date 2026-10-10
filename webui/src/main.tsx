@@ -5,10 +5,6 @@ import { App } from "./App";
 import { DEMO, LINK } from "./params";
 import { refresh, scrollToEl, settled } from "./store";
 
-if (!LINK.theme) {
-  const dark = matchMedia("(prefers-color-scheme: dark)");
-  dark.addEventListener("change", () => (document.documentElement.dataset.theme = dark.matches ? "dark" : "light"));
-}
 const root = document.getElementById("root");
 if (root) createRoot(root).render(<App />);
 
