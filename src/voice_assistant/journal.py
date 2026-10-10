@@ -146,16 +146,25 @@ class Journal:
         asker: str | None,
         timings: dict[str, float] | None = None,
         answered_by: str | None = None,
+        quick_service: str | None = None,
     ) -> None:
         """Sent items are kept even if the conversation couldn't be. `timings`: seconds by stage
-        (conversations.TIMINGS); `answered_by`: which model wrote it (Brain.answered_by)."""
+        (conversations.TIMINGS); `answered_by`: which model wrote it (Brain.answered_by); `quick_service`: where the
+        quick model ran (Brain.quick_service)."""
         self.flush()
         self._settle_wake(ASKED)
         if self.conversations is None:
             return
         conversation = None if self._gone else self._conversation
         tars_turn = (
-            self._safe(self.conversations.add_tars_turn, conversation, text, timings=timings, answered_by=answered_by)
+            self._safe(
+                self.conversations.add_tars_turn,
+                conversation,
+                text,
+                timings=timings,
+                answered_by=answered_by,
+                quick_service=quick_service,
+            )
             if conversation
             else None
         )
@@ -171,6 +180,7 @@ class Journal:
         error: str,
         timings: dict[str, float] | None = None,
         answered_by: str | None = None,
+        quick_service: str | None = None,
     ) -> None:
         """Answering went wrong (`failed_at`: a conversations.STAGES), after saying `text` of the answer, maybe
         nothing. Kept as a TARS turn, so the web UI shows where it failed; when nothing was heard (transcribing
@@ -192,6 +202,7 @@ class Journal:
             answered_by=answered_by,
             failed_at=failed_at,
             error=error,
+            quick_service=quick_service,
         )
 
     def not_for_tars(self) -> None:

@@ -74,6 +74,7 @@ class Said:
     text: str
     sent: list[SentItem]
     answered_by: str | None = None
+    quick_service: str | None = None
 
 
 @dataclass
@@ -559,7 +560,14 @@ class Assistant:
             raise
         finally:
             heard.session.close()
-        self.journal.answered(said.text, said.sent, asker=name, timings=self.timings, answered_by=said.answered_by)
+        self.journal.answered(
+            said.text,
+            said.sent,
+            asker=name,
+            timings=self.timings,
+            answered_by=said.answered_by,
+            quick_service=said.quick_service,
+        )
         if answer.acks is not None and self.reminders:
             self._ack(answer.acks, name)
         self._change_reminders(self.brain.changes, name)
@@ -583,8 +591,15 @@ class Assistant:
         text = "".join(answer.spoken).strip() if answer else ""
         if answer:
             self._measure(answer, answer.t_asked, None)
-        by = self.brain.answered_by if answer and answer.t_asked else None
-        self.journal.failed(text, failed_at(e), f"{type(e).__name__}: {e}", dict(self.timings), by)
+        asked = bool(answer and answer.t_asked)
+        self.journal.failed(
+            text,
+            failed_at(e),
+            f"{type(e).__name__}: {e}",
+            dict(self.timings),
+            answered_by=self.brain.answered_by if asked else None,
+            quick_service=self.brain.quick_service if asked else None,
+        )
 
     def _draft(
         self, pcm: bytes, session: Session, follow_up: bool, tag: str | None, echo_of: str | None = None
@@ -684,7 +699,7 @@ class Assistant:
             print(f"(sent to the TARS page: {item.kind} '{item.title}')")
         self._measure(answer, t_start, first_audio[0] if first_audio else None)
         self._report()
-        return Said("".join(answer.spoken).strip(), sent, self.brain.answered_by)
+        return Said("".join(answer.spoken).strip(), sent, self.brain.answered_by, self.brain.quick_service)
 
     def _measure(self, answer: Answer, t_start: float, t_sound: float | None) -> None:
         if answer.sentences:

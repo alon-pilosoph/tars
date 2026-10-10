@@ -5,12 +5,12 @@
     uv run python tools/capability_bench.py --brain claude --model claude-haiku-5-5    # another quick model
     uv run python tools/capability_bench.py --brain openai --model gpt-6-luna
 
-Qwen on Cerebras, with its own tools (quick_tools on, whatever config.toml says), hears each request with no
-conversation before it, and each answer is sorted by what it did: set, cancelled or snoozed a reminder, sent
-something, handed the turn over (<look-up> or <ponder>), or just answered. A tool call is then checked in detail:
-a timer's minutes, a reminder's moment (worked out by TARS from the day and time Qwen gives), who it's for, a list's
-entries. OpenAI is never asked: a hand-off ends the run, since what matters is that Qwen made it. Reminders are
-checked, never set. A run costs nothing on Cerebras's free tier and takes about a minute.
+Qwen on Cerebras (or Groq, with --brain groq), with its own tools (quick_tools on, whatever config.toml says), hears
+each request with no conversation before it, and each answer is sorted by what it did: set, cancelled or snoozed a
+reminder, sent something, handed the turn over (<look-up> or <ponder>), or just answered. A tool call is then checked
+in detail: a timer's minutes, a reminder's moment (worked out by TARS from the day and time Qwen gives), who it's for,
+a list's entries. OpenAI is never asked: a hand-off ends the run, since what matters is that Qwen made it. Reminders
+are checked, never set. A run costs nothing on Cerebras's or Groq's free tier and takes about a minute.
 
 Turn quick_tools on when every request comes out right (or nearly: say 6/6 and a few 5/6, none of them a wrong time).
 """
@@ -31,10 +31,18 @@ from pathlib import Path
 
 from openai import RateLimitError
 
-from voice_assistant.__main__ import api_key, brain_config, make_cerebras_client, make_openai_client
-from voice_assistant.config import load_config
+from voice_assistant.__main__ import api_key, brain_config, make_openai_client, make_quick_client
+from voice_assistant.config import QUICK_PROVIDERS, load_config
 from voice_assistant.events import EventLog
-from voice_assistant.llm import LOOKED_UP, PONDERED, QUICK, CerebrasChat, ClaudeQuickChat, ResponsesQuickChat
+from voice_assistant.llm import (
+    LOOKED_UP,
+    PONDERED,
+    QUICK,
+    ClaudeQuickChat,
+    QuickChat,
+    QuickService,
+    ResponsesQuickChat,
+)
 from voice_assistant.reminders import (
     ADD,
     CANCEL,
@@ -263,16 +271,19 @@ class _Tiers:
             yield chunk
 
 
-BRAINS = ("cerebras", "openai", "responses", "claude")
+BRAINS = ("cerebras", "groq", "openai", "responses", "claude")
 
 
-def make_quick_client(brain: str):
+PROVIDERS = {provider.name.lower(): provider for provider in QUICK_PROVIDERS}
+
+
+def quick_client_for(brain: str):
     """(the quick model's client, the brain class that uses it). Keys come from .env, as TARS's do."""
     env = REPO / ".env"
-    if brain == "cerebras":
-        return make_cerebras_client(env), CerebrasChat
+    if brain in PROVIDERS:
+        return make_quick_client(env, PROVIDERS[brain]), QuickChat
     if brain == "openai":
-        return make_openai_client(env), CerebrasChat  # Chat Completions, as Cerebras's API is
+        return make_openai_client(env), QuickChat  # Chat Completions, as Cerebras's API is
     if brain == "responses":
         return make_openai_client(env), ResponsesQuickChat  # OpenAI's Responses API: reasoning and tools together
     import anthropic
@@ -293,7 +304,7 @@ def run_once(make_brain: Callable, client, text: str) -> Run:
     return dataclasses.replace(run, error="still rate-limited after 4 minutes")
 
 
-def _run_once(brain: CerebrasChat, text: str) -> Run:
+def _run_once(brain: QuickChat, text: str) -> Run:
     start, first, said = time.monotonic(), None, ""
     try:
         for piece in brain.stream_reply(SPEAKER + text):
@@ -330,10 +341,12 @@ def main() -> None:
         "--brain",
         choices=BRAINS,
         default="cerebras",
-        help="where the quick model runs: cerebras (default), openai (Chat Completions), responses (OpenAI's "
+        help="where the quick model runs: cerebras (default), groq, openai (Chat Completions), responses (OpenAI's "
         "Responses API: Luna with reasoning) or claude",
     )
-    parser.add_argument("--model", help="the quick model, instead of [llm] cerebras_model (e.g. claude-haiku-5-5)")
+    parser.add_argument(
+        "--model", help="the quick model, instead of [llm] cerebras_model or groq_model (e.g. claude-haiku-5-5)"
+    )
     parser.add_argument("--save", help="add the result, as a line of JSON, to this file (docs/models.jsonl)")
     parser.add_argument("--table", metavar="JSONL", help="print the table of saved results in this file, and stop")
     parser.add_argument(
@@ -350,12 +363,11 @@ def main() -> None:
         return
 
     cfg = load_config(REPO / "config.toml")
-    model = args.model or cfg.llm.cerebras_model
+    setting = PROVIDERS[args.brain].setting if args.brain in PROVIDERS else "cerebras_model"
+    model = args.model or getattr(cfg.llm, setting)
     if not model:
-        sys.exit("No quick model: give --model, or set [llm] cerebras_model.")
-    llm = dataclasses.replace(
-        brain_config(cfg, typed=False), cerebras_model=model, quick_tools=not args.no_tools, send=True
-    )
+        sys.exit(f"No quick model: give --model, or set [llm] {setting}.")
+    llm = dataclasses.replace(brain_config(cfg, typed=False), quick_tools=not args.no_tools, send=True)
     if args.no_ponder:
         llm = dataclasses.replace(llm, think_effort="")
     if args.effort is not None:
@@ -367,7 +379,7 @@ def main() -> None:
             case.want, case.check = LOOK_UP, None
         if args.no_ponder and case.want == PONDER:
             case.want = ANSWER
-    client, brain_class = make_quick_client(args.brain)
+    client, brain_class = quick_client_for(args.brain)
     folder = Path(tempfile.mkdtemp(prefix="tars-bench-"))
     reminders = Reminders(EventLog(folder / "events").store)
     SEEDED["pasta"] = reminders.add(NewReminder(TIMER, "pasta", due=time.time() + 600), WEB)
@@ -376,8 +388,10 @@ def main() -> None:
 
     openai_side = make_openai_client(REPO / ".env") if args.follow else None
 
-    def make_brain(quick) -> CerebrasChat:
-        brain = brain_class(openai_side or handed_over_client(), llm, quick, reminders=tools)
+    def make_brain(quick) -> QuickChat:
+        brain = brain_class(
+            openai_side or handed_over_client(), llm, [QuickService(args.brain, quick, model)], reminders=tools
+        )
         if args.brain == "openai" and cfg.llm.service_tier:
             brain._quick_extra["service_tier"] = cfg.llm.service_tier  # as TARS asks OpenAI
         return brain

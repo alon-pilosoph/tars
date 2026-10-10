@@ -16,10 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from dotenv import dotenv_values
 
 from .clustering import MIN_REQUESTS_TO_ENROLL
-from .config import WEB_PORT, Config, required_keys
+from .config import DEEPGRAM_KEY, OPENAI_KEY, QUICK_PROVIDERS, WEB_PORT, Config, ConfigError, QuickProvider, with_keys
 from .echo import MAX_DELAY_S
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
@@ -29,7 +28,6 @@ QUIET_DBFS = -55.0  # a peak below this, with someone talking, is a mic that isn
 LOW_DISK_BYTES = 2 * 1024**3
 WEB_URL = f"http://127.0.0.1:{WEB_PORT}/api/status"
 MODELS_S = 300.0  # long enough to download every local model on a slow line, the first time
-DEEPGRAM_PROJECTS = "https://api.deepgram.com/v1/projects"
 READY = "TARS is ready."
 
 
@@ -80,10 +78,17 @@ def summary(results: list[Result]) -> str:
 
 
 def keys(cfg: Config, env: Path) -> Result:
-    have = dotenv_values(env) if env.exists() else {}
-    if missing := [k for k in required_keys(cfg) if not have.get(k)]:
-        return Result("API keys", FAIL, f"missing {', '.join(missing)}", f"put them in {env} (see .env.example)")
-    return Result("API keys", OK, ", ".join(required_keys(cfg)))
+    from .__main__ import env_keys
+
+    have = env_keys(env)
+    try:
+        _, notes = with_keys(cfg, have)
+    except ConfigError as e:
+        return Result("API keys", FAIL, str(e.code), f"put them in {env} (see .env.example)")
+    if notes:
+        return Result("API keys", WARN, "; ".join(notes), f"for all of config.toml's setup, put the keys in {env}")
+    used = [OPENAI_KEY, DEEPGRAM_KEY, *(provider.key_name for provider in QUICK_PROVIDERS)]
+    return Result("API keys", OK, ", ".join(name for name in used if name in have))
 
 
 def device(kind: str, wanted: str, find: Callable[[str, str], int | None], names: list[str], default: int) -> Result:
@@ -177,7 +182,7 @@ def service_error(name: str, e: Exception) -> Result:
     return Result(name, FAIL, f"{type(e).__name__}: {e}", "check the network, and the service's status page")
 
 
-def cerebras_has(models: Iterable, wanted: str) -> str:
+def has_model(models: Iterable, wanted: str) -> str:
     ids = [m.id for m in models]
     if wanted not in ids:
         raise ValueError(f"no model {wanted!r} here (it has: {', '.join(ids[:8])})")
@@ -280,7 +285,12 @@ def check_all(cfg: Config, root: Path) -> int:
     from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
 
     env = root / ".env"
-    have_keys = keys(cfg, env).status == OK
+    have, asked = cli.env_keys(env), cfg
+    try:
+        cfg, _ = with_keys(cfg, have)
+        have_keys = True
+    except ConfigError:
+        have_keys = False
 
     def audio_device(kind: str):
         names, default_in, default_out = device_names()
@@ -316,6 +326,8 @@ def check_all(cfg: Config, root: Path) -> int:
         return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")
 
     def openai():
+        if OPENAI_KEY not in have:
+            return Result("OpenAI", SKIP, f"not used (no {OPENAI_KEY})")
         if not have_keys:
             return Result("OpenAI", SKIP, "needs the API keys")
         try:
@@ -323,26 +335,29 @@ def check_all(cfg: Config, root: Path) -> int:
         except Exception as e:  # noqa: BLE001 - what went wrong is the result
             return service_error("OpenAI", e)
 
-    def cerebras():
-        if not cfg.llm.cerebras_model:
-            return Result("Cerebras", SKIP, "not used ([llm] cerebras_model is empty)")
+    def quick(provider: QuickProvider):
+        model = getattr(cfg.llm, provider.setting)
+        if not model:
+            why = f"no {provider.key_name}" if provider.key_name not in have else f"[llm] {provider.setting} is empty"
+            return Result(provider.name, SKIP, f"not used ({why})")
         if not have_keys:
-            return Result("Cerebras", SKIP, "needs the API keys")
+            return Result(provider.name, SKIP, "needs the API keys")
         try:
-            client = cli.make_cerebras_client(env)
-            return timed("Cerebras", lambda: cerebras_has(client.models.list(), cfg.llm.cerebras_model))
+            client = cli.make_quick_client(env, provider)
+            return timed(provider.name, lambda: has_model(client.models.list(), model))
         except Exception as e:  # noqa: BLE001
-            return service_error("Cerebras", e)
+            return service_error(provider.name, e)
 
     def deepgram():
-        if "DEEPGRAM_API_KEY" not in required_keys(cfg):
+        if "openai" == cfg.stt.provider == cfg.tts.provider:
             return Result("Deepgram", SKIP, "not used")
         if not have_keys:
             return Result("Deepgram", SKIP, "needs the API keys")
         key = cli.api_key(env, "DEEPGRAM_API_KEY")
         t = time.perf_counter()
         try:
-            status = http_status(DEEPGRAM_PROJECTS, {"Authorization": f"Token {key}"})
+            host = cfg.stt.deepgram_host if cfg.stt.provider in ("deepgram", "flux") else cfg.tts.deepgram_host
+            status = http_status(f"https://{host}/v1/projects", {"Authorization": f"Token {key}"})
         except OSError as e:
             return service_error("Deepgram", e)
         return deepgram_status(status, time.perf_counter() - t)
@@ -384,14 +399,14 @@ def check_all(cfg: Config, root: Path) -> int:
         )
 
     checks: list[tuple[str, Check]] = [
-        ("API keys", lambda: keys(cfg, env)),
+        ("API keys", lambda: keys(asked, env)),
         ("Input device", lambda: audio_device("input")),
         ("Output device", lambda: audio_device("output")),
         ("Local models", models),
         ("Echo cancellation", echo),
         ("Voiceprints", speakers),
         ("OpenAI", openai),
-        ("Cerebras", cerebras),
+        *((provider.name, lambda provider=provider: quick(provider)) for provider in QUICK_PROVIDERS),
         ("Deepgram", deepgram),
         ("Voice", speaking),
         ("Microphone", listen),

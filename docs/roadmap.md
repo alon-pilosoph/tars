@@ -37,7 +37,8 @@ once it has 5 requests.
 | False wakes (TV, talk) | Review | at most one or two a day, none answered |
 | Wrong names | Home, a conversation's "who was talking" | rare once voiceprints come from the speakerphone |
 | Cut off mid-sentence | your notes | never |
-| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 1.1-1.6 s, as on the laptop ([response time](latency.md)) |
+| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 1.3-1.4 s, as on the laptop ([response time](latency.md)) |
+| Turns Groq couldn't take | `quick_service` in the `turns` table: `Cerebras`, or none with `answered_by = 'fallback'` | rare; if Groq's free key runs out often, a paid Groq key or Cerebras first |
 | Failed answers | Home, in red: where it failed (speech to text, the answer, the voice) and why | rare, and no one stage over and over |
 | Answers you'd rate bad | Home's good / bad buttons | a list, for steps 3 and 4 |
 

@@ -4,12 +4,13 @@ How to run TARS on a Mac while working on it, and on a Raspberry Pi 5 as the hou
 operation, storage and backup, and a first test run.
 
 TARS is local-first: the Pi listens, records, serves the web UI and learns voiceprints. Nothing leaves the house
-until a wake is confirmed, and then only the turn itself:
+until a wake is confirmed, and then only the turn itself, and only to the services `.env` has keys for:
 
-- **Deepgram:** your request's audio, for speech to text, and TARS's reply text, for its voice.
-- **Cerebras:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
-- **OpenAI:** the same conversation for turns that need the web or the TARS page, or when Cerebras fails, and a
-  request's recording when Deepgram's stream fails.
+- **Deepgram,** on its EU servers: your request's audio, for speech to text, and TARS's reply text, for its voice.
+- **Groq:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
+- **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
+- **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
+  can answer, and a request's recording when Deepgram's stream fails.
 
 The event log, the audio kept for learning, voiceprints and the web UI never leave it
 ([what leaves the machine](architecture.md#what-leaves-the-machine)).
@@ -17,7 +18,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 ```
                  home network (Wi-Fi)                               internet
 ┌──────────────── Raspberry Pi 5 ────────────────┐
-│ voice-assistant.service                        │── request audio / text ──► Deepgram, Cerebras, OpenAI
+│ voice-assistant.service                        │── request audio / text ──► Deepgram, Groq, Cerebras, OpenAI
 │   wake → double-check → answer                 │     (only after "hey TARS")
 │   writes voice_data/events/ (SQLite + WAVs)    │
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
@@ -29,7 +30,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync --all-extras && cp .env.example .env    # then put your OpenAI, Deepgram and Cerebras API keys in .env
+uv sync --all-extras && cp .env.example .env    # then put your API keys in .env: OpenAI, Deepgram, Groq, Cerebras
 uv run voice-assistant --list-devices
 ```
 
@@ -43,7 +44,7 @@ uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:808
 ```
 
 The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
-(8 MB) and the speaker model (25 MB) into `models/`. Expect about 1.1 to 1.6 seconds from when you stop talking to
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 1.3 to 1.4 seconds from when you stop talking to
 TARS's first sound, a little more when you sounded mid-thought: Deepgram's Flux decides when you're done, and TARS
 prepares the answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks
 for microphone access the first time; if TARS hears nothing, check System Settings → Privacy & Security →
@@ -60,13 +61,24 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts both systemd user services, at boot too, then runs `voice-assistant --check`. The first run stops to ask
-for the keys `config.toml`'s choices need in `.env` (OpenAI, Deepgram and Cerebras, by default); run it again after.
-It's safe to rerun, and it restarts the services, so after a `git pull` it puts the new code in use. A mistake in
-`config.toml` or a missing key stops a service instead of restarting it every few seconds: `journalctl` says what's
-wrong. The web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
+starts both systemd user services, at boot too, then runs `voice-assistant --check`. Every key is optional: it says what
+TARS does without the ones `.env` doesn't have, and stops only when hearing, thinking or speaking has no service at all;
+add keys and run it again ([running on the keys there are](architecture.md#running-on-the-keys-there-are)). It's safe to
+rerun, and it restarts the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml`, or a
+stage left with no key, stops a service instead of restarting it every few seconds: `journalctl` says what's wrong. The
+web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service).
+
+## Recognizing people from the start
+
+Voices are grouped in the web UI as people use TARS, and naming one makes a voiceprint. To recognize someone before
+that, record and enroll them:
+
+```bash
+uv run voice-assistant --record-voice NAME   # ~10 min guided session: wake phrases and read-aloud sentences
+uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sentences
+```
 
 ## Things to know
 
@@ -83,10 +95,12 @@ wrong. The web UI's build is committed, so the Pi needs no Node. By hand, the st
   encrypted copy of `voice_data/` and `models/personal/` to S3 or Backblaze B2 costs cents a month.
 - **Two processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
-- **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys, both
-  audio devices, the local models, echo cancellation (only when it's on; it warns when the devices' delay is over
-  0.5 s), the voiceprints, OpenAI, Cerebras and Deepgram (each with how long it took), the voice (it says "TARS is
-  ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both services.
+- **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
+  with what TARS does without any that are missing), both audio devices, the local models, echo cancellation (only
+  when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras and Deepgram
+  (each with how long it took, Deepgram on the servers `deepgram_host` names, and any without a key skipped), the
+  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both
+  services.
   Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
   one that doesn't open in time is a failure.
 

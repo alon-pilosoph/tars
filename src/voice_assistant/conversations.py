@@ -88,6 +88,7 @@ class ConversationLog:
         answered_by: str | None = None,
         failed_at: str | None = None,
         error: str | None = None,
+        quick_service: str | None = None,
     ) -> int | None:
         """`timings`: seconds by stage (TIMINGS); `failed_at` and `error`: where and why the answer failed, if it
         did."""
@@ -101,6 +102,7 @@ class ConversationLog:
             answered_by=answered_by,
             failed_at=failed_at,
             error=error[:MAX_ERROR] if error else None,
+            quick_service=quick_service,
         )
 
     def _insert_turn(
@@ -355,6 +357,7 @@ def _turn(row: dict, items: list[dict], people: dict, voice: Voice | None) -> di
             items=items,
             timings=json.loads(row["timings"]) if row["timings"] else None,
             answered_by=row["answered_by"],
+            quick_service=row["quick_service"],
             failed_at=row["failed_at"],
             error=row["error"],
         )

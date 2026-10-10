@@ -2,10 +2,12 @@
 with one line naming it, rather than failing on the first request."""
 
 import dataclasses
+import re
 import tomllib
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 
 class ConfigError(SystemExit):
@@ -14,6 +16,25 @@ class ConfigError(SystemExit):
 
 # The default speech to text, and the backup for the streaming services.
 OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
+
+DEEPGRAM_HOST = "api.deepgram.com"
+DEEPGRAM_STT_MODEL = "nova-3"
+DEEPGRAM_VOICE = "aura-2-zeus-en"
+OPENAI_KEY, DEEPGRAM_KEY = "OPENAI_API_KEY", "DEEPGRAM_API_KEY"
+
+
+class QuickProvider(NamedTuple):
+    name: str
+    url: str
+    key_name: str
+    setting: str
+
+
+# Where the quick model runs, in the order they're asked: each runs Qwen as its [llm] `setting` names it.
+QUICK_PROVIDERS = (
+    QuickProvider("Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "groq_model"),
+    QuickProvider("Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "cerebras_model"),
+)
 
 
 WEB_PORT = 8080  # the web UI's, unless --port says otherwise
@@ -65,16 +86,19 @@ class STTConfig:
     provider: str = "openai"  # openai | deepgram (streams while you talk) | flux (Deepgram also ends your turn)
     model: str = OPENAI_STT_MODEL
     language: str = "en"
+    deepgram_host: str = DEEPGRAM_HOST
 
 
 @dataclass
 class LLMConfig:
     model: str = "gpt-4.1-mini"
-    # Answers first, on Cerebras; turns that need the web or the TARS page go to `model`. Empty = `model` answers all.
+    # Answer first, on Groq, then on Cerebras while Groq can't; turns that need the web or the TARS page go to `model`.
+    # Empty = not used; both empty = `model` answers all.
+    groq_model: str = ""
     cerebras_model: str = ""
     service_tier: str = ""
     reasoning_effort: str = ""  # OpenAI's model's, and the quick model's unless quick_reasoning_effort is set
-    quick_reasoning_effort: str = ""  # the quick model's (Cerebras); empty = reasoning_effort
+    quick_reasoning_effort: str = ""  # the quick model's (Groq's and Cerebras's); empty = reasoning_effort
     memory_minutes: float = 10.0
     system_prompt: str = "You are a helpful voice assistant. Answer in one to three short sentences."
     humor: int = 75  # percent; "{humor}" in the system prompt is replaced with it
@@ -82,8 +106,8 @@ class LLMConfig:
     web_search: bool = True
     # Let it send links, notes, lists and text files to the web UI (needs [learning] log_events).
     send: bool = True
-    # The quick model (Cerebras) sets reminders and sends notes, lists and files itself, with its own tools, instead
-    # of handing those turns to `model`. Off until tools/capability_bench.py shows it gets them right.
+    # The quick model (Groq or Cerebras) sets reminders and sends notes, lists and files itself, with its own tools,
+    # instead of handing those turns to `model`. Off until tools/capability_bench.py shows it gets them right.
     quick_tools: bool = False
     # Questions that need real thinking go from the quick model to `think_model` (empty = `model`) at this reasoning
     # effort, for at most think_timeout_s. Empty think_effort = no such hand-off.
@@ -99,6 +123,7 @@ class TTSConfig:
     voice: str = "alloy"
     instructions: str = ""
     effect: str = ""
+    deepgram_host: str = DEEPGRAM_HOST
 
 
 @dataclass
@@ -170,13 +195,39 @@ def load_config(path: Path) -> Config:
     return cfg
 
 
-def required_keys(cfg: Config) -> list[str]:
-    keys = ["OPENAI_API_KEY"]  # always: OpenAI's model answers what needs the web or the TARS page, and backs up STT
-    if cfg.stt.provider in ("deepgram", "flux") or cfg.tts.provider == "deepgram":
-        keys.append("DEEPGRAM_API_KEY")
-    if cfg.llm.cerebras_model:
-        keys.append("CEREBRAS_API_KEY")
-    return keys
+def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
+    """config.toml's setup, cut down to the services there are API keys for (`keys`, the names set in .env): (the setup
+    that runs, a line for each thing done differently). Every paid service is optional, as long as each stage has one:
+    a missing quick provider is skipped, Deepgram's stages fall to OpenAI's and OpenAI's to Deepgram's, and without
+    OpenAI Qwen answers everything itself."""
+    stt, tts, llm, notes = cfg.stt, cfg.tts, cfg.llm, []
+    openai, deepgram = OPENAI_KEY in keys, DEEPGRAM_KEY in keys
+    if not (openai or deepgram):
+        raise ConfigError(f"Hearing and speaking need {DEEPGRAM_KEY} or {OPENAI_KEY} in .env (see .env.example).")
+    if stt.provider != "openai" and not deepgram:
+        stt = dataclasses.replace(stt, provider="openai", model=OPENAI_STT_MODEL)
+        notes.append(f"no {DEEPGRAM_KEY}: OpenAI transcribes, once you've stopped talking")
+    elif stt.provider == "openai" and not openai:
+        english = stt.language.lower().startswith("en")
+        stt = dataclasses.replace(stt, provider="flux" if english else "deepgram", model=DEEPGRAM_STT_MODEL)
+        notes.append(f"no {OPENAI_KEY}: Deepgram transcribes")
+    if tts.provider == "deepgram" and not deepgram:
+        tts = dataclasses.replace(tts, provider="openai", model=TTSConfig.model)
+        notes.append(f"no {DEEPGRAM_KEY}: OpenAI's {tts.voice} voice speaks")
+    elif tts.provider == "openai" and not openai:
+        tts = dataclasses.replace(tts, provider="deepgram", model=DEEPGRAM_VOICE)
+        notes.append(f"no {OPENAI_KEY}: Deepgram's {DEEPGRAM_VOICE} voice speaks")
+    for provider in QUICK_PROVIDERS:
+        if getattr(llm, provider.setting) and provider.key_name not in keys:
+            llm = dataclasses.replace(llm, **{provider.setting: ""})
+            notes.append(f"no {provider.key_name}: Qwen doesn't run on {provider.name}")
+    if not openai:
+        if not any(getattr(llm, provider.setting) for provider in QUICK_PROVIDERS):
+            names = ", ".join(provider.key_name for provider in QUICK_PROVIDERS)
+            raise ConfigError(f"The brain needs {OPENAI_KEY}, or one of {names} with its [llm] model set.")
+        llm = dataclasses.replace(llm, web_search=False, think_effort="", send=llm.send and llm.quick_tools)
+        notes.append(f"no {OPENAI_KEY}: Qwen answers everything, with no web search, thinking model or backup")
+    return dataclasses.replace(cfg, stt=stt, tts=tts, llm=llm), notes
 
 
 _KINDS = {str: "text", bool: "true or false", int: "a whole number", float: "a number", list: "a list"}
@@ -221,6 +272,9 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[stt] model must be a Deepgram model (e.g. nova-3) for provider deepgram, not {stt.model!r}")
     elif stt.provider == "flux" and stt.language and not stt.language.lower().startswith("en"):
         problems.append(f"[stt] provider flux only understands English, not language {stt.language!r}")
+    for name, section in (("stt", stt), ("tts", cfg.tts)):
+        if not re.fullmatch(r"[a-z0-9.-]+", section.deepgram_host):
+            problems.append(f"[{name}] deepgram_host must be a host name, like api.eu.deepgram.com")
     if cfg.recorder.greet not in GREETS:
         problems.append(f"[recorder] greet must be {', '.join(GREETS)}, not {cfg.recorder.greet!r}")
     if cfg.llm.think_timeout_s <= 0:

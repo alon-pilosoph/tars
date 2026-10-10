@@ -8,9 +8,10 @@ Two requirements pull against each other. It has to be **fast**, since it's on e
 **right**, since a reminder it says it set but didn't is worse than none. This page is the benchmark for that seat:
 every candidate, at every reasoning effort worth trying, on the same 26 requests, measured the same way.
 
-**The result:** Qwen on Cerebras at low reasoning scores 149 of 156, one behind gpt-oss-120b and Claude Haiku (150)
+**The result:** Qwen at low reasoning scores 149 of 156 on Cerebras, one behind gpt-oss-120b and Claude Haiku (150)
 and three behind Luna (152), with first words in about 0.4 s; of the two fast candidates, it is the one that sounds
-like TARS. Luna, the most accurate, is 0.2-0.4 s slower to its first words.
+like TARS. Luna, the most accurate, is 0.2-0.4 s slower to its first words. TARS runs the same Qwen on Groq first,
+where it starts sooner, and on Cerebras second.
 
 ## Method
 
@@ -39,7 +40,8 @@ like TARS. Luna, the most accurate, is 0.2-0.4 s slower to its first words.
   tier: the one responses said they were served on (OpenAI's `fast`, as TARS uses it), or the account's (Cerebras's
   free tier, then paid). Cerebras's free tier allows Qwen about 450 requests a minute but few tokens a minute, and
   gpt-oss-120b 5 requests a minute and a small daily amount (it ran out ten runs in); the paid rows came after a
-  top-up.
+  top-up. Groq's free key allows 8,000 tokens a minute, 1,000 of them written, plus a daily allowance, and refuses a
+  request that doesn't cap its reply (TARS asks for at most 500 tokens).
 - **Cost:** a full run costs cents on Cerebras and Haiku, and under a dollar on Luna.
 
 ## Results
@@ -56,6 +58,7 @@ Scores are right answers out of runs.
 | `qwen-3.8-27b` | cerebras (paid) | low | 59/60 | 18/18 | 24/24 | 12/18 | 36/36 | **149/156** | 0.42 / 1.35 | 1.05 / 1.70 | 0.41 / 0.80 | 2026-10-08 |
 | `qwen-3.8-27b` | cerebras (free tier) | medium | 58/60 | 18/18 | 24/24 | 12/18 | 36/36 | **148/156** | 0.39 / 0.89 | 1.17 / 1.84 | 0.53 / 0.85 | 2026-10-08 |
 | `qwen-3.8-27b` | cerebras (paid) | medium | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.43 / 0.87 | 1.12 / 1.67 | 0.41 / 0.77 | 2026-10-08 |
+| `qwen/qwen3.8-27b` | groq (free tier) | low | 6/10 | 2/3 | 4/4 | 3/3 | 6/6 | **21/26** | 0.34 / 0.40 | 1.00 / 1.09 | 0.31 / 0.35 | 2026-10-09 |
 | `claude-haiku-5-5` | claude | low | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.68 / 1.79 | 2.32 / 4.73 | 0.79 / 1.42 | 2026-10-08 |
 | `claude-haiku-5-5` | claude | medium | 60/60 | 18/18 | 24/24 | 12/18 | 36/36 | **150/156** | 0.75 / 2.26 | 2.58 / 4.07 | 0.67 / 1.40 | 2026-10-08 |
 | `gpt-6-luna` | openai (fast) | none | 60/60 | 18/18 | 24/24 | 9/18 | 36/36 | **147/156** | 0.68 / 0.94 | 1.66 / 2.41 | 0.74 / 1.69 | 2026-10-08 |
@@ -63,12 +66,22 @@ Scores are right answers out of runs.
 | `gpt-6-luna` | responses (fast) | low | 60/60 | 18/18 | 24/24 | 14/18 | 36/36 | **152/156** | 0.58 / 1.18 | 1.88 / 2.80 | 0.74 / 0.86 | 2026-10-08 |
 | `gpt-6-luna` | responses (fast) | medium | 60/60 | 18/18 | 24/24 | 13/18 | 36/36 | **151/156** | 0.80 / 1.49 | 1.76 / 2.15 | 0.84 / 1.32 | 2026-10-08 |
 
-### What TARS uses: Qwen on Cerebras at low reasoning
+**The Groq row is one run per request, not six.** Groq's free key allows about two requests a minute with TARS's
+instructions, so six runs span days. Two of its five misses are the benchmark's own: one request was still
+rate-limited after four minutes, and "remind me at 6pm" ran after 6 pm, which Qwen correctly declined. The other
+three (turning down "tomorrow at 7:30", speaking its reasoning instead of sending a message, handing a recipe over
+instead of sending it) need the full six runs to tell the provider from chance. It is the same model, with the same
+weights, that scored 149 of 156 over six runs on Cerebras at low reasoning.
 
-`cerebras_model = "qwen-3.8-27b"`, `quick_reasoning_effort = "low"`, `quick_tools = true`. One behind gpt-oss-120b and
-Claude Haiku (150) and three behind Luna (152) on the score, among the fastest, and of the two fast candidates, the
-one that sounds like TARS. The bench scores what a model does, not how it sounds, so the two fast candidates were
-also asked the same everyday questions and compared by ear:
+### What TARS uses: Qwen at low reasoning, on Groq first
+
+`groq_model = "qwen/qwen3.8-27b"` and `cerebras_model = "qwen-3.8-27b"` (the same model under each service's id),
+`quick_reasoning_effort = "low"`, `quick_tools = true`. One behind gpt-oss-120b and Claude Haiku (150) and three behind
+Luna (152) on the score, among the fastest, and of the two fast candidates, the one that sounds like TARS. Groq starts
+answering sooner and its times vary less, so it's asked first, with Cerebras as a hedge when Groq is slow to start and
+the fallback when it's rate-limited ([where Qwen runs](latency.md#where-should-qwen-and-deepgram-run)). The bench scores
+what a model does, not how it sounds, so the two fast candidates were also asked the same everyday questions and
+compared by ear:
 
 | Asked | Qwen, low | gpt-oss-120b, low |
 |---|---|---|
@@ -113,8 +126,9 @@ Medium is about as right, and slower on reminders. Decision: low.
 
 ### Does paying for Cerebras make it faster?
 
-No. Paying lifts the free tier's daily allowance, past which Qwen answers "402" and OpenAI takes over (slower, but it
-answers) until the next day. It doesn't make Qwen faster.
+No. Paying lifts the free tier's daily allowance, past which Cerebras answers "402" until the next day. It doesn't
+make Qwen faster. With Groq asked first, that allowance matters only on the turns Cerebras takes; with both out,
+OpenAI answers (slower, but it answers).
 
 ### Should a router decide first?
 
@@ -179,6 +193,8 @@ directly from the house.**
   the servers, the picture changes. Whole turns from the cloud machine came out slower than from home (0.68 s to
   first words against 0.50 s), most likely because of the cloud session's own network proxy, which every request goes
   through there; the round trips above are the part to trust.
+- **Groq has one run per request, not six** ([results](#results)), so its score isn't yet comparable with the rows
+  above it.
 - **OpenAI assumes a US location.** Asked for tomorrow's weather, it once asked which city, taking the house to be in
   the United States.
 
@@ -186,15 +202,17 @@ directly from the house.**
 
 ```
 uv run python tools/capability_bench.py --brain cerebras --model <id> --effort low --save docs/models.jsonl
+uv run python tools/capability_bench.py --brain groq --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --brain responses --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --brain claude --model <id> --effort low --save docs/models.jsonl
 uv run python tools/capability_bench.py --table docs/models.jsonl      # the results table, from every saved run
 uv run python tools/router_bench.py                                     # Jev as a router (TYPESAFE_API_KEY)
 ```
 
-`--brain` is where it runs: `cerebras` and `openai` through the Chat Completions API (any compatible service works the
-same way), `responses` through OpenAI's Responses API (`ResponsesQuickChat`: OpenAI's models only take tools with
-reasoning there), `claude` through Anthropic's Messages API (`ClaudeQuickChat`, needs `uv sync --extra claude`). Keys
-come from `.env`: `CEREBRAS_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Try each reasoning effort the model has,
+`--brain` is where it runs: `cerebras`, `groq` and `openai` through the Chat Completions API (any compatible service
+works the same way; without `--model`, `cerebras` and `groq` take their `[llm]` model), `responses` through OpenAI's
+Responses API (`ResponsesQuickChat`: OpenAI's models only take tools with reasoning there), `claude` through
+Anthropic's Messages API (`ClaudeQuickChat`, needs `uv sync --extra claude`). Keys come from `.env`:
+`CEREBRAS_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Try each reasoning effort the model has,
 lowest first, and paste the new rows in. Before switching TARS to a new model, read its wrong answers in the run's
 output too, not only its score: what it gets wrong matters as much as how often.

@@ -67,11 +67,17 @@ greet_after_s = 1.5
 provider = "flux"
 model = "nova-3"
 language = "en"
+# Deepgram's servers: "api.deepgram.com" (the US) or "api.eu.deepgram.com" (the EU, about 70 ms closer to Israel).
+deepgram_host = "api.eu.deepgram.com"
 
 [llm]
-# Answers first, on Cerebras (CEREBRAS_API_KEY in .env): about 0.3 s to its first sentence, against about 0.7 s for
-# OpenAI's. Anything that needs the web, or a tool it doesn't have, goes to `model` below, and so does everything while
-# Cerebras fails. Empty = `model` answers everything.
+# The quick brain, the same Qwen on two services. Groq answers first (GROQ_API_KEY in .env): about 0.15 s to its first
+# sentence, served from Frankfurt. Its free key allows 8,000 tokens a minute, 1,000 of them written, so when it says
+# "too many requests", Cerebras answers (CEREBRAS_API_KEY; about 0.25 s, from the US) until Groq is ready again; if
+# Groq hasn't started answering within half a second, Cerebras is asked too and the first to answer is kept.
+# Anything that needs the web, or a tool it doesn't have, goes to `model` below, and so does everything while both fail.
+# Empty, or no key for it = not used; neither = `model` answers everything.
+groq_model = "qwen/qwen3.8-27b"
 cerebras_model = "qwen-3.8-27b"
 # The model above sets reminders and sends notes, lists and files itself, saving those turns the hand-off.
 # `uv run python tools/capability_bench.py` checks it gets them right.
@@ -121,6 +127,8 @@ never read the tag aloud, and if it says unknown, don't guess who it is."""
 provider = "deepgram"
 model = "aura-2-zeus-en"
 voice = "onyx"
+# As in [stt]: "api.deepgram.com" (the US) or "api.eu.deepgram.com" (the EU).
+deepgram_host = "api.eu.deepgram.com"
 # How to deliver the lines (OpenAI only; gpt-4o-mini-tts and newer).
 instructions = """Low, calm, measured male voice. Completely deadpan and matter-of-fact, with almost no emotional \
 inflection. Even, unhurried pacing and crisp consonants. Deliver jokes perfectly straight, \

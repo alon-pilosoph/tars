@@ -1,7 +1,7 @@
 # Response time
 
 How long TARS takes to answer, from the moment you stop talking to its first sound: where that time goes, how the
-pipeline is built to overlap it, and the measured steps that took it from about 3.5 s to 1.1-1.6 s.
+pipeline is built to overlap it, and the measured steps that took it from about 3.5 s to 1.3-1.4 s.
 
 The constraints shape every choice below. A voice assistant feels slow well before it feels wrong, so every stage is
 streamed and started as early as possible. But cutting someone off mid-sentence is worse than a slow answer, so
@@ -14,13 +14,13 @@ Median over 8 spoken questions, three runs, on the development Mac ([method](#ho
 
 | Stage | Time | What happens |
 |---|---|---|
-| Waiting to be sure you're done | ~0.6 s (0.2-1.7 s) | Deepgram's Flux decides, from your words as well as the pause |
+| Waiting to be sure you're done | ~0.5 s | Deepgram's Flux decides, from your words as well as the pause |
 | Speech to text | ~0 s | Flux sends the words with its decision |
-| The brain's first sentence | ~0.4 s | Qwen on Cerebras at low reasoning, streamed (OpenAI's Luna: ~0.7 s; it still answers anything that needs the web) |
-| The voice's first audio | ~0.4 s | Deepgram's Aura-2 Zeus, a sentence at a time (OpenAI's Onyx: ~1.1 s) |
-| **From you stopping to TARS's first sound** | **~1.1-1.6 s** | the answer is prepared during the wait, so these overlap |
+| The brain's first sentence | ~0.4 s | Qwen on Groq at low reasoning, streamed (on Cerebras: ~0.6 s; OpenAI's Luna: ~0.7 s, and it still answers anything that needs the web) |
+| The voice's first audio | ~0.4 s | Deepgram's Aura-2 Zeus from its EU servers, a sentence at a time (from the US: ~0.6 s; OpenAI's Onyx: ~1.1 s) |
+| **From you stopping to TARS's first sound** | **~1.3-1.4 s** | the answer is prepared during the wait, so these overlap |
 
-A turn that needs the web adds Qwen's hand-off (about 0.4 s) and a web search, and TARS says "Looking it up." as it
+A turn that needs the web adds Qwen's hand-off (about 0.3 s) and a web search, and TARS says "Looking it up." as it
 starts.
 
 ## How the stages overlap
@@ -88,17 +88,36 @@ more than the 0.5 s the canceller can take.
 
 The voice gives up after 4 s without audio instead of the client's 15 s, and TARS says so in its own voice, from
 lines synthesized at startup ("I lost that one somewhere between here and the server. Ask me again."; plainer below
-50% humor). If Deepgram fails, OpenAI transcribes the same recording. If Cerebras fails, Luna answers, and keeps
-answering on its own for the next two minutes. A failed answer is kept in its conversation with where it failed
-(speech to text, the answer, or the voice) and why, and Home shows it.
+50% humor). If Deepgram fails, OpenAI transcribes the same recording.
+
+Qwen runs on Groq first, then on Cerebras, then OpenAI's Luna answers (`QuickChat` in `llm.py`):
+
+- **A hedge, not a timeout.** If the service asked hasn't started answering within 0.5 s (`HEDGE_S`), the next one is
+  asked too, and the first to say anything is kept. The others are closed before any of their tools run, so a reminder
+  is never set twice.
+- **A failed service is skipped** for the next two minutes, so an outage doesn't cost every turn its timeout. After
+  "too many requests" it's skipped for as long as the service asks (`Retry-After`), or a minute if it doesn't say.
+  With both out, Luna answers.
+- **An interrupted reply isn't a failure.** When you carry on talking and the draft is stopped, nothing is skipped
+  and no other service is asked.
+- **A reply that runs into Qwen's 500-token cap** (`QUICK_MAX_TOKENS`; Groq refuses a request without one) is carried
+  on by Luna from what was already said.
+
+A failed answer is kept in its conversation with where it failed (speech to text, the answer, or the voice) and why,
+and Home shows it.
 
 ### Timings on every answer
 
-Each of TARS's turns keeps the same stages as the log line (`timings` in the `turns` table, in seconds) and which
-model wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed the turn over, `ponder` when it went to
-the thinking model, `fallback` when Cerebras failed or is resting, `openai` with no Cerebras set up). Home shows the
-time to first sound and the model under each answer; hovering shows each stage. For a week's numbers:
-`SELECT answered_by, avg(json_extract(timings, '$.total')) FROM turns WHERE role = 'tars' GROUP BY 1`.
+Each of TARS's turns keeps the same stages as the log line (`timings` in the `turns` table, in seconds), which model
+wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed the turn over, `ponder` when it went to the
+thinking model, `fallback` when Qwen couldn't answer on any service or ran into its cap, `openai` with no quick service
+set up), and where Qwen's reply came from (`quick_service`: `Groq` or `Cerebras`, hand-offs included). Home shows the
+time to first sound and the model under each answer; hovering shows each stage. For a week's numbers, by service:
+
+```sql
+SELECT answered_by, quick_service, count(*), avg(json_extract(timings, '$.total'))
+FROM turns WHERE role = 'tars' GROUP BY answered_by, quick_service;
+```
 
 ## How it's measured
 
@@ -113,8 +132,15 @@ uv run python tools/turn_bench.py      # cut-offs: the local end of turn against
 to the assistant at real-time pace over real room tone taken from your recordings, and measures from where the voice
 ends in the audio to when the first reply sound would play (its speaker skips a voice's leading silence too). It uses
 the real services, so a run costs a few cents, and the numbers move by a few tenths between runs with the network and
-the model, so compare medians over several runs. `--set` overrides any `config.toml` setting for
-one run. Every turn also prints its own stage timings in the assistant's log.
+the model, so compare medians over several runs. `--set` overrides any `config.toml` setting for one run. Every turn
+also prints its own stage timings in the assistant's log.
+
+To compare two setups, each gets three clean runs on the same day, alternating between them, so the network and the
+services' load are shared. A run counts only if none of its turns had a failure, a refusal, a fallback or a timeout.
+The headline 1.3-1.4 s comes from such a comparison of four setups
+([where Qwen and Deepgram run](#where-should-qwen-and-deepgram-run)). The 1.1-1.6 s before it was measured on an
+earlier configuration and day; on the day of the comparison, that same setup (Qwen on Cerebras, Deepgram's US servers)
+took 1.7-2.5 s, so the new setup should be compared with that, not with the old headline.
 
 `tools/turn_bench.py` measures cut-offs: it plays the owner's 25 recorded sentences whole, and again with a pause
 spliced in after an unfinished word ("and", "the", "to"...), 0.5, 0.8 or 1.2 s long.
@@ -132,6 +158,8 @@ first sound.
 | Deepgram's Aura-2 Zeus voice instead of Onyx | 2.1-2.5 s | first audio in about 0.4 s instead of 1.1 s; from this step on the total is counted to the first *audible* sound, which includes the silence Zeus starts on, so the total barely moves |
 | Qwen on Cerebras answers first, Luna takes what needs the web | 1.8-2.0 s | the first sentence comes in about 0.3 s (Qwen without reasoning) instead of Luna's 0.7 s |
 | The speaker skips the silence a voice starts on | 1.1-1.6 s | Zeus opens a reply with 0.2-0.5 s of silence, which no longer plays |
+| Deepgram's EU servers for Flux and the voice | 1.6-2.6 s | the voice's first audio in 0.39 s instead of 0.58 s, and Flux's wait 0.12 s shorter; measured against 1.7-2.5 s for the step before on the same day ([how it's measured](#how-its-measured)) |
+| Qwen on Groq first, Cerebras as a hedge | 1.3-1.4 s | Qwen's first sentence in 0.42 s instead of 0.70 s, and the runs barely moved |
 
 ## Design decisions
 
@@ -170,18 +198,46 @@ First sentence with TARS's prompt, without reasoning or tools of its own, over 2
 | Model | First sentence | Free-key limit |
 |---|---|---|
 | Qwen on Cerebras | 0.27 s (slowest 0.41 s) | 450 requests a minute |
-| Qwen on Groq | 0.16 s | 8,000 tokens a minute (about 10 of TARS's requests) |
+| Qwen on Groq | 0.16 s | 8,000 tokens a minute (about 10 of these requests, without tools) |
 | gpt-oss-20b on Groq | 0.35 s | 8,000 tokens a minute |
 | gpt-oss-120b on Groq | 0.38 s | 8,000 tokens a minute |
 | gpt-oss-120b on Cerebras | 0.27 s | 5 requests a minute |
 
-**Decision: Qwen on Cerebras, with OpenAI's Luna (~0.7 s) behind it.** Qwen sounded the most like TARS; gpt-oss was
-correct but plain. Groq's Qwen was faster, but its free allowance covers about ten requests a minute.
+**Decision: Qwen, with OpenAI's Luna (~0.7 s) behind it.** Qwen sounded the most like TARS; gpt-oss was correct but
+plain. Where it runs is the next decision.
 **Trade-off:** a second model in the loop, which must know what to hand over. In this test, with no tools of its own,
 Qwen replied `<look-up>` for the web or the TARS page and the turn went to Luna. Asked 12 questions that need that
 and 12 that don't, six times each, it handed off 70 of the 72 it should have and answered all 72 others itself. As
 TARS is set up, Qwen has its own tools for reminders and sending (`quick_tools`) and runs at low reasoning, with first
 words in about 0.4 s; [choosing the quick model](models.md) benchmarks those across models and reasoning efforts.
+
+### Where should Qwen and Deepgram run?
+
+**Constraint:** from Israel, every request crosses to the services' servers and back, on every turn. Groq serves Qwen
+from Frankfurt and Cerebras from the US; Deepgram has US and EU servers (`deepgram_host`).
+
+Four setups, three clean runs each, alternated on the same day ([method](#how-its-measured)); the stage columns are
+medians over every turn of the three runs:
+
+| Setup | Run medians, you stopping to first sound | Flux's wait | Qwen's first sentence | The voice's first audio |
+|---|---|---|---|---|
+| Qwen on Cerebras, Deepgram US (the setup before) | 1.67, 2.48, 2.35 s | 0.64 s | 0.61 s | 0.58 s |
+| Qwen on Cerebras, Deepgram EU | 1.60, 2.62, 2.03 s | 0.52 s | 0.70 s | 0.39 s |
+| Qwen on Groq, Deepgram US | 1.63, 1.59, 1.65 s | 0.64 s | 0.38 s | 0.57 s |
+| **Qwen on Groq, Deepgram EU** | **1.32, 1.36, 1.41 s** | 0.52 s | 0.42 s | 0.39 s |
+
+Deepgram's EU servers cut the voice's first audio by about 0.2 s, but with Qwen on Cerebras the runs still spread from
+1.6 to 2.6 s. Groq cut Qwen's first sentence by about 0.25 s, and its runs held within 0.1 s of each other. Together
+they took every run under 1.45 s. Groq answered every turn in these runs; the hedge never needed Cerebras.
+
+**Decision: Qwen on Groq first, the same Qwen on Cerebras as a hedge and a fallback, and Deepgram's EU servers.**
+Both services run the same weights, so whichever answers, it's the same model with the same prompt
+([choosing the quick model](models.md#what-tars-uses-qwen-at-low-reasoning-on-groq-first)).
+**Trade-off:** Groq's free key allows 8,000 tokens a minute, 1,000 of them written, plus a daily allowance; with
+TARS's instructions and tools that is about two requests a minute, which a conversation can use up. When Groq says
+"too many requests", Cerebras answers until Groq is ready again, so a busy minute costs about 0.2 s a turn rather than
+the answer, and a slow start on Groq costs a second request on Cerebras. `quick_service` on every turn shows how often
+that happens in real use ([timings on every answer](#timings-on-every-answer)).
 
 ### Which voice?
 
@@ -213,7 +269,10 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 
 ## Limitations
 
-- **Measured on the development Mac**; the numbers move by a few tenths between runs.
+- **Measured on the development Mac**; the numbers move by a few tenths between runs, and the four-setup comparison
+  ran while the Mac was also training models.
+- **Groq's free-key limits are untested in real use.** In the benchmark Groq answered every turn; how often a
+  household's conversations run into its limit, and hand turns to Cerebras, is what `quick_service` will show.
 - **Spliced pauses aren't real hesitations** (no "um", no stretched last word), which may flatter Flux in the
   cut-off test.
 - **Starting early costs brain calls.** Flux's early "maybe done", where a draft starts, came 0.65 s after the end of
@@ -230,7 +289,9 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 | Setting | In `config.toml` | What it does |
 |---|---|---|
 | `[stt] provider` | `"flux"` | `flux`: Deepgram's Flux transcribes while you talk and decides when you're done. `deepgram`: Nova-3 transcribes while you talk, and the local rules below decide. `openai`: the finished recording is sent after the local rules decide (slowest, one key fewer) |
-| `[llm] cerebras_model` | `"qwen-3.8-27b"` | the quick brain; empty: OpenAI's `model` answers everything (~0.4 s slower) |
+| `[llm] groq_model` | `"qwen/qwen3.8-27b"` | the quick brain, on Groq, asked first; empty, or no `GROQ_API_KEY`: not used |
+| `[llm] cerebras_model` | `"qwen-3.8-27b"` | the same Qwen on Cerebras, asked when Groq is being skipped, fails, or hasn't started answering within 0.5 s; empty, or no `CEREBRAS_API_KEY`: not used. Neither: OpenAI's `model` answers everything (~0.3 s slower) |
+| `[stt] deepgram_host`, `[tts] deepgram_host` | `"api.eu.deepgram.com"` | Deepgram's servers: the EU's, or `api.deepgram.com` for the US (from Israel, the voice's first audio ~0.2 s later) |
 | `[tts] provider`, `model` | `"deepgram"`, `"aura-2-zeus-en"` | the voice; `openai` with `gpt-4o-mini-tts` takes delivery instructions but starts ~0.6 s later |
 | `[recorder] end_silence_s` | `0.8` | without Flux: silence that ends your turn |
 | `[recorder] max_pause_s` | `1.6` | without Flux: how long a pause may be when you sounded mid-thought |

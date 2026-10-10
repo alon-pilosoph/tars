@@ -1,8 +1,8 @@
-"""The brain. Qwen on Cerebras answers first (CerebrasChat), with its own tools for reminders and the TARS page when
-`quick_tools` is on, and hands over the turns it can't do (the web, and whatever it has no tool for) to OpenAI's model
-and its tools (OpenAIChat), and the questions that need real thinking to the thinking model. Each model is told
-exactly what it can do, what it hands over, and what TARS can't do at all (abilities()). One shared history, kept
-until the conversation goes quiet. Replies are streamed, and every reply can be stopped and forgotten."""
+"""The brain. Qwen answers first (QuickChat), on Groq or else on Cerebras, with its own tools for reminders and the
+TARS page when `quick_tools` is on, and hands over the turns it can't do (the web, and whatever it has no tool for) to
+OpenAI's model and its tools (OpenAIChat), and the questions that need real thinking to the thinking model. Each model
+is told exactly what it can do, what it hands over, and what TARS can't do at all (abilities()). One shared history,
+kept until the conversation goes quiet. Replies are streamed, and every reply can be stopped and forgotten."""
 
 import itertools
 import json
@@ -11,10 +11,12 @@ import threading
 import time
 import types
 from collections.abc import Iterable, Iterator
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from openai import OpenAI, OpenAIError
+from openai import OpenAI, OpenAIError, RateLimitError
 
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
@@ -169,10 +171,12 @@ SEND_RULES = (
 QUICK_SEND_RULES = (
     "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
     "send tool: a note, a list, or a text file. Use it when asked to send, save or share something, or when the "
-    "answer is a recipe, a list or anything too long to hear. Never put a link or a web address in it: for a link, "
-    "reply <look-up>. After sending, say in one short line that you sent it and that it's on the TARS page. In "
-    "anything you send, write like a person: no middots (·) or em dashes."
+    "answer is a recipe, a list or anything too long to hear. Never put a link or a web address in it{links}. After "
+    "sending, say in one short line that you sent it and that it's on the TARS page. In anything you send, write like "
+    "a person: no middots (·) or em dashes."
 )
+# How the quick model is told it can't send a link: hand the turn over, or say so when nothing can.
+LINK_HAND_OFF, NO_LINKS = ": for a link, reply <look-up>", ": you can't send links"
 
 # Strict mode needs every field listed as required; the ones a kind doesn't use are nullable instead.
 SEND_TOOL = {
@@ -225,17 +229,23 @@ SEARCHING = "Looking it up."
 THINKING = "Let me think about that for a moment."
 FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
 MAX_TOOL_ROUNDS = 3
-CEREBRAS_URL = "https://api.cerebras.ai/v1"
 # What the quick model replies when a turn needs OpenAI's tools; that turn is then OpenAI's to answer.
 LOOK_UP = "<look-up>"
 # What it replies when a question needs real thinking; the thinking model answers it. Not "<think>": Qwen 3 models
 # write their own reasoning between <think> tags.
 PONDER = "<ponder>"
-# After Cerebras fails (down, slow, "too many requests"), OpenAI answers on its own for this long, so each turn
-# doesn't wait out Cerebras's timeout first.
-CEREBRAS_COOLDOWN_S = 120.0
-# Who answered a reply (Brain.answered_by), kept with the turn: Qwen on Cerebras, OpenAI because Qwen handed the turn
-# over, the thinking model because Qwen handed it a hard question, OpenAI because Cerebras failed or is cooling
+# After a quick service fails (down, slow), it's skipped for this long, so each turn doesn't wait out its timeout
+# first. After "too many requests", it's skipped for as long as the service asks (Retry-After), or for the minute its
+# limits are counted over if it doesn't say.
+QUICK_COOLDOWN_S = 120.0
+RATE_LIMITED_S = 60.0
+# A spoken reply, and the quick model's reasoning, are far shorter. Groq refuses a request that doesn't say: it
+# assumes 2,048 tokens, over its free key's 1,000 a minute. Only what's written counts against that, not this.
+QUICK_MAX_TOKENS = 500
+# If the quick service hasn't started answering by then, the next one is asked too, and the first to answer is kept.
+HEDGE_S = 0.5
+# Who answered a reply (Brain.answered_by), kept with the turn: Qwen, OpenAI because Qwen handed the turn over, the
+# thinking model because Qwen handed it a hard question, OpenAI because every quick service failed or is cooling
 # down, or OpenAI as the only brain.
 QUICK, LOOKED_UP, PONDERED, FALLBACK, OPENAI = "quick", "look_up", "ponder", "fallback", "openai"
 NEEDS_THE_WEB = "anything current or live: the weather, news, sports results, prices or opening hours, or a real link"
@@ -344,6 +354,7 @@ class ReplyFailed(OpenAIError):
 class Brain(Protocol):
     sent: list[SentItem]  # what the last reply sent to the web UI
     answered_by: str | None  # who wrote the last reply (QUICK, LOOKED_UP, PONDERED, FALLBACK or OPENAI), once known
+    quick_service: str | None  # the service whose quick reply was used (Groq, Cerebras), hand-offs included
     changes: list[Change]  # what the last reply asked to change in the reminders, made once it's kept
 
     def stream_reply(self, text: str) -> Iterator[str]:
@@ -410,6 +421,7 @@ class _Writing:
         self.stopped: str | None = None  # why, once it's stopped
         self.stream = None  # the response being read, so interrupt() can close it
         self.answered_by = answered_by
+        self.quick_service: str | None = None
         # The quick model's tool calls and their results, as Responses API items, for a model it hands over to.
         self.quick_calls: list[dict] = []
 
@@ -419,8 +431,9 @@ class OpenAIChat:
 
     first_answerer = OPENAI
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig, reminders: ReminderTools | None = None):
-        """`reminders`: TARS's timers, reminders and messages, when it has them."""
+    def __init__(self, client: OpenAI | None, cfg: LLMConfig, reminders: ReminderTools | None = None):
+        """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
+        QuickChat, whose Qwen then answers everything."""
         self._client = client
         self._cfg = cfg
         self._reminders = reminders
@@ -558,20 +571,25 @@ class OpenAIChat:
     def answered_by(self) -> str | None:
         return self._writing.answered_by
 
+    @property
+    def quick_service(self) -> str | None:
+        return self._writing.quick_service
+
     def _remember(self, answer: str, writing: _Writing) -> None:
         with self._lock:
             _check(writing)
             self._history.append({"role": "assistant", "content": answer.strip()})
             self._history = self._history[-MAX_TURNS * 2 :]
 
-    def _run_tool(self, call, links: bool = True) -> str:
-        """`links`: whether this model can send links, which need web search."""
+    def _run_tool(self, call, no_links: str = "") -> str:
+        """`no_links`: what this model should do instead of sending a link, which needs web search; empty if it
+        can."""
         try:
             args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
             return "error: the arguments weren't valid JSON"
-        if call.name == "send" and not links and isinstance(args, dict) and _has_link(args):
-            return f"error: a link needs web search, which you can't do: reply {LOOK_UP} instead"
+        if call.name == "send" and no_links and isinstance(args, dict) and _has_link(args):
+            return f"error: a link needs web search, which you can't do: {no_links}"
         if call.name == "send":
             item, result = check_send(args)
             if item:
@@ -606,6 +624,8 @@ class OpenAIChat:
         _stop(self._writing, "interrupted")
 
     def warm(self) -> None:
+        if self._client is None:
+            return
         # The cheapest request there is; the OpenAI voice reuses the same connection.
         try:
             self._client.models.retrieve(self._cfg.model)
@@ -613,70 +633,117 @@ class OpenAIChat:
             pass  # only a head start: the real request reports a failure
 
 
-class CerebrasChat(OpenAIChat):
-    """Answers on Cerebras (about 0.3 s to the first sentence, against about 0.7 s for OpenAI's), with its own tools
-    when `quick_tools` is on, and hands a turn to OpenAI's model, tools and all, when it needs the web (or anything
-    it has no tool for), to the thinking model when it needs real thinking, and to OpenAI when Cerebras fails. One
-    conversation: each sees what the other said."""
+@dataclass
+class QuickService:
+    name: str
+    client: OpenAI
+    model: str
+    back_at: float = 0.0
+
+
+type _Opened = tuple[object, Iterator]
+
+
+def _cooldown(e: Exception) -> float:
+    try:
+        return float(e.response.headers["retry-after"])
+    except AttributeError, KeyError, ValueError:
+        return RATE_LIMITED_S if isinstance(e, RateLimitError) else QUICK_COOLDOWN_S
+
+
+class QuickChat(OpenAIChat):
+    """Answers with Qwen on the first of its services that isn't failing (Groq about 0.15 s to the first sentence,
+    Cerebras about 0.25 s, against about 0.7 s for OpenAI's), with its own tools when `quick_tools` is on, and hands
+    a turn to OpenAI's model, tools and all, when it needs the web (or anything it has no tool for), to the thinking
+    model when it needs real thinking, and to OpenAI when every service fails. One conversation: each sees what the
+    others said."""
 
     first_answerer = QUICK
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig, cerebras: OpenAI, reminders: ReminderTools | None = None):
+    def __init__(
+        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+    ):
         super().__init__(client, cfg, reminders)
-        self._cerebras = cerebras
-        self._cerebras_back_at = 0.0  # monotonic time; until then, Cerebras failed recently and OpenAI answers
+        self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         tools = REMIND_TOOLS * own_remind + [QUICK_SEND_TOOL] * own_send
         self._quick_tool_defs = tools  # as the Responses API takes them
         self._quick_tools = [_chat_tool(t) for t in tools]
         can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
         look_up = [NEEDS_THE_WEB] * cfg.web_search + [NEEDS_SENDING] * (cfg.send and not own_send)
-        look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind)
+        look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind and client is not None)
         examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:
             ponder = ["plan three days in Rome for us", "should we lease the car or buy it?"]
             hand_offs.append((PONDER, PONDER_INTRO, [NEEDS_THINKING], ponder))
         self._markers = tuple(marker for marker, *_ in hand_offs)
-        rules = [SKIP_RULES, *self._reminder_rules(tools=own_remind)] + [QUICK_SEND_RULES] * own_send
-        rules.append(abilities(can, hand_offs, self._cant()))
+        self._no_links = f"reply {LOOK_UP} instead" if LOOK_UP in self._markers else "say you can't send links"
+        links = LINK_HAND_OFF if LOOK_UP in self._markers else NO_LINKS
+        rules = [SKIP_RULES, *self._reminder_rules(tools=own_remind)]
+        rules += [QUICK_SEND_RULES.format(links=links)] * own_send
+        cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and client is None)
+        rules.append(abilities(can, hand_offs, cant))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules])
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
-        self._quick_extra = {"reasoning_effort": effort} if effort else {}
+        self._quick_extra = {"max_completion_tokens": QUICK_MAX_TOKENS} | (
+            {"reasoning_effort": effort} if effort else {}
+        )
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
-        if time.monotonic() < self._cerebras_back_at:
-            writing.answered_by = FALLBACK
-            yield from super()._stream_reply(context, writing)
-            return
-        answer = ""
-        quick = self._quick_reply(context, writing)
-        # Usually the whole reply is the marker; now and then it comes after a sentence ("I can't check that.
-        # <look-up>").
-        reply = _UpTo(quick, self._markers)
-        handed_off = None
-        try:
-            for piece in reply:
-                answer += piece
-                yield piece
-            handed_off = reply.found
-            writing.answered_by = {LOOK_UP: LOOKED_UP, PONDER: PONDERED}.get(handed_off, QUICK)
-        except OpenAIError as e:  # ReplyFailed is one too: an interrupted reply stays interrupted
-            if isinstance(e, ReplyFailed):
-                raise
-            self._cerebras_back_at = time.monotonic() + CEREBRAS_COOLDOWN_S
-            if answer.strip():
-                raise
-            print(f"(Cerebras failed: {e!r}; OpenAI answers instead, and for the next {CEREBRAS_COOLDOWN_S:.0f} s)")
-            handed_off, writing.answered_by = LOOK_UP, FALLBACK
-        finally:
-            quick.close()
-        if not handed_off and not answer.strip():
-            print("(Cerebras said nothing; OpenAI answers instead)")
-            handed_off, writing.answered_by = LOOK_UP, FALLBACK
-        if not handed_off:
+        answer, handed_off, cut_off = "", None, False
+        ready = [service for service in self._quick if time.monotonic() >= service.back_at]
+        if not ready and self._client is None:
+            ready = list(self._quick)
+        while ready:
+            service, opened, failed = self._first_to_answer(ready, context, writing)
+            for gone, e in failed:
+                self._cool_down(gone, e)
+                ready.remove(gone)
+            if service is None:
+                break
+            writing.quick_service = service.name
+            quick = self._quick_reply(service, context, writing, opened)
+            # Usually the whole reply is the marker; now and then it comes after a sentence ("I can't check that.
+            # <look-up>").
+            reply = _UpTo(quick, self._markers)
+            try:
+                for piece in reply:
+                    answer += piece
+                    yield piece
+                handed_off = reply.found
+                writing.answered_by = {LOOK_UP: LOOKED_UP, PONDER: PONDERED}.get(handed_off, QUICK)
+            except _CutOff:
+                print(f"({service.name}'s reply ran into its {QUICK_MAX_TOKENS} tokens)")
+                cut_off = True
+            except OpenAIError as e:
+                _check(writing)  # an interrupted reply stays interrupted: closing its stream makes it fail
+                self._cool_down(service, e)
+                ready.remove(service)
+                if answer.strip():
+                    raise
+                writing.quick_service = None
+                if writing.quick_calls:
+                    break
+                continue
+            finally:
+                quick.close()
+            if not handed_off and not answer.strip():
+                print(f"({service.name} said nothing)")
+                writing.quick_service = None
+            break
+        if not handed_off and answer.strip() and not cut_off:
             self._remember(answer, writing)
             return
+        if self._client is None:
+            if answer.strip():
+                self._remember(answer, writing)
+                return
+            raise QuickFailed("no quick service answered, and there's no OpenAI to fall back on")
+        if not ready:
+            print("(no quick service can answer; OpenAI answers)")
+        if not handed_off:
+            handed_off, writing.answered_by = LOOK_UP, FALLBACK
         context.extend(writing.quick_calls)  # what Qwen's tools already did, so it isn't done twice
         if handed_off == PONDER:
             thinking = f"{' ' * bool(answer.strip())}{THINKING} "
@@ -696,23 +763,93 @@ class CerebrasChat(OpenAIChat):
         finally:
             timer.cancel()
 
-    def _quick_reply(self, context: list, writing: _Writing) -> Iterator[str]:
-        """Qwen's reply, streamed, with as many rounds of its tools as it needs (up to MAX_TOOL_ROUNDS)."""
-        messages = [{"role": "system", "content": f"{self._quick_instructions}\n\n{self._now()}"}, *context]
+    def _quick_messages(self, context: list) -> list:
+        return [{"role": "system", "content": f"{self._quick_instructions}\n\n{self._now()}"}, *context]
+
+    def _quick_tools_for(self, round_: int) -> dict:
+        tools = {"tools": self._quick_tools} if self._quick_tools else {}
+        if tools and round_ == MAX_TOOL_ROUNDS - 1:
+            tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
+        return tools
+
+    def _create(self, service: QuickService, messages: list, round_: int):
+        return service.client.chat.completions.create(
+            model=service.model, stream=True, messages=messages, **self._quick_extra, **self._quick_tools_for(round_)
+        )
+
+    def _open(self, service: QuickService, messages: list, streams: _Streams) -> _Opened:
+        """`service`'s first round, read up to its first sign of an answer."""
+        stream = self._create(service, messages, 0)
+        streams.add(stream)
+        events, seen = iter(stream), []
+        for event in events:
+            seen.append(event)
+            if _says_something(event):
+                return stream, itertools.chain(seen, events)
+        raise QuickFailed(f"{service.name} said nothing")
+
+    def _first_to_answer(
+        self, services: list[QuickService], context: list, writing: _Writing
+    ) -> tuple[QuickService | None, _Opened | None, list[tuple[QuickService, Exception]]]:
+        """(the service that started answering first, its opened stream, the services that failed meanwhile). The
+        next service is asked too when the one before fails, or hasn't started answering within HEDGE_S; the first to
+        start answering is kept, before any of its tools run, and the others are closed."""
+        messages, streams = self._quick_messages(context), _Streams()
+        writing.stream = streams
+        pending, failed, todo = {}, [], iter(services)
+        pool = ThreadPoolExecutor(len(services), thread_name_prefix="quick-open")
+        try:
+            while True:
+                _check(writing)
+                if service := next(todo, None):
+                    pending[pool.submit(self._open, service, messages, streams)] = service
+                if not pending:
+                    return None, None, failed
+                done, _ = wait(pending, timeout=HEDGE_S, return_when=FIRST_COMPLETED)
+                _check(writing)
+                winner = None
+                for future in done:
+                    service = pending.pop(future)
+                    if error := future.exception():
+                        failed.append((service, error))
+                    elif winner is None:
+                        winner = service, future.result()
+                if winner:
+                    service, opened = winner
+                    streams.close(keep=opened[0])
+                    writing.stream = opened[0]
+                    return service, opened, failed
+        except BaseException:
+            streams.close()
+            raise
+        finally:
+            pool.shutdown(wait=False)
+
+    def _cool_down(self, service: QuickService, e: Exception) -> None:
+        cooldown = _cooldown(e)
+        service.back_at = time.monotonic() + cooldown
+        print(f"({service.name} failed: {e!r}; skipped for the next {cooldown:.0f} s)")
+
+    def _quick_reply(
+        self, service: QuickService, context: list, writing: _Writing, opened: _Opened | None = None
+    ) -> Iterator[str]:
+        """Qwen's reply, streamed, with as many rounds of its tools as it needs (up to MAX_TOOL_ROUNDS). `opened`:
+        its first round, already started by _first_to_answer."""
+        messages = self._quick_messages(context)
         for round_ in range(MAX_TOOL_ROUNDS):
-            tools = {"tools": self._quick_tools} if self._quick_tools else {}
-            if tools and round_ == MAX_TOOL_ROUNDS - 1:
-                tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
             _check(writing)
-            stream = writing.stream = self._cerebras.chat.completions.create(
-                model=self._cfg.cerebras_model, stream=True, messages=messages, **self._quick_extra, **tools
-            )
-            said, calls = "", {}  # calls: index -> {"id", "name", "arguments"}, put together from the stream
+            if round_ == 0 and opened:
+                stream, events = opened
+            else:
+                stream = writing.stream = self._create(service, messages, round_)
+                events = iter(stream)
+            said, calls, finish = "", {}, None  # calls: index -> {"id", "name", "arguments"}, from the stream
             with stream:
-                for event in stream:
+                for event in events:
                     _check(writing)
                     if not event.choices:
                         continue
+                    finish = getattr(event.choices[0], "finish_reason", None) or finish
                     delta = event.choices[0].delta
                     if delta.content:
                         said += delta.content
@@ -724,6 +861,8 @@ class CerebrasChat(OpenAIChat):
                             call["name"] = part.function.name or call["name"]
                             call["arguments"] += part.function.arguments or ""
             writing.stream = None
+            if finish == "length":
+                raise _CutOff
             if not calls:
                 return
             calls = [{**c, "id": c["id"] or f"call_{round_}_{i}"} for i, c in sorted(calls.items())]
@@ -744,7 +883,7 @@ class CerebrasChat(OpenAIChat):
             with self._lock:
                 _check(writing)
                 for c in calls:
-                    output = self._run_tool(types.SimpleNamespace(**c), links=False)
+                    output = self._run_tool(types.SimpleNamespace(**c), self._no_links)
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": output})
                     if output.startswith("error"):
                         continue
@@ -754,10 +893,11 @@ class CerebrasChat(OpenAIChat):
                     ]
 
     def warm(self) -> None:
-        try:
-            self._cerebras.models.list()
-        except OpenAIError:
-            pass  # only a head start
+        for service in self._quick:
+            try:
+                service.client.models.list()
+            except OpenAIError:
+                pass  # only a head start
         super().warm()
 
 
@@ -765,27 +905,38 @@ class QuickFailed(OpenAIError):
     """The quick model's service failed (whichever it is), so OpenAI answers instead."""
 
 
-class ResponsesQuickChat(CerebrasChat):
-    """CerebrasChat with an OpenAI model (Luna) as the quick model, through the Responses API: unlike Chat Completions,
-    it lets the model reason and use tools in the same request. `quick` is an OpenAI client (it can be the same one);
-    `cerebras_model` names the model, and service_tier applies to it as to OpenAI's other requests."""
+class _CutOff(Exception):
+    """The quick model's reply ran into QUICK_MAX_TOKENS."""
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig, quick: OpenAI, reminders: ReminderTools | None = None):
+
+class ResponsesQuickChat(QuickChat):
+    """QuickChat with an OpenAI model (Luna) as the quick model, through the Responses API: unlike Chat Completions,
+    it lets the model reason and use tools in the same request. Each QuickService's client is an OpenAI client (it can
+    be the same one), and service_tier applies to it as to OpenAI's other requests."""
+
+    def __init__(
+        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+    ):
         super().__init__(client, cfg, quick, reminders)
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
         self._quick_extra = {"reasoning": {"effort": effort}} if effort else {}
         if cfg.service_tier:
             self._quick_extra["service_tier"] = cfg.service_tier
 
-    def _quick_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+    def _first_to_answer(self, services: list[QuickService], context: list, writing: _Writing) -> tuple:
+        return services[0], None, []
+
+    def _quick_reply(
+        self, service: QuickService, context: list, writing: _Writing, opened: _Opened | None = None
+    ) -> Iterator[str]:
         items = list(context)
         for round_ in range(MAX_TOOL_ROUNDS):
             tools = {"tools": self._quick_tool_defs} if self._quick_tool_defs else {}
             if tools and round_ == MAX_TOOL_ROUNDS - 1:
                 tools["tool_choice"] = "none"  # the last round has to say something
             _check(writing)
-            stream = writing.stream = self._cerebras.responses.create(
-                model=self._cfg.cerebras_model,
+            stream = writing.stream = service.client.responses.create(
+                model=service.model,
                 instructions=f"{self._quick_instructions}\n\n{self._now()}",
                 input=items,
                 stream=True,
@@ -808,7 +959,7 @@ class ResponsesQuickChat(CerebrasChat):
             with self._lock:
                 _check(writing)
                 for call in calls:
-                    output = self._run_tool(call, links=False)
+                    output = self._run_tool(call, self._no_links)
                     done = [
                         {
                             "type": "function_call",
@@ -823,14 +974,16 @@ class ResponsesQuickChat(CerebrasChat):
                         writing.quick_calls += done
 
 
-class ClaudeQuickChat(CerebrasChat):
-    """CerebrasChat with a Claude model (Haiku) as the quick model, through Anthropic's Messages API: the same tools,
-    hand-offs and fallback to OpenAI. `claude` is an anthropic.Anthropic client; `cerebras_model` names the model."""
+class ClaudeQuickChat(QuickChat):
+    """QuickChat with a Claude model (Haiku) as the quick model, through Anthropic's Messages API: the same tools,
+    hand-offs and fallback to OpenAI. Each QuickService's client is an anthropic.Anthropic client."""
 
     MAX_TOKENS = 8000  # a spoken reply is short, but thinking counts too
 
-    def __init__(self, client: OpenAI, cfg: LLMConfig, claude, reminders: ReminderTools | None = None):
-        super().__init__(client, cfg, claude, reminders)
+    def __init__(
+        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+    ):
+        super().__init__(client, cfg, quick, reminders)
         self._claude_tools = [
             {
                 "name": t["function"]["name"],
@@ -845,7 +998,12 @@ class ClaudeQuickChat(CerebrasChat):
         effort = "low" if effort in ("none", "minimal") else effort
         self._quick_extra = {"output_config": {"effort": effort}} if effort else {}
 
-    def _quick_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+    def _first_to_answer(self, services: list[QuickService], context: list, writing: _Writing) -> tuple:
+        return services[0], None, []
+
+    def _quick_reply(
+        self, service: QuickService, context: list, writing: _Writing, opened: _Opened | None = None
+    ) -> Iterator[str]:
         import anthropic
 
         # The instructions are cached; the time and the reminders change every request, so they come after.
@@ -860,8 +1018,8 @@ class ClaudeQuickChat(CerebrasChat):
                 tools["tool_choice"] = {"type": "none"}  # the last round has to say something
             _check(writing)
             try:
-                with self._cerebras.messages.stream(
-                    model=self._cfg.cerebras_model,
+                with service.client.messages.stream(
+                    model=service.model,
                     max_tokens=self.MAX_TOKENS,
                     system=system,
                     messages=messages,
@@ -888,7 +1046,7 @@ class ClaudeQuickChat(CerebrasChat):
                 _check(writing)
                 for use in uses:
                     arguments = json.dumps(use.input)
-                    output = self._run_tool(types.SimpleNamespace(name=use.name, arguments=arguments), links=False)
+                    output = self._run_tool(types.SimpleNamespace(name=use.name, arguments=arguments), self._no_links)
                     result = {"type": "tool_result", "tool_use_id": use.id, "content": output}
                     results.append(result | ({"is_error": True} if output.startswith("error") else {}))
                     if output.startswith("error"):
@@ -908,6 +1066,46 @@ def _chat_tool(tool: dict) -> dict:
     return {"type": "function", "function": {k: v for k, v in tool.items() if k != "type"}}
 
 
+class _Streams:
+    """The streams _first_to_answer opens, closed together but for the one kept; any that opens after is closed."""
+
+    def __init__(self):
+        self._lock, self._open, self._done = threading.Lock(), [], False
+
+    def add(self, stream) -> None:
+        with self._lock:
+            if not self._done:
+                self._open.append(stream)
+                return
+        _close(stream, "a quick stream")
+
+    def close(self, keep=None) -> None:
+        with self._lock:
+            streams, self._open, self._done = self._open, [], True
+        for stream in streams:
+            if stream is not keep:
+                _close(stream, "a quick stream")
+
+
+def _close(stream, what: str) -> None:
+    try:
+        stream.close()
+    except Exception as e:  # noqa: BLE001 - a stream already closed is as good as closing it
+        print(f"(couldn't close {what}: {e!r})")
+
+
+def _says_something(event) -> bool:
+    if not getattr(event, "choices", None):
+        return False
+    delta = event.choices[0].delta
+    return bool(
+        getattr(delta, "content", None)
+        or getattr(delta, "tool_calls", None)
+        or getattr(delta, "reasoning", None)
+        or getattr(delta, "reasoning_content", None)
+    )
+
+
 def _check(writing: _Writing) -> None:
     if writing.stopped:
         raise ReplyFailed(writing.stopped)
@@ -917,10 +1115,7 @@ def _stop(writing: _Writing, why: str) -> None:
     """Stops a reply being written, from any thread: its stream ends with ReplyFailed(why)."""
     writing.stopped = writing.stopped or why
     if (stream := writing.stream) is not None:
-        try:
-            stream.close()
-        except Exception as e:  # noqa: BLE001 - a stream already closed is as good as closing it
-            print(f"(couldn't close the reply's stream: {e!r})")
+        _close(stream, "the reply's stream")
 
 
 def _why(event) -> str:

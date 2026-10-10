@@ -1,12 +1,15 @@
-"""The brain: skipping overheard chatter, memory, the send tool, failures, and Cerebras handing turns to OpenAI."""
+"""The brain: skipping overheard chatter, memory, the send tool, failures, and Qwen handing turns to OpenAI."""
 
+import dataclasses
 import json
+import threading
 import time
 import types
 from datetime import datetime
 
+import httpx
 import pytest
-from openai import OpenAIError
+from openai import APIConnectionError, OpenAIError, RateLimitError
 
 from voice_assistant import llm
 from voice_assistant.config import LLMConfig
@@ -16,8 +19,9 @@ from voice_assistant.llm import (
     LOOK_UP,
     MAX_TOOL_ROUNDS,
     SKIP,
-    CerebrasChat,
     OpenAIChat,
+    QuickChat,
+    QuickService,
     ReplyFailed,
     split_skip,
 )
@@ -297,25 +301,38 @@ def test_tars_only_sends_things_when_they_can_be_kept(tmp_path, log_events, type
     assert brain_config(cfg, typed).send is sends
 
 
-class FakeStream:
-    """A streamed chat completion that can be closed, like the SDK's."""
+def gone() -> APIConnectionError:
+    return APIConnectionError(request=httpx.Request("POST", "https://api.groq.com"))
 
-    def __init__(self, text):
-        self.pieces, self.closed = [text[:3], text[3:]], False
+
+class FakeStream:
+    """A streamed chat completion that can be closed, like the SDK's: reading on after that fails. `finish`: why the
+    last piece ended it ("length": the token cap)."""
+
+    def __init__(self, text, finish=None):
+        self.pieces, self.closed, self.finish = [text[:3], text[3:]], False, finish
 
     def __iter__(self):
-        for piece in self.pieces:
-            yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=types.SimpleNamespace(content=piece))])
+        for i, piece in enumerate(self.pieces):
+            if self.closed:
+                raise gone()
+            finish = self.finish if i == len(self.pieces) - 1 else None
+            delta = types.SimpleNamespace(content=piece)
+            yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta, finish_reason=finish)])
+
+    def close(self):
+        self.closed = True
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
-        self.closed = True
+        self.close()
 
 
 def fake_cerebras(reply_for):
-    """A Chat Completions client: each request streams `reply_for(messages)`, or raises it if it's an error."""
+    """A Chat Completions client: each request streams `reply_for(messages)`, or raises it if it's an error, or
+    returns it if it's already a stream."""
     requests, streams = [], []
 
     def create(**kw):
@@ -323,7 +340,7 @@ def fake_cerebras(reply_for):
         reply = reply_for(kw["messages"])
         if isinstance(reply, Exception):
             raise reply
-        streams.append(FakeStream(reply))
+        streams.append(reply if hasattr(reply, "close") else FakeStream(reply))
         return streams[-1]
 
     client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
@@ -333,7 +350,7 @@ def fake_cerebras(reply_for):
 
 def cerebras_brain(quick_reply, openai_reply="From OpenAI.", **cfg):
     openai, cerebras = fake_openai_chat(lambda m: openai_reply), fake_cerebras(quick_reply)
-    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen", **cfg), cerebras)
+    brain = QuickChat(openai, LLMConfig(**cfg), [QuickService("Cerebras", cerebras, "qwen")])
     return brain, openai, cerebras
 
 
@@ -377,11 +394,66 @@ def test_after_cerebras_fails_openai_answers_alone_for_a_while(monkeypatch):
     brain, _, cerebras = cerebras_brain(lambda m: OpenAIError("timed out") if down[0] else "Quick.")
     assert "".join(brain.stream_reply("hi")) == "From OpenAI." and len(cerebras.requests) == 1
     down[0] = False
-    now[0] += llm.CEREBRAS_COOLDOWN_S - 1
+    now[0] += llm.QUICK_COOLDOWN_S - 1
     assert "".join(brain.stream_reply("again")) == "From OpenAI."
     assert len(cerebras.requests) == 1 and brain.answered_by == llm.FALLBACK  # no waiting out its timeout
     now[0] += 2
     assert "".join(brain.stream_reply("and now?")) == "Quick." and brain.answered_by == llm.QUICK
+
+
+def too_many_requests(retry_after: str | None) -> RateLimitError:
+    headers = {"retry-after": retry_after} if retry_after else {}
+    response = httpx.Response(429, headers=headers, request=httpx.Request("POST", "https://api.groq.com"))
+    return RateLimitError("429 too many requests", response=response, body=None)
+
+
+def groq_then_cerebras(groq_reply, cerebras_reply=lambda m: "From Cerebras."):
+    openai, groq, cerebras = (
+        fake_openai_chat(lambda m: "From OpenAI."),
+        fake_cerebras(groq_reply),
+        fake_cerebras(cerebras_reply),
+    )
+    quick = [QuickService("Groq", groq, "qwen-g"), QuickService("Cerebras", cerebras, "qwen-c")]
+    return QuickChat(openai, LLMConfig(), quick), groq, cerebras
+
+
+def test_groq_answers_first_and_cerebras_is_never_asked():
+    brain, groq, cerebras = groq_then_cerebras(lambda m: "From Groq.")
+    assert "".join(brain.stream_reply("hi")) == "From Groq." and brain.answered_by == llm.QUICK
+    assert groq.requests[0]["model"] == "qwen-g" and cerebras.requests == []
+    assert groq.requests[0]["max_completion_tokens"] == llm.QUICK_MAX_TOKENS
+
+
+def test_when_groq_is_out_of_tokens_cerebras_answers_until_groq_says_to_come_back(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
+    limited = [True]
+    brain, groq, _ = groq_then_cerebras(lambda m: too_many_requests("30") if limited[0] else "From Groq.")
+    assert "".join(brain.stream_reply("hi")) == "From Cerebras." and brain.answered_by == llm.QUICK
+    limited[0] = False
+    now[0] += 29
+    assert "".join(brain.stream_reply("again")) == "From Cerebras." and len(groq.requests) == 1
+    now[0] += 2
+    assert "".join(brain.stream_reply("and now?")) == "From Groq."
+    assert [m["content"] for m in groq.requests[-1]["messages"][1:]] == [
+        "hi",
+        "From Cerebras.",
+        "again",
+        "From Cerebras.",
+        "and now?",
+    ]
+
+
+def test_a_failed_service_is_skipped_for_as_long_as_it_asks_or_its_limits_window():
+    assert llm._cooldown(too_many_requests(None)) == llm.RATE_LIMITED_S
+    assert llm._cooldown(OpenAIError("timed out")) == llm.QUICK_COOLDOWN_S
+    assert llm._cooldown(too_many_requests("7")) == 7.0
+
+
+def test_when_groq_and_cerebras_both_fail_openai_answers():
+    brain, groq, cerebras = groq_then_cerebras(lambda m: too_many_requests("30"), lambda m: OpenAIError("down"))
+    assert "".join(brain.stream_reply("hi")) == "From OpenAI." and brain.answered_by == llm.FALLBACK
+    assert len(groq.requests) == len(cerebras.requests) == 1
 
 
 def test_an_interrupted_reply_doesnt_count_as_cerebras_failing():
@@ -393,6 +465,66 @@ def test_an_interrupted_reply_doesnt_count_as_cerebras_failing():
         list(reply)
     assert "".join(brain.stream_reply("hi again")) == "A long answer."
     assert openai.requests == [] and brain.answered_by == llm.QUICK
+
+
+def test_interrupting_groq_neither_benches_it_nor_asks_cerebras():
+    brain, _, cerebras = groq_then_cerebras(lambda m: "From Groq, at length.")
+    reply = brain.stream_reply("hi")
+    next(reply)
+    brain.interrupt()
+    with pytest.raises(ReplyFailed):
+        list(reply)
+    assert cerebras.requests == []
+    assert "".join(brain.stream_reply("hi again")) == "From Groq, at length." and brain.quick_service == "Groq"
+
+
+def test_a_reply_cut_off_at_the_token_cap_is_carried_on_by_openai_without_benching_groq():
+    brain, groq, cerebras = groq_then_cerebras(lambda m: FakeStream("From Groq.", finish="length"))
+    said = "".join(brain.stream_reply("tell me everything"))
+    assert said.startswith("From Groq.") and said.endswith("From OpenAI.")
+    assert brain.answered_by == llm.FALLBACK and brain.quick_service == "Groq" and cerebras.requests == []
+    "".join(brain.stream_reply("again"))
+    assert len(groq.requests) == 2
+
+
+def test_without_openai_qwen_answers_alone_and_a_failure_is_an_error(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
+    down = [False]
+    groq = fake_cerebras(lambda m: OpenAIError("down") if down[0] else "From Groq.")
+    cfg = LLMConfig(web_search=False, send=False, think_effort="")
+    brain = QuickChat(None, cfg, [QuickService("Groq", groq, "qwen")])
+    OpenAIChat.warm(brain)
+    assert "".join(brain.stream_reply("hi")) == "From Groq."
+    assert LOOK_UP not in groq.requests[0]["messages"][0]["content"]
+    down[0] = True
+    with pytest.raises(OpenAIError):
+        "".join(brain.stream_reply("again"))
+    down[0] = False
+    assert "".join(brain.stream_reply("and now?")) == "From Groq."  # no cooldown with nothing else to answer
+
+
+def test_without_openai_qwen_is_told_it_cant_send_links_or_set_what_it_has_no_tool_for(tmp_path):
+    groq = fake_cerebras(lambda m: "Done.")
+    cfg = LLMConfig(web_search=False, think_effort="", quick_tools=True)
+    brain = QuickChat(None, cfg, [QuickService("Groq", groq, "qwen")], reminder_tools(tmp_path))
+    "".join(brain.stream_reply("hi"))
+    system = groq.requests[0]["messages"][0]["content"]
+    assert LOOK_UP not in system and llm.QUICK_SEND_RULES.format(links=llm.NO_LINKS) in system
+    alone = QuickChat(
+        None,
+        dataclasses.replace(cfg, quick_tools=False, send=False),
+        [QuickService("Groq", groq, "q")],
+        reminder_tools(tmp_path),
+    )
+    "".join(alone.stream_reply("hi"))
+    system = groq.requests[-1]["messages"][0]["content"]
+    assert LOOK_UP not in system and llm.CANT_REMIND in system and "<ack>" in system
+
+
+def test_a_service_that_ends_without_a_word_doesnt_win_over_one_that_answers():
+    brain, _, _ = groq_then_cerebras(lambda m: "")
+    assert "".join(brain.stream_reply("hi")) == "From Cerebras." and brain.quick_service == "Cerebras"
 
 
 @pytest.mark.parametrize(
@@ -421,6 +553,7 @@ def test_cerebras_failing_after_it_started_talking_is_an_error_not_a_second_answ
     with pytest.raises(OpenAIError, match="connection reset"):
         list(reply)
     assert openai.requests == []  # half an answer isn't followed by a different whole one
+    assert brain.quick_service == "Cerebras"
 
 
 def test_an_empty_reply_is_an_error_not_silence():
@@ -505,7 +638,7 @@ def test_with_reminders_both_models_know_whats_set_and_how_to_ack_and_only_opena
     rid = tools.reminders.add(NewReminder(MESSAGE, "dinner's at eight", "stacey", "alon", due=time.time()), WEB)
     tools.reminders.said(rid)
     openai, cerebras = fake_openai_chat(lambda m: "ok"), fake_cerebras(lambda m: LOOK_UP)
-    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen"), cerebras, reminders=tools)
+    brain = QuickChat(openai, LLMConfig(), [QuickService("Cerebras", cerebras, "qwen")], reminders=tools)
     "".join(brain.stream_reply("I got the message"))
     quick, full = cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]
     for instructions in (quick, full):
@@ -645,8 +778,9 @@ def quick_with_tools(tmp_path, calls, then="Pasta timer, twelve minutes.", **cfg
         return ToolCallStream(calls)
 
     cerebras.chat.completions.create = create
-    config = LLMConfig(cerebras_model="qwen", quick_tools=True, **cfg)
-    return CerebrasChat(openai, config, cerebras, reminders=tools), openai, cerebras, tools
+    config = LLMConfig(quick_tools=True, **cfg)
+    brain = QuickChat(openai, config, [QuickService("Cerebras", cerebras, "qwen")], reminders=tools)
+    return brain, openai, cerebras, tools
 
 
 def test_with_its_own_tools_qwen_sets_a_reminder_and_openai_is_never_asked(tmp_path):
@@ -667,7 +801,8 @@ def test_with_its_own_tools_qwen_is_told_it_can_and_hands_over_only_the_web(tmp_
     brain, _, cerebras, _ = quick_with_tools(tmp_path, [])
     "".join(brain.stream_reply("hi"))
     system = cerebras.requests[0]["messages"][0]["content"]
-    assert llm.CAN_REMIND in system and llm.CAN_SEND_NO_LINKS in system and llm.QUICK_SEND_RULES in system
+    assert llm.CAN_REMIND in system and llm.CAN_SEND_NO_LINKS in system
+    assert llm.QUICK_SEND_RULES.format(links=llm.LINK_HAND_OFF) in system
     assert llm.REMIND_RULES in system and llm.NEEDS_THE_WEB in system
     assert llm.NEEDS_REMINDING not in system and llm.NEEDS_SENDING not in system and "to-do list" not in system
 
@@ -796,8 +931,9 @@ def claude_brain(tmp_path, reply_for, **cfg):
         return reply
 
     claude = types.SimpleNamespace(messages=types.SimpleNamespace(stream=stream))
-    config = LLMConfig(cerebras_model="claude-haiku-5-5", quick_tools=True, **cfg)
-    return llm.ClaudeQuickChat(openai, config, claude, reminder_tools(tmp_path)), openai, requests
+    config = LLMConfig(quick_tools=True, **cfg)
+    quick = [QuickService("Claude", claude, "claude-haiku-5-5")]
+    return llm.ClaudeQuickChat(openai, config, quick, reminder_tools(tmp_path)), openai, requests
 
 
 def test_with_claude_as_the_quick_model_it_sets_a_reminder_itself(tmp_path):
@@ -848,8 +984,9 @@ def test_qwen_cant_slip_a_link_into_a_note_either(tmp_path, body, refused):
 def responses_brain(tmp_path, quick, **cfg):
     """A brain whose quick model is an OpenAI model through the Responses API (`quick`: a fake_openai_chat)."""
     openai = fake_openai_chat(lambda m: "From OpenAI.")
-    config = LLMConfig(cerebras_model="gpt-6-luna", quick_tools=True, **cfg)
-    return llm.ResponsesQuickChat(openai, config, quick, reminder_tools(tmp_path)), openai
+    config = LLMConfig(quick_tools=True, **cfg)
+    services = [QuickService("OpenAI", quick, "gpt-6-luna")]
+    return llm.ResponsesQuickChat(openai, config, services, reminder_tools(tmp_path)), openai
 
 
 def test_luna_as_the_quick_model_reasons_and_sets_a_reminder_on_its_own_tier(tmp_path):
@@ -876,5 +1013,56 @@ def test_luna_as_the_quick_model_hands_over_like_qwen(tmp_path):
 def test_a_blank_line_before_the_hand_off_still_gets_looking_it_up_said():
     openai = fake_openai_chat(lambda m: "Sunny.", search_for=lambda m: ["response.web_search_call.in_progress"])
     cerebras = fake_cerebras(lambda m: f"\n\n{LOOK_UP}")  # Qwen sometimes writes a blank line first
-    brain = CerebrasChat(openai, LLMConfig(cerebras_model="qwen"), cerebras)
+    brain = QuickChat(openai, LLMConfig(), [QuickService("Cerebras", cerebras, "qwen")])
     assert "".join(brain.stream_reply("weather?")).strip() == f"{llm.SEARCHING} Sunny."
+
+
+class Silent(FakeStream):
+    """A stream that says nothing until it's closed, and then fails, as the SDK's does."""
+
+    def __init__(self):
+        super().__init__("")
+        self.shut = threading.Event()
+
+    def __iter__(self):
+        self.shut.wait(5)
+        raise gone()
+        yield
+
+    def close(self):
+        super().close()
+        self.shut.set()
+
+
+def test_when_groq_is_slow_to_start_cerebras_is_asked_too_and_the_first_to_answer_is_kept(monkeypatch):
+    monkeypatch.setattr(llm, "HEDGE_S", 0.05)
+    brain, groq, _ = groq_then_cerebras(lambda m: Silent())
+    started = time.monotonic()
+    assert "".join(brain.stream_reply("hi")) == "From Cerebras." and time.monotonic() - started < 2
+    assert brain.quick_service == "Cerebras" and brain.answered_by == llm.QUICK
+    assert groq.streams[0].closed
+
+
+def test_when_groq_starts_in_time_cerebras_is_never_asked(monkeypatch):
+    monkeypatch.setattr(llm, "HEDGE_S", 5)
+    brain, _, cerebras = groq_then_cerebras(lambda m: "From Groq.")
+    assert "".join(brain.stream_reply("hi")) == "From Groq." and brain.quick_service == "Groq"
+    assert cerebras.requests == []
+
+
+def test_when_groq_fails_cerebras_is_asked_at_once_without_waiting_for_the_hedge(monkeypatch):
+    monkeypatch.setattr(llm, "HEDGE_S", 5)
+    brain, _, _ = groq_then_cerebras(lambda m: OpenAIError("down"))
+    started = time.monotonic()
+    assert "".join(brain.stream_reply("hi")) == "From Cerebras." and time.monotonic() - started < 2
+    assert brain.quick_service == "Cerebras"
+
+
+def test_interrupting_while_both_are_starting_closes_both(monkeypatch):
+    monkeypatch.setattr(llm, "HEDGE_S", 0.01)
+    brain, groq, cerebras = groq_then_cerebras(lambda m: Silent(), lambda m: Silent())
+    reply = brain.stream_reply("hi")
+    threading.Timer(0.2, brain.interrupt).start()
+    with pytest.raises(ReplyFailed):
+        list(reply)
+    assert groq.streams[0].closed and cerebras.streams[0].closed
