@@ -38,7 +38,7 @@ flowchart LR
     log --> learn["Self-learning:<br/>retrain wake models"] --> wake
 ```
 
-![The web UI's Home page: what TARS sent, then the conversations](docs/screenshots/home-desktop-light.png)
+![A 30-second tour: the two-stage wake word, the request timeline, and the web UI in use](docs/media/tars-teaser.gif)
 
 ## Quick start
 
