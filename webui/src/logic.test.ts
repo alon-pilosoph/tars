@@ -98,7 +98,7 @@ describe("format", () => {
     const base = { id: 1, ts: 0, role: "tars", text: "Late." } as const;
     expect(timingLine({ ...base, timings: { total: 1.43, stt: 0.1 }, answered_by: "quick" })).toBe(
       "Took 1.4 s from the end of speech to the first sound: 0.10 s to write down what was said. " +
-        "Answered on the Pi by the quick model.",
+        "Answered by the quick model (Qwen).",
     );
     expect(timingLine({ ...base, answered_by: "fallback", error: "APITimeoutError" })).toBe(
       "Answered by OpenAI, as a backup. The error was “APITimeoutError”.",

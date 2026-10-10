@@ -91,7 +91,7 @@ test("an opened answer says how long it took and who wrote it, and a failed one 
   const t = timed.turns.find(x => x.timings?.total != null && x.answered_by === "quick")!;
   await open(timed.id);
   await expect(turn(t.id).locator(".p-info")).toContainText(`Took ${t.timings!.total!.toFixed(1)} s`);
-  await expect(turn(t.id).locator(".p-info")).toContainText("Answered on the Pi by the quick model.");
+  await expect(turn(t.id).locator(".p-info")).toContainText("Answered by the quick model (Qwen).");
   const f = failed.turns.find(x => x.failed_at === "llm")!;
   await expect(turn(f.id).locator(".fail")).toHaveText("Failed while writing the answer.");
   await open(failed.id);
