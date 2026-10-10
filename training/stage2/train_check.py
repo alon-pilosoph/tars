@@ -2,6 +2,7 @@
 
     DATA/eval/.venv/bin/python -m training.stage2.train_check generic     # no household recordings
     DATA/eval/.venv/bin/python -m training.stage2.train_check personal    # + the owner's training half
+    DATA/eval/.venv/bin/python -m training.stage2.train_check generic --phrase tars_stop    # "TARS stop"
 
 Features per clip, computed by the assistant's own code (verify.TunedCheck): for each of the 20 phrases (the wake
 phrase, "hey darts" and the lookalikes, all from verify.PHRASES), Vosk's best n-best confidence for an alternative
@@ -13,9 +14,13 @@ at 10 dB), using training interference only.
             (counted twice). --no-accent leaves out the accented and VCTK clips (3,000 and 3,500).
   personal: the owner's training half (wake phrases and lookalikes in every condition, weight 5; "TARS stop" and
             sentences, weight 3) plus 500 synthetic wake phrases and 700 synthetic lookalikes.
+  "TARS stop" (generic only): its 17 phrases from verify.PHRASES["tars stop"], 6,000 wake phrases and 7,000
+            lookalikes from Kokoro, Piper voices and OpenAI (there are no accented, converted or real ones for it),
+            and 1,000 synthetic "hey TARS", which mustn't count either.
 Then tests on held-out data (the owner's test half, the held-out OpenAI voices, test interference) and prints a
-table per decision rule. A few minutes. Output: DATA/models/<setup>/hey_tars_check.json (the format the assistant
-loads), DATA/check/<setup>.pkl, and the training rows themselves, DATA/check/<setup>_base.npz.
+table per decision rule. A few minutes. Output: DATA/models/<setup>/<phrase>_check.json (the format the assistant
+loads), DATA/check/<setup>.pkl, and the training rows themselves, DATA/check/<setup>_base.npz ("TARS stop":
+DATA/check/tars_stop_generic.pkl and tars_stop_generic_base.npz).
 """
 
 import json
@@ -43,12 +48,15 @@ ABOUT = {
     "personal": "Learned layer over Vosk's n-best scores for 'hey tars' vs lookalikes, trained on the owner's "
     "recordings (training half) + synthetic clips with training noise. Made by "
     "training/stage2/train_check.py personal.",
+    "tars_stop_generic": "Generic learned layer over Vosk's n-best scores for 'tars stop' vs lookalikes, 'stop' on its "
+    "own and in sentences, and 'hey tars'. Trained WITHOUT any user recordings: synthetic voices with training noise. "
+    "Made by training/stage2/train_check.py generic --phrase tars_stop.",
 }
 
 
-def check_phrases() -> list[str]:
+def check_phrases(phrase: str = "hey_tars") -> list[str]:
     """A bare "hey" is in every grammar (see Features) but isn't scored."""
-    spec = PHRASES["hey tars"]
+    spec = PHRASES[phrase.replace("_", " ")]
     return spec["accept"] + [p for p in spec["lookalikes"] if p != "hey"]
 
 
@@ -114,29 +122,30 @@ def layer(clf, feat: "Features", about: str) -> dict:
     }
 
 
-def synthetic(layout: Layout, kind: str, n: int, seed: int) -> list:
+def synthetic(layout: Layout, kind: str, n: int, seed: int, phrase: str = "hey_tars") -> list:
     files = []
     for src in ["kokoro", "piper_voices", "openai"]:
-        files += sorted(layout.clip_dir(src, "hey_tars", kind).glob("*.wav"))
+        files += sorted(layout.clip_dir(src, phrase, kind).glob("*.wav"))
     random.Random(seed).shuffle(files)
     return files[:n]
 
 
-def generic_pool(layout: Layout, kind: str, n: int, seed: int, accent: bool) -> list:
+def generic_pool(layout: Layout, kind: str, n: int, seed: int, accent: bool, phrase: str = "hey_tars") -> list:
     files = []
     for src in ["kokoro", "piper_voices", "openai"]:
-        files += sorted(layout.clip_dir(src, "hey_tars", kind).glob("*.wav"))
-    files += sorted((layout.vc / kind).glob("*.wav")) * 2  # real speakers' voices count double
-    if accent:
-        files += sorted(layout.clip_dir("accent", "hey_tars", kind).glob("*.wav"))
-        files += sorted((layout.vc_vctk / kind).glob("*.wav")) * 2
-    if kind == "near_miss":
-        files += sorted(layout.real_lookalikes.glob("*.wav")) * 2
+        files += sorted(layout.clip_dir(src, phrase, kind).glob("*.wav"))
+    if phrase == "hey_tars":
+        files += sorted((layout.vc / kind).glob("*.wav")) * 2  # real speakers' voices count double
+        if accent:
+            files += sorted(layout.clip_dir("accent", "hey_tars", kind).glob("*.wav"))
+            files += sorted((layout.vc_vctk / kind).glob("*.wav")) * 2
+        if kind == "near_miss":
+            files += sorted(layout.real_lookalikes.glob("*.wav")) * 2
     random.Random(seed).shuffle(files)
     return files[:n]
 
 
-def build_train(feat, layout: Layout, setup: str, user, accent: bool):
+def build_train(feat, layout: Layout, setup: str, user, accent: bool, phrase: str = "hey_tars"):
     rng = np.random.default_rng(1)
     noise = Training(layout)
     X, y, w = [], [], []
@@ -152,9 +161,11 @@ def build_train(feat, layout: Layout, setup: str, user, accent: bool):
     if setup == "generic":
         n = 2 if accent else 1
         pools = [
-            (generic_pool(layout, "positive", 3000 * n, 2, accent), 1),
-            (generic_pool(layout, "near_miss", 3500 * n, 3, accent), 0),
+            (generic_pool(layout, "positive", 3000 * n, 2, accent, phrase), 1),
+            (generic_pool(layout, "near_miss", 3500 * n, 3, accent, phrase), 0),
         ]
+        if phrase == "tars_stop":
+            pools.append((synthetic(layout, "positive", 1000, 4), 0))
     else:
         add(user_split(user, "hey_tars")[0], 1, 5.0, TRAIN_KINDS)
         add(user_split(user, "hey_tars_lookalikes")[0], 0, 5.0, TRAIN_KINDS)
@@ -214,6 +225,7 @@ def test(layout: Layout, sets, feat, clf, out_path) -> None:
 def main():
     p = parser(__doc__)
     p.add_argument("setup", choices=["generic", "personal"])
+    p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     p.add_argument("--no-accent", action="store_true", help="generic without the accented and VCTK clips")
     p.add_argument("--skip-test", action="store_true")
     add_user_arg(p)
@@ -221,29 +233,33 @@ def main():
     layout = Layout(args.data)
     if args.setup == "personal" and not (args.user and args.user.is_dir()):
         raise SystemExit("The personal layer needs the owner's recordings: pass --user.")
-    phrases = check_phrases()
+    if args.setup == "personal" and args.phrase != "hey_tars":
+        raise SystemExit("The personal layer is for hey_tars only.")
+    name = args.setup if args.phrase == "hey_tars" else f"{args.phrase}_{args.setup}"
+    phrases = check_phrases(args.phrase)
     feat = Features(phrases)
     t0 = time.time()
-    X, y, w = build_train(feat, layout, args.setup, args.user, accent=not args.no_accent)
-    log(f"{args.setup}: {len(y)} training examples ({y.sum()} positive) in {time.time() - t0:.0f}s")
+    X, y, w = build_train(feat, layout, args.setup, args.user, not args.no_accent, args.phrase)
+    log(f"{name}: {len(y)} training examples ({y.sum()} positive) in {time.time() - t0:.0f}s")
     clf = fit(X, y, w)
     layout.check.mkdir(parents=True, exist_ok=True)
     # The training rows themselves: what training.hub hosts, and what a household's own wakes are added to.
     np.savez(
-        layout.check / f"{args.setup}_base.npz",
+        layout.check / f"{name}_base.npz",
         X=X.astype(np.float32),
         y=y.astype(np.int8),
         w=w.astype(np.float32),
         phrases=np.array(phrases),
     )
-    with open(layout.check / f"{args.setup}.pkl", "wb") as f:
+    with open(layout.check / f"{name}.pkl", "wb") as f:
         pickle.dump(clf, f)
-    out = layout.models / args.setup / "hey_tars_check.json"
+    out = layout.models / args.setup / f"{args.phrase}_check.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(layer(clf, feat, ABOUT[args.setup]), indent=1))
+    out.write_text(json.dumps(layer(clf, feat, ABOUT[name]), indent=1))
     log(f"wrote {out} (copy it to the repo's models/{args.setup}/)")
     if not args.skip_test:
-        test(layout, test_sets(layout, args.user), feat, clf, layout.check / f"{args.setup}_test.json")
+        sets = test_sets(layout, args.user, phrase=args.phrase)
+        test(layout, sets, feat, clf, layout.check / f"{name}_test.json")
 
 
 if __name__ == "__main__":

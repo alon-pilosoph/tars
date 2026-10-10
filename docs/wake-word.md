@@ -358,29 +358,31 @@ work, below.
 ## "TARS stop"
 
 "TARS stop" is the interrupt phrase under development: said while TARS talks, it should cut the answer off
-([roadmap](roadmap.md), step 2). It isn't in use yet.
+([roadmap](roadmap.md), step 2). It isn't in use yet. Its model, `models/generic/tars_stop.tflite`, is trained like
+"hey TARS" (`stage1/train.py generic --phrase tars_stop`) and checked by Vosk with a "tars stop" grammar.
 
-**Why "stop" is a negative.** A "TARS stop" model trained without "stop" among its negatives learned the word
-"stop" rather than the phrase. So the current model treats "stop" on its own and in sentences
-("please stop", "I can't stop laughing", "timer stopped") as negatives, and doesn't use the real lookalikes, which
-are cut for "hey TARS" only. The double-check got a "tars stop" grammar: it accepts "tars stop", "tar stop" (how it's
-heard said quickly) and "darts stop", and turns down "stop" on its own or after another word, and "hey tars". It's
-trained with `stage1/train.py generic --phrase tars_stop`, about 3 hours on the development Mac with every step.
+**Why "stop" is a negative.** A model trained without "stop" among its negatives learned the word "stop" rather than
+the phrase, so "stop" on its own and in sentences ("please stop", "I can't stop laughing", "timer stopped") is among
+what it must turn down. The check accepts "tars stop", "tar stop" (how it's heard said quickly) and "darts stop", and
+turns down "stop" on its own or after another word, and "hey tars".
 
-**Results.** The check alone accepts 85 of the 90 held-out "TARS stop" clips. Both stages, end to end on the
-held-out OpenAI voices (`eval/pipeline.py --phrase tars_stop`):
+**Choosing the model.** Eight candidates trained on the same data varied widely: 21% to 62% of the owner's
+training-half takes across the 8 conditions. The best of them, chosen on that half and reported on the other, at
+threshold 0.2 with a 3 s window:
 
-| Threshold, check window | Quiet | TV 15 dB | Babble 15 dB | Far room + TV | TV 5 dB | Babble 5 dB | False answers per hour (TV, audiobooks) |
-|---|---|---|---|---|---|---|---|
-| **0.4, 3 s** | **83%** | **86%** | **81%** | 60% | 53% | 37% | **0, 0** |
-| 0.4, 2 s | 80% | 82% | 79% | 60% | 51% | 39% | 0, 0 |
-| 0.5, 2 s | 76% | 77% | 71% | 51% | 48% | 30% | 0, 0 |
+| Test | Result |
+|---|---|
+| Held-out voices: quiet / TV or babble at 15 dB / TV at 5 dB / babble at 5 dB | 99% / 96% / 87% / 62% |
+| The owner, held-out half: quiet / all 8 conditions | 100% / 76% |
+| Lookalikes let through | 18%, nearly all "guitars stop", "tar stop" and "tarts stop" |
+| "hey TARS", the owner's lookalikes and sentences let through | 0% |
+| False answers in an hour of TV / an hour of audiobooks | 0 / 0 |
+| False interrupts in 23 minutes of TARS's own replies | 0 |
 
-At a threshold of 0.3, stage 1 fires on the noise before the phrase and catches nothing. The pair never answered
-"hey TARS", and of the lookalikes only "tar stop", "tarts stop" and "guitars stop", which sound the same; "stop",
-"bus stop" and "stars stop" are turned down. As for "hey TARS", stage 1 fires after the phrase ends, so the check
-needs 3 s; waiting 0.4 s more before the check halved what it caught. Weighting the lookalikes half as much in
-stage 1 made it worse in noise (18% at TV 5 dB). It's safe, but it misses more than "hey TARS", most in loud noise.
+The reset fix is what made 0.2 usable here too; before it, stage 1 fired on the noise before the phrase below 0.4.
+A learned layer like "hey TARS" has was tried and left out: better on synthetic voices, worse on the owner's (53% in
+quiet), because Vosk hears most of the owner's takes as "tar stop", which synthetic voices almost never produce.
 
-**Before it's used**, it needs a learned layer in the check, as "hey TARS" has; the owner's own takes; and a test
-while TARS is speaking, with echo cancellation, which is where it will be used.
+**Before it's used**, it needs echo cancellation: with TARS's own voice still in the signal at 10 dB below the
+phrase, it catches about half of the "TARS stop" clips, and fewer as the voice gets louder. The next test is on the
+Pi with echo cancellation on, then the owner's real takes through a household retrain.

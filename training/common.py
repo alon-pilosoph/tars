@@ -129,18 +129,19 @@ def cap_onnxruntime_threads(threads: int = 4) -> None:
 def test_sets(layout: Layout, user: Path | None, all_user: bool = False, phrase: str = "hey_tars") -> dict:
     """{name: (files, should the check accept them?)}: the owner's test half (or every take, for a setup that never
     trained on them) and the held-out OpenAI voices. The order fixes which noise each clip gets. For "TARS stop",
-    the held-out voices only, with "hey TARS" among what mustn't count."""
+    "hey TARS" is among what mustn't count."""
     held = layout.heldout
     if phrase == "tars_stop":
-        return {
+        other = {
             "other voices TARS stop": (sorted((held / "tars_stop").glob("*.wav")), True),
             "other lookalikes": (sorted((held / "tars_stop_near_miss").glob("*.wav")), False),
             "other voices hey TARS": (sorted((held / "hey_tars").glob("*.wav")), False),
         }
-    other = {
-        "other voices hey TARS": (sorted((held / "hey_tars").glob("*.wav")), True),
-        "other lookalikes": (sorted((held / "hey_tars_near_miss").glob("*.wav")), False),
-    }
+    else:
+        other = {
+            "other voices hey TARS": (sorted((held / "hey_tars").glob("*.wav")), True),
+            "other lookalikes": (sorted((held / "hey_tars_near_miss").glob("*.wav")), False),
+        }
     if user is None:
         return other
     if not user.is_dir():
@@ -150,6 +151,14 @@ def test_sets(layout: Layout, user: Path | None, all_user: bool = False, phrase:
     def pick(s):
         return sorted((user / s).glob("*.wav")) if all_user else user_split(user, s)[1]
 
+    if phrase == "tars_stop":
+        return {
+            f"your TARS stop ({label})": (pick("tars_stop"), True),
+            **other,
+            f"your hey TARS ({label})": (pick("hey_tars"), False),
+            f"your lookalikes ({label})": (pick("hey_tars_lookalikes"), False),
+            f"your sentences ({label})": (pick("speech"), False),
+        }
     return {
         f"your hey TARS ({label})": (pick("hey_tars"), True),
         "other voices hey TARS": other["other voices hey TARS"],

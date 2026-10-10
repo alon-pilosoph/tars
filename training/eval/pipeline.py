@@ -88,8 +88,6 @@ def main():
     p.add_argument("--cloned", type=Path, help="test on this folder's positive/ and near_miss/ voices only")
     add_user_arg(p)
     args = p.parse_args()
-    if args.phrase != "hey_tars" and (args.user or args.all_user):
-        p.error("the owner's takes are tested for hey_tars only")
     if args.cloned and (args.user or args.all_user or args.phrase != "hey_tars"):
         p.error("--cloned tests hey_tars on its own voices: no --user, --all-user or other --phrase")
     sys.path.insert(0, str(REPO / "src"))
