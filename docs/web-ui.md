@@ -23,9 +23,9 @@ open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
 
 | Home | Review, on a phone |
 |---|---|
-| ![Home](screenshots/home-desktop-light.png) | ![Review on a phone, dark](screenshots/review-phone-dark.png) |
+| ![Home](screenshots/home-desktop.png) | ![Review on a phone](screenshots/review-phone.png) |
 
-Every page in light and dark, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo data, made with
+Every page, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo data, made with
 `npm run screenshots`).
 
 ## Design decisions
@@ -130,9 +130,8 @@ Both run headless in the installed Chrome with Playwright.
   audio is committed (`tools/demo_audio/`, four synthetic voices made by `tools/make_demo_audio.py`), so it runs on
   any machine. A step that finds the demo missing what it needs fails rather than skipping.
 - **`npm run visual`** (`checks/visual.spec.ts`, under 2 minutes): Playwright's `toHaveScreenshot()` on the states
-  a link can open and after interactions (opening a menu, rating, ticking, a dialog), on desktop and phone, and the
-  main pages and overlays in dark too. The page loads from the build on
-  disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.
+  a link can open and after interactions (opening a menu, rating, ticking, a dialog), on desktop and phone. The page
+  loads from the build on disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.
 
 After a change that's meant to look different, run `npm run visual:update`, look at the new images in the diff,
 and commit them with the change. `npm test` runs the unit tests (Vitest), `npm run lint` the linter

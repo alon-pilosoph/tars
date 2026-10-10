@@ -5,17 +5,17 @@
 A household voice assistant you can take apart: say "hey TARS", ask something, and it answers in TARS's voice.
 It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work on it.
 
-**[How TARS works](https://tars.alonp.dev)**: one request, second by second, from the wake word to the answer.
+**[See how it works, from wake word to answer →](https://tars.alonp.dev)**
 
 ## At a glance
 
-| | | |
-|---|---|---|
-| Wake word | two stages, on the device; 97% of held-out voices in quiet, 93% of the owner's (never heard), 1 false answer in an hour of TV | [wake word](docs/wake-word.md) |
-| Response time | 1.3-1.4 s from you stopping to the first sound, down from about 3.5 s | [response time](docs/latency.md) |
-| Quick model | Qwen on Groq, then Cerebras, hedged at 0.5 s; 149/156 on the capability benchmark at low reasoning | [quick model](docs/models.md) |
-| Self-learning | retrains its wake models from the household's use, installs them only if better | [self-learning](docs/self-learning.md) |
-| Runs on | Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or a Mac | [running at home](docs/deployment.md) |
+| Part | Result |
+|---|---|
+| [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 93% of the owner's (never heard), 1 false answer in an hour of TV |
+| [Response time](docs/latency.md) | 1.3-1.4 s from you stopping to the first sound, down from about 3.5 s |
+| [Quick model](docs/models.md) | Qwen on Groq, then Cerebras, hedged at 0.5 s; 149/156 on the capability benchmark at low reasoning |
+| [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |
+| [Runs on](docs/deployment.md) | Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or a Mac |
 
 ## Highlights
 
@@ -27,18 +27,25 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices ([web UI](docs/web-ui.md)).
 
+How a request is answered:
+
 ```mermaid
 flowchart LR
-    mic[Mic] --> wake["Wake word<br/>(local)"] --> stt["Deepgram Flux<br/>speech to text"]
-    stt --> brain["Quick brain<br/>Qwen on Groq / Cerebras"]
-    brain <-.-> handoff["Hand-offs: OpenAI web search,<br/>thinking model"]
-    brain --> voice["Deepgram Aura-2<br/>voice"] --> spk[Speaker]
-    wake --> log[("Event log")]
-    log --> webui["Web UI"]
-    log --> learn["Self-learning:<br/>retrain wake models"] --> wake
+    mic[Mic] --> wake[Wake word] --> stt[Speech to text] --> brain[Quick brain] --> voice[Voice] --> spk[Speaker]
+    brain -.-> handoff[Hand-offs]
 ```
 
-![The web UI's Home page: what TARS sent, then the conversations](docs/screenshots/home-desktop-light.png)
+The wake word runs on the device. Speech to text and the voice are Deepgram (Flux and Aura-2), the quick brain is Qwen
+on Groq or Cerebras, and hand-offs go to OpenAI for web search and hard questions.
+
+How it learns:
+
+```mermaid
+flowchart LR
+    wake[Wake word] --> kept[Wakes kept] --> labels[Labelled] --> train[New pair trained] --> test[Tested] -->|better| wake
+```
+
+![The web UI's Home page: what TARS sent, then the conversations](docs/screenshots/home-desktop.png)
 
 ## Quick start
 
