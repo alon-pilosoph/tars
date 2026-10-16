@@ -6,7 +6,8 @@ operation, storage and backup, and a first test run.
 TARS is local-first: the Pi listens, records, serves the web UI and learns voiceprints. Nothing leaves the house
 until a wake is confirmed, and then only the turn itself, and only to the services `.env` has keys for:
 
-- **Deepgram,** on its EU servers: your request's audio, for speech to text, and TARS's reply text, for its voice.
+- **Deepgram,** on its EU servers: your request's audio, for speech to text.
+- **Cartesia:** TARS's reply text, a sentence at a time, for its voice.
 - **Groq:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
 - **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
 - **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
@@ -18,7 +19,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 ```
                  home network (Wi-Fi)                               internet
 ┌──────────────── Raspberry Pi 5 ────────────────┐
-│ voice-assistant.service                        │── request audio / text ──► Deepgram, Groq, Cerebras, OpenAI
+│ voice-assistant.service                        │── request audio / text ──► Deepgram, Groq, Cerebras, OpenAI, Cartesia
 │   wake → double-check → answer                 │     (only after "hey TARS")
 │   writes voice_data/events/ (SQLite + WAVs)    │
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
@@ -30,7 +31,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync --all-extras && cp .env.example .env    # then put your API keys in .env: OpenAI, Deepgram, Groq, Cerebras
+uv sync --all-extras && cp .env.example .env    # then your keys in .env: OpenAI, Deepgram, Groq, Cerebras, Cartesia
 uv run voice-assistant --list-devices
 ```
 
@@ -44,7 +45,7 @@ uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:808
 ```
 
 The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
-(8 MB) and the speaker model (25 MB) into `models/`. Expect about 1.3 to 1.4 seconds from when you stop talking to
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 1.2 to 1.5 seconds from when you stop talking to
 TARS's first sound, a little more when you sounded mid-thought: Deepgram's Flux decides when you're done, and TARS
 prepares the answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks
 for microphone access the first time; if TARS hears nothing, check System Settings → Privacy & Security →
@@ -97,8 +98,9 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
   with what TARS does without any that are missing), both audio devices, the local models, echo cancellation (only
-  when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras and Deepgram
-  (each with how long it took, Deepgram on the servers `deepgram_host` names, and any without a key skipped), the
+  when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram and
+  Cartesia (each with how long it took, Deepgram on the servers `deepgram_host` names, and any without a key or not
+  in use skipped), the
   voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both
   services.
   Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:

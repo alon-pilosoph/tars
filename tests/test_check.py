@@ -26,7 +26,7 @@ def test_missing_keys_say_what_runs_instead_and_where_to_put_them(cfg, tmp_path)
     assert "no DEEPGRAM_API_KEY" in r.detail and "no GROQ_API_KEY" in r.detail
     env.write_text("GROQ_API_KEY=g\n")
     assert check.keys(cfg, env).status == FAIL
-    env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nGROQ_API_KEY=g\nCEREBRAS_API_KEY=c\n")
+    env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nGROQ_API_KEY=g\nCEREBRAS_API_KEY=c\nCARTESIA_API_KEY=d\n")
     assert check.keys(cfg, env).status == OK
 
 
@@ -118,11 +118,13 @@ def test_a_check_that_breaks_or_exits_is_a_failure_and_the_rest_still_run(capsys
     assert check.exit_code(results[2:]) == 0 and check.summary(results[2:4]) == "Everything works."
 
 
-def test_deepgram_tells_a_refused_key_from_an_outage():
-    assert check.deepgram_status(200, 0.3).status == OK
-    refused = check.deepgram_status(401, 0.3)
-    assert refused.status == FAIL and "DEEPGRAM_API_KEY" in refused.fix
-    assert check.deepgram_status(503, 0.3).detail == "HTTP 503"
+@pytest.mark.parametrize("name, key", [("Deepgram", "DEEPGRAM_API_KEY"), ("Cartesia", "CARTESIA_API_KEY")])
+def test_a_voice_service_tells_a_refused_key_from_an_outage(name, key):
+    assert check.service_status(name, key, 200, 0.3).status == OK
+    refused = check.service_status(name, key, 401, 0.3)
+    assert refused.status == FAIL and key in refused.fix
+    outage = check.service_status(name, key, 503, 0.3)
+    assert outage.detail == "HTTP 503" and name in outage.fix
 
 
 def test_http_status_gives_any_status_and_raises_when_nothing_answers():

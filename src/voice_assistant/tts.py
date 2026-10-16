@@ -1,9 +1,11 @@
-"""Text to speech: OpenAI's voices over HTTP, or Deepgram's over websockets kept warm between sentences."""
+"""Text to speech: OpenAI's voices over HTTP, or Deepgram's and Cartesia's over websockets kept warm."""
 
+import base64
 import json
 import queue
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from typing import Protocol
 from urllib.parse import urlencode
@@ -18,6 +20,9 @@ from .stt import deepgram_connect
 STALL_S = 4.0
 CONNECT_S = 3.0
 SPEAK_URL = "wss://{host}/{version}/speak"
+CARTESIA_API = "https://api.cartesia.ai"
+CARTESIA_URL = "wss://api.cartesia.ai/tts/websocket"
+CARTESIA_VERSION = "2026-08-14"
 
 
 class Voice(Protocol):
@@ -54,33 +59,37 @@ class OpenAISpeech:
             yield from response.iter_bytes(4096)
 
 
-class DeepgramSpeech:
-    """Deepgram's streaming voices, Flux TTS (flux-*) and Aura-2 (aura-2-*), over a websocket.
+class WarmSockets:
+    """A streaming voice over websockets, kept warm between sentences.
 
-    Opening a connection takes about 0.7 s and a warm one starts speaking in about 0.27 s (measured), so connections
-    are opened ahead in warm() and reused: each sentence takes one and hands it back when done. Idle ones stay usable
-    for minutes; past MAX_IDLE_S one is replaced. Connections are closed off the caller's thread, because closing one
-    that has gone quiet waits for a handshake that never comes.
+    Opening a connection takes about 0.7 s and a warm one starts speaking in about 0.27 s (measured on Deepgram), so
+    connections are opened ahead in warm() and reused: each sentence takes one and hands it back when done. Idle ones
+    stay usable for minutes; past MAX_IDLE_S one is replaced. Connections are closed off the caller's thread, because
+    closing one that has gone quiet waits for a handshake that never comes. At most AT_ONCE sentences synthesize at
+    once, so a long reply never needs more connections than the service allows (Flux TTS in the EU: 5); the rest wait
+    their turn, which costs nothing, since playing a sentence takes longer than making it. A subclass says how to
+    connect, send a sentence and read its audio.
     """
 
     sample_rate = 24_000
     READY = 2  # connections open before the reply: its first sentence, and the one after
     KEEP = 3  # the most kept idle (a long reply synthesizes several sentences at once)
+    AT_ONCE = 3
     MAX_IDLE_S = 100.0
+    name = "voice"
 
-    def __init__(self, api_key: str, cfg: TTSConfig):
-        version = "v2" if cfg.model.startswith("flux-") else "v1"
-        params = {"model": cfg.model, "encoding": "linear16", "sample_rate": self.sample_rate}
-        self._url = f"{SPEAK_URL.format(host=cfg.deepgram_host, version=version)}?{urlencode(params)}"
-        # Aura-2 sends a sentence's audio, then Flushed; Flux sends Flushed, the audio, then SpeechMetadata.
-        self._last = "SpeechMetadata" if version == "v2" else "Flushed"
-        self._key = api_key
+    def __init__(self):
         self._idle: queue.LifoQueue = queue.LifoQueue()
+        self._turns = threading.BoundedSemaphore(self.AT_ONCE)
 
     def warm(self) -> None:
-        threading.Thread(target=self._top_up, daemon=True, name="deepgram-voice").start()
+        threading.Thread(target=self._top_up, daemon=True, name=f"{self.name}-voice").start()
 
     def stream(self, text: str) -> Iterator[bytes]:
+        with self._turns:
+            yield from self._stream(text)
+
+    def _stream(self, text: str) -> Iterator[bytes]:
         from websockets.exceptions import ConnectionClosed
 
         for attempt in (1, 2):
@@ -102,22 +111,14 @@ class DeepgramSpeech:
                 # A sentence cut short leaves its audio in flight on the connection; only a finished one is reused.
                 self._keep(ws) if done else self._discard(ws)
 
-    def _audio(self, ws) -> Iterator[bytes]:
-        while True:
-            message = ws.recv(timeout=STALL_S)
-            if isinstance(message, bytes):
-                yield message
-                continue
-            event = json.loads(message)
-            if event.get("type") == "Error":
-                raise RuntimeError(f"Deepgram voice: {event.get('description') or event}")
-            if event.get("type") == self._last:
-                return
+    def _send(self, ws, text: str) -> None:
+        raise NotImplementedError
 
-    @staticmethod
-    def _send(ws, text: str) -> None:
-        ws.send(json.dumps({"type": "Speak", "text": text}))
-        ws.send(json.dumps({"type": "Flush"}))
+    def _audio(self, ws) -> Iterator[bytes]:
+        raise NotImplementedError
+
+    def _connect(self):
+        raise NotImplementedError
 
     def _take(self):
         fresh = self._fresh()
@@ -154,9 +155,76 @@ class DeepgramSpeech:
             else:
                 self._discard(ws)
 
+    def _discard(self, ws) -> None:
+        threading.Thread(target=ws.close, daemon=True, name=f"{self.name}-voice-close").start()
+
+
+class DeepgramSpeech(WarmSockets):
+    """Deepgram's streaming voices, Flux TTS (flux-*) and Aura-2 (aura-2-*)."""
+
+    name = "deepgram"
+
+    def __init__(self, api_key: str, cfg: TTSConfig):
+        super().__init__()
+        version = "v2" if cfg.model.startswith("flux-") else "v1"
+        params = {"model": cfg.model, "encoding": "linear16", "sample_rate": self.sample_rate}
+        self._url = f"{SPEAK_URL.format(host=cfg.deepgram_host, version=version)}?{urlencode(params)}"
+        # Aura-2 sends a sentence's audio, then Flushed; Flux sends Flushed, the audio, then SpeechMetadata.
+        self._last = "SpeechMetadata" if version == "v2" else "Flushed"
+        self._key = api_key
+
+    def _send(self, ws, text: str) -> None:
+        ws.send(json.dumps({"type": "Speak", "text": text}))
+        ws.send(json.dumps({"type": "Flush"}))
+
+    def _audio(self, ws) -> Iterator[bytes]:
+        while True:
+            message = ws.recv(timeout=STALL_S)
+            if isinstance(message, bytes):
+                yield message
+                continue
+            event = json.loads(message)
+            if event.get("type") == "Error":
+                raise RuntimeError(f"Deepgram voice: {event.get('description') or event}")
+            if event.get("type") == self._last:
+                return
+
     def _connect(self):
         return deepgram_connect(self._url, self._key, open_timeout=CONNECT_S, close_timeout=1)
 
-    @staticmethod
-    def _discard(ws) -> None:
-        threading.Thread(target=ws.close, daemon=True, name="deepgram-voice-close").start()
+
+class CartesiaSpeech(WarmSockets):
+    """Cartesia's Sonic voices: each sentence is its own context, its audio base64 chunks until "done"."""
+
+    name = "cartesia"
+    AT_ONCE = 2  # the free plan's limit on sentences being made at once
+
+    def __init__(self, api_key: str, cfg: TTSConfig):
+        super().__init__()
+        self._url = f"{CARTESIA_URL}?{urlencode({'cartesia_version': CARTESIA_VERSION})}"
+        self._key = api_key
+        self._request = {
+            "model_id": cfg.model,
+            "voice": cfg.cartesia_voice,
+            "language": "en",
+            "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": self.sample_rate},
+        }
+
+    def _send(self, ws, text: str) -> None:
+        ws.send(json.dumps({**self._request, "transcript": text, "context_id": uuid.uuid4().hex, "continue": False}))
+
+    def _audio(self, ws) -> Iterator[bytes]:
+        while True:
+            event = json.loads(ws.recv(timeout=STALL_S))
+            kind = event.get("type")
+            if kind == "chunk":
+                yield base64.b64decode(event["data"])
+            elif kind == "error":
+                raise RuntimeError(f"Cartesia voice: {event.get('message') or event.get('title') or event}")
+            elif kind == "done" or event.get("done"):
+                return
+
+    def _connect(self):
+        from websockets.sync.client import connect
+
+        return connect(self._url, additional_headers={"X-API-Key": self._key}, open_timeout=CONNECT_S, close_timeout=1)

@@ -18,7 +18,17 @@ from pathlib import Path
 import numpy as np
 
 from .clustering import MIN_REQUESTS_TO_ENROLL
-from .config import DEEPGRAM_KEY, OPENAI_KEY, QUICK_PROVIDERS, WEB_PORT, Config, ConfigError, QuickProvider, with_keys
+from .config import (
+    CARTESIA_KEY,
+    DEEPGRAM_KEY,
+    OPENAI_KEY,
+    QUICK_PROVIDERS,
+    WEB_PORT,
+    Config,
+    ConfigError,
+    QuickProvider,
+    with_keys,
+)
 from .echo import MAX_DELAY_S
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
@@ -87,7 +97,7 @@ def keys(cfg: Config, env: Path) -> Result:
         return Result("API keys", FAIL, str(e.code), f"put them in {env} (see .env.example)")
     if notes:
         return Result("API keys", WARN, "; ".join(notes), f"for all of config.toml's setup, put the keys in {env}")
-    used = [OPENAI_KEY, DEEPGRAM_KEY, *(provider.key_name for provider in QUICK_PROVIDERS)]
+    used = [OPENAI_KEY, DEEPGRAM_KEY, CARTESIA_KEY, *(provider.key_name for provider in QUICK_PROVIDERS)]
     return Result("API keys", OK, ", ".join(name for name in used if name in have))
 
 
@@ -270,12 +280,12 @@ def http_status(url: str, headers: dict | None = None) -> int:
         return e.code
 
 
-def deepgram_status(status: int, took: float) -> Result:
+def service_status(name: str, key: str, status: int, took: float) -> Result:
     if status in (401, 403):
-        return Result("Deepgram", FAIL, f"the API key was refused ({status})", "check DEEPGRAM_API_KEY in .env")
+        return Result(name, FAIL, f"the API key was refused ({status})", f"check {key} in .env")
     if status != 200:
-        return Result("Deepgram", FAIL, f"HTTP {status}", "check the network, and Deepgram's status page")
-    return Result("Deepgram", OK, f"answers ({took:.1f} s)")
+        return Result(name, FAIL, f"HTTP {status}", f"check the network, and {name}'s status page")
+    return Result(name, OK, f"answers ({took:.1f} s)")
 
 
 def check_all(cfg: Config, root: Path) -> int:
@@ -283,6 +293,7 @@ def check_all(cfg: Config, root: Path) -> int:
 
     from . import __main__ as cli
     from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
+    from .tts import CARTESIA_API, CARTESIA_VERSION
 
     env = root / ".env"
     have, asked = cli.env_keys(env), cfg
@@ -349,7 +360,7 @@ def check_all(cfg: Config, root: Path) -> int:
             return service_error(provider.name, e)
 
     def deepgram():
-        if "openai" == cfg.stt.provider == cfg.tts.provider:
+        if cfg.stt.provider == "openai" and cfg.tts.provider != "deepgram":
             return Result("Deepgram", SKIP, "not used")
         if not have_keys:
             return Result("Deepgram", SKIP, "needs the API keys")
@@ -360,7 +371,20 @@ def check_all(cfg: Config, root: Path) -> int:
             status = http_status(f"https://{host}/v1/projects", {"Authorization": f"Token {key}"})
         except OSError as e:
             return service_error("Deepgram", e)
-        return deepgram_status(status, time.perf_counter() - t)
+        return service_status("Deepgram", DEEPGRAM_KEY, status, time.perf_counter() - t)
+
+    def cartesia():
+        if cfg.tts.provider != "cartesia":
+            return Result("Cartesia", SKIP, "not used")
+        key = cli.api_key(env, CARTESIA_KEY)
+        t = time.perf_counter()
+        try:
+            status = http_status(
+                f"{CARTESIA_API}/voices?limit=1", {"X-API-Key": key, "Cartesia-Version": CARTESIA_VERSION}
+            )
+        except OSError as e:
+            return service_error("Cartesia", e)
+        return service_status("Cartesia", CARTESIA_KEY, status, time.perf_counter() - t)
 
     def models():
         def load():
@@ -408,6 +432,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("OpenAI", openai),
         *((provider.name, lambda provider=provider: quick(provider)) for provider in QUICK_PROVIDERS),
         ("Deepgram", deepgram),
+        ("Cartesia", cartesia),
         ("Voice", speaking),
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),

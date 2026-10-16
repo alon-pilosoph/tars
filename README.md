@@ -12,7 +12,7 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 | Part | Result |
 |---|---|
 | [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 97% of the owner's (never heard), 1 false answer in an hour of TV |
-| [Response time](docs/latency.md) | 1.3-1.4 s from you stopping to the first sound, down from about 3.5 s |
+| [Response time](docs/latency.md) | 1.2-1.5 s from you stopping to the first sound, down from about 3.5 s |
 | [Quick model](docs/models.md) | Qwen on Groq, then Cerebras, hedged at 0.5 s; 149/156 on the capability benchmark at low reasoning |
 | [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |
 | [Runs on](docs/deployment.md) | Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or a Mac |
@@ -35,8 +35,8 @@ flowchart LR
     brain -.-> handoff[Hand-offs]
 ```
 
-The wake word runs on the device. Speech to text and the voice are Deepgram (Flux and Aura-2), the quick brain is Qwen
-on Groq or Cerebras, and hand-offs go to OpenAI for web search and hard questions.
+The wake word runs on the device. Speech to text is Deepgram's Flux, the voice is Cartesia's Sonic, the quick brain is
+Qwen on Groq or Cerebras, and hand-offs go to OpenAI for web search and hard questions.
 
 How it learns:
 
@@ -70,7 +70,8 @@ Everything is in [`config.toml`](config.toml): audio devices by name, wake sensi
 Every key in `.env` is optional, as long as something can hear, think and speak; TARS says at startup what it does
 without the missing ones ([running on the keys there are](docs/architecture.md#running-on-the-keys-there-are)).
 
-The persona is TARS from *Interstellar*; for a plain assistant, set `[tts] effect = ""` and edit the system prompt.
+The persona is TARS from *Interstellar*: for its speaker-in-a-metal-box sound, set `[tts] effect = "tars"`; for a plain
+assistant, edit the system prompt.
 
 ## Docs
 

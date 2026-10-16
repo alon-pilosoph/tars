@@ -19,8 +19,8 @@ OPENAI_STT_MODEL = "gpt-4o-mini-transcribe"
 
 DEEPGRAM_HOST = "api.deepgram.com"
 DEEPGRAM_STT_MODEL = "nova-3"
-DEEPGRAM_VOICE = "aura-2-zeus-en"
-OPENAI_KEY, DEEPGRAM_KEY = "OPENAI_API_KEY", "DEEPGRAM_API_KEY"
+DEEPGRAM_VOICE = "flux-wes-en"
+OPENAI_KEY, DEEPGRAM_KEY, CARTESIA_KEY = "OPENAI_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY"
 
 
 class QuickProvider(NamedTuple):
@@ -118,12 +118,13 @@ class LLMConfig:
 
 @dataclass
 class TTSConfig:
-    provider: str = "openai"  # openai | deepgram (Flux TTS or Aura-2, by the model's name)
+    provider: str = "openai"  # openai | deepgram (Flux TTS or Aura-2, by the model's name) | cartesia (Sonic)
     model: str = "gpt-4o-mini-tts"
     voice: str = "alloy"
     instructions: str = ""
     effect: str = ""
     deepgram_host: str = DEEPGRAM_HOST
+    cartesia_voice: str = ""
 
 
 @dataclass
@@ -211,7 +212,14 @@ def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
         english = stt.language.lower().startswith("en")
         stt = dataclasses.replace(stt, provider="flux" if english else "deepgram", model=DEEPGRAM_STT_MODEL)
         notes.append(f"no {OPENAI_KEY}: Deepgram transcribes")
-    if tts.provider == "deepgram" and not deepgram:
+    if tts.provider == "cartesia" and CARTESIA_KEY not in keys:
+        if deepgram:
+            tts = dataclasses.replace(tts, provider="deepgram", model=DEEPGRAM_VOICE)
+            notes.append(f"no {CARTESIA_KEY}: Deepgram's {DEEPGRAM_VOICE} voice speaks")
+        else:
+            tts = dataclasses.replace(tts, provider="openai", model=TTSConfig.model)
+            notes.append(f"no {CARTESIA_KEY}: OpenAI's {tts.voice} voice speaks")
+    elif tts.provider == "deepgram" and not deepgram:
         tts = dataclasses.replace(tts, provider="openai", model=TTSConfig.model)
         notes.append(f"no {DEEPGRAM_KEY}: OpenAI's {tts.voice} voice speaks")
     elif tts.provider == "openai" and not openai:
@@ -279,8 +287,12 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[recorder] greet must be {', '.join(GREETS)}, not {cfg.recorder.greet!r}")
     if cfg.llm.think_timeout_s <= 0:
         problems.append("[llm] think_timeout_s must be more than 0")
-    if cfg.tts.provider not in ("openai", "deepgram"):
-        problems.append(f"[tts] provider must be openai or deepgram, not {cfg.tts.provider!r}")
+    if cfg.tts.provider not in ("openai", "deepgram", "cartesia"):
+        problems.append(f"[tts] provider must be openai, deepgram or cartesia, not {cfg.tts.provider!r}")
+    elif cfg.tts.provider == "cartesia" and not cfg.tts.model.startswith("sonic"):
+        problems.append(f"[tts] model must be a Cartesia model (sonic-...), not {cfg.tts.model!r}")
+    elif cfg.tts.provider == "cartesia" and not cfg.tts.cartesia_voice:
+        problems.append("[tts] cartesia_voice must be a Cartesia voice id")
     elif cfg.tts.provider == "deepgram" and not cfg.tts.model.startswith(("flux-", "aura-")):
         problems.append(f"[tts] model must be a Deepgram voice (flux-... or aura-2-...), not {cfg.tts.model!r}")
     if cfg.tts.effect:
