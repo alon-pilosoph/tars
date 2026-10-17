@@ -233,6 +233,20 @@ def _plain(sentence: str) -> str:
     return re.sub(r"[^\w\s]", "", sentence.lower()).strip()
 
 
+# What TARS says around a reminder's text when it's due ("Alon, a reminder from Stacey: ..."). Copied into the text, it
+# would be said twice.
+SPOKEN_FRAME = re.compile(r"^\s*(\w+(\s\w+)?,\s+)?(a|your)\s+(reminder|message)\b(\s+from\s+\w+)?\s*:", re.IGNORECASE)
+
+
+def check_reminder_text(changes: list[Change]) -> list[str]:
+    """A reminder's text is what it's about, never TARS's words around it."""
+    return [
+        f"a reminder's text repeats what TARS says around it: {c.reminder.text!r}"
+        for c in changes
+        if c.action == ADD and c.reminder and SPOKEN_FRAME.match(c.reminder.text or "")
+    ]
+
+
 def check_text(turn: Turn, said: str) -> list[str]:
     wrong = [f"doesn't say /{p}/" for p in turn.says if not re.search(p, said, re.IGNORECASE)]
     return wrong + [f"says /{p}/" for p in turn.never_says if re.search(p, said, re.IGNORECASE)]

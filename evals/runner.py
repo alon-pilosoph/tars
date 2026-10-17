@@ -29,6 +29,7 @@ from .scenarios import (
     Scenario,
     Turn,
     change_matches,
+    check_reminder_text,
     check_route,
     check_spoken,
     check_text,
@@ -254,6 +255,7 @@ def _play_turn(brain: QuickChat, quick: QuickClient, tools: ReminderTools, turn:
     route, spoken, acks = _heard(said, brain.answered_by)
     wrong = [w for w in [check_route(turn, route)] if w] + check_spoken(spoken, route, said) + check_text(turn, spoken)
     changes = list(brain.changes)
+    wrong += check_reminder_text(changes)
     if turn.reminders is not None:
         paired, missing, extra = pair(turn.reminders, changes, lambda e, c: change_matches(e, c, refs))
         wrong += [f"didn't {'add ' * (e.action == ADD)}{describe(e)}" for e in missing]
@@ -312,9 +314,11 @@ def _keep(tools: ReminderTools, turn: Turn, changes: list, paired: dict, acks, r
     """Makes what the kept turn asked for, as the assistant does; an added reminder's number goes to its ref."""
     wrong, ref_of = [], {j: turn.reminders[i].ref for i, j in paired.items() if turn.reminders[i].ref}
     reminders, who = tools.reminders, None if turn.speaker == "unknown" else turn.speaker
-    if acks is not None:
+    if acks is not None:  # not the ones the same reply put off or cancelled, as the assistant does
+        changed = {c.id for c in changes if c.id is not None}
         for i in acks or [r["id"] for r in reminders.waiting()[:1]]:
-            reminders.ack(i, who, VOICE)
+            if i not in changed:
+                reminders.ack(i, who, VOICE)
     for j, change in enumerate(changes):
         try:
             if change.action == ADD:

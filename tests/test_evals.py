@@ -10,8 +10,9 @@ from openai import APIStatusError, RateLimitError
 
 from evals.report import compare, gate, wilson
 from evals.runner import play, prompt
-from evals.scenarios import Scenario, Seed, Turn, _turn, check_spoken, check_text, load
+from evals.scenarios import Scenario, Seed, Turn, _turn, check_reminder_text, check_spoken, check_text, load
 from voice_assistant.config import LLMConfig
+from voice_assistant.reminders import ADD, REMINDER, Change, NewReminder
 
 from .conftest import FakeStream, ToolCallStream, fake_openai_chat
 
@@ -300,3 +301,25 @@ def test_once_the_account_is_refused_the_runs_left_are_skipped_and_not_counted()
     assert len(calls) == 1 and stop.why.startswith("AuthenticationError")
     summary = summarize([s], results)
     assert summary["right"] == [0, 0] and summary["not_run"] == 3
+
+
+def test_a_reply_that_acks_and_puts_off_a_reminder_leaves_it_set_as_the_assistant_does():
+    def qwen(messages):
+        return "<ack> Pushed." if after_tool(messages) else [("snooze_reminder", {"id": 1, "minutes": 10})]
+
+    turn = {"say": "remind me again in ten minutes", "tag": "reminder", "active_has": [{"in_minutes": 10}]}
+    result, _ = run([turn], qwen, seeds=[Seed("pills", "reminder", "pills", 1, "alon", said=True)])
+    assert result.ok, result.turns[0].wrong
+
+
+@pytest.mark.parametrize(
+    "text, wrong",
+    [
+        ("take your pills", False),
+        ("Alon, a reminder: take your pills.", True),
+        ("A message from Stacey: dinner's at eight", True),
+        ("a reminder about the dentist", False),
+    ],
+)
+def test_a_reminder_text_that_copies_what_tars_says_around_it_is_caught(text, wrong):
+    assert bool(check_reminder_text([Change(ADD, NewReminder(REMINDER, text))])) is wrong

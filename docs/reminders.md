@@ -89,8 +89,10 @@ a line over and over nor goes deaf to "hey TARS".
 
 **Acknowledgement is the model's call.** What's said after a reminder goes to the brain tagged as a reply to it,
 like the reply to "Did you call me?", with a marker next to `<skip>`: `<ack>` when it acknowledges it, optionally
-followed by a short spoken line ("Got it." when there's none). Anything else carries on as a conversation ("remind me
-again in ten minutes"). Every active reminder is in both models' instructions by number (after the part that can be
+followed by a short spoken line ("Got it." when there's none). Anything else carries on as a conversation. "Remind me
+again in ten minutes" puts that one off, rather than setting a second one beside it (which would say it twice). If a
+reply both acknowledges a reminder and puts it off or cancels it, the change wins: acknowledged, it could no longer be
+put off, and would never be said again. Every active reminder is in both models' instructions by number (after the part that can be
 cached, like the time of day), so "what reminders do I have?" needs no tool, and a later "hey TARS, I got the
 message" gets `<ack 12>`. **Why not a phrase list:** people say "okay thanks" a hundred ways, and a list would miss
 them.
@@ -99,6 +101,9 @@ them.
 (`[llm] quick_tools`, on by default); with it off, they're OpenAI's, and Qwen hands those turns over with
 `<look-up>`, which costs a second or two (see [the brain](architecture.md#the-llms-tools)). Like sent items, a tool
 call changes nothing until the turn is kept: a draft thrown away because you kept talking leaves no reminder behind.
+To move one to another time, the model cancels it and sets it again; "put it off" is only ever from now. A reminder's
+text is what it's about ("call mum"): when a model copies the words TARS says around one in its list ("Alon, a
+reminder: call mum."), the `remind` tool takes them off, so they're never said twice.
 
 **Times are worked out by TARS, not the model.** The model gives minutes from now, or a clock time (`HH:MM`) and the
 day as it was said: `today`, `tomorrow`, a weekday, a date, or none for the next time the clock shows it.

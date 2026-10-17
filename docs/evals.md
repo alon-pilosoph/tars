@@ -82,7 +82,10 @@ benchmark could see. They're listed here, and fixed one pull request at a time, 
 4. **"Remind me again in ten minutes" can lose the reminder.** Answering a reminder TARS just said, Qwen once both
    acknowledged it (`<ack>`) and put it off ten minutes, and said "Pushed to 11:19." The assistant marks the
    acknowledgement first, and a reminder that's been acknowledged can't be put off, so it would never be said again
-   (the order is in `assistant.py`: `_ack` before `_change_reminders`).
+   (the order is in `assistant.py`: `_ack` before `_change_reminders`). With the scenario made strict (exactly one
+   reminder afterwards), a worse problem showed: asked that way, Qwen mostly **set a second reminder** beside the one
+   waiting, so it would be said twice (5 of 6 runs), and new reminders often copied the words TARS says around one
+   ("Alon, a reminder: call mum.") into their text, to be said twice too.
 5. **OpenAI doesn't know where home is.** Asked about the weather, it guesses Israel from nothing, or asks for "your
    city or ZIP code" (a third of weather answers). TARS has no home-location setting to give its web search.
 

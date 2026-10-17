@@ -129,8 +129,8 @@ active = []
 
 [[scenario]]
 id = "again-later"
-about = """Answering a reminder with "remind me again in ten minutes": it's said again then, by snoozing it or setting
-a new one."""
+about = """Answering a reminder with "remind me again in ten minutes": that one is said again in ten minutes, and only
+that one. Setting a new one and leaving the first waiting would say it twice."""
 tags = ["reminders", "tags"]
 
 [[scenario.seed]]
@@ -144,7 +144,7 @@ said = true
 [[scenario.turn]]
 say = "remind me again in ten minutes"
 tag = "reminder"
-active_has = [{ text = "pill", in_minutes = 10 }]
+active = [{ text = "pill", in_minutes = 10 }]
 
 [[scenario]]
 id = "for-someone-else-too"

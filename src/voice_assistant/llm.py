@@ -46,8 +46,9 @@ ACK_RULES = (
     f"Messages starting with {REMINDER_TAG} answer a reminder, timer or message you just said aloud, or a timer "
     f"that's ringing. If it acknowledges it (got it, okay, thanks, will do, on it; or stop, off, turn it off, for "
     f"a timer), reply with exactly {ACK} and nothing else. If it asks "
-    f"for something, like being reminded again later, just do it. If it isn't meant for you, reply with exactly "
-    f"{SKIP} and nothing else."
+    f"for something, just do it; to be reminded of it again later, put that one off with snooze_reminder, rather "
+    f"than setting a new one or acknowledging it. If it isn't meant for you, reply with exactly {SKIP} and nothing "
+    f"else."
 )
 
 
@@ -102,7 +103,10 @@ REMIND_RULES = (
     "only when asked to wait until someone is back or next around. Set wait_for_ack, so it's said again until "
     "someone says they got it, unless they say once is enough; a timer always rings until someone turns it off. "
     "After setting one, confirm it in one short line with the time the tool says it's set for. To cancel one or "
-    "put it off, use cancel_reminder or snooze_reminder with its number from the list of what's set now. If a tool "
+    "put it off, use cancel_reminder or snooze_reminder with its number from the list of what's set now: to have "
+    "one said again in a while, put it off; to move one to another time, cancel it and set it again. Never set a "
+    'second one for the same thing and the same person. The text is only what it\'s about ("call mum"), never the '
+    "words TARS says around it in that list. If a tool "
     "says there's an error, fix it or ask, and never say it's set when it isn't."
 )
 REMIND_TOOLS = [
