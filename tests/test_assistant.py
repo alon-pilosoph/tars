@@ -21,6 +21,8 @@ from voice_assistant.reminders import (
     MESSAGE,
     REMINDER,
     SAID,
+    SCHEDULED,
+    SNOOZE,
     TIMER,
     VOICE,
     WAITING,
@@ -600,6 +602,24 @@ def test_an_answer_thrown_away_acknowledges_nothing(speaker, tmp_path):
     )  # fmt: skip
     assistant.say_reminders(follow_up_s=4.0)
     assert reminders.get(rid)["status"] == WAITING
+
+
+def test_a_reply_that_acknowledges_a_reminder_and_puts_it_off_puts_it_off(speaker, tmp_path):
+    # "Remind me again in ten minutes", answering it: Qwen both <ack>s it and snoozes it. Acknowledged first, it
+    # couldn't be put off any more, and would never be said again.
+    assistant, reminders, rid, _ = reminding(
+        speaker, tmp_path, [b"later", None], ["remind me again in ten minutes"], replies=["<ack> Pushed to 11:19."]
+    )
+    stream = assistant.brain.stream_reply
+
+    def putting_it_off(text):
+        assistant.brain.changes = [Change(SNOOZE, id=rid, minutes=10)]
+        return stream(text)
+
+    assistant.brain.stream_reply = putting_it_off
+    assistant.say_reminders(follow_up_s=4.0)
+    r = reminders.get(rid)
+    assert r["status"] == SCHEDULED and abs(r["next_at"] - (time.time() + 600)) < 5
 
 
 def test_a_reminder_set_by_voice_is_made_once_the_answer_is_kept_in_its_conversation(speaker, tmp_path):

@@ -10,7 +10,7 @@ import random
 import threading
 import time
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -313,11 +313,12 @@ class Assistant:
         if self._clock:
             self._clock.read()
 
-    def _ack(self, ids: list[int], who: str | None) -> None:
-        """A bare <ack> is for the reminders just said, or else the one said last."""
+    def _ack(self, ids: list[int], who: str | None, changed: Collection[int] = ()) -> None:
+        """A bare <ack> is for the reminders just said, or else the one said last. `changed`: the reminders the same
+        reply put off or cancelled, which it doesn't acknowledge."""
         try:
             ids = ids or self._just_said or [r["id"] for r in self.reminders.waiting()[:1]]
-            for i in ids:
+            for i in [i for i in ids if i not in changed]:
                 if self.reminders.ack(i, who, VOICE):
                     print(f"(reminder {i} acknowledged by {who or 'an unknown voice'})")
         except Exception as e:  # noqa: BLE001 - the reply was said; only the record of it failed
@@ -569,7 +570,8 @@ class Assistant:
             quick_service=said.quick_service,
         )
         if answer.acks is not None and self.reminders:
-            self._ack(answer.acks, name)
+            # One the reply also put off or cancelled is that change's: acknowledged, it couldn't be put off.
+            self._ack(answer.acks, name, changed={c.id for c in self.brain.changes if c.id is not None})
         self._change_reminders(self.brain.changes, name)
         return True
 

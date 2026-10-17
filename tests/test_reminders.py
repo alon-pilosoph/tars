@@ -19,6 +19,7 @@ from voice_assistant.reminders import (
     WEB,
     NewReminder,
     Reminders,
+    ReminderTools,
     due_at,
     late,
     line,
@@ -236,3 +237,21 @@ def test_a_day_and_time_as_said_become_the_right_moment(now, day, clock, due):
 def test_a_time_that_isnt_one_is_refused(clock):
     with pytest.raises(ValueError, match="HH:MM"):
         due_at(None, clock, local(WEDNESDAY_5PM))
+
+
+@pytest.mark.parametrize(
+    "text, kept",
+    [
+        ("Alon, a reminder: call mum.", "call mum."),
+        ("Stacey, a reminder from Alon: water the plants", "water the plants"),
+        ("A message from Mary Ann: dinner's at eight", "dinner's at eight"),
+        ("a reminder about the dentist", "a reminder about the dentist"),  # what it's about, not TARS's words
+        ("call the bank: ask about the fee", "call the bank: ask about the fee"),
+    ],
+)
+def test_a_reminder_set_with_tars_own_words_around_it_keeps_only_what_its_about(reminders, text, kept):
+    # A model setting one like a reminder in its list copies the line TARS says; said, it would come out twice.
+    args = {"kind": REMINDER, "text": text, "for": "alon", "in_minutes": 10, "when_back": False}
+    change, _ = ReminderTools(reminders).call("remind", args, now=NOW)
+    assert change.reminder.text == kept
+    assert line({**change.reminder.__dict__, "from_name": None}) == f"Alon, a reminder: {kept.rstrip('.')}."

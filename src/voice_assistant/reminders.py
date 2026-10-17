@@ -52,6 +52,12 @@ MAX_AHEAD_S = 366 * 24 * 3600
 # Said later than this after its time (TARS was off, or busy in a long conversation), a reminder says when it was due.
 LATE_S = 90.0
 MAX_TEXT = 300
+# What line() says around a reminder's text ("Alon, a reminder from Stacey: "). A model setting one like a reminder in
+# the list it's shown copies it now and then, and TARS would then say it twice.
+SPOKEN_FRAME = re.compile(
+    r"^\s*(?:[\w'-]+(?:\s[\w'-]+)?,\s+)?(?:a\s+)?(?:reminder|message)(?:\s+from\s+[\w'-]+(?:\s[\w'-]+)?)?\s*:\s*",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -489,7 +495,7 @@ class ReminderTools:
             raise ValueError("give in_minutes, a time (and day), or when_back")
         new = NewReminder(
             kind=args.get("kind"),
-            text=args.get("text"),
+            text=SPOKEN_FRAME.sub("", args["text"]) if isinstance(args.get("text"), str) else args.get("text"),
             for_name=args.get("for"),
             due=due,
             needs_ack=bool(args.get("wait_for_ack", True)),
