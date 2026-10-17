@@ -11,6 +11,9 @@ from .scenarios import Scenario
 
 PRICES = Path(__file__).parent / "prices.toml"
 RUNS = Path(__file__).parent / "runs"
+# What one run of each scenario used, on average, as of the last saved result (--save): for estimates where there are
+# no transcripts to go on, like a fresh clone or CI.
+PROFILE = Path(__file__).parent / "usage.json"
 # Turns OpenAI answers, any of which may search the web: how searches are estimated from transcripts kept before runs
 # counted them.
 OPENAI_ROUTES = ("look-up", "fallback", "ponder")
@@ -46,14 +49,19 @@ def cost(use: Use, prices: Prices, fast: bool = False) -> float:
     return total
 
 
-def estimate(scenarios: list[Scenario], runs: int, folder: Path = RUNS) -> tuple[Use, list[str]]:
-    """What `runs` runs of each scenario will use, by model, from the latest runs of it on record: its own if it has
-    any, else the average scenario's. Returns (the use, the scenarios with no runs on record)."""
+def estimate(
+    scenarios: list[Scenario], runs: int, folder: Path = RUNS, profile: Path = PROFILE
+) -> tuple[Use, list[str]]:
+    """What `runs` runs of each scenario will use, by model, from the latest runs of it on record (its transcripts, or
+    else the saved profile): its own if it has any, else the average scenario's. Returns (the use, the scenarios with
+    no runs on record)."""
+    saved = json.loads(profile.read_text()) if profile.exists() else {}
     per_run, unknown = {}, []
     for s in scenarios:
-        rows = _latest_runs(s.id, folder)
-        if rows:
+        if rows := _latest_runs(s.id, folder):
             per_run[s.id] = _average(rows)
+        elif s.id in saved:
+            per_run[s.id] = saved[s.id]
         else:
             unknown.append(s.id)
     typical = _average_use(list(per_run.values())) if per_run else {}
@@ -64,6 +72,15 @@ def estimate(scenarios: list[Scenario], runs: int, folder: Path = RUNS) -> tuple
             for k, v in u.items():
                 row[k] = row.get(k, 0.0) + v * runs
     return total, unknown
+
+
+def save_profile(by_scenario: dict[str, list[Use]], profile: Path = PROFILE) -> None:
+    """Keeps what one run of each scenario used, on average over this result's runs, beside the ones not run."""
+    saved = json.loads(profile.read_text()) if profile.exists() else {}
+    for sid, uses in by_scenario.items():
+        if uses:
+            saved[sid] = {m: {k: round(v, 1) for k, v in u.items()} for m, u in _average_use(uses).items()}
+    profile.write_text(json.dumps(dict(sorted(saved.items())), indent=1) + "\n")
 
 
 def _latest_runs(scenario: str, folder: Path, keep: int = 10) -> list[dict]:

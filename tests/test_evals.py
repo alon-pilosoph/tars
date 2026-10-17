@@ -386,3 +386,13 @@ def test_a_reply_too_long_for_the_first_service_is_written_on_the_roomier_one():
     result = play(s, CFG, client, "qwen", fake_openai_chat(lambda m: "x"), services)
     assert result.ok, result.turns[0].wrong
     assert asked == [500, 2000] and result.turns[0].service == "Cerebras"
+
+
+def test_with_no_transcripts_the_estimate_comes_from_the_saved_profile(tmp_path):
+    from evals.costs import estimate, save_profile
+
+    profile = tmp_path / "usage.json"
+    save_profile({"a": [{"luna": {"input": 100, "searches": 1}}, {"luna": {"input": 300, "searches": 3}}]}, profile)
+    a = Scenario("a", "x", [_turn({"say": "hi"}, "t")], ["t"])
+    use, unknown = estimate([a], runs=2, folder=tmp_path / "no-runs", profile=profile)
+    assert unknown == [] and use["luna"] == {"input": 400.0, "searches": 4.0}
