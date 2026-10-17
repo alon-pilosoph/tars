@@ -105,23 +105,23 @@ def run(turns, quick_script, openai_reply="From OpenAI.", openai_calls=None, **s
     return play(s, CFG, quick(quick_script), "qwen", openai), openai
 
 
-def test_a_hand_off_that_does_qwens_tool_call_again_is_caught():
-    # Qwen sets the timer, then hands the weather over; OpenAI sets the timer again.
+def test_a_change_a_hand_off_wasnt_meant_to_make_is_caught():
+    # Qwen sets the timer, then hands the weather over; OpenAI sets another one nobody asked for.
     def qwen(messages):
         return "<look-up>" if after_tool(messages) else [("remind", TIMER_10)]
 
     asked = []
 
-    def again(messages):  # on its first request only: its input already ends with Qwen's tool result
+    def another(messages):  # on its first request only: its input already ends with Qwen's tool result
         asked.append(1)
-        return [("remind", TIMER_10)] if len(asked) == 1 else []
+        return [("remind", TIMER_10 | {"in_minutes": 15})] if len(asked) == 1 else []
 
     turn = {
         "say": "set a timer for ten minutes and what's the weather?",
         "route": "look-up",
         "reminders": [{"kind": "timer", "in_minutes": 10}],
     }
-    result, _ = run([turn], qwen, "Set, and sunny tomorrow.", again)
+    result, _ = run([turn], qwen, "Set, and sunny tomorrow.", another)
     (t,) = result.turns
     assert t.route == "look-up"
     assert [w for w in t.wrong if w.startswith("also did: add timer")]

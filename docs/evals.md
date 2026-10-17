@@ -64,7 +64,7 @@ really forgets; and when Qwen's service fails mid-conversation, OpenAI carries t
 
 ## What it found
 
-Nine of the eleven failures are hand-offs. They come down to five problems in TARS, none of which the capability
+Nine of the eleven failures are hand-offs. They come down to six problems in TARS, none of which the capability
 benchmark could see. They're listed here, and fixed one pull request at a time, each measured with these scenarios.
 
 1. **A request with two parts rarely reaches the right model.** "Set a timer for ten minutes, and what's the weather
@@ -88,6 +88,10 @@ benchmark could see. They're listed here, and fixed one pull request at a time, 
    ("Alon, a reminder: call mum.") into their text, to be said twice too.
 5. **OpenAI doesn't know where home is.** Asked about the weather, it guesses Israel from nothing, or asks for "your
    city or ZIP code" (a third of weather answers). TARS has no home-location setting to give its web search.
+
+6. **OpenAI sometimes sends two different links and then says it couldn't.** Asked for a link to a pancake recipe,
+   it now and then sends two (both tool calls answered "sent") and says "I can't send it to your TARS page right now"
+   (0 to 4 times in 10 runs, varying from one run to the next).
 
 The other two failures are judgment calls the scenarios hold TARS to: with two timers running, "cancel the timer"
 cancelled one without asking (1 of 3), and a message for when Stacey's back was set as a reminder that waits for her

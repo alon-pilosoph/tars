@@ -255,3 +255,26 @@ def test_a_reminder_set_with_tars_own_words_around_it_keeps_only_what_its_about(
     change, _ = ReminderTools(reminders).call("remind", args, now=NOW)
     assert change.reminder.text == kept
     assert line({**change.reminder.__dict__, "from_name": None}) == f"Alon, a reminder: {kept.rstrip('.')}."
+
+
+def test_a_reminder_thats_already_set_isnt_set_again(reminders):
+    tools = ReminderTools(reminders)
+    args = {"kind": REMINDER, "text": "Call the bank", "for": "alon", "in_minutes": 30, "when_back": False}
+    change, _ = tools.call("remind", args, now=NOW)
+    tools.apply(change, from_name="alon")
+    again, said = tools.call("remind", {**args, "text": "call the bank."}, now=NOW + 5)
+    assert again is None and said.startswith("already set")
+    other, _ = tools.call("remind", {**args, "text": "call mum"}, now=NOW + 5)  # same time, something else
+    assert other is not None
+
+
+def test_one_asked_for_earlier_in_the_same_reply_counts_as_set(reminders):
+    tools = ReminderTools(reminders)
+    args = {"kind": REMINDER, "text": "water the plants", "for": "stacey", "day": "tomorrow", "time": "09:00"}
+    change, _ = tools.call("remind", args, now=NOW)
+    again, said = tools.call("remind", args, now=NOW + 1, pending=[change])
+    assert again is None and said.startswith("already set")
+    rid = add(reminders)
+    cancel, _ = tools.call("cancel_reminder", {"id": rid}, now=NOW)
+    twice, said = tools.call("cancel_reminder", {"id": rid}, now=NOW, pending=[cancel])
+    assert twice is None and said.startswith("already")

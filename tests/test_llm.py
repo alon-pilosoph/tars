@@ -1020,3 +1020,48 @@ def test_interrupting_while_both_are_starting_closes_both(monkeypatch):
     with pytest.raises(ReplyFailed):
         list(reply)
     assert groq.streams[0].closed and cerebras.streams[0].closed
+
+
+def test_the_same_reminder_asked_for_twice_in_a_reply_is_set_once(tmp_path):
+    brain, _, cerebras, _ = quick_with_tools(tmp_path, [("remind", REMIND), ("remind", REMIND)])
+    "".join(brain.stream_reply("pasta timer, twelve minutes"))
+    assert len(brain.changes) == 1
+    outputs = [m["content"] for m in cerebras.requests[-1]["messages"] if m.get("role") == "tool"]
+    assert outputs[0].startswith("set for ") and outputs[1].startswith("already set")
+
+
+def test_after_a_hand_off_openai_cant_set_again_what_qwen_set(tmp_path):
+    # Qwen sets the timer, then hands the weather over; OpenAI, shown what Qwen did, asks for the timer again.
+    asked = []
+
+    def again(messages):
+        asked.append(1)
+        return [("remind", REMIND)] if len(asked) == 1 else []
+
+    openai, tools = fake_openai_chat(lambda m: "Set, and sunny.", again), reminder_tools(tmp_path)
+    cerebras = fake_cerebras(lambda m: "<look-up>")
+    plain = cerebras.chat.completions.create
+
+    def create(**kw):
+        if kw["messages"][-1]["role"] == "tool":
+            return plain(**kw)
+        cerebras.requests.append(kw)
+        return ToolCallStream([("remind", REMIND)])
+
+    cerebras.chat.completions.create = create
+    brain = QuickChat(openai, LLMConfig(quick_tools=True), [QuickService("Cerebras", cerebras, "qwen")], tools)
+    "".join(brain.stream_reply("pasta timer twelve minutes, and the weather?"))
+    assert brain.answered_by == llm.LOOKED_UP and len(brain.changes) == 1
+    assert openai.requests[1]["input"][-1]["output"].startswith("already set")
+
+
+def test_the_same_thing_sent_twice_in_a_reply_is_sent_once():
+    def calls_for(messages):
+        return [] if messages[-1].get("type") == "function_call_output" else [("send", RECIPE), ("send", RECIPE)]
+
+    client = fake_openai_chat(lambda m: "Sent." if m[-1].get("type") else "", calls_for)
+    brain = OpenAIChat(client, LLMConfig())
+    "".join(brain.stream_reply("send me a pasta recipe"))
+    assert len(brain.sent) == 1
+    outputs = [i["output"] for i in client.requests[1]["input"] if i.get("type") == "function_call_output"]
+    assert outputs == ["sent", "already sent: it's on the TARS page once"]

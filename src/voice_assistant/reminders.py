@@ -58,6 +58,8 @@ SPOKEN_FRAME = re.compile(
     r"^\s*(?:[\w'-]+(?:\s[\w'-]+)?,\s+)?(?:a\s+)?(?:reminder|message)(?:\s+from\s+[\w'-]+(?:\s[\w'-]+)?)?\s*:\s*",
     re.IGNORECASE,
 )
+# Two reminders this close together, of the same kind, for the same person and about the same thing, are one.
+SAME_TIME_S = 60.0
 
 
 @dataclass
@@ -462,14 +464,21 @@ class ReminderTools:
             )
         return note
 
-    def call(self, tool: str, args: dict, now: float | None = None) -> tuple[Change | None, str]:
-        """(the change to make once the turn is kept, what to tell the model), or (None, "error: ...")."""
+    def call(
+        self, tool: str, args: dict, now: float | None = None, pending: Collection[Change] = ()
+    ) -> tuple[Change | None, str]:
+        """(the change to make once the turn is kept, what to tell the model), or (None, "error: ..."), or (None,
+        "already ...") when it's done already: set, or asked for earlier in the same reply (`pending`, the changes not
+        made yet). Models ask twice now and then (two calls in one go, or OpenAI after Qwen's hand-off), and a
+        reminder set twice is said twice."""
         now = time.time() if now is None else now
         try:
             if tool == "remind":
-                return self._remind(args, now)
+                return self._remind(args, now, pending)
             if tool in ("cancel_reminder", "snooze_reminder"):
                 r = self.reminders.get(int(args.get("id")))
+                if r and any(c.id == r["id"] for c in pending):
+                    return None, f"already changed in this reply, nothing more done: {line(r)}"
                 if tool == "cancel_reminder":
                     if not r or r["status"] not in CANCELLABLE:
                         return None, "error: there's no active reminder with that number, so nothing to cancel"
@@ -484,7 +493,7 @@ class ReminderTools:
             return None, f"error: {e}"
         return None, f"error: no tool called {tool}"
 
-    def _remind(self, args: dict, now: float) -> tuple[Change | None, str]:
+    def _remind(self, args: dict, now: float, pending: Collection[Change]) -> tuple[Change | None, str]:
         if args.get("when_back"):
             due = None
         elif args.get("in_minutes") is not None:
@@ -503,7 +512,23 @@ class ReminderTools:
         new = self.reminders.check(new, self._voices(), now)
         said = line({**new.__dict__, "from_name": None})
         at = when(due, now) if due is not None else f"when {name(new.for_name)} is next heard"
+        if self._already_set(new, pending):
+            return None, f'already set for {at}, nothing new set; TARS will say: "{said}"'
         return Change(ADD, reminder=new, asked_at=now), f'set for {at}; TARS will say: "{said}"'
+
+    def _already_set(self, new: NewReminder, pending: Collection[Change]) -> bool:
+        """Whether `new` is one that's active, or asked for earlier in the reply: the same kind, for the same person,
+        about the same thing (any case or punctuation), due within SAME_TIME_S of it (or both when they're back)."""
+        others = [(r.kind, r.text, r.for_name, r.due) for c in pending if (r := c.reminder)]
+        others += [(r["kind"], r["text"], r["for_name"], r["due"]) for r in self.reminders.active()]
+        return any(
+            kind == new.kind
+            and _words(text) == _words(new.text)
+            and person_key(for_name) == person_key(new.for_name)
+            and (due is None) == (new.due is None)
+            and (due is None or abs(due - new.due) <= SAME_TIME_S)
+            for kind, text, for_name, due in others
+        )
 
     def apply(self, change: Change, from_name: str | None, conversation_id: int | None = None) -> None:
         """Makes a change once its turn is kept. A reminder set by voice is from whoever set it."""
@@ -516,3 +541,7 @@ class ReminderTools:
             self.reminders.cancel(change.id)
         elif change.action == SNOOZE:
             self.reminders.snooze(change.id, change.minutes)
+
+
+def _words(text: str | None) -> str:
+    return " ".join(re.sub(r"[^\w\s]", "", (text or "").lower()).split())
