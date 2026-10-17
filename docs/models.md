@@ -41,7 +41,7 @@ where it starts sooner, and on Cerebras second.
   free tier, then paid). Cerebras's free tier allows Qwen about 450 requests a minute but few tokens a minute, and
   gpt-oss-120b 5 requests a minute and a small daily amount (it ran out ten runs in); the paid rows came after a
   top-up. Groq's free key allows 8,000 tokens a minute, 1,000 of them written, plus a daily allowance, and refuses a
-  request that doesn't cap its reply (TARS asks for at most 500 tokens).
+  request that doesn't cap its reply (TARS caps Groq's at 500 tokens, Cerebras's at 2,000).
 - **Cost:** a full run costs cents on Cerebras and Haiku, and under a dollar on Luna.
 
 ## Results
@@ -183,6 +183,10 @@ directly from the house.**
 
 ## Limitations
 
+- **The rules have changed since these rows.** Since 2026-10-17 they also say what to do with a request that's partly
+  Qwen's and partly a hand-off, that a request for a link always goes over, what a message is, and when to ask which
+  reminder is meant ([fixed since](evals.md#fixed-since)). The rows above were measured before. Whole conversations,
+  hand-offs followed through, are measured by the [scenario evals](evals.md).
 - **The hard-question category is too easy.** The savings question ("300 a month at 4 percent for ten years") nearly
   always gets worked out on the spot, correctly (about 44,200), rather than handed to `<ponder>`. That's fine for
   TARS, but it doesn't test the hand-off; a harder one should replace it.

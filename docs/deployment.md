@@ -36,7 +36,9 @@ uv run voice-assistant --list-devices
 ```
 
 Plug the speakerphone in and look for its name in the list. If it isn't marked as the default (`*`), put part of
-its name in `config.toml`, for example `input_device = "PowerConf"` and `output_device = "PowerConf"`. Then:
+its name in `config.toml`, for example `input_device = "PowerConf"` and `output_device = "PowerConf"`. Set
+`[llm] home_city` and `home_country` to where the house is (Tel Aviv, IL in the repo), so "what's the weather?" is
+about home. Then:
 
 ```bash
 uv run voice-assistant --mic-test   # speak: the level, speech and wake-word meters should move; no API key needed

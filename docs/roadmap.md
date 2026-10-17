@@ -100,7 +100,10 @@ says the usual error line rather than one of its own.
 
 **Measured** ([choosing the quick model](models.md)): Qwen with its own tools at low reasoning gets reminders,
 sends and web hand-offs right, where without reasoning it often said a timer was set when it wasn't. It stays the
-quick model, against gpt-oss-120b, Haiku 5.5 and Luna; Jev, tried as a router in front, would save little.
+quick model, against gpt-oss-120b, Haiku 5.5 and Luna; Jev, tried as a router in front, would save little. The
+[scenario evals](evals.md) follow a hand-off through: hard questions reach the thinking model, which carries on from
+what TARS already said, and the follow-up comes back to Qwen. One case is left at 3 of 5: a hard question in the same
+request as a reminder, where Qwen starts on the question itself instead of handing it over.
 
 **Left to do:** on 50 typical questions from step 1's log, measure how often it hands off to the thinking model (it
 should be rare, and never for the simple ones), the time to the "let me think" line (it should be the usual time to

@@ -14,7 +14,7 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 | [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 97% of the owner's (never heard), 1 false answer in an hour of TV |
 | [Response time](docs/latency.md) | 1.2-1.5 s from you stopping to the first sound, down from about 3.5 s |
 | [Quick model](docs/models.md) | Qwen on Groq, then Cerebras, hedged at 0.5 s; 149/156 on the capability benchmark at low reasoning |
-| [Whole conversations](docs/evals.md) | 29 scenarios, hand-offs followed through: 76/87 runs right; five problems found, most in two-part requests |
+| [Whole conversations](docs/evals.md) | 29 scenarios played through the real brain, hand-offs followed through: 143/145 runs right (from 76/87), run on request from a pull request comment |
 | [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |
 | [Runs on](docs/deployment.md) | Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or a Mac |
 
@@ -23,6 +23,8 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 - **Nothing leaves the house before the wake word's double-check agrees** ([wake word](docs/wake-word.md)).
 - **Answers are drafted before you finish**, and thrown away if you keep talking ([response time](docs/latency.md)).
 - **A quick model that hands off**: web questions to OpenAI, hard ones to a thinking model ([models](docs/models.md)).
+- **Evaluated as whole conversations**: hand-offs followed through, corrections, failures mid-conversation, every turn
+  checked, with costs estimated and capped ([evals](docs/evals.md)).
 - **Reminders, timers and messages** that repeat until someone says "got it" ([reminders](docs/reminders.md)).
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
@@ -95,7 +97,7 @@ assistant, edit the system prompt.
 ```bash
 uv run pytest                                # offline tests: no devices or API keys
 uv run ruff check src tests tools training evals && uv run ruff format src tests tools training evals
-uv run python -m evals                       # scenario evals of the brain: real models (Cerebras, OpenAI)
+uv run python -m evals --estimate            # what the scenario evals would cost; without it they run (paid APIs)
 cd webui && npm install
 npm test && npm run lint && npm run format   # the web UI's unit tests, lint and formatting
 npm run build                                # rebuilds the committed page in src/voice_assistant/webui_static/
