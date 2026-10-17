@@ -1,0 +1,51 @@
+# When Qwen's service fails, OpenAI answers, and the conversation has to hold together across the switch. The failed
+# service sits out its cooldown, as in TARS, so the turns after it go to OpenAI too.
+
+[[scenario]]
+id = "quick-down-mid-conversation"
+about = """Qwen's service is down on the second turn: OpenAI answers it, and the one after, with the conversation so
+far in front of it."""
+tags = ["failures", "follow-up"]
+
+[[scenario.turn]]
+say = "what's the capital of Australia?"
+route = "quick"
+says = ["Canberra"]
+
+[[scenario.turn]]
+quick = "down"
+say = "and of Canada?"
+route = "fallback"
+says = ["Ottawa"]
+
+[[scenario.turn]]
+say = "which of the two is bigger?"
+route = "fallback"
+says = ["Ottawa|Canberra"]
+
+[[scenario]]
+id = "quick-limited-timer"
+about = """Qwen's service says "too many requests" as a timer is asked for: OpenAI sets it, once, with its own tool."""
+tags = ["failures", "reminders"]
+
+[[scenario.turn]]
+quick = "limited"
+say = "set a timer for five minutes"
+route = "fallback"
+reminders = [{ kind = "timer", in_minutes = 5 }]
+
+[[scenario]]
+id = "quick-down-then-cancel"
+about = """A timer set by OpenAI while Qwen is down can be cancelled on the next turn, whichever model takes it."""
+tags = ["failures", "reminders", "corrections"]
+
+[[scenario.turn]]
+quick = "down"
+say = "set a tea timer for four minutes"
+route = "fallback"
+reminders = [{ kind = "timer", in_minutes = 4, ref = "tea" }]
+
+[[scenario.turn]]
+say = "never mind, cancel it"
+reminders = [{ action = "cancel", ref = "tea" }]
+active = []

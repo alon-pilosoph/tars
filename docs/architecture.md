@@ -214,4 +214,5 @@ The assistant is `src/voice_assistant/`:
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),
 `tools/` (benchmarks: `latency_bench.py`, `turn_bench.py`, `wakeword_bench.py`, `verifier_bench.py`;
 `capability_bench.py` and `router_bench.py` for the quick model's tools and hand-offs; `echo_bench.py` for echo
-cancellation in the room), `deploy/` (the Pi's install script and services) and `tests/`.
+cancellation in the room), `evals/` (whole conversations played through the brain, hand-offs followed through,
+[docs/evals.md](evals.md)), `deploy/` (the Pi's install script and services) and `tests/`.

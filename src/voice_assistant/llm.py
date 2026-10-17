@@ -10,7 +10,7 @@ import re
 import threading
 import time
 import types
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
@@ -431,9 +431,17 @@ class OpenAIChat:
 
     first_answerer = OPENAI
 
-    def __init__(self, client: OpenAI | None, cfg: LLMConfig, reminders: ReminderTools | None = None):
+    def __init__(
+        self,
+        client: OpenAI | None,
+        cfg: LLMConfig,
+        reminders: ReminderTools | None = None,
+        clock: Callable[[], float] | None = None,
+    ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
-        QuickChat, whose Qwen then answers everything."""
+        QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
+        a failed service is back (time.monotonic; the evals pass their own, to skip ahead)."""
+        self._clock = clock or (lambda: time.monotonic())
         self._client = client
         self._cfg = cfg
         self._reminders = reminders
@@ -464,9 +472,9 @@ class OpenAIChat:
     def stream_reply(self, text: str) -> Iterator[str]:
         with self._lock:
             # After a long pause, start fresh: old context confuses more than it helps, and it's private.
-            if self._history and time.monotonic() - self._last_turn_at > self._cfg.memory_minutes * 60:
+            if self._history and self._clock() - self._last_turn_at > self._cfg.memory_minutes * 60:
                 self._history.clear()
-            self._previous_turn_at, self._last_turn_at = self._last_turn_at, time.monotonic()
+            self._previous_turn_at, self._last_turn_at = self._last_turn_at, self._clock()
             self._asked = {"role": "user", "content": text}
             self._history.append(self._asked)
             self.sent, self.changes = [], []
@@ -661,9 +669,14 @@ class QuickChat(OpenAIChat):
     first_answerer = QUICK
 
     def __init__(
-        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+        self,
+        client: OpenAI | None,
+        cfg: LLMConfig,
+        quick: list[QuickService],
+        reminders: ReminderTools | None = None,
+        clock: Callable[[], float] | None = None,
     ):
-        super().__init__(client, cfg, reminders)
+        super().__init__(client, cfg, reminders, clock)
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         tools = REMIND_TOOLS * own_remind + [QUICK_SEND_TOOL] * own_send
@@ -692,7 +705,7 @@ class QuickChat(OpenAIChat):
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
         answer, handed_off, cut_off = "", None, False
-        ready = [service for service in self._quick if time.monotonic() >= service.back_at]
+        ready = [service for service in self._quick if self._clock() >= service.back_at]
         if not ready and self._client is None:
             ready = list(self._quick)
         while ready:
@@ -827,7 +840,7 @@ class QuickChat(OpenAIChat):
 
     def _cool_down(self, service: QuickService, e: Exception) -> None:
         cooldown = _cooldown(e)
-        service.back_at = time.monotonic() + cooldown
+        service.back_at = self._clock() + cooldown
         print(f"({service.name} failed: {e!r}; skipped for the next {cooldown:.0f} s)")
 
     def _quick_reply(
@@ -915,9 +928,14 @@ class ResponsesQuickChat(QuickChat):
     be the same one), and service_tier applies to it as to OpenAI's other requests."""
 
     def __init__(
-        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+        self,
+        client: OpenAI | None,
+        cfg: LLMConfig,
+        quick: list[QuickService],
+        reminders: ReminderTools | None = None,
+        clock: Callable[[], float] | None = None,
     ):
-        super().__init__(client, cfg, quick, reminders)
+        super().__init__(client, cfg, quick, reminders, clock)
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
         self._quick_extra = {"reasoning": {"effort": effort}} if effort else {}
         if cfg.service_tier:
@@ -981,9 +999,14 @@ class ClaudeQuickChat(QuickChat):
     MAX_TOKENS = 8000  # a spoken reply is short, but thinking counts too
 
     def __init__(
-        self, client: OpenAI | None, cfg: LLMConfig, quick: list[QuickService], reminders: ReminderTools | None = None
+        self,
+        client: OpenAI | None,
+        cfg: LLMConfig,
+        quick: list[QuickService],
+        reminders: ReminderTools | None = None,
+        clock: Callable[[], float] | None = None,
     ):
-        super().__init__(client, cfg, quick, reminders)
+        super().__init__(client, cfg, quick, reminders, clock)
         self._claude_tools = [
             {
                 "name": t["function"]["name"],

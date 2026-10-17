@@ -9,7 +9,7 @@ from datetime import datetime
 
 import httpx
 import pytest
-from openai import APIConnectionError, OpenAIError, RateLimitError
+from openai import OpenAIError, RateLimitError
 
 from voice_assistant import llm
 from voice_assistant.config import LLMConfig
@@ -27,7 +27,7 @@ from voice_assistant.llm import (
 )
 from voice_assistant.reminders import MESSAGE, TIMER, WEB, NewReminder, Reminders, ReminderTools
 
-from .conftest import fake_openai_chat, raising
+from .conftest import FakeStream, ToolCallStream, fake_openai_chat, gone, raising
 
 
 @pytest.mark.parametrize(
@@ -299,35 +299,6 @@ def test_tars_only_sends_things_when_they_can_be_kept(tmp_path, log_events, type
     cfg = load_config(tmp_path / "none.toml")
     cfg.learning.log_events = log_events
     assert brain_config(cfg, typed).send is sends
-
-
-def gone() -> APIConnectionError:
-    return APIConnectionError(request=httpx.Request("POST", "https://api.groq.com"))
-
-
-class FakeStream:
-    """A streamed chat completion that can be closed, like the SDK's: reading on after that fails. `finish`: why the
-    last piece ended it ("length": the token cap)."""
-
-    def __init__(self, text, finish=None):
-        self.pieces, self.closed, self.finish = [text[:3], text[3:]], False, finish
-
-    def __iter__(self):
-        for i, piece in enumerate(self.pieces):
-            if self.closed:
-                raise gone()
-            finish = self.finish if i == len(self.pieces) - 1 else None
-            delta = types.SimpleNamespace(content=piece)
-            yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta, finish_reason=finish)])
-
-    def close(self):
-        self.closed = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
 
 
 def fake_cerebras(reply_for):
@@ -746,23 +717,6 @@ def test_a_reminder_due_now_is_still_set_when_the_turn_is_kept_a_while_later(tmp
     change, _ = tools.call("remind", {**REMIND, "in_minutes": 0}, now=asked)
     tools.apply(change, from_name="alon")
     assert len(tools.reminders.active()) == 1
-
-
-class ToolCallStream(FakeStream):
-    """A streamed chat completion that calls tools, the arguments arriving in two pieces, as Cerebras streams them."""
-
-    def __init__(self, calls):
-        super().__init__("")
-        self.calls = calls
-
-    def __iter__(self):
-        for i, (name, args) in enumerate(self.calls):
-            text = json.dumps(args)
-            for n, piece in enumerate([text[:5], text[5:]]):
-                function = types.SimpleNamespace(name=name if n == 0 else None, arguments=piece)
-                part = types.SimpleNamespace(index=i, id=f"qc_{i}" if n == 0 else None, function=function)
-                delta = types.SimpleNamespace(content=None, tool_calls=[part])
-                yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
 
 
 def quick_with_tools(tmp_path, calls, then="Pasta timer, twelve minutes.", **cfg):

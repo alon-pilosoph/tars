@@ -1,0 +1,120 @@
+# Turns Qwen hands over, followed through to OpenAI's model (<look-up>) or the thinking model (<ponder>), and what
+# happens next: the conversation is shared, so the turn after a hand-off is Qwen's again, with the other model's
+# answer in front of it.
+
+[[scenario]]
+id = "weather-follow-up"
+about = """After OpenAI answers a weather question, the follow-up comes back to Qwen with that answer in its history.
+It has to hand it over again, not make up the next day's weather from the first answer."""
+tags = ["hand-off", "follow-up"]
+
+[[scenario.turn]]
+say = "what's the weather tomorrow?"
+route = "look-up"
+
+[[scenario.turn]]
+say = "and the day after?"
+route = "look-up"
+
+[[scenario]]
+id = "look-up-then-own-answer"
+about = """After a hand-off, a question that doesn't need the web is Qwen's to answer, using what's in the history:
+here, spelling a name from OpenAI's answer, as the system prompt asks (letters with spaces)."""
+tags = ["hand-off", "follow-up"]
+
+[[scenario.turn]]
+say = "who won the Arsenal game last night?"
+route = "look-up"
+
+[[scenario.turn]]
+say = "how do you spell Arsenal?"
+route = "quick"
+says = ["A R S E N A L"]
+
+[[scenario]]
+id = "timer-and-weather"
+about = """Two things in one request: Qwen sets the timer with its own tool, then hands the weather over. OpenAI is
+told what Qwen's tools already did, and must not set the timer a second time."""
+tags = ["hand-off", "reminders", "done-twice"]
+
+[[scenario.turn]]
+say = "set a timer for ten minutes, and what's the weather like tomorrow?"
+route = "look-up"
+reminders = [{ kind = "timer", in_minutes = 10 }]
+
+[[scenario]]
+id = "note-and-weather"
+about = """Qwen saves the note itself and hands the weather over; OpenAI mustn't send the note again."""
+tags = ["hand-off", "sending", "done-twice"]
+
+[[scenario.turn]]
+say = "save a note that the plumber comes on thursday, and will it rain on thursday?"
+route = "look-up"
+sent = [{ kind = ["note", "file"] }]
+
+[[scenario]]
+id = "reminder-and-hard-question"
+about = """Qwen sets the reminder, then hands the hard question to the thinking model, which mustn't set it again."""
+tags = ["hand-off", "ponder", "reminders", "done-twice"]
+
+[[scenario.turn]]
+say = """remind me in an hour to call the bank, and should I refinance my mortgage? it's at 5.3 percent with \
+twenty years left, and they're offering 4.1 with a two thousand fee"""
+route = "ponder"
+reminders = [{ in_minutes = 60, text = "bank" }]
+says = ["think"]
+
+[[scenario]]
+id = "link-then-list"
+about = """OpenAI sends a link (Qwen can't: it has no web search). The next turn, a shopping list for the recipe, is
+Qwen's to send itself."""
+tags = ["hand-off", "sending", "follow-up"]
+
+[[scenario.turn]]
+say = "send me a link to a good pancake recipe"
+route = "look-up"
+sent = [{ kind = "link" }]
+
+[[scenario.turn]]
+say = "and save me a shopping list for it: flour, eggs and milk"
+route = "quick"
+sent = [{ kind = "list", entries = 3 }]
+
+[[scenario]]
+id = "plan-then-send-it"
+about = """The thinking model plans the trip; "send that to me" then comes to Qwen, which has the plan in its
+history and can send it as a note itself, without handing it over again."""
+tags = ["hand-off", "ponder", "sending", "follow-up"]
+
+[[scenario.turn]]
+say = "plan a three day trip to Lisbon for the two of us"
+route = "ponder"
+
+[[scenario.turn]]
+say = "great, send that to me"
+route = "quick"
+sent = [{ kind = ["note", "file", "list"] }]
+
+[[scenario]]
+id = "hard-question-follow-up"
+about = """A follow-up to the thinking model's answer that is small talk, not another hard question: Qwen answers it,
+in TARS's voice, without a second hand-off."""
+tags = ["hand-off", "ponder", "follow-up"]
+
+[[scenario.turn]]
+say = "should we lease or buy our next car? we drive about fifteen thousand kilometres a year"
+route = "ponder"
+
+[[scenario.turn]]
+say = "thanks, that helps"
+route = "quick"
+
+[[scenario]]
+id = "no-made-up-links"
+about = """Asked for a link to a site, Qwen can't make one up: it hands the turn over, and only OpenAI sends it."""
+tags = ["hand-off", "sending"]
+
+[[scenario.turn]]
+say = "send me the link to the BBC weather page"
+route = "look-up"
+sent = [{ kind = "link" }]

@@ -1,0 +1,161 @@
+# Reminders over a conversation: set, changed, cancelled, asked about, and answered when TARS says one. What a turn
+# changes is made once it's over, as TARS does, so later turns see it in the list Qwen is given.
+
+[[scenario]]
+id = "change-the-time"
+about = """"Actually make it 8" after setting a reminder for 7: afterwards there's one reminder, at 8, not two. (Putting
+it off isn't the same: that moves it from now, not from 7.)"""
+tags = ["reminders", "corrections"]
+
+[[scenario.turn]]
+say = "remind me tomorrow at 7 to call mum"
+reminders = [{ kind = "reminder", day = "tomorrow", time = "07:00", text = "mum", ref = "mum" }]
+
+[[scenario.turn]]
+say = "actually, make it 8"
+active = [{ kind = "reminder", day = "tomorrow", time = "08:00", text = "mum" }]
+
+[[scenario]]
+id = "cancel-that"
+about = """"Cancel that" refers to the timer just set."""
+tags = ["reminders", "corrections"]
+
+[[scenario.turn]]
+say = "set a pasta timer for eight minutes"
+reminders = [{ kind = "timer", in_minutes = 8, ref = "pasta" }]
+
+[[scenario.turn]]
+say = "cancel that"
+reminders = [{ action = "cancel", ref = "pasta" }]
+active = []
+
+[[scenario]]
+id = "which-timer"
+about = """Two timers are running and someone says "cancel the timer": TARS asks which, and cancels nothing."""
+tags = ["reminders", "ambiguous"]
+
+[[scenario.seed]]
+ref = "pasta"
+kind = "timer"
+text = "pasta"
+in_minutes = 6
+
+[[scenario.seed]]
+ref = "eggs"
+kind = "timer"
+text = "eggs"
+in_minutes = 3
+
+[[scenario.turn]]
+say = "cancel the timer"
+route = "quick"
+reminders = []
+says = ["\\?"]
+
+[[scenario.turn]]
+say = "the eggs"
+reminders = [{ action = "cancel", ref = "eggs" }]
+active = [{ kind = "timer", text = "pasta" }]
+
+[[scenario]]
+id = "what-is-set"
+about = """Asked what's set, Qwen answers from the list it's given, changes nothing, and reads no numbers or tags."""
+tags = ["reminders"]
+
+[[scenario.seed]]
+ref = "bank"
+kind = "reminder"
+text = "call the bank"
+in_minutes = 30
+for = "alon"
+
+[[scenario.seed]]
+ref = "pasta"
+kind = "timer"
+text = "pasta"
+in_minutes = 10
+
+[[scenario.turn]]
+say = "what timers and reminders are set?"
+route = "quick"
+reminders = []
+says = ["bank", "pasta"]
+
+[[scenario]]
+id = "put-it-off"
+about = """Putting off a reminder that's set: a snooze of the right one, by the right amount."""
+tags = ["reminders"]
+
+[[scenario.seed]]
+ref = "bank"
+kind = "reminder"
+text = "call the bank"
+in_minutes = 30
+for = "alon"
+
+[[scenario.turn]]
+say = "put off the bank reminder by ten minutes"
+reminders = [{ action = "snooze", ref = "bank", minutes = 10 }]
+
+[[scenario]]
+id = "message-for-later"
+about = """A message for someone who isn't there waits until their voice is next heard."""
+tags = ["reminders"]
+
+[[scenario.turn]]
+say = "tell Stacey dinner's at eight when she's back"
+reminders = [{ kind = "message", when_back = true, for = "stacey" }]
+
+[[scenario]]
+id = "got-it"
+about = """Answering a reminder TARS just said with "got it": an <ack>, which marks it acknowledged and says "Got it."
+or a short line."""
+tags = ["reminders", "tags"]
+
+[[scenario.seed]]
+ref = "pills"
+kind = "reminder"
+text = "take your pills"
+in_minutes = 1
+for = "alon"
+said = true
+
+[[scenario.turn]]
+say = "got it, thanks"
+tag = "reminder"
+route = "ack"
+reminders = []
+active = []
+
+[[scenario]]
+id = "again-later"
+about = """Answering a reminder with "remind me again in ten minutes": it's said again then, by snoozing it or setting
+a new one."""
+tags = ["reminders", "tags"]
+
+[[scenario.seed]]
+ref = "pills"
+kind = "reminder"
+text = "take your pills"
+in_minutes = 1
+for = "alon"
+said = true
+
+[[scenario.turn]]
+say = "remind me again in ten minutes"
+tag = "reminder"
+active_has = [{ text = "pill", in_minutes = 10 }]
+
+[[scenario]]
+id = "for-someone-else-too"
+about = """"Remind me too" from another voice, after a reminder was set: one for Stacey, at the same time."""
+tags = ["reminders", "speakers", "follow-up"]
+
+[[scenario.turn]]
+say = "remind me tomorrow at 9 to water the plants"
+reminders = [{ day = "tomorrow", time = "09:00", text = "plants" }]
+
+[[scenario.turn]]
+speaker = "stacey"
+say = "remind me too"
+reminders = [{ day = "tomorrow", time = "09:00", for = "stacey" }]
