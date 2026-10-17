@@ -118,7 +118,8 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   markdown), a list, or a text file (`.txt`, `.md`, `.csv`, `.ics`), for whoever asked or for the household. The
   assistant checks every call (links must be http(s), a file needs a known type and its text) and returns errors to
   the model, which gets up to three rounds; the last round can't call tools, so TARS always says something. Sent
-  things appear in the web UI; TARS says "It's on the TARS page." It never reads a link aloud. Something sent "for
+  things appear in the web UI; TARS says "It's on the TARS page." It never reads a link aloud. The same thing (kind and
+  title) sent twice in one reply is sent once, whichever model asks the second time. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
 - **Reminders** (`remind`, `cancel_reminder`, `snooze_reminder`): see [reminders](reminders.md).
 

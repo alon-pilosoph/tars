@@ -103,7 +103,11 @@ them.
 call changes nothing until the turn is kept: a draft thrown away because you kept talking leaves no reminder behind.
 To move one to another time, the model cancels it and sets it again; "put it off" is only ever from now. A reminder's
 text is what it's about ("call mum"): when a model copies the words TARS says around one in its list ("Alon, a
-reminder: call mum."), the `remind` tool takes them off, so they're never said twice.
+reminder: call mum."), the `remind` tool takes them off, so they're never said twice. And a reminder is never set
+twice: asked for one that's already set, or asked for twice in one reply (two calls at once, or OpenAI after Qwen
+handed the rest of a request over), the tool answers "already set" and sets nothing. Same kind, same person, about the
+same thing (any case or punctuation) and due within a minute of it count as the same. Cancelling or putting off one
+that the reply already changed is answered the same way.
 
 **Times are worked out by TARS, not the model.** The model gives minutes from now, or a clock time (`HH:MM`) and the
 day as it was said: `today`, `tomorrow`, a weekday, a date, or none for the next time the clock shows it.

@@ -604,12 +604,15 @@ class OpenAIChat:
             return f"error: a link needs web search, which you can't do: {no_links}"
         if call.name == "send":
             item, result = check_send(args)
+            if item and any((s.kind, s.title.lower()) == (item.kind, item.title.lower()) for s in self.sent):
+                return "already sent: it's on the TARS page once"  # asked twice in one reply
             if item:
                 self.sent.append(item)
             return result
         if self._reminders and call.name in ("remind", "cancel_reminder", "snooze_reminder"):
             try:
-                change, result = self._reminders.call(call.name, args if isinstance(args, dict) else {})
+                args = args if isinstance(args, dict) else {}
+                change, result = self._reminders.call(call.name, args, pending=self.changes)
             except Exception as e:  # noqa: BLE001 - the table couldn't be read: the model says it didn't work
                 return f"error: couldn't reach the reminders ({e!r})"
             if change:
