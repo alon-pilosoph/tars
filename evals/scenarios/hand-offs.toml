@@ -5,16 +5,19 @@
 [[scenario]]
 id = "weather-follow-up"
 about = """After OpenAI answers a weather question, the follow-up comes back to Qwen with that answer in its history.
-It has to hand it over again, not make up the next day's weather from the first answer."""
+It has to hand it over again, not make up the next day's weather from the first answer. Neither asks where home is:
+it's in config.toml ([llm] home_city)."""
 tags = ["hand-off", "follow-up"]
 
 [[scenario.turn]]
 say = "what's the weather tomorrow?"
 route = "look-up"
+never_says = ["which city|what city|your city|zip code|where are you"]
 
 [[scenario.turn]]
 say = "and the day after?"
 route = "look-up"
+never_says = ["which city|what city|your city|zip code|where are you"]
 
 [[scenario]]
 id = "look-up-then-own-answer"
@@ -41,6 +44,7 @@ tags = ["hand-off", "reminders", "done-twice"]
 say = "set a timer for ten minutes, and what's the weather like tomorrow?"
 route = "look-up"
 reminders = [{ kind = "timer", in_minutes = 10 }]
+never_says = ["which city|what city|your city|zip code|where are you"]
 
 [[scenario]]
 id = "note-and-weather"
@@ -51,6 +55,7 @@ tags = ["hand-off", "sending", "done-twice"]
 say = "save a note that the plumber comes on thursday, and will it rain on thursday?"
 route = "look-up"
 sent = [{ kind = ["note", "file"] }]
+never_says = ["which city|what city|your city|zip code|where are you"]
 
 [[scenario]]
 id = "reminder-and-hard-question"

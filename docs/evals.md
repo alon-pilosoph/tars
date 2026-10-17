@@ -105,6 +105,7 @@ Each fix is its own pull request, measured with these scenarios before and after
 |---|---|---|---|
 | 4: answering a reminder lost it, or set a second one, or copied TARS's words | the change wins over an `<ack>`; "again later" puts that one off; the `remind` tool strips TARS's words | reminder scenarios 54/66 | 65/66 |
 | 2: something done twice | the tools answer "already set" or "already sent" to a repeat in the same reply, or of one that's set | 4 doubles in 70 runs | 0 |
+| 5: OpenAI didn't know where home is | `[llm] home_city` and `home_country`, told to both models and the web search | 15 of 24 weather answers asked where | 0 of 24 |
 | 1: two-part requests fell to OpenAI | the rules say what to do with one: its own part first, with its tools, then the marker | two-part scenarios 4/18, 15 turns fell to OpenAI | 16/18, 3 turns |
 
 With all three, the whole suite went from 76/87 to **84/87** (95% interval 90-99%), and no scenario got worse.
