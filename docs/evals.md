@@ -97,6 +97,18 @@ The other two failures are judgment calls the scenarios hold TARS to: with two t
 cancelled one without asking (1 of 3), and a message for when Stacey's back was set as a reminder that waits for her
 instead of a message (1 of 3; it's said the same way).
 
+## Fixed since
+
+Each fix is its own pull request, measured with these scenarios before and after on the same day.
+
+| Problem | Fix | Before | After |
+|---|---|---|---|
+| 4: answering a reminder lost it, or set a second one, or copied TARS's words | the change wins over an `<ack>`; "again later" puts that one off; the `remind` tool strips TARS's words | reminder scenarios 54/66 | 65/66 |
+| 2: something done twice | the tools answer "already set" or "already sent" to a repeat in the same reply, or of one that's set | 4 doubles in 70 runs | 0 |
+| 1: two-part requests fell to OpenAI | the rules say what to do with one: its own part first, with its tools, then the marker | two-part scenarios 4/18, 15 turns fell to OpenAI | 16/18, 3 turns |
+
+With all three, the whole suite went from 76/87 to **84/87** (95% interval 90-99%), and no scenario got worse.
+
 ## Limitations
 
 - **No judge yet.** Fixed rules check what was done and what mustn't be said, not whether an answer is right or sounds
