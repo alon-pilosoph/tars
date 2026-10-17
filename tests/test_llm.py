@@ -1097,3 +1097,18 @@ def test_with_no_home_set_nothing_is_said_about_it():
     assert {"type": "web_search"} in openai.requests[0]["tools"]
     assert "household is in" not in openai.requests[0]["instructions"]
     assert "household is in" not in cerebras.requests[0]["messages"][0]["content"]
+
+
+@pytest.mark.parametrize(
+    "written, heard_first",
+    [
+        ("<toolcall> <function=send> <parameter=kind> note </parameter>", ""),
+        ('Sure. <tool_call>{"name": "send"}</tool_call>', "Sure. "),
+        ('<function=remind>{"kind": "timer"}</function>', ""),
+    ],
+)
+def test_a_tool_call_written_as_text_is_never_said_and_openai_takes_the_turn(written, heard_first):
+    brain, openai, _ = cerebras_brain(lambda m: written, openai_reply="It's on the TARS page.")
+    said = "".join(brain.stream_reply("send that to me"))
+    assert said == heard_first + "It's on the TARS page."
+    assert brain.answered_by == llm.FALLBACK and len(openai.requests) == 1
