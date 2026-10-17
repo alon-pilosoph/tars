@@ -38,6 +38,7 @@ from voice_assistant.llm import (
     LOOKED_UP,
     PONDERED,
     QUICK,
+    QUICK_MAX_TOKENS,
     ClaudeQuickChat,
     QuickChat,
     QuickService,
@@ -388,9 +389,14 @@ def main() -> None:
 
     openai_side = make_openai_client(REPO / ".env") if args.follow else None
 
+    cap = PROVIDERS[args.brain].max_tokens if args.brain in PROVIDERS else QUICK_MAX_TOKENS
+
     def make_brain(quick) -> QuickChat:
         brain = brain_class(
-            openai_side or handed_over_client(), llm, [QuickService(args.brain, quick, model)], reminders=tools
+            openai_side or handed_over_client(),
+            llm,
+            [QuickService(args.brain, quick, model, cap)],
+            reminders=tools,
         )
         if args.brain == "openai" and cfg.llm.service_tier:
             brain._quick_extra["service_tier"] = cfg.llm.service_tier  # as TARS asks OpenAI

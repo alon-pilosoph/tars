@@ -28,12 +28,16 @@ class QuickProvider(NamedTuple):
     url: str
     key_name: str
     setting: str
+    max_tokens: int  # a reply's cap, reasoning included
 
 
-# Where the quick model runs, in the order they're asked: each runs Qwen as its [llm] `setting` names it.
+# Where the quick model runs, in the order they're asked: each runs Qwen as its [llm] `setting` names it. Groq's free
+# key allows 1,000 written tokens a minute, and refuses a request whose cap is over what's left, so its replies are
+# capped at 500: enough for a spoken answer, not for a long note. Cerebras has room for one, and takes the turn when
+# Groq's reply runs out before anything was said or done.
 QUICK_PROVIDERS = (
-    QuickProvider("Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "groq_model"),
-    QuickProvider("Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "cerebras_model"),
+    QuickProvider("Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY", "groq_model", 500),
+    QuickProvider("Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", "cerebras_model", 2000),
 )
 
 

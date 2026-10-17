@@ -59,6 +59,7 @@ def test_a_scenario_file_with_a_mistake_is_refused(tmp_path, toml, error):
         ("I set the timer for you. I set the timer for you.", "", "twice"),
         ("Eggs, milk.", "- eggs\n- milk", "a list"),
         ("", "", "said nothing"),
+        ("Less than look-up.", "&lt;look-up&gt;", "a tag"),  # escaped: TARS wouldn't recognize it
     ],
 )
 def test_what_tars_shouldnt_say_aloud(said, raw, wrong):
@@ -368,3 +369,20 @@ def test_web_searches_are_counted():
     events = [types.SimpleNamespace(type="response.web_search_call.completed")] * 2
     list(_Counted(events, usage, "luna"))
     assert usage.by_model["luna"]["searches"] == 2
+
+
+def test_a_reply_too_long_for_the_first_service_is_written_on_the_roomier_one():
+    asked = []
+
+    def create(**kw):
+        asked.append(kw["max_completion_tokens"])
+        if kw["max_completion_tokens"] < 1000:
+            return FakeStream("", finish="length")
+        return FakeStream("Sent. It's on the TARS page.")
+
+    client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+    s = Scenario("t", "a test", [_turn({"say": "send me the plan", "route": "quick"}, "t")], ["t"])
+    services = [("Cerebras, as Groq", 500), ("Cerebras", 2000)]
+    result = play(s, CFG, client, "qwen", fake_openai_chat(lambda m: "x"), services)
+    assert result.ok, result.turns[0].wrong
+    assert asked == [500, 2000] and result.turns[0].service == "Cerebras"

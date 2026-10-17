@@ -27,6 +27,7 @@ TAGS = ("", "follow-up", "asked", "reminder")
 FAILURES = ("", "down", "limited")
 
 ANY_TAG = re.compile(r"<\s*/?\s*[a-z][\w-]*(\s[^<>]*)?>", re.IGNORECASE)
+ESCAPED_TAG = re.compile(r"&lt;\s*/?\s*[a-z][\w-]*", re.IGNORECASE)  # "&lt;look-up&gt;", unrecognized by TARS
 LIST_LINE = re.compile(r"^\s*([-*•]|\d+\.)\s", re.MULTILINE)
 LINK = re.compile(r"https?://|www\.|\b[\w-]+\.(com|org|net|io|co\.uk)\b", re.IGNORECASE)
 EMOJI = re.compile("[\U0001f300-\U0001faff☀-➿]")
@@ -214,7 +215,7 @@ def check_spoken(said: str, route: str, raw: str = "") -> list[str]:
     wrong = []
     if not said.strip():
         wrong.append("said nothing")
-    if m := ANY_TAG.search(said):
+    if m := ANY_TAG.search(said) or ESCAPED_TAG.search(raw):
         wrong.append(f"says a tag aloud: {m.group(0)!r}")
     if m := LIST_LINE.search(raw):
         wrong.append(f"says a list aloud: {raw[m.start() :].strip()[:40]!r}")

@@ -156,6 +156,12 @@ def main() -> None:
         llm = dataclasses.replace(llm, quick_reasoning_effort=args.effort)
     env = REPO / ".env"
     quick_client, openai_client = make_quick_client(env, provider), make_openai_client(env)
+    # TARS asks Groq first, capped for its free key, then Cerebras. On Cerebras, both are played there, each with its
+    # own cap, so a reply too long for Groq's runs out here too, and goes on as it would at home.
+    groq = PROVIDERS["groq"]
+    services = [(provider.name, provider.max_tokens)]
+    if provider.name != groq.name:
+        services.insert(0, (f"{provider.name}, as {groq.name}", groq.max_tokens))
     effort = llm.quick_reasoning_effort or llm.reasoning_effort or "default"
     print(f"{model} on {provider.name}, reasoning {effort}, tools {'on' if llm.quick_tools else 'off'}; hand-offs to")
     tier = llm.service_tier or "standard"
@@ -164,7 +170,7 @@ def main() -> None:
     print(f"{len(scenarios)} scenarios x {args.runs} runs\n")
 
     def run(scenario: Scenario) -> RunResult:
-        return play(scenario, llm, quick_client, model, openai_client, provider.name)
+        return play(scenario, llm, quick_client, model, openai_client, services)
 
     started = datetime.now().astimezone()
     jobs, stop, spent = [s for s in scenarios for _ in range(args.runs)], Stop(), Spent(prices, args.fast, args.budget)

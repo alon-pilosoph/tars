@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import types
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,7 +19,17 @@ from openai import APIConnectionError, AuthenticationError, PermissionDeniedErro
 
 from voice_assistant.config import LLMConfig
 from voice_assistant.events import EventLog
-from voice_assistant.llm import ACK_MARK, ASKED_TAG, FOLLOW_UP_TAG, GOT_IT, REMINDER_TAG, SKIP, QuickChat, QuickService
+from voice_assistant.llm import (
+    ACK_MARK,
+    ASKED_TAG,
+    FOLLOW_UP_TAG,
+    GOT_IT,
+    QUICK_MAX_TOKENS,
+    REMINDER_TAG,
+    SKIP,
+    QuickChat,
+    QuickService,
+)
 from voice_assistant.reminders import ADD, VOICE, WEB, NewReminder, Reminders, ReminderTools
 from voice_assistant.speech import split_sentences
 
@@ -211,10 +222,16 @@ def prompt(turn: Turn) -> str:
 
 
 def play(
-    scenario: Scenario, llm: LLMConfig, quick_client, model: str, openai_client, service: str = "Cerebras"
+    scenario: Scenario,
+    llm: LLMConfig,
+    quick_client,
+    model: str,
+    openai_client,
+    services: Sequence[tuple[str, int]] = (("Cerebras", QUICK_MAX_TOKENS),),
 ) -> RunResult:
     """One run of `scenario`, with Qwen (`model`) on `quick_client` and OpenAI on `openai_client`, against reminders
-    made for the run."""
+    made for the run. `services`: the quick services TARS asks, in order, as (name, reply cap), all served here by
+    `quick_client`; a failure a turn asks for takes them all down."""
     folder = Path(tempfile.mkdtemp(prefix="tars-eval-"))
     try:
         reminders = Reminders(EventLog(folder / "events").store)
@@ -228,7 +245,8 @@ def play(
         usage, clock = Usage(), Clock()
         quick = QuickClient(quick_client, usage)
         openai = OpenAIClient(openai_client, usage) if openai_client is not None else None
-        brain = QuickChat(openai, llm, [QuickService(service, quick, model)], reminders=tools, clock=clock)
+        quick_services = [QuickService(name, quick, model, cap) for name, cap in services]
+        brain = QuickChat(openai, llm, quick_services, reminders=tools, clock=clock)
         turns, unavailable = [], ""
         for turn in scenario.turns:
             clock.skipped += turn.after_minutes * 60

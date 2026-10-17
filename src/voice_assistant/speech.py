@@ -1,5 +1,6 @@
 """Turn a streamed LLM reply into continuous audio, one sentence at a time."""
 
+import html
 import queue
 import re
 import threading
@@ -36,6 +37,7 @@ URL = re.compile(r"\s*\bhttps?://\S+")
 
 
 def clean_for_speech(text: str) -> str:
+    text = html.unescape(text)  # "&amp;" is read out as "amp" otherwise
     text = URL.sub("", LINK.sub(r"\1", CITATION.sub("", text)))
     return MARKDOWN.sub("", text).strip()
 

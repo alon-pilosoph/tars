@@ -66,3 +66,7 @@ def test_voice_with_effect_handles_odd_sized_chunks():
 def test_no_effect_returns_the_voice_unchanged():
     voice = object()
     assert apply_effect(voice, "") is voice
+
+
+def test_html_entities_are_said_as_what_they_stand_for():
+    assert clean_for_speech("Salt &amp; pepper, 5&nbsp;minutes") == "Salt & pepper, 5\xa0minutes"
