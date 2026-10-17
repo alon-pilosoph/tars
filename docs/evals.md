@@ -17,8 +17,12 @@ TARS's real brain, hand-offs followed through to OpenAI's model and the thinking
   tools, OpenAI's `gpt-6-luna` for the web and as the fallback, and the same model at high reasoning for hard
   questions.
 - **Qwen runs on Cerebras.** It's the same model TARS asks on Groq first, and Cerebras's paid tier allows 150,000
-  tokens a minute against Groq's free 7,000-8,000, so a whole run takes about a minute instead of a day. Whether Groq's
-  copy answers the same way is [not yet checked](#limitations).
+  tokens a minute against Groq's free 7,000-8,000, so a whole run takes about a minute instead of a day. TARS's two
+  services are both played there, each with its own reply cap (Groq's 500 tokens, then Cerebras's 2,000), so a reply
+  too long for Groq runs out as it would at home. Whether Groq's copy answers the same way is
+  [not yet checked](#limitations).
+- **On request, never a check.** Evals run from the command line, or from a pull request comment (`#evals`), and
+  nothing waits on them ([evals/README.md](../evals/README.md#on-a-pull-request)).
 - **Played as the assistant plays them**: prompts tagged with the speaker and how they were heard, a `<skip>`
   forgotten, an `<ack>` marking the reminder acknowledged, and each turn's reminder changes made once it's over, so a
   later turn sees them. Failures are made on purpose: Qwen's service down, or saying "too many requests".

@@ -1990,7 +1990,8 @@
                 Qwen on Cerebras, then OpenAI<span class="small"
                   >If Groq hasn't started answering within half a second, Cerebras is asked too and the first to answer
                   is kept. A service that fails is skipped for the next two minutes, so an outage doesn't cost every
-                  turn its timeout; with both out, OpenAI answers.</span
+                  turn its timeout; with both out, OpenAI answers. A reply too long for Groq's cap, like a long note, is
+                  written on Cerebras.</span
                 >
               </td>
             </tr>
@@ -2037,9 +2038,10 @@
             <p>Swapping a cloud service for a local model is one new class and a config change.</p>
           </div>
           <div>
-            <h3>Every answer is measured</h3>
+            <h3>Every answer is measured, every change evaluated</h3>
             <p>
               Each answer is kept with how long each stage took, which model wrote it and, if it failed, where and why.
+              29 whole conversations, hand-offs followed through, check the brain: 143 of 145 runs right.
             </p>
           </div>
           <div>

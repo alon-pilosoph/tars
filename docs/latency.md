@@ -104,8 +104,9 @@ Qwen runs on Groq first, then on Cerebras, then OpenAI's Luna answers (`QuickCha
   With both out, Luna answers.
 - **An interrupted reply isn't a failure.** When you carry on talking and the draft is stopped, nothing is skipped
   and no other service is asked.
-- **A reply that runs into Qwen's 500-token cap** (`QUICK_MAX_TOKENS`; Groq refuses a request without one) is carried
-  on by Luna from what was already said.
+- **A reply that runs into Qwen's cap** (500 tokens on Groq, which refuses a request without one and allows its free
+  key 1,000 a minute; 2,000 on Cerebras) is written on Cerebras if nothing was said or done yet, like a long note,
+  and otherwise carried on by Luna, told what was already said.
 
 A failed answer is kept in its conversation with where it failed (speech to text, the answer, or the voice) and why,
 and Home shows it.

@@ -82,7 +82,9 @@ to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice whi
 | Groq: slow to start | after 0.5 s, Cerebras is asked too, and the first to start answering is kept |
 | Groq or Cerebras: an error, or "too many requests" | the next one answers, and the failed one is skipped for two minutes, or for as long as it asks after "too many requests" |
 | Both Groq and Cerebras | OpenAI's model answers |
-| Qwen's reply runs into its 500-token cap | OpenAI's model carries on from what was already said |
+| Qwen's reply runs into its cap (500 tokens on Groq, for its free key; 2,000 on Cerebras) before saying or doing anything | Cerebras writes it, with room for a long note |
+| Qwen's reply runs into its cap after saying or doing something | OpenAI's model carries on, told what was already said, so nothing is said twice |
+| Qwen writes a tool call or a marker out as text (`<toolcall>`, `&lt;look-up&gt;`) | the reply is cut off there, unsaid, and handled as one that ran out |
 | The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed |
 | The microphone stops delivering audio | the assistant exits so systemd restarts it |
 | A write to the event log | `journal.py` absorbs it; the reply goes ahead |
