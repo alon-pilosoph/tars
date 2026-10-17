@@ -140,7 +140,9 @@ which need web search) and uses them itself, saving those turns the hand-off. A 
 timer, and what's the weather?") gets both: Qwen does its part with its tools, then hands the rest over, and what its
 tools did goes along, so nothing is done twice (the tools also turn down a repeat). Told only to reply with the marker
 "and nothing else", Qwen deliberated over which to do until it ran out of tokens, and the turn fell to OpenAI as if
-Qwen had failed ([evals](evals.md#what-it-found)). `tools/capability_bench.py` checks it gets them right;
+Qwen had failed ([evals](evals.md#what-it-found)). Now and then, in a long reply, Qwen writes a tool call out as text
+(`<toolcall> <function=send> ...`) instead of making it. Its words go to the voice as they come, so the reply is cut
+off at the first sign of one (`TOOL_CALL_TEXT`), unsaid, and OpenAI takes the turn, as when Qwen runs out of tokens. `tools/capability_bench.py` checks it gets them right;
 [choosing the quick model](models.md) has every model and reasoning effort tried, and how to try the next. The marker
 isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
 

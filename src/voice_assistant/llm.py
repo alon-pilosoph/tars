@@ -238,6 +238,9 @@ LOOK_UP = "<look-up>"
 # What it replies when a question needs real thinking; the thinking model answers it. Not "<think>": Qwen 3 models
 # write their own reasoning between <think> tags.
 PONDER = "<ponder>"
+# How Qwen starts a tool call when it writes one out as text instead of making it, now and then in a long reply. Its
+# words go to the voice as they come, so the reply is cut off there, unsaid, and handled as one that ran out.
+TOOL_CALL_TEXT = ("<toolcall>", "<tool_call>", "<function=")
 # After a quick service fails (down, slow), it's skipped for this long, so each turn doesn't wait out its timeout
 # first. After "too many requests", it's skipped for as long as the service asks (Retry-After), or for the minute its
 # limits are counted over if it doesn't say.
@@ -755,12 +758,16 @@ class QuickChat(OpenAIChat):
             quick = self._quick_reply(service, context, writing, opened)
             # Usually the whole reply is the marker; now and then it comes after a sentence ("I can't check that.
             # <look-up>").
-            reply = _UpTo(quick, self._markers)
+            reply = _UpTo(quick, self._markers + TOOL_CALL_TEXT)
             try:
                 for piece in reply:
                     answer += piece
                     yield piece
-                handed_off = reply.found
+                if reply.found in TOOL_CALL_TEXT:
+                    print(f"({service.name} wrote a tool call out as text)")
+                    cut_off = True
+                else:
+                    handed_off = reply.found
                 writing.answered_by = {LOOK_UP: LOOKED_UP, PONDER: PONDERED}.get(handed_off, QUICK)
             except _CutOff:
                 print(f"({service.name}'s reply ran into its {QUICK_MAX_TOKENS} tokens)")
