@@ -761,6 +761,21 @@ def test_with_its_own_tools_qwen_is_told_it_can_and_hands_over_only_the_web(tmp_
     assert llm.NEEDS_REMINDING not in system and llm.NEEDS_SENDING not in system and "to-do list" not in system
 
 
+def test_with_its_own_tools_qwen_is_told_to_do_its_part_of_a_mixed_request_then_hand_over(tmp_path):
+    # "Set a timer, and what's the weather?": "reply with exactly <look-up> and nothing else" alone left Qwen
+    # deliberating over which to do until it ran out of tokens.
+    brain, _, cerebras, _ = quick_with_tools(tmp_path, [], think_effort="high")
+    "".join(brain.stream_reply("hi"))
+    system = cerebras.requests[0]["messages"][0]["content"]
+    assert "do your part first, with your tools, then reply with exactly <look-up> or <ponder>" in system
+
+
+def test_with_nothing_of_its_own_to_do_qwen_isnt_told_about_mixed_requests():
+    brain, _, cerebras = cerebras_brain(lambda m: "ok")
+    "".join(brain.stream_reply("hi"))
+    assert "do your part first" not in cerebras.requests[0]["messages"][0]["content"]
+
+
 def test_without_its_own_tools_qwen_gets_none_and_hands_reminders_over():
     brain, _, cerebras = cerebras_brain(lambda m: "ok")
     "".join(brain.stream_reply("hi"))

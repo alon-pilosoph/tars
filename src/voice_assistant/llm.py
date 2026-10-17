@@ -294,7 +294,15 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
         )
     if hand_offs:
         parts.append(
-            "Never say you can't do something you can hand over: hand it over. Answer everything else yourself."
+            "Never say you can't do something you can hand over, or that you'll look it up or think it over: hand it "
+            "over. Answer everything else yourself."
+        )
+    if hand_offs and can:
+        markers = " or ".join(marker for marker, *_ in hand_offs)
+        parts.append(
+            "When one message asks for something you can do and something you hand over, do your part first, with your "
+            f"tools, then reply with exactly {markers} and nothing else: whoever answers next sees what you did, and "
+            "answers the rest."
         )
     parts.append(
         f"You can't {', '.join(cant)}. When asked to, say plainly in one short line that you can't do that yet, and "

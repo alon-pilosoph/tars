@@ -136,8 +136,11 @@ something it could have done. Turning a feature off in config changes both promp
 | `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links,
-which need web search) and uses them itself, saving those turns the hand-off. What its tools did goes along if it
-hands the turn over after all, so nothing is done twice. `tools/capability_bench.py` checks it gets them right;
+which need web search) and uses them itself, saving those turns the hand-off. A request with a part of each ("set a
+timer, and what's the weather?") gets both: Qwen does its part with its tools, then hands the rest over, and what its
+tools did goes along, so nothing is done twice (the tools also turn down a repeat). Told only to reply with the marker
+"and nothing else", Qwen deliberated over which to do until it ran out of tokens, and the turn fell to OpenAI as if
+Qwen had failed ([evals](evals.md#what-it-found)). `tools/capability_bench.py` checks it gets them right;
 [choosing the quick model](models.md) has every model and reasoning effort tried, and how to try the next. The marker
 isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
 
