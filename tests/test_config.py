@@ -126,3 +126,13 @@ def test_without_cartesia_deepgram_speaks_and_without_either_openai_does(tmp_pat
 def test_a_stage_with_no_service_left_stops_at_startup_naming_the_keys(keys, says):
     with pytest.raises(ConfigError, match=says):
         with_keys(load_config(REPO_CONFIG), keys)
+
+
+@pytest.mark.parametrize("country, ok", [("IL", True), ("", True), ("il", False), ("Israel", False)])
+def test_home_country_is_a_two_letter_code(tmp_path, country, ok):
+    setup = f'[llm]\nhome_city = "Tel Aviv"\nhome_country = "{country}"'
+    if ok:
+        assert config(tmp_path, setup).llm.home_country == country
+    else:
+        with pytest.raises(ConfigError, match="two-letter country code"):
+            config(tmp_path, setup)

@@ -280,6 +280,26 @@ LOOK_UP_INTRO = "You can't do these yourself, but another model can."
 PONDER_INTRO = "A stronger model, which takes longer, does these better than you."
 
 
+def home_rule(cfg: LLMConfig) -> list[str]:
+    """Where the household is, for the instructions, if it's set."""
+    place = ", ".join(p for p in (cfg.home_city, cfg.home_country) if p)
+    if not place:
+        return []
+    rule = (
+        f"The household is in {place}. Questions about the weather, the time, opening hours, prices or anything "
+        "nearby are about there, unless another place is named; never ask where they are."
+    )
+    return [rule]
+
+
+def web_search_tool(cfg: LLMConfig) -> dict:
+    """OpenAI's web search, told roughly where home is when it's set, so results are local."""
+    where = {k: v for k, v in (("city", cfg.home_city), ("country", cfg.home_country)) if v}
+    if not where:
+        return {"type": "web_search"}
+    return {"type": "web_search", "user_location": {"type": "approximate", **where}}
+
+
 def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[str]]], cant: list[str]) -> str:
     """What a model can do itself (`can`), what it hands over and how ((marker, intro, what for, examples)), and what
     TARS can't do at all, from one place, so it never claims what it can't do or hands over what it could have done."""
@@ -466,13 +486,14 @@ class OpenAIChat:
         self.sent: list[SentItem] = []
         self.changes: list[Change] = []
         self._tools = (
-            ([{"type": "web_search"}] if cfg.web_search else [])
+            ([web_search_tool(cfg)] if cfg.web_search else [])
             + ([SEND_TOOL] if cfg.send else [])
             + (REMIND_TOOLS if reminders else [])
         )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
         can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
-        rules = [SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send + [abilities(can, [], self._cant())]
+        rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send
+        rules.append(abilities(can, [], self._cant()))
         self._instructions = "\n\n".join([self._system_prompt, *rules])
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
@@ -708,7 +729,7 @@ class QuickChat(OpenAIChat):
         self._markers = tuple(marker for marker, *_ in hand_offs)
         self._no_links = f"reply {LOOK_UP} instead" if LOOK_UP in self._markers else "say you can't send links"
         links = LINK_HAND_OFF if LOOK_UP in self._markers else NO_LINKS
-        rules = [SKIP_RULES, *self._reminder_rules(tools=own_remind)]
+        rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules(tools=own_remind)]
         rules += [QUICK_SEND_RULES.format(links=links)] * own_send
         cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and client is None)
         rules.append(abilities(can, hand_offs, cant))

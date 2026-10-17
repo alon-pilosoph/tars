@@ -1080,3 +1080,20 @@ def test_the_same_thing_sent_twice_in_a_reply_is_sent_once():
     assert len(brain.sent) == 1
     outputs = [i["output"] for i in client.requests[1]["input"] if i.get("type") == "function_call_output"]
     assert outputs == ["sent", "already sent: it's on the TARS page once"]
+
+
+def test_where_home_is_goes_to_the_web_search_and_both_models():
+    brain, openai, cerebras = cerebras_brain(lambda m: "<look-up>", home_city="Tel Aviv", home_country="IL")
+    "".join(brain.stream_reply("what's the weather tomorrow?"))
+    location = {"type": "approximate", "city": "Tel Aviv", "country": "IL"}
+    assert {"type": "web_search", "user_location": location} in openai.requests[0]["tools"]
+    assert "The household is in Tel Aviv, IL." in openai.requests[0]["instructions"]
+    assert "The household is in Tel Aviv, IL." in cerebras.requests[0]["messages"][0]["content"]
+
+
+def test_with_no_home_set_nothing_is_said_about_it():
+    brain, openai, cerebras = cerebras_brain(lambda m: "<look-up>")
+    "".join(brain.stream_reply("what's the weather tomorrow?"))
+    assert {"type": "web_search"} in openai.requests[0]["tools"]
+    assert "household is in" not in openai.requests[0]["instructions"]
+    assert "household is in" not in cerebras.requests[0]["messages"][0]["content"]

@@ -172,7 +172,8 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
   - **Cerebras** gets the same conversation when Groq is being skipped, fails, or hasn't started answering within
     0.5 s.
   - **OpenAI** gets the same conversation for the turns Qwen hands over (anything that needs the web or the TARS page)
-    or can't answer, and runs those turns' web searches. It also transcribes a request's recording when Deepgram's
+    or can't answer, and runs those turns' web searches. With `[llm] home_city` and `home_country` set, both models
+    and the web search are told the city and country, so "what's the weather?" is about home; nothing closer. It also transcribes a request's recording when Deepgram's
     stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
     Deepgram, or the reply text instead of Cartesia.
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is

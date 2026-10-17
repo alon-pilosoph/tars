@@ -104,6 +104,10 @@ class LLMConfig:
     humor: int = 75  # percent; "{humor}" in the system prompt is replaced with it
     # Let it look things up on the web (current events, real links to send). Only used when the model decides to.
     web_search: bool = True
+    # Where the household is: questions about the weather, opening hours and the like are about there. Told to the
+    # models and the web search. Empty = not said (OpenAI's model then guesses, or asks for a city).
+    home_city: str = ""
+    home_country: str = ""  # a two-letter country code, like IL or GB
     # Let it send links, notes, lists and text files to the web UI (needs [learning] log_events).
     send: bool = True
     # The quick model (Groq or Cerebras) sets reminders and sends notes, lists and files itself, with its own tools,
@@ -287,6 +291,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[recorder] greet must be {', '.join(GREETS)}, not {cfg.recorder.greet!r}")
     if cfg.llm.think_timeout_s <= 0:
         problems.append("[llm] think_timeout_s must be more than 0")
+    if cfg.llm.home_country and not re.fullmatch(r"[A-Z]{2}", cfg.llm.home_country):
+        problems.append(f"[llm] home_country must be a two-letter country code, like IL, not {cfg.llm.home_country!r}")
     if cfg.tts.provider not in ("openai", "deepgram", "cartesia"):
         problems.append(f"[tts] provider must be openai, deepgram or cartesia, not {cfg.tts.provider!r}")
     elif cfg.tts.provider == "cartesia" and not cfg.tts.model.startswith("sonic"):
