@@ -16,3 +16,6 @@ webui/node_modules/
 
 # The built "How TARS works" page (webui: npm run site)
 site/dist/
+
+# Scenario eval transcripts (python -m evals): kept locally, not committed
+evals/runs/

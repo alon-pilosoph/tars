@@ -1,0 +1,110 @@
+# The conversation itself: follow-ups heard without the wake word, memory, who's speaking, and what TARS can't do.
+
+[[scenario]]
+id = "overheard"
+about = """After a reply, TARS keeps listening briefly without the wake word. People talking to each other get a
+<skip>: nothing said, nothing kept."""
+tags = ["follow-up", "tags"]
+
+[[scenario.turn]]
+say = "what's the capital of Australia?"
+route = "quick"
+says = ["Canberra"]
+
+[[scenario.turn]]
+tag = "follow-up"
+say = "Stacey, did you feed the cat this morning?"
+route = "skip"
+
+[[scenario]]
+id = "follow-up-for-tars"
+about = """A follow-up without the wake word that is meant for TARS gets answered."""
+tags = ["follow-up", "tags"]
+
+[[scenario.turn]]
+say = "what's the capital of Australia?"
+route = "quick"
+
+[[scenario.turn]]
+tag = "follow-up"
+say = "and of Canada?"
+route = "quick"
+says = ["Ottawa"]
+
+[[scenario]]
+id = "did-you-call-me"
+about = """TARS wasn't sure it heard its name and asked; a bare "yes" gets a short question back, not a <skip>."""
+tags = ["tags"]
+
+[[scenario.turn]]
+tag = "asked"
+say = "yes"
+route = "quick"
+
+[[scenario]]
+id = "memory-holds"
+about = """Within the conversation, TARS remembers what it was told."""
+tags = ["memory"]
+
+[[scenario.turn]]
+say = "my favourite colour is green"
+route = "quick"
+
+[[scenario.turn]]
+say = "what's my favourite colour?"
+route = "quick"
+says = ["green"]
+
+[[scenario]]
+id = "memory-expires"
+about = """After a quiet spell longer than [llm] memory_minutes, TARS starts fresh, and doesn't pretend to remember."""
+tags = ["memory"]
+
+[[scenario.turn]]
+say = "my favourite colour is green"
+route = "quick"
+
+[[scenario.turn]]
+after_minutes = 15
+say = "what's my favourite colour?"
+route = "quick"
+never_says = ["green"]
+
+[[scenario]]
+id = "unknown-voice"
+about = """A voice TARS doesn't know: it doesn't guess a name."""
+tags = ["speakers"]
+
+[[scenario.turn]]
+speaker = "unknown"
+say = "do you know who I am?"
+route = "quick"
+never_says = ["alon", "stacey"]
+
+[[scenario]]
+id = "cant-do-lights"
+about = """Something TARS can't do: said plainly, with no tool and no hand-off."""
+tags = ["abilities"]
+
+[[scenario.turn]]
+say = "turn off the living room lights"
+route = "quick"
+reminders = []
+sent = []
+says = ["can't|cannot|can not|don't|unable|no way to|not able"]
+
+[[scenario]]
+id = "humor-setting"
+about = """Asked to change its humor setting, TARS confirms the new value in one line, and keeps it for the
+conversation."""
+tags = ["persona"]
+
+[[scenario.turn]]
+say = "set your humor to twenty percent"
+route = "quick"
+says = ["20|twenty"]
+
+[[scenario.turn]]
+say = "what's your humor setting?"
+route = "quick"
+says = ["20|twenty"]
