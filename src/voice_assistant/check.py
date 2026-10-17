@@ -103,10 +103,12 @@ def keys(cfg: Config, env: Path) -> Result:
 
 def device(kind: str, wanted: str, find: Callable[[str, str], int | None], names: list[str], default: int) -> Result:
     """`names`: every device's name, by index; `default`: the system's default for `kind`."""
+    from .audio import NoDeviceError
+
     name = f"{kind.capitalize()} device"
     try:
         index = find(wanted, kind)
-    except SystemExit:
+    except SystemExit, NoDeviceError:
         return Result(name, FAIL, f"nothing matches {wanted!r}", "run --list-devices and fix [audio] in config.toml")
     if index is None:
         return Result(
@@ -252,7 +254,7 @@ def systemd(unit: str, active: Callable[[str], str | None]) -> Result:
     if state is None:
         return Result(unit, SKIP, "no systemd here")
     if state != "active":
-        return Result(unit, WARN, state, f"systemctl --user start {unit}; journalctl --user -u {unit} says why")
+        return Result(unit, WARN, state, f"systemctl --user start {unit}; journalctl --user-unit {unit} says why")
     return Result(unit, OK, "running")
 
 
@@ -368,7 +370,8 @@ def check_all(cfg: Config, root: Path) -> int:
         t = time.perf_counter()
         try:
             host = cfg.stt.deepgram_host if cfg.stt.provider in ("deepgram", "flux") else cfg.tts.deepgram_host
-            status = http_status(f"https://{host}/v1/projects", {"Authorization": f"Token {key}"})
+            # /v1/auth/token: the EU servers don't serve /v1/projects (404 with a good key); both answer this one
+            status = http_status(f"https://{host}/v1/auth/token", {"Authorization": f"Token {key}"})
         except OSError as e:
             return service_error("Deepgram", e)
         return service_status("Deepgram", DEEPGRAM_KEY, status, time.perf_counter() - t)

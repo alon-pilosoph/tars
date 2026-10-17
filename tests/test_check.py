@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from voice_assistant import check
+from voice_assistant.audio import NoDeviceError
 from voice_assistant.check import FAIL, OK, SKIP, WARN, Result
 from voice_assistant.config import load_config
 
@@ -35,7 +36,7 @@ def test_a_device_is_found_by_name_or_says_how_to_find_it():
     assert check.device("input", "powerconf", lambda w, k: 1, names, 0).detail == "Anker PowerConf"
     default = check.device("input", "", lambda w, k: None, names, 0)
     assert default.status == OK and "MacBook Pro Microphone" in default.detail and "input_device" in default.fix
-    missing = check.device("input", "jabra", raising(SystemExit("no such device")), names, 0)
+    missing = check.device("input", "jabra", raising(NoDeviceError("no such device")), names, 0)
     assert missing.status == FAIL and "--list-devices" in missing.fix
 
 

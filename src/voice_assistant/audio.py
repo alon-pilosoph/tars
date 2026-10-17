@@ -69,7 +69,7 @@ def find_device(name: str, kind: str) -> int | None:
     for index, device in enumerate(sd.query_devices()):
         if name.lower() in device["name"].lower() and device[channels_key] > 0:
             return index
-    raise SystemExit(f"No {kind} device matching {name!r}. Run with --list-devices to see what's available.")
+    raise NoDeviceError(f"No {kind} device matching {name!r}. {PLUG_IN}")
 
 
 def device_names() -> tuple[list[str], int, int]:
@@ -94,6 +94,11 @@ class AudioDeviceError(RuntimeError):
     """A device stopped working (unplugged, or the driver died). Not recoverable in-process: exit and restart."""
 
 
+class NoDeviceError(AudioDeviceError):
+    """The device to open isn't there. Restarting won't bring it back, so the process exits for good; on the Pi,
+    plugging the speakerphone in starts TARS again (deploy/99-tars-speakerphone.rules)."""
+
+
 class MicrophoneError(AudioDeviceError):
     pass
 
@@ -113,6 +118,7 @@ class SpeakerError(AudioDeviceError):
     pass
 
 
+PLUG_IN = "Plug in the speakerphone, or set it in config.toml [audio] (--list-devices)."
 # Blocks arrive every 80 ms, so this long without one means the device is gone.
 MIC_STALL_S = 3.0
 # Playback that's this far behind the audio it was given has stopped: the device no longer asks for more.
@@ -125,14 +131,17 @@ class Microphone:
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self._muted = False
         self.echo = echo
-        self._stream = sd.RawInputStream(
-            samplerate=SAMPLE_RATE,
-            blocksize=BLOCK_SAMPLES,
-            device=device,
-            channels=1,
-            dtype="int16",
-            callback=self._on_audio,
-        )
+        try:
+            self._stream = sd.RawInputStream(
+                samplerate=SAMPLE_RATE,
+                blocksize=BLOCK_SAMPLES,
+                device=device,
+                channels=1,
+                dtype="int16",
+                callback=self._on_audio,
+            )
+        except sd.PortAudioError as e:  # none plugged in
+            raise NoDeviceError(f"No microphone to open ({e}). {PLUG_IN}") from None
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         block = np.frombuffer(indata, dtype=np.int16).copy()
@@ -200,9 +209,12 @@ class Speaker:
         self._input_done = True
         self._on_start: Callable[[], None] | None = None
         self._drained = threading.Event()
-        self._stream = sd.RawOutputStream(
-            samplerate=sample_rate, device=device, channels=1, dtype="int16", callback=self._fill
-        )
+        try:
+            self._stream = sd.RawOutputStream(
+                samplerate=sample_rate, device=device, channels=1, dtype="int16", callback=self._fill
+            )
+        except sd.PortAudioError as e:
+            raise NoDeviceError(f"No speaker to open ({e}). {PLUG_IN}") from None
 
     def __enter__(self) -> Self:
         self._stream.start()
