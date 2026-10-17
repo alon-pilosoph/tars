@@ -37,7 +37,7 @@ from pathlib import Path
 from voice_assistant.__main__ import brain_config, make_openai_client, make_quick_client
 from voice_assistant.config import QUICK_PROVIDERS, LLMConfig, load_config
 
-from .costs import RUNS, cost, estimate, load_prices
+from .costs import RUNS, cost, estimate, load_prices, save_profile
 from .report import compare, gate, summarize, wilson
 from .runner import RunResult, play
 from .scenarios import Scenario, load
@@ -201,7 +201,7 @@ def main() -> None:
         "think": f"{llm.think_model or llm.model} {llm.think_effort}".strip(),
         "runs": args.runs,
     }
-    summary["cost_usd"] = round(spent.total, 3)
+    summary["cost_usd"], summary["estimated_usd"] = round(spent.total, 3), round(guess, 3)
     print_totals(summary)
     print(f"Cost: ${spent.total:.2f} (estimated ${guess:.2f})")
     changes = compare(summary, baseline) if baseline else []
@@ -213,7 +213,8 @@ def main() -> None:
     if args.save:
         with open(args.save, "a") as f:
             f.write(json.dumps(summary) + "\n")
-        print(f"Saved to {args.save}.")
+        save_profile({s.id: [r.usage for r in results if r.scenario == s.id and r.counted] for s in scenarios})
+        print(f"Saved to {args.save}, and what each scenario used to evals/usage.json.")
 
     if why := gate(summary, changes, args.fail_under, args.no_regressions):
         print("\nFAILED: " + "; ".join(why))

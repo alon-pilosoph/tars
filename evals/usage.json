@@ -1,0 +1,319 @@
+{
+ "again-later": {
+  "qwen-3.8-27b": {
+   "reasoning": 96.0,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 152.8,
+   "input": 5397.0
+  }
+ },
+ "cancel-that": {
+  "qwen-3.8-27b": {
+   "reasoning": 118.6,
+   "searches": 0.0,
+   "requests": 4.0,
+   "output": 285.0,
+   "input": 10499.8
+  }
+ },
+ "cant-do-lights": {
+  "qwen-3.8-27b": {
+   "reasoning": 50.0,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 79.4,
+   "input": 2533.0
+  }
+ },
+ "change-the-time": {
+  "qwen-3.8-27b": {
+   "reasoning": 228.8,
+   "searches": 0.0,
+   "requests": 4.0,
+   "output": 524.2,
+   "input": 10684.8
+  }
+ },
+ "did-you-call-me": {
+  "qwen-3.8-27b": {
+   "reasoning": 38.0,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 46.6,
+   "input": 2539.0
+  }
+ },
+ "follow-up-for-tars": {
+  "qwen-3.8-27b": {
+   "reasoning": 59.2,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 86.4,
+   "input": 5110.2
+  }
+ },
+ "for-someone-else-too": {
+  "qwen-3.8-27b": {
+   "reasoning": 208.4,
+   "searches": 0.0,
+   "requests": 4.0,
+   "output": 484.4,
+   "input": 10646.2
+  }
+ },
+ "got-it": {
+  "qwen-3.8-27b": {
+   "reasoning": 44.4,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 52.6,
+   "input": 2662.0
+  }
+ },
+ "hard-question-follow-up": {
+  "qwen-3.8-27b": {
+   "reasoning": 29.6,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 52.0,
+   "input": 2696.4
+  },
+  "gpt-6-luna": {
+   "reasoning": 773.2,
+   "searches": 1.6,
+   "requests": 1.0,
+   "output": 883.2,
+   "input": 15544.4
+  }
+ },
+ "humor-setting": {
+  "qwen-3.8-27b": {
+   "reasoning": 60.0,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 79.8,
+   "input": 5102.8
+  }
+ },
+ "link-then-list": {
+  "qwen-3.8-27b": {
+   "reasoning": 63.2,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 188.6,
+   "input": 5318.0
+  },
+  "gpt-6-luna": {
+   "reasoning": 36.0,
+   "searches": 1.0,
+   "requests": 2.0,
+   "output": 130.6,
+   "input": 16678.8
+  }
+ },
+ "look-up-then-own-answer": {
+  "qwen-3.8-27b": {
+   "reasoning": 34.8,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 46.0,
+   "input": 2622.6
+  },
+  "gpt-6-luna": {
+   "reasoning": 82.0,
+   "searches": 1.6,
+   "requests": 1.0,
+   "output": 130.8,
+   "input": 10479.8
+  }
+ },
+ "memory-expires": {
+  "qwen-3.8-27b": {
+   "reasoning": 88.0,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 137.2,
+   "input": 5065.0
+  }
+ },
+ "memory-holds": {
+  "qwen-3.8-27b": {
+   "reasoning": 71.4,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 100.4,
+   "input": 5105.2
+  }
+ },
+ "message-for-later": {
+  "qwen-3.8-27b": {
+   "reasoning": 98.6,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 234.8,
+   "input": 5236.0
+  }
+ },
+ "no-made-up-links": {
+  "gpt-6-luna": {
+   "reasoning": 27.0,
+   "searches": 1.0,
+   "requests": 2.0,
+   "output": 106.8,
+   "input": 16428.8
+  }
+ },
+ "note-and-weather": {
+  "qwen-3.8-27b": {
+   "reasoning": 133.2,
+   "searches": 0.0,
+   "requests": 1.2,
+   "output": 266.8,
+   "input": 3083.0
+  },
+  "gpt-6-luna": {
+   "reasoning": 39.0,
+   "searches": 1.0,
+   "requests": 1.0,
+   "output": 73.4,
+   "input": 6784.2
+  }
+ },
+ "overheard": {
+  "qwen-3.8-27b": {
+   "reasoning": 156.6,
+   "searches": 0.0,
+   "requests": 2.4,
+   "output": 228.2,
+   "input": 6227.4
+  }
+ },
+ "plan-then-send-it": {
+  "qwen-3.8-27b": {
+   "reasoning": 162.6,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 540.4,
+   "input": 5699.2
+  },
+  "gpt-6-luna": {
+   "reasoning": 1445.4,
+   "searches": 3.2,
+   "requests": 2.0,
+   "output": 1948.8,
+   "input": 35232.6
+  }
+ },
+ "put-it-off": {
+  "qwen-3.8-27b": {
+   "reasoning": 145.2,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 201.6,
+   "input": 5229.0
+  }
+ },
+ "quick-down-mid-conversation": {
+  "qwen-3.8-27b": {
+   "reasoning": 23.2,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 37.8,
+   "input": 2534.0
+  },
+  "gpt-6-luna": {
+   "reasoning": 63.0,
+   "searches": 1.2,
+   "requests": 2.0,
+   "output": 134.4,
+   "input": 17506.6
+  }
+ },
+ "quick-down-then-cancel": {
+  "gpt-6-luna": {
+   "reasoning": 0.0,
+   "searches": 0.0,
+   "requests": 4.0,
+   "output": 91.4,
+   "input": 24877.0
+  }
+ },
+ "quick-limited-timer": {
+  "gpt-6-luna": {
+   "reasoning": 0.0,
+   "searches": 0.0,
+   "requests": 2.0,
+   "output": 67.0,
+   "input": 12385.8
+  }
+ },
+ "reminder-and-hard-question": {
+  "qwen-3.8-27b": {
+   "reasoning": 335.2,
+   "searches": 0.0,
+   "requests": 1.6,
+   "output": 474.6,
+   "input": 4048.8
+  },
+  "gpt-6-luna": {
+   "reasoning": 783.6,
+   "searches": 2.0,
+   "requests": 1.0,
+   "output": 909.0,
+   "input": 11068.0
+  }
+ },
+ "timer-and-weather": {
+  "qwen-3.8-27b": {
+   "reasoning": 114.8,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 230.2,
+   "input": 2542.0
+  },
+  "gpt-6-luna": {
+   "reasoning": 39.0,
+   "searches": 1.0,
+   "requests": 1.2,
+   "output": 118.6,
+   "input": 8018.0
+  }
+ },
+ "unknown-voice": {
+  "qwen-3.8-27b": {
+   "reasoning": 29.2,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 49.8,
+   "input": 2533.0
+  }
+ },
+ "weather-follow-up": {
+  "gpt-6-luna": {
+   "reasoning": 78.0,
+   "searches": 2.0,
+   "requests": 2.0,
+   "output": 167.2,
+   "input": 13316.4
+  }
+ },
+ "what-is-set": {
+  "qwen-3.8-27b": {
+   "reasoning": 84.4,
+   "searches": 0.0,
+   "requests": 1.0,
+   "output": 115.2,
+   "input": 2602.0
+  }
+ },
+ "which-timer": {
+  "qwen-3.8-27b": {
+   "reasoning": 116.2,
+   "searches": 0.0,
+   "requests": 3.0,
+   "output": 168.6,
+   "input": 7905.2
+  }
+ }
+}

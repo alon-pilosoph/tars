@@ -15,6 +15,25 @@ uv run python -m evals --baseline evals/results.jsonl --no-regressions --fail-un
 uv run python -m evals --save evals/results.jsonl        # keep the totals as the new baseline
 ```
 
+## On a pull request
+
+Evals are never a check on a pull request: a model's answers vary, and every run costs money, so nothing waits on
+them. They run when asked, from a comment on the pull request (`.github/workflows/evals.yml`), and the answer is a
+comment: runs right, against the baseline, what went wrong, and what it cost.
+
+```text
+#evals                                   every scenario, 3 runs each
+#evals runs=5 tag=hand-off               one kind, more runs (1-10)
+#evals scenario=cancel-that,got-it       just these
+#evals budget=3                          a higher cap (default $2, at most $5)
+#evals estimate                          only what it would cost: nothing is run
+```
+
+Only the owner and collaborators can ask, and only on pull requests from this repository: a fork's code never runs
+with the keys (the repository secrets `OPENAI_API_KEY` and `CEREBRAS_API_KEY`). Every run has a budget, OpenAI is on
+its standard tier, and the transcripts are the run's `evals` artifact. `evals/usage.json`, which `--save` keeps up to
+date, is what the estimate goes on there, with no transcripts of earlier runs.
+
 ## What a run costs
 
 Every run starts with an estimate, from what the same scenarios used in earlier runs and the prices in
@@ -123,6 +142,5 @@ when the eval runs ("at 6pm" after 6 pm) belong on `tomorrow` or a weekday.
   ear, checked against labels the owner gives first.
 - Each model on its own: OpenAI's model on web answers and on carrying on from what Qwen said, and the thinking model
   across reasoning efforts on questions that need it.
-- A few scenarios on every pull request that changes the prompts or `llm.py`, with `--no-regressions` (it needs the
-  service keys as CI secrets); the large model, effort and prompt grid run by hand, now and then.
+- The large model, effort and prompt grid, run by hand, now and then.
 - Turning a real turn that went wrong (from the event log) into a scenario.
