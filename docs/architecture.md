@@ -142,7 +142,11 @@ tools did goes along, so nothing is done twice (the tools also turn down a repea
 "and nothing else", Qwen deliberated over which to do until it ran out of tokens, and the turn fell to OpenAI as if
 Qwen had failed ([evals](evals.md#what-it-found)). Now and then, in a long reply, Qwen writes a tool call out as text
 (`<toolcall> <function=send> ...`) instead of making it. Its words go to the voice as they come, so the reply is cut
-off at the first sign of one (`TOOL_CALL_TEXT`), unsaid, and OpenAI takes the turn, as when Qwen runs out of tokens. `tools/capability_bench.py` checks it gets them right;
+off at the first sign of one (`TOOL_CALL_TEXT`, also when written HTML-escaped, `&lt;look-up&gt;`), unsaid, and OpenAI
+takes the turn, as when Qwen runs out of tokens. Groq's replies are capped at 500 tokens (its free key allows 1,000
+a minute), Cerebras's at 2,000: a reply that runs out on Groq before anything was said or done, like a long note, is
+written on Cerebras instead; one that already said something goes to OpenAI, which is told what was said and carries
+on from it. A tool round never says again what the reply already said. `tools/capability_bench.py` checks it gets them right;
 [choosing the quick model](models.md) has every model and reasoning effort tried, and how to try the next. The marker
 isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
 

@@ -84,7 +84,7 @@ def quick_services(llm: LLMConfig, env_path: Path) -> list[QuickService]:
     from .llm import QuickService
 
     return [
-        QuickService(provider.name, make_quick_client(env_path, provider), model)
+        QuickService(provider.name, make_quick_client(env_path, provider), model, provider.max_tokens)
         for provider in QUICK_PROVIDERS
         if (model := getattr(llm, provider.setting))
     ]

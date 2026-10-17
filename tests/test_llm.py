@@ -202,7 +202,8 @@ def test_send_runs_the_tool_then_speaks_the_confirmation():
     ]
     first, second = client.requests
     assert {"type": "web_search"} in first["tools"] and first["store"] is False
-    assert second["input"][-1] == {"type": "function_call_output", "call_id": "call_1_0", "output": "sent"}
+    output = "sent: 'Pasta al pomodoro' is on the TARS page; it needs sending only once"
+    assert second["input"][-1] == {"type": "function_call_output", "call_id": "call_1_0", "output": output}
     "".join(brain.stream_reply("thanks"))
     assert client.requests[2]["input"][:3] == [  # the exchange is remembered, its tool calls aren't
         {"role": "user", "content": "send me a pasta recipe"},
@@ -236,7 +237,7 @@ def test_a_bad_send_is_explained_to_the_model_not_sent():
 )
 def test_send_accepts_complete_items_and_explains_the_rest(args, ok):
     item, result = llm.check_send(args)
-    assert (item is not None) == ok and (result == "sent") == ok
+    assert (item is not None) == ok and result.startswith("sent: ") == ok
     if item and item.kind == "list":
         assert item.entries == ["milk", "eggs"]
     if item and item.kind == "file":
@@ -1079,7 +1080,7 @@ def test_the_same_thing_sent_twice_in_a_reply_is_sent_once():
     "".join(brain.stream_reply("send me a pasta recipe"))
     assert len(brain.sent) == 1
     outputs = [i["output"] for i in client.requests[1]["input"] if i.get("type") == "function_call_output"]
-    assert outputs == ["sent", "already sent: it's on the TARS page once"]
+    assert outputs[0].startswith("sent: ") and outputs[1] == "already sent: it's on the TARS page once"
 
 
 def test_where_home_is_goes_to_the_web_search_and_both_models():
@@ -1112,3 +1113,104 @@ def test_a_tool_call_written_as_text_is_never_said_and_openai_takes_the_turn(wri
     said = "".join(brain.stream_reply("send that to me"))
     assert said == heard_first + "It's on the TARS page."
     assert brain.answered_by == llm.FALLBACK and len(openai.requests) == 1
+
+
+def test_the_same_thing_with_words_added_to_its_title_is_still_sent_once():
+    a, b = dict(RECIPE, title="Three days in Lisbon"), dict(RECIPE, title="Three Days in Lisbon, for two")
+
+    def calls_for(messages):
+        return [] if messages[-1].get("type") == "function_call_output" else [("send", a), ("send", b)]
+
+    brain = OpenAIChat(fake_openai_chat(lambda m: "Sent." if m[-1].get("type") else "", calls_for), LLMConfig())
+    "".join(brain.stream_reply("send me the plan"))
+    assert [s.title for s in brain.sent] == ["Three days in Lisbon"]
+
+
+def test_after_a_hand_off_openai_is_told_what_tars_already_said():
+    brain, openai, _ = cerebras_brain(lambda m: "Timer set. <ponder>", openai_reply="Refinancing looks good.")
+    said = "".join(brain.stream_reply("set a timer and should I refinance?"))
+    assert said.startswith("Timer set. Let me think about that for a moment.")
+    instructions = openai.requests[0]["instructions"]
+    assert 'This reply has already begun, aloud: "Timer set. Let me think about that for a moment."' in instructions
+
+
+def test_with_nothing_said_yet_openai_isnt_told_to_carry_on():
+    brain, openai, _ = cerebras_brain(lambda m: "<look-up>")
+    "".join(brain.stream_reply("weather?"))
+    assert "already begun" not in openai.requests[0]["instructions"]
+
+
+@pytest.mark.parametrize(
+    "before, after, said",
+    [
+        ("Timer's set for 12:03. ", ["Timer's set", " for 12:03."], ""),  # the same again: nothing
+        ("Timer's set for 12:03.", ["timer's  set for 12:03. ", "And sunny."], "And sunny."),  # then something new
+        ("Timer's set.", ["Done, ", "it's set."], "Done, it's set."),  # something else
+        ("", ["Hello."], "Hello."),  # nothing said before
+    ],
+)
+def test_a_tool_round_doesnt_say_again_what_the_reply_already_said(before, after, said):
+    fresh = llm._NoRepeat(before)
+    assert "".join(fresh.feed(p) for p in after).strip() == said
+
+
+def test_qwen_saying_its_line_with_the_tool_call_and_again_after_says_it_once(tmp_path):
+    openai, tools = fake_openai_chat(lambda m: "From OpenAI."), reminder_tools(tmp_path)
+    cerebras = fake_cerebras(lambda m: "Pasta timer, twelve minutes.")
+    plain = cerebras.chat.completions.create
+
+    class SaysAndCalls(ToolCallStream):
+        def __iter__(self):
+            delta = types.SimpleNamespace(content="Pasta timer, twelve minutes. ", tool_calls=None)
+            yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta, finish_reason=None)])
+            yield from super().__iter__()
+
+    def create(**kw):
+        return plain(**kw) if kw["messages"][-1]["role"] == "tool" else SaysAndCalls([("remind", REMIND)])
+
+    cerebras.chat.completions.create = create
+    brain = QuickChat(openai, LLMConfig(quick_tools=True), [QuickService("Cerebras", cerebras, "qwen")], tools)
+    assert "".join(brain.stream_reply("pasta timer, twelve minutes")).strip() == "Pasta timer, twelve minutes."
+
+
+@pytest.mark.parametrize("written", ["&lt;look-up&gt;", "Let me check. &lt;look-up&gt;", "&lt;function=send>{}"])
+def test_a_marker_qwen_writes_html_escaped_is_still_the_marker_and_never_said(written):
+    brain, openai, _ = cerebras_brain(lambda m: written, openai_reply="Sunny.")
+    said = "".join(brain.stream_reply("weather?"))
+    assert "&lt;" not in said and said.endswith("Sunny.") and len(openai.requests) == 1
+
+
+def test_a_reply_that_only_looks_like_an_escaped_marker_is_said_whole():
+    brain, openai, _ = cerebras_brain(lambda m: "Salt & pepper, &lt;3")
+    assert "".join(brain.stream_reply("seasoning?")) == "Salt & pepper, &lt;3" and openai.requests == []
+
+
+def test_each_quick_service_asks_for_its_own_cap():
+    groq, cerebras = fake_cerebras(lambda m: "Hi."), fake_cerebras(lambda m: "Hi.")
+    services = [QuickService("Groq", groq, "qwen", 500), QuickService("Cerebras", cerebras, "qwen", 2000)]
+    brain = QuickChat(fake_openai_chat(lambda m: "x"), LLMConfig(), services)
+    "".join(brain.stream_reply("hi"))
+    assert groq.requests[0]["max_completion_tokens"] == 500
+
+
+def test_a_reply_too_long_for_groq_is_written_on_cerebras_when_nothing_was_said_yet():
+    # A long note: Groq's 500 tokens run out before it says or does anything, and Cerebras has room.
+    groq = fake_cerebras(lambda m: FakeStream("", finish="length"))
+    cerebras = fake_cerebras(lambda m: "Sent. It's on the TARS page.")
+    openai = fake_openai_chat(lambda m: "From OpenAI.")
+    services = [QuickService("Groq", groq, "qwen", 500), QuickService("Cerebras", cerebras, "qwen", 2000)]
+    brain = QuickChat(openai, LLMConfig(), services)
+    assert "".join(brain.stream_reply("send me the plan")) == "Sent. It's on the TARS page."
+    assert brain.answered_by == llm.QUICK and brain.quick_service == "Cerebras" and openai.requests == []
+    assert cerebras.requests[0]["max_completion_tokens"] == 2000
+
+
+def test_a_reply_that_ran_out_after_saying_something_goes_to_openai_not_again_to_qwen():
+    groq = fake_cerebras(lambda m: FakeStream("Here's the plan, day one", finish="length"))
+    cerebras = fake_cerebras(lambda m: "Here's the plan.")
+    openai = fake_openai_chat(lambda m: " and the rest.")
+    services = [QuickService("Groq", groq, "qwen", 500), QuickService("Cerebras", cerebras, "qwen", 2000)]
+    brain = QuickChat(openai, LLMConfig(), services)
+    said = "".join(brain.stream_reply("plan the trip"))
+    assert said.startswith("Here's the plan, day one") and brain.answered_by == llm.FALLBACK
+    assert cerebras.requests == []  # starting again there would say it twice

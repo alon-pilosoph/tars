@@ -22,7 +22,8 @@ never_says = ["which city|what city|your city|zip code|where are you"]
 [[scenario]]
 id = "look-up-then-own-answer"
 about = """After a hand-off, a question that doesn't need the web is Qwen's to answer, using what's in the history:
-here, spelling a name from OpenAI's answer, as the system prompt asks (letters with spaces)."""
+here, spelling a name from OpenAI's answer, a letter at a time (the system prompt asks for spaces between them; commas
+or hyphens sound the same)."""
 tags = ["hand-off", "follow-up"]
 
 [[scenario.turn]]
@@ -32,7 +33,7 @@ route = "look-up"
 [[scenario.turn]]
 say = "how do you spell Arsenal?"
 route = "quick"
-says = ["A R S E N A L"]
+says = ["A[ ,.-]+R[ ,.-]+S[ ,.-]+E[ ,.-]+N[ ,.-]+A[ ,.-]+L"]
 
 [[scenario]]
 id = "timer-and-weather"
@@ -63,8 +64,8 @@ about = """Qwen sets the reminder, then hands the hard question to the thinking 
 tags = ["hand-off", "ponder", "reminders", "done-twice"]
 
 [[scenario.turn]]
-say = """remind me in an hour to call the bank, and should I refinance my mortgage? it's at 5.3 percent with \
-twenty years left, and they're offering 4.1 with a two thousand fee"""
+say = """remind me in an hour to call the bank, and should I refinance my mortgage? we owe about eight hundred \
+thousand at 5.3 percent with twenty years left, and they're offering 4.1 with a two thousand fee"""
 route = "ponder"
 reminders = [{ in_minutes = 60, text = "bank" }]
 says = ["think"]

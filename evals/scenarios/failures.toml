@@ -19,7 +19,7 @@ route = "fallback"
 says = ["Ottawa"]
 
 [[scenario.turn]]
-say = "which of the two is bigger?"
+say = "which of those two cities is bigger?"
 route = "fallback"
 says = ["Ottawa|Canberra"]
 

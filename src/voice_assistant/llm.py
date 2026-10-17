@@ -96,14 +96,16 @@ CAN_REMIND = "set, cancel and put off timers, reminders and messages for people 
 REMIND_RULES = (
     "You can set timers, reminders and messages for people in the house with the remind tool; TARS says them aloud "
     'when they\'re due. A reminder or message is for the person named ("remind me" is whoever is speaking, by '
-    'the [Speaker: name] tag; "remind Stacey" is Stacey), and a message always needs someone it\'s for. Give the '
+    'the [Speaker: name] tag; "remind Stacey" is Stacey). Something to tell someone ("tell Stacey dinner\'s at '
+    "eight\") is a message, for them; a reminder is something to do. A message always needs someone it's for. Give the "
     'time as in_minutes for "in ten minutes", or for a clock time, time as HH:MM on a 24-hour clock, with day as '
     'it was said ("friday", "tomorrow"; null if no day was said): never work out a date yourself. Morning is 9:00, '
     "afternoon 15:00, evening 19:00 and tonight 20:00, unless a time was said. Use when_back "
     "only when asked to wait until someone is back or next around. Set wait_for_ack, so it's said again until "
     "someone says they got it, unless they say once is enough; a timer always rings until someone turns it off. "
     "After setting one, confirm it in one short line with the time the tool says it's set for. To cancel one or "
-    "put it off, use cancel_reminder or snooze_reminder with its number from the list of what's set now: to have "
+    "put it off, use cancel_reminder or snooze_reminder with its number from the list of what's set now; when more "
+    'than one there could be meant (two timers, and "cancel the timer"), ask which, and change nothing yet. To have '
     "one said again in a while, put it off; to move one to another time, cancel it and set it again. Never set a "
     'second one for the same thing and the same person. The text is only what it\'s about ("call mum"), never the '
     "words TARS says around it in that list. If a tool "
@@ -167,9 +169,11 @@ REMIND_TOOLS = [
 SEND_RULES = (
     "You can send things to the household's TARS page (a web app they open on their phone or laptop) with the "
     "send tool: a link, a note, a list, or a text file. Use it when asked to send, save or share something, or "
-    "when the answer is a link, a recipe, a list or anything too long to hear. Only send links you found with web "
-    "search, never made-up ones. After sending, say in one short line that you sent it and that it's on the TARS "
-    "page; never read a link out loud. In anything you send, write like a person: no middots (·) or em dashes."
+    "when the answer is a link, a recipe, a list or anything too long to hear. Send links from your web search "
+    "results, never made-up ones; one link, unless more were asked for. When the send tool answers that it sent "
+    "something, it's on the TARS page: say so in one short line, and don't send it again. Never say a link or a web "
+    "address out loud, not even a site's name with its .com: that's what the TARS page is for. In anything you send, "
+    "write like a person: no middots (·) or em dashes."
 )
 # The quick model has no web search, so no real links: those turns are handed over.
 QUICK_SEND_RULES = (
@@ -180,7 +184,10 @@ QUICK_SEND_RULES = (
     "a person: no middots (·) or em dashes."
 )
 # How the quick model is told it can't send a link: hand the turn over, or say so when nothing can.
-LINK_HAND_OFF, NO_LINKS = ": for a link, reply <look-up>", ": you can't send links"
+LINK_HAND_OFF = (
+    ": when someone asks for a link, reply <look-up>, even for something you could write out yourself, like a recipe"
+)
+NO_LINKS = ": you can't send links"
 
 # Strict mode needs every field listed as required; the ones a kind doesn't use are nullable instead.
 SEND_TOOL = {
@@ -241,13 +248,20 @@ PONDER = "<ponder>"
 # How Qwen starts a tool call when it writes one out as text instead of making it, now and then in a long reply. Its
 # words go to the voice as they come, so the reply is cut off there, unsaid, and handled as one that ran out.
 TOOL_CALL_TEXT = ("<toolcall>", "<tool_call>", "<function=")
+
+
+def _escaped(marker: str) -> str:
+    """A marker as Qwen sometimes writes it, HTML-escaped ("&lt;look-up&gt;"): the same marker, and never to be said."""
+    return marker.replace("<", "&lt;").replace(">", "&gt;")
+
+
 # After a quick service fails (down, slow), it's skipped for this long, so each turn doesn't wait out its timeout
 # first. After "too many requests", it's skipped for as long as the service asks (Retry-After), or for the minute its
 # limits are counted over if it doesn't say.
 QUICK_COOLDOWN_S = 120.0
 RATE_LIMITED_S = 60.0
-# A spoken reply, and the quick model's reasoning, are far shorter. Groq refuses a request that doesn't say: it
-# assumes 2,048 tokens, over its free key's 1,000 a minute. Only what's written counts against that, not this.
+# A quick reply's cap, reasoning included, unless its service has its own (config.QUICK_PROVIDERS). Groq refuses a
+# request that doesn't say: it assumes 2,048 tokens, over its free key's 1,000 a minute.
 QUICK_MAX_TOKENS = 500
 # If the quick service hasn't started answering by then, the next one is asked too, and the first to answer is kept.
 HEDGE_S = 0.5
@@ -264,6 +278,12 @@ NEEDS_REMINDING = "setting, cancelling or putting off a timer, a reminder or a m
 NEEDS_THINKING = (
     "a question that needs real thinking: planning something, comparing options, or working through several steps "
     "or a tricky calculation; never small talk, a plain fact, or anything the web answers"
+)
+# A hand-off's first words are already said when OpenAI's model takes over ("Timer set. Let me think about that for
+# a moment."): it carries on from them, rather than starting the reply again.
+CARRY_ON = (
+    'This reply has already begun, aloud: "{said}" Carry on from there, without repeating any of it or confirming '
+    "again what it already says was done."
 )
 THINK_RULES = (
     "This question was handed to you because it needs real thinking. Work it through carefully, then answer in a "
@@ -324,8 +344,8 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
         markers = " or ".join(marker for marker, *_ in hand_offs)
         parts.append(
             "When one message asks for something you can do and something you hand over, do your part first, with your "
-            f"tools, then reply with exactly {markers} and nothing else: whoever answers next sees what you did, and "
-            "answers the rest."
+            f"tools, then reply with exactly {markers} and nothing else, without starting on the rest yourself: "
+            "whoever answers next sees what you did, and answers the rest."
         )
     parts.append(
         f"You can't {', '.join(cant)}. When asked to, say plainly in one short line that you can't do that yet, and "
@@ -335,7 +355,9 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
 
 
 def check_send(args: dict) -> tuple[SentItem | None, str]:
-    """(the item to send, "sent") if the send call is complete, else (None, what's wrong) for the model to fix."""
+    """(the item to send, "sent: ...") if the send call is complete, else (None, what's wrong) for the model to fix.
+    The answer says plainly that it went through: told only "sent", OpenAI's model now and then sent another, and
+    said it couldn't."""
     if not isinstance(args, dict):
         return None, "error: the arguments must be an object"
     kind, title = args.get("kind"), _text(args.get("title"))
@@ -366,11 +388,18 @@ def check_send(args: dict) -> tuple[SentItem | None, str]:
         item.file_name, item.file_bytes, item.mime = name, text.encode(), mime
     else:
         return None, f"error: kind must be one of {', '.join(KINDS)}"
-    return item, "sent"
+    return item, f"sent: {item.title!r} is on the TARS page; it needs sending only once"
 
 
 # A web address, in anything the quick model sends: it has no web search, so any link would be from memory.
 WEB_ADDRESS = re.compile(r"https?://|www\.|\b[\w-]+\.(?:com|org|net|io|gov|edu|co\.uk)\b", re.IGNORECASE)
+
+
+def _same_send(a: SentItem, b: SentItem) -> bool:
+    """The same thing sent twice: the same kind, and one title is the other with words added ("Three days in
+    Lisbon", "Three days in Lisbon, for two")."""
+    ta, tb = (" ".join(re.sub(r"[^\w\s]", " ", t.lower()).split()) for t in (a.title, b.title))
+    return a.kind == b.kind and bool(ta and tb) and (ta in tb or tb in ta)
 
 
 def _has_link(args: dict) -> bool:
@@ -422,11 +451,12 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
 
 
 class _UpTo:
-    """A streamed reply up to the first of `markers` (each starts with "<"), holding back only what might be the start
-    of one. `found`: the marker that came, if one did."""
+    """A streamed reply up to the first of `markers`, holding back only what might be the start of one. `found`: the
+    marker that came, if one did."""
 
     def __init__(self, pieces: Iterable[str], markers: tuple[str, ...]):
         self._pieces, self._markers = pieces, markers
+        self._longest = max(map(len, markers), default=0)
         self.found: str | None = None
 
     def __iter__(self) -> Iterator[str]:
@@ -438,14 +468,53 @@ class _UpTo:
                 if at:
                     yield pending[:at]
                 return
-            hold = pending.rfind("<")
-            if hold < 0 or not any(m.startswith(pending[hold:]) for m in self._markers):
-                hold = len(pending)
+            hold = next(
+                (
+                    i
+                    for i in range(max(0, len(pending) - self._longest), len(pending))
+                    if any(m.startswith(pending[i:]) for m in self._markers)
+                ),
+                len(pending),
+            )
             if hold:
                 yield pending[:hold]
             pending = pending[hold:]
         if pending:
             yield pending
+
+
+class _NoRepeat:
+    """A tool round's words, without what an earlier round of the same reply already said: Qwen now and then says
+    "Timer's set for 12:03." with its tool call, and again once it has the result. Held back only while they could
+    still be that repeat (compared without case or spacing); a round that ends while they still could, repeated them
+    and says nothing."""
+
+    def __init__(self, before: str):
+        self._before, self._held, self._passing = _squeeze(before), "", not before.strip()
+
+    def feed(self, piece: str) -> str:
+        if self._passing:
+            return piece
+        self._held += piece
+        held = _squeeze(self._held)
+        if self._before.startswith(held):
+            return ""  # still the same words, so far
+        self._passing = True
+        if held.startswith(self._before):  # the repeat, then something new: only the new part
+            return _after_squeezed(self._held, len(self._before))
+        return self._held  # something else: what was held back is said after all
+
+
+def _squeeze(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def _after_squeezed(text: str, n: int) -> str:
+    """What's left of `text` once its start, squeezed, is `n` characters long. Short texts: a plain scan is fine."""
+    for i in range(len(text) + 1):
+        if len(_squeeze(text[:i])) >= n:
+            return text[i:]
+    return ""
 
 
 class _Writing:
@@ -533,6 +602,8 @@ class OpenAIChat:
                 "timeout": self._cfg.think_timeout_s,
             }
             instructions = f"{self._instructions}\n\n{THINK_RULES}"
+        if said_first.strip():
+            instructions = f"{instructions}\n\n{CARRY_ON.format(said=said_first.strip())}"
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
             tools = {"tools": self._tools} if self._tools else {}
@@ -636,7 +707,7 @@ class OpenAIChat:
             return f"error: a link needs web search, which you can't do: {no_links}"
         if call.name == "send":
             item, result = check_send(args)
-            if item and any((s.kind, s.title.lower()) == (item.kind, item.title.lower()) for s in self.sent):
+            if item and any(_same_send(s, item) for s in self.sent):
                 return "already sent: it's on the TARS page once"  # asked twice in one reply
             if item:
                 self.sent.append(item)
@@ -685,6 +756,7 @@ class QuickService:
     name: str
     client: OpenAI
     model: str
+    max_tokens: int = QUICK_MAX_TOKENS
     back_at: float = 0.0
 
 
@@ -730,6 +802,8 @@ class QuickChat(OpenAIChat):
             ponder = ["plan three days in Rome for us", "should we lease the car or buy it?"]
             hand_offs.append((PONDER, PONDER_INTRO, [NEEDS_THINKING], ponder))
         self._markers = tuple(marker for marker, *_ in hand_offs)
+        # What Qwen's reply is watched for, as written or HTML-escaped, and the marker each one is.
+        self._watch = {form: m for m in self._markers + TOOL_CALL_TEXT for form in (m, _escaped(m))}
         self._no_links = f"reply {LOOK_UP} instead" if LOOK_UP in self._markers else "say you can't send links"
         links = LINK_HAND_OFF if LOOK_UP in self._markers else NO_LINKS
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules(tools=own_remind)]
@@ -738,9 +812,7 @@ class QuickChat(OpenAIChat):
         rules.append(abilities(can, hand_offs, cant))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules])
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
-        self._quick_extra = {"max_completion_tokens": QUICK_MAX_TOKENS} | (
-            {"reasoning_effort": effort} if effort else {}
-        )
+        self._quick_extra = {"reasoning_effort": effort} if effort else {}
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
         answer, handed_off, cut_off = "", None, False
@@ -758,19 +830,25 @@ class QuickChat(OpenAIChat):
             quick = self._quick_reply(service, context, writing, opened)
             # Usually the whole reply is the marker; now and then it comes after a sentence ("I can't check that.
             # <look-up>").
-            reply = _UpTo(quick, self._markers + TOOL_CALL_TEXT)
+            reply = _UpTo(quick, tuple(self._watch))
             try:
                 for piece in reply:
                     answer += piece
                     yield piece
-                if reply.found in TOOL_CALL_TEXT:
+                found = self._watch.get(reply.found)
+                if found in TOOL_CALL_TEXT:
                     print(f"({service.name} wrote a tool call out as text)")
                     cut_off = True
                 else:
-                    handed_off = reply.found
+                    handed_off = found
                 writing.answered_by = {LOOK_UP: LOOKED_UP, PONDER: PONDERED}.get(handed_off, QUICK)
             except _CutOff:
-                print(f"({service.name}'s reply ran into its {QUICK_MAX_TOKENS} tokens)")
+                print(f"({service.name}'s reply ran into its {service.max_tokens} tokens)")
+                roomier = [s for s in ready if s.max_tokens > service.max_tokens]
+                if roomier and not answer.strip() and not writing.quick_calls:
+                    # Nothing said or done yet (a long note, say): the same turn, where there's room for it.
+                    ready, writing.quick_service = roomier, None
+                    continue
                 cut_off = True
             except OpenAIError as e:
                 _check(writing)  # an interrupted reply stays interrupted: closing its stream makes it fail
@@ -802,7 +880,7 @@ class QuickChat(OpenAIChat):
             handed_off, writing.answered_by = LOOK_UP, FALLBACK
         context.extend(writing.quick_calls)  # what Qwen's tools already did, so it isn't done twice
         if handed_off == PONDER:
-            thinking = f"{' ' * bool(answer.strip())}{THINKING} "
+            thinking = f"{' ' * bool(answer.strip() and not answer[-1].isspace())}{THINKING} "
             answer += thinking
             yield thinking
         if answer.strip():  # OpenAI carries on from what TARS already said, rather than repeating it
@@ -830,7 +908,12 @@ class QuickChat(OpenAIChat):
 
     def _create(self, service: QuickService, messages: list, round_: int):
         return service.client.chat.completions.create(
-            model=service.model, stream=True, messages=messages, **self._quick_extra, **self._quick_tools_for(round_)
+            model=service.model,
+            stream=True,
+            messages=messages,
+            max_completion_tokens=service.max_tokens,
+            **self._quick_extra,
+            **self._quick_tools_for(round_),
         )
 
     def _open(self, service: QuickService, messages: list, streams: _Streams) -> _Opened:
@@ -891,7 +974,7 @@ class QuickChat(OpenAIChat):
     ) -> Iterator[str]:
         """Qwen's reply, streamed, with as many rounds of its tools as it needs (up to MAX_TOOL_ROUNDS). `opened`:
         its first round, already started by _first_to_answer."""
-        messages = self._quick_messages(context)
+        messages, earlier = self._quick_messages(context), ""
         for round_ in range(MAX_TOOL_ROUNDS):
             _check(writing)
             if round_ == 0 and opened:
@@ -900,6 +983,7 @@ class QuickChat(OpenAIChat):
                 stream = writing.stream = self._create(service, messages, round_)
                 events = iter(stream)
             said, calls, finish = "", {}, None  # calls: index -> {"id", "name", "arguments"}, from the stream
+            fresh = _NoRepeat(earlier)
             with stream:
                 for event in events:
                     _check(writing)
@@ -909,7 +993,8 @@ class QuickChat(OpenAIChat):
                     delta = event.choices[0].delta
                     if delta.content:
                         said += delta.content
-                        yield delta.content
+                        if new := fresh.feed(delta.content):
+                            yield new
                     for part in getattr(delta, "tool_calls", None) or []:
                         call = calls.setdefault(part.index, {"id": "", "name": "", "arguments": ""})
                         call["id"] = part.id or call["id"]
@@ -917,6 +1002,7 @@ class QuickChat(OpenAIChat):
                             call["name"] = part.function.name or call["name"]
                             call["arguments"] += part.function.arguments or ""
             writing.stream = None
+            earlier += said
             if finish == "length":
                 raise _CutOff
             if not calls:
@@ -962,7 +1048,7 @@ class QuickFailed(OpenAIError):
 
 
 class _CutOff(Exception):
-    """The quick model's reply ran into QUICK_MAX_TOKENS."""
+    """The quick model's reply ran into its service's max_tokens."""
 
 
 class ResponsesQuickChat(QuickChat):

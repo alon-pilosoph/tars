@@ -50,7 +50,8 @@ uv run python -m evals --tag hand-off --budget 1  # refuses to start if estimate
 
 **What it runs:** TARS's real `QuickChat`, set up from `config.toml` as TARS sets it up (the model, reasoning effort,
 tools and prompts). Qwen runs on Cerebras (`CEREBRAS_API_KEY`), which serves the same model as Groq with room for
-heavy runs. Groq's free key allows only a few turns a minute; `--brain groq` works, but slowly. Hand-offs really go
+heavy runs. TARS asks Groq first, its replies capped at 500 tokens for its free key, then Cerebras, capped at 2,000:
+both are played on Cerebras, each with its own cap, so a reply too long for Groq runs out here as it would at home. Groq's free key allows only a few turns a minute; `--brain groq` works, but slowly. Hand-offs really go
 to OpenAI (`OPENAI_API_KEY`), on its standard tier: `config.toml`'s `service_tier = "fast"` (priority processing)
 changes how soon it answers and what it costs, not what it answers, so it's only used with `--fast`, when the times
 matter. First words to OpenAI's answers are slower than at home without it. Reminders are kept in a database made for each run, so nothing touches the household's.
