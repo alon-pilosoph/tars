@@ -103,10 +103,12 @@ def keys(cfg: Config, env: Path) -> Result:
 
 def device(kind: str, wanted: str, find: Callable[[str, str], int | None], names: list[str], default: int) -> Result:
     """`names`: every device's name, by index; `default`: the system's default for `kind`."""
+    from .audio import NoDeviceError
+
     name = f"{kind.capitalize()} device"
     try:
         index = find(wanted, kind)
-    except SystemExit:
+    except SystemExit, NoDeviceError:
         return Result(name, FAIL, f"nothing matches {wanted!r}", "run --list-devices and fix [audio] in config.toml")
     if index is None:
         return Result(

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from dotenv import dotenv_values
 
-from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, Speaker, find_device, list_devices
+from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, NoDeviceError, Speaker, find_device, list_devices
 from .config import (
     OPENAI_KEY,
     OPENAI_STT_MODEL,
@@ -36,6 +36,8 @@ QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
 EX_CONFIG = 78
+# sysexits' EX_UNAVAILABLE: no speakerphone. Not restarted either; plugging it in starts TARS (the udev rule).
+EX_UNAVAILABLE = 69
 
 
 def api_key(env_path: Path, name: str) -> str:
@@ -296,6 +298,9 @@ def main() -> None:
     except ConfigError as e:
         print(e.code, file=sys.stderr)
         raise SystemExit(EX_CONFIG) from None
+    except NoDeviceError as e:
+        print(e, file=sys.stderr)
+        raise SystemExit(EX_UNAVAILABLE) from None
     except AudioDeviceError as e:
         # Exit non-zero so a supervisor (systemd on the Pi) restarts the process once the device is back.
         raise SystemExit(str(e)) from None

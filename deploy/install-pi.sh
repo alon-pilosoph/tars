@@ -4,7 +4,8 @@
 #   git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant && ~/voice-assistant/deploy/install-pi.sh
 #
 # Safe to run again: it adds what's missing and restarts the services (after a `git pull`, say). It asks for sudo
-# for two things: PortAudio (audio I/O) and letting the services start at boot without anyone logged in.
+# for three things: PortAudio (audio I/O), letting the services start at boot without anyone logged in, and starting
+# TARS when the speakerphone is plugged in.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -59,6 +60,12 @@ systemctl --user daemon-reload
 systemctl --user enable voice-assistant voice-assistant-web
 systemctl --user restart voice-assistant voice-assistant-web  # picks up new code on a rerun
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
+# With no speakerphone TARS stays stopped; this starts it when one is plugged in.
+RULE=/etc/udev/rules.d/99-tars-speakerphone.rules
+if ! cmp -s deploy/99-tars-speakerphone.rules "$RULE"; then
+  sudo cp deploy/99-tars-speakerphone.rules "$RULE"
+  sudo udevadm control --reload
+fi
 
 echo "== Checking everything (it says \"TARS is ready.\" and listens a moment)"
 sleep 3  # the services just restarted

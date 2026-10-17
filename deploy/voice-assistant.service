@@ -1,11 +1,13 @@
 # systemd *user* service: starts TARS at boot and restarts it if it exits (e.g. the
-# microphone was unplugged). A user service shares the login session's PipeWire audio.
+# microphone stopped working). With no speakerphone it stays stopped, and plugging it in starts
+# it (99-tars-speakerphone.rules). A user service shares the login session's PipeWire audio.
 #
 #   mkdir -p ~/.config/systemd/user
 #   cp deploy/voice-assistant.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now voice-assistant
 #   sudo loginctl enable-linger $USER    # start at boot, without logging in
+#   sudo cp deploy/99-tars-speakerphone.rules /etc/udev/rules.d/ && sudo udevadm control --reload
 #
 #   journalctl --user-unit voice-assistant -f    # follow the logs
 
@@ -21,7 +23,8 @@ Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=3
 # 78 (EX_CONFIG): a mistake in config.toml or a missing API key. Restarting won't fix it; see the logs.
-RestartPreventExitStatus=78
+# 69 (EX_UNAVAILABLE): no speakerphone. Plugging it in starts TARS again (99-tars-speakerphone.rules).
+RestartPreventExitStatus=78 69
 
 [Install]
 WantedBy=default.target

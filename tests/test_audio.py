@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import voice_assistant.audio as audio_module
-from voice_assistant.audio import Microphone, MicrophoneError, Speaker, SpeakerError
+from voice_assistant.audio import Microphone, MicrophoneError, NoDeviceError, Speaker, SpeakerError, find_device
 
 
 def test_dead_microphone_raises_instead_of_hanging(monkeypatch):
@@ -97,7 +97,11 @@ def test_no_device_to_open_says_plug_it_in(monkeypatch):
 
     monkeypatch.setattr(audio_module.sd, "RawInputStream", missing)
     monkeypatch.setattr(audio_module.sd, "RawOutputStream", missing)
-    with pytest.raises(MicrophoneError, match="No microphone to open .* Plug in the speakerphone"):
+    with pytest.raises(NoDeviceError, match="No microphone to open .* Plug in the speakerphone"):
         Microphone(None)
-    with pytest.raises(SpeakerError, match="No speaker to open .* Plug in the speakerphone"):
+    with pytest.raises(NoDeviceError, match="No speaker to open .* Plug in the speakerphone"):
         Speaker(None, 24_000, prebuffer_s=0.1)
+    headphones_only = [{"name": "bcm2835 Headphones", "max_input_channels": 0}]
+    monkeypatch.setattr(audio_module.sd, "query_devices", lambda: headphones_only)
+    with pytest.raises(NoDeviceError, match="No input device matching 'PowerConf'"):
+        find_device("PowerConf", "input")

@@ -1,0 +1,6 @@
+# Starts TARS when a USB sound card (the speakerphone) is plugged in. With none, TARS exits and stays stopped
+# instead of restarting every few seconds (exit 69, RestartPreventExitStatus), so this is what brings it back.
+# Any USB sound card counts; starting TARS when it's already running does nothing. install-pi.sh installs it:
+#
+#   sudo cp deploy/99-tars-speakerphone.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="card*", SUBSYSTEMS=="usb", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="voice-assistant.service"

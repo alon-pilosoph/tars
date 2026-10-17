@@ -69,7 +69,7 @@ def find_device(name: str, kind: str) -> int | None:
     for index, device in enumerate(sd.query_devices()):
         if name.lower() in device["name"].lower() and device[channels_key] > 0:
             return index
-    raise SystemExit(f"No {kind} device matching {name!r}. Run with --list-devices to see what's available.")
+    raise NoDeviceError(f"No {kind} device matching {name!r}. {PLUG_IN}")
 
 
 def device_names() -> tuple[list[str], int, int]:
@@ -92,6 +92,11 @@ def list_devices() -> None:
 
 class AudioDeviceError(RuntimeError):
     """A device stopped working (unplugged, or the driver died). Not recoverable in-process: exit and restart."""
+
+
+class NoDeviceError(AudioDeviceError):
+    """The device to open isn't there. Restarting won't bring it back, so the process exits for good; on the Pi,
+    plugging the speakerphone in starts TARS again (deploy/99-tars-speakerphone.rules)."""
 
 
 class MicrophoneError(AudioDeviceError):
@@ -135,8 +140,8 @@ class Microphone:
                 dtype="int16",
                 callback=self._on_audio,
             )
-        except sd.PortAudioError as e:  # none plugged in: exit, and the restart picks it up once it is
-            raise MicrophoneError(f"No microphone to open ({e}). {PLUG_IN}") from None
+        except sd.PortAudioError as e:  # none plugged in
+            raise NoDeviceError(f"No microphone to open ({e}). {PLUG_IN}") from None
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         block = np.frombuffer(indata, dtype=np.int16).copy()
@@ -209,7 +214,7 @@ class Speaker:
                 samplerate=sample_rate, device=device, channels=1, dtype="int16", callback=self._fill
             )
         except sd.PortAudioError as e:
-            raise SpeakerError(f"No speaker to open ({e}). {PLUG_IN}") from None
+            raise NoDeviceError(f"No speaker to open ({e}). {PLUG_IN}") from None
 
     def __enter__(self) -> Self:
         self._stream.start()
