@@ -368,7 +368,8 @@ def check_all(cfg: Config, root: Path) -> int:
         t = time.perf_counter()
         try:
             host = cfg.stt.deepgram_host if cfg.stt.provider in ("deepgram", "flux") else cfg.tts.deepgram_host
-            status = http_status(f"https://{host}/v1/projects", {"Authorization": f"Token {key}"})
+            # /v1/auth/token: the EU servers don't serve /v1/projects (404 with a good key); both answer this one
+            status = http_status(f"https://{host}/v1/auth/token", {"Authorization": f"Token {key}"})
         except OSError as e:
             return service_error("Deepgram", e)
         return service_status("Deepgram", DEEPGRAM_KEY, status, time.perf_counter() - t)
