@@ -1,0 +1,80 @@
+# Scenario evals on request: a pull request comment starting with #evals runs them on the pull request's code and
+# answers with a comment of what came out (evals/comment.py has the settings). Never a check: nothing waits on it.
+#
+# They cost money (OpenAI and Cerebras, with every run's budget capped), and run with the repository's keys, so only
+# the owner and collaborators can ask, and only on pull requests from this repository: a fork's code never gets the
+# keys. Needs the secrets OPENAI_API_KEY and CEREBRAS_API_KEY.
+name: Evals
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: evals-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '#evals') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.issue.number }}
+    steps:
+      - name: Seen
+        run: gh api "repos/$GITHUB_REPOSITORY/issues/comments/${{ github.event.comment.id }}/reactions" -f content=eyes
+
+      - name: The pull request's code, if it's from this repository
+        id: pr
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > pr.json
+          if [ "$(jq -r .head.repo.full_name pr.json)" != "$GITHUB_REPOSITORY" ]; then
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "Evals only run on pull requests from this repository."
+            exit 1
+          fi
+          echo "sha=$(jq -r .head.sha pr.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1 # for sounddevice and Vosk
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+
+      # TARS reads its keys from .env only, never the environment.
+      - name: Keys
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+        run: printf 'OPENAI_API_KEY=%s\nCEREBRAS_API_KEY=%s\n' "$OPENAI_API_KEY" "$CEREBRAS_API_KEY" > .env
+
+      # The comment goes in through the environment, never into the script itself.
+      - name: Run
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: uv run python -m evals.comment "$BODY" > reply.md
+
+      - name: Transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evals
+          path: evals/runs/
+          if-no-files-found: ignore
+
+      - name: Reply
+        if: always()
+        run: |
+          [ -s reply.md ] || echo "### Evals failed before they could answer: see [the run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)." > reply.md
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file reply.md
+          rm -f .env
