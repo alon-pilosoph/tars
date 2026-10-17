@@ -89,3 +89,15 @@ def test_a_dead_speaker_raises_instead_of_hanging(monkeypatch):
     monkeypatch.setattr(audio_module, "SPEAKER_STALL_S", 0.1)
     with Speaker(None, 24_000, prebuffer_s=0.1) as speaker, pytest.raises(SpeakerError):
         speaker.play_pcm_stream([np.full(2400, 1000, np.int16).tobytes()], 24_000)
+
+
+def test_no_device_to_open_says_plug_it_in(monkeypatch):
+    def missing(**_):
+        raise audio_module.sd.PortAudioError("Error querying device -1")
+
+    monkeypatch.setattr(audio_module.sd, "RawInputStream", missing)
+    monkeypatch.setattr(audio_module.sd, "RawOutputStream", missing)
+    with pytest.raises(MicrophoneError, match="No microphone to open .* Plug in the speakerphone"):
+        Microphone(None)
+    with pytest.raises(SpeakerError, match="No speaker to open .* Plug in the speakerphone"):
+        Speaker(None, 24_000, prebuffer_s=0.1)

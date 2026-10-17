@@ -7,7 +7,7 @@
 #   systemctl --user enable --now voice-assistant
 #   sudo loginctl enable-linger $USER    # start at boot, without logging in
 #
-#   journalctl --user -u voice-assistant -f    # follow the logs
+#   journalctl --user-unit voice-assistant -f    # follow the logs
 
 [Unit]
 Description=TARS voice assistant

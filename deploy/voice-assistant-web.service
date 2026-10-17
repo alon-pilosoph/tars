@@ -7,7 +7,7 @@
 #   systemctl --user enable --now voice-assistant-web
 #   sudo loginctl enable-linger $USER    # start at boot, without logging in (once, for both services)
 #
-#   journalctl --user -u voice-assistant-web -f    # follow the logs
+#   journalctl --user-unit voice-assistant-web -f    # follow the logs
 #
 # Then open http://<pi-name>.local:8080 from a phone or laptop on the home network. There are no accounts:
 # anyone on the network can open it, so don't forward the port to the internet (use Tailscale to reach it away

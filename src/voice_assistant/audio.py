@@ -113,6 +113,7 @@ class SpeakerError(AudioDeviceError):
     pass
 
 
+PLUG_IN = "Plug in the speakerphone, or set it in config.toml [audio] (--list-devices)."
 # Blocks arrive every 80 ms, so this long without one means the device is gone.
 MIC_STALL_S = 3.0
 # Playback that's this far behind the audio it was given has stopped: the device no longer asks for more.
@@ -125,14 +126,17 @@ class Microphone:
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self._muted = False
         self.echo = echo
-        self._stream = sd.RawInputStream(
-            samplerate=SAMPLE_RATE,
-            blocksize=BLOCK_SAMPLES,
-            device=device,
-            channels=1,
-            dtype="int16",
-            callback=self._on_audio,
-        )
+        try:
+            self._stream = sd.RawInputStream(
+                samplerate=SAMPLE_RATE,
+                blocksize=BLOCK_SAMPLES,
+                device=device,
+                channels=1,
+                dtype="int16",
+                callback=self._on_audio,
+            )
+        except sd.PortAudioError as e:  # none plugged in: exit, and the restart picks it up once it is
+            raise MicrophoneError(f"No microphone to open ({e}). {PLUG_IN}") from None
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         block = np.frombuffer(indata, dtype=np.int16).copy()
@@ -200,9 +204,12 @@ class Speaker:
         self._input_done = True
         self._on_start: Callable[[], None] | None = None
         self._drained = threading.Event()
-        self._stream = sd.RawOutputStream(
-            samplerate=sample_rate, device=device, channels=1, dtype="int16", callback=self._fill
-        )
+        try:
+            self._stream = sd.RawOutputStream(
+                samplerate=sample_rate, device=device, channels=1, dtype="int16", callback=self._fill
+            )
+        except sd.PortAudioError as e:
+            raise SpeakerError(f"No speaker to open ({e}). {PLUG_IN}") from None
 
     def __enter__(self) -> Self:
         self._stream.start()

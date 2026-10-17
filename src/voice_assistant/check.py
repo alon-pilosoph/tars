@@ -252,7 +252,7 @@ def systemd(unit: str, active: Callable[[str], str | None]) -> Result:
     if state is None:
         return Result(unit, SKIP, "no systemd here")
     if state != "active":
-        return Result(unit, WARN, state, f"systemctl --user start {unit}; journalctl --user -u {unit} says why")
+        return Result(unit, WARN, state, f"systemctl --user start {unit}; journalctl --user-unit {unit} says why")
     return Result(unit, OK, "running")
 
 
