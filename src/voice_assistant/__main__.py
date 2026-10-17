@@ -323,7 +323,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
         FluxTranscriber,
         OpenAITranscriber,
     )
-    from .tts import DeepgramSpeech, OpenAISpeech
+    from .tts import CartesiaSpeech, DeepgramSpeech, OpenAISpeech
 
     env = root / ".env"
     keys = env_keys(env)
@@ -332,11 +332,12 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     llm = brain_config(cfg, typed=typed)
     quick = quick_services(llm, env)
     brain = QuickChat(client, llm, quick, reminders) if quick else OpenAIChat(client, llm, reminders)
-    speech = (
-        DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
-        if cfg.tts.provider == "deepgram"
-        else OpenAISpeech(client, cfg.tts)
-    )
+    if cfg.tts.provider == "deepgram":
+        speech = DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
+    elif cfg.tts.provider == "cartesia":
+        speech = CartesiaSpeech(api_key(env, "CARTESIA_API_KEY"), cfg.tts)
+    else:
+        speech = OpenAISpeech(client, cfg.tts)
     voice = apply_effect(speech, cfg.tts.effect)
     if typed:
         return None, brain, voice

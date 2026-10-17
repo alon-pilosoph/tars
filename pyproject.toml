@@ -1,7 +1,7 @@
 [project]
 name = "voice-assistant"
 version = "0.1.0"
-description = "TARS, a household voice assistant for a Raspberry Pi 5 that answers in about a second and a half and learns its wake word from the household."
+description = "TARS, a household voice assistant for a Raspberry Pi 5 that answers in about 1.2 seconds and learns its wake word from the household."
 readme = "README.md"
 authors = [{ name = "Alon Pilosoph" }]
 requires-python = ">=3.14"

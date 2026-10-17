@@ -1,7 +1,7 @@
 # Response time
 
 How long TARS takes to answer, from the moment you stop talking to its first sound: where that time goes, how the
-pipeline is built to overlap it, and the measured steps that took it from about 3.5 s to 1.3-1.4 s.
+pipeline is built to overlap it, and the measured steps that took it from about 3.5 s to 1.2-1.5 s.
 
 The constraints shape every choice below. A voice assistant feels slow well before it feels wrong, so every stage is
 streamed and started as early as possible. But cutting someone off mid-sentence is worse than a slow answer, so
@@ -17,8 +17,8 @@ Median over 8 spoken questions, three runs, on the development Mac ([method](#ho
 | Waiting to be sure you're done | ~0.5 s | Deepgram's Flux decides, from your words as well as the pause |
 | Speech to text | ~0 s | Flux sends the words with its decision |
 | The brain's first sentence | ~0.4 s | Qwen on Groq at low reasoning, streamed (on Cerebras: ~0.6 s; OpenAI's Luna: ~0.7 s, and it still answers anything that needs the web) |
-| The voice's first audio | ~0.4 s | Deepgram's Aura-2 Zeus from its EU servers, a sentence at a time (from the US: ~0.6 s; OpenAI's Onyx: ~1.1 s) |
-| **From you stopping to TARS's first sound** | **~1.3-1.4 s** | the answer is prepared during the wait, so these overlap |
+| The voice's first audio | ~0.3 s | Cartesia's Sonic voice James, a sentence at a time (Deepgram's Aura-2 Zeus from its EU servers: ~0.4 s; OpenAI's Onyx: ~1.1 s) |
+| **From you stopping to TARS's first sound** | **~1.2-1.5 s** | the answer is prepared during the wait, so these overlap |
 
 A turn that needs the web adds Qwen's hand-off (about 0.3 s) and a web search, and TARS says "Looking it up." as it
 starts.
@@ -36,7 +36,7 @@ sequenceDiagram
     Rec-->>DG: audio, while you talk
     DG->>Rec: maybe done
     Rec->>Draft: start early (the words so far, speaker ID)
-    Draft->>Draft: Qwen writes, Zeus speaks the first sentence
+    Draft->>Draft: Qwen writes, James speaks the first sentence
     DG->>Rec: done
     Rec->>Out: confirmed: play the draft
 ```
@@ -60,10 +60,14 @@ words sounded) may extend the wait to 1.6 s, and a draft starts a quarter second
 
 ### The voice
 
-A warm connection to Deepgram starts speaking in about 0.27 s, and opening one takes about 0.7 s, so
-`tts.DeepgramSpeech` keeps two open from the wake word. The speaker (`audio.Speaker`) skips the silence a voice
-starts a reply on (0.2-0.5 s for Zeus) and hands the mic back at the last sound, so a short "Yes?" frees the mic
-0.9 s after it starts, of which 0.3 s is a margin for the room's echo.
+A warm connection to Cartesia sends a sentence's first audio in about 0.2 s, and opening one takes about 0.6 s (0.8 s
+to the first audio in all), so `tts.CartesiaSpeech`, like `tts.DeepgramSpeech`, keeps two open from the wake word.
+Only a few sentences synthesize at once, within what each service allows: two on Cartesia's free plan, three on
+Deepgram, whose Flux voices take five connections at a time on its EU servers. Playing a sentence takes longer than
+making one, so the rest waiting their turn costs nothing, and a reply thrown away stops its sentences and frees their
+connections. The speaker (`audio.Speaker`) skips any silence a voice starts a reply on (James starts within about 0.15
+s of it; Zeus, the voice before it, after 0.2-0.5 s) and hands the mic back at the last sound, so a short "Yes?" frees
+the mic 0.9 s after it starts, of which 0.3 s is a margin for the room's echo.
 
 ### The greeting and the open mic
 
@@ -137,10 +141,10 @@ also prints its own stage timings in the assistant's log.
 
 To compare two setups, each gets three clean runs on the same day, alternating between them, so the network and the
 services' load are shared. A run counts only if none of its turns had a failure, a refusal, a fallback or a timeout.
-The headline 1.3-1.4 s comes from such a comparison of four setups
-([where Qwen and Deepgram run](#where-should-qwen-and-deepgram-run)). The 1.1-1.6 s before it was measured on an
-earlier configuration and day; on the day of the comparison, that same setup (Qwen on Cerebras, Deepgram's US servers)
-took 1.7-2.5 s, so the new setup should be compared with that, not with the old headline.
+The headline 1.2-1.5 s comes from such a comparison of three voices on one day ([which voice?](#which-voice)). Each
+headline is only comparable with the setups measured on its own day: on the day of the four-setup comparison
+([where Qwen and Deepgram run](#where-should-qwen-and-deepgram-run)), the setup before it took 1.7-2.5 s against an
+older headline of 1.1-1.6 s, and the setup it chose measured 1.3-1.4 s there but 1.3-1.5 s with Zeus a week later.
 
 `tools/turn_bench.py` measures cut-offs: it plays the owner's 25 recorded sentences whole, and again with a pause
 spliced in after an unfinished word ("and", "the", "to"...), 0.5, 0.8 or 1.2 s long.
@@ -160,6 +164,7 @@ first sound.
 | The speaker skips the silence a voice starts on | 1.1-1.6 s | Zeus opens a reply with 0.2-0.5 s of silence, which no longer plays |
 | Deepgram's EU servers for Flux and the voice | 1.6-2.6 s | the voice's first audio in 0.39 s instead of 0.58 s, and Flux's wait 0.12 s shorter; measured against 1.7-2.5 s for the step before on the same day ([how it's measured](#how-its-measured)) |
 | Qwen on Groq first, Cerebras as a hedge | 1.3-1.4 s | Qwen's first sentence in 0.42 s instead of 0.70 s, and the runs barely moved |
+| Cartesia's Sonic voice James instead of Zeus, without the speaker-box effect | 1.2-1.5 s | the voice's first audio in 0.27 s instead of 0.41 s; measured against 1.3-1.5 s for Zeus the same day ([which voice?](#which-voice)) |
 
 ## Design decisions
 
@@ -241,18 +246,43 @@ that happens in real use ([timings on every answer](#timings-on-every-answer)).
 
 ### Which voice?
 
-**Constraint:** the voice's first audio is the last stage before TARS is heard.
+**Constraint:** the voice's first audio is the last stage before TARS is heard, on every sentence, and a reply that
+sometimes starts late is noticed more than one that is always a little slower.
 
-| Option | First audio | Outcome |
+First, each voice alone: the first *audible* sound of a sentence on a warm connection, from the development Mac, 8
+sentences per voice (Zeus and Wes: 36 each, in alternating rounds), Deepgram on its EU servers:
+
+| Option | First audible sound | Outcome |
 |---|---|---|
 | OpenAI's Onyx | 0.97-1.19 s | sounds best and takes delivery instructions; too slow |
 | Onyx at 1.2x speed (`speed`, pitch kept) | about 20% more words a second | sounded bad |
-| Deepgram's Flux Cliff | 0.39-0.44 s | now and then opens a sentence with about a second of silence, which undoes the gain |
-| ElevenLabs Flash, Cartesia Sonic | 0.2-0.45 s | no faster than Deepgram's, which also does speech to text, so not chosen |
-| Deepgram's Aura-2 Zeus | 0.34-0.48 s | **chosen** |
+| ElevenLabs Flash | 0.2-0.45 s | not chosen |
+| Deepgram's Aura-2 Zeus, with the speaker-box effect | 0.29 s median, 90% within 0.33 s | the voice until October 2026; 2 of its 36 sentences, both one word ("Done.", "Canberra."), came back silent |
+| Deepgram's Flux Cliff and Miles | first audio in 0.13 s, but some sentences start with up to 0.9 s (Cliff) or 3 s (Miles) of silence | not chosen |
+| Deepgram's Flux Wes, Tanner, Donovan, Conor and Jack | 0.13-0.18 s median, 90% within 0.13-0.21 s | Wes compared below |
+| Cartesia's Sonic-3.6, eight deep or deadpan voices | 0.20-0.26 s median, 90% within 0.22-0.33 s | James compared below |
 
-**Decision: Aura-2 Zeus**, with Deepgram already used for speech to text. **Trade-off:** Onyx sounds better and takes
-delivery instructions; TARS picks latency over voice. Onyx stays a setting (`[tts] provider = "openai"`).
+Then the two picked by ear against Zeus, end to end, three clean runs each, alternated on the same day
+([method](#how-its-measured)), Qwen on Groq; the stage columns are medians over every turn of the three runs, and a
+late start is a sentence whose audio began with 0.3 s of silence or more:
+
+| Voice | Run medians, you stopping to first sound | The voice's first audio | Late starts |
+|---|---|---|---|
+| Deepgram's Aura-2 Zeus, with the speaker-box effect (the voice before) | 1.26, 1.52, 1.31 s | 0.41 s (90% within 0.48 s) | none past its usual 0.2-0.5 s lead-in, which TARS skips |
+| Deepgram's Flux Wes | 1.19, 1.14, 1.32 s | 0.27 s (90% within 0.32 s) | 2 of 64 sentences, none at a reply's start; the day before, 24 of 207 and 8 of 64 reply starts, up to 1.6 s late |
+| **Cartesia's Sonic-3.6 James** | **1.20, 1.20, 1.48 s** | **0.27 s** (90% within 0.32 s) | **none in 75 sentences (101 over two days); the longest lead-in 0.16 s** |
+
+Wes and James are equally fast, 0.14 s ahead of Zeus at the voice; the spread in the totals is the brain's (James's
+1.48 s run had Qwen's slowest first sentences). The difference is that Flux voices sometimes send a second of silence
+before the first word, more on some days and hours than others.
+
+**Decision: Cartesia's James, without the speaker-box effect**, for being as fast as the fastest and steady. The
+effect is still there (`[tts] effect = "tars"`). Without a Cartesia key, Deepgram's Wes speaks (`DEEPGRAM_VOICE`).
+**Trade-off:** a fifth service and key. Cartesia's free plan makes two sentences at once and covers 20,000
+characters a month (about 25 minutes of speech), which a household in daily use outgrows; its Pro plan, $5 a month,
+covers 100,000 and three at once (October 2026). Onyx still sounds the best and takes delivery
+instructions; TARS picks latency over voice, and Onyx stays a setting (`[tts] provider = "openai"`). A new voice is
+worth measuring before it's used (`tools/latency_bench.py --set tts.cartesia_voice=...`).
 
 ### Can a reply start sooner?
 
@@ -292,7 +322,8 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 | `[llm] groq_model` | `"qwen/qwen3.8-27b"` | the quick brain, on Groq, asked first; empty, or no `GROQ_API_KEY`: not used |
 | `[llm] cerebras_model` | `"qwen-3.8-27b"` | the same Qwen on Cerebras, asked when Groq is being skipped, fails, or hasn't started answering within 0.5 s; empty, or no `CEREBRAS_API_KEY`: not used. Neither: OpenAI's `model` answers everything (~0.3 s slower) |
 | `[stt] deepgram_host`, `[tts] deepgram_host` | `"api.eu.deepgram.com"` | Deepgram's servers: the EU's, or `api.deepgram.com` for the US (from Israel, the voice's first audio ~0.2 s later) |
-| `[tts] provider`, `model` | `"deepgram"`, `"aura-2-zeus-en"` | the voice; `openai` with `gpt-4o-mini-tts` takes delivery instructions but starts ~0.6 s later |
+| `[tts] provider`, `model`, `cartesia_voice` | `"cartesia"`, `"sonic-3.6"`, James's id | the voice; `deepgram` with a Flux or Aura-2 voice as the model; `openai` with `gpt-4o-mini-tts` takes delivery instructions but starts ~0.6 s later |
+| `[tts] effect` | `""` | `"tars"`: a speaker in a metal box, applied as the voice streams |
 | `[recorder] end_silence_s` | `0.8` | without Flux: silence that ends your turn |
 | `[recorder] max_pause_s` | `1.6` | without Flux: how long a pause may be when you sounded mid-thought |
 | `[recorder] end_of_turn` | `"smart"` | without Flux: `silence` turns Smart Turn off |

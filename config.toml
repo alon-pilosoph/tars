@@ -121,20 +121,22 @@ Messages may start with [Speaker: name], identified from their voice; use names 
 never read the tag aloud, and if it says unknown, don't guess who it is."""
 
 [tts]
-# deepgram: model = a Flux TTS or Aura-2 voice, e.g. "aura-2-zeus-en" or "flux-cliff-en" (voice and instructions
+# deepgram: model = a Flux TTS or Aura-2 voice, e.g. "flux-wes-en" or "aura-2-zeus-en" (voice and instructions
 # are then ignored). openai: model = "gpt-4o-mini-tts" with the voice and instructions below; Onyx sounds best, but
-# TARS answers about 0.6 s later with it (docs/latency.md).
-provider = "deepgram"
-model = "aura-2-zeus-en"
+# TARS answers about 0.6 s later with it (docs/latency.md). cartesia: model = "sonic-3.6" with cartesia_voice.
+provider = "cartesia"
+model = "sonic-3.6"
 voice = "onyx"
 # As in [stt]: "api.deepgram.com" (the US) or "api.eu.deepgram.com" (the EU).
 deepgram_host = "api.eu.deepgram.com"
+# A Cartesia voice id (play.cartesia.ai), for provider = "cartesia": James, "very deep, authoritative".
+cartesia_voice = "42b39f37-515f-4eee-8546-73e841679c1d"
 # How to deliver the lines (OpenAI only; gpt-4o-mini-tts and newer).
 instructions = """Low, calm, measured male voice. Completely deadpan and matter-of-fact, with almost no emotional \
 inflection. Even, unhurried pacing and crisp consonants. Deliver jokes perfectly straight, \
 with a short beat before the punchline."""
 # Post-processing on the synthesized audio. "tars" = speaker in a metal box. Empty = none.
-effect = "tars"
+effect = ""
 
 [speaker]
 # Recognize who is talking. Enroll people first: --record-voice NAME, then --enroll NAME.

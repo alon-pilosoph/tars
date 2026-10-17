@@ -115,3 +115,21 @@ def test_a_draft_that_failed_raises_when_taken():
     with pytest.raises(ConnectionError):
         draft.take()
     draft.cancel()
+
+
+def test_a_reply_thrown_away_stops_its_sentences_and_frees_the_voice():
+    speaking, closed = threading.Event(), threading.Event()
+
+    class Voice:
+        def stream(self, text):
+            try:
+                while True:
+                    speaking.set()
+                    yield b"\x00\x00"
+            finally:
+                closed.set()
+
+    reply = StreamedReply(iter(["A long first sentence."]), Voice(), on_sentence=lambda sentence: None)
+    assert speaking.wait(1)
+    reply.stop()
+    assert closed.wait(1)

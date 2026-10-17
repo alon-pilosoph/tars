@@ -3,7 +3,7 @@
 import queue
 import re
 import threading
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Generator, Iterable, Iterator
 
 from .conversations import LLM, OTHER, TTS
 from .tts import Voice
@@ -63,18 +63,25 @@ def _sentence_end(text: str) -> re.Match | None:
 
 
 class _Prefetch:
-    def __init__(self, voice: Voice, text: str):
+    def __init__(self, voice: Voice, text: str, stop: threading.Event):
         self._chunks: queue.Queue = queue.Queue()
-        threading.Thread(target=self._fetch, args=(voice, text), daemon=True, name="tts-sentence").start()
+        threading.Thread(target=self._fetch, args=(voice, text, stop), daemon=True, name="tts-sentence").start()
 
-    def _fetch(self, voice: Voice, text: str) -> None:
+    def _fetch(self, voice: Voice, text: str, stop: threading.Event) -> None:
+        audio = None
         try:
-            for chunk in voice.stream(text):
+            audio = voice.stream(text)
+            for chunk in audio:
+                if stop.is_set():  # a reply thrown away frees its connection to the voice
+                    break
                 self._chunks.put(chunk)
         except Exception as e:  # noqa: BLE001 - raised again where the audio is played
             mark_failed_at(e, TTS)
             self._chunks.put(e)
-        self._chunks.put(_DONE)
+        finally:
+            if isinstance(audio, Generator):
+                audio.close()
+            self._chunks.put(_DONE)
 
     def __iter__(self) -> Iterator[bytes]:
         while (item := self._chunks.get()) is not _DONE:
@@ -99,7 +106,7 @@ class StreamedReply:
         try:
             for sentence in split_sentences(self._until_stopped(pieces)):
                 on_sentence(sentence)
-                self._playlist.put(_Prefetch(voice, sentence))
+                self._playlist.put(_Prefetch(voice, sentence, self._stop))
         except Exception as e:  # noqa: BLE001 - raised again where the audio is played
             mark_failed_at(e, LLM)  # writing the reply; the voice's errors come from _Prefetch
             self._playlist.put(e)
@@ -112,8 +119,9 @@ class StreamedReply:
             yield piece
 
     def stop(self) -> None:
-        """Stops at the next piece of the reply; interrupt the brain to get there sooner. Doesn't wait: a reply
-        stuck on the network (a web search) finishes on its own and nothing it makes is played."""
+        """Stops at the next piece of the reply, and the voice at its next chunk; interrupt the brain to get there
+        sooner. Doesn't wait: a reply stuck on the network (a web search) finishes on its own and nothing it makes is
+        played."""
         self._stop.set()
 
     def __iter__(self) -> Iterator[bytes]:

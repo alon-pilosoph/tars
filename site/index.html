@@ -14,7 +14,7 @@
     <meta property="og:title" content="How TARS works" />
     <meta
       property="og:description"
-      content="A household voice assistant that answers in about 1.4 seconds, and nothing leaves the house until it's sure it heard “hey TARS”."
+      content="A household voice assistant that answers in about 1.2 seconds, and nothing leaves the house until it's sure it heard “hey TARS”."
     />
     <meta property="og:image" content="https://tars.alonp.dev/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -1511,7 +1511,7 @@
           </p>
           <div class="facts">
             <a class="fact" href="#timeline"
-              ><span class="k">Time</span><b>About 1.4 s</b
+              ><span class="k">Time</span><b>About 1.2 s</b
               ><span
                 >from your last word to its first sound. It starts answering before you finish, so the work
                 overlaps.</span
@@ -1579,18 +1579,18 @@
         <div class="wide-only">
           <div class="chart" id="chart"></div>
           <p class="note b">
-            A typical run, built from measured medians. Real answers take 1.3 to 1.4 s to the first sound. Detailed
+            A typical run, built from measured medians. Real answers take 1.2 to 1.5 s to the first sound. Detailed
             shows every lane.
           </p>
           <p class="note d">
-            A typical run, built from measured medians; measured 1.3 to 1.4 s to the first sound. After 0 the axis is 3
+            A typical run, built from measured medians; measured 1.2 to 1.5 s to the first sound. After 0 the axis is 3
             times wider per second, so the dense part is readable; the follow-up at the far right is not to scale. Drag
             the playhead along the seconds row to scrub, or tap anything to jump to it. Play moves the playhead at an
             even, slow pace, and Space plays or pauses.
           </p>
           <p class="note d measured">
             Every real answer is measured the same way. Each one is kept with how long each stage took and which model
-            wrote it, so the 1.3 to 1.4 s range can be checked against real use, not only a benchmark.
+            wrote it, so the 1.2 to 1.5 s range can be checked against real use, not only a benchmark.
           </p>
         </div>
 
@@ -1648,14 +1648,14 @@
             </div>
           </li>
           <li class="step" data-step="8">
-            <span class="n">8</span><span class="t">1.05 s</span>
+            <span class="n">8</span><span class="t">0.9 s</span>
             <div>
-              <p>Zeus, the Aura-2 voice, has the first sentence's audio.</p>
-              <span class="w d">Aura-2</span>
+              <p>James, the Cartesia voice, has the first sentence's audio.</p>
+              <span class="w d">Cartesia</span>
             </div>
           </li>
           <li class="step" data-step="9">
-            <span class="n">9</span><span class="t">1.4 s</span>
+            <span class="n">9</span><span class="t">1.2 s</span>
             <div>
               <p>First sound: “Nine minutes for hard, six for soft.”</p>
               <span class="w d">Pi</span>
@@ -1676,7 +1676,7 @@
             cloud stays hatched, closed, until stage 2 says yes, and the blue line marks the moment it opens.
           </p>
           <ol class="runs" id="runs"></ol>
-          <p class="note">A typical run, built from measured medians; measured 1.3 to 1.4 s to the first sound.</p>
+          <p class="note">A typical run, built from measured medians; measured 1.2 to 1.5 s to the first sound.</p>
           <p class="note d measured">
             Every real answer is kept with how long each stage took and which model wrote it, so that range can be
             checked against real use, not only a benchmark.
@@ -1996,7 +1996,7 @@
             </tr>
             <tr>
               <td>Voice</td>
-              <td>Deepgram Aura-2</td>
+              <td>Cartesia Sonic</td>
               <td>A spoken error line, made at startup</td>
             </tr>
             <tr>
@@ -2162,7 +2162,7 @@
                 lt: -2.64,
               },
               { k: "point", t0: -2.5, s: [4] },
-              { k: "muted", t0: 1.4, t1: 1.6, s: [9], label: "mic muted" },
+              { k: "muted", t0: 1.2, t1: 1.4, s: [9], label: "mic muted" },
               { k: "bar", t0: 1.9, t1: 2.95, s: [10], soft: 1, label: "listening" },
             ],
           },
@@ -2177,7 +2177,7 @@
             basic: 1,
             name: "Speaker",
             sub: "playback",
-            items: [{ k: "bar", t0: 1.4, t1: 1.85, s: [9], label: "first sound" }],
+            items: [{ k: "bar", t0: 1.2, t1: 1.65, s: [9], label: "first sound" }],
           },
           {
             g: "home",
@@ -2186,7 +2186,7 @@
             items: [
               { k: "point", t0: -2.7, s: [3], label: "wake" },
               { k: "point", t0: 0.5, s: [6], label: "turn" },
-              { k: "point", t0: 1.4, s: [9], label: "reply" },
+              { k: "point", t0: 1.2, s: [9], label: "reply" },
             ],
           },
           {
@@ -2212,7 +2212,7 @@
               { k: "idle", t0: -2.7, t1: 0.25 },
               { k: "point", t0: -2.7, s: [3], label: "open" },
               { k: "bar", t0: 0.25, t1: 0.65, s: [5, 7], label: "first sentence" },
-              { k: "bar", t0: 0.66, t1: 1.05, s: [7], soft: 1 },
+              { k: "bar", t0: 0.66, t1: 0.92, s: [7], soft: 1 },
             ],
           },
           {
@@ -2228,15 +2228,15 @@
           {
             g: "cloud",
             basic: 1,
-            name: "Deepgram Aura-2",
-            sub: "the voice, “Zeus”",
+            name: "Cartesia",
+            sub: "the voice, “James”",
             items: [
               { k: "closed", t0: -3.6, t1: -2.7 },
               { k: "idle", t0: -2.7, t1: 0.65 },
               { k: "point", t0: -2.7, s: [3], label: "two connections open" },
-              { k: "bar", t0: 0.65, t1: 1.05, s: [8], label: "sentence 1" },
-              { k: "bar", t0: 1.07, t1: 1.47, soft: 1, label: "sentence 2" },
-              { k: "bar", t0: 1.49, t1: 1.6, soft: 1 },
+              { k: "bar", t0: 0.65, t1: 0.92, s: [8], label: "sentence 1" },
+              { k: "bar", t0: 0.94, t1: 1.21, soft: 1, label: "sentence 2" },
+              { k: "bar", t0: 1.23, t1: 1.5, soft: 1 },
             ],
           },
         ];

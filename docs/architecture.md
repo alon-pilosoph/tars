@@ -58,19 +58,20 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    started answering within 0.5 s, the same Qwen on Cerebras is asked too; the first to say anything is kept, and the
    other is closed before any of its tools run. When the answer needs the web or the TARS page, Qwen replies
    `<look-up>`, and that turn goes to OpenAI's model (the Responses API, with web search and the send tool), which also
-   answers when neither Groq nor Cerebras can; all of them share one conversation. Each finished sentence goes to **text
-   to speech** (Deepgram's Aura-2 Zeus voice, from its EU servers, or OpenAI's Onyx) straight away, and playback starts
-   on the first audio chunk, so TARS starts talking while the reply is still being written. The TARS effect (a speaker
-   in a metal box) is applied as it streams. All of this starts early, when Flux thinks you may be done, while the
-   recording goes on: if you carry on talking the draft is thrown away, and it's only played, logged and allowed to send
-   anything once your turn is confirmed over (see [response time](latency.md)).
+   answers when neither Groq nor Cerebras can; all of them share one conversation. Each finished sentence goes to
+   **text to speech** (Cartesia's Sonic voice James; or a Deepgram voice, or OpenAI's Onyx) straight away, and
+   playback starts on the first audio chunk, so TARS starts talking while the reply is still being written. With
+   `[tts] effect = "tars"`, a speaker-in-a-metal-box effect is applied as it streams (off by default). All of this
+   starts early, when Flux thinks you may be done, while the recording goes on: if you carry on talking the draft is
+   thrown away, and it's only played, logged and allowed to send anything once your turn is confirmed over (see
+   [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
 class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
-to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and Deepgram's voice while you're still talking.
+to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice while you're still talking.
 
 ### When something fails
 
@@ -98,7 +99,8 @@ the rest of the code only sees the setup that runs:
 |---|---|
 | Groq or Cerebras | Qwen on the other one; with neither, OpenAI's model answers everything |
 | Deepgram | OpenAI transcribes once you've stopped (the local rules decide when), and OpenAI's voice speaks |
-| OpenAI | Deepgram hears (Flux) and speaks (Zeus); Qwen answers everything itself, hard questions included, with no web search or speech-to-text backup; it's told it can't look things up, so asked to, it says so |
+| Cartesia | Deepgram's Flux voice Wes speaks, or OpenAI's without Deepgram |
+| OpenAI | Deepgram hears (Flux) and Cartesia speaks; Qwen answers everything itself, hard questions included, with no web search or speech-to-text backup; it's told it can't look things up, so asked to, it says so |
 
 Each change prints one line at startup ("no OPENAI_API_KEY: Qwen answers everything, with no web search, thinking
 model or backup"). TARS stops, naming the keys, only when hearing, thinking or speaking has no service left. `--check`
@@ -156,18 +158,19 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
 
 - **Before the wake is confirmed, nothing.** Stage 1, stage 2, the speech detector and the fallback end-of-turn
   model run locally.
-- **After it,** four services each get part of the turn (with the default `config.toml`); one with no key in `.env`
+- **After it,** five services each get part of the turn (with the default `config.toml`); one with no key in `.env`
   gets nothing:
   - **Deepgram**, on its EU servers (`deepgram_host`), gets your request's audio, streamed for speech to text from
-    when you start speaking after a wake, and TARS's reply text, to speak it.
+    when you start speaking after a wake.
+  - **Cartesia** gets TARS's reply text, a sentence at a time, to speak it.
   - **Groq** gets the conversation so far (its text, with each request's `[Speaker: name]` tag and TARS's replies)
     and answers first.
   - **Cerebras** gets the same conversation when Groq is being skipped, fails, or hasn't started answering within
     0.5 s.
   - **OpenAI** gets the same conversation for the turns Qwen hands over (anything that needs the web or the TARS page)
     or can't answer, and runs those turns' web searches. It also transcribes a request's recording when Deepgram's
-    stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio or the reply text
-    instead of Deepgram.
+    stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
+    Deepgram, or the reply text instead of Cartesia.
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
   served from the same machine and talks to nothing else.
 

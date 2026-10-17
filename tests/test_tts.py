@@ -1,13 +1,15 @@
-"""The Deepgram voice: connections kept warm and reused, and each model family's end-of-sentence."""
+"""The websocket voices: connections kept warm and reused, and each service's end of a sentence."""
 
+import base64
 import json
+import threading
 import time
 
 import pytest
 from websockets.exceptions import ConnectionClosed
 
 from voice_assistant.config import TTSConfig
-from voice_assistant.tts import DeepgramSpeech
+from voice_assistant.tts import CartesiaSpeech, DeepgramSpeech
 
 
 class FakeSocket:
@@ -120,6 +122,7 @@ def test_a_stalled_voice_is_not_retried():
 def test_no_more_than_a_few_idle_connections_are_kept():
     sockets = [FakeSocket(True) for _ in range(6)]
     v = voice("flux-cliff-en", list(sockets))
+    v._turns = threading.BoundedSemaphore(6)  # more in flight than KEEP, as with a service that allows it
     streams = [v.stream(f"Sentence {i}.") for i in range(6)]
     for s_ in streams:
         next(s_)  # six sentences synthesizing at once, like a long reply
@@ -134,3 +137,93 @@ def test_warming_replaces_connections_too_old_to_trust():
     v._idle.put((-1000.0, old))
     v._top_up()
     assert old.closed and v._idle.qsize() == DeepgramSpeech.READY
+
+
+class CartesiaSocket:
+    """Answers each request the way Cartesia does: base64 chunks for its context, then done."""
+
+    def __init__(self, error: str = ""):
+        self.error, self.closed = error, False
+        self.inbox: list = []
+        self.requests: list[dict] = []
+
+    def send(self, message):
+        request = json.loads(message)
+        self.requests.append(request)
+        if self.error:
+            self.inbox.append(json.dumps({"type": "error", "message": self.error}))
+            return
+        audio = request["transcript"].encode()
+        self.inbox += [
+            json.dumps({"type": "chunk", "data": base64.b64encode(part).decode(), "context_id": request["context_id"]})
+            for part in (audio[:4], audio[4:])
+        ]
+        self.inbox.append(json.dumps({"type": "done", "done": True, "context_id": request["context_id"]}))
+
+    def recv(self, timeout=None):
+        return self.inbox.pop(0)
+
+    def close(self):
+        self.closed = True
+
+
+def cartesia(sockets: list) -> CartesiaSpeech:
+    v = CartesiaSpeech("key", TTSConfig(provider="cartesia", model="sonic-3.6", cartesia_voice="voice-id"))
+    v._connect = lambda: sockets.pop(0)
+    v._discard = lambda ws: ws.close()
+    return v
+
+
+def test_cartesia_speaks_each_sentence_as_its_own_context_on_a_reused_connection():
+    socket = CartesiaSocket()
+    v = cartesia([socket])
+    assert b"".join(v.stream("Hello there.")) == b"Hello there."
+    assert b"".join(v.stream("Again.")) == b"Again."
+    first, second = socket.requests
+    assert first["transcript"] == "Hello there." and first["context_id"] != second["context_id"]
+    assert (first["model_id"], first["voice"], first["continue"]) == ("sonic-3.6", "voice-id", False)
+    assert first["output_format"] == {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 24_000}
+    assert not socket.closed
+
+
+def test_a_cartesia_error_ends_the_reply_with_the_reason():
+    socket = CartesiaSocket(error="voice not found")
+    with pytest.raises(RuntimeError, match="voice not found"):
+        b"".join(cartesia([socket]).stream("Hi."))
+    assert socket.closed
+
+
+class Slow(FakeSocket):
+    """Speaks only when the test lets it, so several sentences are in flight at once."""
+
+    def __init__(self, gate, busy):
+        super().__init__(True)
+        self.gate, self.busy = gate, busy
+
+    def send(self, message):
+        if json.loads(message)["type"] == "Speak":
+            self.busy.append(self)
+            self.gate.wait()
+        super().send(message)
+
+
+def test_no_more_than_a_few_sentences_synthesize_at_once_and_the_rest_wait_their_turn():
+    gate, busy = threading.Event(), []
+    v = voice("flux-wes-en", [Slow(gate, busy) for _ in range(6)])
+    results: list[bytes] = []
+    threads = [
+        threading.Thread(target=lambda i=i: results.append(b"".join(v.stream(f"Sentence {i}.")))) for i in range(6)
+    ]
+    for t in threads:
+        t.start()
+    time.sleep(0.2)
+    in_flight = len(busy)
+    gate.set()
+    for t in threads:
+        t.join(timeout=5)
+    assert in_flight == DeepgramSpeech.AT_ONCE
+    assert sorted(results) == sorted(f"Sentence {i}.".encode() for i in range(6))
+
+
+def test_cartesia_makes_no_more_sentences_at_once_than_its_free_plan_allows():
+    assert cartesia([])._turns._value == CartesiaSpeech.AT_ONCE == 2
