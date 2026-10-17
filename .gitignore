@@ -4,10 +4,11 @@ __pycache__/
 *.pyc
 *.wav
 voice_data/
-# Models download on first use and models/personal/ is learned from the owner's voice: only the generic pair and its
-# license are committed.
+# Models download on first use and models/personal/ is learned from the owner's voice: only the generic pair, the
+# optional large pair and their license are committed.
 models/*
 !models/generic/
+!models/generic-large/
 !models/LICENSE.md
 
 .DS_Store
