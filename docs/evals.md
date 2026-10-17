@@ -55,7 +55,9 @@ An earlier full run the same day, before the harness kept transcripts, came out 
 | OpenAI, because Qwen couldn't | 1.64 / 2.62 | 22 |
 
 A full run is 217 requests: 146 to Qwen (341,000 tokens in, 19,000 out, 12,000 of them reasoning) and 71 to OpenAI
-(589,000 in, mostly web search results, and 12,000 out).
+(589,000 in, mostly web search results, and 12,000 out). It costs about $0.90: about $0.50 on OpenAI's standard tier,
+most of it the 45 or so web searches ($10 per 1,000, on any tier), and about $0.40 for Qwen on Cerebras, mostly its
+long instructions; `--estimate` says what a run will cost before it starts.
 
 **What holds up:** a follow-up after a web answer is handed over again rather than answered from the old one (3/3);
 Qwen answers from OpenAI's answer when it can (spelling a name from it); corrections ("actually, make it 8", "cancel

@@ -99,19 +99,27 @@ class RunResult:
 
 
 class Usage:
-    """Requests and tokens by model, from what the services report at the end of each streamed response."""
+    """Requests, tokens and web searches by model, from what the services report as each streamed response ends."""
 
     def __init__(self):
         self.by_model: dict[str, dict[str, int]] = {}
         self._lock = threading.Lock()
 
+    def _row(self, model: str) -> dict[str, int]:
+        return self.by_model.setdefault(model, {"requests": 0, "input": 0, "output": 0, "reasoning": 0, "searches": 0})
+
     def add(self, model: str, prompt: int, completion: int, reasoning: int) -> None:
         with self._lock:
-            row = self.by_model.setdefault(model, {"requests": 0, "input": 0, "output": 0, "reasoning": 0})
+            row = self._row(model)
             row["requests"] += 1
             row["input"] += prompt
             row["output"] += completion
             row["reasoning"] += reasoning
+
+    def searched(self, model: str) -> None:
+        """A web search: billed by the search, besides its results' tokens, and the dearest thing in a run."""
+        with self._lock:
+            self._row(model)["searches"] += 1
 
 
 class _Counted:
@@ -139,11 +147,13 @@ class _Counted:
                 details = getattr(u, "completion_tokens_details", None)
                 reasoning = getattr(details, "reasoning_tokens", None) or 0
                 self._usage.add(self._model, u.prompt_tokens or 0, u.completion_tokens or 0, reasoning)
+            elif getattr(event, "type", "") == "response.web_search_call.completed":
+                self._usage.searched(self._model)
             elif getattr(event, "type", "") == "response.completed" and (r := getattr(event, "response", None)):
                 if u := getattr(r, "usage", None):
                     details = getattr(u, "output_tokens_details", None)
                     reasoning = getattr(details, "reasoning_tokens", None) or 0
-                    self._usage.add(getattr(r, "model", "openai"), u.input_tokens, u.output_tokens, reasoning)
+                    self._usage.add(self._model, u.input_tokens, u.output_tokens, reasoning)
             yield event
 
 

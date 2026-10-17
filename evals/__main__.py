@@ -14,8 +14,12 @@ the reasoning effort and tools config.toml gives it; hand-offs really go to Open
 and only changes the times). A run that hits a real "too many requests" is run again after a pause, and isn't
 counted if it never gets through. Every run's transcript goes to evals/runs/<time>/ (not committed).
 
+Every run starts with an estimate of what it will cost, from earlier runs and evals/prices.toml; --budget refuses to
+start a run estimated over it, and stops one that gets there (web searches are most of it: $10 per 1,000).
+
 Exit status: 0 if it passes, 1 if --fail-under or --no-regressions fails it, 2 if some runs couldn't be run (still
-rate-limited, or a service refused the account: out of credits, a bad key; the eval then stops early).
+rate-limited, or a service refused the account: out of credits, a bad key; the eval then stops early), 3 if it was
+over --budget: estimated over it, so not started, or stopped when it got there.
 """
 
 import argparse
@@ -33,12 +37,12 @@ from pathlib import Path
 from voice_assistant.__main__ import brain_config, make_openai_client, make_quick_client
 from voice_assistant.config import QUICK_PROVIDERS, LLMConfig, load_config
 
+from .costs import RUNS, cost, estimate, load_prices
 from .report import compare, gate, summarize, wilson
 from .runner import RunResult, play
 from .scenarios import Scenario, load
 
 REPO = Path(__file__).parents[1]
-RUNS = Path(__file__).parent / "runs"
 PROVIDERS = {p.name.lower(): p for p in QUICK_PROVIDERS}
 WAITS_S = (10, 20, 40, 60, 60)
 # What the brain's behavior comes from besides config.toml: its rules, prompts and tools.
@@ -54,6 +58,24 @@ class Stop:
     def set(self, why: str) -> None:
         with self._lock:
             self.why = self.why or why
+
+
+OVER_BUDGET = "over the budget"
+
+
+class Spent:
+    """What the runs so far have cost; past `budget`, the reason to stop."""
+
+    def __init__(self, prices, fast: bool, budget: float | None):
+        self.prices, self.fast, self.budget, self.total = prices, fast, budget, 0.0
+        self._lock = threading.Lock()
+
+    def add(self, result: RunResult) -> str:
+        with self._lock:
+            self.total += cost(result.usage, self.prices, self.fast)
+            if self.budget is not None and self.total >= self.budget:
+                return f"{OVER_BUDGET} of ${self.budget:.2f}: ${self.total:.2f} spent"
+        return ""
 
 
 def run_until_answered(scenario: Scenario, run, stop: Stop) -> RunResult:
@@ -92,6 +114,8 @@ def main() -> None:
     parser.add_argument("--fail-under", type=float, help="fail if fewer runs than this share are right (e.g. 0.85)")
     parser.add_argument("--save", help="add the totals, as a line of JSON, to this file (e.g. evals/results.jsonl)")
     parser.add_argument("--list", action="store_true", help="list the scenarios, and stop")
+    parser.add_argument("--budget", type=float, help="dollars: don't start a run estimated over this, stop at it")
+    parser.add_argument("--estimate", action="store_true", help="say what the run would cost, and stop")
     args = parser.parse_args()
     if args.no_regressions and not args.baseline:
         parser.error("--no-regressions needs --baseline")
@@ -102,6 +126,22 @@ def main() -> None:
             print(f"{s.id:32} {len(s.turns)} turn{'s' * (len(s.turns) != 1)}  [{', '.join(s.tags)}]  {s.file}")
         return
     baseline = last_line(Path(args.baseline)) if args.baseline else None
+    prices = load_prices()
+    expected, unknown = estimate(scenarios, args.runs)
+    guess = cost(expected, prices, args.fast)
+    searches = sum(u.get("searches", 0) for u in expected.values())
+    unpriced = prices.unpriced(expected)
+    runs = f"{len(scenarios)} scenarios x {args.runs} runs"
+    print(f"Estimated cost: ${guess:.2f} ({runs}, about {searches:.0f} web searches;")
+    print(f"prices checked {prices.checked}" + (f"; no price for {', '.join(unpriced)})" if unpriced else ")"))
+    if unknown:
+        print(f"    no earlier runs of {', '.join(unknown)}: estimated as an average scenario")
+    if args.estimate:
+        return
+    if args.budget is not None and guess > args.budget:
+        print(f"Not run: estimated over the budget of ${args.budget:.2f}.")
+        sys.exit(3)
+    print()
 
     cfg = load_config(REPO / "config.toml")
     provider = PROVIDERS[args.brain]
@@ -127,11 +167,18 @@ def main() -> None:
         return play(scenario, llm, quick_client, model, openai_client, provider.name)
 
     started = datetime.now().astimezone()
-    jobs, stop = [s for s in scenarios for _ in range(args.runs)], Stop()
+    jobs, stop, spent = [s for s in scenarios for _ in range(args.runs)], Stop(), Spent(prices, args.fast, args.budget)
+
+    def counted_run(scenario: Scenario) -> RunResult:
+        result = run_until_answered(scenario, run, stop)
+        if over := spent.add(result):
+            stop.set(over)
+        return result
+
     with ThreadPoolExecutor(args.parallel) as pool:
-        results = list(pool.map(lambda s: run_until_answered(s, run, stop), jobs))
+        results = list(pool.map(counted_run, jobs))
     if stop.why:
-        print(f"STOPPED: a service refused the account, so the result is incomplete: {stop.why}\n")
+        print(f"STOPPED, so the result is incomplete: {stop.why}\n")
 
     print_runs(scenarios, results, args.show)
     summary = summarize(scenarios, results) | {
@@ -148,7 +195,9 @@ def main() -> None:
         "think": f"{llm.think_model or llm.model} {llm.think_effort}".strip(),
         "runs": args.runs,
     }
+    summary["cost_usd"] = round(spent.total, 3)
     print_totals(summary)
+    print(f"Cost: ${spent.total:.2f} (estimated ${guess:.2f})")
     changes = compare(summary, baseline) if baseline else []
     if baseline:
         print_comparison(changes, baseline, summary)
@@ -166,7 +215,7 @@ def main() -> None:
     if summary["not_run"]:
         why = stop.why or f"still rate-limited after {sum(WAITS_S)} s"
         print(f"\n{summary['not_run']} run(s) aren't counted: {why}")
-        sys.exit(2)
+        sys.exit(3 if why.startswith(OVER_BUDGET) else 2)
 
 
 def pick(scenarios: list[Scenario], ids: list[str] | None, tags: list[str] | None) -> list[Scenario]:
@@ -259,9 +308,10 @@ def print_totals(summary: dict) -> None:
         print(f"    {route:16} {t['median']:.2f} / {t['p90']:.2f}  ({t['turns']} turns)")
     print("Tokens:")
     for model, u in summary["usage"].items():
+        searches = f", {u['searches']} web searches" if u.get("searches") else ""
         print(
             f"    {model:24} {u['requests']:>5} requests, {u['input']:>9,} in, {u['output']:>8,} out "
-            f"({u['reasoning']:,} reasoning)"
+            f"({u['reasoning']:,} reasoning){searches}"
         )
 
 

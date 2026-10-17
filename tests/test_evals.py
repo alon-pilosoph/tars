@@ -217,7 +217,7 @@ def test_tokens_are_counted_by_model_without_changing_the_requests():
     client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
     s = Scenario("t", "a test", [_turn({"say": "capital?"}, "t")], ["t"])
     result = play(s, CFG, client, "qwen", fake_openai_chat(lambda m: "x"))
-    assert result.usage == {"qwen": {"requests": 1, "input": 100, "output": 20, "reasoning": 0}}
+    assert result.usage == {"qwen": {"requests": 1, "input": 100, "output": 20, "reasoning": 0, "searches": 0}}
     assert "stream_options" not in asked[0]
 
 
@@ -323,3 +323,48 @@ def test_a_reply_that_acks_and_puts_off_a_reminder_leaves_it_set_as_the_assistan
 )
 def test_a_reminder_text_that_copies_what_tars_says_around_it_is_caught(text, wrong):
     assert bool(check_reminder_text([Change(ADD, NewReminder(REMINDER, text))])) is wrong
+
+
+def test_a_runs_cost_is_its_tokens_at_each_models_price_and_its_searches():
+    from evals.costs import Prices, cost
+
+    prices = Prices({"luna": {"input": 0.10, "output": 0.50, "fast": 2.0}}, search=0.01, checked="today")
+    use = {"luna": {"input": 1_000_000, "output": 100_000, "searches": 10}, "qwen": {"input": 5_000_000}}
+    assert cost(use, prices) == pytest.approx(0.10 + 0.05 + 0.10)
+    assert cost(use, prices, fast=True) == pytest.approx(0.20 + 0.10 + 0.10)  # searches cost the same on any tier
+    assert prices.unpriced(use) == ["qwen"]
+
+
+def test_the_estimate_comes_from_earlier_runs_of_each_scenario(tmp_path):
+    from evals.costs import estimate
+
+    (tmp_path / "2026-10-17-100000").mkdir()
+    old = {"scenario": "a", "usage": {"luna": {"input": 100, "searches": 2}}, "turns": []}
+    older = {"scenario": "b", "usage": {"luna": {"input": 300}}, "turns": [{"route": "look-up"}, {"route": "quick"}]}
+    lines = [json.dumps(r) for r in (old, older)]
+    (tmp_path / "2026-10-17-100000" / "runs.jsonl").write_text("\n".join(lines) + "\n")
+    a, b, c = (Scenario(i, "x", [_turn({"say": "hi"}, "t")], ["t"]) for i in "abc")
+    use, unknown = estimate([a, b, c], runs=2, folder=tmp_path)
+    assert unknown == ["c"]  # no earlier runs: estimated as the average of the others
+    assert use["luna"]["input"] == pytest.approx(2 * (100 + 300 + 200))
+    assert use["luna"]["searches"] == pytest.approx(2 * (2 + 1 + 1.5))  # b: one search per turn OpenAI answered
+
+
+def test_the_budget_stops_the_runs_once_its_spent():
+    import evals.__main__ as cli
+    from evals.costs import Prices
+    from evals.runner import RunResult
+
+    spent = cli.Spent(Prices({}, search=0.01, checked="today"), fast=False, budget=0.05)
+    run = RunResult("a", [], usage={"luna": {"searches": 3}})
+    assert spent.add(run) == ""
+    assert spent.add(run).startswith("over the budget of $0.05")
+
+
+def test_web_searches_are_counted():
+    from evals.runner import Usage, _Counted
+
+    usage = Usage()
+    events = [types.SimpleNamespace(type="response.web_search_call.completed")] * 2
+    list(_Counted(events, usage, "luna"))
+    assert usage.by_model["luna"]["searches"] == 2

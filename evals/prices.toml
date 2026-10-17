@@ -1,0 +1,21 @@
+# What the evals cost, for the estimate before a run and for --budget. Dollars per million tokens, and per web search.
+# Prices change: check them against the providers' pages before trusting an estimate, and update the date.
+#   OpenAI: https://developers.openai.com/api/docs/pricing
+#   Cerebras: https://www.cerebras.ai/pricing
+checked = "2026-10-17"
+
+# OpenAI's web search is billed per search ($10 per 1,000), whatever the tier, besides its results' tokens. In a full
+# run it's most of the cost.
+[searches]
+each = 0.01
+
+[models."gpt-6-luna"]
+input = 0.10
+output = 0.50
+fast = 2.0  # priority processing (--fast) costs this many times as much per token
+
+# From the Cerebras account's billing page (not on its public page). Qwen's instructions are long (about 2,500 tokens a
+# request), so its input is a large part of a run's cost.
+[models."qwen-3.8-27b"]
+input = 0.99
+output = 1.49

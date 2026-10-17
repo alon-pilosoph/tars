@@ -15,10 +15,24 @@ uv run python -m evals --baseline evals/results.jsonl --no-regressions --fail-un
 uv run python -m evals --save evals/results.jsonl        # keep the totals as the new baseline
 ```
 
+## What a run costs
+
+Every run starts with an estimate, from what the same scenarios used in earlier runs and the prices in
+`evals/prices.toml` (check them against the providers' pages: they change). **Web searches are most of it**: OpenAI
+bills $10 per 1,000 on any tier, besides their results' tokens, and a full run makes about 45. A full run (29
+scenarios, 3 runs each) comes to about $0.90: about $0.50 on OpenAI, most of it searches, and about $0.40 for Qwen on
+Cerebras ($0.99 per million tokens in, $1.49 out; its instructions are long, so it's mostly input).
+
+```bash
+uv run python -m evals --estimate                 # what it would cost, and nothing else
+uv run python -m evals --tag hand-off --budget 1  # refuses to start if estimated over $1, and stops when it gets there
+```
+
 ## What a run leaves behind
 
 - **The report**: each scenario's runs right, and every turn that went wrong with what it said and did; then the
-  totals with 95% Wilson intervals, by tag, first words by where the turn went, and tokens by model.
+  totals with 95% Wilson intervals, by tag, first words by where the turn went, tokens and web searches by model,
+  and what it cost against the estimate.
 - **Every run's transcript**, in `evals/runs/<time>/runs.jsonl` (not committed): for each turn, the prompt, the reply
   as written and as heard, where it went, what it changed and sent, the times and what was wrong; and
   `summary.json`. That's what to read when a scenario fails, and what a judge model grades.
@@ -29,7 +43,8 @@ uv run python -m evals --save evals/results.jsonl        # keep the totals as th
   (with 3 runs, 3/3 to 1/3), *better* the other way, and *changed* when its definition changed, since then the two
   aren't comparable. One run either way is what the same code does from run to run.
 - **An exit status for checks**: 0 if it passes; 1 if `--fail-under` (the share of runs right) or `--no-regressions`
-  (nothing worse than the baseline) fails it; 2 if the result is incomplete: some runs were still rate-limited after
+  (nothing worse than the baseline) fails it; 3 if it was over `--budget` (estimated over it, so not started, or
+  stopped when it got there); 2 if the result is incomplete: some runs were still rate-limited after
   five pauses, or a service refused the account (out of credits, a bad key, no access). A refusal stops the eval
   early, since every run after it would fail the same way, and it's never scored as TARS getting a turn wrong.
 
