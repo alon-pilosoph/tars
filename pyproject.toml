@@ -23,6 +23,8 @@ dependencies = [
     "uvicorn>=0.30",
     "websockets>=14",
     "onnxruntime>=1.20",
+    "psutil>=7",  # the Status page's CPU, memory, temperature and uptime
+    "httpx>=0.28",  # Telegram, and the services' status pages
 ]
 
 [project.urls]
@@ -50,7 +52,6 @@ packages = ["src/voice_assistant"]
 [dependency-groups]
 dev = [
     "anthropic>=1",
-    "httpx>=0.28.1",
     "livekit>=1.1",
     "pytest>=9.1.1",
     "ruff==0.16.10",

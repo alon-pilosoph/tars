@@ -70,6 +70,60 @@ export interface ModelsInfo {
 export interface Status {
   clustering: boolean;
   enroll_at: number; // requests a named voice needs before TARS builds its voiceprint
+  health: boolean; // the Status page is there
+}
+
+/** One of TARS's processes, from the heartbeat it writes every 30 s. */
+export interface ProcessHealth {
+  name: "assistant" | "web" | "telegram";
+  label: string;
+  running: boolean;
+  started: number | null;
+  beat: number | null; // its last heartbeat; null: never seen
+  pid: number | null;
+  version: string; // the git commit it runs
+  unit: string; // its systemd unit at home
+  unit_state: string | null; // null: no systemd here (a Mac)
+}
+
+export type CheckStatus = "ok" | "warn" | "fail";
+
+/** A cloud service, asked with TARS's key, and as its own status page says it is. */
+export interface ServiceHealth {
+  name: string;
+  status: CheckStatus;
+  detail: string;
+  fix: string;
+  page: {
+    indicator: "none" | "minor" | "major" | "critical" | "maintenance" | "unknown";
+    description: string;
+    url: string;
+  } | null;
+}
+
+export interface MachineHealth {
+  host: string;
+  system: string;
+  python: string;
+  cpu_percent: number;
+  cores: number;
+  load: [number, number, number];
+  memory_total: number;
+  memory_used: number;
+  temperature_c: number | null; // null: the machine doesn't say (a Mac)
+  throttled: string[] | null; // a Pi's power and heat warnings; null: not a Pi
+  disk_total: number;
+  disk_used: number;
+  uptime_s: number;
+}
+
+export interface Health {
+  now: number;
+  processes: ProcessHealth[];
+  today: { wakes: number; answers: number; failed: number; last_wake: number | null };
+  services: ServiceHealth[];
+  services_asked: number;
+  machine: MachineHealth;
 }
 
 export interface Speaker {

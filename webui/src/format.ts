@@ -1,4 +1,16 @@
-import type { AnsweredBy, ConversationWake, FailedAt, Item, Metric, Reminder, TarsEvent, Turn } from "./types";
+import type {
+  AnsweredBy,
+  ConversationWake,
+  FailedAt,
+  Item,
+  MachineHealth,
+  Metric,
+  ProcessHealth,
+  Reminder,
+  ServiceHealth,
+  TarsEvent,
+  Turn,
+} from "./types";
 
 export type Kind = "answer" | "ask" | "ignore" | "near_miss";
 
@@ -56,8 +68,19 @@ export function fmtSize(bytes: number | null | undefined) {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
+  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${(bytes / 1073741824).toFixed(1)} GB`;
 }
+
+/** How long, in the one unit that reads best: "40 seconds", "12 minutes", "5 hours", "3 days". */
+export function duration(seconds: number) {
+  if (seconds < 90) return plural(Math.max(1, Math.round(seconds)), "second");
+  if (seconds < 90 * 60) return plural(Math.round(seconds / 60), "minute");
+  if (seconds < 36 * 3600) return plural(Math.round(seconds / 3600), "hour");
+  return plural(Math.round(seconds / 86400), "day");
+}
+
+export const ago = (ts: number, now: number) => (now - ts < 10 ? "just now" : `${duration(now - ts)} ago`);
 
 export const itemName = (i: Item) => i.title || i.name || "";
 
@@ -182,3 +205,42 @@ export function reminderFor(r: Reminder) {
     parts.push(`from ${personName(r.from_name)}`);
   return parts.join(", ");
 }
+
+/* The Status page. A line is `bad` when something needs looking at, which is all the accent colour is for. */
+
+export interface HealthLine {
+  text: string;
+  bad: boolean;
+}
+
+export function processLine(p: ProcessHealth, now: number): HealthLine {
+  const unit = p.unit_state && p.unit_state !== "active" ? `; systemd says ${p.unit_state}` : "";
+  if (p.running && p.started != null) {
+    const version = p.version ? `, version ${p.version}` : "";
+    return { text: `Running for ${duration(now - p.started)}${version}${unit}`, bad: Boolean(unit) };
+  }
+  if (p.beat != null) return { text: `Stopped: last heard from ${ago(p.beat, now)}${unit}`, bad: true };
+  return { text: `Not seen running${unit}`, bad: true };
+}
+
+export function pageLine(page: ServiceHealth["page"]): HealthLine {
+  if (!page) return { text: "No status page", bad: false };
+  if (page.indicator === "unknown") return { text: "Couldn't read it", bad: false };
+  return { text: page.description, bad: page.indicator !== "none" };
+}
+
+export function memoryLine(m: MachineHealth) {
+  return `${fmtSize(m.memory_used)} of ${fmtSize(m.memory_total)} (${Math.round((m.memory_used / m.memory_total) * 100)}%)`;
+}
+
+export function diskLine(m: MachineHealth) {
+  const free = m.disk_total - m.disk_used;
+  return `${fmtSize(free)} free of ${fmtSize(m.disk_total)} (${Math.round((m.disk_used / m.disk_total) * 100)}% used)`;
+}
+
+/** Over 2 GB free and under 90% used is fine; a card that fills up stops TARS keeping anything. */
+export const diskLow = (m: MachineHealth) =>
+  m.disk_total - m.disk_used < 2 * 1073741824 || m.disk_used / m.disk_total > 0.9;
+
+/** A Pi 5 throttles at 85 °C, and its fan comes on well below: 80 °C is worth a look. */
+export const hot = (m: MachineHealth) => m.temperature_c != null && m.temperature_c >= 80;

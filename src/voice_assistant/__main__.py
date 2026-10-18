@@ -25,6 +25,7 @@ from .config import (
     load_config,
     with_keys,
 )
+from .health import Heartbeat
 from .recorder import make_recorder
 from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
@@ -199,6 +200,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .reminders import Reminders
 
     reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
+    Heartbeat(log.folder, "web", root).start()
     serve(
         log,
         host,
@@ -208,7 +210,33 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
         reminders=reminders,
         voice_names=speaker_id.names if speaker_id else list,
+        health=make_health(cfg, root, log),
     )
+
+
+def make_health(cfg: Config, root: Path, log):
+    """What the web UI's Status page shows, as it is when asked (health.py)."""
+    import time
+
+    from .check import service_checks, systemd_state
+    from .health import Services, machine, processes, today
+
+    services = Services(lambda: service_checks(cfg, root))
+    wanted = ["assistant", "web"] + ["telegram"] * cfg.telegram.enabled
+
+    def now() -> dict:
+        found, asked = services.get()
+        at = time.time()
+        return {
+            "now": at,
+            "processes": processes(log.folder, wanted, systemd_state, at),
+            "today": today(log.store, at),
+            "services": found,
+            "services_asked": asked,
+            "machine": machine(log.folder),
+        }
+
+    return now
 
 
 def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) -> None:
@@ -402,6 +430,8 @@ def telegram(cfg: Config, root: Path) -> None:
             raise ConfigError(f"Telegram refused {TELEGRAM_KEY}: check it in {env}.") from None
         raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
     events = make_event_log(cfg, root)
+    if events:
+        Heartbeat(events.folder, "telegram", root).start()
     tools = None
     if cfg.reminders.enabled and events:
         voiceprints = root / cfg.speaker.voiceprints
@@ -458,6 +488,8 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     from .journal import Journal
 
     events = make_event_log(cfg, root)
+    if events:
+        Heartbeat(events.folder, "assistant", root).start()
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders)

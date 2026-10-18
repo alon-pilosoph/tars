@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { post, writesDone, writesMade } from "./api";
 import {
+  ago,
+  diskLow,
+  duration,
   failedLine,
   fmtSize,
+  hot,
+  pageLine,
+  processLine,
   metricChange,
   personName,
   reminderEnded,
@@ -18,7 +24,7 @@ import {
 import { md, plain } from "./markdown";
 import { type State, forPerson, get, personShown } from "./store";
 import { normalize, snapshotOf, within } from "./store/load";
-import type { ApiConversation, Cluster, Item, Reminder, TarsEvent } from "./types";
+import type { ApiConversation, Cluster, Item, MachineHealth, ProcessHealth, Reminder, TarsEvent } from "./types";
 
 describe("md", () => {
   it("escapes before adding any tag", () => {
@@ -152,6 +158,69 @@ describe("format", () => {
     );
     expect(metricChange({ name: "TV", current: "0.0", candidate: "0.0", lower_is_better: true })?.verdict).toBe("same");
     expect(metricChange({ name: "odd", current: "n/a", candidate: "1" })).toBeNull();
+  });
+});
+
+describe("the Status page", () => {
+  const NOW = 1_800_000_000;
+  const proc = (x: Partial<ProcessHealth>): ProcessHealth => ({
+    name: "assistant",
+    label: "The assistant",
+    running: true,
+    started: NOW - 3 * 86400,
+    beat: NOW - 12,
+    pid: 812,
+    version: "9bc2ba5",
+    unit: "voice-assistant",
+    unit_state: "active",
+    ...x,
+  });
+  it("says how long, in the unit that reads best", () => {
+    expect([duration(40), duration(12 * 60), duration(5 * 3600), duration(3 * 86400)]).toEqual([
+      "40 seconds",
+      "12 minutes",
+      "5 hours",
+      "3 days",
+    ]);
+    expect([ago(NOW - 3, NOW), ago(NOW - 600, NOW)]).toEqual(["just now", "10 minutes ago"]);
+    expect(fmtSize(58 * 1073741824)).toBe("58.0 GB");
+  });
+  it("says a process is running, stopped, or never seen, and flags all but the first", () => {
+    expect(processLine(proc({}), NOW)).toEqual({ text: "Running for 3 days, version 9bc2ba5", bad: false });
+    expect(processLine(proc({ unit_state: null, version: "" }), NOW).text).toBe("Running for 3 days");
+    expect(processLine(proc({ running: false, beat: NOW - 7200, unit_state: "failed" }), NOW)).toEqual({
+      text: "Stopped: last heard from 2 hours ago; systemd says failed",
+      bad: true,
+    });
+    expect(processLine(proc({ running: false, beat: null, started: null, unit_state: null }), NOW)).toEqual({
+      text: "Not seen running",
+      bad: true,
+    });
+  });
+  it("flags a service's own trouble, but not a status page it couldn't read", () => {
+    const page = (indicator: "none" | "minor" | "unknown", description: string) => ({
+      indicator,
+      description,
+      url: "",
+    });
+    expect(pageLine(page("none", "All Systems Operational"))).toEqual({ text: "All Systems Operational", bad: false });
+    expect(pageLine(page("minor", "Partially Degraded Service")).bad).toBe(true);
+    expect(pageLine(page("unknown", "couldn't read it (ConnectError)"))).toEqual({
+      text: "Couldn't read it",
+      bad: false,
+    });
+    expect(pageLine(null)).toEqual({ text: "No status page", bad: false });
+  });
+  it("flags a card that's filling up and a Pi that's running hot", () => {
+    const gb = 1073741824;
+    const m = (x: Partial<MachineHealth>) =>
+      ({ disk_total: 58 * gb, disk_used: 21 * gb, temperature_c: 52, ...x }) as MachineHealth;
+    expect([diskLow(m({})), diskLow(m({ disk_used: 57 * gb })), diskLow(m({ disk_used: 53 * gb }))]).toEqual([
+      false,
+      true,
+      true,
+    ]);
+    expect([hot(m({})), hot(m({ temperature_c: 81 })), hot(m({ temperature_c: null }))]).toEqual([false, true, false]);
   });
 });
 

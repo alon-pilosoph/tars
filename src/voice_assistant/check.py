@@ -310,54 +310,21 @@ def service_status(name: str, key: str, status: int, took: float) -> Result:
     return Result(name, OK, f"answers ({took:.1f} s)")
 
 
-def check_all(cfg: Config, root: Path) -> int:
-    import sounddevice as sd
+def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
+    """The cloud services TARS uses, each asked with its own key: --check runs them, and so does the web UI's Status
+    page. A service TARS doesn't use, as config.toml and .env set it up, is a SKIP."""
     from dotenv import dotenv_values
 
     from . import __main__ as cli
-    from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
     from .tts import CARTESIA_API, CARTESIA_VERSION
 
     env = root / ".env"
-    have, asked = cli.env_keys(env), cfg
+    have = cli.env_keys(env)
     try:
         cfg, _ = with_keys(cfg, have)
         have_keys = True
     except ConfigError:
         have_keys = False
-
-    def audio_device(kind: str):
-        names, default_in, default_out = device_names()
-        wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
-        return device(kind, wanted, find_device, names, default_in if kind == "input" else default_out)
-
-    def listen():
-        print(f"(listening {LISTEN_S:.0f} s: say something)", flush=True)
-
-        def measure():
-            with Microphone(find_device(cfg.audio.input_device, "input")) as mic:
-                return mic_level(mic.read, round(LISTEN_S / BLOCK_SECONDS))
-
-        return within(
-            LISTEN_S + 7,
-            "Microphone",
-            measure,
-            "it didn't open, or sent no audio",
-            "it may be waiting for permission (macOS: run it from a terminal you can see, and allow the microphone), "
-            "or in use by something that won't share it",
-        )
-
-    def speaking():
-        if not have_keys:
-            return Result("Voice", SKIP, "needs the API keys")
-        _, _, tts = cli.make_pipeline(cfg, root, typed=True)
-        out = find_device(cfg.audio.output_device, "output")
-
-        def say():
-            with Speaker(out, tts.sample_rate, cfg.audio.playback_prebuffer_s) as speaker:
-                return voice(tts.stream, lambda audio: speaker.play_pcm_stream(iter(audio), tts.sample_rate))
-
-        return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")
 
     def openai():
         if OPENAI_KEY not in have:
@@ -400,6 +367,8 @@ def check_all(cfg: Config, root: Path) -> int:
     def cartesia():
         if cfg.tts.provider != "cartesia":
             return Result("Cartesia", SKIP, "not used")
+        if not have_keys:
+            return Result("Cartesia", SKIP, "needs the API keys")
         key = cli.api_key(env, CARTESIA_KEY)
         t = time.perf_counter()
         try:
@@ -414,6 +383,62 @@ def check_all(cfg: Config, root: Path) -> int:
         from .telegram import Bot
 
         return Bot(token).me()
+
+    return [
+        ("OpenAI", openai),
+        *((provider.name, lambda provider=provider: quick(provider)) for provider in QUICK_PROVIDERS),
+        ("Deepgram", deepgram),
+        ("Cartesia", cartesia),
+        ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
+    ]
+
+
+def check_all(cfg: Config, root: Path) -> int:
+    import sounddevice as sd
+
+    from . import __main__ as cli
+    from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
+
+    env = root / ".env"
+    have, asked = cli.env_keys(env), cfg
+    try:
+        cfg, _ = with_keys(cfg, have)
+        have_keys = True
+    except ConfigError:
+        have_keys = False
+
+    def audio_device(kind: str):
+        names, default_in, default_out = device_names()
+        wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
+        return device(kind, wanted, find_device, names, default_in if kind == "input" else default_out)
+
+    def listen():
+        print(f"(listening {LISTEN_S:.0f} s: say something)", flush=True)
+
+        def measure():
+            with Microphone(find_device(cfg.audio.input_device, "input")) as mic:
+                return mic_level(mic.read, round(LISTEN_S / BLOCK_SECONDS))
+
+        return within(
+            LISTEN_S + 7,
+            "Microphone",
+            measure,
+            "it didn't open, or sent no audio",
+            "it may be waiting for permission (macOS: run it from a terminal you can see, and allow the microphone), "
+            "or in use by something that won't share it",
+        )
+
+    def speaking():
+        if not have_keys:
+            return Result("Voice", SKIP, "needs the API keys")
+        _, _, tts = cli.make_pipeline(cfg, root, typed=True)
+        out = find_device(cfg.audio.output_device, "output")
+
+        def say():
+            with Speaker(out, tts.sample_rate, cfg.audio.playback_prebuffer_s) as speaker:
+                return voice(tts.stream, lambda audio: speaker.play_pcm_stream(iter(audio), tts.sample_rate))
+
+        return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")
 
     def models():
         def load():
@@ -458,15 +483,11 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Local models", models),
         ("Echo cancellation", echo),
         ("Voiceprints", speakers),
-        ("OpenAI", openai),
-        *((provider.name, lambda provider=provider: quick(provider)) for provider in QUICK_PROVIDERS),
-        ("Deepgram", deepgram),
-        ("Cartesia", cartesia),
+        *service_checks(asked, root),
         ("Voice", speaking),
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
-        ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
         ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
         ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
         *(

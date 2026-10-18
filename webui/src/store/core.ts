@@ -2,7 +2,17 @@
 import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { LINK, type PersonFilter, type Tab } from "../params";
-import type { Cluster, Conversation, Item, ModelsInfo, RemindersInfo, Status, TarsEvent, VoiceSample } from "../types";
+import type {
+  Cluster,
+  Conversation,
+  Health,
+  Item,
+  ModelsInfo,
+  RemindersInfo,
+  Status,
+  TarsEvent,
+  VoiceSample,
+} from "../types";
 
 export interface Toast {
   id: number;
@@ -62,6 +72,9 @@ export interface State {
   convs: Conversation[];
   items: Item[];
   reminders: RemindersInfo | null; // always as the server has them: they change by the minute
+  health: Health | null; // the Status page's, loaded when it's shown, and with Refresh while it is
+  healthLoading: boolean;
+  healthError: string;
   snapshot: Snapshot;
   open: Set<number>; // conversations opened up, with their details
   moreTurns: Set<number>;
@@ -82,10 +95,13 @@ let current: State = {
   events: [],
   clusters: [],
   models: null,
-  status: { clustering: false, enroll_at: 0 },
+  status: { clustering: false, enroll_at: 0, health: false },
   convs: [],
   items: [],
   reminders: null,
+  health: null,
+  healthLoading: false,
+  healthError: "",
   snapshot: {
     events: new Set(),
     convs: new Set(),

@@ -66,6 +66,7 @@ const STATES = [
   "tab=models",
   "tab=models&modal=rollback:v1",
   "tab=models&demo=empty",
+  "tab=status",
 ];
 
 /** Click the i-th match, click the first match whose text starts with `text`, or type into a field. */
@@ -106,6 +107,7 @@ const ACTS: [string, string, Step[]][] = [
   ["Name this voice", "", [{ click: ".name-link" }]],
   ["Reminders: new", "tab=reminders", [{ clickText: ".page-head .btn", text: "New reminder" }]],
   ["Reminders: stop", "tab=reminders", [{ clickText: ".rem .btn", text: "Stop" }]],
+  ["nav to Status", "", [{ clickText: ".nav-2 a", text: "Status" }]],
 ];
 
 function act(steps: Step[]) {

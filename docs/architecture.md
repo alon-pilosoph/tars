@@ -188,8 +188,10 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
 - **With `[telegram]` on,** Telegram gets what's written in the household's chats with TARS, its replies there, and
   the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)). TARS asks
   Telegram for new messages, so nothing at home is opened to the internet.
+- **When the web UI's Status page is opened,** each service TARS has a key for is asked for its model list or
+  account (no conversation, no tokens), and each one's public status page is read (nothing is sent to it).
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything else the web UI shows. The web UI
-  is served from the same machine and talks to nothing else.
+  is served from the same machine and talks to nothing else but the Status page's checks.
 
 ## The web UI
 
@@ -198,6 +200,11 @@ React page built from `webui/` (committed as `src/voice_assistant/webui_static/`
 assistant writes and the web UI reads and edits (as does TARS on Telegram, when it's on): SQLite in WAL mode lets
 them all work at once, and every change of more than one row is one transaction. Each runs as its own service, so a
 crash in one never takes another down. The web UI is described in [the web UI](web-ui.md).
+
+**Each process writes a heartbeat**, `voice_data/events/heartbeats/<name>.json`, every 30 seconds (`health.py`), and
+the web UI's Status page reads them: a process whose heartbeat is older than three beats has stopped or hangs, which
+systemd's "active" alone doesn't show. Writing it never touches the database, and a heartbeat that can't be written
+costs only a line in the log.
 
 **It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
 elsewhere could reach it through someone's browser:
@@ -227,6 +234,7 @@ The assistant is `src/voice_assistant/`:
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
 | Downloads | `models.py` (the small local models, on first use) |
 | Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Telegram) |
+| Is it all running | `health.py` (heartbeats, today's counts, the services and their status pages, the machine: what the Status page shows) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),

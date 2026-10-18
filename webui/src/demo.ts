@@ -8,11 +8,13 @@ import type {
   Conversation,
   ConversationWake,
   FailedAt,
+  Health,
   Item,
   Label,
   Metric,
   ModelsInfo,
   Outcome,
+  ProcessHealth,
   Reminder,
   RemindersInfo,
   Speaker,
@@ -992,7 +994,8 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
       .sort((a, b) => b.size - a.size);
   }
   if (p === "/api/models") return d.models;
-  if (p === "/api/status") return { clustering: true, enroll_at: 5 };
+  if (p === "/api/status") return { clustering: true, enroll_at: 5, health: true };
+  if (p === "/api/health") return demoHealth(Date.now() / 1000);
   if (p === "/api/conversations") return d.convs.map(withItems).sort((a, b) => b.started - a.started);
   if ((m = p.match(/^\/api\/conversations\/(\d+)$/))) {
     const id = Number(m[1]);
@@ -1117,4 +1120,90 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
     return ok;
   }
   throw new Error("Not Found");
+}
+
+/** The Status page's sample: a Pi that's been up a few days, Telegram stopped, and Groq having a bad morning. */
+function demoHealth(at: number): Health {
+  const day = 86400;
+  const process = (name: ProcessHealth["name"], label: string, running: boolean, started: number) => ({
+    name,
+    label,
+    running,
+    started,
+    beat: running ? at - 12 : at - 2 * 3600,
+    pid: 812,
+    version: "9bc2ba5",
+    unit: name === "assistant" ? "voice-assistant" : `voice-assistant-${name}`,
+    unit_state: running ? "active" : "failed",
+  });
+  const page = (url: string, indicator: "none" | "minor", description: string) => ({ indicator, description, url });
+  return {
+    now: at,
+    processes: [
+      process("assistant", "The assistant", true, at - 3 * day),
+      process("web", "The web UI", true, at - 3 * day),
+      process("telegram", "Telegram", false, at - 3 * day),
+    ],
+    today: { wakes: 23, answers: 21, failed: 1, last_wake: at - 25 * 60 },
+    services: [
+      {
+        name: "OpenAI",
+        status: "ok",
+        detail: "answers (0.4 s)",
+        fix: "",
+        page: page("https://status.openai.com", "none", "All Systems Operational"),
+      },
+      {
+        name: "Groq",
+        status: "ok",
+        detail: "answers (0.2 s)",
+        fix: "",
+        page: page("https://groqstatus.com", "minor", "Partially Degraded Service"),
+      },
+      {
+        name: "Cerebras",
+        status: "ok",
+        detail: "answers (0.3 s)",
+        fix: "",
+        page: page("https://status.cerebras.ai", "none", "All Systems Operational"),
+      },
+      {
+        name: "Deepgram",
+        status: "ok",
+        detail: "answers (0.2 s)",
+        fix: "",
+        page: page("https://status.deepgram.com", "none", "All Systems Operational"),
+      },
+      {
+        name: "Cartesia",
+        status: "ok",
+        detail: "answers (0.3 s)",
+        fix: "",
+        page: page("https://status.cartesia.ai", "none", "All Systems Operational"),
+      },
+      {
+        name: "Telegram",
+        status: "ok",
+        detail: "@hey_tars_bot answers (0.3 s), for Alon, Stacey",
+        fix: "",
+        page: null,
+      },
+    ],
+    services_asked: at - 20,
+    machine: {
+      host: "homepi",
+      system: "Linux 6.12.47+rpt-rpi-2712, aarch64",
+      python: "3.14.7",
+      cpu_percent: 14,
+      cores: 4,
+      load: [0.42, 0.51, 0.48],
+      memory_total: 8 * 1073741824,
+      memory_used: 2.1 * 1073741824,
+      temperature_c: 52.6,
+      throttled: [],
+      disk_total: 58 * 1073741824,
+      disk_used: 21 * 1073741824,
+      uptime_s: 3 * day + 4 * 3600,
+    },
+  };
 }

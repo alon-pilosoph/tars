@@ -12,6 +12,7 @@ import type {
   TarsEvent,
 } from "../types";
 import { type Snapshot, get, set, setNow } from "./core";
+import { loadHealth } from "./health";
 import { errText, toast } from "./ui";
 
 interface Data {
@@ -122,7 +123,7 @@ export async function settled() {
 
 export async function refreshNow() {
   set({ refreshing: true });
-  await refresh();
+  await Promise.all([refresh(), get().tab === "status" ? loadHealth() : null]);
   set({ refreshing: false });
 }
 

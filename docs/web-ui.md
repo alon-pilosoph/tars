@@ -17,9 +17,10 @@ palette).
 | **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set (by voice, on this page or on Telegram), whether it's posted to a Telegram chat rather than said aloud, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice is back. The tab counts what's waiting for a got it. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
+| **Status** | Whether each part of TARS is running (the assistant, the web UI, Telegram), since when and which version; the day's wakes, answers and failed answers; each cloud service TARS uses, asked with TARS's own key, beside what the service's own status page says; and the machine: CPU, load, memory, temperature, the Pi's power and heat warnings, storage and uptime. |
 
-On a phone the pages are tabs along the bottom, Voices and Models sit under the ⋯ at the top, and menus and dialogs
-open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
+On a phone the pages are tabs along the bottom, Voices, Models and Status sit under the ⋯ at the top, and menus and
+dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
 
 | Home | Review, on a phone |
 |---|---|
@@ -57,6 +58,21 @@ its own page (403 otherwise). That closes the two ways a page elsewhere could re
 UI with Python alone. CI rebuilds it and fails if the result differs from what's committed, so the build can't drift
 from the source.
 
+### The Status page reads heartbeats, not the processes
+
+Each long-running process (the assistant, the web UI, Telegram) rewrites a small file every 30 seconds,
+`<events folder>/heartbeats/<name>.json`, with its pid, start time and version (`health.py`). A process whose file is
+older than three beats has stopped or hangs, which a systemd state alone doesn't show: a hung process is still
+"active". Where there's systemd, its state for the unit is shown beside the heartbeat. The database isn't written to
+for it, and nothing about the assistant waits on it.
+
+The services are asked with the same checks as `--check` (`check.service_checks`), all at once, and each one's own
+status page is read (they all publish Statuspage's `/api/v2/status.json`). Both together, because each answers a
+different question: the key works, and the service says it's fine. The answers are kept for a minute, so reloading
+the page again and again costs at most one call to each service a minute.
+**Trade-off:** the checks read a model list or the account, so they spend no tokens, but they are requests on
+TARS's keys; the page asks only when it's opened or refreshed, never in the background.
+
 ## The API
 
 JSON over HTTP, all under `/api`. Errors carry a readable reason: `{"detail": "..."}`, or for a malformed body
@@ -65,7 +81,8 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 
 | Method and path | Does |
 |---|---|
-| `GET /api/status` | Whether voices can be regrouped, and how many requests a voiceprint needs |
+| `GET /api/status` | Whether voices can be regrouped, how many requests a voiceprint needs, and whether there's a Status page (`health`) |
+| `GET /api/health` | What the Status page shows: each process's heartbeat and systemd state, today's counts, the services (asked at most once a minute) and the machine |
 | `GET /api/conversations` | The newest 200 conversations, with their turns, sent items and the wake that started each |
 | `GET /api/conversations/{id}` | One conversation |
 | `DELETE /api/conversations/{id}` | It, its turns, audio and items, and the wake that started it |
