@@ -70,6 +70,7 @@ function reminder(r: ReminderRow, now: number): Reminder {
     acked_at: null,
     acked_by: null,
     acked_via: null,
+    channel: "voice",
     says: "",
     ...r,
   };
@@ -463,6 +464,7 @@ function build(): DemoData {
   const conv = (id: number, started: number, speaker: Speaker, wake: ConversationWake, turns: TurnRow[]): DemoConv => ({
     id,
     started,
+    via: null,
     speaker,
     wake,
     turns: turns.map(([who, text, extra], n) => ({
@@ -862,6 +864,7 @@ function stress(d: DemoData) {
   d.convs.unshift({
     id: 12,
     started: now - 90,
+    via: null,
     speaker: alon,
     wake: {
       event_id: 99,

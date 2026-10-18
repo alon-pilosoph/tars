@@ -23,6 +23,7 @@ from .config import (
     DEEPGRAM_KEY,
     OPENAI_KEY,
     QUICK_PROVIDERS,
+    TELEGRAM_KEY,
     WEB_PORT,
     Config,
     ConfigError,
@@ -249,6 +250,25 @@ def web(get: Callable[[str], int]) -> Result:
     return Result("Web UI", OK, f"running on port {WEB_PORT}")
 
 
+def telegram(cfg: Config, token: str | None, me: Callable[[str], dict]) -> Result:
+    """The bot's token works, and who may chat with it. `me`: the bot Telegram says the token is for."""
+    if not cfg.telegram.enabled:
+        return Result("Telegram", SKIP, "off ([telegram] enabled)")
+    if not token:
+        return Result("Telegram", FAIL, f"no {TELEGRAM_KEY}", "make a bot with @BotFather and put its token in .env")
+    from .telegram import TelegramError
+
+    t = time.perf_counter()
+    try:
+        bot = me(token)
+    except TelegramError as e:
+        if e.status in (401, 404):
+            return Result("Telegram", FAIL, "the bot's token was refused", f"check {TELEGRAM_KEY} in .env")
+        return Result("Telegram", FAIL, str(e), "check the network")
+    people = ", ".join(cfg.telegram.people)
+    return Result("Telegram", OK, f"@{bot.get('username')} answers ({time.perf_counter() - t:.1f} s), for {people}")
+
+
 def systemd(unit: str, active: Callable[[str], str | None]) -> Result:
     state = active(unit)
     if state is None:
@@ -292,6 +312,7 @@ def service_status(name: str, key: str, status: int, took: float) -> Result:
 
 def check_all(cfg: Config, root: Path) -> int:
     import sounddevice as sd
+    from dotenv import dotenv_values
 
     from . import __main__ as cli
     from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
@@ -389,6 +410,11 @@ def check_all(cfg: Config, root: Path) -> int:
             return service_error("Cartesia", e)
         return service_status("Cartesia", CARTESIA_KEY, status, time.perf_counter() - t)
 
+    def bot_me(token: str) -> dict:
+        from .telegram import Bot
+
+        return Bot(token).me()
+
     def models():
         def load():
             t = time.perf_counter()
@@ -440,8 +466,14 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
+        ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
         ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
         ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
+        *(
+            [("voice-assistant-telegram", lambda: systemd("voice-assistant-telegram", systemd_state))]
+            if cfg.telegram.enabled
+            else []
+        ),
     ]
     print("Checking TARS...\n", flush=True)
     results = run(checks)

@@ -29,6 +29,8 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices ([web UI](docs/web-ui.md)).
+- **On Telegram too**: chat with it away from home, and get its reminders and what it sends on your phone, with
+  nothing at home opened to the internet ([Telegram](docs/telegram.md)).
 
 How a request is answered:
 
@@ -70,6 +72,8 @@ Also `--ptt` (press Enter instead of the wake word), `--text` (type, hear answer
 ## Configure
 
 Everything is in [`config.toml`](config.toml): audio devices by name, wake sensitivity, turn-taking, each stage's model.
+What's this machine's own (the speakerphone's name, who's on Telegram) goes in `config.local.toml` next to it: never
+committed, its settings replace `config.toml`'s, so `git pull` never meets a local edit.
 Every key in `.env` is optional, as long as something can hear, think and speak; TARS says at startup what it does
 without the missing ones ([running on the keys there are](docs/architecture.md#running-on-the-keys-there-are)).
 
@@ -89,6 +93,7 @@ assistant, edit the system prompt.
 | [Self-learning TARS](docs/self-learning.md) | what's kept, automatic labels, voices, retraining |
 | [Reminders, timers and messages](docs/reminders.md) | setting, saying and acknowledging them |
 | [The web UI](docs/web-ui.md) | pages, the Refresh rule, the API, checks |
+| [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
 | [What's next](docs/roadmap.md) | real use, interrupting, the hard-question hand-off, memory |
 

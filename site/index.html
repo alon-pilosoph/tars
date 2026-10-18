@@ -1958,6 +1958,56 @@
         </div>
       </section>
 
+      <section id="telegram" class="part">
+        <div class="part-head">
+          <div class="kicker">On Telegram</div>
+          <h2>The same TARS, in writing, from anywhere</h2>
+          <p class="lead">
+            Each person can chat with TARS on Telegram: ask it something, set a reminder, have it send something, or
+            have a message said aloud at home. TARS asks Telegram for new messages, so nothing at home is opened to the
+            internet.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Only the people it's told about</h3>
+              <p>
+                It answers the chats named in its settings, each as that person. Anyone else gets no answer at all, so a
+                stranger can't even tell it's there.
+              </p>
+            </div>
+            <div>
+              <h3>Reminders come to where you are</h3>
+              <p>
+                One set in a chat is posted to that chat when it's due. “Tell the house dinner's ready” is said aloud at
+                home instead, and the chat hears when it was said and who said “got it”.<span class="d">
+                  Whatever TARS sends at home for someone with a chat comes to their phone as well.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Written, not spoken</h3>
+              <p>
+                Chats go straight to OpenAI's model: a chat is read whole, so Qwen's faster first word buys nothing
+                there.<span class="d">
+                  Each person has their own conversation, kept until the chat has been quiet for an hour, or until they
+                  send /new.</span
+                >
+              </p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">A chat, away from home</span>
+            <p class="said"><b>Alon</b> Remind me to call the bank at nine.</p>
+            <p class="said tars"><b>TARS</b> Set for 9 AM. It'll come here.</p>
+            <p class="said"><b>Alon</b> And tell the house dinner's at eight.</p>
+            <p class="said tars"><b>TARS</b> Saying it at home now.</p>
+            <span class="foot">A minute later the chat reads: “Stacey said they got it at 7:42 PM.”</span>
+          </div>
+        </div>
+      </section>
+
       <section id="fallbacks" class="part">
         <div class="part-head">
           <div class="kicker">When something breaks</div>
@@ -2024,13 +2074,14 @@
         </div>
         <div class="hood">
           <div>
-            <h3>Two processes, one folder</h3>
+            <h3>A process for each job, one folder</h3>
             <div class="procs">
               <div>The assistant</div>
               <div>The web app, FastAPI and React</div>
+              <div>Telegram, if it's on</div>
               <div class="db">One SQLite database, WAL mode</div>
             </div>
-            <p>The assistant writes while the page reads, on the same machine.</p>
+            <p>They share the database on the same machine, and a crash in one never takes another down.</p>
           </div>
           <div>
             <h3>Every stage is an interface</h3>

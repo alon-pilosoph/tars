@@ -271,8 +271,10 @@ function Panel({ c, s }: { c: Conversation; s: State }) {
       })}
       <div className="p-foot">
         <div className="p-info">
-          {wakeLine(c.wake, { name: c.speaker?.name ?? null, known: !isUnknown(c.speaker) }) +
-            (notReal ? " Marked as not meant for TARS." : "")}
+          {c.via === "telegram"
+            ? `A chat on Telegram${c.speaker?.name ? ` with ${c.speaker.name}` : ""}.`
+            : wakeLine(c.wake, { name: c.speaker?.name ?? null, known: !isUnknown(c.speaker) }) +
+              (notReal ? " Marked as not meant for TARS." : "")}
         </div>
         <div className="p-actions">
           <button className="btn ghost" onClick={() => copyTranscript(c)}>

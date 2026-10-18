@@ -16,6 +16,7 @@ from .config import (
     OPENAI_KEY,
     OPENAI_STT_MODEL,
     QUICK_PROVIDERS,
+    TELEGRAM_KEY,
     WEB_PORT,
     Config,
     ConfigError,
@@ -248,6 +249,9 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=WEB_PORT)
     parser.add_argument(
+        "--telegram", action="store_true", help="chat with TARS on Telegram ([telegram] in config.toml)"
+    )
+    parser.add_argument(
         "--install-models",
         type=Path,
         metavar="FOLDER",
@@ -286,6 +290,9 @@ def main() -> None:
         if args.web:
             web_ui(cfg, root, args.host, args.port)
             return
+        if args.telegram:
+            telegram(keyed(cfg, root), root)
+            return
         if args.install_models:
             install_models(cfg, root, args.install_models, args.based_on)
             return
@@ -321,7 +328,6 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set."""
     from .effects import apply_effect
-    from .llm import OpenAIChat, QuickChat
     from .stt import (
         DeepgramTranscriber,
         FallbackTranscriber,
@@ -334,9 +340,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
-    llm = brain_config(cfg, typed=typed)
-    quick = quick_services(llm, env)
-    brain = QuickChat(client, llm, quick, reminders) if quick else OpenAIChat(client, llm, reminders)
+    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders)
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
     elif cfg.tts.provider == "cartesia":
@@ -354,6 +358,68 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
         return streaming, brain, voice
     backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
     return FallbackTranscriber(streaming, backup), brain, voice
+
+
+def make_brain(client, llm: LLMConfig, env: Path, reminders=None, **channel):
+    """Qwen first, handing over to OpenAI's `client`, or OpenAI alone when no quick service is set up. `channel`:
+    a chat's channel_rules and remind_tools (see OpenAIChat)."""
+    from .llm import OpenAIChat, QuickChat
+
+    quick = quick_services(llm, env)
+    if quick:
+        return QuickChat(client, llm, quick, reminders, **channel)
+    return OpenAIChat(client, llm, reminders, **channel)
+
+
+def chat_brain_config(cfg: Config, has_openai: bool) -> LLMConfig:
+    """The brain's settings for a Telegram chat: [telegram]'s memory, and OpenAI's model alone, at [telegram]'s tier
+    and reasoning effort, unless [telegram] brain is "quick" or there's no OpenAI key."""
+    llm = dataclasses.replace(brain_config(cfg, typed=False), memory_minutes=cfg.telegram.memory_minutes)
+    if cfg.telegram.brain != "openai" or not has_openai:
+        return llm
+    quick_off = {provider.setting: "" for provider in QUICK_PROVIDERS}
+    tg = cfg.telegram
+    return dataclasses.replace(llm, service_tier=tg.service_tier, reasoning_effort=tg.reasoning_effort, **quick_off)
+
+
+def telegram(cfg: Config, root: Path) -> None:
+    """--telegram: TARS in the household's Telegram chats, a process of its own, like the web UI."""
+    from .conversations import ConversationLog
+    from .reminders import Reminders, ReminderTools
+    from .speaker import voiceprint_names
+    from .telegram import CHAT_REMIND_TOOLS, Bot, TelegramError, TelegramTars, channel_rules
+
+    if not cfg.telegram.enabled:
+        raise ConfigError(
+            "Set enabled = true under [telegram] in config.toml, and say who may chat in people (docs/telegram.md)."
+        )
+    env = root / ".env"
+    bot = Bot(api_key(env, TELEGRAM_KEY))
+    try:
+        me = bot.me()
+    except TelegramError as e:
+        if e.status in (401, 404):
+            raise ConfigError(f"Telegram refused {TELEGRAM_KEY}: check it in {env}.") from None
+        raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
+    events = make_event_log(cfg, root)
+    tools = None
+    if cfg.reminders.enabled and events:
+        voiceprints = root / cfg.speaker.voiceprints
+        names = (lambda: voiceprint_names(voiceprints)) if cfg.speaker.enabled else list
+        tools = ReminderTools(Reminders.from_config(events.store, cfg.reminders), voices=names)
+    client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
+    llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
+    who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
+    print(f"(chats are answered by {who})")
+    TelegramTars(
+        bot,
+        cfg.telegram.people,
+        lambda: make_brain(client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS),
+        ConversationLog(events) if events else None,
+        tools,
+        memory_s=llm.memory_minutes * 60,
+        send_items=cfg.telegram.send_items,
+    ).run_forever(me)
 
 
 def phrase_folder(cfg: Config, root: Path) -> Path:

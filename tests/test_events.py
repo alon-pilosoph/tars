@@ -217,6 +217,17 @@ def test_an_upgraded_database_has_the_same_columns_as_a_new_one(tmp_path):
     assert columns(EventLog(old)) == columns(EventLog(tmp_path / "new"))
 
 
+def test_what_was_sent_before_telegram_isnt_posted_there_after_the_upgrade(tmp_path):
+    folder = tmp_path / "events"
+    folder.mkdir()
+    with sqlite3.connect(folder / "events.db") as db:
+        for statement in UNVERSIONED:
+            db.execute(statement)
+        db.execute("INSERT INTO items (ts, kind, title, scope, for_name) VALUES (5.0, 'note', 'Old', 'person', 'alon')")
+    log = EventLog(folder)
+    assert log.store.rows("SELECT delivered FROM items") == [{"delivered": 5.0}]
+
+
 def test_a_new_database_starts_at_the_latest_version(log):
     assert log.store.rows("PRAGMA user_version")[0]["user_version"] == len(MIGRATIONS)
 

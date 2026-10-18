@@ -33,7 +33,8 @@ SCHEDULED, WAITING, ACKNOWLEDGED, SAID, MISSED, CANCELLED = (
 ACTIVE = (SCHEDULED, WAITING)
 CANCELLABLE = ACTIVE
 SNOOZABLE = (*ACTIVE, MISSED)  # a missed one can be put off and tried again
-VOICE, WEB = "voice", "web"
+VOICE, WEB, TELEGRAM = "voice", "web", "telegram"  # how one was set or acknowledged; VOICE and TELEGRAM are also
+# where it's said: aloud at home, or in its person's Telegram chat
 ADD, CANCEL, SNOOZE = "add", "cancel", "snooze"  # a Change
 
 # Reminders and messages are said again every 5 minutes, 4 times at most. A timer rings like a kitchen timer until
@@ -49,6 +50,9 @@ MIN_TIMER_EVERY_S = 5.0
 MAX_TRIES_LIMIT = 30
 MAX_RINGS = 360
 MAX_AHEAD_S = 366 * 24 * 3600
+# A reminder posted to a chat stays in the list the model sees for this long, so "remind me again in ten minutes" in
+# the chat can snooze it.
+POSTED_WITHIN_S = 60 * 60.0
 # Said later than this after its time (TARS was off, or busy in a long conversation), a reminder says when it was due.
 LATE_S = 90.0
 MAX_TEXT = 300
@@ -99,14 +103,20 @@ class Reminders:
         voices: Collection[str] = (),
         conversation_id: int | None = None,
         now: float | None = None,
+        channel: str = VOICE,
     ) -> int:
         """Raises ValueError, saying what's wrong, for anything that can't be done. `voices`: the names TARS knows by
-        voice, which waiting until someone's back needs."""
+        voice, which waiting until someone's back needs. `channel`: where it's said, VOICE or TELEGRAM."""
         now = time.time() if now is None else now
         r = self.check(new, voices, now)
+        if channel not in (VOICE, TELEGRAM):
+            raise ValueError(f"it can be said aloud or on Telegram, not {channel!r}")
+        if channel == TELEGRAM and r.due is None:
+            raise ValueError("waiting until someone's back needs their voice, so it's said aloud")
         return self.store.write(
             "INSERT INTO reminders (created, kind, text, for_name, from_name, set_via, conversation_id, due, "
-            "needs_ack, repeat_every_s, max_tries, status, next_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "needs_ack, repeat_every_s, max_tries, status, next_at, channel) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 now,
                 r.kind,
@@ -121,6 +131,7 @@ class Reminders:
                 r.max_tries,
                 SCHEDULED,
                 r.due,
+                channel,
             ),
         )
 
@@ -178,15 +189,27 @@ class Reminders:
             (*ACTIVE, *ACTIVE, limit),
         )
 
-    def active(self) -> list[dict]:
+    def active(self, channel: str | None = None) -> list[dict]:
+        """`channel`: only those said there (VOICE or TELEGRAM); None for all."""
         marks = ",".join("?" * len(ACTIVE))
+        only = " AND channel=?" if channel else ""
         return self.store.rows(
-            f"SELECT * FROM reminders WHERE status IN ({marks}) ORDER BY coalesce(next_at, 1e18), id", ACTIVE
+            f"SELECT * FROM reminders WHERE status IN ({marks}){only} ORDER BY coalesce(next_at, 1e18), id",
+            (*ACTIVE, *([channel] if channel else [])),
+        )
+
+    def posted(self, since: float) -> list[dict]:
+        """Posted to their Telegram chat since `since`, and not changed since: the most recently posted last."""
+        return self.store.rows(
+            "SELECT * FROM reminders WHERE status=? AND channel=? AND last_said > ? ORDER BY last_said, id",
+            (SAID, TELEGRAM, since),
         )
 
     def waiting(self) -> list[dict]:
-        """Said, and waiting for someone to acknowledge them: the most recently said first."""
-        return self.store.rows("SELECT * FROM reminders WHERE status=? ORDER BY last_said DESC, id DESC", (WAITING,))
+        """Said aloud, and waiting for someone to acknowledge them: the most recently said first."""
+        return self.store.rows(
+            "SELECT * FROM reminders WHERE status=? AND channel=? ORDER BY last_said DESC, id DESC", (WAITING, VOICE)
+        )
 
     def next_at(self) -> float | None:
         rows = self.store.rows(
@@ -194,19 +217,21 @@ class Reminders:
         )
         return rows[0]["t"]
 
-    def due(self, now: float | None = None) -> list[dict]:
-        """What to say now. One said max_tries times and still not acknowledged is Missed instead."""
+    def due(self, now: float | None = None, channel: str = VOICE) -> list[dict]:
+        """What to say now, aloud or (`channel` TELEGRAM) on Telegram. One said max_tries times and still not
+        acknowledged is Missed instead."""
         now = time.time() if now is None else now
         marks = ",".join("?" * len(ACTIVE))
         with self.store.transaction() as db:
             db.execute(
                 f"UPDATE reminders SET status=?, next_at=NULL WHERE status IN ({marks}) AND next_at <= ? "
-                "AND tries >= max_tries",
-                (MISSED, *ACTIVE, now),
+                "AND tries >= max_tries AND channel=?",
+                (MISSED, *ACTIVE, now, channel),
             )
             rows = db.execute(
-                f"SELECT * FROM reminders WHERE status IN ({marks}) AND next_at <= ? ORDER BY next_at, id",
-                (*ACTIVE, now),
+                f"SELECT * FROM reminders WHERE status IN ({marks}) AND next_at <= ? AND channel=? "
+                "ORDER BY next_at, id",
+                (*ACTIVE, now, channel),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -215,7 +240,8 @@ class Reminders:
         if not person_key(name):
             return []
         rows = self.store.rows(
-            "SELECT * FROM reminders WHERE status=? AND due IS NULL AND tries=0 ORDER BY id", (SCHEDULED,)
+            "SELECT * FROM reminders WHERE status=? AND due IS NULL AND tries=0 AND channel=? ORDER BY id",
+            (SCHEDULED, VOICE),
         )
         return [r for r in rows if person_key(r["for_name"]) == person_key(name)]
 
@@ -230,6 +256,35 @@ class Reminders:
             (now, WAITING, SAID, now, reminder_id, *ACTIVE),
         )
 
+    def delivered(self, reminder_id: int, now: float | None = None) -> None:
+        """It was just posted to its person's Telegram chat: said, once. A phone keeps the message until it's read,
+        so it isn't sent again, and nothing there says when it's been read."""
+        now = time.time() if now is None else now
+        self.store.write(
+            "UPDATE reminders SET tries=tries+1, last_said=?, status=?, next_at=NULL WHERE id=? AND status IN (?, ?)",
+            (now, SAID, reminder_id, *ACTIVE),
+        )
+
+    def to_report(self, now: float | None = None) -> list[dict]:
+        """Set in a chat and said aloud at home, with news for that chat: said, acknowledged or missed since it was
+        last told. Only ones said in the last day, so an old one changed on the web UI doesn't turn up."""
+        now = time.time() if now is None else now
+        return self.store.rows(
+            "SELECT * FROM reminders WHERE set_via=? AND channel=? AND status IN (?, ?, ?, ?) "
+            "AND (reported IS NULL OR reported != status) AND last_said > ? ORDER BY id",
+            (TELEGRAM, VOICE, WAITING, SAID, ACKNOWLEDGED, MISSED, now - 24 * 3600),
+        )
+
+    def reported(self, reminder_id: int, status: str) -> None:
+        self.store.write("UPDATE reminders SET reported=? WHERE id=?", (status, reminder_id))
+
+    def say_aloud(self, reminder_id: int) -> bool:
+        """One due on Telegram whose person has no chat there any more: said aloud at home instead."""
+        return self._change(
+            f"UPDATE reminders SET channel=? WHERE id=? AND status IN ({_marks(ACTIVE)})",
+            (VOICE, reminder_id, *ACTIVE),
+        )
+
     def ack(self, reminder_id: int, by: str | None, via: str, now: float | None = None) -> bool:
         """False if it was no longer active (acknowledged already, cancelled, missed)."""
         now = time.time() if now is None else now
@@ -240,13 +295,15 @@ class Reminders:
         )
 
     def snooze(self, reminder_id: int, minutes: float, now: float | None = None) -> bool:
-        """Said again in `minutes`, as if new: it gets its full number of tries again."""
+        """Said again in `minutes`, as if new: it gets its full number of tries again. One posted to a chat can be
+        too: posted again then."""
         now = time.time() if now is None else now
         if not (math.isfinite(minutes) and 0 < minutes <= MAX_AHEAD_S / 60):
             raise ValueError("snooze for a positive number of minutes")
         return self._change(
-            f"UPDATE reminders SET status=?, tries=0, next_at=? WHERE id=? AND status IN ({_marks(SNOOZABLE)})",
-            (SCHEDULED, now + minutes * 60, reminder_id, *SNOOZABLE),
+            "UPDATE reminders SET status=?, tries=0, next_at=? WHERE id=? "
+            f"AND (status IN ({_marks(SNOOZABLE)}) OR (status=? AND channel=?))",
+            (SCHEDULED, now + minutes * 60, reminder_id, *SNOOZABLE, SAID, TELEGRAM),
         )
 
     def cancel(self, reminder_id: int) -> bool:
@@ -287,7 +344,7 @@ class Clock:
     def read(self) -> None:
         """Never raises: a failed read leaves nothing due until the next good one."""
         try:
-            active = self._reminders.active()
+            active = self._reminders.active(VOICE)
             now = time.time()
             ids = {r["id"] for r in active}
             self._holds = {i: until for i, until in self._holds.items() if i in ids and until > now}
@@ -315,6 +372,10 @@ class Clock:
         now = time.time() if now is None else now
         at = self._next
         return now >= self._paused_until and at is not None and at <= now
+
+
+def snoozable(r: dict) -> bool:
+    return r["status"] in SNOOZABLE or (r["status"] == SAID and r["channel"] == TELEGRAM)
 
 
 def _marks(values: tuple) -> str:
@@ -390,6 +451,7 @@ class Change:
     id: int | None = None
     minutes: float | None = None
     asked_at: float = 0.0  # when the model asked: an ADD due "now" mustn't count as passed by the time it's kept
+    aloud: bool = False  # asked for in a chat, to be said aloud at home rather than posted there
 
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -439,12 +501,16 @@ class ReminderTools:
         self.reminders, self._voices = reminders, voices
 
     def note(self, now: float | None = None) -> str:
-        """The active reminders, by number, for the instructions; "" if there are none."""
+        """The active reminders, and those just posted to a chat, by number, for the instructions; "" if there are
+        none."""
         now = time.time() if now is None else now
         active = self.reminders.active()
-        if not active:
+        posted = self.reminders.posted(now - POSTED_WITHIN_S)
+        if not active and not posted:
             return ""
         rows = []
+        for r in posted:
+            rows.append(f'[{r["id"]}] posted to {name(r["for_name"] or r["from_name"])}\'s Telegram chat: "{line(r)}"')
         for r in active:
             at = when(r["next_at"], now) if r["next_at"] is not None else f"when {name(r['for_name'])} is next heard"
             state = (
@@ -483,7 +549,7 @@ class ReminderTools:
                     if not r or r["status"] not in CANCELLABLE:
                         return None, "error: there's no active reminder with that number, so nothing to cancel"
                     return Change(CANCEL, id=r["id"]), f"cancelled: {line(r)}"
-                if not r or r["status"] not in SNOOZABLE:
+                if not r or not snoozable(r):
                     return None, "error: there's no active or missed reminder with that number"
                 minutes = float(args.get("minutes"))
                 if not (math.isfinite(minutes) and 0 < minutes <= MAX_AHEAD_S / 60):
@@ -512,9 +578,11 @@ class ReminderTools:
         new = self.reminders.check(new, self._voices(), now)
         said = line({**new.__dict__, "from_name": None})
         at = when(due, now) if due is not None else f"when {name(new.for_name)} is next heard"
+        aloud = bool(args.get("aloud"))
+        where = " aloud at home" if aloud else ""
         if self._already_set(new, pending):
-            return None, f'already set for {at}, nothing new set; TARS will say: "{said}"'
-        return Change(ADD, reminder=new, asked_at=now), f'set for {at}; TARS will say: "{said}"'
+            return None, f'already set for {at}, nothing new set; TARS will say{where}: "{said}"'
+        return Change(ADD, reminder=new, asked_at=now, aloud=aloud), f'set for {at}; TARS will say{where}: "{said}"'
 
     def _already_set(self, new: NewReminder, pending: Collection[Change]) -> bool:
         """Whether `new` is one that's active, or asked for earlier in the reply: the same kind, for the same person,
@@ -530,12 +598,25 @@ class ReminderTools:
             for kind, text, for_name, due in others
         )
 
-    def apply(self, change: Change, from_name: str | None, conversation_id: int | None = None) -> None:
-        """Makes a change once its turn is kept. A reminder set by voice is from whoever set it."""
+    def apply(
+        self,
+        change: Change,
+        from_name: str | None,
+        conversation_id: int | None = None,
+        via: str = VOICE,
+        channel: str = VOICE,
+    ) -> None:
+        """Makes a change once its turn is kept. A reminder set by voice (or `via` Telegram) is from whoever set it;
+        `channel`: where a new one is said."""
         if change.action == ADD:
             new = dataclasses.replace(change.reminder, from_name=from_name)
             self.reminders.add(
-                new, VOICE, voices=self._voices(), conversation_id=conversation_id, now=change.asked_at or None
+                new,
+                via,
+                voices=self._voices(),
+                conversation_id=conversation_id,
+                now=change.asked_at or None,
+                channel=channel,
             )
         elif change.action == CANCEL:
             self.reminders.cancel(change.id)

@@ -1,6 +1,15 @@
 import { type FormEvent, useState } from "react";
 import { DEMO_LINK } from "../demoParams";
-import { personName, reminderEnded, reminderFor, reminderNow, reminderWhen, stamp } from "../format";
+import {
+  personName,
+  reminderEnded,
+  reminderFor,
+  reminderNow,
+  reminderSetVia,
+  reminderWhen,
+  reminderWhere,
+  stamp,
+} from "../format";
 import { DEMO, linkTo } from "../params";
 import { ackReminder, cancelReminder, convById, goConv, setReminder, snoozeReminder, useStore } from "../store";
 import type { Reminder, ReminderKind, RemindersInfo } from "../types";
@@ -130,12 +139,11 @@ export function Reminders() {
 
 function Meta({ r }: { r: Reminder }) {
   const s = useStore();
-  const conv = r.set_via === "voice" && r.conversation_id != null && convById(s, r.conversation_id);
+  const conv = r.set_via !== "web" && r.conversation_id != null && convById(s, r.conversation_id);
+  const where = reminderWhere(r);
   return (
     <div className="r-meta">
-      {conv
-        ? `${reminderFor(r)}, `
-        : `${reminderFor(r)}, ${r.set_via === "voice" ? "set by voice" : "set on this page"}.`}
+      {conv ? `${reminderFor(r)}, ` : `${reminderFor(r)}, ${reminderSetVia(r)}.${where}`}
       {conv && (
         <>
           <a
@@ -146,9 +154,9 @@ function Meta({ r }: { r: Reminder }) {
               goConv(conv.id);
             }}
           >
-            set by voice
+            {reminderSetVia(r)}
           </a>
-          .
+          .{where}
         </>
       )}
     </div>

@@ -6,6 +6,8 @@ import {
   metricChange,
   personName,
   reminderEnded,
+  reminderSetVia,
+  reminderWhere,
   reminderFor,
   reminderNow,
   reminderWhen,
@@ -55,6 +57,7 @@ describe("reminders", () => {
     acked_at: null,
     acked_by: null,
     acked_via: null,
+    channel: "voice",
     says: "",
     ...x,
   });
@@ -77,6 +80,20 @@ describe("reminders", () => {
     expect(reminderEnded(r({ status: "acknowledged", acked_via: "web", acked_at: at(9) }))).toBe(
       "Got it on this page today at 9:00 AM.",
     );
+    expect(reminderEnded(r({ status: "acknowledged", acked_via: "telegram", acked_by: "alon", acked_at: at(9) }))).toBe(
+      "Alon said “got it” on Telegram today at 9:00 AM.",
+    );
+    expect(reminderEnded(r({ status: "said", channel: "telegram", last_said: at(9) }))).toBe(
+      "Sent on Telegram today at 9:00 AM.",
+    );
+    expect(reminderEnded(r({ status: "said", last_said: at(9) }))).toBe("Said today at 9:00 AM.");
+    expect(reminderSetVia(r({ set_via: "telegram" }))).toBe("set on Telegram");
+    const telegramTimer = { kind: "timer", for_name: null, from_name: "alon", channel: "telegram" } as const;
+    expect(reminderFor(r(telegramTimer))).toBe("Timer for Alon");
+    expect(reminderFor(r({ ...telegramTimer, channel: "voice" }))).toBe("Timer for whoever's there, from Alon");
+    expect(reminderWhere(r({ channel: "telegram" }))).toBe(" It's sent on Telegram, not said aloud.");
+    expect(reminderWhere(r({ channel: "telegram", status: "said" }))).toBe("");
+    expect(reminderWhere(r({}))).toBe("");
     expect(reminderEnded(r({ status: "missed", tries: 1 }))).toBe("Missed. Said 1 time and nobody said “got it”.");
     expect(reminderEnded(r({ status: "cancelled", due: at(9) }))).toBe("Stopped. It was due today at 9:00 AM.");
     const timer = { kind: "timer" as const, repeat_every_s: 10 };

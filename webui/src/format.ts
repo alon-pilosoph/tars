@@ -148,10 +148,11 @@ export function reminderEnded(r: Reminder) {
     case "acknowledged": {
       const at = r.acked_at != null ? ` ${when(r.acked_at)}` : "";
       if (r.acked_via === "web") return `Got it on this page${at}.`;
+      if (r.acked_via === "telegram") return `${personName(r.acked_by ?? "Someone")} said “got it” on Telegram${at}.`;
       return `${r.acked_by ? personName(r.acked_by) : "An unknown voice"} said “got it”${at}.`;
     }
     case "said":
-      return `Said ${r.last_said != null ? when(r.last_said) : "earlier"}.`;
+      return `${r.channel === "telegram" ? "Sent on Telegram" : "Said"} ${r.last_said != null ? when(r.last_said) : "earlier"}.`;
     case "missed":
       return r.kind === "timer"
         ? `Missed. It rang for ${plural(Math.round((r.tries * r.repeat_every_s) / 60), "minute")} and nobody turned it off.`
@@ -163,8 +164,21 @@ export function reminderEnded(r: Reminder) {
   }
 }
 
+/** How it was set: "set by voice", "set on Telegram", "set on this page". */
+export function reminderSetVia(r: Reminder) {
+  return { voice: "set by voice", telegram: "set on Telegram", web: "set on this page" }[r.set_via];
+}
+
+/** Where one still to come is said, when that isn't aloud at home (once said, reminderEnded says where). */
+export function reminderWhere(r: Reminder) {
+  return r.channel === "telegram" && r.status === "scheduled" ? " It's sent on Telegram, not said aloud." : "";
+}
+
 export function reminderFor(r: Reminder) {
-  const parts = [`${REMINDER_KIND_LABEL[r.kind]} for ${r.for_name ? personName(r.for_name) : "whoever's there"}`];
-  if (r.from_name) parts.push(`from ${personName(r.from_name)}`);
+  // One for no one in particular, posted on Telegram, goes to whoever set it.
+  const forName = r.for_name || (r.channel === "telegram" ? r.from_name : null);
+  const parts = [`${REMINDER_KIND_LABEL[r.kind]} for ${forName ? personName(forName) : "whoever's there"}`];
+  if (r.from_name && r.from_name.toLowerCase() !== forName?.toLowerCase())
+    parts.push(`from ${personName(r.from_name)}`);
   return parts.join(", ");
 }

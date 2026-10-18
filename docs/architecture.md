@@ -1,8 +1,9 @@
 # How TARS fits together
 
-TARS is two processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of data:
-the assistant, which listens and answers, and the web UI, which shows and edits what the assistant kept. Five
-principles shape the design:
+TARS is a few processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of
+data: the assistant, which listens and answers; the web UI, which shows and edits what the assistant kept; and,
+optionally, TARS on Telegram, which answers the household's chats ([TARS on Telegram](telegram.md)). Five principles
+shape the design:
 
 - **Local until it's sure.** The wake word, the double-check, the speech detector and speaker ID run on the machine.
   Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)). After a wake,
@@ -184,16 +185,19 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
     and the web search are told the city and country, so "what's the weather?" is about home; nothing closer. It also transcribes a request's recording when Deepgram's
     stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
     Deepgram, or the reply text instead of Cartesia.
-- **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
-  served from the same machine and talks to nothing else.
+- **With `[telegram]` on,** Telegram gets what's written in the household's chats with TARS, its replies there, and
+  the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)). TARS asks
+  Telegram for new messages, so nothing at home is opened to the internet.
+- **Never:** the event log, the audio kept for learning, voiceprints, and anything else the web UI shows. The web UI
+  is served from the same machine and talks to nothing else.
 
 ## The web UI
 
 `voice-assistant --web` is a separate process: a FastAPI server (`webui.py`) over the same database, serving the
 React page built from `webui/` (committed as `src/voice_assistant/webui_static/`, so the Pi needs no Node). The
-assistant writes and the web UI reads and edits: SQLite in WAL mode lets both work at once, and every change of more
-than one row is one transaction. Each runs as its own service, so a crash in one never takes the other down. The web
-UI is described in [the web UI](web-ui.md).
+assistant writes and the web UI reads and edits (as does TARS on Telegram, when it's on): SQLite in WAL mode lets
+them all work at once, and every change of more than one row is one transaction. Each runs as its own service, so a
+crash in one never takes another down. The web UI is described in [the web UI](web-ui.md).
 
 **It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
 elsewhere could reach it through someone's browser:
@@ -216,12 +220,13 @@ The assistant is `src/voice_assistant/`:
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
-| Reminders | `reminders.py` (the table, what's due, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
+| Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
+| Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
 | Downloads | `models.py` (the small local models, on first use) |
-| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage) |
+| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Telegram) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),

@@ -135,3 +135,15 @@ def _load(path: Path) -> tuple[dict[str, np.ndarray], set[str]]:
             return dict(zip(names, saved["vectors"], strict=True)), {person_key(str(n)) for n in saved["from_clusters"]}
         # Legacy format: one array per person, named after them.
         return {person_key(name): saved[name] for name in saved.files}, set()
+
+
+def voiceprint_names(path: Path) -> list[str]:
+    """Everyone with a voiceprint, read from the file alone, without loading the model: for a process that only
+    needs to know whose voice TARS knows (the Telegram chat, for messages that wait until someone's back)."""
+    try:
+        return list(_load(path)[0])
+    except FileNotFoundError:
+        return []
+    except Exception as e:  # noqa: BLE001 - a half-written or foreign file: as if nobody's enrolled, this once
+        print(f"(couldn't read the voiceprints in {path}: {e!r})")
+        return []

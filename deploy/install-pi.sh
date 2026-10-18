@@ -59,6 +59,16 @@ cp deploy/voice-assistant.service deploy/voice-assistant-web.service "$HOME/.con
 systemctl --user daemon-reload
 systemctl --user enable voice-assistant voice-assistant-web
 systemctl --user restart voice-assistant voice-assistant-web  # picks up new code on a rerun
+# TARS on Telegram, if [telegram] is on in config.toml (docs/telegram.md).
+if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \
+raise SystemExit(0 if load_config(Path('config.toml')).telegram.enabled else 1)"; then
+  cp deploy/voice-assistant-telegram.service "$HOME/.config/systemd/user/"
+  systemctl --user daemon-reload
+  systemctl --user enable voice-assistant-telegram
+  systemctl --user restart voice-assistant-telegram
+elif [ -e "$HOME/.config/systemd/user/voice-assistant-telegram.service" ]; then
+  systemctl --user disable --now voice-assistant-telegram || true
+fi
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
 # With no speakerphone TARS stays stopped; this starts it when one is plugged in.
 RULE=/etc/udev/rules.d/99-tars-speakerphone.rules
@@ -73,4 +83,4 @@ sleep 3  # the services just restarted
 
 echo
 echo "Done. Say \"hey TARS\". The web UI is at http://$(hostname).local:8080"
-echo "Logs: journalctl --user-unit voice-assistant -f   (and --user-unit voice-assistant-web)"
+echo "Logs: journalctl --user-unit voice-assistant -f   (and --user-unit voice-assistant-web, voice-assistant-telegram)"

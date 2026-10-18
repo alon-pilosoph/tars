@@ -50,7 +50,8 @@ TABLES = {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started REAL NOT NULL,
     ended REAL,
-    wake_event_id INTEGER            -- the wake that started it (events.id), if any
+    wake_event_id INTEGER,           -- the wake that started it (events.id), if any
+    via TEXT                         -- telegram: a chat on Telegram; NULL = by voice
 )""",
     "turns": """CREATE TABLE turns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +77,7 @@ TABLES = {
     text TEXT,                       -- what to say; a timer's optional label
     for_name TEXT,                   -- who it's for, by name; NULL = whoever is there
     from_name TEXT,                  -- who set it, if known
-    set_via TEXT NOT NULL,           -- voice | web
+    set_via TEXT NOT NULL,           -- voice | web | telegram
     conversation_id INTEGER,         -- the conversation it was set in, by voice
     due REAL,                        -- when; NULL = when for_name's voice is next heard
     needs_ack INTEGER NOT NULL,      -- 1 = said again until acknowledged
@@ -88,7 +89,9 @@ TABLES = {
     last_said REAL,
     acked_at REAL,
     acked_by TEXT,                   -- the recognized voice; NULL = unknown voice, or the web UI
-    acked_via TEXT                   -- voice | web
+    acked_via TEXT,                  -- voice | web | telegram
+    channel TEXT NOT NULL DEFAULT 'voice', -- where it's said: voice (aloud at home) | telegram (to their chat)
+    reported TEXT                    -- set in a chat, said aloud: the last status told back to that chat
 )""",
     "items": """CREATE TABLE items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,7 +107,8 @@ TABLES = {
     body TEXT,                       -- note: short markdown
     entries TEXT,                    -- list: JSON [{"text": ..., "done": false}]
     file TEXT, mime TEXT, size INTEGER,     -- file: where it's stored (relative to the folder)
-    file_name TEXT                   -- file: the name it downloads as
+    file_name TEXT,                  -- file: the name it downloads as
+    delivered REAL                   -- when it was posted to its person's Telegram chat, if it was
 )""",
 }
 INDEXES = [
@@ -141,6 +145,13 @@ MIGRATIONS = [
         "CREATE INDEX reminders_status ON reminders(status)",
     ],
     ["ALTER TABLE turns ADD COLUMN quick_service TEXT"],
+    [
+        "ALTER TABLE conversations ADD COLUMN via TEXT",
+        "ALTER TABLE reminders ADD COLUMN channel TEXT NOT NULL DEFAULT 'voice'",
+        "ALTER TABLE reminders ADD COLUMN reported TEXT",
+        "ALTER TABLE items ADD COLUMN delivered REAL",
+        "UPDATE items SET delivered = ts",  # what was sent before Telegram isn't posted to a chat now
+    ],
 ]
 
 

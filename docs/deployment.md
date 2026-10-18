@@ -12,6 +12,8 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
 - **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
 - **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
   can answer, and a request's recording when Deepgram's stream fails.
+- **Telegram,** with `[telegram]` on: what's written in the household's chats with TARS, and what it sends there
+  ([TARS on Telegram](telegram.md)).
 
 The event log, the audio kept for learning, voiceprints and the web UI never leave it
 ([what leaves the machine](architecture.md#what-leaves-the-machine)).
@@ -25,6 +27,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
 │   the React page + API over the same log       │◄── away from home: Tailscale (optional)
 │   regroup voices, switch wake models           │── nightly encrypted backup ──► S3 / B2 (optional)
+│ voice-assistant-telegram.service (optional)    │── asks for new messages ──► Telegram ◄── the household's phones
 └────────────────────────────────────────────────┘
 ```
 
@@ -36,7 +39,15 @@ uv run voice-assistant --list-devices
 ```
 
 Plug the speakerphone in and look for its name in the list. If it isn't marked as the default (`*`), put part of
-its name in `config.toml`, for example `input_device = "PowerConf"` and `output_device = "PowerConf"`. Set
+its name in `config.local.toml` (this machine's own settings, never committed, over `config.toml`):
+
+```toml
+[audio]
+input_device = "PowerConf"
+output_device = "PowerConf"
+```
+
+Set
 `[llm] home_city` and `home_country` to where the house is (Tel Aviv, IL in the repo), so "what's the weather?" is
 about home. Then:
 
@@ -73,7 +84,9 @@ does a missing speakerphone, and plugging it in starts TARS again
 ([`deploy/99-tars-speakerphone.rules`](../deploy/99-tars-speakerphone.rules)). The
 web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
-[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service).
+[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service). With `[telegram]` on, it also installs
+and starts [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service)
+([setting it up](telegram.md#setting-it-up)).
 
 ## Recognizing people from the start
 
@@ -98,15 +111,15 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years.
 - **Backup.** SD cards die, and the labels are the valuable part. A nightly `restic` or `rclone` job sending an
   encrypted copy of `voice_data/` and `models/personal/` to S3 or Backblaze B2 costs cents a month.
-- **Two processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
+- **Separate processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
   with what TARS does without any that are missing), both audio devices, the local models, echo cancellation (only
   when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram and
   Cartesia (each with how long it took, Deepgram on the servers `deepgram_host` names, and any without a key or not
   in use skipped), the
-  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both
-  services.
+  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Telegram
+  (its bot's token, when `[telegram]` is on) and the services.
   Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
   one that doesn't open in time is a failure.
 
