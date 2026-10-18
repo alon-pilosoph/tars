@@ -396,7 +396,7 @@ def telegram(cfg: Config, root: Path) -> None:
     env = root / ".env"
     bot = Bot(api_key(env, TELEGRAM_KEY))
     try:
-        bot.me()
+        me = bot.me()
     except TelegramError as e:
         if e.status in (401, 404):
             raise ConfigError(f"Telegram refused {TELEGRAM_KEY}: check it in {env}.") from None
@@ -419,7 +419,7 @@ def telegram(cfg: Config, root: Path) -> None:
         tools,
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
-    ).run_forever()
+    ).run_forever(me)
 
 
 def phrase_folder(cfg: Config, root: Path) -> Path:

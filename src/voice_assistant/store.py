@@ -150,7 +150,7 @@ MIGRATIONS = [
         "ALTER TABLE reminders ADD COLUMN channel TEXT NOT NULL DEFAULT 'voice'",
         "ALTER TABLE reminders ADD COLUMN reported TEXT",
         "ALTER TABLE items ADD COLUMN delivered REAL",
-        "UPDATE items SET delivered = ts",  # what was sent before Telegram stays on the TARS page
+        "UPDATE items SET delivered = ts",  # what was sent before Telegram isn't posted to a chat now
     ],
 ]
 

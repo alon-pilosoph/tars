@@ -80,8 +80,9 @@ Each person has their own brain, so their own history: everything said since the
 last 50 exchanges), sent with each message, and nothing older. A conversation ends once the chat has been quiet for
 `[telegram] memory_minutes` (60, longer than by voice's 10, since a written reply often comes back much later), or
 when they send **/new**, for a change of subject; the next message starts a new one. What TARS posts by itself (a
-reminder that's due, how a message said at home went) is part of the conversation too, so "remind me again in ten
-minutes" right after a reminder knows which. On the web UI, each conversation is its own, like one at home.
+reminder that's due, how a message said at home went, what was sent at home for them) is part of the conversation
+too, so "remind me again in ten minutes" right after a reminder knows which, and snoozes it: a reminder posted in
+the chat is in the model's list, by number, for an hour after, and snoozed it's posted again at its new time. On the web UI, each conversation is its own, like one at home.
 
 **Writing, not speaking.** The system prompt is written for the ear. For a chat, a rule goes last in the
 instructions, so it wins: this is in writing, reply as in a text message, plain text, links are fine, what you send is

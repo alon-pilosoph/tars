@@ -55,10 +55,10 @@ DELIVER_EVERY_S = 2.0
 # What TARS sent at home for someone is posted to their chat if it's newer than this: after a long time off, a
 # backlog of old notes would only be noise (they're on the TARS page).
 ITEMS_WITHIN_S = 60 * 60.0
-RETRY_S = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
+RETRY_S = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)  # waiting for Telegram again, after each failure in a row
 # Telegram saying a chat can't get messages from the bot, for good: blocked (403), or no such chat (400). Trying
 # again won't help.
-UNREACHABLE = (400, 403)  # waiting for Telegram again, after each failure in a row
+UNREACHABLE = (400, 403)
 DELIVERY_REST_S = 30.0
 SEND_TRIES = 3
 TYPING_EVERY_S = 4.0  # "typing..." shows for 5 s
@@ -293,8 +293,9 @@ class TelegramTars:
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
 
-    def run_forever(self) -> None:
-        me = self._bot.me()
+    def run_forever(self, me: dict | None = None) -> None:
+        """`me`: the bot, as Telegram's getMe said, if it's been asked already."""
+        me = me or self._bot.me()
         names = ", ".join(c.person for c in self._chats.values())
         print(f"TARS is on Telegram as @{me.get('username')}, for {names}.", flush=True)
         try:
@@ -342,8 +343,8 @@ class TelegramTars:
             return
         sent_at = message.get("date") or self._clock()
         if self._clock() - sent_at > STALE_S:
-            clock = f"{datetime.fromtimestamp(sent_at).astimezone():%I:%M %p}".lstrip("0")
-            self._send(chat_id, f"I was off when this came in, at {clock}. Send it again if it still matters.")
+            off = f"I was off when this came in, at {_clock(sent_at)}. Send it again if it still matters."
+            self._send(chat_id, off)
             return
         command = text.split()[0].split("@")[0]
         if command == "/start":
@@ -417,12 +418,19 @@ class TelegramTars:
                 reminders.delivered(r["id"], now)
                 print(f"TARS (Telegram, to {self._chats[chat_id].person}):  {text}  (reminder {r['id']})", flush=True)
                 self._said(self._chats[chat_id], text, now)
-            for r in reminders.to_report():
+            for r in reminders.to_report(now):
                 chat_id = self._by_person.get(person_key(r["from_name"]))
                 if chat_id is None:
                     continue
                 text = report(r)
-                self._bot.send(chat_id, text)
+                try:
+                    self._bot.send(chat_id, text)
+                except TelegramError as e:
+                    if e.status not in UNREACHABLE:
+                        raise
+                    print(f"(Telegram: can't tell {self._chats[chat_id].person} how reminder {r['id']} went ({e}))")
+                    reminders.reported(r["id"], r["status"])
+                    continue
                 reminders.reported(r["id"], r["status"])
                 self._said(self._chats[chat_id], text, now)
         if self._conversations and self._send_items:
@@ -442,7 +450,10 @@ class TelegramTars:
                     if e.status not in UNREACHABLE:
                         raise
                     print(f"(Telegram: can't post {row['title']!r} ({e}); it's on the TARS page)")
+                    self._conversations.mark_delivered(row["id"], now)
+                    continue
                 self._conversations.mark_delivered(row["id"], now)
+                self._chats[chat_id].brain.remember_said(item_text(item))
 
     def _deliver_forever(self) -> None:
         wait = DELIVER_EVERY_S
@@ -472,10 +483,11 @@ class TelegramTars:
             print(f"(couldn't {change.action} the reminder: {e!r})")
 
     def _ack(self, ids: list[int], who: str, changed: Collection[int]) -> None:
-        """A bare <ack> is for the reminder said aloud last; the chat has none of its own waiting."""
+        """Only a numbered <ack N>: a bare one would be for the reminder said aloud at home last, whoever it's for,
+        and a chat has none of its own waiting, so it's a slip."""
         reminders = self._tools.reminders
         try:
-            for i in [i for i in ids or [r["id"] for r in reminders.waiting()[:1]] if i not in changed]:
+            for i in [i for i in ids if i not in changed]:
                 if reminders.ack(i, who, TELEGRAM):
                     print(f"(reminder {i} acknowledged by {who}, on Telegram)")
         except Exception as e:  # noqa: BLE001 - the reply was sent; only the record of it failed
@@ -496,18 +508,20 @@ class TelegramTars:
         return self._clock()
 
     def _send(self, chat_id: int, text: str, tries: int = 1) -> None:
-        """Raises TelegramError after `tries` failures; a single try's failure is only printed."""
-        for attempt in range(tries):
-            try:
-                self._bot.send(chat_id, text)
-                return
-            except TelegramError as e:
-                if tries == 1:
-                    print(f"(Telegram: couldn't send a message: {e})")
-                    return
-                if attempt == tries - 1:
-                    raise
-                self._sleep(e.retry_after or RETRY_S[attempt])
+        """Raises TelegramError after `tries` failures of one part of `text`; a single try's failure is only printed.
+        Each part is tried on its own, so one that failed doesn't post those before it again."""
+        for part in split_text(text):
+            for attempt in range(tries):
+                try:
+                    self._bot.send(chat_id, part)
+                    break
+                except TelegramError as e:
+                    if tries == 1:
+                        print(f"(Telegram: couldn't send a message: {e})")
+                        return
+                    if attempt == tries - 1:
+                        raise
+                    self._sleep(e.retry_after or RETRY_S[attempt])
 
     def _conversation(self, chat: Chat, now: float) -> int | None:
         """The chat's conversation for the web UI: the same one until it goes quiet for as long as the brain

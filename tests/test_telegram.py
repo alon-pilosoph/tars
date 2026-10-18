@@ -18,6 +18,7 @@ from voice_assistant.reminders import (
     TELEGRAM,
     TIMER,
     VOICE,
+    WAITING,
     WEB,
     Change,
     NewReminder,
@@ -184,10 +185,11 @@ def test_new_starts_a_new_conversation(convos):
 
 
 def test_the_commands_menu_is_set_and_a_failure_to_is_no_matter(monkeypatch):
+    # A real sleep: the thread posting what's due runs on after the test, and mustn't spin.
     bot = FakeBot()
     bot.updates = lambda offset: (_ for _ in ()).throw(KeyboardInterrupt)
     with pytest.raises(KeyboardInterrupt):
-        tars(bot, [ScriptedBrain()]).run_forever()
+        tars(bot, [ScriptedBrain()], sleep=time.sleep).run_forever()
     assert bot.commands == COMMANDS
 
     def refuse(commands):
@@ -195,7 +197,7 @@ def test_the_commands_menu_is_set_and_a_failure_to_is_no_matter(monkeypatch):
 
     bot.set_commands = refuse
     with pytest.raises(KeyboardInterrupt):  # still went on to read messages
-        tars(bot, [ScriptedBrain()]).run_forever()
+        tars(bot, [ScriptedBrain()], sleep=time.sleep).run_forever()
 
 
 def test_a_photo_or_voice_note_gets_a_plain_answer():
@@ -438,6 +440,21 @@ def test_tidy_takes_out_the_lines_said_while_waiting():
     assert tidy("Line one.\n\nLine two.") == "Line one.\n\nLine two."
 
 
+def test_a_long_reply_that_fails_partway_doesnt_post_its_start_twice():
+    bot, tries = FakeBot(), []
+    post = bot.send
+
+    def send(chat_id, text):
+        tries.append(text)
+        if len(tries) == 2:
+            raise TelegramError("sendMessage: ConnectError")
+        post(chat_id, text)
+
+    bot.send = send
+    tars(bot, [ScriptedBrain(["a" * 4000 + "\n\n" + "b" * 100])]).handle(message("long?"))
+    assert bot.said() == ["a" * 4000, "b" * 100]
+
+
 def test_long_text_is_split_where_it_reads_well():
     text = "a" * 30 + "\n\n" + "b" * 30
     assert split_text(text, limit=40) == ["a" * 30, "b" * 30]
@@ -535,6 +552,28 @@ def test_the_voice_brains_remind_tool_has_no_aloud_choice():
     assert CHAT_REMIND_TOOLS[1:] == REMIND_TOOLS[1:]
 
 
+def test_what_was_posted_in_the_chat_is_part_of_its_conversation(convos):
+    brain = ScriptedBrain()
+    convos.add_item(None, None, SentItem(NOTE, "Pasta", body="Boil water."), for_name="Alon")
+    tars(FakeBot(), [brain], convos, tools_with(convos)).deliver()
+    assert brain.remembered == ["Pasta\n\nBoil water."]
+
+
+def test_a_reminder_posted_in_the_chat_can_be_snoozed_from_it(convos):
+    tools, now = tools_with(convos), time.time()
+    rid = tools.reminders.add(
+        NewReminder(REMINDER, "call mum", "alon", due=now + 60), TELEGRAM, channel=TELEGRAM, now=now
+    )
+    tars(FakeBot(), [ScriptedBrain()], convos, tools, clock=lambda: now + 61).deliver()
+    assert tools.reminders.get(rid)["status"] == SAID
+    assert f"[{rid}] posted to Alon's Telegram chat" in tools.note(now + 120)
+    change, said = tools.call("snooze_reminder", {"id": rid, "minutes": 10}, now=now + 120)
+    assert said.startswith("snoozed")
+    tools.apply(change, "Alon")
+    r = tools.reminders.get(rid)
+    assert (r["status"], r["channel"]) == (SCHEDULED, TELEGRAM)
+
+
 def said_at_home(convos, needs_ack=True):
     """A message set in Alon's chat, said aloud at home just now."""
     tools, now = tools_with(convos), time.time()
@@ -577,6 +616,18 @@ def test_one_said_once_is_reported_once_and_kept_in_the_chat(convos):
     (said,) = bot.said()
     assert said.startswith("Said at home at") and "Waiting" not in said
     assert convos.conversations()[0]["turns"][0]["text"] == said
+
+
+def test_a_chat_that_blocked_the_bot_isnt_told_how_its_message_went_over_and_over(convos):
+    tools, _ = said_at_home(convos)
+    tars(BlockedBot(), [ScriptedBrain()], convos, tools).deliver()  # doesn't raise: nothing to try again
+    assert tools.reminders.to_report() == []
+
+
+def test_a_bare_ack_in_a_chat_acknowledges_nothing_said_at_home(convos):
+    tools, rid = said_at_home(convos)
+    tars(FakeBot(), [ScriptedBrain(["<ack> Noted."])], convos, tools).handle(message("thanks"))
+    assert tools.reminders.get(rid)["status"] == WAITING
 
 
 def test_reminders_set_at_home_are_never_reported_to_a_chat(convos):

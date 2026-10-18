@@ -753,7 +753,8 @@ class OpenAIChat:
             self._forget_if_quiet()
             self._history.append({"role": "assistant", "content": text})
             self._history = self._history[-MAX_TURNS * 2 :]
-            self._last_turn_at = self._clock()
+            # Both: forget_last() for a question asked before this goes back to when this was said, not before.
+            self._previous_turn_at = self._last_turn_at = self._clock()
 
     def start_over(self) -> None:
         with self._lock:
