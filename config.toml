@@ -213,8 +213,8 @@ bucket = ""
 region = ""
 # Everything goes under this folder in the bucket.
 prefix = "tars"
-# A request's audio stays on the machine this long, then only in the bucket (the web UI still plays it). Audio
-# training learns from, and what TARS sent, stay on the machine as well. 0 = keep everything on the machine too.
+# A recording stays on the machine this long, then only in the bucket (the web UI still plays it). What training
+# learns from, each voice's newest requests, and what TARS sent stay on the machine too. 0 = keep everything here.
 keep_local_days = 30
 # Then S3 moves the audio to Glacier Deep Archive: the cheapest storage, and up to 48 hours to bring back. 0 = never.
 archive_after_days = 180

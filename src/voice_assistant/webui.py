@@ -256,18 +256,18 @@ def create_app(
 
     def recording(rel: str | None) -> Response:
         """A recording, from this machine, or from the backup's bucket once it's been moved there."""
+        path = (log.folder / rel).resolve() if rel else None
+        if not (path and path.is_relative_to(log.folder.resolve())):
+            raise HTTPException(404, "no file")
+        if path.exists():
+            return FileResponse(path, media_type="audio/wav")
         try:
-            return FileResponse(file_or_404(rel), media_type="audio/wav")
-        except HTTPException:
-            if not (rel and bucket):
-                raise
-        try:
-            data = bucket(rel)
+            data = bucket(rel) if bucket else None
         except Exception as e:  # noqa: BLE001 - the bucket not answering is a recording that can't be played
             print(f"(web UI: couldn't fetch {rel} from the backup: {e!r})")
             data = None
         if data is None:
-            raise HTTPException(404, "not on this machine, and not in the bucket, or archived there")
+            raise HTTPException(404, "not on this machine, nor in the backup's bucket (or archived there)")
         return Response(data, media_type="audio/wav")
 
     # Before /api/audio/{event_id}/{which}, or "turn" would be taken for an event id.

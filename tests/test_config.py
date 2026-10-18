@@ -55,6 +55,12 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ("[telegram]\npeople = { Alon = 1, Stacey = 1 }", "the same chat id twice"),
         ('[telegram]\npeople = { " " = 1 }', "a name for each chat id"),
         ("[telegram]\nmemory_minutes = 0", "memory_minutes must be more than 0"),
+        ("[backup]\nenabled = true", "[backup] bucket must name"),
+        ('[backup]\nenabled = true\nbucket = "tars-home"', "[backup] region must say"),
+        ('[backup]\nbucket = "Tars_Home"', "must be an S3 bucket name"),
+        ('[backup]\nregion = "europe"', "must be an AWS region"),
+        ('[backup]\nprefix = "/tars/"', "no slash at either end"),
+        ("[backup]\nkeep_snapshots_days = 0", "keep_snapshots_days must be at least 1"),
     ],
 )
 def test_a_setting_that_cannot_work_stops_at_startup_with_one_line(tmp_path, setting, says):

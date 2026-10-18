@@ -8,6 +8,7 @@ win over the automatic ones.
 import sqlite3
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -21,6 +22,20 @@ PERSON, NOT_PERSON, UNKNOWN = "person", "not_person", "unknown"
 MISSED_WINDOW_S = 6.0  # a near-miss followed this soon by a real wake was probably a missed "hey TARS"
 DAY_S = 24 * 3600
 REVIEW_SHOWN = 500  # Review shows this many of the newest wakes waiting for an answer, and as many answered ones
+# The newest requests of each named voice stay on the machine whatever a backup does: its voiceprint is rebuilt from
+# them when voices are regrouped (clustering.enroll_named), and a few dozen make a good one.
+VOICEPRINT_REQUESTS = 25
+
+
+class KeptFile(NamedTuple):
+    """A file the event log keeps, by its path in the log's folder: when it was made, and whether it must stay on
+    this machine (something reads it from here later) or may live only in a backup."""
+
+    path: str
+    ts: float
+    stays: bool
+
+
 SAMPLES = 4  # requests a voice is shown with
 
 
@@ -90,7 +105,7 @@ class EventLog:
         unreviewed wakes the check turned away); a TV can make dozens a day. Labeled audio is training data and stays.
         Returns how many events lost their audio."""
         cutoff = (now or time.time()) - keep_days * DAY_S
-        rows = self.labeled(
+        rows = self._labeled(
             self.store.rows(
                 "SELECT * FROM events WHERE ts < ? AND label IS NULL AND "
                 "(audio IS NOT NULL OR utterance_audio IS NOT NULL)",
@@ -111,6 +126,33 @@ class EventLog:
                     dropped.append(r)
         self.store.remove([rel for r in dropped for rel in (r["audio"], r["utterance_audio"])])
         return len(dropped)
+
+    def kept_files(self) -> list[KeptFile]:
+        """Every recording the events keep. A wake window training learns from stays on the machine (training reads
+        it from here), as do the newest VOICEPRINT_REQUESTS requests of each named voice."""
+        rows = self._labeled(
+            self.store.rows(
+                "SELECT id, ts, kind, label, outcome, follow, transcript, audio, utterance_audio FROM events "
+                "WHERE audio IS NOT NULL OR utterance_audio IS NOT NULL"
+            )
+        )
+        voiceprints = {
+            r["utterance_audio"]
+            for r in self.store.rows(
+                "SELECT utterance_audio FROM (SELECT e.utterance_audio, "
+                "row_number() OVER (PARTITION BY e.cluster_id ORDER BY e.ts DESC) AS newest "
+                "FROM events e JOIN clusters c ON c.id = e.cluster_id "
+                "WHERE c.kind = ? AND e.utterance_audio IS NOT NULL) WHERE newest <= ?",
+                (PERSON, VOICEPRINT_REQUESTS),
+            )
+        }
+        files = []
+        for r in rows:
+            if r["audio"]:
+                files.append(KeptFile(r["audio"], r["ts"], learning_label(r) is not None))
+            if r["utterance_audio"]:
+                files.append(KeptFile(r["utterance_audio"], r["ts"], r["utterance_audio"] in voiceprints))
+        return files
 
     def set_label(self, event_id: int, label: str | None) -> None:
         self.store.write("UPDATE events SET label=? WHERE id=?", (label, event_id))
@@ -162,14 +204,14 @@ class EventLog:
 
     def events(self, limit: int | None = None) -> list[dict]:
         """Newest first (all of them without a `limit`), each with its automatic label."""
-        return self.labeled(
+        return self._labeled(
             self.store.rows("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (-1 if limit is None else limit,))
         )
 
     def for_review(self) -> list[dict]:
         """Newest first: the events waiting for an answer, and the newest answered ones. A wake a request followed
         settles itself, and one whose audio is gone can't be listened to, so neither waits."""
-        return self.labeled(
+        return self._labeled(
             self.store.rows(
                 "SELECT * FROM events WHERE id IN (SELECT id FROM events WHERE label IS NULL AND audio IS NOT NULL "
                 "AND follow IS NOT ? ORDER BY ts DESC LIMIT ?) "
@@ -178,8 +220,7 @@ class EventLog:
             )
         )
 
-    def labeled(self, rows: list[dict]) -> list[dict]:
-        """`rows` of events, each with its automatic label and why (auto_label, auto_reason)."""
+    def _labeled(self, rows: list[dict]) -> list[dict]:
         answered = self._answered_times(rows)
         for r in rows:
             r["auto_label"], r["auto_reason"] = auto_label(r, answered)

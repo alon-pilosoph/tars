@@ -5,7 +5,8 @@ will hear most: the owner's soft *t* is the main reason the generic setup misses
 gap from real use. TARS keeps every wake and near-miss with its audio, labels most of them automatically from what
 happened next, and groups requests by voice for speaker ID. Both wake stages are then retrained together, as a pair,
 on a bigger machine, and the new pair is installed only if it tests better end to end than the one in use, with
-every version kept and one tap to switch back. Everything it learns from stays on the machine it runs on.
+every version kept and one tap to switch back. Everything it learns from stays on the machine it runs on, and in
+the household's own S3 bucket when the [backup](backup.md) is on.
 
 ## The problem
 

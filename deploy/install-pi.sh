@@ -92,4 +92,5 @@ sleep 3  # the services just restarted
 
 echo
 echo "Done. Say \"hey TARS\". The web UI is at http://$(hostname).local:8080"
-echo "Logs: journalctl --user-unit voice-assistant -f   (and voice-assistant-web, -telegram and -backup)"
+echo "Logs: journalctl --user-unit voice-assistant -f   (and --user-unit voice-assistant-web,"
+echo "      --user-unit voice-assistant-telegram, --user-unit voice-assistant-backup)"

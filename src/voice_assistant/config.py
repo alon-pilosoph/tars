@@ -21,6 +21,7 @@ DEEPGRAM_HOST = "api.deepgram.com"
 DEEPGRAM_STT_MODEL = "nova-3"
 DEEPGRAM_VOICE = "flux-wes-en"
 OPENAI_KEY, DEEPGRAM_KEY, CARTESIA_KEY = "OPENAI_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY"
+AWS_KEY_ID, AWS_SECRET = "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"  # an IAM user's key, for [backup]
 TELEGRAM_KEY = "TELEGRAM_BOT_TOKEN"
 
 
@@ -206,8 +207,8 @@ class BackupConfig:
     region: str = ""
     # Everything goes under this folder in the bucket: audio/, files/ and snapshots/.
     prefix: str = "tars"
-    # A request's audio stays on the machine this long, then only in the bucket (the web UI still plays it). Audio
-    # training learns from, and what TARS sent, stay on the machine as well. 0 = keep everything on the machine.
+    # A recording stays on the machine this long, then only in the bucket (the web UI still plays it). What training
+    # learns from, each voice's newest requests, and what TARS sent stay on the machine too. 0 = keep everything here.
     keep_local_days: float = 30.0
     # Then S3 moves it to Glacier Deep Archive, the cheapest storage, which takes up to 48 hours to bring back.
     # 0 = never.

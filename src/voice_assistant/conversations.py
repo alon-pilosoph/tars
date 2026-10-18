@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .events import EventLog, person_key
+from .events import EventLog, KeptFile, person_key
 
 ROLE_PERSON, ROLE_TARS = "person", "tars"
 LINK, NOTE, LIST, FILE = "link", "note", "list", "file"
@@ -171,6 +171,14 @@ class ConversationLog:
                     delivered,
                 ),
             )
+
+    def kept_files(self) -> list[KeptFile]:
+        """Every file the conversations keep: what was said in each turn, which may live only in a backup, and the
+        files TARS sent, which stay on the machine (the web UI hands them out)."""
+        turns = self.store.rows("SELECT ts, audio FROM turns WHERE audio IS NOT NULL")
+        items = self.store.rows("SELECT ts, file FROM items WHERE file IS NOT NULL")
+        said = [KeptFile(t["audio"], t["ts"], False) for t in turns]
+        return said + [KeptFile(i["file"], i["ts"], True) for i in items]
 
     def undelivered(self, since: float) -> list[dict]:
         """Items for a person, sent since `since` and not posted to a Telegram chat yet: the oldest first."""

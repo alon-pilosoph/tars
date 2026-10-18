@@ -14,8 +14,10 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
   can answer, and a request's recording when Deepgram's stream fails.
 - **Telegram,** with `[telegram]` on: what's written in the household's chats with TARS, and what it sends there
   ([TARS on Telegram](telegram.md)).
+- **Your own S3 bucket,** with `[backup]` on: a copy of everything TARS keeps, encrypted at rest, every 15 minutes
+  ([backing up to S3](backup.md)).
 
-The event log, the audio kept for learning, voiceprints and the web UI never leave it
+Without the backup, the event log, the audio kept for learning, voiceprints and the web UI never leave it
 ([what leaves the machine](architecture.md#what-leaves-the-machine)).
 
 ```

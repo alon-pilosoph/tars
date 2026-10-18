@@ -18,6 +18,8 @@ from .audio import save_wav
 
 # AUTOINCREMENT so an id is never reused: the web UI deletes rows while the assistant adds them, and a reused id
 # would silently attach a new wake to an old conversation (or delete it along with one).
+DB_FILE = "events.db"  # in the event log's folder
+
 TABLES = {
     "events": """CREATE TABLE events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,8 +115,9 @@ TABLES = {
     "remote_files": """CREATE TABLE remote_files (
     path TEXT PRIMARY KEY,           -- as the rows that keep it name it (relative to the folder)
     uploaded REAL NOT NULL,          -- when it went to the bucket ([backup], backup.py)
-    size INTEGER NOT NULL,
-    offloaded REAL                   -- when it was removed from the machine, being in the bucket; NULL = on both
+    size INTEGER NOT NULL,           -- as uploaded: a copy fetched back must be as long
+    offloaded REAL,                  -- when it was removed from the machine, being in the bucket; NULL = on both
+    fetched REAL                     -- when it was last brought back from the bucket, if it was
 )""",
 }
 INDEXES = [
@@ -158,7 +161,15 @@ MIGRATIONS = [
         "ALTER TABLE items ADD COLUMN delivered REAL",
         "UPDATE items SET delivered = ts",  # what was sent before Telegram isn't posted to a chat now
     ],
-    [TABLES["remote_files"]],
+    [
+        """CREATE TABLE remote_files (
+    path TEXT PRIMARY KEY,
+    uploaded REAL NOT NULL,
+    size INTEGER NOT NULL,
+    offloaded REAL,
+    fetched REAL
+)"""
+    ],
 ]
 
 
@@ -171,7 +182,7 @@ class Store:
 
     def connect(self) -> sqlite3.Connection:
         # Autocommit: a single statement is atomic on its own, and transaction() opens the multi-step ones.
-        db = sqlite3.connect(self.folder / "events.db", timeout=10, isolation_level=None)
+        db = sqlite3.connect(self.folder / DB_FILE, timeout=10, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA journal_mode=WAL")
         return db

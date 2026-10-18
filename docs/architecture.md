@@ -7,7 +7,8 @@ which copies what TARS keeps to an S3 bucket every 15 minutes ([backing up to S3
 the design:
 
 - **Local until it's sure.** The wake word, the double-check, the speech detector and speaker ID run on the machine.
-  Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)). After a wake,
+  Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)), but for the
+  backup, when it's on, which copies everything TARS keeps to the household's own S3 bucket later. After a wake,
   Deepgram's Flux, in the cloud, decides when you're done by default; the local end of turn (silence, then Smart
   Turn) is the fallback.
 - **Streamed and overlapped.** Speech to text runs while you talk, the answer is drafted before your turn is
@@ -193,7 +194,7 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
   Telegram for new messages, so nothing at home is opened to the internet.
 - **With `[backup]` on,** your own S3 bucket gets everything TARS keeps: the recordings, the files it sent, and once
   a day the database (transcripts and voice embeddings included), the voiceprints and the wake models trained on the
-  household, encrypted at rest ([backing up to S3](backup.md#what-it-sends)). `.env` never goes.
+  household, encrypted at rest ([backing up to S3](backup.md#what-it-sends-aws)). `.env` never goes.
 - **Never, without `[backup]`:** the event log, the audio kept for learning, voiceprints, and anything else the web UI
   shows. The web UI is served from the same machine, and talks to nothing else but that bucket, to play a recording
   that's moved there.
