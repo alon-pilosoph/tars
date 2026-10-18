@@ -84,6 +84,10 @@ reminder that's due, how a message said at home went, what was sent at home for 
 too, so "remind me again in ten minutes" right after a reminder knows which, and snoozes it: a reminder posted in
 the chat is in the model's list, by number, for an hour after, and snoozed it's posted again at its new time. On the web UI, each conversation is its own, like one at home.
 
+**Never in the middle of an exchange.** Posting runs on its own thread, every 2 s. While TARS is answering
+someone, nothing it posts by itself goes to their chat: a reminder that comes due meanwhile is posted right after the
+answer, so neither the chat nor what the model remembers has it between a question and its answer.
+
 **Writing, not speaking.** The system prompt is written for the ear. For a chat, a rule goes last in the
 instructions, so it wins: this is in writing, reply as in a text message, plain text, links are fine, what you send is
 posted here, and who's on Telegram (so a reminder for someone without a chat is said aloud). The lines TARS says while

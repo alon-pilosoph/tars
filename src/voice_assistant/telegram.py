@@ -17,9 +17,9 @@ import re
 import threading
 import time
 import traceback
-from collections.abc import Callable, Collection
-from contextlib import nullcontext
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Iterator
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -240,6 +240,19 @@ class Chat:
     brain: Brain
     conversation: int | None = None
     last_at: float = 0.0
+    # Held while TARS answers in the chat, or posts to it by itself: one at a time, never one inside the other.
+    busy: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+
+@contextmanager
+def _free(chat: Chat) -> Iterator[bool]:
+    """Holds `chat` if nothing else is: True then, False if TARS is answering in it (try again later)."""
+    got = chat.busy.acquire(blocking=False)
+    try:
+        yield got
+    finally:
+        if got:
+            chat.busy.release()
 
 
 class _Typing:
@@ -358,7 +371,12 @@ class TelegramTars:
 
     def answer(self, chat: Chat, text: str) -> None:
         """Answers in the chat, and keeps the exchange for the web UI. As by voice, what the reply did (reminders
-        set, things sent) only happens once the reply has reached them."""
+        set, things sent) only happens once the reply has reached them. The chat is held meanwhile, so what TARS
+        posts by itself (deliver) waits until the exchange is over."""
+        with chat.busy:
+            self._answer(chat, text)
+
+    def _answer(self, chat: Chat, text: str) -> None:
         now = self._clock()
         print(f"{chat.person} (Telegram):  {text!r}", flush=True)
         with self._lock:
@@ -396,64 +414,88 @@ class TelegramTars:
             self._apply(change, chat, conversation)
 
     def deliver(self) -> None:
-        """Posts the reminders due on Telegram, and what TARS sent at home for someone with a chat. Raises
-        TelegramError when Telegram can't be reached; what wasn't posted is tried again next time."""
+        """Posts the reminders due on Telegram, how those set here and said at home went, and what TARS sent at home
+        for someone with a chat. A chat in the middle of an exchange is left for the next round, so nothing TARS
+        posts by itself lands between a question and its answer. Raises TelegramError when Telegram can't be reached;
+        what wasn't posted is tried again next time."""
         now = self._clock()
         if self._tools:
             reminders = self._tools.reminders
             for r in reminders.due(now, channel=TELEGRAM):
-                chat_id = self._by_person.get(person_key(r["for_name"] or r["from_name"]))
-                if chat_id is None:  # their chat was taken out of config.toml since: said at home instead
+                chat = self._chat_for(r["for_name"] or r["from_name"])
+                if chat is None:  # their chat was taken out of [telegram] people since: said at home instead
                     reminders.say_aloud(r["id"])
                     continue
-                text = " ".join(t for t in (line(r), late(r, now)) if t)
-                try:
-                    self._bot.send(chat_id, text)
-                except TelegramError as e:
-                    if e.status not in UNREACHABLE:
-                        raise
-                    print(f"(Telegram: can't post reminder {r['id']} ({e}); it's said aloud at home instead)")
-                    reminders.say_aloud(r["id"])
-                    continue
-                reminders.delivered(r["id"], now)
-                print(f"TARS (Telegram, to {self._chats[chat_id].person}):  {text}  (reminder {r['id']})", flush=True)
-                self._said(self._chats[chat_id], text, now)
+                with _free(chat) as free:
+                    if free:
+                        self._post_reminder(chat, r, now)
             for r in reminders.to_report(now):
-                chat_id = self._by_person.get(person_key(r["from_name"]))
-                if chat_id is None:
+                chat = self._chat_for(r["from_name"])
+                if chat is None:
                     continue
-                text = report(r)
-                try:
-                    self._bot.send(chat_id, text)
-                except TelegramError as e:
-                    if e.status not in UNREACHABLE:
-                        raise
-                    print(f"(Telegram: can't tell {self._chats[chat_id].person} how reminder {r['id']} went ({e}))")
-                    reminders.reported(r["id"], r["status"])
-                    continue
-                reminders.reported(r["id"], r["status"])
-                self._said(self._chats[chat_id], text, now)
+                with _free(chat) as free:
+                    if free:
+                        self._report(chat, r, now)
         if self._conversations and self._send_items:
             for row in self._conversations.undelivered(since=now - ITEMS_WITHIN_S):
-                chat_id = self._by_person.get(person_key(row["for_name"]))
-                if chat_id is None:
+                chat = self._chat_for(row["for_name"])
+                if chat is None:
                     continue
-                try:
-                    item = stored_item(row, self._conversations.store.folder)
-                except OSError as e:  # its file is gone: there's nothing to post, now or later
-                    print(f"(Telegram: couldn't read {row['title']!r} to post it: {e!r})")
-                    self._conversations.mark_delivered(row["id"], now)
-                    continue
-                try:
-                    self._post_item(chat_id, item, raises=True)
-                except TelegramError as e:
-                    if e.status not in UNREACHABLE:
-                        raise
-                    print(f"(Telegram: can't post {row['title']!r} ({e}); it's on the TARS page)")
-                    self._conversations.mark_delivered(row["id"], now)
-                    continue
-                self._conversations.mark_delivered(row["id"], now)
-                self._chats[chat_id].brain.remember_said(item_text(item))
+                with _free(chat) as free:
+                    if free:
+                        self._post_sent_at_home(chat, row, now)
+
+    def _chat_for(self, person: str | None) -> Chat | None:
+        chat_id = self._by_person.get(person_key(person))
+        return self._chats[chat_id] if chat_id is not None else None
+
+    def _post_reminder(self, chat: Chat, r: dict, now: float) -> None:
+        reminders = self._tools.reminders
+        text = " ".join(t for t in (line(r), late(r, now)) if t)
+        try:
+            self._bot.send(chat.chat_id, text)
+        except TelegramError as e:
+            if e.status not in UNREACHABLE:
+                raise
+            print(f"(Telegram: can't post reminder {r['id']} ({e}); it's said aloud at home instead)")
+            reminders.say_aloud(r["id"])
+            return
+        reminders.delivered(r["id"], now)
+        print(f"TARS (Telegram, to {chat.person}):  {text}  (reminder {r['id']})", flush=True)
+        self._said(chat, text, now)
+
+    def _report(self, chat: Chat, r: dict, now: float) -> None:
+        """Tells the chat that set a reminder said at home how it went; one that can't be reached isn't told again."""
+        text = report(r)
+        try:
+            self._bot.send(chat.chat_id, text)
+        except TelegramError as e:
+            if e.status not in UNREACHABLE:
+                raise
+            print(f"(Telegram: can't tell {chat.person} how reminder {r['id']} went ({e}))")
+            self._tools.reminders.reported(r["id"], r["status"])
+            return
+        self._tools.reminders.reported(r["id"], r["status"])
+        self._said(chat, text, now)
+
+    def _post_sent_at_home(self, chat: Chat, row: dict, now: float) -> None:
+        log = self._conversations
+        try:
+            item = stored_item(row, log.store.folder)
+        except OSError as e:  # its file is gone: there's nothing to post, now or later
+            print(f"(Telegram: couldn't read {row['title']!r} to post it: {e!r})")
+            log.mark_delivered(row["id"], now)
+            return
+        try:
+            self._post_item(chat.chat_id, item, raises=True)
+        except TelegramError as e:
+            if e.status not in UNREACHABLE:
+                raise
+            print(f"(Telegram: can't post {row['title']!r} ({e}); it's on the TARS page)")
+            log.mark_delivered(row["id"], now)
+            return
+        log.mark_delivered(row["id"], now)
+        chat.brain.remember_said(item_text(item))
 
     def _deliver_forever(self) -> None:
         wait = DELIVER_EVERY_S
@@ -539,7 +581,7 @@ class TelegramTars:
 
     def start_over(self, chat: Chat) -> None:
         """/new: the brain forgets the chat so far, and the next message starts a new conversation on the web UI."""
-        with self._lock:
+        with chat.busy, self._lock:
             if chat.conversation is not None and self._conversations is not None:
                 self._log(self._conversations.end, chat.conversation, ts=chat.last_at or self._clock())
             chat.conversation, chat.last_at = None, 0.0

@@ -1,9 +1,9 @@
 # How TARS fits together
 
-TARS is two processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of data:
-the assistant, which listens and answers, and the web UI, which shows and edits what the assistant kept. A third,
-optional, answers the household's Telegram chats ([TARS on Telegram](telegram.md)). Five principles shape the
-design:
+TARS is a few processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of
+data: the assistant, which listens and answers; the web UI, which shows and edits what the assistant kept; and,
+optionally, TARS on Telegram, which answers the household's chats ([TARS on Telegram](telegram.md)). Five principles
+shape the design:
 
 - **Local until it's sure.** The wake word, the double-check, the speech detector and speaker ID run on the machine.
   Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)). After a wake,
@@ -195,9 +195,9 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
 
 `voice-assistant --web` is a separate process: a FastAPI server (`webui.py`) over the same database, serving the
 React page built from `webui/` (committed as `src/voice_assistant/webui_static/`, so the Pi needs no Node). The
-assistant writes and the web UI reads and edits: SQLite in WAL mode lets both work at once, and every change of more
-than one row is one transaction. Each runs as its own service, so a crash in one never takes the other down. The web
-UI is described in [the web UI](web-ui.md).
+assistant writes and the web UI reads and edits (as does TARS on Telegram, when it's on): SQLite in WAL mode lets
+them all work at once, and every change of more than one row is one transaction. Each runs as its own service, so a
+crash in one never takes another down. The web UI is described in [the web UI](web-ui.md).
 
 **It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
 elsewhere could reach it through someone's browser:

@@ -379,6 +379,28 @@ def test_a_reminder_due_on_telegram_is_posted_once_and_never_said_aloud(convos):
     assert conversation["turns"][0]["text"] == "Your pasta timer is done."
 
 
+def test_a_reminder_due_while_tars_is_answering_is_posted_after_the_answer(convos):
+    # The posting thread's round can come while a reply is being written: the reminder mustn't land between the
+    # question and its answer, in the chat or in what the brain remembers.
+    bot, tools, now = FakeBot(), tools_with(convos), time.time()
+    timer = NewReminder(TIMER, "pasta", from_name="Alon", due=now - 1)
+    tools.reminders.add(timer, TELEGRAM, channel=TELEGRAM, now=now - 60)
+    brain = ScriptedBrain(["Nine o'clock."])
+    t = tars(bot, [brain], convos, tools)
+    answering = brain.stream_reply
+
+    def stream_reply(text):
+        t.deliver()  # as the posting thread would, mid-reply
+        return answering(text)
+
+    brain.stream_reply = stream_reply
+    t.handle(message("what time is it?"))
+    assert bot.said() == ["Nine o'clock."] and brain.remembered == []
+    t.deliver()
+    assert bot.said() == ["Nine o'clock.", "Your pasta timer is done."]
+    assert brain.remembered == ["Your pasta timer is done."]
+
+
 def test_a_reminder_posted_late_says_when_it_was_due(convos):
     bot, tools, now = FakeBot(), tools_with(convos), time.time()
     tools.reminders.add(NewReminder(REMINDER, "call mum", "alon", due=now + 60), TELEGRAM, channel=TELEGRAM, now=now)

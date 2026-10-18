@@ -111,15 +111,15 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years.
 - **Backup.** SD cards die, and the labels are the valuable part. A nightly `restic` or `rclone` job sending an
   encrypted copy of `voice_data/` and `models/personal/` to S3 or Backblaze B2 costs cents a month.
-- **Two processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
+- **Separate processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
   with what TARS does without any that are missing), both audio devices, the local models, echo cancellation (only
   when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram and
   Cartesia (each with how long it took, Deepgram on the servers `deepgram_host` names, and any without a key or not
   in use skipped), the
-  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI and both
-  services.
+  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Telegram
+  (its bot's token, when `[telegram]` is on) and the services.
   Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
   one that doesn't open in time is a failure.
 
