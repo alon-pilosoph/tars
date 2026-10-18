@@ -23,7 +23,8 @@ dependencies = [
     "uvicorn>=0.30",
     "websockets>=14",
     "onnxruntime>=1.20",
-    "httpx>=0.28",  # Home Assistant and Telegram
+    "soundfile>=0.14.0",  # reading voice messages (Opus in Ogg)
+    "httpx>=0.28",  # Home Assistant, Telegram, and Deepgram's endpoint for whole recordings
 ]
 
 [project.urls]

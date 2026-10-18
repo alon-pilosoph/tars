@@ -2,7 +2,9 @@
 
 import json
 import time
+import types
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 import pytest
@@ -31,9 +33,14 @@ from voice_assistant.telegram import (
     COMMANDS,
     FRESH,
     HELLO,
+    MAX_VOICE_S,
+    NO_VOICE,
+    NOT_HEARD,
+    NOT_LISTENED,
     ONLY_TEXT,
     SORRY,
     STALE_S,
+    TOO_LONG,
     Bot,
     TelegramError,
     TelegramTars,
@@ -682,3 +689,148 @@ def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path)
     assert cfg.telegram.memory_minutes > cfg.llm.memory_minutes
     for has_openai in (True, False):
         assert chat_brain_config(cfg, has_openai).memory_minutes == cfg.telegram.memory_minutes
+
+
+# Voice messages.
+
+
+def voice_note(seconds: float = 1.0) -> bytes:
+    """A voice message as Telegram's apps record one: Opus in Ogg, at 48 kHz."""
+    import io
+
+    import numpy as np
+    import soundfile
+
+    t = np.linspace(0, seconds, int(48_000 * seconds), endpoint=False)
+    out = io.BytesIO()
+    soundfile.write(out, (0.3 * np.sin(2 * np.pi * 220 * t)).astype("float32"), 48_000, format="OGG", subtype="OPUS")
+    return out.getvalue()
+
+
+class ListeningBot(FakeBot):
+    def __init__(self, recording=None, **kw):
+        super().__init__(**kw)
+        self.recording, self.downloaded = recording or voice_note(), []
+
+    def download(self, file_id):
+        self.downloaded.append(file_id)
+        if isinstance(self.recording, Exception):
+            raise self.recording
+        return self.recording
+
+
+def hearing(*heard):
+    """Speech to text that writes down each recording as the next of `heard`; an exception is raised instead."""
+    from voice_assistant.stt import BufferedSession
+
+    said = list(heard)
+
+    def transcribe(pcm):
+        assert pcm, "it was given the recording"
+        words = said.pop(0)
+        if isinstance(words, Exception):
+            raise words
+        return words
+
+    return types.SimpleNamespace(session=lambda: BufferedSession(transcribe))
+
+
+def spoken(duration=1, sent_at=None):
+    update = message("", sent_at=sent_at)
+    del update["message"]["text"]
+    update["message"]["voice"] = {"file_id": "AwACAgQ", "duration": duration, "mime_type": "audio/ogg"}
+    return update
+
+
+def test_a_voice_message_is_written_down_and_answered_and_its_recording_kept(convos):
+    bot, brain = ListeningBot(), ScriptedBrain(["Nine o'clock."])
+    tars(bot, [brain], convos, transcriber=hearing("what time is it?")).handle(spoken())
+    assert bot.downloaded == ["AwACAgQ"] and bot.said() == ["Nine o'clock."]
+    assert brain.asked == ["[Speaker: Alon] [Voice message] what time is it?"]
+    (conversation,) = convos.conversations()
+    person, answer = conversation["turns"]
+    assert person["text"] == "what time is it?" and person["has_audio"] and answer["text"] == "Nine o'clock."
+
+
+def test_a_voice_message_that_came_while_tars_was_off_is_not_listened_to():
+    bot = ListeningBot()
+    tars(bot, [ScriptedBrain()], transcriber=hearing()).handle(spoken(sent_at=time.time() - STALE_S - 60))
+    assert bot.downloaded == [] and "I was off when this came in" in bot.said()[0]
+
+
+@pytest.mark.parametrize(
+    "transcriber, duration, says",
+    [
+        (None, 1, NO_VOICE),  # no speech to text at all
+        (hearing(), MAX_VOICE_S + 1, TOO_LONG),
+    ],
+)
+def test_a_voice_message_it_wont_listen_to_says_why_without_fetching_it(transcriber, duration, says):
+    bot, brain = ListeningBot(), ScriptedBrain()
+    tars(bot, [brain], transcriber=transcriber).handle(spoken(duration))
+    assert bot.said() == [says] and bot.downloaded == [] and brain.asked == []
+
+
+def test_a_voice_message_with_no_words_in_it_asks_again():
+    bot, brain = ListeningBot(), ScriptedBrain()
+    tars(bot, [brain], transcriber=hearing("")).handle(spoken())
+    assert bot.said() == [NOT_HEARD] and brain.asked == []
+
+
+def test_speech_to_text_failing_is_said_and_kept_with_the_recording(convos):
+    bot, brain = ListeningBot(), ScriptedBrain()
+    tars(bot, [brain], convos, transcriber=hearing(ConnectionError("both down"))).handle(spoken())
+    assert bot.said() == [NOT_LISTENED] and brain.asked == []
+    person, failed = convos.conversations()[0]["turns"]
+    assert person["has_audio"] and failed["failed_at"] == "stt" and "both down" in failed["error"]
+
+
+def test_a_voice_message_telegram_wont_hand_over_is_said_and_kept_without_a_recording(convos):
+    bot = ListeningBot(recording=TelegramError("getFile: Bad Request: file is too big", 400))
+    tars(bot, [ScriptedBrain()], convos, transcriber=hearing()).handle(spoken())
+    assert bot.said() == [NOT_LISTENED]
+    person, failed = convos.conversations()[0]["turns"]
+    assert not person["has_audio"] and failed["failed_at"] == "stt" and "too big" in failed["error"]
+
+
+def test_the_bot_downloads_a_file_by_its_id_and_never_puts_the_token_in_an_error():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path.endswith("/getFile"):
+            assert json.loads(request.content) == {"file_id": "AwACAgQ"}
+            return httpx.Response(200, json={"ok": True, "result": {"file_path": "voice/file_7.oga"}})
+        return httpx.Response(200, content=b"OggS...")
+
+    assert bot_answering(handler).download("AwACAgQ") == b"OggS..."
+    assert seen == ["/bot123:SECRET/getFile", "/file/bot123:SECRET/voice/file_7.oga"]
+
+    def gone(request):
+        if request.url.path.endswith("/getFile"):
+            return httpx.Response(200, json={"ok": True, "result": {"file_path": "voice/file_7.oga"}})
+        return httpx.Response(404)
+
+    with pytest.raises(TelegramError) as e:
+        bot_answering(gone).download("AwACAgQ")
+    assert e.value.status == 404 and "SECRET" not in str(e.value)
+
+
+def test_voice_messages_go_to_deepgram_then_openai_as_at_home(tmp_path):
+    from voice_assistant.__main__ import make_recording_transcriber
+    from voice_assistant.config import load_config, with_keys
+    from voice_assistant.stt import DeepgramFileTranscriber, FallbackTranscriber, OpenAITranscriber
+
+    shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    env = tmp_path / ".env"
+
+    def made(keys: dict):
+        env.write_text("".join(f"{k}=x\n" for k in keys))
+        cfg, _ = with_keys(shipped, set(keys) | {"CARTESIA_API_KEY", "GROQ_API_KEY"})
+        return make_recording_transcriber(cfg, env)
+
+    both = made({"DEEPGRAM_API_KEY": 1, "OPENAI_API_KEY": 1})
+    assert isinstance(both, FallbackTranscriber)
+    assert isinstance(both._transcriber, DeepgramFileTranscriber) and isinstance(both._backup, OpenAITranscriber)
+    assert isinstance(made({"DEEPGRAM_API_KEY": 1}), DeepgramFileTranscriber)
+    assert isinstance(made({"OPENAI_API_KEY": 1}), OpenAITranscriber)

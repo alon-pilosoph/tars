@@ -4,6 +4,7 @@ import json
 import threading
 import types
 
+import numpy as np
 import pytest
 
 from voice_assistant import stt
@@ -287,3 +288,60 @@ def test_the_fallback_session_passes_flux_s_turns_through(flux):
     fallback.finish()
     assert fallback.transcript() == "what time is it"
     assert with_backup(BufferedSession(lambda pcm: ""), "").turn_state is None
+
+
+# A whole recording: a voice message on Telegram.
+
+
+def recorded(handler):
+    """A DeepgramFileTranscriber over a pretend Deepgram that answers with `handler(request)`."""
+    import httpx
+
+    from voice_assistant.config import STTConfig
+
+    cfg = STTConfig(provider="flux", deepgram_host="api.eu.deepgram.com")
+    return stt.DeepgramFileTranscriber("dg-key", cfg, httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_a_whole_recording_goes_to_deepgrams_endpoint_for_them_on_its_eu_servers():
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        alternatives = [{"transcript": " remind me to call mum at six "}]
+        return httpx.Response(200, json={"results": {"channels": [{"alternatives": alternatives}]}})
+
+    pcm = np.zeros(1600, dtype=np.int16)
+    assert stt.transcribe(recorded(handler), pcm) == "remind me to call mum at six"
+    (request,) = seen
+    assert request.url.host == "api.eu.deepgram.com" and request.url.path == "/v1/listen"
+    assert request.url.params["model"] == "nova-3"  # Flux has no endpoint for whole recordings
+    assert request.headers["Authorization"] == "Token dg-key" and request.content.startswith(b"RIFF")
+
+
+def test_a_whole_recording_deepgram_cant_take_goes_to_the_backup():
+    import httpx
+
+    deepgram = recorded(lambda request: httpx.Response(503))
+    backup = types.SimpleNamespace(session=lambda: BufferedSession(lambda pcm: "heard by OpenAI"))
+    pcm = np.zeros(1600, dtype=np.int16)
+    assert stt.transcribe(FallbackTranscriber(deepgram, backup), pcm) == "heard by OpenAI"
+
+
+def test_a_recording_is_read_as_16_khz_samples_whatever_it_was():
+    import io
+
+    import soundfile
+
+    t = np.linspace(0, 1.5, 72_000, endpoint=False)
+    tone = (0.5 * np.sin(2 * np.pi * 300 * t)).astype("float32")
+    voice = io.BytesIO()
+    soundfile.write(voice, tone, 48_000, format="OGG", subtype="OPUS")  # as Telegram sends a voice message
+    pcm = stt.decode_recording(voice.getvalue())
+    assert pcm.dtype == np.int16 and abs(len(pcm) - 24_000) < 400
+    assert 0.3 < np.abs(pcm).max() / 32767 < 0.7  # the same loudness, near enough
+    with pytest.raises(ValueError, match="can't read the recording") as e:
+        stt.decode_recording(b"not audio at all")
+    assert "BytesIO" not in str(e.value)

@@ -6,14 +6,14 @@ operation, storage and backup, and a first test run.
 TARS is local-first: the Pi listens, records, serves the web UI and learns voiceprints. Nothing leaves the house
 until a wake is confirmed, and then only the turn itself, and only to the services `.env` has keys for:
 
-- **Deepgram,** on its EU servers: your request's audio, for speech to text.
+- **Deepgram,** on its EU servers: your request's audio, and a voice message sent on Telegram, for speech to text.
 - **Cartesia:** TARS's reply text, a sentence at a time, for its voice.
 - **Groq:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
 - **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
 - **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
   can answer, and a request's recording when Deepgram's stream fails.
-- **Telegram,** with `[telegram]` on: what's written in the household's chats with TARS, and what it sends there
-  ([TARS on Telegram](telegram.md)).
+- **Telegram,** with `[telegram]` on: what's written and said in the household's chats with TARS, and what it sends
+  there ([TARS on Telegram](telegram.md)).
 
 The event log, the audio kept for learning, voiceprints and the web UI never leave it
 ([what leaves the machine](architecture.md#what-leaves-the-machine)).

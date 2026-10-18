@@ -3,8 +3,12 @@ With Flux, Deepgram also decides when you've finished talking.
 
 A session starts when TARS starts listening, before anyone speaks, so a streaming service can connect ahead. It's fed
 the audio as it's recorded, asked for the words so far (at a pause, and at the end), and closed.
+
+A recording that's already finished (a voice message on Telegram) goes the same way, to Deepgram and then OpenAI, but
+to Deepgram's endpoint for whole recordings: Flux would end the turn at the first long pause.
 """
 
+import io
 import json
 import queue
 import threading
@@ -13,13 +17,19 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlencode
 
+import httpx
+import numpy as np
+
 from .audio import SAMPLE_RATE, wav_bytes
-from .config import STTConfig
+from .config import DEEPGRAM_STT_MODEL, STTConfig
 
 if TYPE_CHECKING:
     from openai import OpenAI
 
 DEEPGRAM_URL = "wss://{host}/v1/listen"
+DEEPGRAM_FILE_URL = "https://{host}/v1/listen"
+# A whole recording takes Deepgram about a tenth of its length; this is for a few minutes of it, with room.
+FILE_TIMEOUT_S = 30.0
 FLUX_URL = "wss://{host}/v2/listen"
 CONNECT_S = 5.0
 # How sure Flux must be that the turn is over, and how sure for an early "maybe" (where a draft starts).
@@ -125,6 +135,63 @@ class DeepgramTranscriber:
 
     def session(self) -> Session:
         return DeepgramSession(self._url, self._key)
+
+
+class DeepgramFileTranscriber:
+    """Deepgram's speech to text for a recording that's already finished: the whole of it, sent at once, pauses and
+    all."""
+
+    def __init__(self, api_key: str, cfg: STTConfig, http: httpx.Client | None = None):
+        self._key = api_key
+        model = cfg.model if cfg.provider == "deepgram" else DEEPGRAM_STT_MODEL  # Flux has no file endpoint
+        params = {"model": model, "smart_format": "true", "punctuate": "true"}
+        if cfg.language:
+            params["language"] = cfg.language
+        self._url = f"{DEEPGRAM_FILE_URL.format(host=cfg.deepgram_host)}?{urlencode(params)}"
+        self._http = http or httpx.Client(timeout=FILE_TIMEOUT_S)
+
+    def session(self) -> Session:
+        return BufferedSession(self._transcribe)
+
+    def _transcribe(self, pcm: bytes) -> str:
+        if not pcm:
+            return ""
+        response = self._http.post(
+            self._url,
+            content=wav_bytes(pcm),
+            headers={"Authorization": f"Token {self._key}", "Content-Type": "audio/wav"},
+        )
+        response.raise_for_status()
+        channels = response.json()["results"]["channels"]
+        return channels[0]["alternatives"][0]["transcript"].strip() if channels else ""
+
+
+def decode_recording(data: bytes) -> np.ndarray:
+    """A recording in any format libsndfile reads (Telegram's voice messages are Opus in Ogg, at 48 kHz), as the
+    16 kHz mono 16-bit samples the rest of TARS works with. ValueError if it can't be read."""
+    import soundfile
+    from scipy.signal import resample_poly
+
+    try:
+        samples, rate = soundfile.read(io.BytesIO(data), dtype="float32", always_2d=True)
+    except (soundfile.LibsndfileError, RuntimeError, TypeError) as e:
+        raise ValueError(f"can't read the recording ({str(e).rsplit(': ', 1)[-1]})") from None  # not the BytesIO
+    mono = samples.mean(axis=1)
+    if rate != SAMPLE_RATE:
+        divisor = np.gcd(int(rate), SAMPLE_RATE)
+        mono = resample_poly(mono, SAMPLE_RATE // divisor, int(rate) // divisor)
+    return (np.clip(mono, -1.0, 1.0) * 32767).astype(np.int16)
+
+
+def transcribe(transcriber: Transcriber, pcm: np.ndarray) -> str:
+    """A finished recording's words, through `transcriber` as a whole recording: fed, finished and asked once."""
+    session = transcriber.session()
+    try:
+        session.feed(pcm.tobytes())
+        session.finish()
+        return session.transcript()
+    finally:
+        session.close()
 
 
 class DeepgramSession:

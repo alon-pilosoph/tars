@@ -1,8 +1,9 @@
 # TARS on Telegram
 
-The household can chat with TARS on Telegram, in writing, from anywhere: ask it something, set a reminder, have it
-send something. TARS also sends things there: a reminder set in a chat comes to that chat when it's due, and what TARS
-sends at home for someone ("send me the recipe") comes to their phone as well as the TARS page.
+The household can chat with TARS on Telegram from anywhere, in writing or with a voice message: ask it something,
+set a reminder, have it send something. TARS also sends things there: a reminder set in a chat comes to that chat
+when it's due, and what TARS sends at home for someone ("send me the recipe") comes to their phone as well as the
+TARS page.
 
 It's the same TARS as at home, with the same tools and reminders, told it's writing rather than speaking, and from a
 chat it can also say things aloud at home. Chats are answered by OpenAI's model directly rather than Qwen first
@@ -38,6 +39,7 @@ client, which its terms forbid.
 | Written in the chat | What happens |
 |---|---|
 | "what's 17 times 23?" | TARS answers in the chat |
+| a voice message: "remind me to call mum at six" | written down by speech to text, as at home, and answered in writing |
 | "what's the weather?" | handed to OpenAI with web search, as by voice; "typing..." while it looks |
 | "remind me at 6 to call mum" | set, and posted to this chat at 6:00 |
 | "set a pasta timer for 12 minutes" | "Your pasta timer is done." in this chat after 12 minutes |
@@ -88,6 +90,16 @@ the chat is in the model's list, by number, for an hour after, and snoozed it's 
 someone, nothing it posts by itself goes to their chat: a reminder that comes due meanwhile is posted right after the
 answer, so neither the chat nor what the model remembers has it between a question and its answer.
 
+**Voice messages, heard as at home.** A voice message (up to five minutes) is fetched from Telegram, read from its
+Opus into the 16 kHz audio TARS keeps of everything said at home, and written down by the same speech to text, from
+`[stt]` and the keys there are: Deepgram on its EU servers, then OpenAI if Deepgram fails. It goes to Deepgram's
+endpoint for whole recordings, not Flux: Flux decides when a speaker is done, and would end the message at its first
+long pause. The words are answered as if written, tagged `[Voice message]`, so a misheard word is asked about rather
+than acted on; the recording is kept with the turn, and the web UI plays it like one said at home. Nothing heard:
+"I couldn't make out any words in that."; speech to text failing: "I couldn't listen to that just now.", kept on
+the web UI with why. Who sent it is the chat's person, as for anything written there: speaker ID isn't asked, and a
+voice message never trains it.
+
 **Writing, not speaking.** The system prompt is written for the ear. For a chat, a rule goes last in the
 instructions, so it wins: this is in writing, reply as in a text message, plain text, links are fine, what you send is
 posted here, and who's on Telegram (so a reminder for someone without a chat is said aloud). The lines TARS says while
@@ -131,14 +143,17 @@ part of every request's address, so no error message includes the address.
 
 ## What it sends Telegram
 
-Telegram gets what's written in the chats, TARS's replies, the reminders posted there, and what TARS sends to them.
-Nothing from home goes to Telegram except the things sent for someone with a chat. Telegram bot chats aren't
+Telegram gets what's written in the chats, the voice messages sent there, TARS's replies, the reminders posted
+there, and what TARS sends to them. Nothing from home goes to Telegram except the things sent for someone with a
+chat. A voice message's recording also goes to speech to text, as a request at home does: Deepgram, or OpenAI if
+Deepgram fails. Telegram bot chats aren't
 end-to-end encrypted: Telegram's servers can read them, as they can any chat that isn't a secret chat.
 
 ## Not yet
 
-- **Voice notes and photos.** TARS answers "I can only read text for now." Voice notes could go through the same
-  speech to text as at home.
+- **Photos, and replies by voice.** A photo gets "I can only read text and listen to voice messages for now."; a
+  photo could go to OpenAI's model, which reads images. TARS answers a voice message in writing; it could answer in
+  its own voice, as a voice message.
 - **"Got it" for a reminder posted to a chat.** It's posted once and done, so there's nothing to acknowledge;
   "remind me again in ten minutes" sets it again.
 - **Missed reminders at home forwarded to a phone.** A reminder nobody acknowledged aloud could go to its person's

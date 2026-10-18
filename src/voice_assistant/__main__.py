@@ -396,6 +396,23 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     return FallbackTranscriber(streaming, backup), brain, voice
 
 
+def make_recording_transcriber(cfg: Config, env: Path):
+    """Speech to text for a whole recording (a voice message), with the services config.toml picks for the voice at
+    home and the keys there are (`cfg` is cut down to them already): Deepgram's endpoint for whole recordings, with
+    OpenAI as the backup, or whichever of the two there is."""
+    from .stt import DeepgramFileTranscriber, FallbackTranscriber, OpenAITranscriber
+
+    client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
+    if cfg.stt.provider == "openai":
+        return OpenAITranscriber(client, cfg.stt)
+    deepgram = DeepgramFileTranscriber(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt)
+    if client is None:
+        return deepgram
+    return FallbackTranscriber(
+        deepgram, OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
+    )
+
+
 def make_brain(client, llm: LLMConfig, env: Path, reminders=None, **channel):
     """Qwen first, handing over to OpenAI's `client`, or OpenAI alone when no quick service is set up. `channel`:
     a chat's channel_rules and remind_tools, or the house's home (see OpenAIChat)."""
@@ -455,6 +472,7 @@ def telegram(cfg: Config, root: Path) -> None:
         tools,
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
+        transcriber=make_recording_transcriber(cfg, env),
     ).run_forever(me)
 
 
