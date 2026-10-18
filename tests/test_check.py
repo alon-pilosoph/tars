@@ -182,7 +182,7 @@ def test_the_backup_says_how_its_last_pass_went(cfg, log, convos, tmp_path):
     on = dataclasses.replace(cfg, backup=BackupConfig(enabled=True, bucket="tars-home", region="eu-central-1"))
     assert check.backup(cfg, raising(AssertionError("not asked")))[0].status == SKIP
     bucket = PretendS3()
-    job = Backup(log, on.backup, S3(bucket, "tars-home"), "events/events.db", clock=lambda: NOW)
+    job = Backup(log, on.backup, S3(bucket, "tars-home"), clock=lambda: NOW)
     (never,) = check.backup(on, lambda: job, now=NOW)
     assert never.status == WARN and "no pass has run yet" in never.detail
     a_request(log, convos, NOW)

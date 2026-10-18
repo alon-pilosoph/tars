@@ -213,7 +213,8 @@ class BackupConfig:
     # Then S3 moves it to Glacier Deep Archive, the cheapest storage, which takes up to 48 hours to bring back.
     # 0 = never.
     archive_after_days: int = 180
-    # A copy of the database, the voiceprints and the trained wake models is made once a day, and kept this long.
+    # A copy of the database, the voiceprints and the trained wake models is made once a day, and kept this long; the
+    # newest always stays.
     keep_snapshots_days: int = 30
 
 

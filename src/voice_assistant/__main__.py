@@ -264,10 +264,11 @@ def main() -> None:
     parser.add_argument(
         "--telegram", action="store_true", help="chat with TARS on Telegram ([telegram] in config.toml)"
     )
-    parser.add_argument(
+    backup = parser.add_mutually_exclusive_group()
+    backup.add_argument(
         "--backup", action="store_true", help="back up to S3 once, as its timer does ([backup] in config.toml)"
     )
-    parser.add_argument(
+    backup.add_argument(
         "--fetch-audio",
         action="store_true",
         help="bring back the audio that's only in the S3 bucket (for training, or a new machine)",
@@ -282,7 +283,7 @@ def main() -> None:
         action="store_true",
         help="with --backup: delete from the bucket what TARS no longer keeps, even if it's most of it",
     )
-    parser.add_argument(
+    backup.add_argument(
         "--restore-backup", action="store_true", help="put the bucket's latest snapshot in place on a new machine"
     )
     parser.add_argument(
@@ -482,31 +483,29 @@ def make_s3(cfg: Config, root: Path) -> S3:
         raise ConfigError(f"The backup {e}.") from None
 
 
-def snapshot_db(cfg: Config) -> str:
-    """Where a snapshot keeps the database, and a restore puts it: under [learning] folder, as the project names it."""
-    return str(Path(cfg.learning.folder) / DB_FILE)
+def snapshot_files(cfg: Config, root: Path) -> dict[str, Path]:
+    """What a snapshot holds besides the database, by its name there, and where each is on this machine: the
+    voiceprints, the wake models trained on the household (the self-learning pairs, and models/personal/) and this
+    machine's own settings (config.local.toml; never .env, which holds the keys). A restore puts each back where this
+    machine's config says, so the two machines' folders needn't match."""
+    return {
+        "voiceprints.npz": root / cfg.speaker.voiceprints,
+        "wake_models": root / cfg.learning.folder / "wake_models",
+        "models/personal": root / "models/personal",
+        LOCAL_CONFIG: root / LOCAL_CONFIG,
+    }
 
 
 def make_backup(cfg: Config, root: Path, log: EventLog | None = None) -> Backup:
     """The backup to [backup]'s bucket, of `log` (made from config.toml if not given): the event log's files, and a
-    daily snapshot of the database, the voiceprints, the wake models trained on the household (the self-learning
-    pairs, and models/personal/) and this machine's own settings (config.local.toml; never .env, which holds the
-    keys). ConfigError if it's off, or can't be."""
+    daily snapshot of the database and snapshot_files. ConfigError if it's off, or can't be."""
     from .backup import Backup
 
     s3 = make_s3(cfg, root)
     log = log or make_event_log(cfg, root)
     if log is None:
         raise ConfigError("The backup is of the event log: set log_events = true under [learning] in config.toml.")
-    files = {
-        cfg.speaker.voiceprints: root / cfg.speaker.voiceprints,
-        str(Path(cfg.learning.folder) / "wake_models"): log.folder / "wake_models",
-        "models/personal": root / "models/personal",
-        LOCAL_CONFIG: root / LOCAL_CONFIG,
-    }
-    # A path outside the project (an absolute [speaker] voiceprints, say) couldn't be put back where it was.
-    inside = {n: path for n, path in files.items() if not Path(n).is_absolute() and ".." not in Path(n).parts}
-    return Backup(log, cfg.backup, s3, snapshot_db(cfg), inside)
+    return Backup(log, cfg.backup, s3, snapshot_files(cfg, root))
 
 
 def backup_pass(cfg: Config, root: Path, delete_anyway: bool = False) -> None:
@@ -549,16 +548,24 @@ def fetch_audio(cfg: Config, root: Path, restore_archived: bool = False) -> None
 
 def restore_backup(cfg: Config, root: Path) -> None:
     """--restore-backup: the bucket's latest snapshot, put in place on a new machine, with TARS stopped."""
-    from .backup import BackupError, restore_snapshot
+    from .backup import SNAPSHOT_DB, BackupError, Busy, restore_snapshot
     from .check import systemd_state
 
-    units = ["voice-assistant", "voice-assistant-web", "voice-assistant-telegram", "voice-assistant-backup.timer"]
-    running = [u for u in units if systemd_state(u) == "active"]
+    units = [
+        "voice-assistant",
+        "voice-assistant-web",
+        "voice-assistant-telegram",
+        "voice-assistant-backup.timer",
+        "voice-assistant-backup.service",
+    ]
+    # Anything but stopped counts as running: "activating" is a backup pass under way.
+    running = [u for u in units if systemd_state(u) not in (None, "inactive", "failed")]
     if running:
         raise SystemExit(f"Stop TARS first: systemctl --user stop {' '.join(running)}")
+    places = {SNAPSHOT_DB: root / cfg.learning.folder / DB_FILE, **snapshot_files(cfg, root)}
     try:
-        key = restore_snapshot(make_s3(cfg, root), cfg.backup, root, snapshot_db(cfg))
-    except (ValueError, BackupError) as e:
+        key = restore_snapshot(make_s3(cfg, root), cfg.backup, places)
+    except (ValueError, BackupError, Busy) as e:
         raise SystemExit(f"Couldn't restore: {e}") from None
     print(f"Restored {key}. Start TARS again; --fetch-audio brings the recordings back, if training needs them.")
 

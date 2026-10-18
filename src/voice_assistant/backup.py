@@ -2,17 +2,20 @@
 
 `voice-assistant --backup` runs one pass, every 15 minutes from its systemd timer (docs/backup.md):
 
+0. The bucket's prefix is marked as this database's backup (owner.json), or checked to be: a pass never writes into
+   another database's backup, such as the one a new machine is about to restore.
 1. Every recording and every file TARS sent that isn't in the bucket yet is uploaded, under [backup] prefix.
 2. A recording older than [backup] keep_local_days is removed from the machine, once the bucket is checked to have it
-   whole. What something reads from the machine later stays there too: wake windows training learns from, each named
+   whole. What something reads from the machine later stays there too: wake windows training learns from, each
    voice's newest requests (its voiceprint is rebuilt from them), and the files TARS sent. A file that becomes one of
    those (a wake labeled in Review) comes back.
 3. Whatever TARS no longer keeps (a conversation deleted in the web UI, old audio dropped by [learning]
    keep_audio_days) is deleted from the bucket too: the bucket holds what TARS keeps, no more.
 4. Once a day, a snapshot: the database (through sqlite's backup API, so it's consistent while TARS writes), the
-   voiceprints, the wake models trained on the household and config.local.toml, as one .tar.gz. Never .env.
-5. The bucket's lifecycle rules, kept in step with [backup], move the audio to Glacier Deep Archive after
-   archive_after_days, and delete snapshots after keep_snapshots_days.
+   voiceprints, the wake models trained on the household and config.local.toml, as one .tar.gz. Never .env. Snapshots
+   older than keep_snapshots_days are deleted then, but never the newest.
+5. The bucket's lifecycle rule, kept in step with [backup], moves the audio to Glacier Deep Archive after
+   archive_after_days.
 
 What's in the bucket is kept in the database (remote_files), so a pass looks only at what's new. The web UI plays a
 recording that's no longer on the machine straight from the bucket, until it's archived. `--fetch-audio` brings
@@ -24,11 +27,14 @@ import fcntl
 import io
 import json
 import os
+import re
 import shutil
+import socket
 import sqlite3
 import tarfile
 import tempfile
 import time
+import uuid
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import asdict, dataclass, field
@@ -45,9 +51,12 @@ from .store import DB_FILE
 SNAPSHOT_EVERY_S = DAY_S
 STATUS_FILE = "backup.json"  # in the event log's folder: how the last pass went, for --check
 LOCK_FILE = "backup.lock"  # in the event log's folder: held by a pass or a fetch, so two never run at once
+OWNER = "owner.json"  # under [backup] prefix: which database's backup it is
+SNAPSHOT_DB = "events.db"  # the database's name in a snapshot; every other file's is the caller's (Backup)
+SNAPSHOT_NAME = re.compile(r"\d{4}-\d\d-\d\dT\d{6}Z\.tar\.gz")  # _stamp's: they sort as they were taken
 DEEP_ARCHIVE = "DEEP_ARCHIVE"  # S3's name for Glacier Deep Archive
-# The bucket's lifecycle rules this keeps in step with [backup], by their ids; any other rule there is left alone.
-ARCHIVE_RULE, SNAPSHOTS_RULE = "tars-audio-to-deep-archive", "tars-snapshots-expire"
+# The bucket's lifecycle rule this keeps in step with [backup], by its id; any other rule there is left alone.
+ARCHIVE_RULE = "tars-audio-to-deep-archive"
 DELETE_BATCH = 1000  # S3 deletes at most this many objects a request
 # A pass that would delete more than this share of the bucket, and more than a few files, stops instead: a database
 # that suddenly keeps nothing is far likelier a mistake than a household deleting its whole history.
@@ -55,6 +64,7 @@ MAX_DELETE_SHARE, MAX_DELETE_ANYWAY = 0.5, 20
 # Asking S3 to bring an archived recording back: the bulk tier (up to 48 hours, the cheapest), for this many days.
 RESTORE_TIER, RESTORE_DAYS = "Bulk", 7
 ARCHIVED, MISSING = "InvalidObjectState", ("404", "NoSuchKey", "NotFound")  # S3's error codes
+CUT_SHORT, NOT_OURS = "CutShort", "NotOurs"  # this module's: a file that came back short, another database's bucket
 
 
 class BackupError(Exception):
@@ -66,7 +76,7 @@ class BackupError(Exception):
 
 
 class Busy(Exception):
-    """Another pass, or a fetch, is running."""
+    """Another pass, a fetch or a restore is running."""
 
 
 class S3:
@@ -137,7 +147,11 @@ class S3:
             raise
 
     def set_lifecycle(self, rules: list[dict]) -> None:
+        """S3 refuses an empty list of rules: delete_lifecycle is for none."""
         self._call("put_bucket_lifecycle_configuration", LifecycleConfiguration={"Rules": rules})
+
+    def delete_lifecycle(self) -> None:
+        self._call("delete_bucket_lifecycle")
 
 
 def make_s3(cfg: BackupConfig, key_id: str, secret: str) -> S3:
@@ -159,6 +173,32 @@ def make_s3(cfg: BackupConfig, key_id: str, secret: str) -> S3:
 
 def snapshots_prefix(cfg: BackupConfig) -> str:
     return f"{cfg.prefix}/snapshots/"
+
+
+def snapshots(s3: S3, cfg: BackupConfig) -> list[str]:
+    """The snapshots in the bucket, oldest first. Anything else under the prefix isn't one."""
+    prefix = snapshots_prefix(cfg)
+    return sorted(k for k in s3.keys(prefix) if SNAPSHOT_NAME.fullmatch(k.removeprefix(prefix)))
+
+
+@contextmanager
+def exclusive(folder: Path) -> Iterator[None]:
+    """Holds LOCK_FILE in the event log's folder for a pass, a fetch or a restore: Busy if another holds it. The lock
+    goes with the process."""
+    folder.mkdir(parents=True, exist_ok=True)
+    with open(folder / LOCK_FILE, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Busy("another backup pass, a fetch or a restore is running") from None
+        yield
+
+
+def database_id(store) -> str:
+    """This database's own id, made the first time it's asked for. A snapshot carries it, so a database restored
+    from one is still the bucket's owner."""
+    store.write("INSERT OR IGNORE INTO meta (key, value) VALUES ('id', ?)", (uuid.uuid4().hex,))
+    return store.rows("SELECT value FROM meta WHERE key='id'")[0]["value"]
 
 
 @dataclass
@@ -193,7 +233,8 @@ class Status:
 
 @dataclass
 class Fetched:
-    """What --fetch-audio did: brought back, archived (or now being restored), and gone from the bucket."""
+    """What --fetch-audio did: brought back, archived (or now being restored), and gone from the bucket (or not whole
+    there)."""
 
     fetched: int = 0
     archived: int = 0
@@ -210,16 +251,14 @@ class Backup:
         log: EventLog,
         cfg: BackupConfig,
         s3: S3,
-        db_as: str,
         snapshot_files: dict[str, Path] | None = None,
         clock: Callable[[], float] = time.time,
     ):
-        """`db_as`: where a snapshot keeps the database, as [learning] folder puts it ("voice_data/events/events.db"),
-        so restore_snapshot puts it back there. `snapshot_files`: what else goes in, by the path it has there, like
-        {"voice_data/voiceprints.npz": ...}."""
+        """`snapshot_files`: what a snapshot holds besides the database, by its name there, like
+        {"voiceprints.npz": ...}; restore_snapshot puts each back by that name."""
         self._log, self._store, self._cfg, self._s3, self._clock = log, log.store, cfg, s3, clock
         self._conversations = ConversationLog(log)
-        self._db_as, self._snapshot_files = db_as, snapshot_files or {}
+        self._snapshot_files = snapshot_files or {}
         self.status_path = log.folder / STATUS_FILE
 
     def check(self) -> None:
@@ -230,21 +269,11 @@ class Backup:
         """Where a file in the event log's folder is in the bucket."""
         return f"{self._cfg.prefix}/{rel}"
 
-    @contextmanager
-    def _exclusive(self) -> Iterator[None]:
-        """Holds LOCK_FILE for a pass or a fetch: Busy if another holds it. The lock goes with the process."""
-        with open(self._log.folder / LOCK_FILE, "a") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise Busy("another backup pass, or a fetch, is running") from None
-            yield
-
     def run(self, delete_anyway: bool = False) -> Status:
         """One pass. Each step goes on if another fails; the first failure is in the status, which is saved.
         `delete_anyway`: delete from the bucket what TARS no longer keeps even if it's most of it. Busy if another
-        pass is running."""
-        with self._exclusive():
+        pass is running. A bucket that's another database's backup stops the pass before anything is written."""
+        with exclusive(self._log.folder):
             status = Status.load(self.status_path)
             status.last_run, status.error, status.notes = self._clock(), "", []
             steps: list[tuple[str, Callable[[], None]]] = [
@@ -255,6 +284,11 @@ class Backup:
                 ("the snapshot", lambda: self._snapshot(status)),
                 ("the lifecycle rules", lambda: self._lifecycle(status)),
             ]
+            try:
+                self._claim()
+            except Exception as e:  # noqa: BLE001 - kept, like a step's; and nothing is written to the bucket
+                print(f"(backup: {e})", flush=True)
+                status.error, steps = str(e), []
             for what, step in steps:
                 try:
                     step()
@@ -267,6 +301,27 @@ class Backup:
             status.in_bucket, status.only_in_bucket = counts["n"], counts["away"]
             status.save(self.status_path)
             return status
+
+    def _claim(self) -> None:
+        """Marks the bucket's prefix as this database's backup, or checks that it is (BackupError NOT_OURS if not): a
+        new machine's database must never write over the backup it's about to be restored from."""
+        ours = database_id(self._store)
+        try:
+            owner = json.loads(self._s3.get(self.key(OWNER)))
+        except BackupError as e:
+            if e.code not in MISSING:
+                raise
+            mark = {"database": ours, "host": socket.gethostname(), "since": self._clock()}
+            self._s3.put(self.key(OWNER), json.dumps(mark).encode())
+            return
+        if owner.get("database") != ours:
+            since = time.strftime("%Y-%m-%d", time.localtime(owner.get("since") or 0))
+            raise BackupError(
+                f"{self._cfg.prefix}/ in the bucket is the backup of another database (on {owner.get('host')}, since "
+                f"{since}), so nothing was written. To carry it on here, stop TARS and restore it: voice-assistant "
+                "--restore-backup. To start a new backup instead, set [backup] prefix to another folder",
+                NOT_OURS,
+            )
 
     def kept(self) -> dict[str, KeptFile]:
         """Every file TARS keeps, by its path in the event log's folder. One that more than one row names (a request
@@ -331,15 +386,19 @@ class Backup:
                 self._download(rel, row["size"])
                 status.brought_back += 1
             except BackupError as e:
-                if e.code != ARCHIVED:
+                if e.code == ARCHIVED:
+                    status.notes.append(f"{rel} is needed here but archived: --fetch-audio --restore-archived")
+                elif e.code in MISSING or e.code == CUT_SHORT:
+                    status.notes.append(f"{rel} is needed here but isn't whole in the bucket: it's lost")
+                else:
                     raise
-                status.notes.append(f"{rel} is needed on the machine but archived: --fetch-audio --restore-archived")
 
     def _download(self, rel: str, size: int) -> None:
-        """The file, from the bucket onto the machine. BackupError if it's archived (ARCHIVED), gone, or cut short."""
+        """The file, from the bucket onto the machine. BackupError if it's archived (ARCHIVED), gone (MISSING), or cut
+        short (CUT_SHORT)."""
         data = self._s3.get(self.key(rel))
         if len(data) != size:
-            raise BackupError(f"{rel} came back {len(data)} bytes long, not {size}")
+            raise BackupError(f"{rel} came back {len(data)} bytes long, not {size}", CUT_SHORT)
         path = self._store.folder / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(path, data)
@@ -362,16 +421,16 @@ class Backup:
         status.deleted = len(gone)
 
     def _snapshot(self, status: Status) -> None:
-        """Once a day, and never of a database with nothing in it yet: on a new machine, that would become the
-        latest snapshot, ahead of the one to restore."""
+        """Once a day; then the snapshots older than keep_snapshots_days go, but never the newest, so a machine that
+        was down for longer still has one to restore."""
         now = self._clock()
         if now - status.last_snapshot < SNAPSHOT_EVERY_S:
             return
-        if not _has_history(self._store.folder / DB_FILE):
-            status.notes.append("no snapshot yet: the database has nothing in it")
-            return
         self._s3.put(f"{snapshots_prefix(self._cfg)}{_stamp(now)}.tar.gz", self.snapshot_bytes())
         status.last_snapshot = now
+        cutoff = f"{snapshots_prefix(self._cfg)}{_stamp(now - self._cfg.keep_snapshots_days * DAY_S)}"
+        if old := [k for k in snapshots(self._s3, self._cfg)[:-1] if k < cutoff]:
+            self._s3.delete(old)
 
     def snapshot_bytes(self) -> bytes:
         """The database, consistent while TARS writes to it, and the snapshot's other files, as one .tar.gz."""
@@ -386,23 +445,16 @@ class Backup:
                 target.close()
                 source.close()
             with tarfile.open(fileobj=out, mode="w:gz") as tar:
-                tar.add(copy, arcname=self._db_as)
+                tar.add(copy, arcname=SNAPSHOT_DB)
                 for name, path in self._snapshot_files.items():
                     if path.exists():
                         tar.add(path, arcname=name)
         return out.getvalue()
 
     def _lifecycle(self, status: Status) -> None:
-        """Puts the bucket's rules for TARS's prefix in step with [backup], leaving any other rule as it is. A key
-        that may not change them only leaves a note: the backup works without them."""
-        wanted = [
-            {
-                "ID": SNAPSHOTS_RULE,
-                "Filter": {"Prefix": snapshots_prefix(self._cfg)},
-                "Status": "Enabled",
-                "Expiration": {"Days": self._cfg.keep_snapshots_days},
-            }
-        ]
+        """Puts the bucket's rule for TARS's audio in step with [backup], leaving any other rule as it is. A key that
+        may not change it only leaves a note: the backup works without it."""
+        wanted = []
         if self._cfg.archive_after_days > 0:
             transition = {"Days": self._cfg.archive_after_days, "StorageClass": DEEP_ARCHIVE}
             wanted.append(
@@ -413,11 +465,13 @@ class Backup:
                     "Transitions": [transition],
                 }
             )
-        ours = {ARCHIVE_RULE, SNAPSHOTS_RULE}
         try:
             rules = self._s3.lifecycle()
-            if not _same([r for r in rules if r.get("ID") in ours], wanted):
-                self._s3.set_lifecycle([r for r in rules if r.get("ID") not in ours] + wanted)
+            if not _same([r for r in rules if r.get("ID") == ARCHIVE_RULE], wanted):
+                if rules := [r for r in rules if r.get("ID") != ARCHIVE_RULE] + wanted:
+                    self._s3.set_lifecycle(rules)
+                else:
+                    self._s3.delete_lifecycle()
         except BackupError as e:
             status.lifecycle, status.lifecycle_ok = f"not set: {e}", False
             if e.code != "AccessDenied":
@@ -430,7 +484,7 @@ class Backup:
         """Brings every file the bucket has and the machine doesn't back onto the machine, to stay there for
         keep_local_days. One that's archived is asked to be restored (`restore`), to be fetched by a later run once
         it's back (up to 48 hours). Busy if a pass is running."""
-        with self._exclusive():
+        with exclusive(self._log.folder):
             done = Fetched()
             for rel, row in self._remote().items():
                 if (self._store.folder / rel).exists():
@@ -439,7 +493,7 @@ class Backup:
                     self._download(rel, row["size"])
                     done.fetched += 1
                 except BackupError as e:
-                    if e.code in MISSING:
+                    if e.code in MISSING or e.code == CUT_SHORT:
                         done.missing += 1
                     elif e.code != ARCHIVED:
                         raise
@@ -462,43 +516,65 @@ class Backup:
             raise
 
 
-def restore_snapshot(s3: S3, cfg: BackupConfig, root: Path, db_as: str) -> str:
-    """Puts the bucket's latest snapshot in place under the project's folder `root`, on a new machine; returns its
-    key. Refuses (ValueError) over a database with anything in it, or one that's open: TARS has to be stopped. Every
-    file is unpacked beside where it goes, then moved into place, so a failure leaves nothing half-written."""
-    db = root / db_as
-    for open_file in (db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")):
-        if open_file.exists():
-            raise ValueError(f"{db} is open ({open_file.name} is there): stop TARS's services first")
-    if _has_history(db):
-        raise ValueError(f"{db} has a history of its own: move it away to restore over it")
-    key = max(s3.keys(snapshots_prefix(cfg)), default=None)
-    if key is None:
-        raise ValueError("there's no snapshot in the bucket yet")
-    unpacked = Path(tempfile.mkdtemp(prefix=".restore-", dir=root))
-    try:
-        with tarfile.open(fileobj=io.BytesIO(s3.get(key)), mode="r:gz") as tar:
-            tar.extractall(unpacked, filter="data")
-        for source in sorted(p for p in unpacked.rglob("*") if p.is_file()):
-            target = root / source.relative_to(unpacked)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, target)
-    finally:
-        shutil.rmtree(unpacked, ignore_errors=True)
-    return key
+def restore_snapshot(s3: S3, cfg: BackupConfig, places: dict[str, Path]) -> str:
+    """Puts the bucket's latest snapshot in place on a new machine; returns its key. `places`: where each of its
+    files goes on this machine, by its name in the snapshot (SNAPSHOT_DB, and Backup's snapshot_files); one this
+    machine has no place for is left out. Refuses (ValueError) over a database with anything in it, or one that's
+    open: TARS has to be stopped. Busy if a pass or a fetch is running.
+
+    Every file is first copied beside where it goes, then they're all moved into place, the database last: a failure
+    before then changes nothing, and the database never arrives without its files."""
+    db = places[SNAPSHOT_DB]
+    with exclusive(db.parent):
+        for open_file in (db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")):
+            if open_file.exists():
+                raise ValueError(f"{db} is open ({open_file.name} is there): stop TARS's services first")
+        if _has_history(db):
+            raise ValueError(f"{db} has a history of its own: move it away to restore over it")
+        if not (found := snapshots(s3, cfg)):
+            raise ValueError("there's no snapshot in the bucket yet")
+        key = found[-1]
+        staged: list[tuple[Path, Path]] = []
+        try:
+            with tempfile.TemporaryDirectory() as unpacked:
+                with tarfile.open(fileobj=io.BytesIO(s3.get(key)), mode="r:gz") as tar:
+                    tar.extractall(unpacked, filter="data")
+                for source in sorted(p for p in Path(unpacked).rglob("*") if p.is_file()):
+                    if (target := _place(source.relative_to(unpacked), places)) is None:
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    copy = target.with_name(f".{target.name}.restoring")
+                    staged.append((copy, target))
+                    shutil.copyfile(source, copy)
+        except BaseException:
+            for copy, _ in staged:
+                copy.unlink(missing_ok=True)
+            raise
+        for copy, target in sorted(staged, key=lambda s: s[1] == db):
+            os.replace(copy, target)
+        return key
+
+
+def _place(name: Path, places: dict[str, Path]) -> Path | None:
+    """Where a file in a snapshot goes on this machine: its own place, or under its folder's."""
+    for i in range(len(name.parts), 0, -1):
+        if (place := places.get(Path(*name.parts[:i]).as_posix())) is not None:
+            return place.joinpath(*name.parts[i:])
+    return None
 
 
 def _has_history(db: Path) -> bool:
-    """Whether a database has anything in it: an event or a conversation. One that isn't there has none."""
+    """Whether a database has anything in it: an event or a conversation. Only for a database that isn't open (no
+    -wal beside it), which is read as a file at rest; one that isn't there has none."""
     if not db.exists():
         return False
-    with closing(sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)) as found:
-        try:
-            events = found.execute("SELECT count(*) FROM events").fetchone()[0]
-            conversations = found.execute("SELECT count(*) FROM conversations").fetchone()[0]
-        except sqlite3.OperationalError:
-            return False  # no tables yet
-    return events + conversations > 0
+    with closing(sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro&immutable=1", uri=True)) as found:
+        tables = {r[0] for r in found.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        return any(
+            found.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+            for table in ("events", "conversations")
+            if table in tables
+        )
 
 
 def _stamp(ts: float) -> str:
@@ -511,5 +587,4 @@ def _same(a: list[dict], b: list[dict]) -> bool:
 
 
 def _lifecycle_summary(cfg: BackupConfig) -> str:
-    archive = f"audio to Deep Archive after {cfg.archive_after_days} days" if cfg.archive_after_days else "no archive"
-    return f"{archive}; snapshots kept {cfg.keep_snapshots_days} days"
+    return f"audio to Deep Archive after {cfg.archive_after_days} days" if cfg.archive_after_days else "no archive"

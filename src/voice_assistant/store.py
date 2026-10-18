@@ -119,6 +119,10 @@ TABLES = {
     offloaded REAL,                  -- when it was removed from the machine, being in the bucket; NULL = on both
     fetched REAL                     -- when it was last brought back from the bucket, if it was
 )""",
+    "meta": """CREATE TABLE meta (
+    key TEXT PRIMARY KEY,            -- "id": this database's own, which a backup marks its bucket with (backup.py)
+    value TEXT NOT NULL
+)""",
 }
 INDEXES = [
     "CREATE INDEX events_ts ON events(ts)",
@@ -168,7 +172,8 @@ MIGRATIONS = [
     size INTEGER NOT NULL,
     offloaded REAL,
     fetched REAL
-)"""
+)""",
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     ],
 ]
 

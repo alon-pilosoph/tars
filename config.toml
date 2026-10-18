@@ -218,5 +218,5 @@ prefix = "tars"
 keep_local_days = 30
 # Then S3 moves the audio to Glacier Deep Archive: the cheapest storage, and up to 48 hours to bring back. 0 = never.
 archive_after_days = 180
-# The daily copy of the database, voiceprints and trained wake models, kept this long.
+# The daily copy of the database, voiceprints and trained wake models, kept this long; the newest always stays.
 keep_snapshots_days = 30

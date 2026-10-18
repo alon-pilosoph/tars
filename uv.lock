@@ -1,8 +1,6 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
-
-[manifest]
 
 [[manifest.dependency-metadata]]
 name = "openwakeword"

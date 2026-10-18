@@ -10,13 +10,17 @@ cheapest storage.
 
 `voice-assistant --backup` (`backup.py`) runs one pass, every 15 minutes from `voice-assistant-backup.timer`:
 
+0. **Checks the bucket is this TARS's.** The first pass marks `<prefix>/owner.json` with the database's own id; every
+   pass after checks it, and one from another database (a new Pi's, before the old one's backup is restored onto it)
+   writes nothing ([a new Pi](#bringing-things-back)).
 1. **Uploads what's new.** Every recording TARS keeps (wake windows, requests, follow-ups) and every file it sent,
    under `<prefix>/audio/...` and `<prefix>/files/...`, encrypted at rest (SSE-S3).
 2. **Makes room on the machine.** A recording older than `keep_local_days` (30) is removed from the Pi once the bucket
    is checked to have it whole, and the web UI plays it from the bucket from then on. What something reads from the
-   Pi later stays there as well: wake windows training learns from, the newest 25 requests of each named voice (its
-   voiceprint is rebuilt from them when voices are regrouped), and the files TARS sent (the web UI hands them out). A
-   wake labeled in Review after its audio left comes back on the next pass.
+   Pi later stays there as well: wake windows training learns from, the newest 25 requests of each voice (a
+   voiceprint is rebuilt from them when voices are regrouped, and a voice named months later still has them), and the
+   files TARS sent (the web UI hands them out). A wake labeled in Review after its audio left comes back on the next
+   pass.
 3. **Deletes what TARS no longer keeps.** A conversation or wake deleted in the web UI, or old audio dropped by
    `[learning] keep_audio_days`, is deleted from the bucket too: the bucket holds what TARS keeps, no more. A pass that
    would delete more than half of the bucket, and more than 20 files, stops instead and says so: that's far likelier a
@@ -25,11 +29,10 @@ cheapest storage.
 4. **Takes a snapshot, once a day.** The database (through SQLite's backup API, so the copy is consistent while TARS
    writes), the voiceprints, the wake models trained on the household (the self-learning pairs and
    `models/personal/`) and `config.local.toml`, as one `.tar.gz` under `<prefix>/snapshots/`. Never `.env`: the keys
-   stay on the Pi. Never of a database with nothing in it either: on a new Pi, that would become the latest snapshot,
-   ahead of the one to restore.
-5. **Keeps the bucket's lifecycle rules in step** with `[backup]`: the audio moves to Deep Archive after
-   `archive_after_days` (180), and snapshots are deleted after `keep_snapshots_days` (30). Only TARS's own two rules
-   are touched; any other rule on the bucket stays.
+   stay on the Pi. Snapshots older than `keep_snapshots_days` (30) are deleted then, but never the newest: a Pi that
+   was off for longer still has one to restore.
+5. **Keeps the bucket's lifecycle rule in step** with `[backup]`: the audio moves to Deep Archive after
+   `archive_after_days` (180). Only TARS's own rule is touched; any other rule on the bucket stays.
 
 What's in the bucket is recorded in the database (`remote_files`), so a pass only looks at what's new. How the last
 pass went is in `voice_data/events/backup.json`, and `--check` reads it.
@@ -38,7 +41,7 @@ pass went is in `voice_data/events/backup.json`, and `--check` reads it.
 flowchart LR
     pi["The Pi: voice_data/"] -->|"every 15 min: new files"| standard["S3 Standard"]
     standard -->|"after 180 days, S3 itself"| deep["Glacier Deep Archive"]
-    pi -->|"once a day"| snaps["snapshots/ (30 days)"]
+    pi -->|"once a day"| snaps["snapshots/ (30 days, the newest always)"]
     standard -.->|"the web UI plays one that's left the Pi"| pi
 ```
 
@@ -68,9 +71,8 @@ flowchart LR
    }
    ```
 
-   Without the lifecycle permissions the backup still works; `--check` warns, and the two rules are set by hand
-   (S3, the bucket, Management, Lifecycle rules: `tars/audio/` to Glacier Deep Archive after 180 days, and
-   `tars/snapshots/` expired after 30).
+   Without the lifecycle permissions the backup still works; `--check` warns, and the rule is set by hand (S3, the
+   bucket, Management, Lifecycle rules: `tars/audio/` to Glacier Deep Archive after 180 days).
 3. **The key and the settings.** In `.env`: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. TARS reads them from
    there only, never from the shell or `~/.aws`. In `config.local.toml`:
 
@@ -94,10 +96,13 @@ flowchart LR
   another `keep_local_days`. Archived audio needs `--fetch-audio --restore-archived`: S3 restores it within 48 hours
   (the bulk tier, the cheapest), and running `--fetch-audio` again then brings it back.
 - **A new Pi.** Install TARS (`deploy/install-pi.sh`), put the key in `.env` and `[backup]` in `config.local.toml`,
-  stop TARS (`systemctl --user stop voice-assistant voice-assistant-web voice-assistant-backup.timer`), then
-  `uv run voice-assistant --restore-backup`. It puts the latest snapshot in place (the database, voiceprints, wake
-  models and `config.local.toml`) and refuses while TARS is running, or over a database with a history of its own.
-  Start TARS again; the recordings play from the bucket, and `--fetch-audio` brings them back onto the Pi.
+  stop TARS (`systemctl --user stop voice-assistant voice-assistant-web voice-assistant-telegram
+  voice-assistant-backup.timer`), then `uv run voice-assistant --restore-backup`. It puts the latest snapshot in place
+  (the database, voiceprints, wake models and `config.local.toml`), each where this Pi's config puts it, and refuses
+  while TARS or a backup pass is running, or over a database with a history of its own: if TARS heard anything before
+  the restore, move `voice_data/events/events.db` away first. Start TARS again; the recordings play from the bucket,
+  and `--fetch-audio` brings them back onto the Pi. Until the restore, the new Pi's backup writes nothing to the
+  bucket, and `--check` says why. To start a new backup from scratch instead, set `[backup] prefix` to a new folder.
 
 ## What it costs
 
@@ -123,6 +128,12 @@ one started meanwhile is skipped.
 **The bucket mirrors what TARS keeps.** Deleting a conversation in the web UI deletes its audio from the bucket on the
 next pass, as from the Pi. A backup that kept everything forever would undo the household's own deletes.
 
+**One bucket, one database.** A database makes itself an id the first time a backup asks, and the snapshots carry
+it, so a database restored from one is still the same. The bucket's `owner.json` names the database whose backup it
+is, and a pass from any other stops before writing anything. Without it, a new Pi set up before the restore would
+upload its own recordings into the old Pi's backup, and its snapshot would become the latest: the one a restore
+would bring back.
+
 **What's read from the Pi stays on the Pi.** Training copies the labeled wake windows from the Pi over SSH
 ([training](../training/README.md)), regrouping voices rebuilds each voiceprint from its requests on the Pi, and Deep
 Archive takes up to 48 hours to bring anything back. So those stay, and only recordings nothing reads from the Pi
@@ -133,10 +144,13 @@ later leave it. Which files TARS keeps, and which must stay, the event log and t
 there and the same size; one that isn't is uploaded again. A file fetched back is checked against the size it was
 uploaded with.
 
-**S3's lifecycle does the archiving.** Moving an object to Deep Archive is a rule on the bucket, which S3 applies
-itself; TARS only keeps its two rules in step with `[backup]`.
+**S3's lifecycle does the archiving; the pass prunes the snapshots.** Moving an object to Deep Archive is a rule on
+the bucket, which S3 applies itself; TARS only keeps its rule in step with `[backup]`. Snapshots aren't left to a rule
+because a rule deletes by age alone: a Pi that's off for longer than `keep_snapshots_days` would lose its last one.
 
 **Failures.** Each step of a pass goes on if another fails, and the first failure is kept for `--check`, which warns
 after an hour without a good pass. The network down: nothing is removed from the Pi (nothing can be checked in the
 bucket), and the next pass catches up. A key that may not set lifecycle rules: a note, and the rest of the backup as
-usual. A file gone from the bucket by hand: `--fetch-audio` counts it and goes on.
+usual. A file gone from the bucket by hand: `--fetch-audio` counts it and goes on, and a pass that needed it back
+says it's lost, without failing. A restore copies every file beside where it goes first, then moves them into
+place, the database last: one that fails before then changes nothing.
