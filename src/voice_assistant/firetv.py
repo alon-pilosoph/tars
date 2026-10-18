@@ -16,10 +16,14 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 from xml.etree import ElementTree
 
-from .home import DO, OFF, ON, OPEN, PRESS, STATUS, HomeError, Request
+import httpx
+
+from .home import DO, OFF, ON, OPEN, PLAY, PRESS, STATUS, HomeError, Request
 
 # The remote's buttons, as Android's key codes.
 KEYS = {
@@ -62,6 +66,21 @@ SETTLE_S = 4.0  # how long waking or sleeping gets to show on the stick
 OPEN_WAIT_S, STAY_S, OPEN_TRIES = 8.0, 3.0, 3
 POLL_S = 0.5
 MAX_PRESSES = 20
+# Playing a title straight from its link, in the apps that take one, rather than by working the screen: the title is
+# looked up by name (IMDb's ids are what Stremio's add-ons go by; Netflix's own come from JustWatch's catalogue of
+# what streams where, both public and keyless), its page opened by link, and the first stream (Stremio) or Play
+# (Netflix) chosen.
+DIRECT = ("stremio", "netflix")
+IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/{first}/{query}.json"
+JUSTWATCH = "https://apis.justwatch.com/graphql"
+LOOKUP_TIMEOUT_S = 5.0
+MOVIES, SERIES = ("movie", "tvMovie"), ("tvSeries", "tvMiniSeries")
+NETFLIX_ACTIVITY = "com.netflix.ninja/.MainActivity"
+STREAMS_WAIT_S = 2.5  # Stremio's stream list filling in once its page is up
+NETFLIX_WAIT_S = 6.0  # Netflix's title page, after the app itself comes up
+PLAY_WAIT_S = 20.0  # what was chosen to start playing
+EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
+YEAR = re.compile(r"\s*\((\d{4})\)\s*$")
 AGENT_STEPS = 30
 AGENT_TIMEOUT_S = 150.0
 # Working a remote is many small, easy choices: at the model's default effort each step thought for seconds.
@@ -208,6 +227,14 @@ class FireTV:
     def open(self, package: str) -> None:
         self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1")
 
+    def open_link(
+        self, uri: str, package: str, component: str = "", flags: str = "", extras: dict | None = None
+    ) -> None:
+        """Opens `uri` in `package` (Android's VIEW intent), returning once the app is up."""
+        parts = ["am start -W -a android.intent.action.VIEW", f"-d '{uri}'"]
+        parts += [f"-f {flags}"] * bool(flags) + [f"-e {k} '{v}'" for k, v in (extras or {}).items()]
+        self.shell(" ".join([*parts, f"-n {component}" if component else package]), timeout_s=15)
+
     def force_stop(self, package: str) -> None:
         self.shell(f"am force-stop {package}")
 
@@ -225,8 +252,88 @@ class FireTV:
         return min(matches, key=len) if matches else None
 
 
+@dataclass
+class Title:
+    """What someone asked to play: "Ratatouille (2007)", "Wednesday S1E3"."""
+
+    name: str
+    year: int | None = None
+    season: int | None = None
+    episode: int | None = None
+
+    @classmethod
+    def parse(cls, text: str) -> Title:
+        text, season, episode = text.strip(), None, None
+        if found := EPISODE.search(text):
+            season, episode, text = int(found[1]), int(found[2]), text[: found.start()]
+        year = int(found[1]) if (found := YEAR.search(text)) else None
+        return cls(YEAR.sub("", text).strip(), year, season, episode)
+
+
+@dataclass
+class Found:
+    id: str  # IMDb's (tt0382932) or Netflix's (81231974)
+    name: str
+    year: int | None
+    series: bool
+
+    def said(self) -> str:
+        return f"{self.name} ({self.year})" if self.year else self.name
+
+
+class Catalog:
+    """Titles by name: IMDb's search suggestions and JustWatch's catalogue, for `country` (two letters)."""
+
+    def __init__(self, country: str = "", client: httpx.Client | None = None):
+        self._country = (country or "US").upper()
+        self._http = client or httpx.Client(timeout=LOOKUP_TIMEOUT_S, follow_redirects=True)
+
+    def imdb(self, title: Title) -> Found | None:
+        """The best match on IMDb: its first suggestion of the right kind (a series, for an episode) and year."""
+        query = title.name.lower()
+        first = query[0] if query[:1].isalnum() else "x"
+        response = self._http.get(IMDB_SUGGEST.format(first=first, query=quote(query)))
+        response.raise_for_status()
+        kinds = SERIES if title.season else MOVIES + SERIES
+        for s in response.json().get("d", []):
+            if str(s.get("id", "")).startswith("tt") and s.get("qid") in kinds and title.year in (None, s.get("y")):
+                return Found(s["id"], s.get("l") or title.name, s.get("y"), s["qid"] in SERIES)
+        return None
+
+    def netflix(self, title: Title) -> Found | None:
+        """The best match that's on Netflix in this country, by JustWatch, with Netflix's own id."""
+        query = (
+            "query Search($country: Country!, $language: Language!, $first: Int!, $filter: TitleFilter) {"
+            " popularTitles(country: $country, first: $first, filter: $filter) { edges { node { objectType"
+            " content(country: $country, language: $language) { title originalReleaseYear }"
+            " offers(country: $country, platform: WEB) { package { technicalName } standardWebURL } } } } }"
+        )
+        variables = {
+            "country": self._country,
+            "language": "en",
+            "first": 5,
+            "filter": {"searchQuery": title.name, "includeTitlesWithoutUrl": False},
+        }
+        response = self._http.post(JUSTWATCH, json={"operationName": "Search", "query": query, "variables": variables})
+        response.raise_for_status()
+        edges = ((response.json().get("data") or {}).get("popularTitles") or {}).get("edges") or []
+        for node in (e.get("node") or {} for e in edges):
+            content, series = node.get("content") or {}, node.get("objectType") == "SHOW"
+            if (title.season and not series) or title.year not in (None, content.get("originalReleaseYear")):
+                continue
+            for offer in node.get("offers") or []:
+                if not str((offer.get("package") or {}).get("technicalName", "")).startswith("netflix"):
+                    continue
+                if found := re.search(r"netflix\.com/(?:[\w-]+/)?title/(\d+)", offer.get("standardWebURL") or ""):
+                    return Found(
+                        found[1], content.get("title") or title.name, content.get("originalReleaseYear"), series
+                    )
+        return None
+
+
 class TV:
-    """The home tool's Fire TV: one button, an app, on and off, checked on the stick; and `do`, for the agent."""
+    """The home tool's Fire TV: one button, an app, on and off, checked on the stick; `play`, straight from a title's
+    link; and `do`, for the agent."""
 
     def __init__(
         self,
@@ -234,14 +341,16 @@ class TV:
         agent: TvAgent | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        catalog: Catalog | None = None,
     ):
-        self.stick, self.agent = stick, agent
+        self.stick, self.agent, self.catalog = stick, agent, catalog or Catalog()
         self._clock, self._sleep = clock, sleep
 
     def what(self) -> str:
         how = "do (anything that takes several steps on screen)" if self.agent else "no several-step tasks"
         return (
-            f"the Fire TV stick, and the TV through it: status, on, off, press ({', '.join(KEYS)}), open an app, {how}"
+            f"the Fire TV stick, and the TV through it: status, on, off, press ({', '.join(KEYS)}), open an app, "
+            f"play a film or episode on {' or '.join(a.capitalize() for a in DIRECT)}, {how}"
         )
 
     def status(self) -> str:
@@ -279,6 +388,8 @@ class TV:
                 again = f", on try {tries}: it closed or never came up before" if tries > 1 else ""
                 return f"done: {name} is open and stayed open (the fire tv says so){again}"
             return f"not confirmed: opened {name} {tries} times, and {front or 'nothing'} is in front; it may be broken"
+        if action == PLAY:
+            return self._play(args)
         if action == DO:
             goal = str(args.get("goal") or "").strip()
             if not goal:
@@ -288,6 +399,50 @@ class TV:
             self.agent.start(goal)
             return "started: working on it on screen; TARS will say when it's done, so say only that you're on it"
         return f"error: the fire tv can't {action}"
+
+    def _play(self, args: dict) -> str:
+        app = str(args.get("app") or "stremio").strip().lower()
+        if app not in DIRECT:
+            return f"error: play goes straight to {' or '.join(DIRECT)}; for anything else, use do"
+        title = Title.parse(str(args.get("title") or ""))
+        if not title.name:
+            return 'error: play needs the title, as "Ratatouille (2007)" or "Wednesday S1E3"'
+        package = self.stick.find_app(app)
+        if not package:
+            return f"error: {app} isn't installed on the fire tv"
+        try:
+            found = (self.catalog.imdb if app == "stremio" else self.catalog.netflix)(title)
+        except (httpx.HTTPError, ValueError) as e:
+            return f"error: couldn't look up {title.name} ({type(e).__name__}); use do to find it on screen instead"
+        if found is None:
+            where = " on Netflix here" if app == "netflix" else ""
+            return f"error: found nothing called {title.name!r}{where}; check the title, or use do"
+        if not self.stick.awake():
+            self.stick.wake()
+            self._sleep(2.0)
+        shown = app.capitalize()
+        if app == "stremio":
+            kind = "series" if found.series else "movie"
+            if found.series and not title.season:
+                self.stick.open_link(f"stremio:///detail/series/{found.id}", package)
+                return f"done: {found.said()} is open in Stremio; it's a series, so ask which season and episode"
+            video = f"{found.id}:{title.season}:{title.episode}" if found.series else found.id
+            self.stick.open_link(f"stremio:///detail/{kind}/{found.id}/{video}", package)
+            self._sleep(STREAMS_WAIT_S)
+            chose = "the first stream"
+        else:
+            link = f"netflix://title/{found.id}"
+            self.stick.open_link(link, package, NETFLIX_ACTIVITY, "0x10000020", {"amzn_deeplink_data": found.id})
+            self._sleep(NETFLIX_WAIT_S)
+            chose = "Play"
+        self.stick.press("select")
+        episode = f", season {title.season} episode {title.episode}" if title.season and app == "stremio" else ""
+        own = " (Netflix plays the episode it has next for them)" if found.series and app == "netflix" else ""
+        if _watch(
+            lambda: any(p == package and s == "playing" for p, s, _ in self.stick.media()), PLAY_WAIT_S, self._sleep
+        ):
+            return f"done: {found.said()}{episode} is playing on {shown} (the fire tv says so){own}"
+        return f"not confirmed: opened {found.said()}{episode} on {shown} and chose {chose}, but nothing's playing yet"
 
     def _until(self, done: Callable[[], bool]) -> bool:
         deadline = self._clock() + SETTLE_S

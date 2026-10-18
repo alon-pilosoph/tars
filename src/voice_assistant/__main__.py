@@ -399,7 +399,7 @@ def make_ac(spec: dict, blaster, hass, root: Path):
 
 def make_tv(cfg: Config, spec: dict, root: Path, announce=None):
     """The Fire TV, and its agent if there's OpenAI to run it and somewhere to say how it went."""
-    from .firetv import KEY_FILE, TV, FireTV, TvAgent
+    from .firetv import KEY_FILE, TV, Catalog, FireTV, TvAgent
 
     try:
         import adb_shell  # noqa: F401 - only whether it's there
@@ -415,7 +415,7 @@ def make_tv(cfg: Config, spec: dict, root: Path, announce=None):
         agent = TvAgent(stick, client, cfg.home.tv_model or cfg.llm.model, announce, service_tier=cfg.llm.service_tier)
     elif announce:
         print(f'(no {OPENAI_KEY}: the Fire TV takes single buttons and apps, not tasks like "play Toy Story")')
-    return TV(stick, agent)
+    return TV(stick, agent, catalog=Catalog(cfg.llm.home_country))
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None):

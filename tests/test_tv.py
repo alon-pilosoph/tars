@@ -5,11 +5,12 @@ import json
 import threading
 import types
 
+import httpx
 import pytest
 
 from voice_assistant.ac_onboard import decode
 from voice_assistant.assistant import Announcements
-from voice_assistant.firetv import TV, FireTV, TvAgent, screen
+from voice_assistant.firetv import TV, Catalog, FireTV, Found, Title, TvAgent, screen
 from voice_assistant.home import HomeError, Request
 from voice_assistant.ir import CODE_SETS, Remote, nec_pulses
 
@@ -134,7 +135,8 @@ class Stick(FireTV):
         if command.startswith("uiautomator"):
             return s["ui"]
         if command == "pm list packages":
-            return "package:com.amazon.tv.launcher\npackage:com.stremio.one\npackage:org.videolan.vlc\n"
+            apps = ("com.amazon.tv.launcher", "com.stremio.one", "org.videolan.vlc", "com.netflix.ninja")
+            return "".join(f"package:{a}\n" for a in apps)
         if command == "screencap -p":
             return b"\x89PNG fake"
         if "KEYCODE_WAKEUP" in command:
@@ -143,6 +145,10 @@ class Stick(FireTV):
             s["awake"] = False
         elif command.startswith("monkey -p "):
             s["front"] = command.split()[2]
+        elif command.startswith("am start "):
+            s["front"] = command.split()[-1].split("/")[0]
+        elif command == "input keyevent KEYCODE_DPAD_CENTER" and s["front"] in ("com.stremio.one", "com.netflix.ninja"):
+            s["media"] = f"  package={s['front']}\n  active=true\n  state=PlaybackState {{state=3}}\n"
         return ""
 
 
@@ -357,3 +363,95 @@ def test_a_reply_to_an_announcement_is_heard_without_the_wake_word(speaker):
     assistant.announcements.add("Toy Story, or Toy Story 4?")
     assistant.say_announcements(follow_up_s=4.0)
     assert brain.asked == ["[Follow-up, no wake word] the first one"]
+
+
+# Playing a title straight from its link.
+
+
+class Titles:
+    """The catalog, as far as the TV can tell: what it was asked, and Ratatouille or Wednesday found."""
+
+    def __init__(self, found=True):
+        self.asked: list[Title] = []
+        self.found = found
+
+    def imdb(self, title: Title) -> Found | None:
+        self.asked.append(title)
+        if not self.found:
+            return None
+        if title.season:
+            return Found("tt13443470", "Wednesday", 2022, True)
+        return Found("tt0382932", "Ratatouille", 2007, False)
+
+    def netflix(self, title: Title) -> Found | None:
+        self.asked.append(title)
+        return Found("81231974", "Wednesday", 2022, True) if self.found else None
+
+
+def player(found=True) -> tuple[TV, Stick, Titles]:
+    stick, titles = Stick(), Titles(found)
+    return TV(stick, sleep=lambda s: None, catalog=titles), stick, titles
+
+
+def test_titles_are_read_with_their_year_or_episode():
+    assert Title.parse("Ratatouille (2007)") == Title("Ratatouille", 2007)
+    assert Title.parse(" Wednesday s1e3 ") == Title("Wednesday", None, 1, 3)
+    assert Title.parse("Toy Story") == Title("Toy Story")
+
+
+def test_a_film_plays_on_stremio_from_its_link_and_the_first_stream():
+    tv, stick, titles = player()
+    said = tv.call("play", {"app": "Stremio", "title": "Ratatouille (2007)"}, Request())
+    assert said == "done: Ratatouille (2007) is playing on Stremio (the fire tv says so)"
+    link = next(c for c in stick.commands if c.startswith("am start"))
+    assert "-d 'stremio:///detail/movie/tt0382932/tt0382932'" in link and link.endswith(" com.stremio.one")
+    assert titles.asked == [Title("Ratatouille", 2007)]
+
+
+def test_an_episode_on_stremio_goes_to_its_own_streams():
+    tv, stick, _ = player()
+    said = tv.call("play", {"app": "stremio", "title": "Wednesday S1E3"}, Request())
+    assert said.startswith("done: Wednesday (2022), season 1 episode 3 is playing on Stremio")
+    assert any("stremio:///detail/series/tt13443470/tt13443470:1:3" in c for c in stick.commands)
+
+
+def test_a_series_without_an_episode_opens_its_page_and_asks_which():
+    tv, stick, _ = player()
+    tv.catalog.imdb = lambda title: Found("tt13443470", "Wednesday", 2022, True)
+    said = tv.call("play", {"app": "stremio", "title": "Wednesday"}, Request())
+    assert "ask which season and episode" in said and "KEYCODE_DPAD_CENTER" not in " ".join(stick.commands)
+
+
+def test_netflix_opens_its_own_link_and_plays():
+    tv, stick, _ = player()
+    said = tv.call("play", {"app": "netflix", "title": "Wednesday"}, Request())
+    assert said.startswith("done: Wednesday (2022) is playing on Netflix") and "episode it has next" in said
+    link = next(c for c in stick.commands if c.startswith("am start"))
+    assert "-d 'netflix://title/81231974'" in link and link.endswith("-n com.netflix.ninja/.MainActivity")
+
+
+def test_play_says_when_it_found_nothing_or_the_app_takes_no_links():
+    tv, stick, _ = player(found=False)
+    assert tv.call("play", {"app": "stremio", "title": "Ratatoullie"}, Request()).startswith("error: found nothing")
+    assert tv.call("play", {"app": "youtube", "title": "news"}, Request()).startswith("error: play goes straight")
+    assert not any(c.startswith("am start") for c in stick.commands)
+
+
+def test_the_catalog_reads_imdb_and_justwatch():
+    def answer(request):
+        if request.url.host == "v3.sg.media-imdb.com":
+            assert request.url.path == "/suggestion/r/ratatouille.json"
+            d = [
+                {"id": "tt13721696", "l": "Ratatouille: The TikTok Musical", "y": 2021, "qid": "video"},
+                {"id": "tt0382932", "l": "Ratatouille", "y": 2007, "qid": "movie"},
+            ]
+            return httpx.Response(200, json={"d": d})
+        assert json.loads(request.content)["variables"]["country"] == "IL"
+        offer = {"package": {"technicalName": "netflix"}, "standardWebURL": "https://www.netflix.com/title/81231974"}
+        node = {"objectType": "SHOW", "content": {"title": "Wednesday", "originalReleaseYear": 2022}, "offers": [offer]}
+        return httpx.Response(200, json={"data": {"popularTitles": {"edges": [{"node": node}]}}})
+
+    catalog = Catalog("il", httpx.Client(transport=httpx.MockTransport(answer)))
+    assert catalog.imdb(Title("Ratatouille")) == Found("tt0382932", "Ratatouille", 2007, False)
+    assert catalog.netflix(Title("Wednesday")) == Found("81231974", "Wednesday", 2022, True)
+    assert catalog.netflix(Title("Wednesday", 1999)) is None

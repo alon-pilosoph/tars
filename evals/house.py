@@ -10,7 +10,7 @@ import httpx
 
 from voice_assistant.ac import AC, Profile, Settings, State
 from voice_assistant.config import HomeConfig
-from voice_assistant.firetv import APPS, TV
+from voice_assistant.firetv import APPS, TV, Found, Title
 from voice_assistant.home import STATUS, HomeAssistant, HomeTools, Request
 from voice_assistant.ir import CODE_SETS, Remote
 
@@ -98,6 +98,7 @@ class PretendStick:
 
     def __init__(self, on: bool):
         self.on, self.front = on, "com.amazon.tv.launcher" if on else ""
+        self.linked = self.title = ""  # a title's page opened by link, and then what plays from it
 
     def awake(self) -> bool:
         return self.on
@@ -112,16 +113,32 @@ class PretendStick:
         return self.front if self.on else ""
 
     def playing(self) -> str:
-        return "nothing playing"
+        return f"playing: {self.title} ({self.front})" if self.title else "nothing playing"
+
+    def media(self) -> list[tuple[str, str, str]]:
+        return [(self.front, "playing", self.title)] if self.title else []
 
     def press(self, key: str, times: int = 1) -> None:
-        pass
+        if key == "select" and self.linked:
+            self.title, self.linked = self.linked, ""
+
+    def open_link(self, uri: str, package: str, component: str = "", flags: str = "", extras: dict | None = None):
+        self.front, self.linked = package, uri
 
     def find_app(self, name: str) -> str | None:
         return APPS.get(name.strip().lower())
 
     def open(self, package: str) -> None:
         self.front = package
+
+
+class PretendCatalog:
+    """Every title is found, as asked: no lookups in an eval."""
+
+    def imdb(self, title: Title) -> Found:
+        return Found("tt0114709", title.name.title(), title.year, bool(title.season))
+
+    netflix = imdb
 
 
 class PretendAgent:
@@ -161,7 +178,9 @@ def make_house(house: dict, folder: Path) -> House:
         "ac": AC(Profile(electra_profile()), nowhere, state_path),
         "tv": Remote("tv", CODE_SETS["samsung-tv"], nowhere, sleep=lambda s: None),
         "soundbar": Remote("soundbar", CODE_SETS["polk-re9641"], nowhere, sleep=lambda s: None),
-        "fire tv": TV(PretendStick(house.get("tv") == "on"), PretendAgent(), sleep=lambda s: None),
+        "fire tv": TV(
+            PretendStick(house.get("tv") == "on"), PretendAgent(), sleep=lambda s: None, catalog=PretendCatalog()
+        ),
     }
     cfg = HomeConfig(url="http://pretend:8123", unlock_voices=["alon"], devices=DEVICES, blaster=BLASTER)
     tools = HomeTools(cfg, hass, local, sleep=lambda s: None)

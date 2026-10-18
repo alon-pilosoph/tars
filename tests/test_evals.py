@@ -408,7 +408,7 @@ def test_scenarios_never_run_are_estimated_as_an_average_one_not_as_nothing(tmp_
     assert unknown == ["new"] and use["luna"] == {"input": 200.0}
 
 
-HOME_CALL = dict.fromkeys(("minutes", "mode", "temperature", "fan", "button", "times", "app", "goal")) | {
+HOME_CALL = dict.fromkeys(("minutes", "mode", "temperature", "fan", "button", "times", "app", "title", "goal")) | {
     "confirmed": False
 }
 

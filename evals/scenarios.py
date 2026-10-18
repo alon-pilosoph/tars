@@ -72,13 +72,17 @@ class ExpectedHome:
     fan: str | None = None
     button: str | None = None
     app: str | None = None
+    title: str | None = None  # a regular expression the title has to match (any case)
     goal: str | None = None  # a regular expression the goal has to match (any case)
 
     def matches(self, call: dict) -> bool:
         if (self.device, self.action) != (call.get("device"), call.get("action")):
             return False
-        wanted = {k: v for k, v in vars(self).items() if k not in ("device", "action", "goal") and v is not None}
-        if self.goal and not re.search(self.goal, str(call.get("goal") or ""), re.IGNORECASE):
+        loose = ("goal", "title")
+        wanted = {k: v for k, v in vars(self).items() if k not in ("device", "action", *loose) and v is not None}
+        if any(
+            getattr(self, k) and not re.search(getattr(self, k), str(call.get(k) or ""), re.IGNORECASE) for k in loose
+        ):
             return False
         return all(
             str(call.get(k)).lower() == str(v).lower() if isinstance(v, str) else call.get(k) == v
@@ -226,7 +230,7 @@ def _turn(raw: dict, where: str) -> Turn:
         for h in raw["home"]:
             _only(
                 h,
-                {"device", "action", "minutes", "temperature", "mode", "fan", "button", "app", "goal"},
+                {"device", "action", "minutes", "temperature", "mode", "fan", "button", "app", "title", "goal"},
                 f"{where}, home",
             )
             if h.get("action") not in ACTIONS or h["action"] == STATUS:

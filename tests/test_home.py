@@ -95,7 +95,7 @@ def home(ha: FakeHA | None = None, unlock_voices=("alon",), devices=DEVICES, **c
     return tools, ha
 
 
-NO_SETTINGS = dict.fromkeys(("minutes", "mode", "temperature", "fan", "button", "times", "app", "goal"))
+NO_SETTINGS = dict.fromkeys(("minutes", "mode", "temperature", "fan", "button", "times", "app", "title", "goal"))
 
 
 def args(device, action, **extra):

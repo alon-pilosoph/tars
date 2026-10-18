@@ -86,8 +86,16 @@ Stremio" is done only when Stremio is in front, and still there three seconds la
 after it starts, the first time after the stick boots: then TARS stops it and opens it again, up to three times, and
 the agent does the same whenever an app closes under it.
 
-**A task that takes several steps** ("play Toy Story on Stremio", "find the news on YouTube") goes to the Fire TV's
-agent: a model (`[home] tv_model`, OpenAI's `[llm] model` by default) that works the remote the way a person would.
+**Playing a film or an episode on Stremio or Netflix** ("play Ratatouille on Stremio", "put on Wednesday on Netflix")
+goes straight to it, in seconds and with no model working the screen: TARS looks the title up by name (IMDb's ids,
+which Stremio's add-ons go by, from IMDb's search suggestions; Netflix's own ids from JustWatch's catalogue for
+`[llm] home_country`), opens its page by link (`stremio:///detail/movie/tt0382932/tt0382932`, or a series'
+`.../tt13443470:1:3` for season 1 episode 3; `netflix://title/81231974`), chooses the first stream (Stremio) or Play
+(Netflix), and says it's playing only once the stick's media session does. A series on Stremio without an episode
+opens its page and TARS asks which; on Netflix the show plays the episode Netflix has next.
+
+**Any other task that takes several steps** ("find the news on YouTube"), or a title `play` couldn't find, goes to the
+Fire TV's agent: a model (`[home] tv_model`, OpenAI's `[llm] model` by default) that works the remote the way a person would.
 Each step it chooses from what it sees (look, a screenshot), presses, types or opens an app, then looks again to check
 it did what it meant, for up to 30 steps and two and a half minutes. It runs in the background: TARS answers "On it."
 at once, and when the agent is done, TARS says how it went after a chime, like a reminder: "Toy Story is playing.",

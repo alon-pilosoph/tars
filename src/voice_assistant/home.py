@@ -23,8 +23,8 @@ TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
 LOCK, BOILER, SWITCH, AC, IR, FIRETV = HOME_DEVICES
 LOCAL = (AC, IR, FIRETV)  # worked by TARS itself, not through Home Assistant
 STATUS, ON, OFF, LOCK_IT, UNLOCK, SET, IS_ON, IS_OFF = "status", "on", "off", "lock", "unlock", "set", "is_on", "is_off"
-PRESS, OPEN, DO = "press", "open", "do"
-ACTIONS = (STATUS, ON, OFF, LOCK_IT, UNLOCK, SET, IS_ON, IS_OFF, PRESS, OPEN, DO)
+PRESS, OPEN, PLAY, DO = "press", "open", "play", "do"
+ACTIONS = (STATUS, ON, OFF, LOCK_IT, UNLOCK, SET, IS_ON, IS_OFF, PRESS, OPEN, PLAY, DO)
 EVERYTHING = "everything"  # the device name that asks for every device's status
 # What each kind of device can be asked to do.
 CAN = {
@@ -33,7 +33,7 @@ CAN = {
     SWITCH: (STATUS, ON, OFF),
     AC: (STATUS, ON, OFF, SET, IS_ON, IS_OFF),
     IR: (PRESS, ON, OFF),
-    FIRETV: (STATUS, ON, OFF, PRESS, OPEN, DO),
+    FIRETV: (STATUS, ON, OFF, PRESS, OPEN, PLAY, DO),
 }
 # How long a change waits for the device to report it: a Nuki turns its bolt in a few seconds, then reports it over
 # MQTT; a Switcher answers at once.
@@ -163,8 +163,10 @@ IR_RULES = (
 )
 TV_RULES = (
     "The fire tv is the TV's stick, and waking it turns the TV on too (HDMI-CEC). To turn the TV on or off, use the "
-    "TV's own on or off and the fire tv's, one call each, so they agree. For "
-    'anything on screen that takes more than one button ("play Toy Story on Stremio", "find the news on YouTube"), use '
+    "TV's own on or off and the fire tv's, one call each, so they agree. To play a film or an episode on Stremio or "
+    'Netflix, use play with the app and the title ("Ratatouille (2007)", "Wednesday S1E3"; the best-known one unless '
+    "they said which; Stremio if they didn't say where): it goes straight to it. For anything else on screen that "
+    'takes more than one button ("find the news on YouTube"), or when play says it found nothing, use '
     "do with the goal in their words: it works it out on screen in the background, checking each step, and TARS says "
     "when it's done; say only that you're on it, in a few words. For one button (pause, back) use press; to open an "
     "app, open. "
@@ -198,6 +200,7 @@ def home_tool(names: list[str]) -> dict:
                 "button",
                 "times",
                 "app",
+                "title",
                 "goal",
                 "confirmed",
             ],
@@ -211,6 +214,10 @@ def home_tool(names: list[str]) -> dict:
                 "button": {"type": ["string", "null"], "description": "press: the button, as listed for the device."},
                 "times": {"type": ["integer", "null"], "description": "press: how many times; null: once."},
                 "app": {"type": ["string", "null"], "description": "open: the app, by its name."},
+                "title": {
+                    "type": ["string", "null"],
+                    "description": 'play: the film or series, as "Ratatouille (2007)" or "Wednesday S1E3".',
+                },
                 "goal": {"type": ["string", "null"], "description": "do: what they asked for, in their words."},
                 "confirmed": {
                     "type": "boolean",
@@ -278,7 +285,7 @@ class HomeTools:
                 device.kind == LOCK
                 and (action == LOCK_IT or action == UNLOCK and args.get("confirmed") is True)
                 or device.kind == FIRETV
-                and action in (ON, OFF, OPEN)
+                and action in (ON, OFF, OPEN, PLAY)
             )
         )
 
