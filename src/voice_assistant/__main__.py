@@ -13,6 +13,7 @@ from dotenv import dotenv_values
 
 from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, NoDeviceError, Speaker, find_device, list_devices
 from .config import (
+    LOCAL_CONFIG,
     OPENAI_KEY,
     OPENAI_STT_MODEL,
     QUICK_PROVIDERS,
@@ -199,6 +200,12 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .reminders import Reminders
 
     reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
+    bucket = None
+    if cfg.backup.enabled:
+        try:
+            bucket = make_backup(cfg, root).read
+        except ConfigError as e:
+            print(f"(the web UI plays only what's on this machine: {e.code})")
     serve(
         log,
         host,
@@ -208,6 +215,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
         reminders=reminders,
         voice_names=speaker_id.names if speaker_id else list,
+        bucket=bucket,
     )
 
 
@@ -252,6 +260,22 @@ def main() -> None:
         "--telegram", action="store_true", help="chat with TARS on Telegram ([telegram] in config.toml)"
     )
     parser.add_argument(
+        "--backup", action="store_true", help="back up to S3 once, as its timer does ([backup] in config.toml)"
+    )
+    parser.add_argument(
+        "--fetch-audio",
+        action="store_true",
+        help="bring back the audio that's only in the S3 bucket (for training, or a new machine)",
+    )
+    parser.add_argument(
+        "--restore-archived",
+        action="store_true",
+        help="with --fetch-audio: ask S3 to restore archived audio too, to fetch with a later run (up to 48 hours)",
+    )
+    parser.add_argument(
+        "--restore-backup", action="store_true", help="put the bucket's latest snapshot in place on a new machine"
+    )
+    parser.add_argument(
         "--install-models",
         type=Path,
         metavar="FOLDER",
@@ -292,6 +316,11 @@ def main() -> None:
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)
+            return
+        if args.backup or args.fetch_audio or args.restore_backup:
+            backup(
+                cfg, root, fetch=args.fetch_audio, restore_archived=args.restore_archived, restore=args.restore_backup
+            )
             return
         if args.install_models:
             install_models(cfg, root, args.install_models, args.based_on)
@@ -420,6 +449,77 @@ def telegram(cfg: Config, root: Path) -> None:
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
     ).run_forever(me)
+
+
+def make_backup(cfg: Config, root: Path):
+    """The backup to [backup]'s bucket: the event log's files, and a daily snapshot of the database, the voiceprints,
+    the wake models trained on the household (the self-learning pairs, and models/personal/) and this machine's own
+    settings (config.local.toml; never .env, which holds the keys). ConfigError if it's off, or can't be."""
+    from .backup import Backup, make_s3
+
+    if not cfg.backup.enabled:
+        raise ConfigError("Set enabled = true, bucket and region under [backup] (docs/backup.md).")
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("The backup is of the event log: set log_events = true under [learning] in config.toml.")
+    try:
+        s3 = make_s3(cfg.backup, lambda name: dotenv_values(root / ".env").get(name) or None)
+    except ValueError as e:
+        raise ConfigError(f"The backup: {e}") from None
+    folder = Path(cfg.learning.folder)
+    extra = {
+        cfg.speaker.voiceprints: root / cfg.speaker.voiceprints,
+        str(folder / "wake_models"): log.folder / "wake_models",
+        "models/personal": root / "models/personal",
+        LOCAL_CONFIG: root / LOCAL_CONFIG,
+    }
+    return Backup(log, cfg.backup, s3, str(folder / "events.db"), extra)
+
+
+def backup(cfg: Config, root: Path, fetch: bool = False, restore_archived: bool = False, restore: bool = False) -> None:
+    """--backup: one pass, as its timer runs it. --fetch-audio: bring back what's only in the bucket. --restore-backup:
+    the latest snapshot, on a new machine."""
+    from .backup import BackupError, make_s3, restore_snapshot
+
+    if restore:
+        if not cfg.backup.enabled:
+            raise ConfigError("Set enabled = true, bucket and region under [backup] (docs/backup.md).")
+        try:
+            s3 = make_s3(cfg.backup, lambda name: dotenv_values(root / ".env").get(name) or None)
+            key = restore_snapshot(s3, cfg.backup.prefix, root, str(Path(cfg.learning.folder) / "events.db"))
+        except (ValueError, BackupError) as e:
+            raise SystemExit(f"Couldn't restore: {e}") from None
+        print(f"Restored {key}. Start TARS; --fetch-audio brings back the recordings, if training needs them.")
+        return
+    job = make_backup(cfg, root)
+    if fetch:
+        try:
+            counts = job.fetch(restore=restore_archived)
+        except BackupError as e:
+            raise SystemExit(f"Couldn't fetch the audio: {e}") from None
+        print(
+            f"Fetched {counts['fetched']} files. "
+            + (
+                f"{counts['restoring']} archived ones are being restored: run this again in up to 48 hours. "
+                if counts["restoring"]
+                else ""
+            )
+            + (
+                f"{counts['archived']} are archived: add --restore-archived to bring them back."
+                if counts["archived"]
+                else ""
+            )
+        )
+        return
+    status = job.run()
+    print(
+        f"(backup: {status.uploaded} uploaded, {status.offloaded} removed from this machine, {status.deleted} deleted "
+        f"from the bucket; {status.in_bucket} files in it, {status.only_in_bucket} only there)"
+    )
+    for note in status.notes:
+        print(f"({note})")
+    if status.error:
+        raise SystemExit(f"The backup didn't finish: {status.error}")
 
 
 def phrase_folder(cfg: Config, root: Path) -> Path:

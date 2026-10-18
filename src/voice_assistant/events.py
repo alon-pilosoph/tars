@@ -90,7 +90,7 @@ class EventLog:
         unreviewed wakes the check turned away); a TV can make dozens a day. Labeled audio is training data and stays.
         Returns how many events lost their audio."""
         cutoff = (now or time.time()) - keep_days * DAY_S
-        rows = self._labeled(
+        rows = self.labeled(
             self.store.rows(
                 "SELECT * FROM events WHERE ts < ? AND label IS NULL AND "
                 "(audio IS NOT NULL OR utterance_audio IS NOT NULL)",
@@ -162,14 +162,14 @@ class EventLog:
 
     def events(self, limit: int | None = None) -> list[dict]:
         """Newest first (all of them without a `limit`), each with its automatic label."""
-        return self._labeled(
+        return self.labeled(
             self.store.rows("SELECT * FROM events ORDER BY ts DESC LIMIT ?", (-1 if limit is None else limit,))
         )
 
     def for_review(self) -> list[dict]:
         """Newest first: the events waiting for an answer, and the newest answered ones. A wake a request followed
         settles itself, and one whose audio is gone can't be listened to, so neither waits."""
-        return self._labeled(
+        return self.labeled(
             self.store.rows(
                 "SELECT * FROM events WHERE id IN (SELECT id FROM events WHERE label IS NULL AND audio IS NOT NULL "
                 "AND follow IS NOT ? ORDER BY ts DESC LIMIT ?) "
@@ -178,7 +178,8 @@ class EventLog:
             )
         )
 
-    def _labeled(self, rows: list[dict]) -> list[dict]:
+    def labeled(self, rows: list[dict]) -> list[dict]:
+        """`rows` of events, each with its automatic label and why (auto_label, auto_reason)."""
         answered = self._answered_times(rows)
         for r in rows:
             r["auto_label"], r["auto_reason"] = auto_label(r, answered)

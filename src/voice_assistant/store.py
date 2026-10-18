@@ -110,6 +110,12 @@ TABLES = {
     file_name TEXT,                  -- file: the name it downloads as
     delivered REAL                   -- when it was posted to its person's Telegram chat, if it was
 )""",
+    "remote_files": """CREATE TABLE remote_files (
+    path TEXT PRIMARY KEY,           -- as the rows that keep it name it (relative to the folder)
+    uploaded REAL NOT NULL,          -- when it went to the bucket ([backup], backup.py)
+    size INTEGER NOT NULL,
+    offloaded REAL                   -- when it was removed from the machine, being in the bucket; NULL = on both
+)""",
 }
 INDEXES = [
     "CREATE INDEX events_ts ON events(ts)",
@@ -152,6 +158,7 @@ MIGRATIONS = [
         "ALTER TABLE items ADD COLUMN delivered REAL",
         "UPDATE items SET delivered = ts",  # what was sent before Telegram isn't posted to a chat now
     ],
+    [TABLES["remote_files"]],
 ]
 
 

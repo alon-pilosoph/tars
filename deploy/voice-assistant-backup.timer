@@ -1,0 +1,14 @@
+# Runs voice-assistant-backup.service every 15 minutes, and soon after the Pi starts. A pass still running when the
+# next is due isn't started twice. docs/backup.md
+
+[Unit]
+Description=TARS backup to S3, every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -39,6 +39,10 @@ claude = [
 echo = [
     "livekit>=1.1",
 ]
+# Backing up to S3 ([backup]).
+backup = [
+    "boto3>=1.40",
+]
 
 [build-system]
 requires = ["hatchling"]

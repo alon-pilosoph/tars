@@ -33,6 +33,7 @@ from .config import (
 from .echo import MAX_DELAY_S
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
+STALE_BACKUP_S = 3600.0  # the timer runs a pass every 15 minutes: an hour without a good one is worth a look
 MARKS = {OK: "✓", WARN: "!", FAIL: "✗", SKIP: "-"}
 LISTEN_S = 3.0
 QUIET_DBFS = -55.0  # a peak below this, with someone talking, is a mic that isn't the one in the room
@@ -269,6 +270,44 @@ def telegram(cfg: Config, token: str | None, me: Callable[[str], dict]) -> Resul
     return Result("Telegram", OK, f"@{bot.get('username')} answers ({time.perf_counter() - t:.1f} s), for {people}")
 
 
+def backup(cfg: Config, make: Callable[[], object], now: float | None = None) -> list[Result]:
+    """The S3 bucket answers with the keys TARS has, and how the timer's last pass went. `make`: the Backup, raising
+    ConfigError if it can't be made."""
+    from .backup import BackupError, Status
+
+    if not cfg.backup.enabled:
+        return [Result("Backup", SKIP, "off ([backup] enabled)")]
+    try:
+        job = make()
+        job.check()
+    except ConfigError as e:
+        return [Result("Backup", FAIL, str(e.code), "docs/backup.md")]
+    except BackupError as e:
+        fix = "check the bucket's name and region, and the key's policy (docs/backup.md)"
+        return [Result("Backup", FAIL, str(e), fix)]
+    status, now = Status.load(job.status_path), now or time.time()
+    where = f"s3://{cfg.backup.bucket}/{cfg.backup.prefix}"
+    start = "systemctl --user start voice-assistant-backup, and see journalctl --user-unit voice-assistant-backup"
+    if not status.last_run:
+        return [Result("Backup", WARN, f"{where} answers; no pass has run yet", start)]
+    ago = _ago(now - status.last_ok) if status.last_ok else "never"
+    files = f"{status.in_bucket} files there, {status.only_in_bucket} only there; last good pass {ago}"
+    if status.error:
+        return [Result("Backup", FAIL, f"the last pass: {status.error}", start)]
+    results = [Result("Backup", WARN if now - status.last_ok > STALE_BACKUP_S else OK, f"{where}: {files}")]
+    if status.lifecycle.startswith("not set"):
+        results.append(Result("Backup lifecycle", WARN, status.lifecycle, "set the rules by hand (docs/backup.md)"))
+    return results
+
+
+def _ago(seconds: float) -> str:
+    if seconds < 90:
+        return "just now"
+    if seconds < 90 * 60:
+        return f"{round(seconds / 60)} minutes ago"
+    return f"{seconds / 3600:.1f} hours ago"
+
+
 def systemd(unit: str, active: Callable[[str], str | None]) -> Result:
     state = active(unit)
     if state is None:
@@ -467,11 +506,17 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
         ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
+        ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
         ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
         ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
         *(
             [("voice-assistant-telegram", lambda: systemd("voice-assistant-telegram", systemd_state))]
             if cfg.telegram.enabled
+            else []
+        ),
+        *(
+            [("voice-assistant-backup.timer", lambda: systemd("voice-assistant-backup.timer", systemd_state))]
+            if cfg.backup.enabled
             else []
         ),
     ]

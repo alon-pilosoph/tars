@@ -2079,9 +2079,15 @@
               <div>The assistant</div>
               <div>The web app, FastAPI and React</div>
               <div>Telegram, if it's on</div>
+              <div>A backup to S3 every 15 minutes, if it's on</div>
               <div class="db">One SQLite database, WAL mode</div>
             </div>
-            <p>They share the database on the same machine, and a crash in one never takes another down.</p>
+            <p>
+              They share the database on the same machine, and a crash in one never takes another down.<span class="d">
+                The backup copies everything to an S3 bucket, makes room on the card after a month, and S3 moves old
+                audio to Deep Archive.</span
+              >
+            </p>
           </div>
           <div>
             <h3>Every stage is an interface</h3>

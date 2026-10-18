@@ -1,0 +1,23 @@
+# systemd *user* service for one backup pass to S3 ([backup] in config.toml, docs/backup.md), started by
+# voice-assistant-backup.timer. deploy/install-pi.sh installs both when [backup] is on.
+#
+#   cp deploy/voice-assistant-backup.service deploy/voice-assistant-backup.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now voice-assistant-backup.timer
+#
+#   systemctl --user start voice-assistant-backup          # a pass now
+#   journalctl --user-unit voice-assistant-backup          # how the passes went
+
+[Unit]
+Description=TARS backup to S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --backup
+Environment=PYTHONUNBUFFERED=1
+# Below the voice: a pass reads every new recording and compresses the database, and must never slow a reply.
+Nice=15
+IOSchedulingClass=idle

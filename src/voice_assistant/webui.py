@@ -16,7 +16,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
@@ -144,12 +144,14 @@ def create_app(
     allowed_hosts: frozenset[str] = frozenset(),
     reminders: Reminders | None = None,
     voice_names: Callable[[], list[str]] = list,
+    bucket: Callable[[str], bytes | None] | None = None,
 ) -> FastAPI:
     """`recluster` regroups the voices (see clustering.regroup); None hides the button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
     `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts.
     `reminders`: TARS's timers, reminders and messages; None when they're off. `voice_names`: the names TARS knows
-    by voice (speaker ID's voiceprints), which a message waiting until someone is back needs."""
+    by voice (speaker ID's voiceprints), which a message waiting until someone is back needs. `bucket`: a recording
+    that's only in the backup's bucket now, by its path ([backup], Backup.read); None if it isn't there either."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
@@ -252,15 +254,31 @@ def create_app(
         """Without a `limit`: every event still waiting for an answer, and the newest answered ones."""
         return [event(e) for e in (log.events(limit) if limit else log.for_review())]
 
+    def recording(rel: str | None) -> Response:
+        """A recording, from this machine, or from the backup's bucket once it's been moved there."""
+        try:
+            return FileResponse(file_or_404(rel), media_type="audio/wav")
+        except HTTPException:
+            if not (rel and bucket):
+                raise
+        try:
+            data = bucket(rel)
+        except Exception as e:  # noqa: BLE001 - the bucket not answering is a recording that can't be played
+            print(f"(web UI: couldn't fetch {rel} from the backup: {e!r})")
+            data = None
+        if data is None:
+            raise HTTPException(404, "not on this machine, and not in the bucket, or archived there")
+        return Response(data, media_type="audio/wav")
+
     # Before /api/audio/{event_id}/{which}, or "turn" would be taken for an event id.
     @app.get("/api/audio/turn/{turn_id}")
     def turn_audio(turn_id: int):
-        return FileResponse(file_or_404(turn_or_404(turn_id)["audio"]), media_type="audio/wav")
+        return recording(turn_or_404(turn_id)["audio"])
 
     @app.get("/api/audio/{event_id}/{which}")
     def audio(event_id: int, which: Literal["wake", "request"]):
         column = {"wake": "audio", "request": "utterance_audio"}[which]
-        return FileResponse(file_or_404(event_or_404(event_id)[column]), media_type="audio/wav")
+        return recording(event_or_404(event_id)[column])
 
     @app.post("/api/events/{event_id}/label")
     def label(event_id: int, body: Label):

@@ -203,3 +203,20 @@ brain = "openai"
 # OpenAI's settings for chats: the standard tier, since nobody's waiting on a first word, and a little thinking.
 service_tier = ""
 reasoning_effort = "low"
+
+[backup]
+# Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and once a day the
+# database, voiceprints and trained wake models. voice-assistant --backup does it, every 15 minutes by its systemd
+# timer, with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env. Set enabled, bucket and region in config.local.toml.
+enabled = false
+bucket = ""
+region = ""
+# Everything goes under this folder in the bucket.
+prefix = "tars"
+# A request's audio stays on the machine this long, then only in the bucket (the web UI still plays it). Audio
+# training learns from, and what TARS sent, stay on the machine as well. 0 = keep everything on the machine too.
+keep_local_days = 30
+# Then S3 moves the audio to Glacier Deep Archive: the cheapest storage, and up to 48 hours to bring back. 0 = never.
+archive_after_days = 180
+# The daily copy of the database, voiceprints and trained wake models, kept this long.
+keep_snapshots_days = 30

@@ -197,6 +197,26 @@ class TelegramConfig:
 
 
 @dataclass
+class BackupConfig:
+    # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): voice-assistant --backup, every 15 minutes by
+    # its systemd timer, with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env.
+    enabled: bool = False
+    bucket: str = ""
+    # The AWS region the bucket is in, like eu-central-1.
+    region: str = ""
+    # Everything goes under this folder in the bucket: audio/, files/ and snapshots/.
+    prefix: str = "tars"
+    # A request's audio stays on the machine this long, then only in the bucket (the web UI still plays it). Audio
+    # training learns from, and what TARS sent, stay on the machine as well. 0 = keep everything on the machine.
+    keep_local_days: float = 30.0
+    # Then S3 moves it to Glacier Deep Archive, the cheapest storage, which takes up to 48 hours to bring back.
+    # 0 = never.
+    archive_after_days: int = 180
+    # A copy of the database, the voiceprints and the trained wake models is made once a day, and kept this long.
+    keep_snapshots_days: int = 30
+
+
+@dataclass
 class Config:
     audio: AudioConfig
     wake: WakeConfig
@@ -209,6 +229,7 @@ class Config:
     web: WebConfig
     reminders: RemindersConfig
     telegram: TelegramConfig
+    backup: BackupConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
@@ -386,4 +407,21 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[telegram] brain must be openai or quick, not {cfg.telegram.brain!r}")
     if len(set(cfg.telegram.people.values())) < len(cfg.telegram.people):
         problems.append("[telegram] people has the same chat id twice")
+    b = cfg.backup
+    if b.enabled and not b.bucket:
+        problems.append("[backup] bucket must name the S3 bucket to back up to")
+    if b.enabled and not b.region:
+        problems.append("[backup] region must say where the bucket is, like eu-central-1")
+    if b.bucket and not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", b.bucket):
+        problems.append(f"[backup] bucket must be an S3 bucket name, not {b.bucket!r}")
+    if b.region and not re.fullmatch(r"[a-z]{2}(-[a-z]+)+-\d", b.region):
+        problems.append(f"[backup] region must be an AWS region like eu-central-1, not {b.region!r}")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*", b.prefix):
+        problems.append(f"[backup] prefix must be a folder like tars, with no slash at either end, not {b.prefix!r}")
+    if b.keep_local_days < 0:
+        problems.append("[backup] keep_local_days must be 0 (keep everything) or more")
+    if b.archive_after_days < 0:
+        problems.append("[backup] archive_after_days must be 0 (never) or more")
+    if b.keep_snapshots_days < 1:
+        problems.append("[backup] keep_snapshots_days must be at least 1")
     return problems

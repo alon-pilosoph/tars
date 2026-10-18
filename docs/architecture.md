@@ -2,8 +2,9 @@
 
 TARS is a few processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of
 data: the assistant, which listens and answers; the web UI, which shows and edits what the assistant kept; and,
-optionally, TARS on Telegram, which answers the household's chats ([TARS on Telegram](telegram.md)). Five principles
-shape the design:
+optionally, TARS on Telegram, which answers the household's chats ([TARS on Telegram](telegram.md)), and the backup,
+which copies what TARS keeps to an S3 bucket every 15 minutes ([backing up to S3](backup.md)). Five principles shape
+the design:
 
 - **Local until it's sure.** The wake word, the double-check, the speech detector and speaker ID run on the machine.
   Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)). After a wake,
@@ -165,7 +166,9 @@ fail without costing a reply. The layout, retention and labeling rules are in [s
 Voiceprints live in `voice_data/voiceprints.npz`; the personal wake models in `models/personal/` (gitignored). The
 short lines made ahead ("Yes?", "Did you call me?", the error lines) are kept in `voice_data/phrases/`, one folder per
 `[tts]` setup, so TARS can still say something went wrong after a restart with the network down. After changing the
-voice effect's code (`effects.py`), delete that folder so the lines are made again.
+voice effect's code (`effects.py`), delete that folder so the lines are made again. With `[backup]` on, all of it is
+copied to an S3 bucket, and a request's audio leaves the machine after a month, living on in the bucket
+([backing up to S3](backup.md)).
 
 ## What leaves the machine
 
@@ -188,8 +191,12 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
 - **With `[telegram]` on,** Telegram gets what's written in the household's chats with TARS, its replies there, and
   the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)). TARS asks
   Telegram for new messages, so nothing at home is opened to the internet.
-- **Never:** the event log, the audio kept for learning, voiceprints, and anything else the web UI shows. The web UI
-  is served from the same machine and talks to nothing else.
+- **With `[backup]` on,** your own S3 bucket gets everything TARS keeps: the recordings, the files it sent, and once
+  a day the database (transcripts and voice embeddings included), the voiceprints and the wake models trained on the
+  household, encrypted at rest ([backing up to S3](backup.md#what-it-sends)). `.env` never goes.
+- **Never, without `[backup]`:** the event log, the audio kept for learning, voiceprints, and anything else the web UI
+  shows. The web UI is served from the same machine, and talks to nothing else but that bucket, to play a recording
+  that's moved there.
 
 ## The web UI
 
@@ -224,9 +231,9 @@ The assistant is `src/voice_assistant/`:
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
-| What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
+| What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
 | Downloads | `models.py` (the small local models, on first use) |
-| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Telegram) |
+| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Telegram, the backup) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),
