@@ -23,6 +23,7 @@ from pydantic import BaseModel, field_validator
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, UNKNOWN, EventLog
+from .health import Report
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .versions import INSTALLED, FixedPair, ModelVersions
 
@@ -144,7 +145,7 @@ def create_app(
     allowed_hosts: frozenset[str] = frozenset(),
     reminders: Reminders | None = None,
     voice_names: Callable[[], list[str]] = list,
-    health: Callable[[], dict] | None = None,
+    health: Callable[[], Report] | None = None,
 ) -> FastAPI:
     """`recluster` regroups the voices (see clustering.regroup); None hides the button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
@@ -481,9 +482,9 @@ def create_app(
     @app.get("/api/health")
     def health_now():
         """The Status page: TARS's processes, today, the services it uses and the machine. Asking the services takes
-        a few seconds the first time in a minute."""
+        a few seconds the first time in a minute, ten at most."""
         if health is None:
-            raise HTTPException(404, "the Status page isn't set up")
+            raise HTTPException(501, "the Status page isn't set up")
         return health()
 
     return app

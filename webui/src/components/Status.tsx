@@ -1,41 +1,59 @@
 import { useEffect } from "react";
-import { ago, diskLine, diskLow, duration, hot, memoryLine, pageLine, plural, processLine, time } from "../format";
+import {
+  ago,
+  diskLine,
+  duration,
+  memoryLine,
+  pageLine,
+  processLine,
+  processorLine,
+  temperatureLine,
+  time,
+} from "../format";
 import { loadHealth, useStore } from "../store";
 import type { Health } from "../types";
-import { PageHead, SecHead } from "./Blocks";
+import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
+import { Loading } from "./States";
 
-const MARK = { ok: "✓", warn: "!", fail: "✗" } as const;
+const MARK = { ok: "✓", warn: "!", fail: "✗" } as const; // check.py's
 
-export function Status() {
+export function StatusView() {
   const s = useStore();
   useEffect(() => {
     loadHealth();
   }, []);
-  const h = s.health;
   return (
     <>
       <PageHead title="Status" sub="Whether every part of TARS is running, the services it uses, and this machine." />
-      {s.healthError && (
-        <p className="hint warn" role="alert">
-          {`Couldn't get the status (${s.healthError}). `}
-          <button className="btn quiet" onClick={() => loadHealth()}>
-            Try again
-          </button>
-        </p>
-      )}
-      {!h ? (
-        !s.healthError && <p className="muted">Asking each part of TARS, and each service it uses…</p>
+      {s.health ? (
+        <Body h={s.health} />
+      ) : s.healthError ? (
+        <Empty role="alert" title="Couldn't get the status" text={s.healthError}>
+          <div className="btns">
+            <button className="btn primary big" onClick={() => loadHealth()}>
+              Try again
+            </button>
+          </div>
+        </Empty>
       ) : (
-        <Body h={h} />
+        <Loading />
       )}
     </>
   );
 }
 
+function Count({ n, one, many, bad }: { n: number; one: string; many: string; bad?: boolean }) {
+  return (
+    <div className={bad ? "bad" : undefined}>
+      <b>{n}</b>
+      <span>{n === 1 ? one : many}</span>
+    </div>
+  );
+}
+
 function Body({ h }: { h: Health }) {
-  const m = h.machine;
-  const t = h.today;
+  const { machine: m, today } = h;
   return (
     <>
       <SecHead title="TARS" />
@@ -53,20 +71,13 @@ function Body({ h }: { h: Health }) {
         </tbody>
       </table>
       <div className="counts health-counts">
-        <div>
-          <b>{t.wakes}</b>
-          <span>{t.wakes === 1 ? "wake today" : "wakes today"}</span>
-        </div>
-        <div>
-          <b>{t.answers}</b>
-          <span>{t.answers === 1 ? "answer" : "answers"}</span>
-        </div>
-        <div className={t.failed ? "bad" : undefined}>
-          <b>{t.failed}</b>
-          <span>{t.failed === 1 ? "answer failed" : "answers failed"}</span>
-        </div>
+        <Count n={today.wakes} one="wake today" many="wakes today" />
+        <Count n={today.answers} one="answer" many="answers" />
+        <Count n={today.failed} one="answer failed" many="answers failed" bad={today.failed > 0} />
       </div>
-      <p className="hint">{t.last_wake != null ? `The last wake was ${ago(t.last_wake, h.now)}.` : "No wakes yet."}</p>
+      <p className="hint">
+        {today.last_wake != null ? `The last wake was ${ago(today.last_wake, h.now)}.` : "No wakes yet."}
+      </p>
 
       <SecHead title="Services">
         <span className="muted">{`Asked at ${time(h.services_asked)}`}</span>
@@ -117,23 +128,21 @@ function Body({ h }: { h: Health }) {
         <dt>System</dt>
         <dd>{`${m.system}, Python ${m.python}`}</dd>
         <dt>Processor</dt>
-        <dd>{`${Math.round(m.cpu_percent)}% busy; load ${m.load.join(", ")} on ${plural(m.cores, "core")}`}</dd>
+        <dd>{processorLine(m)}</dd>
         <dt>Memory</dt>
         <dd>{memoryLine(m)}</dd>
         <dt>Temperature</dt>
-        <dd className={hot(m) ? "bad" : undefined}>
-          {m.temperature_c != null ? `${m.temperature_c.toFixed(1)} °C` : "Not reported here"}
-        </dd>
+        <dd className={m.hot ? "bad" : undefined}>{temperatureLine(m)}</dd>
         {m.throttled && (
           <>
             <dt>Power and heat</dt>
             <dd className={m.throttled.length ? "bad" : undefined}>
-              {m.throttled.length ? m.throttled.map(t => <div key={t}>{t}</div>) : "Fine"}
+              {m.throttled.length ? m.throttled.map(said => <div key={said}>{said}</div>) : "Fine"}
             </dd>
           </>
         )}
         <dt>Storage</dt>
-        <dd className={diskLow(m) ? "bad" : undefined}>{diskLine(m)}</dd>
+        <dd className={m.disk_low ? "bad" : undefined}>{diskLine(m)}</dd>
         <dt>Up for</dt>
         <dd>{duration(m.uptime_s)}</dd>
       </dl>

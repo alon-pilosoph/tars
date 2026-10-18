@@ -54,19 +54,24 @@ Check = Callable[[], Result | Iterable[Result]]
 
 
 def run(checks: list[tuple[str, Check]]) -> list[Result]:
-    """Every check, in order. One that raises is a failure with the error, never the end of the run."""
+    """Every check, in order, each printed as it's done."""
     results = []
     for name, check in checks:
-        try:
-            got = check()
-        except (Exception, SystemExit) as e:  # noqa: BLE001 - reported, and the rest still run (a bad setting exits)
-            got = Result(name, FAIL, str(e) if isinstance(e, SystemExit) else f"{type(e).__name__}: {e}")
-            if not isinstance(e, OSError | RuntimeError | ValueError | SystemExit):
-                traceback.print_exc()
-        for r in [got] if isinstance(got, Result) else got:
+        for r in outcome(name, check):
             print(line(r), flush=True)
             results.append(r)
     return results
+
+
+def outcome(name: str, check: Check) -> list[Result]:
+    """A check's results. One that raises is a failure with the error, never the end of a run (a bad setting exits)."""
+    try:
+        got = check()
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - reported, and the rest still run
+        got = Result(name, FAIL, str(e) if isinstance(e, SystemExit) else f"{type(e).__name__}: {e}")
+        if not isinstance(e, OSError | RuntimeError | ValueError | SystemExit):
+            traceback.print_exc()
+    return [got] if isinstance(got, Result) else list(got)
 
 
 def line(r: Result) -> str:
@@ -310,6 +315,18 @@ def service_status(name: str, key: str, status: int, took: float) -> Result:
     return Result(name, OK, f"answers ({took:.1f} s)")
 
 
+def with_keys_there(cfg: Config, env: Path) -> tuple[Config, set[str], bool]:
+    """The setup cut down to the keys in `env` (config.with_keys), the keys, and whether they're enough to run on; if
+    they aren't, the setup as it's written."""
+    from . import __main__ as cli
+
+    have = cli.env_keys(env)
+    try:
+        return with_keys(cfg, have)[0], have, True
+    except ConfigError:
+        return cfg, have, False
+
+
 def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
     """The cloud services TARS uses, each asked with its own key: --check runs them, and so does the web UI's Status
     page. A service TARS doesn't use, as config.toml and .env set it up, is a SKIP."""
@@ -319,12 +336,7 @@ def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
     from .tts import CARTESIA_API, CARTESIA_VERSION
 
     env = root / ".env"
-    have = cli.env_keys(env)
-    try:
-        cfg, _ = with_keys(cfg, have)
-        have_keys = True
-    except ConfigError:
-        have_keys = False
+    cfg, have, have_keys = with_keys_there(cfg, env)
 
     def openai():
         if OPENAI_KEY not in have:
@@ -398,14 +410,11 @@ def check_all(cfg: Config, root: Path) -> int:
 
     from . import __main__ as cli
     from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
+    from .health import PROCESSES, expected
 
     env = root / ".env"
-    have, asked = cli.env_keys(env), cfg
-    try:
-        cfg, _ = with_keys(cfg, have)
-        have_keys = True
-    except ConfigError:
-        have_keys = False
+    asked = cfg
+    cfg, _, have_keys = with_keys_there(cfg, env)
 
     def audio_device(kind: str):
         names, default_in, default_out = device_names()
@@ -488,13 +497,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
-        ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
-        ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
-        *(
-            [("voice-assistant-telegram", lambda: systemd("voice-assistant-telegram", systemd_state))]
-            if cfg.telegram.enabled
-            else []
-        ),
+        *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
     ]
     print("Checking TARS...\n", flush=True)
     results = run(checks)

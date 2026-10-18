@@ -73,6 +73,8 @@ export interface Status {
   health: boolean; // the Status page is there
 }
 
+/* What /api/health answers, as health.py's Report has it. */
+
 /** One of TARS's processes, from the heartbeat it writes every 30 s. */
 export interface ProcessHealth {
   name: "assistant" | "web" | "telegram";
@@ -80,13 +82,18 @@ export interface ProcessHealth {
   running: boolean;
   started: number | null;
   beat: number | null; // its last heartbeat; null: never seen
-  pid: number | null;
   version: string; // the git commit it runs
-  unit: string; // its systemd unit at home
-  unit_state: string | null; // null: no systemd here (a Mac)
+  unit_state: string | null; // its systemd unit's; null: no systemd to ask (a Mac)
 }
 
 export type CheckStatus = "ok" | "warn" | "fail";
+
+/** A service's own status page; "unknown" when it couldn't be read, and the description says why. */
+export interface StatusPage {
+  indicator: "none" | "minor" | "major" | "critical" | "maintenance" | "unknown";
+  description: string;
+  url: string;
+}
 
 /** A cloud service, asked with TARS's key, and as its own status page says it is. */
 export interface ServiceHealth {
@@ -94,11 +101,7 @@ export interface ServiceHealth {
   status: CheckStatus;
   detail: string;
   fix: string;
-  page: {
-    indicator: "none" | "minor" | "major" | "critical" | "maintenance" | "unknown";
-    description: string;
-    url: string;
-  } | null;
+  page: StatusPage | null;
 }
 
 export interface MachineHealth {
@@ -111,9 +114,11 @@ export interface MachineHealth {
   memory_total: number;
   memory_used: number;
   temperature_c: number | null; // null: the machine doesn't say (a Mac)
+  hot: boolean;
   throttled: string[] | null; // a Pi's power and heat warnings; null: not a Pi
   disk_total: number;
-  disk_used: number;
+  disk_free: number;
+  disk_low: boolean; // as --check has it
   uptime_s: number;
 }
 

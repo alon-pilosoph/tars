@@ -25,12 +25,15 @@ from .config import (
     load_config,
     with_keys,
 )
-from .health import Heartbeat
 from .recorder import make_recorder
 from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .events import EventLog
+    from .health import Report
     from .llm import QuickService
 
 OPENAI_TIMEOUT_S = 15.0
@@ -200,6 +203,8 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .reminders import Reminders
 
     reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
+    from .health import Heartbeat
+
     Heartbeat(log.folder, "web", root).start()
     serve(
         log,
@@ -214,29 +219,12 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     )
 
 
-def make_health(cfg: Config, root: Path, log):
+def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
     """What the web UI's Status page shows, as it is when asked (health.py)."""
-    import time
-
     from .check import service_checks, systemd_state
-    from .health import Services, machine, processes, today
+    from .health import Health, Services, expected
 
-    services = Services(lambda: service_checks(cfg, root))
-    wanted = ["assistant", "web"] + ["telegram"] * cfg.telegram.enabled
-
-    def now() -> dict:
-        found, asked = services.get()
-        at = time.time()
-        return {
-            "now": at,
-            "processes": processes(log.folder, wanted, systemd_state, at),
-            "today": today(log.store, at),
-            "services": found,
-            "services_asked": asked,
-            "machine": machine(log.folder),
-        }
-
-    return now
+    return Health(log, expected(cfg), Services(lambda: service_checks(cfg, root)), systemd_state).report
 
 
 def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) -> None:
@@ -431,6 +419,8 @@ def telegram(cfg: Config, root: Path) -> None:
         raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
     events = make_event_log(cfg, root)
     if events:
+        from .health import Heartbeat
+
         Heartbeat(events.folder, "telegram", root).start()
     tools = None
     if cfg.reminders.enabled and events:
@@ -489,6 +479,8 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
 
     events = make_event_log(cfg, root)
     if events:
+        from .health import Heartbeat
+
         Heartbeat(events.folder, "assistant", root).start()
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)

@@ -67,6 +67,8 @@ const STATES = [
   "tab=models&modal=rollback:v1",
   "tab=models&demo=empty",
   "tab=status",
+  "tab=status&health=trouble",
+  "tab=status&demo=empty",
 ];
 
 /** Click the i-th match, click the first match whose text starts with `text`, or type into a field. */

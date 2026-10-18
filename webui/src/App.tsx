@@ -7,7 +7,7 @@ import { Models } from "./components/Models";
 import { Reminders } from "./components/Reminders";
 import { Review } from "./components/Review";
 import { Loading, Unreachable } from "./components/States";
-import { Status } from "./components/Status";
+import { StatusView } from "./components/Status";
 import { Toasts } from "./components/Toasts";
 import { Voices } from "./components/Voices";
 import { type Tab, linkTo } from "./params";
@@ -30,7 +30,7 @@ const VIEWS = {
   reminders: Reminders,
   voices: Voices,
   models: Models,
-  status: Status,
+  status: StatusView,
 };
 
 const COUNTED: Partial<Record<Tab, string>> = { review: "to review", reminders: "waiting for got it" };

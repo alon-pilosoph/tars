@@ -7,7 +7,7 @@ import type {
   Metric,
   ProcessHealth,
   Reminder,
-  ServiceHealth,
+  StatusPage,
   TarsEvent,
   Turn,
 } from "./types";
@@ -216,31 +216,30 @@ export interface HealthLine {
 export function processLine(p: ProcessHealth, now: number): HealthLine {
   const unit = p.unit_state && p.unit_state !== "active" ? `; systemd says ${p.unit_state}` : "";
   if (p.running && p.started != null) {
-    const version = p.version ? `, version ${p.version}` : "";
-    return { text: `Running for ${duration(now - p.started)}${version}${unit}`, bad: Boolean(unit) };
+    const commit = p.version ? `, commit ${p.version}` : "";
+    return { text: `Running for ${duration(now - p.started)}${commit}${unit}`, bad: Boolean(unit) };
   }
   if (p.beat != null) return { text: `Stopped: last heard from ${ago(p.beat, now)}${unit}`, bad: true };
   return { text: `Not seen running${unit}`, bad: true };
 }
 
-export function pageLine(page: ServiceHealth["page"]): HealthLine {
+export function pageLine(page: StatusPage | null): HealthLine {
   if (!page) return { text: "No status page", bad: false };
-  if (page.indicator === "unknown") return { text: "Couldn't read it", bad: false };
-  return { text: page.description, bad: page.indicator !== "none" };
+  return { text: page.description, bad: page.indicator !== "none" && page.indicator !== "unknown" };
 }
+
+export function processorLine(m: MachineHealth) {
+  return `${Math.round(m.cpu_percent)}% busy; load ${m.load.join(", ")} on ${plural(m.cores, "core")}`;
+}
+
+export const temperatureLine = (m: MachineHealth) =>
+  m.temperature_c != null ? `${m.temperature_c.toFixed(1)} °C` : "Not reported here";
 
 export function memoryLine(m: MachineHealth) {
   return `${fmtSize(m.memory_used)} of ${fmtSize(m.memory_total)} (${Math.round((m.memory_used / m.memory_total) * 100)}%)`;
 }
 
 export function diskLine(m: MachineHealth) {
-  const free = m.disk_total - m.disk_used;
-  return `${fmtSize(free)} free of ${fmtSize(m.disk_total)} (${Math.round((m.disk_used / m.disk_total) * 100)}% used)`;
+  const used = Math.round((1 - m.disk_free / m.disk_total) * 100);
+  return `${fmtSize(m.disk_free)} free of ${fmtSize(m.disk_total)} (${used}% used)`;
 }
-
-/** Over 2 GB free and under 90% used is fine; a card that fills up stops TARS keeping anything. */
-export const diskLow = (m: MachineHealth) =>
-  m.disk_total - m.disk_used < 2 * 1073741824 || m.disk_used / m.disk_total > 0.9;
-
-/** A Pi 5 throttles at 85 °C, and its fan comes on well below: 80 °C is worth a look. */
-export const hot = (m: MachineHealth) => m.temperature_c != null && m.temperature_c >= 80;

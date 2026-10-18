@@ -73,7 +73,6 @@ export interface State {
   items: Item[];
   reminders: RemindersInfo | null; // always as the server has them: they change by the minute
   health: Health | null; // the Status page's, loaded when it's shown, and with Refresh while it is
-  healthLoading: boolean;
   healthError: string;
   snapshot: Snapshot;
   open: Set<number>; // conversations opened up, with their details
@@ -100,7 +99,6 @@ let current: State = {
   items: [],
   reminders: null,
   health: null,
-  healthLoading: false,
   healthError: "",
   snapshot: {
     events: new Set(),

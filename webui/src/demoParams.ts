@@ -9,7 +9,7 @@
    ?menu=item:<id>|wake:<id>|reply:<event id>|voice:<id>|who:<conversation id>: a menu open
    ?answered=<event id>:real|not_real: a wake answered on this page, before Refresh; with &refreshed=1, after it
    ?form=minutes|time|back|error: the New reminder form, filled in
-   ?toast=recluster|renamed     ?recluster=running */
+   ?toast=recluster|renamed     ?recluster=running     ?health=trouble: the Status page with everything wrong */
 import { PARAMS, idParam, oneOf } from "./params";
 
 const MODALS = ["delete-conv", "delete-item", "note", "delete-wake", "newvoice", "merge", "rollback", "stop"] as const;
@@ -38,4 +38,5 @@ export const DEMO_LINK = {
   form: oneOf(PARAMS.get("form"), ["minutes", "time", "back", "error"] as const),
   toast: oneOf(PARAMS.get("toast"), ["recluster", "renamed"] as const),
   reclustering: PARAMS.get("recluster") === "running",
+  health: oneOf(PARAMS.get("health"), ["trouble"] as const),
 };

@@ -57,6 +57,16 @@ class ConversationLog:
     def end(self, conversation_id: int, ts: float | None = None) -> None:
         self.store.write("UPDATE conversations SET ended=? WHERE id=?", (ts or time.time(), conversation_id))
 
+    def answers_since(self, ts: float) -> tuple[int, int]:
+        """TARS's answers since `ts`, and how many of those failed. What it said by itself (a reminder, a message held
+        for someone) answered nobody, and isn't one."""
+        found = self.store.rows(
+            "SELECT count(*) AS n, count(failed_at) AS failed FROM turns "
+            "WHERE role=? AND ts >= ? AND (answered_by IS NOT NULL OR failed_at IS NOT NULL)",
+            (ROLE_TARS, ts),
+        )[0]
+        return found["n"] - found["failed"], found["failed"]
+
     def exists(self, conversation_id: int) -> bool:
         return bool(self.store.rows("SELECT 1 FROM conversations WHERE id=?", (conversation_id,)))
 

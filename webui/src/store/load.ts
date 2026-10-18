@@ -12,7 +12,7 @@ import type {
   TarsEvent,
 } from "../types";
 import { type Snapshot, get, set, setNow } from "./core";
-import { loadHealth } from "./health";
+import { healthLoaded, loadHealth } from "./health";
 import { errText, toast } from "./ui";
 
 interface Data {
@@ -118,6 +118,7 @@ export async function settled() {
     writes = writesMade();
     await writesDone();
     await loads;
+    await healthLoaded();
   } while (writes !== writesMade());
 }
 

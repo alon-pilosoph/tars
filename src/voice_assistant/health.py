@@ -1,9 +1,12 @@
-"""What the web UI's Status page shows (docs/web-ui.md#status): whether each part of TARS is running, from the
-heartbeat each process writes; the cloud services TARS uses, each asked with its own key (the same checks as
---check) and each with its own status page; and the machine: CPU, memory, temperature, throttling, disk and uptime.
+"""What the web UI's Status page shows (docs/web-ui.md#the-status-page): whether each part of TARS is running, from
+the heartbeat each process writes; what TARS did today; the cloud services TARS uses, each asked with its own key (the
+same checks as --check) and each with its own status page; and the machine: CPU, memory, temperature, throttling,
+disk and uptime.
 
 A heartbeat is a small file each long-running process rewrites every 30 seconds, under the event log's folder
-(heartbeats/<name>.json): the database isn't written to for it, and a process that stopped, or hangs, stops writing."""
+(heartbeats/<name>.json), from a thread of its own: the database isn't written to for it. A process that crashed, was
+killed or froze whole stops writing; one stuck inside its own loop doesn't, which is what the assistant's own watchdog
+on the mic is for."""
 
 import json
 import os
@@ -14,13 +17,18 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TypedDict
 
+from .check import FAIL, LOW_DISK_BYTES, SKIP, Check, Result, outcome
+from .config import Config
+from .conversations import ConversationLog
+from .events import EventLog
 from .files import atomic_write
 
 HEARTBEAT_EVERY_S = 30.0
-MISSED_BEATS = 3  # a process that hasn't written for this many beats has stopped, or hangs
+MISSED_BEATS = 3  # a process that hasn't written for this many beats has stopped
+AHEAD_S = 5.0  # a beat further ahead than this was written before the clock was set back: no sign of life now
 HEARTBEATS = "heartbeats"
 # The processes TARS runs, as the Status page names them, and their systemd units at home.
 PROCESSES = {
@@ -28,7 +36,8 @@ PROCESSES = {
     "web": ("The web UI", "voice-assistant-web"),
     "telegram": ("Telegram", "voice-assistant-telegram"),
 }
-# Each service's own status page, where it says it's having trouble: all of these publish Statuspage's JSON.
+# Each service's own status page, where it says it's having trouble: all of these publish Statuspage's JSON. Keyed by
+# the names check.service_checks gives them.
 STATUS_PAGES = {
     "OpenAI": "https://status.openai.com",
     "Groq": "https://groqstatus.com",
@@ -37,7 +46,11 @@ STATUS_PAGES = {
     "Cartesia": "https://status.cartesia.ai",
 }
 SERVICES_FRESH_S = 60.0  # the services are asked again only once their last answers are this old
-CHECK_TIMEOUT_S = 10.0
+# The services and their status pages are all asked at once, and given this long together: one that hasn't answered
+# by then is a failure, so a service that hangs can't hold the page up.
+ASK_DEADLINE_S = 10.0
+STATUS_PAGE_TIMEOUT_S = 8.0
+HOT_C = 80.0  # a Pi 5 slows itself down at 85 °C, and its fan is on well before: 80 is worth a look
 # The Raspberry Pi's firmware: what `vcgencmd get_throttled` reports, bit by bit, now and since it started.
 THROTTLED = {
     0: "under-voltage now: the power supply can't keep up",
@@ -51,35 +64,98 @@ THROTTLED = {
 }
 
 
+# What /api/health answers, as webui/src/types.ts has it (Health).
+class ProcessHealth(TypedDict):
+    name: str
+    label: str
+    running: bool
+    started: float | None
+    beat: float | None
+    version: str
+    unit_state: str | None  # systemd's, where there's systemd
+
+
+class Today(TypedDict):
+    wakes: int
+    answers: int
+    failed: int
+    last_wake: float | None
+
+
+class StatusPage(TypedDict):
+    indicator: str  # Statuspage's: none, minor, major, critical or maintenance; or unknown, when it can't be read
+    description: str
+    url: str
+
+
+class ServiceHealth(TypedDict):
+    name: str
+    status: str  # check.py's: ok, warn or fail
+    detail: str
+    fix: str
+    page: StatusPage | None
+
+
+class MachineHealth(TypedDict):
+    host: str
+    system: str
+    python: str
+    cpu_percent: float
+    cores: int
+    load: list[float]
+    memory_total: int
+    memory_used: int
+    temperature_c: float | None
+    hot: bool
+    throttled: list[str] | None  # None: not a Pi
+    disk_total: int
+    disk_free: int
+    disk_low: bool
+    uptime_s: float
+
+
+class Report(TypedDict):
+    now: float
+    processes: list[ProcessHealth]
+    today: Today
+    services: list[ServiceHealth]
+    services_asked: float
+    machine: MachineHealth
+
+
 class Heartbeat:
-    """Writes <folder>/<name>.json now and every `every_s`, from a thread of its own, until the process ends."""
+    """Writes <folder>/heartbeats/<name>.json now and every `every_s`, from a thread of its own, until the process
+    ends."""
 
     def __init__(self, folder: Path, name: str, root: Path | None = None, every_s: float = HEARTBEAT_EVERY_S):
-        """`root`: the project's folder, for the version it runs (its git commit)."""
+        """`root`: the project's folder, for the commit it runs."""
         self._path = folder / HEARTBEATS / f"{name}.json"
-        self._every_s = every_s
-        self._info = {
-            "name": name,
-            "pid": os.getpid(),
-            "host": socket.gethostname(),
-            "started": time.time(),
-            "every_s": every_s,
-            "version": version(root) if root else "",
-        }
+        self._name, self._every_s = name, every_s
+        self._version = version(root) if root else ""
+        self._since = time.monotonic()  # when it started, whatever the clock does meanwhile
+        self._failing = False
 
     def start(self) -> Heartbeat:
         self.beat()
-        threading.Thread(target=self._run, daemon=True, name=f"heartbeat-{self._info['name']}").start()
+        threading.Thread(target=self._run, daemon=True, name=f"heartbeat-{self._name}").start()
         return self
 
     def beat(self) -> None:
         """Never raises: a heartbeat that can't be written shows as the process stopping, which is the truth the page
-        can see."""
+        can see. Said once in the log, until one is written again."""
+        now = time.time()
+        # When it started, worked out again each time: a Pi without a clock starts on the wrong time, and only later
+        # sets it from the network.
+        started = now - (time.monotonic() - self._since)
+        beat = {"pid": os.getpid(), "started": started, "beat": now, "every_s": self._every_s, "version": self._version}
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write(self._path, json.dumps({**self._info, "beat": time.time()}).encode())
+            atomic_write(self._path, json.dumps(beat))
+            self._failing = False
         except OSError as e:
-            print(f"(couldn't write the heartbeat: {e!r})")
+            if not self._failing:
+                print(f"(couldn't write the heartbeat: {e!r})", flush=True)
+            self._failing = True
 
     def _run(self) -> None:
         while True:
@@ -102,59 +178,67 @@ def version(root: Path) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def processes(folder: Path, wanted: list[str], unit_state: Callable[[str], str | None], now: float) -> list[dict]:
+def expected(cfg: Config) -> list[str]:
+    """The processes this setup runs (PROCESSES): Telegram's only when it's on."""
+    return ["assistant", "web", *(["telegram"] if cfg.telegram.enabled else [])]
+
+
+def processes(
+    folder: Path, wanted: list[str], unit_state: Callable[[str], str | None], now: float
+) -> list[ProcessHealth]:
     """Each of TARS's processes in `wanted`, from its heartbeat: running or not, since when, and its systemd unit's
     state where there's systemd. One that never wrote a heartbeat is listed as never seen."""
-    out = []
+    out: list[ProcessHealth] = []
     for name in wanted:
         label, unit = PROCESSES[name]
-        try:
-            beat = json.loads((folder / HEARTBEATS / f"{name}.json").read_text())
-        except FileNotFoundError, ValueError:
-            beat = {}
-        every = float(beat.get("every_s") or HEARTBEAT_EVERY_S)
+        beat = _read_beat(folder / HEARTBEATS / f"{name}.json")
         last = beat.get("beat")
+        state = unit_state(unit)
         out.append(
             {
                 "name": name,
                 "label": label,
-                "running": last is not None and now - last <= every * MISSED_BEATS,
+                "running": last is not None and -AHEAD_S <= now - last <= beat["every_s"] * MISSED_BEATS,
                 "started": beat.get("started"),
                 "beat": last,
-                "pid": beat.get("pid"),
                 "version": beat.get("version") or "",
-                "unit": unit,
-                "unit_state": unit_state(unit),
+                "unit_state": None if state == "unknown" else state,  # systemd there, but no user session to ask
             }
         )
     return out
 
 
-def today(store, now: float) -> dict:
-    """What TARS did since midnight: wakes, answers, failed answers, and the last of each."""
-    midnight = time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1))
-    wakes = store.rows("SELECT count(*) AS n, max(ts) AS last FROM events WHERE kind='wake' AND ts >= ?", (midnight,))
-    answers = store.rows(
-        "SELECT count(*) AS n, sum(failed_at IS NOT NULL) AS failed, max(ts) AS last FROM turns "
-        "WHERE role='tars' AND ts >= ?",
-        (midnight,),
-    )
-    last_wake = store.rows("SELECT max(ts) AS ts FROM events WHERE kind='wake'")[0]["ts"]
-    return {
-        "wakes": wakes[0]["n"],
-        "answers": answers[0]["n"] - (answers[0]["failed"] or 0),
-        "failed": answers[0]["failed"] or 0,
-        "last_wake": last_wake,
-    }
+def _read_beat(path: Path) -> dict:
+    """A heartbeat's numbers, each only if it's a number; a file that's missing or isn't one reads as never seen."""
+    try:
+        found = json.loads(path.read_text())
+    except OSError, ValueError:
+        found = None
+    if not isinstance(found, dict):
+        found = {}
+    beat = {k: v for k in ("beat", "started", "every_s") if isinstance(v := found.get(k), int | float)}
+    beat.setdefault("every_s", HEARTBEAT_EVERY_S)
+    if isinstance(found.get("version"), str):
+        beat["version"] = found["version"]
+    return beat
 
 
-def machine(folder: Path, throttled: Callable[[], int | None] | None = None) -> dict:
+def today(log: EventLog, conversations: ConversationLog, now: float) -> Today:
+    """What TARS did since midnight: wakes, answers and failed answers; and when it last woke."""
+    day = time.localtime(now)
+    midnight = time.mktime((day.tm_year, day.tm_mon, day.tm_mday, 0, 0, 0, 0, 0, -1))
+    answers, failed = conversations.answers_since(midnight)
+    return {"wakes": log.wakes_since(midnight), "answers": answers, "failed": failed, "last_wake": log.last_wake()}
+
+
+def machine(folder: Path, read_throttled: Callable[[], int | None] | None = None) -> MachineHealth:
     """The machine TARS runs on, as it is now. `folder`: whose disk to measure (the event log's)."""
     import psutil
 
     memory, disk = psutil.virtual_memory(), shutil.disk_usage(folder)
     load = os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)
-    flags = (throttled or pi_throttled)()
+    flags = (read_throttled or pi_throttled)()
+    celsius = temperature()
     return {
         "host": socket.gethostname(),
         "system": f"{platform.system()} {platform.release()}, {platform.machine()}",
@@ -164,16 +248,20 @@ def machine(folder: Path, throttled: Callable[[], int | None] | None = None) -> 
         "load": [round(x, 2) for x in load],
         "memory_total": memory.total,
         "memory_used": memory.total - memory.available,
-        "temperature_c": temperature(psutil),
+        "temperature_c": celsius,
+        "hot": celsius is not None and celsius >= HOT_C,
         "throttled": None if flags is None else [said for bit, said in THROTTLED.items() if flags >> bit & 1],
         "disk_total": disk.total,
-        "disk_used": disk.used,
+        "disk_free": disk.free,
+        "disk_low": disk.free < LOW_DISK_BYTES,  # as --check has it
         "uptime_s": time.time() - psutil.boot_time(),
     }
 
 
-def temperature(psutil) -> float | None:
+def temperature() -> float | None:
     """The CPU's temperature in °C where the system says (Linux, a Pi), else None (a Mac doesn't tell)."""
+    import psutil
+
     try:
         sensors = psutil.sensors_temperatures()
     except AttributeError, OSError:
@@ -197,65 +285,114 @@ def pi_throttled() -> int | None:
         return None
 
 
-def status_page(url: str, get: Callable[[str], dict]) -> dict:
-    """A service's own status page, as it says it is: {indicator: none|minor|major|critical|unknown, description}."""
+def status_page(url: str, fetch_json: Callable[[str], dict]) -> StatusPage:
+    """A service's own status page, as it says it is; one that can't be read is "unknown", and says why."""
     try:
-        found = get(f"{url}/api/v2/status.json")["status"]
+        found = fetch_json(f"{url}/api/v2/status.json")["status"]
         return {"indicator": found["indicator"], "description": found["description"], "url": url}
     except Exception as e:  # noqa: BLE001 - a status page that can't be read says only that
-        return {"indicator": "unknown", "description": f"couldn't read it ({type(e).__name__})", "url": url}
+        return {"indicator": "unknown", "description": f"Couldn't read it ({type(e).__name__})", "url": url}
 
 
 class Services:
-    """The services TARS uses, each asked with its key, and each one's status page, all at once; kept for
-    SERVICES_FRESH_S, so a page reloaded again and again asks them once a minute at most."""
+    """The services TARS uses, each asked with its key, and their status pages, all at once and within
+    ASK_DEADLINE_S; kept for SERVICES_FRESH_S, so a page reloaded again and again asks them once a minute at most.
+    One asks at a time: meanwhile the others get the last answers, or, before there are any, wait for them."""
 
     def __init__(
         self,
-        checks: Callable[[], list[tuple[str, Callable]]],
-        get: Callable[[str], dict] | None = None,
-        clock: Callable[[], float] = time.time,
+        checks: Callable[[], list[tuple[str, Check]]],
+        fetch_json: Callable[[str], dict] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+        wall: Callable[[], float] = time.time,
     ):
-        """`checks`: check.service_checks for the setup. `get`: fetches a URL's JSON (httpx, by default)."""
-        self._checks, self._get, self._clock = checks, get or _get_json, clock
+        """`checks`: check.service_checks for the setup. `fetch_json`: a URL's JSON (httpx, by default). `clock`
+        says how old the answers are, and `wall` when they were asked."""
+        self._checks, self._fetch_json = checks, fetch_json or _fetch_json
+        self._clock, self._wall = clock, wall
         self._lock = threading.Lock()
-        self._found: list[dict] = []
-        self._at = 0.0
+        self._found: list[ServiceHealth] | None = None
+        self._asked, self._at = 0.0, 0.0
 
-    def get(self) -> tuple[list[dict], float]:
+    def get(self) -> tuple[list[ServiceHealth], float]:
         """The services, and when they were asked."""
-        with self._lock:
-            if self._clock() - self._at > SERVICES_FRESH_S:
-                self._found, self._at = self._ask(), self._clock()
-            return self._found, self._at
+        if not self._lock.acquire(blocking=self._found is None):
+            return self._found or [], self._asked
+        try:
+            if self._found is None or self._clock() - self._at > SERVICES_FRESH_S:
+                self._found, self._asked, self._at = self._ask(), self._wall(), self._clock()
+            return self._found, self._asked
+        finally:
+            self._lock.release()
 
-    def _ask(self) -> list[dict]:
-        from .check import SKIP, Result
-
-        def check(call) -> Result:
-            try:
-                got = call()
-            except Exception as e:  # noqa: BLE001 - what went wrong is the result
-                return Result("", "fail", f"{type(e).__name__}: {e}", "")
-            return got if isinstance(got, Result) else next(iter(got))
-
+    def _ask(self) -> list[ServiceHealth]:
         checks = self._checks()
-        with ThreadPoolExecutor(max_workers=8, thread_name_prefix="status") as pool:
-            results = list(pool.map(lambda c: check(c[1]), checks))
-            used = [(name, r) for (name, _), r in zip(checks, results, strict=True) if r.status != SKIP]
-            pages = list(pool.map(lambda name: self._page(name), [name for name, _ in used]))
-        return [
-            {"name": name, "status": r.status, "detail": r.detail, "fix": r.fix, "page": page}
-            for (name, r), page in zip(used, pages, strict=True)
-        ]
+        calls: dict[tuple[str, str], Callable] = {}
+        for name, check in checks:
+            calls["check", name] = lambda name=name, check=check: outcome(name, check)
+        for name, url in STATUS_PAGES.items():
+            calls["page", name] = lambda url=url: status_page(url, self._fetch_json)
+        done = _all_within(calls, ASK_DEADLINE_S)
+        late = f"no answer within {ASK_DEADLINE_S:.0f} s"
+        found: list[ServiceHealth] = []
+        for name, _ in checks:
+            page = None
+            if url := STATUS_PAGES.get(name):
+                page = done.get(("page", name)) or {"indicator": "unknown", "description": late, "url": url}
+            for r in done.get(("check", name)) or [Result(name, FAIL, late)]:
+                if r.status != SKIP:
+                    found.append({"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix, "page": page})
+        return found
 
-    def _page(self, name: str) -> dict | None:
-        return status_page(STATUS_PAGES[name], self._get) if name in STATUS_PAGES else None
+
+def _all_within(calls: dict, seconds: float) -> dict:
+    """Every call at once, each in a thread of its own, all given `seconds` at most together: what each returned, by
+    its key, leaving out any still going (left to finish by itself). The calls never raise."""
+    done: dict = {}
+    threads = [
+        threading.Thread(target=lambda key=key, call=call: done.__setitem__(key, call()), daemon=True, name="status")
+        for key, call in calls.items()
+    ]
+    deadline = time.monotonic() + seconds
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
+    return dict(done)
 
 
-def _get_json(url: str) -> dict:
+class Health:
+    """The Status page's report, put together when asked."""
+
+    def __init__(
+        self,
+        log: EventLog,
+        wanted: list[str],
+        services: Services,
+        unit_state: Callable[[str], str | None],
+        read_throttled: Callable[[], int | None] | None = None,
+    ):
+        """`wanted`: the processes this setup runs (expected). `unit_state`: systemd's state of a unit, or None."""
+        self._log, self._conversations = log, ConversationLog(log)
+        self._wanted, self._services, self._unit_state = wanted, services, unit_state
+        self._read_throttled = read_throttled
+
+    def report(self) -> Report:
+        services, asked = self._services.get()
+        now = time.time()
+        return {
+            "now": now,
+            "processes": processes(self._log.folder, self._wanted, self._unit_state, now),
+            "today": today(self._log, self._conversations, now),
+            "services": services,
+            "services_asked": asked,
+            "machine": machine(self._log.folder, self._read_throttled),
+        }
+
+
+def _fetch_json(url: str) -> dict:
     import httpx
 
-    response = httpx.get(url, timeout=CHECK_TIMEOUT_S, follow_redirects=True)
+    response = httpx.get(url, timeout=STATUS_PAGE_TIMEOUT_S, follow_redirects=True)
     response.raise_for_status()
     return response.json()
