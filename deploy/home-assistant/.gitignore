@@ -1,0 +1,4 @@
+# What Home Assistant and Mosquitto keep: the household's own, never committed.
+config/
+mosquitto/data/
+mosquitto/passwords

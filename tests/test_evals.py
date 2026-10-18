@@ -12,6 +12,7 @@ from evals.report import compare, gate, wilson
 from evals.runner import play, prompt
 from evals.scenarios import Scenario, Seed, Turn, _turn, check_reminder_text, check_spoken, check_text, load
 from voice_assistant.config import LLMConfig
+from voice_assistant.home import SETTINGS
 from voice_assistant.reminders import ADD, REMINDER, Change, NewReminder
 
 from .conftest import FakeStream, ToolCallStream, fake_openai_chat
@@ -396,3 +397,64 @@ def test_with_no_transcripts_the_estimate_comes_from_the_saved_profile(tmp_path)
     a = Scenario("a", "x", [_turn({"say": "hi"}, "t")], ["t"])
     use, unknown = estimate([a], runs=2, folder=tmp_path / "no-runs", profile=profile)
     assert unknown == [] and use["luna"] == {"input": 400.0, "searches": 4.0}
+
+
+def test_scenarios_never_run_are_estimated_as_an_average_one_not_as_nothing(tmp_path):
+    from evals.costs import estimate, save_profile
+
+    profile = tmp_path / "usage.json"
+    save_profile({"a": [{"luna": {"input": 100}}], "b": [{"luna": {"input": 300}}]}, profile)
+    new = Scenario("new", "x", [_turn({"say": "hi"}, "t")], ["t"])
+    use, unknown = estimate([new], runs=1, folder=tmp_path / "no-runs", profile=profile)
+    assert unknown == ["new"] and use["luna"] == {"input": 200.0}
+
+
+HOME_CALL = dict.fromkeys(SETTINGS)
+
+
+def test_a_house_scenario_plays_the_real_home_tool_and_checks_what_changed():
+    # Asked to unlock, Qwen unlocks: the real tool's rules let a trusted voice, heard asking, through.
+    def qwen(messages):
+        if after_tool(messages):
+            return "It's unlocked."
+        return [("home", HOME_CALL | {"device": "front door", "action": "unlock"})]
+
+    turn = {"say": "unlock the front door", "home": [{"device": "front door", "action": "unlock"}]}
+    result, _ = run([turn], qwen, house={"lock": "locked"})
+    assert result.ok, [t.wrong for t in result.turns]
+
+
+def test_in_a_house_scenario_an_unknown_voice_unlocks_nothing():
+    def qwen(messages):
+        if after_tool(messages):
+            return "I can't unlock it for you."
+        return [("home", HOME_CALL | {"device": "front door", "action": "unlock"})]
+
+    turn = {"say": "unlock the front door", "speaker": "unknown", "home": []}
+    result, _ = run([turn], qwen, house={"lock": "locked"})
+    assert result.ok, [t.wrong for t in result.turns]
+
+
+def test_a_house_change_nobody_asked_for_is_caught():
+    def qwen(messages):
+        if after_tool(messages):
+            return "Done."
+        return [("home", HOME_CALL | {"device": "boiler", "action": "on", "minutes": 30})]
+
+    turn = {
+        "say": "turn the boiler on for forty minutes",
+        "home": [{"device": "boiler", "action": "on", "minutes": 40}],
+    }
+    result, _ = run([turn], qwen, house={"boiler": "off"})
+    (t,) = result.turns
+    assert "didn't turn on the boiler (minutes 40)" in t.wrong
+    assert any(w.startswith("also did: turn on the boiler") for w in t.wrong)
+    assert t.changes == ["home: turn on the boiler"]
+
+
+def test_a_scenario_that_checks_the_house_needs_one(tmp_path):
+    (tmp_path / "x.toml").write_text(
+        '[[scenario]]\nid = "x"\nabout = "x"\ntags = ["x"]\n[[scenario.turn]]\nsay = "lock it"\nhome = []\n'
+    )
+    with pytest.raises(ValueError, match="needs a \\[scenario.house\\]"):
+        load(tmp_path)

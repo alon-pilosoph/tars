@@ -118,8 +118,9 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram and
   Cartesia (each with how long it took, Deepgram on the servers `deepgram_host` names, and any without a key or not
   in use skipped), the
-  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Telegram
-  (its bot's token, when `[telegram]` is on) and the services.
+  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant
+  and each device in the house (with `[home]` devices), Telegram (its bot's token, when `[telegram]` is on) and the
+  services.
   Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
   one that doesn't open in time is a failure.
 

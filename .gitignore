@@ -21,3 +21,9 @@ site/dist/
 
 # Scenario eval transcripts (python -m evals): kept locally, not committed
 evals/runs/
+
+# What tinytuya's wizard writes where it runs (examples/my_house): the Tuya devices' local keys and the cloud secret
+devices.json
+tinytuya.json
+snapshot.json
+tuya-raw.json

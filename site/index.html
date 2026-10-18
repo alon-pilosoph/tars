@@ -1958,6 +1958,62 @@
         </div>
       </section>
 
+      <section id="house" class="part">
+        <div class="part-head">
+          <div class="kicker">The house</div>
+          <h2>Done means the device says so</h2>
+          <p class="lead">
+            TARS locks the door, runs the boiler, sets the AC and plays things on the TV, through Home Assistant on the
+            home network. It says something's done only once the device reports it.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Checked, not assumed</h3>
+              <p>
+                After locking, TARS reads the lock back until it says locked. An AC worked by infrared can't report
+                back, so TARS says it sent the command, never that it's on.<span class="d">
+                  A lock that jams is said to have jammed, and an open door is never locked.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Nothing is done by a draft</h3>
+              <p>
+                TARS starts answering before you finish, but a change waits until you have. “Turn off the boiler… no,
+                leave it” leaves it.
+              </p>
+            </div>
+            <div>
+              <h3>Unlocking is for voices it trusts</h3>
+              <p>
+                The door unlocks only for a voice TARS knows and trusts with it, recognised from the request itself, and
+                only when it heard “unlock”. Anyone can lock.
+              </p>
+            </div>
+            <div>
+              <h3>An agent works the TV</h3>
+              <p>
+                For anything that takes several steps, a model works an Android TV box like a person with its remote,
+                reading the screen after every step.<span class="d">
+                  It runs in the background, and TARS says how it went after a chime. Devices Home Assistant doesn't
+                  work are plugins: a little code of the household's own.</span
+                >
+              </p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">Two requests</span>
+            <p class="said"><b>Alon</b> Hey TARS, lock the front door.</p>
+            <p class="said tars"><b>TARS</b> One moment. Locked.</p>
+            <p class="said"><b>Alon</b> And play Toy Story on Stremio.</p>
+            <p class="said tars"><b>TARS</b> On it.</p>
+            <span class="foot">A minute later, after a chime: “Toy Story is playing.”</span>
+          </div>
+        </div>
+      </section>
+
       <section id="telegram" class="part">
         <div class="part-head">
           <div class="kicker">On Telegram</div>

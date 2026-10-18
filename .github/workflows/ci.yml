@@ -13,8 +13,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1 # for sounddevice and Vosk
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen
-      - run: uv run ruff check src tests tools training evals
-      - run: uv run ruff format --check src tests tools training evals
+      - run: uv run ruff check src tests tools training evals examples
+      - run: uv run ruff format --check src tests tools training evals examples
       - run: for f in deploy/*.sh training/*/*.sh; do bash -n "$f"; done
       - run: uv run pytest -q
 

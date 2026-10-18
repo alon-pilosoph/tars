@@ -20,6 +20,7 @@ from openai import OpenAI, OpenAIError, RateLimitError
 
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
+from .home import CAN_HOME, NEEDS_HOME, ONE_MOMENT, HomeTools, Request
 from .reminders import Change, ReminderTools
 
 # The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a marathon session from
@@ -85,6 +86,7 @@ def _or_else(pieces: Iterable[str], default: str) -> Iterator[str]:
 # What TARS can't do. Without saying so, a model asked for a timer TARS can't set says "Twelve minutes, starting
 # now." and nothing ever goes off.
 CANT = "play music or sounds, call anyone, or control anything in the house"
+CANT_BUT_HOME = "play music or sounds, call anyone, or work anything in the house the home tool doesn't list"
 CANT_REMIND = "set timers, alarms or reminders"
 CANT_WEB = "look anything up on the web"
 CANT_SEND = "send anything to a phone or the TARS page"
@@ -421,8 +423,9 @@ class Brain(Protocol):
     quick_service: str | None  # the service whose quick reply was used (Groq, Cerebras), hand-offs included
     changes: list[Change]  # what the last reply asked to change in the reminders, made once it's kept
 
-    def stream_reply(self, text: str) -> Iterator[str]:
-        """Yield the reply in pieces as it's generated."""
+    def stream_reply(self, text: str, request: Request | None = None) -> Iterator[str]:
+        """Yield the reply in pieces as it's generated. `request`: who asked, how, and whether the turn is over yet,
+        for the home tool; None for a typed turn, over already, from nobody in particular."""
 
     def forget_last(self) -> None:
         """Drop the most recent exchange from the conversation history, finished or not. Once only."""
@@ -534,6 +537,7 @@ class _Writing:
         self.quick_service: str | None = None
         # The quick model's tool calls and their results, as Responses API items, for a model it hands over to.
         self.quick_calls: list[dict] = []
+        self.request = Request()  # the turn it answers, for the home tool
 
 
 class OpenAIChat:
@@ -549,18 +553,21 @@ class OpenAIChat:
         clock: Callable[[], float] | None = None,
         channel_rules: str = "",
         remind_tools: list[dict] | None = None,
+        home: HomeTools | None = None,
     ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
         QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
         a failed service is back (time.monotonic; the evals pass their own, to skip ahead). `channel_rules`: how
         this conversation differs from one aloud (a Telegram chat, written), last in the instructions so they win.
-        `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud)."""
+        `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud).
+        `home`: the devices in the house, when there are any."""
         self._clock = clock or (lambda: time.monotonic())
         self._channel_rules = [channel_rules] if channel_rules else []
         self._remind_tools = remind_tools or REMIND_TOOLS
         self._client = client
         self._cfg = cfg
         self._reminders = reminders
+        self._home = home if home and home.devices else None
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -573,10 +580,13 @@ class OpenAIChat:
             ([web_search_tool(cfg)] if cfg.web_search else [])
             + ([SEND_TOOL] if cfg.send else [])
             + (self._remind_tools if reminders else [])
+            + ([self._home.tool] if self._home else [])
         )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
         can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
+        can += [CAN_HOME] * bool(self._home)
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send
+        rules += [self._home.rules()] if self._home else []
         rules.append(abilities(can, [], self._cant()))
         self._instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         # Only send optional settings that are configured; not every model accepts them.
@@ -586,7 +596,7 @@ class OpenAIChat:
         if cfg.reasoning_effort:
             self._extra["reasoning"] = {"effort": cfg.reasoning_effort}
 
-    def stream_reply(self, text: str) -> Iterator[str]:
+    def stream_reply(self, text: str, request: Request | None = None) -> Iterator[str]:
         with self._lock:
             self._forget_if_quiet()
             self._previous_turn_at, self._last_turn_at = self._last_turn_at, self._clock()
@@ -594,6 +604,7 @@ class OpenAIChat:
             self._history.append(self._asked)
             self.sent, self.changes = [], []
             self._writing = writing = _Writing(self.first_answerer)
+            writing.request = request or Request()
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
 
@@ -648,6 +659,9 @@ class OpenAIChat:
                 break
             if said:
                 context.append({"role": "assistant", "content": said})
+            if wait := self._one_moment([(c.name, c.arguments) for c in calls], answer):
+                answer += wait
+                yield wait
             with self._lock:
                 _check(writing)
                 for call in calls:
@@ -659,9 +673,8 @@ class OpenAIChat:
                             "arguments": call.arguments,
                         }
                     )
-                    context.append(
-                        {"type": "function_call_output", "call_id": call.call_id, "output": self._run_tool(call)}
-                    )
+                    output = self._run_tool(call, writing=writing)
+                    context.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
         if not answer.strip() and not self.sent:
             raise ReplyFailed("the reply was empty")
         self._remember(answer, writing)
@@ -679,8 +692,13 @@ class OpenAIChat:
             [CANT_REMIND] * (not self._reminders)
             + [CANT_WEB] * (not cfg.web_search)
             + [CANT_SEND] * (not cfg.send)
-            + [CANT]
+            + [CANT_BUT_HOME if self._home else CANT]
         )
+
+    def _one_moment(self, calls: list[tuple[str, str]], said: str) -> str:
+        """ONE_MOMENT, to say before tool calls that take a few seconds (a lock turning), if nothing's been said."""
+        slow = self._home and any(name == "home" and self._home.slow(arguments) for name, arguments in calls)
+        return f"{ONE_MOMENT} " if slow and not said.strip() else ""
 
     def _now(self) -> str:
         """What changes from one request to the next, so it goes after the instructions that can be cached."""
@@ -706,9 +724,9 @@ class OpenAIChat:
             self._history.append({"role": "assistant", "content": answer.strip()})
             self._history = self._history[-MAX_TURNS * 2 :]
 
-    def _run_tool(self, call, no_links: str = "") -> str:
-        """`no_links`: what this model should do instead of sending a link, which needs web search; empty if it
-        can."""
+    def _run_tool(self, call, no_links: str = "", writing: _Writing | None = None) -> str:
+        """Called with the lock held. `no_links`: what this model should do instead of sending a link, which needs
+        web search; empty if it can. `writing`: the reply the call is part of, whose request the home tool goes by."""
         try:
             args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
@@ -731,6 +749,16 @@ class OpenAIChat:
             if change:
                 self.changes.append(change)
             return result
+        if self._home and call.name == "home":
+            # A device can take seconds (a bolt turning), and a change first waits for the turn to be over: the
+            # conversation isn't held meanwhile, so nothing else the brain does waits on the house.
+            self._lock.release()
+            try:
+                return self._home.call(args, (writing or self._writing).request)
+            except Exception as e:  # noqa: BLE001 - a device that fails never costs the reply: the model says so
+                return f"error: couldn't reach the device ({e!r}); nothing is known to have changed"
+            finally:
+                self._lock.acquire()
         return f"error: no tool called {call.name}"
 
     def forget_last(self) -> None:
@@ -818,16 +846,21 @@ class QuickChat(OpenAIChat):
         clock: Callable[[], float] | None = None,
         channel_rules: str = "",
         remind_tools: list[dict] | None = None,
+        home: HomeTools | None = None,
     ):
-        super().__init__(client, cfg, reminders, clock, channel_rules, remind_tools)
+        super().__init__(client, cfg, reminders, clock, channel_rules, remind_tools, home)
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
+        # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.
+        own_home = (cfg.quick_tools or client is None) and bool(self._home)
         tools = self._remind_tools * own_remind + [QUICK_SEND_TOOL] * own_send
+        tools += [self._home.tool] if own_home else []
         self._quick_tool_defs = tools  # as the Responses API takes them
         self._quick_tools = [_chat_tool(t) for t in tools]
-        can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
+        can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send + [CAN_HOME] * own_home
         look_up = [NEEDS_THE_WEB] * cfg.web_search + [NEEDS_SENDING] * (cfg.send and not own_send)
         look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind and client is not None)
+        look_up += [NEEDS_HOME] * (bool(self._home) and not own_home)
         examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:
@@ -840,6 +873,7 @@ class QuickChat(OpenAIChat):
         links = LINK_HAND_OFF if LOOK_UP in self._markers else NO_LINKS
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules(tools=own_remind)]
         rules += [QUICK_SEND_RULES.format(links=links)] * own_send
+        rules += [self._home.rules()] if own_home else []
         cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and client is None)
         rules.append(abilities(can, hand_offs, cant))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
@@ -1054,10 +1088,13 @@ class QuickChat(OpenAIChat):
                     ],
                 }
             )
+            if wait := self._one_moment([(c["name"], c["arguments"]) for c in calls], earlier):
+                earlier += wait
+                yield wait
             with self._lock:
                 _check(writing)
                 for c in calls:
-                    output = self._run_tool(types.SimpleNamespace(**c), self._no_links)
+                    output = self._run_tool(types.SimpleNamespace(**c), self._no_links, writing)
                     messages.append({"role": "tool", "tool_call_id": c["id"], "content": output})
                     if output.startswith("error"):
                         continue
@@ -1095,8 +1132,9 @@ class ResponsesQuickChat(QuickChat):
         quick: list[QuickService],
         reminders: ReminderTools | None = None,
         clock: Callable[[], float] | None = None,
+        home: HomeTools | None = None,
     ):
-        super().__init__(client, cfg, quick, reminders, clock)
+        super().__init__(client, cfg, quick, reminders, clock, home=home)
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
         self._quick_extra = {"reasoning": {"effort": effort}} if effort else {}
         if cfg.service_tier:
@@ -1108,7 +1146,7 @@ class ResponsesQuickChat(QuickChat):
     def _quick_reply(
         self, service: QuickService, context: list, writing: _Writing, opened: _Opened | None = None
     ) -> Iterator[str]:
-        items = list(context)
+        items, said = list(context), ""
         for round_ in range(MAX_TOOL_ROUNDS):
             tools = {"tools": self._quick_tool_defs} if self._quick_tool_defs else {}
             if tools and round_ == MAX_TOOL_ROUNDS - 1:
@@ -1127,6 +1165,7 @@ class ResponsesQuickChat(QuickChat):
             for event in stream:
                 _check(writing)
                 if event.type == "response.output_text.delta" and event.delta:
+                    said += event.delta
                     yield event.delta
                 elif event.type == "response.output_item.done" and event.item.type == "function_call":
                     calls.append(event.item)
@@ -1135,10 +1174,13 @@ class ResponsesQuickChat(QuickChat):
             writing.stream = None
             if not calls:
                 return
+            if wait := self._one_moment([(c.name, c.arguments) for c in calls], said):
+                said += wait
+                yield wait
             with self._lock:
                 _check(writing)
                 for call in calls:
-                    output = self._run_tool(call, self._no_links)
+                    output = self._run_tool(call, self._no_links, writing)
                     done = [
                         {
                             "type": "function_call",
@@ -1166,8 +1208,9 @@ class ClaudeQuickChat(QuickChat):
         quick: list[QuickService],
         reminders: ReminderTools | None = None,
         clock: Callable[[], float] | None = None,
+        home: HomeTools | None = None,
     ):
-        super().__init__(client, cfg, quick, reminders, clock)
+        super().__init__(client, cfg, quick, reminders, clock, home=home)
         self._claude_tools = [
             {
                 "name": t["function"]["name"],
@@ -1195,7 +1238,7 @@ class ClaudeQuickChat(QuickChat):
             {"type": "text", "text": self._quick_instructions, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": self._now()},
         ]
-        messages = list(context)
+        messages, said = list(context), ""
         for round_ in range(MAX_TOOL_ROUNDS):
             tools = {"tools": self._claude_tools} if self._claude_tools else {}
             if tools and round_ == MAX_TOOL_ROUNDS - 1:
@@ -1214,6 +1257,7 @@ class ClaudeQuickChat(QuickChat):
                     for event in stream:
                         _check(writing)
                         if event.type == "text" and event.text:
+                            said += event.text
                             yield event.text
                     final = stream.get_final_message()
             except anthropic.APIError as e:
@@ -1225,12 +1269,16 @@ class ClaudeQuickChat(QuickChat):
             if not uses:
                 return
             messages.append({"role": "assistant", "content": final.content})
+            if wait := self._one_moment([(u.name, json.dumps(u.input)) for u in uses], said):
+                said += wait
+                yield wait
             results = []
             with self._lock:
                 _check(writing)
                 for use in uses:
                     arguments = json.dumps(use.input)
-                    output = self._run_tool(types.SimpleNamespace(name=use.name, arguments=arguments), self._no_links)
+                    call = types.SimpleNamespace(name=use.name, arguments=arguments)
+                    output = self._run_tool(call, self._no_links, writing)
                     result = {"type": "tool_result", "tool_use_id": use.id, "content": output}
                     results.append(result | ({"is_error": True} if output.startswith("error") else {}))
                     if output.startswith("error"):
