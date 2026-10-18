@@ -412,7 +412,7 @@ def make_tv(cfg: Config, spec: dict, root: Path, announce=None):
 
         # Each step reads a screenshot, so a step can take longer than a spoken reply may.
         client = OpenAI(api_key=api_key(root / ".env", OPENAI_KEY), timeout=AGENT_TIMEOUT_S, max_retries=1)
-        agent = TvAgent(stick, client, cfg.home.tv_model or cfg.llm.model, announce)
+        agent = TvAgent(stick, client, cfg.home.tv_model or cfg.llm.model, announce, service_tier=cfg.llm.service_tier)
     elif announce:
         print(f'(no {OPENAI_KEY}: the Fire TV takes single buttons and apps, not tasks like "play Toy Story")')
     return TV(stick, agent)

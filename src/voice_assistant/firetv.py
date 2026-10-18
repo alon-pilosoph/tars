@@ -28,6 +28,7 @@ KEYS = {
     "left": "KEYCODE_DPAD_LEFT",
     "right": "KEYCODE_DPAD_RIGHT",
     "select": "KEYCODE_DPAD_CENTER",
+    "enter": "KEYCODE_ENTER",  # not on the remote: what submits a search typed with type_text
     "back": "KEYCODE_BACK",
     "home": "KEYCODE_HOME",
     "menu": "KEYCODE_MENU",
@@ -63,6 +64,8 @@ POLL_S = 0.5
 MAX_PRESSES = 20
 AGENT_STEPS = 30
 AGENT_TIMEOUT_S = 150.0
+# Working a remote is many small, easy choices: at the model's default effort each step thought for seconds.
+AGENT_EFFORT = "low"
 UI_DUMP = "/sdcard/tars_ui.xml"
 KEY_FILE = "voice_data/firetv/adbkey"
 CONNECT_TIMEOUT_S = 3.0  # TARS's ADB key: the stick asks once whether to trust it
@@ -194,13 +197,13 @@ class FireTV:
         self.shell("input keyevent KEYCODE_SLEEP")
 
     def press(self, key: str, times: int = 1) -> None:
-        code = KEYS[key]
-        self.shell("; ".join([f"input keyevent {code}"] * times))
+        """One `input` for all the presses: each starts Android's input tool, about a second on a Fire TV."""
+        self.shell("input keyevent " + " ".join([KEYS[key]] * times))
 
     def type(self, text: str) -> None:
-        """Types into whatever has focus. `input text` takes no spaces: they go as %s."""
+        """Types into whatever has focus, in place of what's there. `input text` takes no spaces: they go as %s."""
         quoted = text.replace("'", "'\\''").replace(" ", "%s")
-        self.shell(f"input text '{quoted}'")
+        self.shell(f"input keyevent KEYCODE_MOVE_END {' '.join(['KEYCODE_DEL'] * CLEAR_CHARS)}; input text '{quoted}'")
 
     def open(self, package: str) -> None:
         self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1")
@@ -340,18 +343,23 @@ def _times(args: dict) -> int:
         return 1
 
 
+CLEAR_CHARS = 40  # what typing deletes first: longer than any search left in a box
+
 AGENT_RULES = """You work a Fire TV stick for someone in the house, the way a person with its remote would, to do what \
 they asked: {goal}
 
 You have its remote's buttons, typing into whatever has focus, opening apps, and two ways to see the screen: look (the \
-app in front, what's playing, and the text the app shows, the focused element marked) and screenshot. Look after every \
-step and check it did what you meant before the next; when look shows no text, take a screenshot. If the app closes \
+app in front, what's playing, and the text the app shows, the focused element marked) and screenshot. Pressing, typing \
+and opening an app each answer with the screen as it is after: check it did what you meant before the next step; look \
+again only after waiting, and when the screen shows no text, take a screenshot. If the app closes \
 or you're back on the Fire TV's home screen without meaning to be, open the app again. Move the focus with \
 the arrows and choose with select; back goes back. Fire TV apps often take a few seconds to load: wait, then look again.
 
-To play something: open the app, find it (its search, usually), choose the right title (the best known one, unless \
-they said which), and start it. In Stremio, choosing a title lists streams from its add-ons: choose the first one that \
-plays. It's playing only when look says playing, or a screenshot shows the video itself.
+To play something: open the app, find it, choose the right title (the best known one, unless they said which), and \
+start it. If it's already on screen (in Continue Watching, say), choose it there. Otherwise search: type_text into the \
+search box, then press enter to search (select on the on-screen keyboard types a letter), and look for the results. \
+In Stremio, choosing a title lists streams from its add-ons: choose the first one that plays. It's playing only when \
+look says playing, or a screenshot shows the video itself.
 
 Finish with done: success true only when what they asked for is on screen, and in say, one short spoken line for them \
 ("Toy Story is playing."); if it can't be done, success false and why, in one line ("Stremio found no streams for Toy \
@@ -365,7 +373,8 @@ AGENT_TOOLS = [
     {"type": "function", "name": "press", "description": "Press a button on the remote, once or more.", "strict": True,
      "parameters": {"type": "object", "additionalProperties": False, "required": ["button", "times"],
                     "properties": {"button": {"type": "string", "enum": list(KEYS)}, "times": {"type": "integer"}}}},
-    {"type": "function", "name": "type_text", "description": "Type into the focused search box.", "strict": True,
+    {"type": "function", "name": "type_text", "description": "Type into the focused search box; then enter searches.",
+     "strict": True,
      "parameters": {"type": "object", "additionalProperties": False, "required": ["text"],
                     "properties": {"text": {"type": "string"}}}},
     {"type": "function", "name": "open_app", "description": "Open an app by its name.", "strict": True,
@@ -403,8 +412,11 @@ class TvAgent:
         steps: int = AGENT_STEPS,
         timeout_s: float = AGENT_TIMEOUT_S,
         sleep: Callable[[float], None] = time.sleep,
+        service_tier: str = "",
     ):
+        """`service_tier`: OpenAI's, as [llm] has it ("fast"); "" = the default."""
         self.stick, self._client, self._model, self._announce = stick, client, model, announce
+        self._extra = {"reasoning": {"effort": AGENT_EFFORT}} | ({"service_tier": service_tier} if service_tier else {})
         self._steps, self._timeout_s, self._sleep = steps, timeout_s, sleep
         self._stopped = threading.Event()
         self._thread: threading.Thread | None = None
@@ -454,6 +466,7 @@ class TvAgent:
                 tools=AGENT_TOOLS,
                 tool_choice="required",
                 store=False,
+                **self._extra,
             )
             calls = [i for i in response.output if getattr(i, "type", "") == "function_call"]
             if not calls:
@@ -494,11 +507,11 @@ class TvAgent:
                     return f"error: buttons are {', '.join(KEYS)}", None
                 self.stick.press(args["button"], _times(args))
                 self._sleep(0.6)
-                return "pressed; look to see what changed", None
+                return f"pressed; the screen now:\n{self._look()}", None
             if name == "type_text":
                 self.stick.type(str(args.get("text", "")))
                 self._sleep(0.8)
-                return "typed; look to check it went into the search box", None
+                return f"typed; the screen now:\n{self._look()}", None
             if name == "open_app":
                 package = self.stick.find_app(str(args.get("app", "")))
                 if not package:
@@ -513,7 +526,7 @@ class TvAgent:
                         None,
                     )
                 again = f" on try {tries} (it closed before)" if tries > 1 else ""
-                return f"opened {package}{again}, and it stayed open; look to see where it is", None
+                return f"opened {package}{again}, and it stayed open; the screen now:\n{self._look()}", None
             if name == "wait":
                 self._sleep(max(0.5, min(10.0, float(args.get("seconds") or 1))))
                 return "waited", None
@@ -558,7 +571,8 @@ def main() -> None:
             if not key:
                 raise SystemExit(f"do needs {OPENAI_KEY} in .env")
             model = cfg.home.tv_model or cfg.llm.model
-            agent = TvAgent(stick, OpenAI(api_key=key), model, lambda line, who: print(f"TARS: {line}"))
+            tier = cfg.llm.service_tier
+            agent = TvAgent(stick, OpenAI(api_key=key), model, lambda line: print(f"TARS: {line}"), service_tier=tier)
             success, say = agent.work(args.argument or "")
             print("\n".join(agent.log))
             print(f"TARS: {say}  ({'done' if success else 'not done'})")

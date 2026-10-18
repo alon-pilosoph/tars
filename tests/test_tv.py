@@ -162,7 +162,9 @@ def test_what_the_stick_says_is_read():
 def test_typing_goes_as_one_word_with_quotes_kept():
     stick = Stick()
     stick.type("it's toy story")
-    assert stick.commands[-1] == "input text 'it'\\''s%stoy%sstory'"
+    clear, typed = stick.commands[-1].split("; ")
+    assert clear.startswith("input keyevent KEYCODE_MOVE_END KEYCODE_DEL")  # what an earlier search left is cleared
+    assert typed == "input text 'it'\\''s%stoy%sstory'"
 
 
 def test_apps_are_found_by_name_or_among_whats_installed():
@@ -294,7 +296,11 @@ def test_the_agent_works_step_by_step_and_finishes_with_what_to_say():
     agent = TvAgent(stick, client, "gpt", lambda line: None, sleep=lambda s: None)
     assert agent.work("play Toy Story on Stremio") == (True, "Toy Story is playing.")
     assert "input keyevent KEYCODE_WAKEUP" in stick.commands  # it woke the TV first
-    assert stick.state["front"] == "com.stremio.one" and "input text 'toy%sstory'" in stick.commands
+    assert stick.state["front"] == "com.stremio.one"
+    assert any(c.endswith("input text 'toy%sstory'") for c in stick.commands)
+    assert client.requests[-1]["reasoning"] == {"effort": "low"}
+    pressed = next(i["output"] for i in client.requests[-1]["input"] if str(i.get("output", "")).startswith("pressed"))
+    assert "the screen now:\napp: " in pressed  # no extra round trip to look
     last = client.requests[-1]["input"]
     assert any(isinstance(i.get("content"), list) and i["content"][0]["type"] == "input_image" for i in last)
     assert "play Toy Story on Stremio" in client.requests[0]["instructions"]
