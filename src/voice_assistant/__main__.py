@@ -33,6 +33,7 @@ from .wake import PushToTalkTrigger, wake_word_trigger
 
 if TYPE_CHECKING:
     from .llm import QuickService
+    from .stt import Transcriber
 
 OPENAI_TIMEOUT_S = 15.0
 AGENT_TIMEOUT_S = 40.0  # one step of the Android TV agent, a screenshot to read
@@ -396,13 +397,14 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     return FallbackTranscriber(streaming, backup), brain, voice
 
 
-def make_recording_transcriber(cfg: Config, env: Path):
-    """Speech to text for a whole recording (a voice message), with the services config.toml picks for the voice at
-    home and the keys there are (`cfg` is cut down to them already): Deepgram's endpoint for whole recordings, with
-    OpenAI as the backup, or whichever of the two there is."""
-    from .stt import DeepgramFileTranscriber, FallbackTranscriber, OpenAITranscriber
+def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
+    """Speech to text for a whole recording (a voice message), with the services make_pipeline picks for the voice at
+    home: Deepgram's endpoint for whole recordings, with OpenAI's `client` as the backup, or whichever of the two
+    there's a key for. `cfg` has been through with_keys."""
+    from .stt import FILE_TIMEOUT_S, DeepgramFileTranscriber, FallbackTranscriber, OpenAITranscriber
 
-    client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
+    if client is not None:
+        client = client.with_options(timeout=FILE_TIMEOUT_S)  # a few minutes of audio, not one request
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt)
     deepgram = DeepgramFileTranscriber(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt)
@@ -472,7 +474,7 @@ def telegram(cfg: Config, root: Path) -> None:
         tools,
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
-        transcriber=make_recording_transcriber(cfg, env),
+        transcriber=make_recording_transcriber(cfg, env, client),
     ).run_forever(me)
 
 

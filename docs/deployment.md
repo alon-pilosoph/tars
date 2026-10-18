@@ -11,7 +11,7 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
 - **Groq:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
 - **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
 - **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
-  can answer, and a request's recording when Deepgram's stream fails.
+  can answer, and a request's recording (or a Telegram voice message) when Deepgram fails.
 - **Telegram,** with `[telegram]` on: what's written and said in the household's chats with TARS, and what it sends
   there ([TARS on Telegram](telegram.md)).
 

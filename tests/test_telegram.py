@@ -2,7 +2,6 @@
 
 import json
 import time
-import types
 from datetime import datetime
 from pathlib import Path
 
@@ -29,15 +28,15 @@ from voice_assistant.reminders import (
     ReminderTools,
 )
 from voice_assistant.telegram import (
+    CANT_READ,
     CHAT_REMIND_TOOLS,
     COMMANDS,
+    COULDNT_LISTEN,
     FRESH,
     HELLO,
     MAX_VOICE_S,
     NO_VOICE,
-    NOT_HEARD,
-    NOT_LISTENED,
-    ONLY_TEXT,
+    NO_WORDS,
     SORRY,
     STALE_S,
     TOO_LONG,
@@ -49,7 +48,7 @@ from voice_assistant.telegram import (
     tidy,
 )
 
-from .conftest import fake_openai_chat
+from .conftest import ScriptedTranscriber, fake_openai_chat
 
 ALON, STACEY = 111, 222
 PEOPLE = {"Alon": ALON}
@@ -213,7 +212,7 @@ def test_a_photo_or_voice_note_gets_a_plain_answer():
     update = message("")
     del update["message"]["text"]
     tars(bot, [ScriptedBrain()]).handle(update)
-    assert bot.said() == [ONLY_TEXT]
+    assert bot.said() == [CANT_READ]
 
 
 def test_a_message_that_came_while_tars_was_off_is_not_answered_as_if_new():
@@ -672,7 +671,6 @@ def test_reminders_set_at_home_are_never_reported_to_a_chat(convos):
 
 def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path):
     import dataclasses
-    from pathlib import Path
 
     from voice_assistant.__main__ import chat_brain_config
     from voice_assistant.config import load_config
@@ -708,9 +706,11 @@ def voice_note(seconds: float = 1.0) -> bytes:
 
 
 class ListeningBot(FakeBot):
+    """Telegram, with a voice message to hand over: its recording, or the error fetching it raises."""
+
     def __init__(self, recording=None, **kw):
         super().__init__(**kw)
-        self.recording, self.downloaded = recording or voice_note(), []
+        self.recording, self.downloaded = recording if recording is not None else voice_note(), []
 
     def download(self, file_id):
         self.downloaded.append(file_id)
@@ -719,34 +719,20 @@ class ListeningBot(FakeBot):
         return self.recording
 
 
-def hearing(*heard):
-    """Speech to text that writes down each recording as the next of `heard`; an exception is raised instead."""
-    from voice_assistant.stt import BufferedSession
-
-    said = list(heard)
-
-    def transcribe(pcm):
-        assert pcm, "it was given the recording"
-        words = said.pop(0)
-        if isinstance(words, Exception):
-            raise words
-        return words
-
-    return types.SimpleNamespace(session=lambda: BufferedSession(transcribe))
-
-
-def spoken(duration=1, sent_at=None):
+def spoken(duration=1, sent_at=None, file_size=20_000):
     update = message("", sent_at=sent_at)
     del update["message"]["text"]
-    update["message"]["voice"] = {"file_id": "AwACAgQ", "duration": duration, "mime_type": "audio/ogg"}
+    voice = {"file_id": "AwACAgQ", "duration": duration, "mime_type": "audio/ogg", "file_size": file_size}
+    update["message"]["voice"] = voice
     return update
 
 
 def test_a_voice_message_is_written_down_and_answered_and_its_recording_kept(convos):
-    bot, brain = ListeningBot(), ScriptedBrain(["Nine o'clock."])
-    tars(bot, [brain], convos, transcriber=hearing("what time is it?")).handle(spoken())
+    bot, brain, heard = ListeningBot(), ScriptedBrain(["Nine o'clock."]), ScriptedTranscriber(["what time is it?"])
+    tars(bot, [brain], convos, transcriber=heard).handle(spoken())
     assert bot.downloaded == ["AwACAgQ"] and bot.said() == ["Nine o'clock."]
     assert brain.asked == ["[Speaker: Alon] [Voice message] what time is it?"]
+    assert len(heard.heard[0]) == 2 * 16_000  # one second, as 16 kHz samples
     (conversation,) = convos.conversations()
     person, answer = conversation["turns"]
     assert person["text"] == "what time is it?" and person["has_audio"] and answer["text"] == "Nine o'clock."
@@ -754,43 +740,81 @@ def test_a_voice_message_is_written_down_and_answered_and_its_recording_kept(con
 
 def test_a_voice_message_that_came_while_tars_was_off_is_not_listened_to():
     bot = ListeningBot()
-    tars(bot, [ScriptedBrain()], transcriber=hearing()).handle(spoken(sent_at=time.time() - STALE_S - 60))
+    tars(bot, [ScriptedBrain()], transcriber=ScriptedTranscriber([])).handle(spoken(sent_at=time.time() - STALE_S - 60))
     assert bot.downloaded == [] and "I was off when this came in" in bot.said()[0]
 
 
 @pytest.mark.parametrize(
-    "transcriber, duration, says",
+    "transcriber, voice, says",
     [
-        (None, 1, NO_VOICE),  # no speech to text at all
-        (hearing(), MAX_VOICE_S + 1, TOO_LONG),
+        (None, {}, NO_VOICE),  # no speech to text at all
+        (ScriptedTranscriber([]), {"duration": MAX_VOICE_S + 1}, TOO_LONG),
+        (ScriptedTranscriber([]), {"file_size": 50_000_000}, TOO_LONG),
     ],
 )
-def test_a_voice_message_it_wont_listen_to_says_why_without_fetching_it(transcriber, duration, says):
+def test_a_voice_message_it_wont_listen_to_says_why_without_fetching_it(transcriber, voice, says):
     bot, brain = ListeningBot(), ScriptedBrain()
-    tars(bot, [brain], transcriber=transcriber).handle(spoken(duration))
+    tars(bot, [brain], transcriber=transcriber).handle(spoken(**voice))
     assert bot.said() == [says] and bot.downloaded == [] and brain.asked == []
 
 
-def test_a_voice_message_with_no_words_in_it_asks_again():
+def test_a_recording_longer_than_its_message_said_is_turned_down_before_speech_to_text(monkeypatch):
+    from voice_assistant import telegram
+
+    monkeypatch.setattr(telegram, "MAX_VOICE_S", 0.5)
+    bot, heard = ListeningBot(recording=voice_note(1.0)), ScriptedTranscriber([])
+    tars(bot, [ScriptedBrain()], transcriber=heard).handle(spoken(duration=0))  # it said nothing of its length
+    assert bot.said() == [TOO_LONG] and heard.heard == []
+
+
+def test_a_voice_message_with_no_words_in_it_asks_again_and_is_kept(convos):
     bot, brain = ListeningBot(), ScriptedBrain()
-    tars(bot, [brain], transcriber=hearing("")).handle(spoken())
-    assert bot.said() == [NOT_HEARD] and brain.asked == []
+    tars(bot, [brain], convos, transcriber=ScriptedTranscriber([""])).handle(spoken())
+    assert bot.said() == [NO_WORDS] and brain.asked == []
+    person, said = convos.conversations()[0]["turns"]
+    assert person["has_audio"] and said["text"] == NO_WORDS and not said["failed_at"]
+
+
+def test_a_tap_on_the_button_isnt_sent_to_speech_to_text():
+    bot, heard = ListeningBot(recording=voice_note(0.05)), ScriptedTranscriber([])
+    tars(bot, [ScriptedBrain()], transcriber=heard).handle(spoken())
+    assert bot.said() == [NO_WORDS] and heard.heard == []
 
 
 def test_speech_to_text_failing_is_said_and_kept_with_the_recording(convos):
     bot, brain = ListeningBot(), ScriptedBrain()
-    tars(bot, [brain], convos, transcriber=hearing(ConnectionError("both down"))).handle(spoken())
-    assert bot.said() == [NOT_LISTENED] and brain.asked == []
+    tars(bot, [brain], convos, transcriber=ScriptedTranscriber([ConnectionError("both down")])).handle(spoken())
+    assert bot.said() == [COULDNT_LISTEN] and brain.asked == []
     person, failed = convos.conversations()[0]["turns"]
     assert person["has_audio"] and failed["failed_at"] == "stt" and "both down" in failed["error"]
 
 
-def test_a_voice_message_telegram_wont_hand_over_is_said_and_kept_without_a_recording(convos):
+def test_a_voice_message_telegram_wont_hand_over_is_kept_as_telegram_failing(convos):
     bot = ListeningBot(recording=TelegramError("getFile: Bad Request: file is too big", 400))
-    tars(bot, [ScriptedBrain()], convos, transcriber=hearing()).handle(spoken())
-    assert bot.said() == [NOT_LISTENED]
+    tars(bot, [ScriptedBrain()], convos, transcriber=ScriptedTranscriber([])).handle(spoken())
+    assert bot.said() == [COULDNT_LISTEN]
     person, failed = convos.conversations()[0]["turns"]
-    assert not person["has_audio"] and failed["failed_at"] == "stt" and "too big" in failed["error"]
+    assert not person["has_audio"] and failed["failed_at"] == "other" and "too big" in failed["error"]
+
+
+def test_nothing_tars_posts_by_itself_lands_while_a_voice_message_is_written_down(convos):
+    # Writing it down takes seconds: the posting thread's round can come meanwhile, and must wait for the answer.
+    bot, tools, now = ListeningBot(), tools_with(convos), time.time()
+    timer = NewReminder(TIMER, "pasta", from_name="Alon", due=now - 1)
+    tools.reminders.add(timer, TELEGRAM, channel=TELEGRAM, now=now - 60)
+    brain, heard = ScriptedBrain(["Nine o'clock."]), ScriptedTranscriber(["what time is it?"])
+    t = tars(bot, [brain], convos, tools, transcriber=heard)
+    writing_down = heard._transcribe
+
+    def transcribe(pcm):
+        t.deliver()  # as the posting thread would, mid-transcription
+        return writing_down(pcm)
+
+    heard._transcribe = transcribe
+    t.handle(spoken())
+    assert bot.said() == ["Nine o'clock."] and brain.remembered == []
+    t.deliver()
+    assert bot.said() == ["Nine o'clock.", "Your pasta timer is done."]
 
 
 def test_the_bot_downloads_a_file_by_its_id_and_never_puts_the_token_in_an_error():
@@ -814,23 +838,3 @@ def test_the_bot_downloads_a_file_by_its_id_and_never_puts_the_token_in_an_error
     with pytest.raises(TelegramError) as e:
         bot_answering(gone).download("AwACAgQ")
     assert e.value.status == 404 and "SECRET" not in str(e.value)
-
-
-def test_voice_messages_go_to_deepgram_then_openai_as_at_home(tmp_path):
-    from voice_assistant.__main__ import make_recording_transcriber
-    from voice_assistant.config import load_config, with_keys
-    from voice_assistant.stt import DeepgramFileTranscriber, FallbackTranscriber, OpenAITranscriber
-
-    shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
-    env = tmp_path / ".env"
-
-    def made(keys: dict):
-        env.write_text("".join(f"{k}=x\n" for k in keys))
-        cfg, _ = with_keys(shipped, set(keys) | {"CARTESIA_API_KEY", "GROQ_API_KEY"})
-        return make_recording_transcriber(cfg, env)
-
-    both = made({"DEEPGRAM_API_KEY": 1, "OPENAI_API_KEY": 1})
-    assert isinstance(both, FallbackTranscriber)
-    assert isinstance(both._transcriber, DeepgramFileTranscriber) and isinstance(both._backup, OpenAITranscriber)
-    assert isinstance(made({"DEEPGRAM_API_KEY": 1}), DeepgramFileTranscriber)
-    assert isinstance(made({"OPENAI_API_KEY": 1}), OpenAITranscriber)

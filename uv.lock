@@ -1364,11 +1364,9 @@ tv = [
 [package.dev-dependencies]
 dev = [
     { name = "anthropic" },
-    { name = "httpx" },
     { name = "livekit" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "soundfile" },
 ]
 training = [
     { name = "huggingface-hub" },
@@ -1405,11 +1403,9 @@ provides-extras = ["claude", "echo", "tv", "my-house"]
 [package.metadata.requires-dev]
 dev = [
     { name = "anthropic", specifier = ">=1" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "livekit", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = "==0.16.10" },
-    { name = "soundfile", specifier = ">=0.14.0" },
 ]
 training = [
     { name = "huggingface-hub", specifier = ">=1.0" },

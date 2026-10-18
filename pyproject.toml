@@ -60,11 +60,9 @@ packages = ["src/voice_assistant"]
 [dependency-groups]
 dev = [
     "anthropic>=1",
-    "httpx>=0.28.1",
     "livekit>=1.1",
     "pytest>=9.1.1",
     "ruff==0.16.10",
-    "soundfile>=0.14.0",
 ]
 # What training/ needs from this environment (training.household, training.hub): uv run --group training ...
 training = [

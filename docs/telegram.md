@@ -36,7 +36,7 @@ client, which its terms forbid.
 
 ## What it does
 
-| Written in the chat | What happens |
+| Sent in the chat | What happens |
 |---|---|
 | "what's 17 times 23?" | TARS answers in the chat |
 | a voice message: "remind me to call mum at six" | written down by speech to text, as at home, and answered in writing |
@@ -95,14 +95,16 @@ Opus into the 16 kHz audio TARS keeps of everything said at home, and written do
 `[stt]` and the keys there are: Deepgram on its EU servers, then OpenAI if Deepgram fails. It goes to Deepgram's
 endpoint for whole recordings, not Flux: Flux decides when a speaker is done, and would end the message at its first
 long pause. The words are answered as if written, tagged `[Voice message]`, so a misheard word is asked about rather
-than acted on; the recording is kept with the turn, and the web UI plays it like one said at home. Nothing heard:
-"I couldn't make out any words in that."; speech to text failing: "I couldn't listen to that just now.", kept on
-the web UI with why. Who sent it is the chat's person, as for anything written there: speaker ID isn't asked, and a
-voice message never trains it.
+than acted on; the recording is kept with the turn, and the web UI plays it like one said at home. The chat is held
+from the moment it arrives, so a reminder that comes due meanwhile is posted after the answer. With no words in it:
+"I couldn't make out any words in that."; fetching it or writing it down failing: "I couldn't listen to that just
+now.". Either way it's kept on the web UI, with its recording and why. Who sent it is the chat's person, as for
+anything written there: speaker ID isn't asked, and a voice message never trains it.
 
 **Writing, not speaking.** The system prompt is written for the ear. For a chat, a rule goes last in the
 instructions, so it wins: this is in writing, reply as in a text message, plain text, links are fine, what you send is
-posted here, and who's on Telegram (so a reminder for someone without a chat is said aloud). The lines TARS says while
+posted here, a `[Voice message]` may have a word misheard (say what you heard and ask), and who's on Telegram (so a
+reminder for someone without a chat is said aloud). The lines TARS says while
 a slow answer comes ("Looking it up.", "Let me think about that for a moment.") are taken out: the chat shows
 "typing..." instead.
 
@@ -146,8 +148,8 @@ part of every request's address, so no error message includes the address.
 Telegram gets what's written in the chats, the voice messages sent there, TARS's replies, the reminders posted
 there, and what TARS sends to them. Nothing from home goes to Telegram except the things sent for someone with a
 chat. A voice message's recording also goes to speech to text, as a request at home does: Deepgram, or OpenAI if
-Deepgram fails. Telegram bot chats aren't
-end-to-end encrypted: Telegram's servers can read them, as they can any chat that isn't a secret chat.
+Deepgram fails. Telegram bot chats aren't end-to-end encrypted: Telegram's servers can read them, as they can any
+chat that isn't a secret chat.
 
 ## Not yet
 

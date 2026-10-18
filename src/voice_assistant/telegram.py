@@ -7,7 +7,8 @@ person's chat id can be found.
 
 Each person has their own conversation (the brain's history, kept until it's quiet for [telegram] memory_minutes,
 or they send /new; what TARS posts by itself is part of it) with the same
-brain, tools and reminders as at home, told it's writing rather than speaking. What it sends goes into the chat as
+brain, tools and reminders as at home, told it's writing rather than speaking; a voice message is written down by
+the same speech to text as at home (stt.py), and answered as if written. What it sends goes into the chat as
 well as onto the TARS page. A reminder set here for someone with a chat comes to that chat when it's due, and
 whatever TARS sends at home for someone with a chat comes to it too. See docs/telegram.md.
 """
@@ -26,6 +27,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
+from .audio import SAMPLE_RATE, decode_recording
 from .config import ConfigError
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
@@ -45,7 +47,7 @@ from .reminders import (
     line,
     name,
 )
-from .stt import Transcriber, decode_recording, transcribe
+from .stt import Transcriber, transcribe_recording
 
 API = "https://api.telegram.org"
 POLL_S = 50  # how long a request for new messages waits for one to come; Telegram's longest
@@ -65,13 +67,15 @@ DELIVERY_REST_S = 30.0
 SEND_TRIES = 3
 TYPING_EVERY_S = 4.0  # "typing..." shows for 5 s
 SORRY = "That didn't work. Try again in a moment."
-ONLY_TEXT = "I can only read text and listen to voice messages for now."
-# The longest voice message TARS listens to: a few minutes is a message, and anything longer is better written.
-MAX_VOICE_S = 5 * 60
+CANT_READ = "I can only read text and listen to voice messages for now."
+# The longest voice message TARS listens to: a few minutes is a message, and anything longer is better written. Five
+# minutes of a voice message's Opus is about 2 MB; a file far bigger than that isn't fetched to find out.
+MAX_VOICE_S, MAX_VOICE_BYTES = 5 * 60, 10_000_000
+MIN_VOICE = SAMPLE_RATE // 10  # shorter than a tenth of a second: a tap on the button, with no words in it
 NO_VOICE = "I can't listen to voice messages here. Write it instead."
 TOO_LONG = "That's a long one. Keep a voice message under five minutes, or write it."
-NOT_HEARD = "I couldn't make out any words in that. Try again, or write it."
-NOT_LISTENED = "I couldn't listen to that just now. Try again in a moment, or write it."
+NO_WORDS = "I couldn't make out any words in that. Try again, or write it."
+COULDNT_LISTEN = "I couldn't listen to that just now. Try again in a moment, or write it."
 VOICE_TAG = "[Voice message]"  # what the brain is asked is spoken, and written down by speech to text
 HELLO = (
     "Hello, {name}. It's TARS. Ask me anything, have me set a timer or a reminder, or ask me to send you something. "
@@ -133,7 +137,8 @@ class Bot:
     which address failed: it would end up in the logs."""
 
     def __init__(self, token: str, http: httpx.Client | None = None):
-        self._base, self._files = f"{API}/bot{token}", f"{API}/file/bot{token}"
+        self._base = f"{API}/bot{token}"
+        self._files = f"{API}/file/bot{token}"
         self._http = http or httpx.Client(timeout=httpx.Timeout(POLL_S + 10, connect=10))
 
     def call(self, method: str, files: dict | None = None, **params):
@@ -377,7 +382,7 @@ class TelegramTars:
             return
         text, voice = (message.get("text") or "").strip(), message.get("voice")
         if not text and not voice:
-            self._send(chat_id, ONLY_TEXT)
+            self._send(chat_id, CANT_READ)
             return
         sent_at = message.get("date") or self._clock()
         if self._clock() - sent_at > STALE_S:
@@ -399,48 +404,53 @@ class TelegramTars:
 
     def listen(self, chat: Chat, voice: dict) -> None:
         """A voice message: written down by speech to text (Deepgram, then OpenAI, as at home), then answered as if
-        written. Its recording is kept with the turn, so the web UI plays it like one said at home."""
+        written. Its recording is kept with the turn, so the web UI plays it like one said at home. The chat is held
+        from the start, as for a written message, so nothing TARS posts by itself lands before the answer."""
         if self._transcriber is None:
             self._send(chat.chat_id, NO_VOICE)
             return
-        if (voice.get("duration") or 0) > MAX_VOICE_S:
+        if (voice.get("duration") or 0) > MAX_VOICE_S or (voice.get("file_size") or 0) > MAX_VOICE_BYTES:
             self._send(chat.chat_id, TOO_LONG)
             return
-        pcm, start = None, time.perf_counter()
-        try:
-            with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                pcm = decode_recording(self._bot.download(voice["file_id"]))
-                text = transcribe(self._transcriber, pcm)
-        except Exception as e:  # noqa: BLE001 - said in the chat, and kept as a turn that failed at speech to text
-            print(f"(Telegram: couldn't listen to {chat.person}'s voice message: {e!r})", flush=True)
-            with chat.busy:
-                self._not_heard(chat, pcm, e)
-            self._send(chat.chat_id, NOT_LISTENED)
-            return
-        print(f"(Telegram: {chat.person}'s voice message, {time.perf_counter() - start:.1f} s to write down)")
-        if not text:
-            self._send(chat.chat_id, NOT_HEARD)
-            return
-        self.answer(chat, text, pcm)
+        with chat.busy:
+            recording, stage, start = None, OTHER, time.perf_counter()
+            try:
+                with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
+                    data = self._bot.download(voice["file_id"])
+                    stage = STT
+                    recording = decode_recording(data)
+                    if len(recording) > MAX_VOICE_S * SAMPLE_RATE:  # Telegram's duration is a claim; this is the audio
+                        self._send(chat.chat_id, TOO_LONG)
+                        return
+                    text = transcribe_recording(self._transcriber, recording) if len(recording) >= MIN_VOICE else ""
+            except Exception as e:  # noqa: BLE001 - said in the chat, and kept as a failed turn with where it failed
+                print(f"(Telegram: couldn't listen to {chat.person}'s voice message: {e!r})", flush=True)
+                self._keep_unanswered(chat, recording, failed_at=stage, error=f"{type(e).__name__}: {e}")
+                self._send(chat.chat_id, COULDNT_LISTEN)
+                return
+            print(f"(Telegram: {chat.person}'s voice message, {time.perf_counter() - start:.1f} s to write down)")
+            if not text:
+                self._keep_unanswered(chat, recording, said=NO_WORDS)
+                self._send(chat.chat_id, NO_WORDS)
+                return
+            self._answer(chat, text, recording)
 
-    def answer(self, chat: Chat, text: str, pcm: np.ndarray | None = None) -> None:
+    def answer(self, chat: Chat, text: str) -> None:
         """Answers in the chat, and keeps the exchange for the web UI. As by voice, what the reply did (reminders
         set, things sent) only happens once the reply has reached them. The chat is held meanwhile, so what TARS
-        posts by itself (deliver) waits until the exchange is over. `pcm`: the voice message `text` was heard
-        from, if it was one."""
+        posts by itself (deliver) waits until the exchange is over."""
         with chat.busy:
-            self._answer(chat, text, pcm)
+            self._answer(chat, text)
 
-    def _answer(self, chat: Chat, text: str, pcm: np.ndarray | None) -> None:
+    def _answer(self, chat: Chat, text: str, recording: np.ndarray | None = None) -> None:
+        """`recording`: the voice message `text` was written down from; None for a written message."""
         now = self._clock()
-        print(f"{chat.person} (Telegram{', by voice' if pcm is not None else ''}):  {text!r}", flush=True)
-        with self._lock:
-            conversation = self._conversation(chat, now)
-            chat.last_at = now
+        print(f"{chat.person} (Telegram{', by voice' if recording is not None else ''}):  {text!r}", flush=True)
+        conversation = self._current_conversation(chat, now)
         if conversation is not None:
-            self._log(self._conversations.add_person_turn, conversation, text, pcm, speaker=chat.person, ts=now)
+            self._log(self._conversations.add_person_turn, conversation, text, recording, speaker=chat.person, ts=now)
         brain, acks = chat.brain, None
-        asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if pcm is not None else ''}{text}"
+        asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
                 pieces = brain.stream_reply(asked)
@@ -635,20 +645,21 @@ class TelegramTars:
         chat.conversation = self._log(log.start, None, ts=now, via=TELEGRAM)
         return chat.conversation
 
-    def _not_heard(self, chat: Chat, pcm: np.ndarray | None, error: Exception) -> None:
-        """A voice message speech to text couldn't write down: kept, with its recording if there is one, as a turn
-        that failed there, so the web UI shows what went wrong. Call with the chat held."""
-        if self._conversations is None:
-            return
+    def _keep_unanswered(self, chat: Chat, recording: np.ndarray | None, said: str = "", **failure) -> None:
+        """A voice message that got no answer, kept with its recording if there is one, and what TARS said back or
+        where it failed, so the web UI shows it came."""
         now = self._clock()
+        conversation = self._current_conversation(chat, now)
+        if conversation is None:
+            return
+        self._log(self._conversations.add_person_turn, conversation, "", recording, speaker=chat.person, ts=now)
+        self._log(self._conversations.add_tars_turn, conversation, said, ts=now, **failure)
+
+    def _current_conversation(self, chat: Chat, now: float) -> int | None:
         with self._lock:
             conversation = self._conversation(chat, now)
             chat.last_at = now
-        if conversation is None:
-            return
-        self._log(self._conversations.add_person_turn, conversation, "", pcm, speaker=chat.person, ts=now)
-        reason = f"{type(error).__name__}: {error}"
-        self._log(self._conversations.add_tars_turn, conversation, "", ts=now, failed_at=STT, error=reason)
+        return conversation
 
     def start_over(self, chat: Chat) -> None:
         """/new: the brain forgets the chat so far, and the next message starts a new conversation on the web UI."""
@@ -662,12 +673,7 @@ class TelegramTars:
         """TARS wrote first (a reminder, or how one said at home went): part of the brain's conversation, so "snooze
         that" right after knows what "that" is, and kept in the chat's conversation, or one of its own."""
         chat.brain.remember_said(text)
-        if self._conversations is None:
-            return
-        with self._lock:
-            conversation = self._conversation(chat, now)
-            chat.last_at = now
-        if conversation is not None:
+        if (conversation := self._current_conversation(chat, now)) is not None:
             self._log(self._conversations.add_tars_turn, conversation, text, ts=now)
 
     def _log_turn(self, conversation: int | None, text: str, brain: Brain, **failure) -> int | None:

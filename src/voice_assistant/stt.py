@@ -8,7 +8,6 @@ A recording that's already finished (a voice message on Telegram) goes the same 
 to Deepgram's endpoint for whole recordings: Flux would end the turn at the first long pause.
 """
 
-import io
 import json
 import queue
 import threading
@@ -17,13 +16,13 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 from urllib.parse import urlencode
 
-import httpx
 import numpy as np
 
 from .audio import SAMPLE_RATE, wav_bytes
 from .config import DEEPGRAM_STT_MODEL, STTConfig
 
 if TYPE_CHECKING:
+    import httpx
     from openai import OpenAI
 
 DEEPGRAM_URL = "wss://{host}/v1/listen"
@@ -142,6 +141,8 @@ class DeepgramFileTranscriber:
     all."""
 
     def __init__(self, api_key: str, cfg: STTConfig, http: httpx.Client | None = None):
+        import httpx
+
         self._key = api_key
         model = cfg.model if cfg.provider == "deepgram" else DEEPGRAM_STT_MODEL  # Flux has no file endpoint
         params = {"model": model, "smart_format": "true", "punctuate": "true"}
@@ -166,28 +167,10 @@ class DeepgramFileTranscriber:
         return channels[0]["alternatives"][0]["transcript"].strip() if channels else ""
 
 
-def decode_recording(data: bytes) -> np.ndarray:
-    """A recording in any format libsndfile reads (Telegram's voice messages are Opus in Ogg, at 48 kHz), as the
-    16 kHz mono 16-bit samples the rest of TARS works with. ValueError if it can't be read."""
-    import soundfile
-    from scipy.signal import resample_poly
-
-    try:
-        samples, rate = soundfile.read(io.BytesIO(data), dtype="float32", always_2d=True)
-    except (soundfile.LibsndfileError, RuntimeError, TypeError) as e:
-        raise ValueError(f"can't read the recording ({str(e).rsplit(': ', 1)[-1]})") from None  # not the BytesIO
-    mono = samples.mean(axis=1)
-    if rate != SAMPLE_RATE:
-        divisor = np.gcd(int(rate), SAMPLE_RATE)
-        mono = resample_poly(mono, SAMPLE_RATE // divisor, int(rate) // divisor)
-    return (np.clip(mono, -1.0, 1.0) * 32767).astype(np.int16)
-
-
-def transcribe(transcriber: Transcriber, pcm: np.ndarray) -> str:
-    """A finished recording's words, through `transcriber` as a whole recording: fed, finished and asked once."""
+def transcribe_recording(transcriber: Transcriber, pcm: bytes | np.ndarray) -> str:
     session = transcriber.session()
     try:
-        session.feed(pcm.tobytes())
+        session.feed(pcm.tobytes() if isinstance(pcm, np.ndarray) else pcm)
         session.finish()
         return session.transcript()
     finally:
@@ -388,8 +371,8 @@ class FluxSession:
 
 
 class FallbackTranscriber:
-    """A streaming transcriber whose audio is also kept, so a backup can transcribe the recording if the stream
-    fails."""
+    """A transcriber whose audio is also kept, so a backup can transcribe the recording if the first one fails:
+    Deepgram's stream, or its endpoint for whole recordings."""
 
     def __init__(self, transcriber: Transcriber, backup: Transcriber):
         self._transcriber, self._backup = transcriber, backup
