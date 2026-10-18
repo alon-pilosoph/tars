@@ -97,49 +97,137 @@ enough.
 
 ## Setting it up
 
-About an hour, on the Pi, in this order. Home Assistant runs beside TARS in Docker; nothing else on the Pi changes.
+About an hour, on the Pi. This is written to be driven by an agent (Claude Code, say) working on the Pi over SSH, with
+the person beside it for what needs hands, a phone or an account; it works the same by hand.
+
+**How to work through it (for the agent):**
+
+- Work on the Pi, in `~/voice-assistant`, on the branch with the house in it, set up by `deploy/install-pi.sh`.
+- Go in order: each step needs the ones before it. Start each with its **done when** check, and skip the step if it
+  already passes: running this again after a stop picks up where it left off.
+- **You do** is yours to run. **Ask the person** is one thing at a time, in the words given; then run **verify**
+  yourself, rather than taking "done" on trust. If the check fails, say what it shows and ask again; don't move on.
+- Commands marked *(the person's terminal)* prompt as they go: give the person the exact command to run in a terminal
+  on the Pi (`ssh homepi.local`, then `cd ~/voice-assistant`), and wait for them to say it finished.
+- Secrets go straight into `.env`, never into the conversation: the token, the blaster's key, the MQTT passwords. The
+  one the person has to see is the Nuki's MQTT password, since they type it into the Nuki app.
+- Ask before anything that needs `sudo`, and before restarting TARS. After every change to `config.toml`, run the
+  config check below; it says what's wrong in one line.
+- When something doesn't work, look before guessing: `uv run voice-assistant --check`,
+  `docker logs homeassistant --tail 50`, `journalctl --user-unit voice-assistant -n 50`.
+
+These are used throughout:
+
+```bash
+cd ~/voice-assistant
+config_ok() { uv run python -c "from pathlib import Path; from voice_assistant.config import load_config; load_config(Path('config.toml')); print('config ok')"; }
+env_set() { touch .env; grep -v "^$1=" .env > .env.tmp; printf '%s=%s\n' "$1" "$2" >> .env.tmp; mv .env.tmp .env; chmod 600 .env; }
+HA=http://127.0.0.1:8123
+ha() { curl -s -H "Authorization: Bearer $(grep '^HOME_ASSISTANT_TOKEN=' .env | cut -d= -f2-)" -H 'Content-Type: application/json' "$@"; }
+entities() { ha "$HA/api/states" | python3 -c "import json,sys; [print(s['entity_id'], s['state']) for s in json.load(sys.stdin) if s['entity_id'].split('.')[0] in sys.argv[1:]]" "$@"; }
+```
+
+### 0. The Pi is ready
+
+**Done when** `git branch --show-current` says `home-assistant` (or a branch with it merged), and
+`uv run python -c "import tinytuya, adb_shell"` prints nothing.
+
+**You do:** `git fetch && git checkout home-assistant && deploy/install-pi.sh`. It installs the extras (tinytuya,
+adb-shell) and restarts TARS.
 
 ### 1. Home Assistant and Mosquitto
 
+**Done when** `curl -s -o /dev/null -w '%{http_code}' $HA/api/` says `401` (running, wants a token), and
+`docker ps --format '{{.Names}}'` lists `homeassistant` and `mosquitto`.
+
+**You do** (ask before installing Docker: it needs `sudo`):
+
 ```bash
-curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER   # then log out and back in
-cd ~/voice-assistant/deploy/home-assistant
-docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 sh -c \
-  'touch /m/passwords && mosquitto_passwd -b /m/passwords homeassistant PICK-ONE && mosquitto_passwd -b /m/passwords nuki PICK-ANOTHER'
+command -v docker || { curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER; }
+# a new login picks up the docker group: reconnect over SSH before going on
+env_set MQTT_HA_PASSWORD "$(openssl rand -hex 12)"
+env_set MQTT_NUKI_PASSWORD "$(openssl rand -hex 12)"
+cd deploy/home-assistant
+docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 sh -c "touch /m/passwords && \
+  mosquitto_passwd -b /m/passwords homeassistant $(grep '^MQTT_HA_PASSWORD=' ../../.env | cut -d= -f2) && \
+  mosquitto_passwd -b /m/passwords nuki $(grep '^MQTT_NUKI_PASSWORD=' ../../.env | cut -d= -f2) && \
+  chown 1883:1883 /m/passwords"    # the broker runs as its own user (1883), and must read it
 docker compose up -d
+cd ../..
+until [ "$(curl -s -o /dev/null -w '%{http_code}' $HA/api/)" = 401 ]; do sleep 5; done   # a minute or two
 ```
 
-Open `http://<the Pi>.local:8123`, make the owner account, and set the home's location. Then add the MQTT broker:
-**Settings > Devices & services > Add integration > MQTT**, broker `127.0.0.1`, port 1883, user `homeassistant` and
-its password.
-
-### 2. The Nuki
-
-In the Nuki app, open the lock's settings and find **MQTT** (under Smart Home, or Features & Configuration,
-depending on the app's version). Turn it on with:
-
-- host: the Pi's address on the home network (give it a fixed one in the router),
-- port 1883, user `nuki` and its password,
-- **Home Assistant auto discovery** on.
-
-The lock appears in Home Assistant by itself, as `lock.<its name>`, with a battery sensor and, with the door sensor,
-a door one. Leave the lock's Wi-Fi power mode on Automatic.
-
-### 3. The Switcher
-
-**Settings > Devices & services**: Home Assistant usually finds the Switcher on its own; otherwise **Add integration >
-Switcher**. Its entities are `switch.<its name>` and `sensor.<its name>_remaining_time`.
-
-### 4. TARS and Home Assistant
-
-In Home Assistant, open your profile (bottom left), then **Security > Long-lived access tokens > Create token**, and
-put it in TARS's `.env`:
+**Ask the person:** "Open http://homepi.local:8123 on your phone or laptop, make the owner account, and set the home's
+location. Tell me when you see the Overview page." Then: "Open your profile (bottom left), Security, Long-lived
+access tokens, Create token, name it TARS, and paste it here." Put it straight into `.env`, and don't repeat it:
 
 ```bash
-HOME_ASSISTANT_TOKEN=eyJ...
+env_set HOME_ASSISTANT_TOKEN '<the token>'
 ```
 
-Then in `config.toml`'s `[home]`, with the entity ids from **Settings > Devices & services > Entities**:
+**Verify:** `ha $HA/api/` says `{"message":"API running."}`.
+
+### 2. The MQTT broker in Home Assistant
+
+**Done when** `ha $HA/api/config/config_entries/entry | grep -c '"domain":"mqtt"'` is at least 1.
+
+**You do:** add it through Home Assistant's config flow API, then answer the form it returns:
+
+```bash
+FLOW=$(ha -X POST $HA/api/config/config_entries/flow -d '{"handler":"mqtt"}')
+echo "$FLOW"    # a form: its step_id and the fields it wants (broker, port, username, password)
+ID=$(echo "$FLOW" | python3 -c "import json,sys; print(json.load(sys.stdin)['flow_id'])")
+ha -X POST $HA/api/config/config_entries/flow/$ID -d "{\"broker\":\"127.0.0.1\",\"port\":1883,\"username\":\"homeassistant\",\"password\":\"$(grep '^MQTT_HA_PASSWORD=' .env | cut -d= -f2)\"}"
+```
+
+The answer should say `"type":"create_entry"`. If the first step is a menu or asks for other fields, answer what it
+asks (the same values); if it aborts, show the person what it said and do it in the browser instead: Settings >
+Devices & services > Add integration > MQTT, broker `127.0.0.1`, port 1883, user `homeassistant`, and the password
+from `.env`.
+
+### 3. The Nuki
+
+**Done when** `entities lock` lists a lock.
+
+**You do:** find the Pi's address on the home network (`hostname -I | cut -d' ' -f1`), and the Nuki's MQTT password
+(`grep '^MQTT_NUKI_PASSWORD=' .env | cut -d= -f2`).
+
+**Ask the person:** "In the Nuki app, open the lock's settings and find MQTT (under Smart Home, or Features &
+Configuration). Turn it on with: host `<the Pi's address>`, port 1883, user `nuki`, password `<the password>`, and
+Home Assistant auto discovery on. Leave Wi-Fi power mode on Automatic. Also, in your router, give the Pi a fixed
+address, so the lock can always find it."
+
+**Verify:** wait for the lock to appear, for up to five minutes:
+`until entities lock | grep -q .; do sleep 10; done; entities lock binary_sensor sensor | grep -i -E 'lock|nuki|door|batter'`.
+Note the lock's entity, its door sensor if there is one (a `binary_sensor` with "door" in it) and its battery.
+
+### 4. The Switcher
+
+**Done when** `ha $HA/api/config/config_entries/entry | grep -c '"domain":"switcher_kis"'` is at least 1, and
+`entities switch` lists it.
+
+**You do:** Home Assistant finds Switchers on the home network itself, in the flow:
+
+```bash
+FLOW=$(ha -X POST $HA/api/config/config_entries/flow -d '{"handler":"switcher_kis"}'); echo "$FLOW"
+ID=$(echo "$FLOW" | python3 -c "import json,sys; print(json.load(sys.stdin)['flow_id'])")
+ha -X POST $HA/api/config/config_entries/flow/$ID -d '{}'      # "create_entry", or "no_devices_found"
+entities switch sensor | grep -i -E 'switcher|boiler|remaining'
+```
+
+If it finds none, **ask the person:** "Is the Switcher on the same Wi-Fi as the Pi, and does the Switcher app see
+it?", then run the flow again.
+
+### 5. TARS's [home], for the lock and the boiler
+
+**Done when** `uv run voice-assistant --check` shows Home Assistant, the front door and the boiler with a ✓.
+
+**Ask the person:** what to call each device (default: "front door", "boiler"), and whose voices may unlock the door
+by voice: names from the web UI's Voices page (`uv run python -c "import numpy; print(list(numpy.load('voice_data/voiceprints.npz')))"`
+lists them). Nobody is a fine answer: then the door unlocks only from the Nuki app.
+
+**You do:** fill in `config.toml`'s `[home]` (it's the last section), with the entities from steps 3 and 4; leave out
+`door` and `remaining` if there were none. Then `config_ok`.
 
 ```toml
 [home]
@@ -159,58 +247,65 @@ entity = "switch.boiler"
 remaining = "sensor.boiler_remaining_time"
 ```
 
-`uv run voice-assistant --check` now shows Home Assistant and each device, with what it says right now.
+**Verify:** `uv run voice-assistant --check`, and read the house lines: each device with what it says right now.
 
-### 5. The blaster's key
+### 6. The IR blaster
 
-TARS talks to the blaster (for the AC, the TV and the soundbar) on the home network with [tinytuya](https://github.com/jasonacox/tinytuya), which needs
-the blaster's id and its local key. The key is in Tuya's cloud, read once:
+**Done when** `--check` shows "IR blaster: answers at ...".
 
-1. At [platform.tuya.com](https://platform.tuya.com), make a free account and a cloud project (Smart Home; the data
-   center your Smart Life account is in: Central Europe for an account made in Israel).
-2. In the project, **Devices > Link App Account**, and scan the code with the Smart Life app (Me > the scan icon).
-3. On the Pi, in `~/voice-assistant`: `uv run python -m tinytuya wizard`, with the project's Access ID and Secret. It
-   lists every device with its id and local key. Then `uv run python -m tinytuya scan` gives the blaster's address
-   and protocol version. Give it a fixed address in the router.
+**You do:** find it on the home network: `uv run python -m tinytuya scan` (about 20 seconds) lists Tuya devices with
+their id, address and version. The local key, which TARS needs too, is only in Tuya's cloud.
 
-The wizard also lists the Smart IR app's remotes (TV, Air, Audio): they live only in Tuya's cloud. Use the blaster's
-own id, address and key. Put the key in `.env` and the blaster in `config.toml`:
+**Ask the person** (about ten minutes, once):
+
+1. "At platform.tuya.com, make a free account, then Cloud, Create Cloud Project: any name, industry Smart Home,
+   development method Smart Home, data center Central Europe (where a Smart Life account made in Israel is)."
+2. "In the project: Devices, Link App Account, Add App Account, and scan the code with the Smart Life app (Me, then
+   the scan icon at the top)."
+3. *(the person's terminal)* "Run `cd ~/voice-assistant && uv run python -m tinytuya wizard`, and give it the
+   project's Access ID and Access Secret (the project's Overview page), and region `eu`. Answer yes to scanning."
+
+The wizard writes `devices.json` in `~/voice-assistant`, with every device's local key (git ignores it). Find the
+blaster: the entry whose category is `wnykq` (a universal remote), not the TV, Air and Audio remotes, which live only
+in Tuya's cloud (they have a `parent` or `node_id`):
 
 ```bash
-TUYA_LOCAL_KEY=0123456789abcdef
+python3 -c "import json; [print(d.get('name'), d['id'], d.get('ip',''), d.get('version',''), d.get('category','')) for d in json.load(open('devices.json')) if not d.get('parent')]"
+env_set TUYA_LOCAL_KEY "$(python3 -c "import json; print(next(d['key'] for d in json.load(open('devices.json')) if d['id'] == '<the blaster id>'))")"
 ```
 
-```toml
-[home]
-blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.3" }
+Then in `config.toml`'s `[home]` (before the first `[[home.devices]]`), with the address from the scan, and
+`config_ok`:
 
+```toml
+blaster = { id = "<the blaster id>", address = "<its address>", version = "3.3" }
+```
+
+**Ask the person:** "In your router, give the blaster a fixed address." **Verify:** `--check`. The key changes if the
+blaster is ever removed from Smart Life and added again: then run the wizard again.
+
+### 7. The AC
+
+**Done when** `--check` shows "AC: profile: ..." with a ✓ (not "never tried on the AC").
+
+**You do:** add the AC to `config.toml`, `config_ok`, then `uv run python -m voice_assistant.ac_onboard check`.
+
+```toml
 [[home.devices]]
 name = "AC"
 kind = "ac"
 ```
 
-The key changes if the blaster is ever removed from Smart Life and added again; then read it again.
+**Ask the person:** "Have the Electra remote with you, the AC in view and off, and the blaster where the remote can
+reach it from about 30 cm." Then *(the person's terminal)*:
+"Run `uv run python -m voice_assistant.ac_onboard capture`." It asks for one button at a time (temperature, fan, mode,
+swing, then power twice) and, after each, what the remote's screen shows; Enter takes its guess. Between presses it
+asks them to set the remote some way, pointed away from the blaster: those presses aren't recorded. Buttons other than
+POWER shouldn't turn the AC on: if one did, tell `fit` what happened. A press that didn't come through is asked for
+again; `capture --again "mode 3"` redoes one.
 
-### 6. The AC: teaching TARS the remote
-
-Have the Electra remote and the AC in view, the AC off, and the blaster where the remote can reach it from about 30
-cm. Then:
-
-```bash
-uv run python -m voice_assistant.ac_onboard check     # the blaster answers
-uv run python -m voice_assistant.ac_onboard capture   # 19 presses, about five minutes
-uv run python -m voice_assistant.ac_onboard fit       # works out the code, checks it against every press
-uv run python -m voice_assistant.ac_onboard try       # four codes from TARS; you say what the AC did
-```
-
-**capture** asks for one button at a time (temperature up and down, fan, mode, swing, then power twice) and, after
-each, what the remote's screen shows; Enter takes its guess. Between captures it asks you to set the remote some way
-first, pointed away from the blaster: those presses aren't recorded. Buttons other than POWER shouldn't turn the AC on:
-if one does, the power bit isn't a toggle, and `fit` will say what it found instead. A press that didn't come through
-whole is asked for again; `capture --again "mode 3"` redoes one later. Everything is kept in
-`voice_data/ac/captures.json`.
-
-**fit** prints what it found, like:
+**You do:** `uv run python -m voice_assistant.ac_onboard fit`. It prints what it found and writes
+`voice_data/ac/profile.json` only if it can make every press again bit for bit:
 
 ```text
 - read 19 presses: manchester, 34 bits, sent 3 times
@@ -222,17 +317,21 @@ whole is asked for again; `capture --again "mode 3"` redoes one later. Everythin
 - made 19 of 19 presses again, bit for bit
 ```
 
-It writes `voice_data/ac/profile.json` only when it can make the presses again exactly. A mode that writes some
-setting its own way (fan mode often blanks the temperature) is left out rather than sent wrong. If nothing can be
-trusted, it says why and writes nothing: send `captures.json` and what it printed.
+A mode that writes some setting its own way (fan mode often blanks the temperature) is left out rather than sent
+wrong. If `fit` writes nothing, read what it says, and the presses in `voice_data/ac/captures.json`: a typo in a screen
+reading shows as "the same screen sent different codes", and redoing that step fixes it. A layout it can't explain
+is for a person to look at, with those two things.
 
-**try** sends four codes: settings without the toggle (the AC should stay off), the toggle (on), a new temperature
-without the toggle (still on, now 26), the toggle (off). Four yeses mark the profile checked, and TARS starts out
-knowing the AC is off. `send "cool 22 auto" --toggle` sends any one code by hand.
+**Ask the person** *(the person's terminal)*: "Run `uv run python -m voice_assistant.ac_onboard try`, watching the
+AC." It sends four codes and asks what the AC did each time: settings without the toggle (it should stay off), the
+toggle (on), 26 degrees without the toggle (still on, now 26), the toggle (off). Four yeses mark the profile checked,
+and TARS starts out knowing the AC is off.
 
-### 7. The TV and the soundbar
+### 8. The TV and the soundbar
 
-Nothing to record: add them, try a button each, and try the TV's on and off codes on your set.
+**Done when** `voice_data/ir/tv.json` exists, and the person heard the soundbar's volume change.
+
+**You do:** add both to `config.toml`, `config_ok`, then press one soundbar button:
 
 ```toml
 [[home.devices]]
@@ -248,46 +347,55 @@ codes = "polk-re9641"
 
 ```bash
 uv run python -m voice_assistant.ir press soundbar volume_up
-uv run python -m voice_assistant.ir test TV       # off, on and the power button, one at a time: say what the TV did
 ```
 
-If the soundbar doesn't answer "volume up", check its remote's model on the back: these are the RE9641's codes.
+**Ask the person:** "Did the soundbar get louder?" If not: "What does the back of its remote say? These codes are
+for the RE9641." Then *(the person's terminal)*: "With the TV on, run `uv run python -m voice_assistant.ir test TV`:
+it sends off, on and the power button, and asks what the TV did each time." It saves what worked, and TARS uses that.
 
-### 8. The Fire TV
+### 9. The Fire TV
 
-On the Fire TV: **Settings > My Fire TV > About**, check it says Fire OS (not Vega OS), and click the device name seven
-times to show **Developer Options**; there, turn **ADB debugging** on. **Settings > My Fire TV > About > Network** shows
-its address: give it a fixed one in the router. Power the stick from its own plug, not the TV's USB port, which goes
-off with the TV and takes the stick with it. On the Samsung, **Anynet+ (HDMI-CEC)** should be on.
+**Done when** `--check` shows "Fire TV: answers".
+
+**Ask the person:** "On the Fire TV: Settings, My Fire TV, About. Does it say Fire OS? Click the device name seven
+times, go back, and in Developer Options turn ADB debugging on. About, Network shows its IP address: what is it? Then
+give it a fixed address in the router. Is the stick powered from its own plug, not the TV's USB port? On the Samsung,
+is Anynet+ (HDMI-CEC) on, under Settings, General, External Device Manager?" If it says Vega OS, stop here: it has no
+ADB.
+
+**You do:** add it to `config.toml` with that address, and `config_ok`:
 
 ```toml
 [[home.devices]]
 name = "fire tv"
 kind = "firetv"
-address = "192.168.1.60"
+address = "<its address>"
 ```
 
-Then let TARS in, once, with the TV on:
+Then run `uv run python -m voice_assistant.firetv pair`, and at the same time **ask the person:** "The TV is asking
+'Allow USB debugging?': tick Always allow, then OK." `pair` waits a minute for it.
+
+**Verify:** `uv run python -m voice_assistant.firetv look`: the app in front, what's playing, and the text on screen.
+Then **ask the person** to open Stremio with the Fire TV remote, run `look` again, and see whether it shows Stremio's
+text: if it shows none, the agent will work from screenshots, which is slower. Then try a task, and ask the person
+whether the TV did what it says:
 
 ```bash
-uv run python -m voice_assistant.firetv pair             # the TV asks "Allow USB debugging?": tick Always allow, OK
-uv run python -m voice_assistant.firetv look             # the app in front, what's playing, the text on screen
-uv run python -m voice_assistant.firetv do "play Toy Story on Stremio"   # every step, then what TARS would say
+uv run python -m voice_assistant.firetv do "play Toy Story on Stremio"
 ```
 
-`look` shows whether an app describes its screen: Stremio's text is what the agent reads first, and a screenshot is
-for when there isn't any. TARS's ADB key is kept in `voice_data/firetv/`.
+### 10. TARS, with the house
 
-### 9. Try it
+**Done when** `--check` has no ✗ in the house lines, and the person heard TARS work each device.
 
-```bash
-uv run voice-assistant --check          # Home Assistant, the devices, the blaster, the AC, the Fire TV
-uv run voice-assistant --text           # "is the door locked?", "boiler on for 20 minutes", "AC on, 23", "louder"
-systemctl --user restart voice-assistant
-```
+**You do:** `uv run voice-assistant --check`, then, asking first, `systemctl --user restart voice-assistant`.
 
-Typed questions can do everything but unlock. Said aloud, "hey TARS, unlock the front door" gets "Unlock the front
-door?", and a yes unlocks it.
+**Ask the person** to try each aloud, and say what happened: "Hey TARS, is the front door locked?", "turn the boiler on
+for ten minutes", "turn on the AC at 24", "turn the volume up a bit", "play Toy Story on Stremio", and, from a voice in
+`unlock_voices`, "unlock the front door" (TARS asks first; a yes unlocks it). `journalctl --user-unit voice-assistant
+-n 100 | grep -E 'home:|tv:'` shows each call and what the device answered.
+
+**Then:** tidy up: `rm -f devices.json tinytuya.json snapshot.json tuya-raw.json` (the keys TARS needs are in `.env`).
 
 ## Things to know
 
