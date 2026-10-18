@@ -290,6 +290,86 @@ def service_status(name: str, key: str, status: int, took: float) -> Result:
     return Result(name, OK, f"answers ({took:.1f} s)")
 
 
+def home_assistant(cfg: Config, have: set[str], make: Callable[[], object]) -> Result:
+    from .home import TOKEN_KEY, HomeError
+
+    if not cfg.home.url:
+        return Result("Home Assistant", SKIP, "not used ([home] url is empty)")
+    if TOKEN_KEY not in have:
+        fix = f"in Home Assistant: your profile, Security, Long-lived access tokens; put it in .env as {TOKEN_KEY}"
+        return Result("Home Assistant", FAIL, f"no {TOKEN_KEY}", fix)
+    t = time.perf_counter()
+    try:
+        make().ping()
+    except HomeError as e:
+        return Result("Home Assistant", FAIL, str(e), f"is it running at {cfg.home.url}? docs/home.md")
+    return Result("Home Assistant", OK, f"answers at {cfg.home.url} ({time.perf_counter() - t:.1f} s)")
+
+
+def house(cfg: Config, hass) -> list[Result]:
+    """Every device Home Assistant works for TARS, and every sensor it reads, found there."""
+    from .home import AC, HomeError
+
+    results = []
+    for d in cfg.home.devices:
+        if d["kind"] == AC:
+            continue
+        name = d["name"].strip().lower()
+        if hass is None:
+            results.append(Result(name, SKIP, "needs Home Assistant"))
+            continue
+        entities = [d["entity"], *(d[k] for k in ("door", "battery", "remaining", "power") if k in d)]
+        missing, said = [], []
+        for entity in entities:
+            try:
+                said.append(f"{entity} {hass.state(entity).get('state')}")
+            except HomeError:
+                missing.append(entity)
+        if missing:
+            fix = "check the entity ids in Home Assistant (Settings, Devices & services, Entities) and in config.toml"
+            results.append(Result(name, FAIL, f"Home Assistant has no {', '.join(missing)}", fix))
+        elif "unavailable" in said[0]:
+            results.append(Result(name, WARN, said[0], "Home Assistant knows it but can't reach it: is it online?"))
+        else:
+            results.append(Result(name, OK, ", ".join(said)))
+    return results
+
+
+def ac_check(cfg: Config, root: Path, have: set[str]) -> Result:
+    from .ac import TUYA_KEY, Profile
+
+    spec = next((d for d in cfg.home.devices if d["kind"] == "ac"), None)
+    if spec is None:
+        return Result("AC", SKIP, 'not used (no [[home.devices]] with kind = "ac")')
+    onboard = "uv run python -m voice_assistant.ac_onboard"
+    if TUYA_KEY not in have:
+        return Result("AC", FAIL, f"no {TUYA_KEY}", "the blaster's local key goes in .env (docs/home.md)")
+    try:
+        import tinytuya  # noqa: F401 - only whether it's there
+    except ImportError:
+        return Result("AC", FAIL, "tinytuya isn't installed", "uv sync --all-extras")
+    try:
+        profile = Profile.load(root / spec.get("profile", "voice_data/ac/profile.json"))
+    except ValueError as e:
+        return Result("AC", FAIL, str(e), f"{onboard} capture, then fit and try")
+    from . import __main__ as cli
+
+    blaster = cli.make_blaster(spec, root)
+    why, fix = "the blaster didn't answer", "is it powered, on the Wi-Fi, at that address? (python -m tinytuya scan)"
+    try:
+        answered = within(20, "AC", lambda: blaster.connect() or Result("AC", OK, ""), why, fix)
+    except Exception as e:  # noqa: BLE001 - what's wrong is the result
+        return Result("AC", FAIL, f"the blaster at {spec['address']} didn't answer: {e}", fix)
+    if answered.status == FAIL:
+        return answered
+    temps = profile.temperatures()
+    degrees = f", {temps[0]} to {temps[1]} degrees" if temps else ", no temperatures"
+    detail = f"blaster answers; profile: {', '.join(profile.values('mode')) or 'one mode'}{degrees}"
+    if not profile.checked:
+        return Result("AC", WARN, f"{detail}, never tried on the AC", f"{onboard} try")
+    return Result("AC", OK, detail)
+
+
 def check_all(cfg: Config, root: Path) -> int:
     import sounddevice as sd
 
@@ -413,6 +493,17 @@ def check_all(cfg: Config, root: Path) -> int:
         wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
         return sd.query_devices(find_device(wanted, kind), kind)[f"default_high_{kind}_latency"]
 
+    def hass():
+        from .home import TOKEN_KEY, HomeAssistant
+
+        return HomeAssistant(cfg.home.url, cli.api_key(env, TOKEN_KEY))
+
+    def devices():
+        if not cfg.home.devices:
+            return Result("The house", SKIP, "no devices ([[home.devices]] in config.toml)")
+        ready = home_assistant(cfg, have, hass).status == OK
+        return house(cfg, hass() if ready else None)
+
     def speakers():
         if not cfg.speaker.enabled:
             return Result("Voiceprints", SKIP, "speaker ID is off")
@@ -440,6 +531,9 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
+        ("Home Assistant", lambda: home_assistant(cfg, have, hass)),
+        ("The house", devices),
+        ("AC", lambda: ac_check(cfg, root, have)),
         ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
         ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
     ]

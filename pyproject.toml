@@ -23,6 +23,7 @@ dependencies = [
     "uvicorn>=0.30",
     "websockets>=14",
     "onnxruntime>=1.20",
+    "httpx>=0.28",
 ]
 
 [project.urls]
@@ -38,6 +39,9 @@ claude = [
 ]
 echo = [
     "livekit>=1.1",
+]
+ac = [
+    "tinytuya>=1.17",
 ]
 
 [build-system]

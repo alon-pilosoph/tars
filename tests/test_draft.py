@@ -80,7 +80,7 @@ def test_a_reply_that_fails_while_playing_is_stopped_and_forgotten(speaker):
 def test_a_question_the_brain_failed_on_is_forgotten(speaker):
     assistant, brain = make_assistant(speaker, [["pause", speech()]], ["yes, the lights"])
 
-    def broken(text):
+    def broken(text, request=None):
         brain.asked.append(text)
         raise ConnectionError("the brain is down")
         yield
@@ -133,3 +133,27 @@ def test_a_reply_thrown_away_stops_its_sentences_and_frees_the_voice():
     assert speaking.wait(1)
     reply.stop()
     assert closed.wait(1)
+
+
+def test_what_an_answer_does_waits_for_the_turn_and_a_thrown_away_one_does_nothing(speaker):
+    assistant, brain = make_assistant(
+        speaker,
+        [["pause", "resume", "pause", speech()]],
+        ["unlock the", "unlock the door"],
+        replies=["Early.", "Unlock the front door?"],
+    )
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    played_by(speaker)
+    assistant.converse(follow_up_s=0)
+    thrown_away, played = brain.requests
+    assert played.by_voice and thrown_away.by_voice
+    assert thrown_away.may_act(0) is False and played.may_act(0) is True
+
+
+def test_a_draft_may_act_only_once_its_turn_is_over():
+    draft = Draft(threading.Lock(), lambda d: "answer", lambda r: None)
+    assert draft.may_act(0.01) is False  # still drafting: not yet
+    draft.go()
+    assert draft.may_act(0) is True
+    draft.cancel()
+    assert draft.may_act(0) is False

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 OPENAI_TIMEOUT_S = 15.0
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
+AC_FOLDER = "voice_data/ac"  # the AC's learned profile (profile.json), and whether TARS thinks it's on (state.json)
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
 EX_CONFIG = 78
 # sysexits' EX_UNAVAILABLE: no speakerphone. Not restarted either; plugging it in starts TARS (the udev rule).
@@ -317,9 +318,51 @@ def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
     return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list)
 
 
-def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
+def make_home(cfg: Config, root: Path):
+    """The devices in the house, as [home] lists them, or None. Like every service, optional: without the token, or
+    the AC's profile, TARS says what it can't work and starts anyway."""
+    if not cfg.home.devices:
+        return None
+    from .home import AC, TOKEN_KEY, HomeAssistant, HomeTools
+
+    env = root / ".env"
+    hass = None
+    if cfg.home.url and TOKEN_KEY in env_keys(env):
+        hass = HomeAssistant(cfg.home.url, api_key(env, TOKEN_KEY))
+    elif cfg.home.url:
+        print(f"(no {TOKEN_KEY}: the lock and the boiler aren't connected; see docs/home.md)")
+    ac = None
+    if spec := next((d for d in cfg.home.devices if d["kind"] == AC), None):
+        try:
+            ac = make_ac(spec, hass, root)
+        except (ValueError, ConfigError) as e:
+            print(f"(the AC isn't connected: {e.code if isinstance(e, ConfigError) else e})")
+    home = HomeTools(cfg.home, hass, ac)
+    if home.devices:
+        print(f"(the house: {', '.join(home.devices)})")
+    return home
+
+
+def make_blaster(spec: dict, root: Path):
+    from .ac import TUYA_KEY, Blaster
+
+    return Blaster(spec["blaster"], spec["address"], api_key(root / ".env", TUYA_KEY), spec.get("version", "3.3"))
+
+
+def make_ac(spec: dict, hass, root: Path):
+    from .ac import AC, Profile
+
+    folder = root / AC_FOLDER
+    profile = Profile.load(root / spec["profile"] if spec.get("profile") else folder / "profile.json")
+    if not profile.checked:
+        print("(the AC's profile wasn't tried on the AC yet: python -m voice_assistant.ac_onboard try)")
+    return AC(profile, make_blaster(spec, root).send, folder / "state.json", hass, spec.get("state", ""))
+
+
+def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
-    With `reminders` (a ReminderTools), the brain can set them and knows what's set."""
+    With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
+    can work the devices in the house."""
     from .effects import apply_effect
     from .llm import OpenAIChat, QuickChat
     from .stt import (
@@ -336,7 +379,10 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     client = make_openai_client(env) if OPENAI_KEY in keys else None
     llm = brain_config(cfg, typed=typed)
     quick = quick_services(llm, env)
-    brain = QuickChat(client, llm, quick, reminders) if quick else OpenAIChat(client, llm, reminders)
+    if quick:
+        brain = QuickChat(client, llm, quick, reminders, home=home)
+    else:
+        brain = OpenAIChat(client, llm, reminders, home=home)
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
     elif cfg.tts.provider == "cartesia":
@@ -366,7 +412,7 @@ def typed(cfg: Config, root: Path) -> None:
     """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
     from .assistant import Assistant
 
-    _, brain, voice = make_pipeline(cfg, root, typed=True)
+    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root))
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
@@ -394,7 +440,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     events = make_event_log(cfg, root)
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
-    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders)
+    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=make_home(cfg, root))
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
     speaker = Speaker(

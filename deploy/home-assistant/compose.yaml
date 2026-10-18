@@ -1,0 +1,27 @@
+# Home Assistant and Mosquitto (the MQTT broker the Nuki reports to), on the Pi beside TARS. docs/home.md
+#   cd deploy/home-assistant && docker compose up -d
+# Everything they keep is in this folder (config/, mosquitto/data/), which git ignores.
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    # The host's network, so it finds the Switcher and the blaster on the home network as they announce themselves.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Jerusalem
+    volumes:
+      - ./config:/config
+      - /etc/localtime:/etc/localtime:ro
+      - /run/dbus:/run/dbus:ro
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwords:/mosquitto/config/passwords:ro
+      - ./mosquitto/data:/mosquitto/data

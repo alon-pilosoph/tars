@@ -176,6 +176,29 @@ class RemindersConfig:
     ack_window_s: float = 6.0
 
 
+# What each kind of [[home.devices]] needs, and may have, besides its name and kind. Home Assistant's entity ids start
+# with their domain: a lock is lock.*, a switch switch.* (the Switcher's boiler is one).
+HOME_DEVICES = {
+    "lock": ({"entity": ("lock",)}, {"door": ("binary_sensor",), "battery": ("sensor",)}),
+    "boiler": ({"entity": ("switch",)}, {"remaining": ("sensor",), "power": ("sensor",)}),
+    "switch": ({"entity": ("switch", "light", "fan", "input_boolean")}, {}),
+    "ac": ({"blaster": (), "address": ()}, {"version": (), "profile": (), "state": ("binary_sensor", "input_boolean")}),
+}
+TUYA_VERSIONS = ("3.1", "3.2", "3.3", "3.4", "3.5")
+
+
+@dataclass
+class HomeConfig:
+    # Home Assistant, on the home network (docs/home.md); its token is HOME_ASSISTANT_TOKEN in .env. Empty = none.
+    url: str = ""
+    # Who may unlock a lock by voice, by their names in the Voices list; empty = nobody (the Nuki app does it).
+    unlock_voices: list[str] = field(default_factory=list)
+    # How sure speaker ID must be that it's them, to unlock: stricter than [speaker] threshold.
+    unlock_threshold: float = 0.6
+    # [[home.devices]]: name, kind (lock, boiler, switch or ac), and what HOME_DEVICES says that kind needs.
+    devices: list[dict] = field(default_factory=list)
+
+
 @dataclass
 class Config:
     audio: AudioConfig
@@ -188,6 +211,7 @@ class Config:
     learning: LearningConfig
     web: WebConfig
     reminders: RemindersConfig
+    home: HomeConfig
 
 
 def load_config(path: Path) -> Config:
@@ -326,4 +350,43 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[reminders] timer_ring_min must be between 1 and 60")
     if not 2 <= cfg.reminders.ack_window_s <= 30:
         problems.append("[reminders] ack_window_s must be between 2 and 30")
+    return problems + _home_problems(cfg.home)
+
+
+def _home_problems(home: HomeConfig) -> list[str]:
+    problems, names = [], set()
+    if home.url and not re.fullmatch(r"https?://[^\s/]+(:\d+)?/?", home.url):
+        problems.append(f"[home] url must be an address like http://homeassistant.local:8123, not {home.url!r}")
+    if not 0 < home.unlock_threshold <= 1:
+        problems.append("[home] unlock_threshold must be more than 0 and at most 1")
+    for i, d in enumerate(home.devices, 1):
+        name, kind = d.get("name"), d.get("kind")
+        where = f"[[home.devices]] {name!r}" if isinstance(name, str) and name.strip() else f"[[home.devices]] #{i}"
+        if not (isinstance(name, str) and name.strip()):
+            problems.append(f"{where} needs a name")
+        elif name.strip().lower() in names:
+            problems.append(f"{where}: two devices have that name")
+        else:
+            names.add(name.strip().lower())
+        if kind not in HOME_DEVICES:
+            problems.append(f"{where}: kind must be {', '.join(HOME_DEVICES)}, not {kind!r}")
+            continue
+        needs, may = HOME_DEVICES[kind]
+        for key, value in d.items():
+            if key in ("name", "kind"):
+                continue
+            if key not in needs and key not in may:
+                problems.append(f"{where} ({kind}) has no setting {key}")
+            elif not isinstance(value, str) or not value.strip():
+                problems.append(f"{where}: {key} must be text")
+            elif (domains := {**needs, **may}[key]) and value.split(".", 1)[0] not in domains:
+                kinds = " or ".join(f"{x}.*" for x in domains)
+                problems.append(f"{where}: {key} must be a {kinds} entity, not {value!r}")
+        problems += [f"{where} ({kind}) needs {key}" for key in needs if key not in d]
+        if kind == "ac" and d.get("version", "3.3") not in TUYA_VERSIONS:
+            problems.append(f"{where}: version must be one of {', '.join(TUYA_VERSIONS)}")
+        if kind != "ac" and not home.url:
+            problems.append(f"{where} goes through Home Assistant: set [home] url")
+    if sum(d.get("kind") == "ac" for d in home.devices) > 1:
+        problems.append("[[home.devices]]: only one ac for now")
     return problems

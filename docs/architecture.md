@@ -124,6 +124,10 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   title) sent twice in one reply is sent once, whichever model asks the second time. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
 - **Reminders** (`remind`, `cancel_reminder`, `snooze_reminder`): see [reminders](reminders.md).
+- **The house** (`home`, with `[home]` devices): the lock and the boiler through Home Assistant, the AC through its IR
+  blaster. A change is only "done" when the device reports it, waits until the turn is over (a draft thrown away changes
+  nothing), and unlocking has rules in code: a voice it knows, sure, and a yes to its own question. See
+  [the house](home.md).
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.
@@ -134,7 +138,7 @@ something it could have done. Turning a feature off in config changes both promp
 
 | Marker | When | To | TARS says first |
 |---|---|---|---|
-| `<look-up>` | the web: weather, news, prices, a real link; and reminders and sending, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
+| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
 | `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links,
@@ -185,7 +189,8 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
     stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
     Deepgram, or the reply text instead of Cartesia.
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
-  served from the same machine and talks to nothing else.
+  served from the same machine and talks to nothing else. Home Assistant, the Nuki's MQTT and the AC's blaster are on
+  the home network too; the models only see what the home tool answered, as part of the conversation.
 
 ## The web UI
 
@@ -217,15 +222,17 @@ The assistant is `src/voice_assistant/`:
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
 | Reminders | `reminders.py` (the table, what's due, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
+| The house | `home.py` (the `home` tool, Home Assistant, the lock's rules), `ac.py` (the AC's codes from its learned profile, and whether it's on), `ac_onboard.py` (teaching it the remote, once) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
 | Downloads | `models.py` (the small local models, on first use) |
-| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage) |
+| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Home Assistant, the house, the AC) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),
 `tools/` (benchmarks: `latency_bench.py`, `turn_bench.py`, `wakeword_bench.py`, `verifier_bench.py`;
 `capability_bench.py` and `router_bench.py` for the quick model's tools and hand-offs; `echo_bench.py` for echo
 cancellation in the room), `evals/` (whole conversations played through the brain, hand-offs followed through,
-[docs/evals.md](evals.md)), `deploy/` (the Pi's install script and services) and `tests/`.
+[docs/evals.md](evals.md)), `deploy/` (the Pi's install script and services, and `home-assistant/`: Home Assistant and Mosquitto in Docker) and
+`tests/`.

@@ -152,3 +152,52 @@ def test_echo_cancellation_warns_when_the_devices_delay_is_more_than_it_can_take
     assert check.echo_delay(0.1, 0.2).status == OK
     late = check.echo_delay(0.3, 0.3)
     assert late.status == WARN and "echo_bench" in late.fix
+
+
+def test_home_assistant_needs_its_token_and_says_where_it_goes(cfg):
+    from voice_assistant.config import HomeConfig
+    from voice_assistant.home import HomeError
+
+    assert check.home_assistant(cfg, set(), lambda: None).status == SKIP
+    home = cfg.__class__(**{**vars(cfg), "home": HomeConfig(url="http://ha.local:8123")})
+    missing = check.home_assistant(home, set(), lambda: None)
+    assert missing.status == FAIL and "HOME_ASSISTANT_TOKEN" in missing.fix
+    have = {"HOME_ASSISTANT_TOKEN"}
+    up = type("Up", (), {"ping": lambda self: "API running."})
+    assert check.home_assistant(home, have, up).status == OK
+    down = type("Down", (), {"ping": raising(HomeError("Home Assistant didn't answer (ConnectError)"))})
+    assert check.home_assistant(home, have, down).status == FAIL
+
+
+def test_every_device_and_sensor_is_found_in_home_assistant(cfg):
+    from voice_assistant.config import HomeConfig
+    from voice_assistant.home import HomeError
+
+    devices = [
+        {"name": "front door", "kind": "lock", "entity": "lock.front_door", "battery": "sensor.nuki_battery"},
+        {"name": "boiler", "kind": "boiler", "entity": "switch.boiler"},
+        {"name": "ac", "kind": "ac", "blaster": "x", "address": "10.0.0.9"},
+    ]
+    home = cfg.__class__(**{**vars(cfg), "home": HomeConfig(url="http://ha", devices=devices)})
+    states = {"lock.front_door": "locked", "switch.boiler": "unavailable"}
+
+    def state(entity):
+        if entity not in states:
+            raise HomeError("no such entity")
+        return {"state": states[entity]}
+
+    door, boiler = check.house(home, type("HA", (), {"state": lambda self, e: state(e)})())
+    assert door.status == FAIL and "sensor.nuki_battery" in door.detail
+    assert boiler.status == WARN and "can't reach it" in boiler.fix
+    assert [r.status for r in check.house(home, None)] == [SKIP, SKIP]
+
+
+def test_the_ac_needs_its_key_and_a_profile(cfg, tmp_path):
+    from voice_assistant.config import HomeConfig
+
+    assert check.ac_check(cfg, tmp_path, set()).status == SKIP
+    ac = {"name": "ac", "kind": "ac", "blaster": "x", "address": "10.0.0.9"}
+    home = cfg.__class__(**{**vars(cfg), "home": HomeConfig(devices=[ac])})
+    assert "TUYA_LOCAL_KEY" in check.ac_check(home, tmp_path, set()).detail
+    no_profile = check.ac_check(home, tmp_path, {"TUYA_LOCAL_KEY"})
+    assert no_profile.status == FAIL and "ac_onboard capture" in no_profile.fix

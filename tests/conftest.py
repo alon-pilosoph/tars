@@ -168,6 +168,7 @@ class RecordingBrain:
     def __init__(self, replies=()):
         self.replies = iter(replies)
         self.asked = []
+        self.requests = []
         self.forgotten = 0
         self.sent = []
         self.changes = []
@@ -180,8 +181,9 @@ class RecordingBrain:
     def interrupt(self):
         pass
 
-    def stream_reply(self, text):
+    def stream_reply(self, text, request=None):
         self.asked.append(text)
+        self.requests.append(request)
         return iter([next(self.replies, "ok")])
 
     def forget_last(self):

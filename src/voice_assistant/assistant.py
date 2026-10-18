@@ -26,6 +26,7 @@ from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .echo import without_echo
 from .files import atomic_write
+from .home import Request
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
 from .recorder import UtteranceRecorder
@@ -528,6 +529,7 @@ class Assistant:
         self.timings = {}
         answer: Answer | None = None
         try:
+            heard.draft.go()  # the turn is over: what the answer does in the house can be done
             answer = heard.draft.take()
             name, score, embedding = answer.who
             if heard.echo_of and not answer.text:
@@ -625,17 +627,18 @@ class Assistant:
         if not text or draft.cancelled:
             return answer
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
+        request = Request(answer.who.name, answer.who.score, by_voice=True, may_act=draft.may_act)
         try:
             # A follow-up, or a reply to "Did you call me?" (maybe a "no"), may not be meant for TARS at all.
-            return self._start_reply(answer, prompt, may_skip=follow_up or tag is not None)
+            return self._start_reply(answer, prompt, may_skip=follow_up or tag is not None, request=request)
         except Exception as e:  # noqa: BLE001 - raised again in handle(), after what was heard is kept
             answer.asked, answer.error = False, e  # already forgotten
             return answer
 
-    def _start_reply(self, answer: Answer, prompt: str, may_skip: bool) -> Answer:
+    def _start_reply(self, answer: Answer, prompt: str, may_skip: bool, request: Request | None = None) -> Answer:
         answer.asked, answer.t_asked = True, time.perf_counter()
         try:
-            pieces = self.brain.stream_reply(prompt)
+            pieces = self.brain.stream_reply(prompt, request)
             if may_skip:
                 answer.skipped, pieces = split_skip(pieces)
                 if answer.skipped:
