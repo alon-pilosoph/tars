@@ -26,8 +26,9 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 - **Evaluated as whole conversations**: hand-offs followed through, corrections, failures mid-conversation, every turn
   checked, with costs estimated and capped ([evals](docs/evals.md)).
 - **Reminders, timers and messages** that repeat until someone says "got it" ([reminders](docs/reminders.md)).
-- **Works the house**: the lock, the boiler and an IR-only AC, each change confirmed by the device, nothing done by a
-  draft, and unlocking only for a voice it knows, after asking ([the house](docs/home.md)).
+- **Works the house**: the lock, the boiler, an IR-only AC, the TV and soundbar, and "play Toy Story on Stremio" on
+  the Fire TV, checked on screen step by step. Each change is confirmed by the device, nothing is done by a draft,
+  and unlocking is only for a voice it knows, after asking ([the house](docs/home.md)).
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices ([web UI](docs/web-ui.md)).

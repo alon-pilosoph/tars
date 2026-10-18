@@ -192,12 +192,22 @@ def test_every_device_and_sensor_is_found_in_home_assistant(cfg):
     assert [r.status for r in check.house(home, None)] == [SKIP, SKIP]
 
 
-def test_the_ac_needs_its_key_and_a_profile(cfg, tmp_path):
+def test_the_blaster_needs_its_key_and_the_ac_a_profile(cfg, tmp_path):
     from voice_assistant.config import HomeConfig
 
-    assert check.ac_check(cfg, tmp_path, set()).status == SKIP
-    ac = {"name": "ac", "kind": "ac", "blaster": "x", "address": "10.0.0.9"}
-    home = cfg.__class__(**{**vars(cfg), "home": HomeConfig(devices=[ac])})
-    assert "TUYA_LOCAL_KEY" in check.ac_check(home, tmp_path, set()).detail
-    no_profile = check.ac_check(home, tmp_path, {"TUYA_LOCAL_KEY"})
+    assert check.blaster_check(cfg, tmp_path, set()).status == SKIP
+    assert check.ac_check(cfg, tmp_path).status == SKIP
+    home = HomeConfig(blaster={"id": "x", "address": "10.0.0.9"}, devices=[{"name": "ac", "kind": "ac"}])
+    with_ac = cfg.__class__(**{**vars(cfg), "home": home})
+    assert "TUYA_LOCAL_KEY" in check.blaster_check(with_ac, tmp_path, set()).detail
+    no_profile = check.ac_check(with_ac, tmp_path)
     assert no_profile.status == FAIL and "ac_onboard capture" in no_profile.fix
+
+
+def test_the_fire_tv_must_have_let_tars_in(cfg, tmp_path):
+    from voice_assistant.config import HomeConfig
+
+    assert check.firetv_check(cfg, tmp_path, set()).status == SKIP
+    home = HomeConfig(devices=[{"name": "fire tv", "kind": "firetv", "address": "10.0.0.8"}])
+    never_paired = check.firetv_check(cfg.__class__(**{**vars(cfg), "home": home}), tmp_path, set())
+    assert never_paired.status == FAIL and "firetv pair" in never_paired.fix

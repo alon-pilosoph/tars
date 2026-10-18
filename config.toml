@@ -182,8 +182,9 @@ ack_window_s = 6.0
 allowed_hosts = []
 
 [home]
-# The house (docs/home.md): TARS locks the door, runs the boiler and works the AC by voice ("is the door locked?",
-# "boiler on for 40 minutes", "make it 22"). The lock and the boiler go through Home Assistant on the home network;
+# The house (docs/home.md): TARS locks the door, runs the boiler, works the AC, the TV and the soundbar, and plays
+# things on the Fire TV by voice ("is the door locked?", "boiler on for 40 minutes", "make it 22", "play Toy Story on
+# Stremio"). The lock and the boiler go through Home Assistant on the home network;
 # its token is HOME_ASSISTANT_TOKEN in .env. Every change is checked against what the device then reports, and a
 # reply that's still a draft changes nothing. Empty url and no devices = TARS says it can't work the house.
 url = ""
@@ -192,6 +193,11 @@ url = ""
 unlock_voices = []
 # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
 unlock_threshold = 0.6
+# The model that works the Fire TV step by step ("play Toy Story on Stremio"), reading its screen. Empty = [llm] model.
+tv_model = ""
+# The IR blaster, for the AC, the TV and the soundbar: its id, address and protocol version (tinytuya scan); its
+# local key is TUYA_LOCAL_KEY in .env.
+# blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.3" }
 
 # One [[home.devices]] for each thing TARS may work. name is what people call it; Home Assistant's entity ids are
 # in Settings > Devices & services > Entities.
@@ -211,8 +217,20 @@ unlock_threshold = 0.6
 #
 # [[home.devices]]
 # name = "AC"
-# kind = "ac"                                     # through a Tuya IR blaster, taught the AC's remote once:
-# blaster = "bf0123456789abcdef"                  # uv run python -m voice_assistant.ac_onboard (docs/home.md)
-# address = "192.168.1.50"                        # the blaster's id, address and protocol version: tinytuya scan
-# version = "3.3"                                 # its local key is TUYA_LOCAL_KEY in .env
+# kind = "ac"                                     # taught the AC's remote once: python -m voice_assistant.ac_onboard
 # state = "binary_sensor.ac_light"                # optional: a sensor on the AC's light, so TARS knows it's on
+#
+# [[home.devices]]
+# name = "TV"
+# kind = "ir"                                     # published codes, nothing to record: samsung-tv or polk-re9641
+# codes = "samsung-tv"
+#
+# [[home.devices]]
+# name = "soundbar"
+# kind = "ir"
+# codes = "polk-re9641"
+#
+# [[home.devices]]
+# name = "fire tv"
+# kind = "firetv"                                 # over ADB: python -m voice_assistant.firetv pair (docs/home.md)
+# address = "192.168.1.60"

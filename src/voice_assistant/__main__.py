@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from .llm import QuickService
 
 OPENAI_TIMEOUT_S = 15.0
+AGENT_TIMEOUT_S = 40.0  # one step of the Fire TV agent, a screenshot to read
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
 AC_FOLDER = "voice_data/ac"  # the AC's learned profile (profile.json), and whether TARS thinks it's on (state.json)
@@ -318,45 +319,83 @@ def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
     return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list)
 
 
-def make_home(cfg: Config, root: Path):
-    """The devices in the house, as [home] lists them, or None. Like every service, optional: without the token, or
-    the AC's profile, TARS says what it can't work and starts anyway."""
+def make_home(cfg: Config, root: Path, announce=None):
+    """The devices in the house, as [home] lists them, or None. Like every service, optional: without the token, the
+    blaster's key or the AC's profile, TARS says what it can't work and starts anyway. `announce(line, for_name)`:
+    how TARS says something on its own, later (the Fire TV agent's result)."""
     if not cfg.home.devices:
         return None
-    from .home import AC, TOKEN_KEY, HomeAssistant, HomeTools
+    from .ac import TUYA_KEY
+    from .home import AC, FIRETV, IR, TOKEN_KEY, HomeAssistant, HomeTools
 
     env = root / ".env"
+    keys = env_keys(env)
     hass = None
-    if cfg.home.url and TOKEN_KEY in env_keys(env):
+    if cfg.home.url and TOKEN_KEY in keys:
         hass = HomeAssistant(cfg.home.url, api_key(env, TOKEN_KEY))
     elif cfg.home.url:
         print(f"(no {TOKEN_KEY}: the lock and the boiler aren't connected; see docs/home.md)")
-    ac = None
-    if spec := next((d for d in cfg.home.devices if d["kind"] == AC), None):
+    blaster = None
+    if cfg.home.blaster and TUYA_KEY in keys:
+        blaster = make_blaster(cfg.home.blaster, root)
+    elif cfg.home.blaster:
+        print(f"(no {TUYA_KEY}: the AC, the TV and the soundbar by IR aren't connected; see docs/home.md)")
+    local = {}
+    for spec in cfg.home.devices:
+        name = spec["name"].strip().lower()
         try:
-            ac = make_ac(spec, hass, root)
+            if spec["kind"] == AC and blaster:
+                local[name] = make_ac(spec, blaster, hass, root)
+            elif spec["kind"] == IR and blaster:
+                from .ir import CODE_SETS, Remote
+
+                local[name] = Remote(name, CODE_SETS[spec["codes"]], blaster.send)
+            elif spec["kind"] == FIRETV:
+                local[name] = make_tv(cfg, spec, root, announce)
         except (ValueError, ConfigError) as e:
-            print(f"(the AC isn't connected: {e.code if isinstance(e, ConfigError) else e})")
-    home = HomeTools(cfg.home, hass, ac)
+            print(f"(the {name} isn't connected: {e.code if isinstance(e, ConfigError) else e})")
+    home = HomeTools(cfg.home, hass, local)
     if home.devices:
         print(f"(the house: {', '.join(home.devices)})")
     return home
 
 
 def make_blaster(spec: dict, root: Path):
+    """The IR blaster, from [home] blaster."""
     from .ac import TUYA_KEY, Blaster
 
-    return Blaster(spec["blaster"], spec["address"], api_key(root / ".env", TUYA_KEY), spec.get("version", "3.3"))
+    return Blaster(spec["id"], spec["address"], api_key(root / ".env", TUYA_KEY), spec.get("version", "3.3"))
 
 
-def make_ac(spec: dict, hass, root: Path):
+def make_ac(spec: dict, blaster, hass, root: Path):
     from .ac import AC, Profile
 
     folder = root / AC_FOLDER
     profile = Profile.load(root / spec["profile"] if spec.get("profile") else folder / "profile.json")
     if not profile.checked:
         print("(the AC's profile wasn't tried on the AC yet: python -m voice_assistant.ac_onboard try)")
-    return AC(profile, make_blaster(spec, root).send, folder / "state.json", hass, spec.get("state", ""))
+    return AC(profile, blaster.send, folder / "state.json", hass, spec.get("state", ""))
+
+
+def make_tv(cfg: Config, spec: dict, root: Path, announce=None):
+    """The Fire TV, and its agent if there's OpenAI to run it and somewhere to say how it went."""
+    from .firetv import KEY_FILE, TV, FireTV, TvAgent
+
+    try:
+        import adb_shell  # noqa: F401 - only whether it's there
+    except ImportError:
+        raise ValueError('it needs the optional extra "tv": uv sync --all-extras') from None
+    stick = FireTV(spec["address"], root / KEY_FILE)
+    agent = None
+    if announce and OPENAI_KEY in env_keys(root / ".env"):
+        from openai import OpenAI
+
+        # Each step reads a screenshot, so a step can take longer than a spoken reply may.
+        client = OpenAI(api_key=api_key(root / ".env", OPENAI_KEY), timeout=AGENT_TIMEOUT_S, max_retries=1)
+        agent = TvAgent(stick, client, cfg.home.tv_model or cfg.llm.model, announce)
+    elif announce:
+        print(f'(no {OPENAI_KEY}: the Fire TV takes single buttons and apps, not tasks like "play Toy Story")')
+    return TV(stick, agent)
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None):
@@ -412,11 +451,20 @@ def typed(cfg: Config, root: Path) -> None:
     """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
     from .assistant import Assistant
 
-    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root))
+    later: list = []  # the assistant, once made: what the TV agent says when it's done is said through it
+
+    def announce(line: str, for_name: str | None = None) -> None:
+        print(f"\nTARS:  {line}\n\nYou:  ", end="", flush=True)
+        if later:
+            later[0].say(line, keep=False)
+            later[0].brain.remember_said(line)
+
+    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce))
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
         assistant = Assistant(None, speaker, None, None, None, brain, voice)
+        later.append(assistant)
         while True:
             try:
                 text = input("\nYou:  ").strip()
@@ -440,7 +488,11 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     events = make_event_log(cfg, root)
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
-    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=make_home(cfg, root))
+    from .assistant import Announcements
+
+    announcements = Announcements()
+    home = make_home(cfg, root, announcements.add)
+    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home)
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
     speaker = Speaker(
@@ -467,6 +519,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             phrases=phrase_folder(cfg, root),
             reminders=reminders,
             ack_window_s=cfg.reminders.ack_window_s,
+            announcements=announcements,
         )
         assistant.run_forever(
             idle_message,

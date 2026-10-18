@@ -10,6 +10,7 @@ import random
 import threading
 import time
 import traceback
+from collections import deque
 from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import nullcontext
@@ -70,6 +71,28 @@ class Identified(NamedTuple):
 NOBODY = Identified(None, None, None)
 
 
+class Announcements:
+    """What TARS says on its own once it's free, from another thread: how a task on the TV went. Kept in order; said
+    after a chime, between conversations, like a reminder."""
+
+    def __init__(self):
+        self._lines: deque[tuple[str, str | None]] = deque()
+        self._lock = threading.Lock()
+
+    def add(self, line: str, for_name: str | None = None) -> None:
+        if line.strip():
+            with self._lock:
+                self._lines.append((line.strip(), for_name))
+
+    def waiting(self) -> bool:
+        return bool(self._lines)
+
+    def take(self) -> list[tuple[str, str | None]]:
+        with self._lock:
+            lines, self._lines = list(self._lines), deque()
+        return lines
+
+
 @dataclass
 class Said:
     text: str
@@ -124,6 +147,7 @@ class Assistant:
         phrases: Path | None = None,
         reminders: ReminderTools | None = None,
         ack_window_s: float = RemindersConfig.ack_window_s,
+        announcements: Announcements | None = None,
     ):
         self.mic = mic
         self.speaker = speaker
@@ -147,6 +171,7 @@ class Assistant:
         self._phrases: dict[str, Future[list[bytes]]] = {}
         self._phrase_dir = phrases  # the short lines' audio for this voice, so they survive an offline restart
         self.ack_window_s = ack_window_s
+        self.announcements = announcements
         self.reminder_tools: ReminderTools | None = None
         self._clock: Clock | None = None
         self.use_reminders(reminders)
@@ -169,9 +194,12 @@ class Assistant:
             self._clock.start()
         while True:
             print(f"\n{idle_message}")
-            woke = self.trigger.wait(self.mic, due=self._clock.is_due if self._clock else None)
+            woke = self.trigger.wait(self.mic, due=self._due if self._clock or self.announcements else None)
             if woke == DUE:
-                self.say_reminders(follow_up_s)
+                if self.announcements and self.announcements.waiting():
+                    self.say_announcements(follow_up_s)
+                if self._clock and self._clock.is_due():
+                    self.say_reminders(follow_up_s)
                 continue
             if woke == ASK:
                 self.ask_if_called(follow_up_s)
@@ -255,6 +283,33 @@ class Assistant:
         """Makes each active reminder's line ahead, so it plays at once when it's due."""
         for r in active:
             self._phrase(reminder_line(r) if r["due"] is not None else held_line(r), keep=False)
+
+    def _due(self) -> bool:
+        return bool(self.announcements and self.announcements.waiting()) or bool(self._clock and self._clock.is_due())
+
+    def say_announcements(self, follow_up_s: float = 0.0) -> None:
+        """Says what's waiting to be said (the TV is playing, or why it isn't), then listens a moment, without the
+        wake word, in case it asked something ("Toy Story, or Toy Story 4?"). What's said joins the conversation."""
+        lines = self.announcements.take() if self.announcements else []
+        if not lines:
+            return
+        self.journal.unprompted()
+        with self._mic_paused():
+            self.speaker.play_pcm_stream(iter([chime(self.voice.sample_rate)]), self.voice.sample_rate)
+        said = []
+        for line, _ in lines:
+            print(f"Bot:  {line}  (on its own)")
+            if self.say(line, keep=False):
+                self.journal.said(line)
+                said.append(line)
+        if not said:
+            return
+        self.brain.remember_said(" ".join(said))
+        heard = self.listen(start_timeout_s=follow_up_s, follow_up=True) if follow_up_s else None
+        if heard is None:
+            self.journal.nobody_spoke()
+            return
+        self.converse(follow_up_s, first=heard)
 
     def say_reminders(self, follow_up_s: float = 0.0) -> None:
         """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""

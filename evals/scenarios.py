@@ -70,12 +70,20 @@ class ExpectedHome:
     temperature: int | None = None
     mode: str | None = None
     fan: str | None = None
+    button: str | None = None
+    app: str | None = None
+    goal: str | None = None  # a regular expression the goal has to match (any case)
 
     def matches(self, call: dict) -> bool:
         if (self.device, self.action) != (call.get("device"), call.get("action")):
             return False
-        wanted = {k: v for k, v in vars(self).items() if k not in ("device", "action") and v is not None}
-        return all(call.get(k) == v for k, v in wanted.items())
+        wanted = {k: v for k, v in vars(self).items() if k not in ("device", "action", "goal") and v is not None}
+        if self.goal and not re.search(self.goal, str(call.get("goal") or ""), re.IGNORECASE):
+            return False
+        return all(
+            str(call.get(k)).lower() == str(v).lower() if isinstance(v, str) else call.get(k) == v
+            for k, v in wanted.items()
+        )
 
     def said(self) -> str:
         extra = ", ".join(f"{k} {v}" for k, v in vars(self).items() if k not in ("device", "action") and v is not None)
@@ -216,7 +224,11 @@ def _turn(raw: dict, where: str) -> Turn:
     if "home" in raw:
         home = []
         for h in raw["home"]:
-            _only(h, {"device", "action", "minutes", "temperature", "mode", "fan"}, f"{where}, home")
+            _only(
+                h,
+                {"device", "action", "minutes", "temperature", "mode", "fan", "button", "app", "goal"},
+                f"{where}, home",
+            )
             if h.get("action") not in ACTIONS or h["action"] == STATUS:
                 raise ValueError(f"{where}, home: action must be one of {[a for a in ACTIONS if a != STATUS]}")
             home.append(ExpectedHome(**{**h, "device": str(h["device"]).lower()}))

@@ -28,7 +28,7 @@ UV="$HOME/.local/bin/uv"
 [ -x "$UV" ] || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 echo "== Python packages (uv installs its own Python)"
-"$UV" sync --frozen --all-extras  # echo cancellation, Claude and the AC's IR blaster are extras
+"$UV" sync --frozen --all-extras  # echo cancellation, Claude, the IR blaster and the Fire TV are extras
 
 echo "== API keys (TARS uses the services there are keys for, and says what it does without the others)"
 [ -e .env ] || cp .env.example .env

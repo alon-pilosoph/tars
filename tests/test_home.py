@@ -94,11 +94,11 @@ def home(ha: FakeHA | None = None, unlock_voices=("alon",), devices=DEVICES, **c
     return tools, ha
 
 
+NO_SETTINGS = dict.fromkeys(("minutes", "mode", "temperature", "fan", "button", "times", "app", "goal"))
+
+
 def args(device, action, **extra):
-    return {"device": device, "action": action, "minutes": None, "mode": None, "temperature": None, "fan": None} | {
-        "confirmed": False,
-        **extra,
-    }
+    return {"device": device, "action": action, **NO_SETTINGS, "confirmed": False, **extra}
 
 
 def numbered(request: Request, n: int) -> Request:
@@ -308,7 +308,7 @@ colour = "blue"
     message = str(e.value.code)
     assert "entity must be a lock.* entity" in message
     assert "two devices have that name" in message and "kind must be lock, boiler, switch, ac" in message
-    assert "(ac) has no setting colour" in message and "(ac) needs address" in message
+    assert "(ac) has no setting colour" in message and "goes through the IR blaster: set [home] blaster" in message
 
 
 def test_the_shipped_config_loads_with_no_devices():
@@ -374,3 +374,29 @@ def test_each_reply_gets_its_own_request_number():
     "".join(brain.stream_reply("one", first))
     "".join(brain.stream_reply("two", second))
     assert 0 < first.number < second.number
+
+
+def test_devices_tars_works_itself_are_listed_with_what_they_can_do_and_wait_for_the_turn():
+    from voice_assistant.ir import CODE_SETS, Remote
+
+    sent = []
+    devices = [*DEVICES, {"name": "soundbar", "kind": "ir", "codes": "polk-re9641"}, {"name": "AC", "kind": "ac"}]
+    config = HomeConfig(url="http://ha", devices=devices, blaster={"id": "x", "address": "10.0.0.9"})
+    soundbar = Remote("soundbar", CODE_SETS["polk-re9641"], sent.append, sleep=lambda s: None)
+    tools = HomeTools(config, None, {"soundbar": soundbar})
+    assert list(tools.devices) == ["soundbar"]  # no Home Assistant, and no AC profile: only what can be worked
+    assert "- soundbar: a Polk soundbar, by IR: press a button (power, mute, volume_up" in tools.rules()
+    assert "use times for how many presses" in tools.rules()
+    withdrawn = Request(may_act=lambda timeout: False)
+    assert tools.call(args("soundbar", "press", button="mute"), withdrawn).startswith(
+        "error: the request was withdrawn"
+    )
+    assert sent == []
+    assert tools.call(args("soundbar", "press", button="mute"), Request()).startswith("sent: mute")
+
+
+def test_waking_the_fire_tv_says_one_moment_first():
+    tools, _ = home(devices=[*DEVICES, {"name": "fire tv", "kind": "firetv", "address": "10.0.0.8"}])
+    tools.devices["fire tv"] = types.SimpleNamespace(kind="firetv")
+    assert tools.slow(json.dumps(args("fire tv", "on")))
+    assert not tools.slow(json.dumps(args("fire tv", "press", button="pause")))

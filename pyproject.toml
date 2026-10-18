@@ -43,6 +43,9 @@ echo = [
 ac = [
     "tinytuya>=1.17",
 ]
+tv = [
+    "adb-shell>=0.4.4",
+]
 
 [build-system]
 requires = ["hatchling"]

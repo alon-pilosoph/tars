@@ -253,7 +253,13 @@ class AC:
         how = "someone said so" if state.how == "told" else "as far as TARS knows: it can't see the AC"
         return f"AC: {'on' if state.on else 'off'} ({how}), last set to {settings}"
 
-    def call(self, action: str, args: dict) -> str:
+    def what(self) -> str:
+        temps = self.profile.temperatures()
+        degrees = f", {temps[0]} to {temps[1]} degrees" if temps else ""
+        modes = "/".join(self.profile.values(MODE))
+        return f"the air conditioner: status, on, off, set (mode {modes}{degrees}, fan), is_on, is_off"
+
+    def call(self, action: str, args: dict, request=None) -> str:
         with self._lock:
             state = State.load(self._path)
             if action in (IS_ON, IS_OFF):

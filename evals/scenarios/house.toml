@@ -179,3 +179,45 @@ home = [{ device = "ac", action = "on" }]
 [[scenario.turn]]
 say = "it didn't turn on, it's still off"
 home = [{ device = "ac", action = "is_off" }, { device = "ac", action = "on" }]
+
+[[scenario]]
+id = "play-on-stremio"
+about = """"Play Toy Story on Stremio" goes to the Fire TV's agent with the goal, and TARS says only that it's on it:
+the agent says when it's playing, so TARS mustn't claim it already is."""
+tags = ["house", "tv"]
+house = { tv = "on" }
+
+[[scenario.turn]]
+say = "play toy story on stremio"
+home = [{ device = "fire tv", action = "do", goal = "toy story" }]
+never_says = ["\\bis (now )?playing\\b", "\\bstarted playing\\b"]
+
+[[scenario]]
+id = "tv-on"
+about = """"Turn on the TV" wakes the Fire TV, which turns the TV on: the Samsung has no code that only turns it on."""
+tags = ["house", "tv"]
+house = { tv = "off" }
+
+[[scenario.turn]]
+say = "turn on the TV"
+home = [{ device = "fire tv", action = "on" }]
+
+[[scenario]]
+id = "louder"
+about = """"Turn it up a bit" is the soundbar's volume, a few presses."""
+tags = ["house", "tv"]
+house = { tv = "on" }
+
+[[scenario.turn]]
+say = "turn the volume up a bit"
+home = [{ device = "soundbar", action = "press", button = "volume_up" }]
+
+[[scenario]]
+id = "pause-it"
+about = """"Pause it" with something on: one press on the Fire TV, not a task for the agent."""
+tags = ["house", "tv"]
+house = { tv = "on" }
+
+[[scenario.turn]]
+say = "pause it"
+home = [{ device = "fire tv", action = "press" }]

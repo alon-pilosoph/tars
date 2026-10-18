@@ -124,8 +124,8 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   title) sent twice in one reply is sent once, whichever model asks the second time. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
 - **Reminders** (`remind`, `cancel_reminder`, `snooze_reminder`): see [reminders](reminders.md).
-- **The house** (`home`, with `[home]` devices): the lock and the boiler through Home Assistant, the AC through its IR
-  blaster. A change is only "done" when the device reports it, waits until the turn is over (a draft thrown away changes
+- **The house** (`home`, with `[home]` devices): the lock and the boiler through Home Assistant, the AC, the TV and the
+  soundbar through the IR blaster, the Fire TV over ADB, with an agent for tasks that take several steps on screen. A change is only "done" when the device reports it, waits until the turn is over (a draft thrown away changes
   nothing), and unlocking has rules in code: a voice it knows, sure, and a yes to its own question. See
   [the house](home.md).
 
@@ -189,8 +189,9 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
     stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
     Deepgram, or the reply text instead of Cartesia.
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
-  served from the same machine and talks to nothing else. Home Assistant, the Nuki's MQTT and the AC's blaster are on
-  the home network too; the models only see what the home tool answered, as part of the conversation.
+  served from the same machine and talks to nothing else. Home Assistant, the Nuki's MQTT, the blaster and the Fire TV
+  are on the home network too; the models only see what the home tool answered, as part of the conversation, and the
+  Fire TV's agent (OpenAI) sees the TV's screen while it works a task.
 
 ## The web UI
 
@@ -222,7 +223,7 @@ The assistant is `src/voice_assistant/`:
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
 | Reminders | `reminders.py` (the table, what's due, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
-| The house | `home.py` (the `home` tool, Home Assistant, the lock's rules), `ac.py` (the AC's codes from its learned profile, and whether it's on), `ac_onboard.py` (teaching it the remote, once) |
+| The house | `home.py` (the `home` tool, Home Assistant, the lock's rules), `ac.py` (the AC's codes from its learned profile, and whether it's on), `ac_onboard.py` (teaching it the remote, once), `ir.py` (the TV's and the soundbar's published codes), `firetv.py` (the Fire TV over ADB, and the agent that works it step by step), and in `assistant.py` saying how a task went (`Announcements`) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |

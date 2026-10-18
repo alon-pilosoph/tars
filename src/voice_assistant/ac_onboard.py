@@ -502,14 +502,13 @@ def blaster_from_config(config: Path) -> Blaster:
 
     from .config import load_config
 
-    cfg = load_config(config)
-    spec = next((d for d in cfg.home.devices if d.get("kind") == "ac"), None)
-    if spec is None:
-        raise SystemExit('config.toml has no [[home.devices]] with kind = "ac" yet: see docs/home.md')
+    blaster = load_config(config).home.blaster
+    if not blaster:
+        raise SystemExit("config.toml has no [home] blaster yet: see docs/home.md")
     key = dotenv_values(config.resolve().parent / ".env").get(TUYA_KEY)
     if not key:
         raise SystemExit(f"Put the blaster's local key in .env as {TUYA_KEY} (docs/home.md says how to get it)")
-    return Blaster(spec["blaster"], spec["address"], key, spec.get("version", "3.3"))
+    return Blaster(blaster["id"], blaster["address"], key, blaster.get("version", "3.3"))
 
 
 def ask(prompt: str, default: str = "") -> str:

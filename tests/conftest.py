@@ -169,6 +169,7 @@ class RecordingBrain:
         self.replies = iter(replies)
         self.asked = []
         self.requests = []
+        self.remembered = []
         self.forgotten = 0
         self.sent = []
         self.changes = []
@@ -188,6 +189,9 @@ class RecordingBrain:
 
     def forget_last(self):
         self.forgotten += 1
+
+    def remember_said(self, text):
+        self.remembered.append(text)
 
 
 class SilentReply:

@@ -430,6 +430,9 @@ class Brain(Protocol):
     def forget_last(self) -> None:
         """Drop the most recent exchange from the conversation history, finished or not. Once only."""
 
+    def remember_said(self, text: str) -> None:
+        """Something TARS said on its own (how a task on the TV went), so a reply to it is understood."""
+
     def interrupt(self) -> None:
         """From another thread: stop writing the reply in progress; its stream ends with an error."""
 
@@ -747,6 +750,14 @@ class OpenAIChat:
             except Exception as e:  # noqa: BLE001 - a device that fails never costs the reply: the model says so
                 return f"error: couldn't reach the device ({e!r}); nothing is known to have changed"
         return f"error: no tool called {call.name}"
+
+    def remember_said(self, text: str) -> None:
+        with self._lock:
+            if self._history and self._clock() - self._last_turn_at > self._cfg.memory_minutes * 60:
+                self._history.clear()
+            self._history.append({"role": "assistant", "content": text})
+            self._history = self._history[-MAX_TURNS * 2 :]
+            self._last_turn_at = self._clock()
 
     def forget_last(self) -> None:
         with self._lock:

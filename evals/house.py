@@ -10,16 +10,28 @@ import httpx
 
 from voice_assistant.ac import AC, Profile, Settings, State
 from voice_assistant.config import HomeConfig
+from voice_assistant.firetv import APPS, TV
 from voice_assistant.home import STATUS, HomeAssistant, HomeTools, Request
+from voice_assistant.ir import CODE_SETS, Remote
 
 DEVICES = [
     {"name": "front door", "kind": "lock", "entity": "lock.front_door", "door": "binary_sensor.front_door_door"},
     {"name": "boiler", "kind": "boiler", "entity": "switch.boiler", "remaining": "sensor.boiler_remaining_time"},
-    {"name": "AC", "kind": "ac", "blaster": "eval", "address": "127.0.0.1"},
+    {"name": "AC", "kind": "ac"},
+    {"name": "TV", "kind": "ir", "codes": "samsung-tv"},
+    {"name": "soundbar", "kind": "ir", "codes": "polk-re9641"},
+    {"name": "fire tv", "kind": "firetv", "address": "127.0.0.1"},
 ]
+BLASTER = {"id": "eval", "address": "127.0.0.1"}
 # What a house setting in a scenario may be: the lock, the door, the boiler and the AC, or Home Assistant down, or the
 # lock jamming when it's turned.
-HOUSE_KEYS = {"lock": ("locked", "unlocked"), "door": ("closed", "open"), "boiler": ("on", "off"), "ac": ("on", "off")}
+HOUSE_KEYS = {
+    "lock": ("locked", "unlocked"),
+    "door": ("closed", "open"),
+    "boiler": ("on", "off"),
+    "ac": ("on", "off"),
+    "tv": ("on", "off"),
+}
 HOUSE_FLAGS = ("jams", "down")
 CHANGED = ("done", "sent", "not confirmed", "noted")
 
@@ -81,6 +93,50 @@ class PretendHA:
         return httpx.Response(200, json=[])
 
 
+class PretendStick:
+    """A Fire TV that does what it's told at once: awake or asleep, the app in front, nothing ever playing."""
+
+    def __init__(self, on: bool):
+        self.on, self.front = on, "com.amazon.tv.launcher" if on else ""
+
+    def awake(self) -> bool:
+        return self.on
+
+    def wake(self) -> None:
+        self.on, self.front = True, self.front or "com.amazon.tv.launcher"
+
+    def sleep(self) -> None:
+        self.on = False
+
+    def app(self) -> str:
+        return self.front if self.on else ""
+
+    def playing(self) -> str:
+        return "nothing playing"
+
+    def press(self, key: str, times: int = 1) -> None:
+        pass
+
+    def find_app(self, name: str) -> str | None:
+        return APPS.get(name.strip().lower())
+
+    def open(self, package: str) -> None:
+        self.front = package
+
+
+class PretendAgent:
+    """The Fire TV's agent, as far as the brain can tell: it starts, and says nothing until it's done."""
+
+    def __init__(self):
+        self.goals: list[str] = []
+
+    def start(self, goal: str, for_name: str | None = None) -> None:
+        self.goals.append(goal)
+
+    def stop(self) -> None:
+        pass
+
+
 @dataclass
 class House:
     tools: HomeTools
@@ -97,9 +153,18 @@ def make_house(house: dict, folder: Path) -> House:
     state_path = folder / "ac-state.json"
     if house.get("ac") == "on":
         State(on=True, settings=Settings(), how="told").save(state_path)
-    ac = AC(Profile(electra_profile()), lambda pulses: None, state_path)
-    cfg = HomeConfig(url="http://pretend:8123", unlock_voices=["alon"], devices=DEVICES)
-    tools = HomeTools(cfg, hass, ac, sleep=lambda s: None)
+
+    def nowhere(pulses: list[int]) -> None:
+        pass
+
+    local = {
+        "ac": AC(Profile(electra_profile()), nowhere, state_path),
+        "tv": Remote("tv", CODE_SETS["samsung-tv"], nowhere, sleep=lambda s: None),
+        "soundbar": Remote("soundbar", CODE_SETS["polk-re9641"], nowhere, sleep=lambda s: None),
+        "fire tv": TV(PretendStick(house.get("tv") == "on"), PretendAgent(), sleep=lambda s: None),
+    }
+    cfg = HomeConfig(url="http://pretend:8123", unlock_voices=["alon"], devices=DEVICES, blaster=BLASTER)
+    tools = HomeTools(cfg, hass, local, sleep=lambda s: None)
     result = House(tools, ha)
     call = tools.call
 

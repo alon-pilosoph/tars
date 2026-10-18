@@ -105,7 +105,7 @@ in_minutes = 10
 [[scenario.turn]]
 say = "set a pasta timer for eight minutes"
 reminders = [{ kind = "timer", in_minutes = 8, ref = "pasta" }]
-# house = { lock = "locked", door = "closed", boiler = "off", ac = "off" }   # optional, on the scenario: TARS's
+# house = { lock = "locked", door = "closed", boiler = "off", ac = "off", tv = "on" }   # optional: TARS's
 #   real home tool over a pretend house (evals/house.py); jams = true or down = true for a lock that jams, or Home
 #   Assistant not answering
 

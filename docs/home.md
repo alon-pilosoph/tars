@@ -1,13 +1,15 @@
 # The house
 
 TARS works the house by voice: "is the front door locked?", "lock it", "boiler on for 40 minutes", "turn the AC on,
-22 degrees", "turn everything off". The lock (a Nuki) and the boiler (a Switcher) go through
-[Home Assistant](https://www.home-assistant.io) on the home network; the AC (an Electra central unit, with no Wi-Fi
-module) goes through a Tuya IR blaster that TARS sends codes to directly.
+22 degrees", "turn the volume up a bit", "play Toy Story on Stremio". The lock (a Nuki) and the boiler (a Switcher) go
+through [Home Assistant](https://www.home-assistant.io) on the home network; the AC (an Electra central unit, with no
+Wi-Fi module), the TV (a Samsung) and the soundbar (a Polk Signa S2) through a Tuya IR blaster that TARS sends codes to
+directly; the Fire TV stick over ADB, also on the home network.
 
-Everything here stays on the home network. Home Assistant, the MQTT broker the Nuki reports to and the blaster are all
-local, and nothing goes through Tuya's or Nuki's cloud. What the models see is the conversation, as for any request:
-which device was asked about, and what the home tool answered ("the front door is locked").
+Everything here stays on the home network. Home Assistant, the MQTT broker the Nuki reports to, the blaster and the
+Fire TV are all local, and nothing goes through Tuya's or Nuki's cloud. What the models see is the conversation, as for
+any request: which device was asked about, and what the home tool answered ("the front door is locked"). A task on
+the TV ("play Toy Story") is the exception: the model working it sees the TV's screen, as text and as screenshots.
 
 ## How it works
 
@@ -64,6 +66,29 @@ IR goes one way: TARS knows what it sent, not what the AC did. It keeps what it 
 light sensor on the AC's own indicator (the `state` setting: any `binary_sensor` in Home Assistant, on when the light
 is) makes it sure: TARS reads the light before deciding to toggle, checks it changed, and sends the toggle once more
 if the first was missed.
+
+### The TV, the soundbar and the Fire TV
+
+The Samsung and the Polk need no recording: their codes are published, one fixed code per button, and TARS makes them
+itself (`ir.py`): Samsung's from [IRDB](https://github.com/probonopd/irdb), Polk's RE9641 remote (the Signa S2's) from
+[Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB). The soundbar does volume, mute, bass, voice, night and its
+sound modes; the TV its inputs, menus and an "off" that only ever turns it off. There's no code that only turns a
+Samsung on, so "turn on the TV" wakes the Fire TV instead, which turns the TV on over HDMI-CEC.
+
+**The Fire TV** (`firetv.py`) is worked over ADB, which answers back: TARS knows whether it's awake, which app is in
+front, what's playing (the app's media session: "playing: Toy Story"), and the text on screen (the app's accessibility
+tree, the focused element marked), and can take a screenshot. So its changes are checked like the lock's: "open
+Stremio" is done only when Stremio is in front.
+
+**A task that takes several steps** ("play Toy Story on Stremio", "find the news on YouTube") goes to the Fire TV's
+agent: a model (`[home] tv_model`, OpenAI's `[llm] model` by default) that works the remote the way a person would.
+Each step it chooses from what it sees (look, a screenshot), presses, types or opens an app, then looks again to check
+it did what it meant, for up to 30 steps and two and a half minutes. It runs in the background: TARS answers "On it."
+at once, and when the agent is done, TARS says how it went after a chime, like a reminder: "Toy Story is playing.",
+or why not ("Stremio found no streams for Toy Story."). If it isn't clear which was meant, it asks ("Toy Story, or
+Toy Story 4?"), and TARS listens for the answer without the wake word. Pressing anything on the TV through TARS stops
+it. A task costs a few cents of OpenAI: every step is one request, with a screenshot when the app's text isn't
+enough.
 
 ## Setting it up
 
@@ -131,9 +156,9 @@ remaining = "sensor.boiler_remaining_time"
 
 `uv run voice-assistant --check` now shows Home Assistant and each device, with what it says right now.
 
-### 5. The AC: the blaster's key
+### 5. The blaster's key
 
-TARS talks to the blaster on the home network with [tinytuya](https://github.com/jasonacox/tinytuya), which needs
+TARS talks to the blaster (for the AC, the TV and the soundbar) on the home network with [tinytuya](https://github.com/jasonacox/tinytuya), which needs
 the blaster's id and its local key. The key is in Tuya's cloud, read once:
 
 1. At [platform.tuya.com](https://platform.tuya.com), make a free account and a cloud project (Smart Home; the data
@@ -143,19 +168,20 @@ the blaster's id and its local key. The key is in Tuya's cloud, read once:
    lists every device with its id and local key. Then `uv run python -m tinytuya scan` gives the blaster's address
    and protocol version. Give it a fixed address in the router.
 
-Put the key in `.env` and the blaster in `config.toml`:
+The wizard also lists the Smart IR app's remotes (TV, Air, Audio): they live only in Tuya's cloud. Use the blaster's
+own id, address and key. Put the key in `.env` and the blaster in `config.toml`:
 
 ```bash
 TUYA_LOCAL_KEY=0123456789abcdef
 ```
 
 ```toml
+[home]
+blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.3" }
+
 [[home.devices]]
 name = "AC"
 kind = "ac"
-blaster = "bf0123456789abcdef"
-address = "192.168.1.50"
-version = "3.3"
 ```
 
 The key changes if the blaster is ever removed from Smart Life and added again; then read it again.
@@ -199,11 +225,54 @@ trusted, it says why and writes nothing: send `captures.json` and what it printe
 without the toggle (still on, now 26), the toggle (off). Four yeses mark the profile checked, and TARS starts out
 knowing the AC is off. `send "cool 22 auto" --toggle` sends any one code by hand.
 
-### 7. Try it
+### 7. The TV and the soundbar
+
+Nothing to record: add them, and try a button each.
+
+```toml
+[[home.devices]]
+name = "TV"
+kind = "ir"
+codes = "samsung-tv"
+
+[[home.devices]]
+name = "soundbar"
+kind = "ir"
+codes = "polk-re9641"
+```
+
+If the soundbar doesn't answer "volume up", check its remote's model on the back: these are the RE9641's codes.
+
+### 8. The Fire TV
+
+On the Fire TV: **Settings > My Fire TV > About**, check it says Fire OS (not Vega OS), and click the device name seven
+times to show **Developer Options**; there, turn **ADB debugging** on. **Settings > My Fire TV > About > Network** shows
+its address: give it a fixed one in the router. Power the stick from its own plug, not the TV's USB port, which goes
+off with the TV and takes the stick with it. On the Samsung, **Anynet+ (HDMI-CEC)** should be on.
+
+```toml
+[[home.devices]]
+name = "fire tv"
+kind = "firetv"
+address = "192.168.1.60"
+```
+
+Then let TARS in, once, with the TV on:
 
 ```bash
-uv run voice-assistant --check          # Home Assistant, the devices, the AC
-uv run voice-assistant --text           # "is the door locked?", "boiler on for 20 minutes", "AC on, 23"
+uv run python -m voice_assistant.firetv pair             # the TV asks "Allow USB debugging?": tick Always allow, OK
+uv run python -m voice_assistant.firetv look             # the app in front, what's playing, the text on screen
+uv run python -m voice_assistant.firetv do "play Toy Story on Stremio"   # every step, then what TARS would say
+```
+
+`look` shows whether an app describes its screen: Stremio's text is what the agent reads first, and a screenshot is
+for when there isn't any. TARS's ADB key is kept in `voice_data/firetv/`.
+
+### 9. Try it
+
+```bash
+uv run voice-assistant --check          # Home Assistant, the devices, the blaster, the AC, the Fire TV
+uv run voice-assistant --text           # "is the door locked?", "boiler on for 20 minutes", "AC on, 23", "louder"
 systemctl --user restart voice-assistant
 ```
 
@@ -220,5 +289,6 @@ door?", and a yes unlocks it.
   without the light sensor.
 - **A device that doesn't answer costs a sentence, not the reply.** Home Assistant down, the blaster off the Wi-Fi: TARS
   says what didn't work, and everything else goes on.
-- **Not yet:** the TV (a Fire Stick, through Home Assistant's Android TV integration, with screenshots to check what's
-  on screen), scenes ("going to bed"), and checking the AC from a temperature sensor at a vent.
+- **ADB is a key to the Fire TV.** Anyone on the home network whose key the TV accepted can work it; TARS's key is
+  in `voice_data/firetv/`. The TV's "Allow USB debugging?" is what lets a new one in.
+- **Not yet:** scenes ("going to bed"), and checking the AC from a temperature sensor at a vent.

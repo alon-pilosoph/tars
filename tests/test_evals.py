@@ -408,7 +408,9 @@ def test_scenarios_never_run_are_estimated_as_an_average_one_not_as_nothing(tmp_
     assert unknown == ["new"] and use["luna"] == {"input": 200.0}
 
 
-HOME_CALL = {"minutes": None, "mode": None, "temperature": None, "fan": None, "confirmed": False}
+HOME_CALL = dict.fromkeys(("minutes", "mode", "temperature", "fan", "button", "times", "app", "goal")) | {
+    "confirmed": False
+}
 
 
 def test_a_house_scenario_plays_the_real_home_tool_and_checks_what_changed():

@@ -335,39 +335,81 @@ def house(cfg: Config, hass) -> list[Result]:
     return results
 
 
-def ac_check(cfg: Config, root: Path, have: set[str]) -> Result:
-    from .ac import TUYA_KEY, Profile
+def blaster_check(cfg: Config, root: Path, have: set[str]) -> Result:
+    """The IR blaster answers, for the AC, the TV and the soundbar."""
+    from .ac import TUYA_KEY
+
+    if not cfg.home.blaster:
+        return Result("IR blaster", SKIP, "not used ([home] blaster isn't set)")
+    if TUYA_KEY not in have:
+        return Result("IR blaster", FAIL, f"no {TUYA_KEY}", "the blaster's local key goes in .env (docs/home.md)")
+    try:
+        import tinytuya  # noqa: F401 - only whether it's there
+    except ImportError:
+        return Result("IR blaster", FAIL, "tinytuya isn't installed", "uv sync --all-extras")
+    from . import __main__ as cli
+
+    blaster = cli.make_blaster(cfg.home.blaster, root)
+    address = cfg.home.blaster["address"]
+    why, fix = "it didn't answer", "is it powered, on the Wi-Fi, at that address? (uv run python -m tinytuya scan)"
+    try:
+        answered = within(20, "IR blaster", lambda: blaster.connect() or Result("IR blaster", OK, ""), why, fix)
+    except Exception as e:  # noqa: BLE001 - what's wrong is the result
+        return Result("IR blaster", FAIL, f"it didn't answer at {address}: {e}", fix)
+    if answered.status == FAIL:
+        return answered
+    return Result("IR blaster", OK, f"answers at {address}")
+
+
+def ac_check(cfg: Config, root: Path) -> Result:
+    """The AC's learned profile: there, and tried on the AC."""
+    from .ac import Profile
 
     spec = next((d for d in cfg.home.devices if d["kind"] == "ac"), None)
     if spec is None:
         return Result("AC", SKIP, 'not used (no [[home.devices]] with kind = "ac")')
     onboard = "uv run python -m voice_assistant.ac_onboard"
-    if TUYA_KEY not in have:
-        return Result("AC", FAIL, f"no {TUYA_KEY}", "the blaster's local key goes in .env (docs/home.md)")
-    try:
-        import tinytuya  # noqa: F401 - only whether it's there
-    except ImportError:
-        return Result("AC", FAIL, "tinytuya isn't installed", "uv sync --all-extras")
     try:
         profile = Profile.load(root / spec.get("profile", "voice_data/ac/profile.json"))
     except ValueError as e:
         return Result("AC", FAIL, str(e), f"{onboard} capture, then fit and try")
-    from . import __main__ as cli
-
-    blaster = cli.make_blaster(spec, root)
-    why, fix = "the blaster didn't answer", "is it powered, on the Wi-Fi, at that address? (python -m tinytuya scan)"
-    try:
-        answered = within(20, "AC", lambda: blaster.connect() or Result("AC", OK, ""), why, fix)
-    except Exception as e:  # noqa: BLE001 - what's wrong is the result
-        return Result("AC", FAIL, f"the blaster at {spec['address']} didn't answer: {e}", fix)
-    if answered.status == FAIL:
-        return answered
     temps = profile.temperatures()
     degrees = f", {temps[0]} to {temps[1]} degrees" if temps else ", no temperatures"
-    detail = f"blaster answers; profile: {', '.join(profile.values('mode')) or 'one mode'}{degrees}"
+    detail = f"profile: {', '.join(profile.values('mode')) or 'one mode'}{degrees}"
     if not profile.checked:
         return Result("AC", WARN, f"{detail}, never tried on the AC", f"{onboard} try")
     return Result("AC", OK, detail)
+
+
+def firetv_check(cfg: Config, root: Path, have: set[str]) -> Result:
+    """The Fire TV answers over ADB, and can be worked step by step."""
+    spec = next((d for d in cfg.home.devices if d["kind"] == "firetv"), None)
+    if spec is None:
+        return Result("Fire TV", SKIP, 'not used (no [[home.devices]] with kind = "firetv")')
+    try:
+        import adb_shell  # noqa: F401 - only whether it's there
+    except ImportError:
+        return Result("Fire TV", FAIL, "adb-shell isn't installed", "uv sync --all-extras")
+    from .firetv import KEY_FILE, FireTV
+    from .home import HomeError
+
+    pair = "uv run python -m voice_assistant.firetv pair, and allow it on the TV"
+    if not (root / KEY_FILE).exists():
+        return Result("Fire TV", FAIL, "TARS was never let in", pair)
+    stick = FireTV(spec["address"], root / KEY_FILE, auth_timeout_s=3.0)
+
+    def ask() -> Result:
+        try:
+            state = "awake" if stick.awake() else "asleep"
+        except HomeError as e:
+            return Result("Fire TV", FAIL, str(e), f"is ADB debugging on, and the address right? Then {pair}")
+        finally:
+            stick.close()
+        if OPENAI_KEY not in have:
+            return Result("Fire TV", WARN, f"answers ({state})", f'tasks like "play Toy Story" need {OPENAI_KEY}')
+        return Result("Fire TV", OK, f"answers ({state}); it does tasks with {cfg.home.tv_model or cfg.llm.model}")
+
+    return within(20, "Fire TV", ask, "it didn't answer", f"is it on the Wi-Fi at {spec['address']}?")
 
 
 def check_all(cfg: Config, root: Path) -> int:
@@ -533,7 +575,9 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Web UI", lambda: web(http_status)),
         ("Home Assistant", lambda: home_assistant(cfg, have, hass)),
         ("The house", devices),
-        ("AC", lambda: ac_check(cfg, root, have)),
+        ("IR blaster", lambda: blaster_check(cfg, root, have)),
+        ("AC", lambda: ac_check(cfg, root)),
+        ("Fire TV", lambda: firetv_check(cfg, root, have)),
         ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
         ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
     ]

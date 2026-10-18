@@ -182,8 +182,13 @@ HOME_DEVICES = {
     "lock": ({"entity": ("lock",)}, {"door": ("binary_sensor",), "battery": ("sensor",)}),
     "boiler": ({"entity": ("switch",)}, {"remaining": ("sensor",), "power": ("sensor",)}),
     "switch": ({"entity": ("switch", "light", "fan", "input_boolean")}, {}),
-    "ac": ({"blaster": (), "address": ()}, {"version": (), "profile": (), "state": ("binary_sensor", "input_boolean")}),
+    "ac": ({}, {"profile": (), "state": ("binary_sensor", "input_boolean")}),
+    "ir": ({"codes": ()}, {}),
+    "firetv": ({"address": ()}, {}),
 }
+# The remotes ir.py has codes for ([[home.devices]] kind = "ir", codes = ...).
+IR_CODE_SETS = ("samsung-tv", "polk-re9641")
+BLASTER_KEYS = ("id", "address", "version")
 TUYA_VERSIONS = ("3.1", "3.2", "3.3", "3.4", "3.5")
 
 
@@ -195,8 +200,13 @@ class HomeConfig:
     unlock_voices: list[str] = field(default_factory=list)
     # How sure speaker ID must be that it's them, to unlock: stricter than [speaker] threshold.
     unlock_threshold: float = 0.6
-    # [[home.devices]]: name, kind (lock, boiler, switch or ac), and what HOME_DEVICES says that kind needs.
+    # [[home.devices]]: name, kind (lock, boiler, switch, ac, ir or firetv), and what HOME_DEVICES says it needs.
     devices: list[dict] = field(default_factory=list)
+    # The Tuya IR blaster, for the AC and the IR remotes: { id = "...", address = "192.168.1.50", version = "3.3" };
+    # its local key is TUYA_LOCAL_KEY in .env.
+    blaster: dict = field(default_factory=dict)
+    # The model that works the Fire TV step by step (it reads screenshots); empty = [llm] model.
+    tv_model: str = ""
 
 
 @dataclass
@@ -270,7 +280,7 @@ def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
     return dataclasses.replace(cfg, stt=stt, tts=tts, llm=llm), notes
 
 
-_KINDS = {str: "text", bool: "true or false", int: "a whole number", float: "a number", list: "a list"}
+_KINDS = {str: "text", bool: "true or false", int: "a whole number", float: "a number", list: "a list", dict: "a table"}
 
 
 def _section(kind: type, name: str, values, problems: list[str]):
@@ -383,10 +393,20 @@ def _home_problems(home: HomeConfig) -> list[str]:
                 kinds = " or ".join(f"{x}.*" for x in domains)
                 problems.append(f"{where}: {key} must be a {kinds} entity, not {value!r}")
         problems += [f"{where} ({kind}) needs {key}" for key in needs if key not in d]
-        if kind == "ac" and d.get("version", "3.3") not in TUYA_VERSIONS:
-            problems.append(f"{where}: version must be one of {', '.join(TUYA_VERSIONS)}")
-        if kind != "ac" and not home.url:
+        if kind == "ir" and d.get("codes") not in IR_CODE_SETS:
+            problems.append(f"{where}: codes must be one of {', '.join(IR_CODE_SETS)}")
+        if kind in ("ac", "ir") and not home.blaster:
+            problems.append(f"{where} goes through the IR blaster: set [home] blaster")
+        if kind in ("lock", "boiler", "switch") and not home.url:
             problems.append(f"{where} goes through Home Assistant: set [home] url")
-    if sum(d.get("kind") == "ac" for d in home.devices) > 1:
-        problems.append("[[home.devices]]: only one ac for now")
+    for kind in ("ac", "firetv"):
+        if sum(d.get("kind") == kind for d in home.devices) > 1:
+            problems.append(f"[[home.devices]]: only one {kind} for now")
+    if home.blaster:
+        if unknown := set(home.blaster) - set(BLASTER_KEYS):
+            problems.append(f"[home] blaster has no setting {', '.join(sorted(unknown))}")
+        if not all(isinstance(home.blaster.get(k), str) and home.blaster[k] for k in ("id", "address")):
+            problems.append("[home] blaster needs its id and address, as text")
+        if home.blaster.get("version", "3.3") not in TUYA_VERSIONS:
+            problems.append(f"[home] blaster version must be one of {', '.join(TUYA_VERSIONS)}")
     return problems
