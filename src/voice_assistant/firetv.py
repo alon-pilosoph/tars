@@ -64,14 +64,15 @@ MAX_PRESSES = 20
 AGENT_STEPS = 30
 AGENT_TIMEOUT_S = 150.0
 UI_DUMP = "/sdcard/tars_ui.xml"
-KEY_FILE = "voice_data/firetv/adbkey"  # TARS's ADB key: the stick asks once whether to trust it
+KEY_FILE = "voice_data/firetv/adbkey"
+CONNECT_TIMEOUT_S = 3.0  # TARS's ADB key: the stick asks once whether to trust it
 
 
 class FireTV:
     """One ADB connection, made when first needed and again after it drops. Every call is short, and a stick that
     doesn't answer is a HomeError."""
 
-    def __init__(self, address: str, key_path: Path, auth_timeout_s: float = 10.0):
+    def __init__(self, address: str, key_path: Path, auth_timeout_s: float = 3.0):
         host, _, port = address.partition(":")
         self._host, self._port = host, int(port or 5555)
         self._key_path, self._auth_timeout_s = key_path, auth_timeout_s
@@ -89,7 +90,8 @@ class FireTV:
             self._key_path.parent.mkdir(parents=True, exist_ok=True)
             keygen(str(self._key_path))
         signer = PythonRSASigner(Path(f"{self._key_path}.pub").read_text(), self._key_path.read_text())
-        adb = AdbDeviceTcp(self._host, self._port, default_transport_timeout_s=9.0)
+        # Short: a stick that's unplugged or off the Wi-Fi is said to be, rather than leaving a voice turn waiting.
+        adb = AdbDeviceTcp(self._host, self._port, default_transport_timeout_s=CONNECT_TIMEOUT_S)
         try:
             adb.connect(rsa_keys=[signer], auth_timeout_s=self._auth_timeout_s)
         except Exception as e:
@@ -206,11 +208,12 @@ class FireTV:
         self.shell(f"am force-stop {package}")
 
     def find_app(self, name: str) -> str | None:
-        """The package for an app's name: a known one, a package itself, or the installed package that mentions it."""
+        """The package for an app's name, among those installed: the known one, the package itself, or the shortest
+        package that mentions it (an app built for Fire TV may be packaged differently)."""
         wanted = name.strip().lower()
-        if wanted in APPS:
-            return APPS[wanted]
         installed = self.packages()
+        if APPS.get(wanted) in installed:
+            return APPS[wanted]
         if wanted in installed:
             return wanted
         squeezed = re.sub(r"[^a-z0-9]", "", wanted)

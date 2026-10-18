@@ -9,6 +9,7 @@ With a sensor that sees the AC's own light ([[home.devices]] state), it reads th
 to, and checks the light changed."""
 
 import json
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -27,6 +28,10 @@ TUYA_KEY = "TUYA_LOCAL_KEY"  # the blaster's local key, in .env
 SENSOR_WAIT_S = 6.0
 SENSOR_POLL_S = 0.5
 MAX_PULSE_US = 65535  # a Tuya code is 16-bit microseconds
+# A blaster that doesn't answer is given up on in seconds, so a voice turn says so rather than going quiet: tinytuya's
+# defaults (5 s, five tries, 5 s apart) took a minute.
+BLASTER_TIMEOUT_S, BLASTER_TRIES, BLASTER_RETRY_S = 2.0, 2, 0.3
+TUYA_PORT, REACH_TIMEOUT_S = 6668, 1.5
 
 
 @dataclass
@@ -172,8 +177,22 @@ class Blaster:
     def _device(self):
         from tinytuya.Contrib.IRRemoteControlDevice import IRRemoteControlDevice
 
+        # One quick look first: finding out which of Tuya's protocols it speaks takes three tries, each with its own
+        # timeout, before a blaster that's off the Wi-Fi is given up on.
+        try:
+            socket.create_connection((self._address, TUYA_PORT), timeout=REACH_TIMEOUT_S).close()
+        except OSError as e:
+            raise HomeError(f"the IR blaster didn't answer at {self._address} ({type(e).__name__})") from e
+
         ir = IRRemoteControlDevice(
-            self._id, self._address, self._key, version=self._version, control_type=self._control_type or None
+            self._id,
+            self._address,
+            self._key,
+            version=self._version,
+            control_type=self._control_type or None,
+            connection_timeout=BLASTER_TIMEOUT_S,
+            connection_retry_limit=BLASTER_TRIES,
+            connection_retry_delay=BLASTER_RETRY_S,
         )
         if not ir.control_type:
             raise HomeError(f"the IR blaster didn't answer at {self._address}")

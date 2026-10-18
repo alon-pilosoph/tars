@@ -129,8 +129,9 @@ entities() { ha "$HA/api/states" | python3 -c "import json,sys; [print(s['entity
 
 ### 0. The Pi is ready
 
-**Done when** `git branch --show-current` says `home-assistant` (or a branch with it merged), and
-`uv run python -c "import tinytuya, adb_shell"` prints nothing.
+**Done when** `git branch --show-current` says `home-assistant` (or a branch with it merged),
+`uv run python -c "import tinytuya, adb_shell"` prints nothing, and `df -h /` shows at least 4 GB free (Docker and
+Home Assistant take about 3 GB; the card had 9 GB free after TARS).
 
 **You do:** `git fetch && git checkout home-assistant && deploy/install-pi.sh`. It installs the extras (tinytuya,
 adb-shell) and restarts TARS.
@@ -144,14 +145,15 @@ adb-shell) and restarts TARS.
 
 ```bash
 command -v docker || { curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER; }
-# a new login picks up the docker group: reconnect over SSH before going on
+# a new login picks up the docker group: reconnect over SSH (or put sudo before docker until then)
 env_set MQTT_HA_PASSWORD "$(openssl rand -hex 12)"
 env_set MQTT_NUKI_PASSWORD "$(openssl rand -hex 12)"
 cd deploy/home-assistant
 docker run --rm -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 sh -c "touch /m/passwords && \
   mosquitto_passwd -b /m/passwords homeassistant $(grep '^MQTT_HA_PASSWORD=' ../../.env | cut -d= -f2) && \
   mosquitto_passwd -b /m/passwords nuki $(grep '^MQTT_NUKI_PASSWORD=' ../../.env | cut -d= -f2) && \
-  chown 1883:1883 /m/passwords"    # the broker runs as its own user (1883), and must read it
+  chmod 600 /m/passwords && chown 1883:1883 /m/passwords"   # the broker's user (1883) must own it, and only it
+test -f mosquitto/passwords || echo "no passwords file: compose would mount a folder in its place"
 docker compose up -d
 cd ../..
 until [ "$(curl -s -o /dev/null -w '%{http_code}' $HA/api/)" = 401 ]; do sleep 5; done   # a minute or two
@@ -165,7 +167,10 @@ access tokens, Create token, name it TARS, and paste it here." Put it straight i
 env_set HOME_ASSISTANT_TOKEN '<the token>'
 ```
 
-**Verify:** `ha $HA/api/` says `{"message":"API running."}`.
+**Verify:** `ha $HA/api/` says `{"message":"API running."}`, and
+`ha $HA/api/config | python3 -c "import json,sys; print(json.load(sys.stdin)['state'])"` says `RUNNING`. Right after
+the first start it can say `NOT_RUNNING` for a few minutes while Home Assistant installs what it needs: wait for
+`RUNNING` before going on, since MQTT discovery (step 3) only starts then.
 
 ### 2. The MQTT broker in Home Assistant
 
@@ -177,11 +182,13 @@ env_set HOME_ASSISTANT_TOKEN '<the token>'
 FLOW=$(ha -X POST $HA/api/config/config_entries/flow -d '{"handler":"mqtt"}')
 echo "$FLOW"    # a form: its step_id and the fields it wants (broker, port, username, password)
 ID=$(echo "$FLOW" | python3 -c "import json,sys; print(json.load(sys.stdin)['flow_id'])")
-ha -X POST $HA/api/config/config_entries/flow/$ID -d "{\"broker\":\"127.0.0.1\",\"port\":1883,\"username\":\"homeassistant\",\"password\":\"$(grep '^MQTT_HA_PASSWORD=' .env | cut -d= -f2)\"}"
+PW=$(grep '^MQTT_HA_PASSWORD=' .env | cut -d= -f2)
+ha -X POST $HA/api/config/config_entries/flow/$ID -d "{\"broker\":\"127.0.0.1\",\"port\":1883,\"username\":\"homeassistant\",\"password\":\"$PW\",\"other_settings\":{\"set_client_cert\":false,\"set_ca_cert\":\"off\",\"transport\":\"tcp\"}}"
 ```
 
-The answer should say `"type":"create_entry"`. If the first step is a menu or asks for other fields, answer what it
-asks (the same values); if it aborts, show the person what it said and do it in the browser instead: Settings >
+The answer should say `"type":"create_entry"`. That's the form as Home Assistant 2026.10 has it (`other_settings`
+holds the TLS and transport settings). If it answers the form again, read its `errors` and `data_schema` and send what
+it asks for; if it says `cannot_connect`, check `docker logs mosquitto`; if it aborts, show the person what it said and do it in the browser instead: Settings >
 Devices & services > Add integration > MQTT, broker `127.0.0.1`, port 1883, user `homeassistant`, and the password
 from `.env`.
 
@@ -199,7 +206,11 @@ address, so the lock can always find it."
 
 **Verify:** wait for the lock to appear, for up to five minutes:
 `until entities lock | grep -q .; do sleep 10; done; entities lock binary_sensor sensor | grep -i -E 'lock|nuki|door|batter'`.
-Note the lock's entity, its door sensor if there is one (a `binary_sensor` with "door" in it) and its battery.
+Note the lock's entity, its door sensor if there is one (a `binary_sensor` with "door" in it) and its battery. If
+nothing appears and the Nuki app says MQTT is connected: check Home Assistant says `RUNNING` (step 1), then reload the
+MQTT integration, which reads what the lock announced again:
+`ha -X POST $HA/api/config/config_entries/entry/$(ha $HA/api/config/config_entries/entry | python3 -c "import json,sys; print(next(e['entry_id'] for e in json.load(sys.stdin) if e['domain'] == 'mqtt'))")/reload`.
+If the lock's id is taken (`lock.front_door_2`), that's fine: use the id it has.
 
 ### 4. The Switcher
 
@@ -215,7 +226,10 @@ ha -X POST $HA/api/config/config_entries/flow/$ID -d '{}'      # "create_entry",
 entities switch sensor | grep -i -E 'switcher|boiler|remaining'
 ```
 
-If it finds none, **ask the person:** "Is the Switcher on the same Wi-Fi as the Pi, and does the Switcher app see
+If the answer is a `credentials` form, it's a newer Switcher that needs a token. **Ask the person** for the email of
+their Switcher account, and to get the token for it from the page the Switcher integration's documentation links to
+(https://www.home-assistant.io/integrations/switcher_kis), then send
+`{"username": "<the email>", "token": "<the token>"}` to the same flow. If it finds none, **ask the person:** "Is the Switcher on the same Wi-Fi as the Pi, and does the Switcher app see
 it?", then run the flow again.
 
 ### 5. TARS's [home], for the lock and the boiler
@@ -267,10 +281,10 @@ their id, address and version. The local key, which TARS needs too, is only in T
 
 The wizard writes `devices.json` in `~/voice-assistant`, with every device's local key (git ignores it). Find the
 blaster: the entry whose category is `wnykq` (a universal remote), not the TV, Air and Audio remotes, which live only
-in Tuya's cloud (they have a `parent` or `node_id`):
+in Tuya's cloud (the wizard gives them a `parent`, sometimes empty, and the blaster's key):
 
 ```bash
-python3 -c "import json; [print(d.get('name'), d['id'], d.get('ip',''), d.get('version',''), d.get('category','')) for d in json.load(open('devices.json')) if not d.get('parent')]"
+python3 -c "import json; [print(d.get('name'), d['id'], d.get('ip',''), d.get('version',''), d.get('category','')) for d in json.load(open('devices.json')) if 'parent' not in d]"
 env_set TUYA_LOCAL_KEY "$(python3 -c "import json; print(next(d['key'] for d in json.load(open('devices.json')) if d['id'] == '<the blaster id>'))")"
 ```
 
