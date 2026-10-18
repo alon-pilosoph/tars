@@ -17,7 +17,17 @@ from voice_assistant.ac import (
     frame_pulses,
     with_checksum,
 )
-from voice_assistant.ac_onboard import STEPS, Capture, _load_captures, capture, decode, fit, parse_screen
+from voice_assistant.ac_onboard import (
+    STEPS,
+    Capture,
+    _load_captures,
+    capture,
+    decode,
+    fit,
+    parse_screen,
+    published,
+    run_fit,
+)
 from voice_assistant.home import HomeError
 
 ELECTRA_MODES = {"cool": 1, "heat": 2, "auto": 3, "dry": 4, "fan": 5}
@@ -119,6 +129,15 @@ def test_a_mode_that_writes_the_temperature_its_own_way_is_left_out_not_sent_wro
     result = fit(press_through_the_steps(lambda s, power: electra_bits(s, power, hide_fan_mode_temperature=True)))
     assert result.profile and "fan" not in result.profile["fields"]["mode"]["values"]
     assert any("fan mode is left out" in line for line in result.report)
+
+
+def test_electras_published_code_makes_a_profile_with_nothing_recorded(tmp_path):
+    assert run_fit(tmp_path, published()) == 0
+    profile = Profile.load(tmp_path / "profile.json")
+    for s in (Settings("heat", 30, "high", True), Settings("dry", 16, "low"), Settings("auto", 22, "medium")):
+        for power in (True, False):
+            assert profile.bits(s, power) == electra_bits(s, power)
+    assert profile.temperatures() == (16, 30) and not profile.checked  # still to be tried on the AC
 
 
 def test_a_checksum_in_the_last_byte_is_found_and_made():

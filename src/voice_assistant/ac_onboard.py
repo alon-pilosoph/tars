@@ -1,6 +1,7 @@
 """Teaching TARS the AC's remote, once (temporary: for an AC whose remote nobody has written down yet).
 
     uv run python -m voice_assistant.ac_onboard check     # the blaster answers, with config.toml's settings
+    uv run python -m voice_assistant.ac_onboard published # Electra's published code, nothing recorded: then try
     uv run python -m voice_assistant.ac_onboard capture   # press the remote's buttons, one by one, at the blaster
     uv run python -m voice_assistant.ac_onboard fit       # work out the code, and check it against every press
     uv run python -m voice_assistant.ac_onboard try       # send TARS's own codes to the AC, and say what it did
@@ -44,6 +45,7 @@ from .ac import (
     Profile,
     Settings,
     State,
+    frame_pulses,
     with_checksum,
 )
 
@@ -575,8 +577,33 @@ def _plain(s: Settings) -> str:
     return f"{s.mode} {s.temperature} {s.fan}{' swing' if s.swing else ''}"
 
 
-def run_fit(folder: Path) -> int:
-    captures = _load_captures(folder)
+# Electra's remotes as published (github.com/barakwei/IRelectra): 34 bits, Manchester on a ~1 ms clock, sent three
+# times; the power toggle is the first bit, then mode, fan, swing and the temperature (16-30, 15 + the value).
+ELECTRA_MODES = {"cool": 1, "heat": 2, "auto": 3, "dry": 4, "fan": 5}
+ELECTRA_FANS = {"low": 0, "medium": 1, "high": 2, "auto": 3}
+ELECTRA_TIMING = {"unit": 992, "header": [3, 3], "trailer": 4, "one": "01", "gap": 0}
+
+
+def electra_bits(s: Settings, power: bool) -> str:
+    value = power << 33 | ELECTRA_MODES[s.mode] << 30 | ELECTRA_FANS[s.fan] << 28 | s.swing << 25
+    return format(value | (s.temperature - 15) << 19 | 1 << 1, "034b")
+
+
+def published() -> list[Capture]:
+    """Every step as Electra's published remote would send it: fitted and checked like presses that were recorded."""
+    screen, captures = Settings("cool", 23, "auto"), []
+    for step in STEPS:
+        if step.setup.startswith("Set it to"):
+            screen = Settings(screen.mode, int(step.setup.split()[3]), screen.fan, screen.swing)
+        screen = step.expect(step.first(screen))
+        pulses = frame_pulses(electra_bits(screen, step.power), MANCHESTER, ELECTRA_TIMING, 3)
+        captures.append(Capture(screen, step.power, pulses, step.name))
+    return captures
+
+
+def run_fit(folder: Path, captures: list[Capture] | None = None) -> int:
+    """`captures`: what to fit, if not what was recorded (published's)."""
+    captures = captures if captures is not None else _load_captures(folder)
     if not captures:
         raise SystemExit("Nothing captured yet: run capture first.")
     result = fit(captures)
@@ -638,7 +665,7 @@ def run_send(blaster: Blaster, folder: Path, screen: str, toggle: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m voice_assistant.ac_onboard", description=__doc__.split("\n")[0])
-    parser.add_argument("command", choices=["check", "capture", "fit", "try", "send"])
+    parser.add_argument("command", choices=["check", "published", "capture", "fit", "try", "send"])
     parser.add_argument("screen", nargs="?", help='send: the settings, like "cool 22 auto"')
     parser.add_argument("--toggle", action="store_true", help="send: with the power bit")
     parser.add_argument("--again", metavar="STEP", help="capture: redo this step")
@@ -647,6 +674,9 @@ def main() -> None:
     folder = args.config.resolve().parent / FOLDER
     if args.command == "fit":
         raise SystemExit(run_fit(folder))
+    if args.command == "published":
+        folder.mkdir(parents=True, exist_ok=True)
+        raise SystemExit(run_fit(folder, published()))
     blaster = blaster_from_config(args.config)
     if args.command == "check":
         try:

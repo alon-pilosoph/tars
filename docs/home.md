@@ -51,7 +51,8 @@ toggle: one bit that means "switch over". The same press turns the AC on when it
 press without that bit changes the settings and leaves the power alone. That's why the Smart Life app's on button
 sometimes did nothing: its "on" was a settings-only code, and its "off" was the toggle.
 
-So TARS doesn't use the app's codes. `ac_onboard` records the AC's own remote, works out which bits are the power
+So TARS doesn't use the app's codes. It starts from the code published for Electra's remotes, and if the AC
+doesn't answer to it, `ac_onboard` records the AC's own remote, works out which bits are the power
 toggle, the mode, the temperature, the fan and the swing, and checks the result against every press it heard, bit for
 bit ([teaching it the remote](#the-ac-teaching-tars-the-remote)). From that profile TARS makes any setting the remote
 could, and decides itself whether to send the toggle:
@@ -315,8 +316,13 @@ name = "AC"
 kind = "ac"
 ```
 
-**Ask the person:** "Have the Electra remote with you, the AC in view and off, and the blaster where the remote can
-reach it from about 30 cm." Then *(the person's terminal)*:
+**First, the published code, with nothing to record:** many Electra ACs speak the protocol published for their remotes
+([IRelectra](https://github.com/barakwei/IRelectra): 34 bits, Manchester, power as a toggle). `uv run python -m
+voice_assistant.ac_onboard published` writes that profile, fitted and checked like a recording; then go straight to
+`try` below. If `try`'s second step doesn't turn the AC on, it speaks something else: record it as follows.
+
+**Recording the remote, if the published code isn't it.** **Ask the person:** "Have the Electra remote with you, the
+AC in view and off, and the blaster where the remote can reach it from about 30 cm." Then *(the person's terminal)*:
 "Run `uv run python -m voice_assistant.ac_onboard capture`." It asks for one button at a time (temperature, fan, mode,
 swing, then power twice) and, after each, what the remote's screen shows; Enter takes its guess. Between presses it
 asks them to set the remote some way, pointed away from the blaster: those presses aren't recorded. Buttons other than
