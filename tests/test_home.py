@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from voice_assistant import llm
+from voice_assistant.ac import Blaster
 from voice_assistant.config import ConfigError, HomeConfig, load_config
 from voice_assistant.draft import Draft
 from voice_assistant.home import (
@@ -309,6 +310,18 @@ colour = "blue"
     assert "entity must be a lock.* entity" in message
     assert "two devices have that name" in message and "kind must be lock, boiler, switch, ac" in message
     assert "(ac) has no setting colour" in message and "goes through the IR blaster: set [home] blaster" in message
+
+
+def test_a_blaster_that_wont_say_its_protocol_is_told_it(tmp_path):
+    path = tmp_path / "config.toml"
+    blaster = '[home]\nblaster = {{ id = "bf41", address = "10.0.0.9", version = "3.5"{} }}\n'
+    path.write_text(blaster.format(", control_type = 1"))
+    assert Blaster.from_spec(load_config(path).home.blaster, "key")._control_type == 1
+    path.write_text(blaster.format(", control_type = 3"))
+    with pytest.raises(ConfigError, match="control_type must be 1"):
+        load_config(path)
+    path.write_text(blaster.format(""))
+    assert Blaster.from_spec(load_config(path).home.blaster, "key")._control_type == 0
 
 
 def test_the_shipped_config_loads_with_no_devices():

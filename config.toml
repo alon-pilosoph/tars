@@ -196,7 +196,7 @@ unlock_threshold = 0.6
 # The model that works the Fire TV step by step ("play Toy Story on Stremio"), reading its screen. Empty = [llm] model.
 tv_model = ""
 # The IR blaster, for the AC, the TV and the soundbar: its id, address and protocol version (tinytuya scan); its
-# local key is TUYA_LOCAL_KEY in .env.
+# local key is TUYA_LOCAL_KEY in .env. control_type (1 or 2) for one that never says which IR protocol it speaks.
 # blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.3" }
 
 # One [[home.devices]] for each thing TARS may work. name is what people call it; Home Assistant's entity ids are

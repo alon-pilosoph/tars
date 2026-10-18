@@ -384,7 +384,7 @@ def make_blaster(spec: dict, root: Path):
     """The IR blaster, from [home] blaster."""
     from .ac import TUYA_KEY, Blaster
 
-    return Blaster(spec["id"], spec["address"], api_key(root / ".env", TUYA_KEY), spec.get("version", "3.3"))
+    return Blaster.from_spec(spec, api_key(root / ".env", TUYA_KEY))
 
 
 def make_ac(spec: dict, blaster, hass, root: Path):

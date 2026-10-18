@@ -515,7 +515,7 @@ def blaster_from_config(config: Path) -> Blaster:
     key = dotenv_values(config.resolve().parent / ".env").get(TUYA_KEY)
     if not key:
         raise SystemExit(f"Put the blaster's local key in .env as {TUYA_KEY} (docs/home.md says how to get it)")
-    return Blaster(blaster["id"], blaster["address"], key, blaster.get("version", "3.3"))
+    return Blaster.from_spec(blaster, key)
 
 
 def ask(prompt: str, default: str = "") -> str:

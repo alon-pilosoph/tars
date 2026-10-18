@@ -225,8 +225,7 @@ def main() -> None:
     key = dotenv_values(root / ".env").get(TUYA_KEY)
     if not key:
         raise SystemExit(f"Put the blaster's local key in .env as {TUYA_KEY}")
-    b = cfg.home.blaster
-    blaster = Blaster(b["id"], b["address"], key, b.get("version", "3.3"))
+    blaster = Blaster.from_spec(cfg.home.blaster, key)
     name = spec["name"].lower()
     remote = Remote(name, CODE_SETS[spec["codes"]], blaster.send, tested=root / TESTED / f"{name}.json")
     if args.command == "press":

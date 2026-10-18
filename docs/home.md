@@ -295,6 +295,11 @@ Then in `config.toml`'s `[home]` (before the first `[[home.devices]]`), with the
 blaster = { id = "<the blaster id>", address = "<its address>", version = "3.3" }
 ```
 
+If `--check` says the blaster "didn't say which IR protocol it speaks", it's one that never answers a status request
+(seen on a v3.5 "Smart IR"): set it by hand, `control_type = 2` (the newer protocol) or `1`, in that same line. To
+tell which, with the TV off and in view, `uv run python -m voice_assistant.ir press TV power` with each: the one the
+TV obeys is it.
+
 **Ask the person:** "In your router, give the blaster a fixed address." **Verify:** `--check`. The key changes if the
 blaster is ever removed from Smart Life and added again: then run the wizard again.
 

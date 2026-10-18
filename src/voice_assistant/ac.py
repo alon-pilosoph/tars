@@ -171,9 +171,16 @@ def _checked(pulses: list[int]) -> list[int]:
 class Blaster:
     """The Tuya IR blaster, on the home network (tinytuya: local, no cloud)."""
 
-    def __init__(self, device_id: str, address: str, local_key: str, version: str = "3.3"):
+    def __init__(self, device_id: str, address: str, local_key: str, version: str = "3.3", control_type: int = 0):
+        """`control_type`: which of Tuya's two IR protocols it speaks; 0 = found on first use, from its status, which
+        some blasters never give."""
         self._id, self._address, self._key, self._version = device_id, address, local_key, float(version)
-        self._control_type = 0  # which of Tuya's two IR protocols it speaks, found on first use
+        self._control_type = control_type
+
+    @classmethod
+    def from_spec(cls, spec: dict, local_key: str) -> Blaster:
+        """From [home] blaster."""
+        return cls(spec["id"], spec["address"], local_key, spec.get("version", "3.3"), spec.get("control_type", 0))
 
     def _device(self):
         from tinytuya.Contrib.IRRemoteControlDevice import IRRemoteControlDevice
@@ -196,7 +203,10 @@ class Blaster:
             connection_retry_delay=BLASTER_RETRY_S,
         )
         if not ir.control_type:
-            raise HomeError(f"the IR blaster didn't answer at {self._address}")
+            raise HomeError(
+                f"the IR blaster at {self._address} didn't say which IR protocol it speaks: set control_type in "
+                "[home] blaster (docs/home.md)"
+            )
         self._control_type = ir.control_type
         return ir
 

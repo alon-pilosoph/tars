@@ -188,7 +188,7 @@ HOME_DEVICES = {
 }
 # The remotes ir.py has codes for ([[home.devices]] kind = "ir", codes = ...).
 IR_CODE_SETS = ("samsung-tv", "polk-re9641")
-BLASTER_KEYS = ("id", "address", "version")
+BLASTER_KEYS = ("id", "address", "version", "control_type")
 TUYA_VERSIONS = ("3.1", "3.2", "3.3", "3.4", "3.5")
 
 
@@ -202,8 +202,8 @@ class HomeConfig:
     unlock_threshold: float = 0.6
     # [[home.devices]]: name, kind (lock, boiler, switch, ac, ir or firetv), and what HOME_DEVICES says it needs.
     devices: list[dict] = field(default_factory=list)
-    # The Tuya IR blaster, for the AC and the IR remotes: { id = "...", address = "192.168.1.50", version = "3.3" };
-    # its local key is TUYA_LOCAL_KEY in .env.
+    # The Tuya IR blaster, for the AC and the IR remotes: { id = "...", address = "192.168.1.50", version = "3.3" },
+    # and control_type (1 or 2) for one that won't say which it speaks; its local key is TUYA_LOCAL_KEY in .env.
     blaster: dict = field(default_factory=dict)
     # The model that works the Fire TV step by step (it reads screenshots); empty = [llm] model.
     tv_model: str = ""
@@ -409,4 +409,6 @@ def _home_problems(home: HomeConfig) -> list[str]:
             problems.append("[home] blaster needs its id and address, as text")
         if home.blaster.get("version", "3.3") not in TUYA_VERSIONS:
             problems.append(f"[home] blaster version must be one of {', '.join(TUYA_VERSIONS)}")
+        if home.blaster.get("control_type", 1) not in (1, 2):
+            problems.append("[home] blaster control_type must be 1 (DPS 201/202) or 2 (DPS 1-13)")
     return problems
