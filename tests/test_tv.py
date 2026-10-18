@@ -125,6 +125,8 @@ class Stick(FireTV):
         s = self.state
         if command.startswith("dumpsys power"):
             return f"  mWakefulness={'Awake' if s['awake'] else 'Asleep'}"
+        if command.startswith("dumpsys window windows"):  # as Fire OS 8 (Android 11) answers it
+            return ""
         if command.startswith("dumpsys window"):
             return f"  mCurrentFocus=Window{{7e2 u0 {s['front']}/{s['front']}.MainActivity}}" if s["front"] else ""
         if command.startswith("dumpsys media_session"):

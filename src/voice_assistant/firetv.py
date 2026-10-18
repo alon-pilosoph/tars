@@ -129,7 +129,8 @@ class FireTV:
 
     def app(self) -> str:
         """The package in front ("com.stremio.one"), or ""."""
-        out = self.shell("dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'")
+        # Not "dumpsys window windows": on Fire OS 8 (Android 11) that prints nothing.
+        out = self.shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
         found = re.search(r"\s([\w.]+)/[\w.$]+", out)
         return found.group(1) if found else ""
 
