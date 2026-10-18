@@ -130,7 +130,7 @@ class PretendAgent:
     def __init__(self):
         self.goals: list[str] = []
 
-    def start(self, goal: str, for_name: str | None = None) -> None:
+    def start(self, goal: str) -> None:
         self.goals.append(goal)
 
     def stop(self) -> None:

@@ -5,6 +5,7 @@ It says "TARS is ready." through the speaker and listens to the mic for a few se
 the mic is shared (PipeWire), so it works either way.
 """
 
+import functools
 import os
 import shutil
 import subprocess
@@ -307,18 +308,24 @@ def home_assistant(cfg: Config, have: set[str], make: Callable[[], object]) -> R
 
 
 def house(cfg: Config, hass) -> list[Result]:
-    """Every device Home Assistant works for TARS, and every sensor it reads, found there."""
+    """Every device Home Assistant works for TARS, and every sensor it reads, found there: the AC only for its light
+    sensor, and the IR and Fire TV devices not at all (their own checks are below)."""
     from .home import AC, HomeError
 
     results = []
     for d in cfg.home.devices:
         if d["kind"] == AC:
+            entities = [d["state"]] if d.get("state") else []
+        elif "entity" in d:
+            entities = [d["entity"], *(d[k] for k in ("door", "battery", "remaining", "power") if k in d)]
+        else:
+            entities = []
+        if not entities:
             continue
         name = d["name"].strip().lower()
         if hass is None:
             results.append(Result(name, SKIP, "needs Home Assistant"))
             continue
-        entities = [d["entity"], *(d[k] for k in ("door", "battery", "remaining", "power") if k in d)]
         missing, said = [], []
         for entity in entities:
             try:
@@ -353,24 +360,23 @@ def blaster_check(cfg: Config, root: Path, have: set[str]) -> Result:
     address = cfg.home.blaster["address"]
     why, fix = "it didn't answer", "is it powered, on the Wi-Fi, at that address? (uv run python -m tinytuya scan)"
     try:
-        answered = within(20, "IR blaster", lambda: blaster.connect() or Result("IR blaster", OK, ""), why, fix)
+        return within(
+            20, "IR blaster", lambda: blaster.connect() or Result("IR blaster", OK, f"answers at {address}"), why, fix
+        )
     except Exception as e:  # noqa: BLE001 - what's wrong is the result
         return Result("IR blaster", FAIL, f"it didn't answer at {address}: {e}", fix)
-    if answered.status == FAIL:
-        return answered
-    return Result("IR blaster", OK, f"answers at {address}")
 
 
 def ac_check(cfg: Config, root: Path) -> Result:
     """The AC's learned profile: there, and tried on the AC."""
-    from .ac import Profile
+    from .ac import FOLDER, PROFILE, Profile
 
     spec = next((d for d in cfg.home.devices if d["kind"] == "ac"), None)
     if spec is None:
         return Result("AC", SKIP, 'not used (no [[home.devices]] with kind = "ac")')
     onboard = "uv run python -m voice_assistant.ac_onboard"
     try:
-        profile = Profile.load(root / spec.get("profile", "voice_data/ac/profile.json"))
+        profile = Profile.load(root / spec["profile"] if spec.get("profile") else root / FOLDER / PROFILE)
     except ValueError as e:
         return Result("AC", FAIL, str(e), f"{onboard} capture, then fit and try")
     temps = profile.temperatures()
@@ -540,11 +546,14 @@ def check_all(cfg: Config, root: Path) -> int:
 
         return HomeAssistant(cfg.home.url, cli.api_key(env, TOKEN_KEY))
 
+    @functools.cache
+    def hass_check():
+        return home_assistant(cfg, have, hass)
+
     def devices():
         if not cfg.home.devices:
             return Result("The house", SKIP, "no devices ([[home.devices]] in config.toml)")
-        ready = home_assistant(cfg, have, hass).status == OK
-        return house(cfg, hass() if ready else None)
+        return house(cfg, hass() if hass_check().status == OK else None)
 
     def speakers():
         if not cfg.speaker.enabled:
@@ -573,7 +582,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
-        ("Home Assistant", lambda: home_assistant(cfg, have, hass)),
+        ("Home Assistant", hass_check),
         ("The house", devices),
         ("IR blaster", lambda: blaster_check(cfg, root, have)),
         ("AC", lambda: ac_check(cfg, root)),

@@ -1,6 +1,7 @@
 # Home Assistant and Mosquitto (the MQTT broker the Nuki reports to), on the Pi beside TARS. docs/home.md
 #   cd deploy/home-assistant && docker compose up -d
-# Everything they keep is in this folder (config/, mosquitto/data/), which git ignores.
+# Everything they keep is in this folder (config/, mosquitto/data/), which git ignores. Make mosquitto/passwords
+# first (docs/home.md): without it, Docker makes a folder there, and Mosquitto won't start.
 services:
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable

@@ -9,7 +9,8 @@
 `capture` keeps every press, with what the remote's screen showed, in voice_data/ac/captures.json. `fit` reads each
 press into bits (Manchester, as Electra's remotes send them, or the pulse-distance most remotes use), finds which bits
 are the power toggle, the mode, the temperature, the fan and the swing by comparing presses that differ in one thing
-only, and writes voice_data/ac/profile.json only if, from those, it makes every press it heard again bit for bit.
+only, and writes voice_data/ac/profile.json only if, from those, it makes every press it heard again bit for bit (a
+mode that can't be is left out, and the rest fitted again without it).
 `try` is the last word: the AC itself, doing what TARS sends.
 
 Nothing here assumes the layout: one published for Electra's remotes (github.com/barakwei/IRelectra: 34 bits,
@@ -27,12 +28,15 @@ from .ac import (
     DISTANCE,
     FAN,
     FANS,
+    FOLDER,
     MANCHESTER,
     MODE,
     MODES,
     NO_PRESS,
     POWER,
     PRESS,
+    PROFILE,
+    STATE,
     SWING,
     TEMPERATURE,
     TUYA_KEY,
@@ -43,8 +47,7 @@ from .ac import (
     with_checksum,
 )
 
-FOLDER = Path("voice_data/ac")
-CAPTURES, PROFILE, STATE = "captures.json", "profile.json", "state.json"
+CAPTURES = "captures.json"
 FIELDS = (POWER, TEMPERATURE, FAN, SWING, MODE)  # the order positions are claimed in: mode gets what's left
 GAP_UNITS = 8  # in Manchester, a space this many half-bits long is between frames, not in one
 MAX_HEADER_UNITS = 8
@@ -303,9 +306,13 @@ def fit(captures: list[Capture]) -> Fit:
     report.append(f"made {len(read) - len(wrong)} of {len(read)} presses again, bit for bit")
     if wrong and MODE not in fields:
         return Fit(None, [*report, *(f"press {c.step or _said(label)} isn't made again exactly" for c, label in wrong)])
-    for c, label in wrong:  # a mode that writes some setting its own way: left out, rather than sent wrong
-        report.append(f"press {c.step or _said(label)} isn't made again exactly, so {label[MODE]} mode is left out")
-        fields[MODE]["values"].pop(label[MODE], None)
+    if wrong:  # a mode that writes some setting its own way: left out, rather than sent wrong, and fitted again
+        left_out = {label[MODE] for _, label in wrong}
+        for c, label in wrong:
+            report.append(f"press {c.step or _said(label)} isn't made again exactly, so {label[MODE]} mode is left out")
+        kept = [c for (c, _), label in zip(read, labels, strict=True) if label[MODE] not in left_out]
+        again = fit(kept)
+        return Fit(again.profile, [*report, "fitted again without those modes:", *again.report])
     if POWER not in fields:
         return Fit(None, [*report, "no power bit found: TARS could set the AC but never turn it on or off"])
     if not fields.get(MODE, {"values": {None: ""}})["values"]:
@@ -585,20 +592,29 @@ def run_fit(folder: Path) -> int:
 
 def run_try(blaster: Blaster, folder: Path) -> int:
     profile = Profile.load(folder / PROFILE)
-    cool = Settings("cool", 24, "auto")
-    warmer = Settings("cool", 26, "auto")
+    modes, fans = profile.values(MODE), profile.values(FAN)
+    temps = [int(t) for t in profile.values(TEMPERATURE)]
+    if len(temps) < 2:
+        print("The profile knows fewer than two temperatures: capture more of them, and fit again.")
+        return 1
+    mode = "cool" if "cool" in modes or not modes else modes[0]
+    fan = "auto" if "auto" in fans or not fans else fans[0]
+    start = min(temps, key=lambda t: abs(t - 24))
+    other = min((t for t in temps if t != start), key=lambda t: abs(t - start - 2))
+    cool, warmer = Settings(mode, start, fan), Settings(mode, other, fan)
+    said = f"{mode.upper()} {start}"
     print("Turn the AC OFF with its own remote, and watch it. Each step sends one code from TARS.\n")
     input("Enter when it's off. ")
     blaster.send(profile.pulses(cool, toggle=False))
-    if not yes("1. Sent COOL 24 without the power bit. It should beep (maybe) and stay OFF. Did it stay off?"):
+    if not yes(f"1. Sent {said} without the power bit. It should beep (maybe) and stay OFF. Did it stay off?"):
         print("Then the settings code turns it on: the power bit isn't a toggle. Send me what fit said.")
         return 1
     blaster.send(profile.pulses(cool, toggle=True))
-    if not yes("2. Sent COOL 24 with the power bit. Did it turn ON?"):
+    if not yes(f"2. Sent {said} with the power bit. Did it turn ON?"):
         print("Check the blaster can see the AC (try the Smart Life app from where it stands), then try again.")
         return 1
     blaster.send(profile.pulses(warmer, toggle=False))
-    if not yes("3. Sent COOL 26 without the power bit. Is it still ON, and set to 26?"):
+    if not yes(f"3. Sent {mode.upper()} {other} without the power bit. Is it still ON, and set to {other}?"):
         print("Then a settings change doesn't work as the remote's does. Send me what fit said.")
         return 1
     blaster.send(profile.pulses(warmer, toggle=True))

@@ -24,6 +24,8 @@ POWER, MODE, TEMPERATURE, FAN, SWING = "power", "mode", "temperature", "fan", "s
 PRESS, NO_PRESS = "press", "none"  # the power field's values: the power button pressed, or not
 MANCHESTER, DISTANCE = "manchester", "distance"
 TUYA_KEY = "TUYA_LOCAL_KEY"  # the blaster's local key, in .env
+# The AC's learned profile, and whether TARS thinks it's on: in this folder, under the project's root.
+FOLDER, PROFILE, STATE = Path("voice_data/ac"), "profile.json", "state.json"
 # How long the light sensor gets to show the AC came on (or went off) before the toggle is sent again, once.
 SENSOR_WAIT_S = 6.0
 SENSOR_POLL_S = 0.5
@@ -59,14 +61,13 @@ class Profile:
             self.fields: dict[str, dict] = raw["fields"]
             self.checksum: dict | None = raw.get("checksum")
             self.checked: bool = bool(raw.get("checked", False))
-        except (KeyError, TypeError, ValueError) as e:
+            broken = [n for n, f in self.fields.items() if any(len(v) != len(f["at"]) for v in f["values"].values())]
+        except (AttributeError, KeyError, TypeError, ValueError) as e:
             raise ValueError(f"not an AC profile ({e!r}); run ac_onboard fit again") from None
         if self.scheme not in (MANCHESTER, DISTANCE) or set(self.template) - {"0", "1"}:
             raise ValueError("not an AC profile: unknown scheme or bits; run ac_onboard fit again")
-        for name, f in self.fields.items():
-            for value in f["values"].values():
-                if len(value) != len(f["at"]):
-                    raise ValueError(f"the profile's {name} field is broken; run ac_onboard fit again")
+        if broken:
+            raise ValueError(f"the profile's {broken[0]} field is broken; run ac_onboard fit again")
         if POWER not in self.fields:
             raise ValueError("the profile has no power bit; the AC can be set, but not turned on or off")
 
@@ -314,22 +315,25 @@ class AC:
             return f"sent: {verb}{set_to}; TARS can't see the AC, so if it didn't, someone should say so"
 
     def _confirm(self, state: State, settings: Settings, want_on: bool) -> str:
-        """With a light sensor: wait for the light to change, and send the toggle again once if it doesn't."""
+        """With a light sensor: wait for the light to change, and send the toggle again once if it still shows the
+        old state. A sensor that doesn't answer gets no second toggle: it could turn the AC straight back."""
+        seen = None
         for attempt in (1, 2):
             deadline = self._clock() + SENSOR_WAIT_S
             while self._clock() < deadline:
-                if self._seen() is want_on:
+                seen = self._seen()
+                if seen is want_on:
                     state.on, state.how = want_on, "sensor"
                     state.save(self._path)
                     tried = " (on the second try)" if attempt == 2 else ""
                     return f"done: the AC is {'on' if want_on else 'off'}{tried}, its light says so"
                 self._sleep(SENSOR_POLL_S)
+            if seen is None:
+                return "not confirmed: sent it, but the AC's light sensor didn't answer"
             if attempt == 1:
                 self._send(self.profile.pulses(settings, True))
-        seen = self._seen()
-        if seen is not None:
-            state.on, state.how = seen, "sensor"
-            state.save(self._path)
+        state.on, state.how = seen, "sensor"
+        state.save(self._path)
         return f"not confirmed: sent it twice, and the AC's light still says {'on' if seen else 'off'}"
 
     def _seen(self) -> bool | None:

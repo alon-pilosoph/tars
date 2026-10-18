@@ -7,6 +7,7 @@ import functools
 import hashlib
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -36,7 +37,6 @@ OPENAI_TIMEOUT_S = 15.0
 AGENT_TIMEOUT_S = 40.0  # one step of the Fire TV agent, a screenshot to read
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
-AC_FOLDER = "voice_data/ac"  # the AC's learned profile (profile.json), and whether TARS thinks it's on (state.json)
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
 EX_CONFIG = 78
 # sysexits' EX_UNAVAILABLE: no speakerphone. Not restarted either; plugging it in starts TARS (the udev rule).
@@ -322,7 +322,7 @@ def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
 
 def make_home(cfg: Config, root: Path, announce=None):
     """The devices in the house, as [home] lists them, or None. Like every service, optional: without the token, the
-    blaster's key or the AC's profile, TARS says what it can't work and starts anyway. `announce(line, for_name)`:
+    blaster's key or the AC's profile, TARS says what it can't work and starts anyway. `announce(line)`:
     how TARS says something on its own, later (the Fire TV agent's result)."""
     if not cfg.home.devices:
         return None
@@ -338,7 +338,12 @@ def make_home(cfg: Config, root: Path, announce=None):
         print(f"(no {TOKEN_KEY}: the lock and the boiler aren't connected; see docs/home.md)")
     blaster = None
     if cfg.home.blaster and TUYA_KEY in keys:
-        blaster = make_blaster(cfg.home.blaster, root)
+        try:
+            import tinytuya  # noqa: F401 - only whether it's there
+        except ImportError:
+            print('(the AC, the TV and the soundbar by IR need the optional extra "ac": uv sync --all-extras)')
+        else:
+            blaster = make_blaster(cfg.home.blaster, root)
     elif cfg.home.blaster:
         print(f"(no {TUYA_KEY}: the AC, the TV and the soundbar by IR aren't connected; see docs/home.md)")
     local = {}
@@ -383,13 +388,13 @@ def make_blaster(spec: dict, root: Path):
 
 
 def make_ac(spec: dict, blaster, hass, root: Path):
-    from .ac import AC, Profile
+    from .ac import AC, FOLDER, PROFILE, STATE, Profile
 
-    folder = root / AC_FOLDER
-    profile = Profile.load(root / spec["profile"] if spec.get("profile") else folder / "profile.json")
+    folder = root / FOLDER
+    profile = Profile.load(root / spec["profile"] if spec.get("profile") else folder / PROFILE)
     if not profile.checked:
         print("(the AC's profile wasn't tried on the AC yet: python -m voice_assistant.ac_onboard try)")
-    return AC(profile, blaster.send, folder / "state.json", hass, spec.get("state", ""))
+    return AC(profile, blaster.send, folder / STATE, hass, spec.get("state", ""))
 
 
 def make_tv(cfg: Config, spec: dict, root: Path, announce=None):
@@ -467,12 +472,15 @@ def typed(cfg: Config, root: Path) -> None:
     from .assistant import Assistant
 
     later: list = []  # the assistant, once made: what the TV agent says when it's done is said through it
+    # One at a time: the TV agent's line, from its thread, never over a reply, nor in the middle of one.
+    speaking = threading.Lock()
 
-    def announce(line: str, for_name: str | None = None) -> None:
+    def announce(line: str) -> None:
         print(f"\nTARS:  {line}\n\nYou:  ", end="", flush=True)
         if later:
-            later[0].say(line, keep=False)
-            later[0].brain.remember_said(line)
+            with speaking:
+                later[0].say(line, keep=False)
+                later[0].brain.remember_said(line)
 
     _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce))
     with Speaker(
@@ -489,7 +497,8 @@ def typed(cfg: Config, root: Path) -> None:
             if not text:
                 continue
             try:
-                assistant.answer_text(text)
+                with speaking:
+                    assistant.answer_text(text)
             except AudioDeviceError:
                 raise
             except Exception as e:  # noqa: BLE001 - a failed question shouldn't end the session

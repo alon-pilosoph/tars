@@ -332,7 +332,7 @@ again; `capture --again "mode 3"` redoes one.
 ```
 
 A mode that writes some setting its own way (fan mode often blanks the temperature) is left out rather than sent
-wrong. If `fit` writes nothing, read what it says, and the presses in `voice_data/ac/captures.json`: a typo in a screen
+wrong, and the rest is fitted again without its presses, so nothing in the profile was learned from them. If `fit` writes nothing, read what it says, and the presses in `voice_data/ac/captures.json`: a typo in a screen
 reading shows as "the same screen sent different codes", and redoing that step fixes it. A layout it can't explain
 is for a person to look at, with those two things.
 

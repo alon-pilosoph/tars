@@ -395,6 +395,13 @@ def test_devices_tars_works_itself_are_listed_with_what_they_can_do_and_wait_for
     assert tools.call(args("soundbar", "press", button="mute"), Request()).startswith("sent: mute")
 
 
+def test_only_an_unlock_that_turns_the_lock_says_one_moment_first():
+    tools, _ = home()
+    assert tools.slow(json.dumps(args("front door", "lock")))
+    assert tools.slow(json.dumps(args("front door", "unlock", confirmed=True)))
+    assert not tools.slow(json.dumps(args("front door", "unlock")))
+
+
 def test_waking_the_fire_tv_says_one_moment_first():
     tools, _ = home(devices=[*DEVICES, {"name": "fire tv", "kind": "firetv", "address": "10.0.0.8"}])
     tools.devices["fire tv"] = types.SimpleNamespace(kind="firetv")

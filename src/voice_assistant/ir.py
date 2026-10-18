@@ -21,6 +21,7 @@ HEADER_NEC, HEADER_SAMSUNG = (9000, 4500), (4500, 4500)
 MARK, ZERO, ONE = 560, 560, 1690
 GAP_S = 0.15  # between presses of the same button
 MAX_PRESSES = 15
+TESTED = "voice_data/ir"  # what trying the power codes on each set showed
 
 
 @dataclass(frozen=True)
@@ -235,9 +236,6 @@ def main() -> None:
     else:
         works = test(remote, root / TESTED / f"{name}.json", lambda q: input(f"{q} (y/n) ").lower().startswith("y"))
         print(f"Saved: {works}. TARS turns the {name} on and off with what worked.")
-
-
-TESTED = "voice_data/ir"  # what trying the power codes on each set showed
 
 
 if __name__ == "__main__":

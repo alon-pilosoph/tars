@@ -76,18 +76,18 @@ class Announcements:
     after a chime, between conversations, like a reminder."""
 
     def __init__(self):
-        self._lines: deque[tuple[str, str | None]] = deque()
+        self._lines: deque[str] = deque()
         self._lock = threading.Lock()
 
-    def add(self, line: str, for_name: str | None = None) -> None:
+    def add(self, line: str) -> None:
         if line.strip():
             with self._lock:
-                self._lines.append((line.strip(), for_name))
+                self._lines.append(line.strip())
 
     def waiting(self) -> bool:
         return bool(self._lines)
 
-    def take(self) -> list[tuple[str, str | None]]:
+    def take(self) -> list[str]:
         with self._lock:
             lines, self._lines = list(self._lines), deque()
         return lines
@@ -297,7 +297,7 @@ class Assistant:
         with self._mic_paused():
             self.speaker.play_pcm_stream(iter([chime(self.voice.sample_rate)]), self.voice.sample_rate)
         said = []
-        for line, _ in lines:
+        for line in lines:
             print(f"Bot:  {line}  (on its own)")
             if self.say(line, keep=False):
                 self.journal.said(line)

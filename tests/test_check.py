@@ -178,20 +178,23 @@ def test_every_device_and_sensor_is_found_in_home_assistant(cfg):
     devices = [
         {"name": "front door", "kind": "lock", "entity": "lock.front_door", "battery": "sensor.nuki_battery"},
         {"name": "boiler", "kind": "boiler", "entity": "switch.boiler"},
-        {"name": "ac", "kind": "ac", "blaster": "x", "address": "10.0.0.9"},
+        {"name": "ac", "kind": "ac", "state": "binary_sensor.ac_light"},
+        {"name": "tv", "kind": "ir", "codes": "samsung-tv"},
+        {"name": "fire tv", "kind": "firetv", "address": "10.0.0.8"},
     ]
     home = cfg.__class__(**{**vars(cfg), "home": HomeConfig(url="http://ha", devices=devices)})
-    states = {"lock.front_door": "locked", "switch.boiler": "unavailable"}
+    states = {"lock.front_door": "locked", "switch.boiler": "unavailable", "binary_sensor.ac_light": "off"}
 
     def state(entity):
         if entity not in states:
             raise HomeError("no such entity")
         return {"state": states[entity]}
 
-    door, boiler = check.house(home, type("HA", (), {"state": lambda self, e: state(e)})())
+    door, boiler, ac = check.house(home, type("HA", (), {"state": lambda self, e: state(e)})())
     assert door.status == FAIL and "sensor.nuki_battery" in door.detail
     assert boiler.status == WARN and "can't reach it" in boiler.fix
-    assert [r.status for r in check.house(home, None)] == [SKIP, SKIP]
+    assert ac.status == OK and ac.detail == "binary_sensor.ac_light off"
+    assert [r.status for r in check.house(home, None)] == [SKIP, SKIP, SKIP]
 
 
 def test_the_blaster_needs_its_key_and_the_ac_a_profile(cfg, tmp_path, monkeypatch):

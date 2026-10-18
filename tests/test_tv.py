@@ -225,7 +225,7 @@ def test_an_app_that_crashes_right_after_opening_is_opened_again():
 def test_the_agent_opens_apps_the_same_way():
     stick = CrashesOnce()
     client = calls(("open_app", {"app": "Stremio"}), ("done", {"success": True, "say": "Stremio is open."}))
-    agent = TvAgent(stick, client, "gpt", lambda line, who: None, sleep=lambda s: None)
+    agent = TvAgent(stick, client, "gpt", lambda line: None, sleep=lambda s: None)
     assert agent.work("open stremio") == (True, "Stremio is open.")
     assert stick.opens == 2 and "on try 2" in agent.log[1]
 
@@ -239,9 +239,9 @@ def test_a_button_press_says_what_is_playing_after_it():
 
 def test_do_hands_the_goal_to_the_agent_and_answers_at_once():
     agent = types.SimpleNamespace(goals=[], stop=lambda: None)
-    agent.start = lambda goal, who: agent.goals.append((goal, who))
+    agent.start = agent.goals.append
     said = tv(Stick(), agent).call("do", {"goal": "play Toy Story on Stremio"}, Request("alon"))
-    assert said.startswith("started") and agent.goals == [("play Toy Story on Stremio", "alon")]
+    assert said.startswith("started") and agent.goals == ["play Toy Story on Stremio"]
 
 
 def test_without_openai_do_says_what_else_it_can_do():
@@ -289,7 +289,7 @@ def test_the_agent_works_step_by_step_and_finishes_with_what_to_say():
         ("press", {"button": "select", "times": 1}),
         ("done", {"success": True, "say": "Toy Story is playing."}),
     )
-    agent = TvAgent(stick, client, "gpt", lambda line, who: None, sleep=lambda s: None)
+    agent = TvAgent(stick, client, "gpt", lambda line: None, sleep=lambda s: None)
     assert agent.work("play Toy Story on Stremio") == (True, "Toy Story is playing.")
     assert "input keyevent KEYCODE_WAKEUP" in stick.commands  # it woke the TV first
     assert stick.state["front"] == "com.stremio.one" and "input text 'toy%sstory'" in stick.commands
@@ -300,17 +300,17 @@ def test_the_agent_works_step_by_step_and_finishes_with_what_to_say():
 
 def test_the_agent_gives_up_when_its_out_of_steps():
     client = calls(*[("look", {})] * 5)
-    agent = TvAgent(Stick(), client, "gpt", lambda line, who: None, steps=3, sleep=lambda s: None)
+    agent = TvAgent(Stick(), client, "gpt", lambda line: None, steps=3, sleep=lambda s: None)
     success, said = agent.work("Play the news")
     assert not success and said == "I ran out of time trying to play the news."
 
 
-def test_the_agent_says_how_it_went_to_whoever_asked():
+def test_the_agent_says_how_it_went():
     said = []
     client = calls(("done", {"success": False, "say": "Stremio found no streams for Toy Story."}))
-    agent = TvAgent(Stick(), client, "gpt", lambda line, who: said.append((line, who)), sleep=lambda s: None)
-    agent.start("play Toy Story on Stremio", "alon", wait=True)
-    assert said == [("Stremio found no streams for Toy Story.", "alon")]
+    agent = TvAgent(Stick(), client, "gpt", said.append, sleep=lambda s: None)
+    agent.start("play Toy Story on Stremio", wait=True)
+    assert said == ["Stremio found no streams for Toy Story."]
 
 
 def test_a_stopped_agent_says_nothing():
@@ -322,7 +322,7 @@ def test_a_stopped_agent_says_nothing():
         return types.SimpleNamespace(output=[], output_text="")
 
     client = types.SimpleNamespace(responses=types.SimpleNamespace(create=create))
-    agent = TvAgent(Stick(), client, "gpt", lambda line, who: said.append(line), sleep=lambda s: None)
+    agent = TvAgent(Stick(), client, "gpt", said.append, sleep=lambda s: None)
     agent.start("play Toy Story", wait=True)
     assert started.is_set() and said == []
 
@@ -336,7 +336,7 @@ def test_what_tars_announces_is_said_after_a_chime_and_joins_the_conversation(sp
     speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
     assistant.voice.stream = lambda text: iter([text.encode()])
     assistant.announcements = Announcements()
-    assistant.announcements.add("Toy Story is playing.", "alon")
+    assistant.announcements.add("Toy Story is playing.")
     assert assistant._due()
     assistant.say_announcements(follow_up_s=4.0)
     assert played[-1] == b"Toy Story is playing." and brain.remembered == ["Toy Story is playing."]

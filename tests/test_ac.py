@@ -278,6 +278,12 @@ def test_with_the_light_sensor_it_checks_and_sends_once_more_if_it_was_missed(tm
     assert [toggle for toggle, _ in sent.codes] == [True, True] and State.load(path).how == "sensor"
 
 
+def test_a_light_sensor_that_doesnt_answer_gets_no_second_toggle(tmp_path):
+    unit, sent, path = ac(tmp_path, sensor=lambda: "unavailable")
+    assert unit.call("on", NOTHING) == "not confirmed: sent it, but the AC's light sensor didn't answer"
+    assert [toggle for toggle, _ in sent.codes] == [True] and State.load(path).how == "sent"
+
+
 def test_with_the_light_sensor_on_already_means_no_toggle(tmp_path):
     unit, sent, _ = ac(tmp_path, sensor=lambda: "on")
     assert unit.call("on", NOTHING).startswith("sent: cool 24") and sent.codes[-1][0] is False

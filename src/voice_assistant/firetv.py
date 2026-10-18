@@ -281,7 +281,7 @@ class TV:
                 return "error: do needs the goal, in their words"
             if self.agent is None:
                 return "error: working the TV step by step needs OPENAI_API_KEY; press buttons or open an app instead"
-            self.agent.start(goal, request.speaker)
+            self.agent.start(goal)
             return "started: working on it on screen; TARS will say when it's done, so say only that you're on it"
         return f"error: the fire tv can't {action}"
 
@@ -379,9 +379,18 @@ AGENT_TOOLS = [
 ]  # fmt: skip
 
 
+def _without_pictures(items: list) -> list:
+    """Earlier screenshots as a line each: the whole list is sent again every step, and every picture kept in it
+    would make each step dearer and slower than the one before."""
+    return [
+        {"role": "user", "content": "(an earlier screenshot)"} if isinstance(i.get("content"), list) else i
+        for i in items
+    ]
+
+
 class TvAgent:
     """Works the TV toward a goal in the background, a model choosing each step from what it sees, and says how it
-    went through `announce(line, for_name)`. One goal at a time: a new one, or a person pressing a button, stops the
+    went through `announce(line)`. One goal at a time: a new one, or a person pressing a button, stops the
     one before."""
 
     def __init__(
@@ -389,7 +398,7 @@ class TvAgent:
         stick: FireTV,
         client,
         model: str,
-        announce: Callable[[str, str | None], None],
+        announce: Callable[[str], None],
         steps: int = AGENT_STEPS,
         timeout_s: float = AGENT_TIMEOUT_S,
         sleep: Callable[[float], None] = time.sleep,
@@ -400,10 +409,10 @@ class TvAgent:
         self._thread: threading.Thread | None = None
         self.log: list[str] = []  # the last goal's steps, for --check and the logs
 
-    def start(self, goal: str, for_name: str | None = None, wait: bool = False) -> None:
+    def start(self, goal: str, wait: bool = False) -> None:
         self.stop()
         self._stopped = stopped = threading.Event()
-        self._thread = threading.Thread(target=self._run, args=(goal, for_name, stopped), daemon=True, name="tv-agent")
+        self._thread = threading.Thread(target=self._run, args=(goal, stopped), daemon=True, name="tv-agent")
         self._thread.start()
         if wait:
             self._thread.join()
@@ -411,10 +420,7 @@ class TvAgent:
     def stop(self) -> None:
         self._stopped.set()
 
-    def busy(self) -> bool:
-        return bool(self._thread and self._thread.is_alive() and not self._stopped.is_set())
-
-    def _run(self, goal: str, for_name: str | None, stopped: threading.Event) -> None:
+    def _run(self, goal: str, stopped: threading.Event) -> None:
         try:
             success, say = self.work(goal, stopped)
         except Exception as e:  # noqa: BLE001 - said, never raised: nobody is waiting on this thread
@@ -424,7 +430,7 @@ class TvAgent:
             print(f"(tv: {goal!r} stopped)")
             return
         print(f"(tv: {goal!r} {'done' if success else 'not done'}: {say})")
-        self._announce(say, for_name)
+        self._announce(say)
 
     def work(self, goal: str, stopped: threading.Event | None = None) -> tuple[bool, str]:
         """(success, what to say): the goal worked toward step by step, until done, stopped, or out of steps or time."""
@@ -467,6 +473,7 @@ class TvAgent:
                 ]
                 if image:
                     picture = f"data:image/png;base64,{base64.b64encode(image).decode()}"
+                    items = _without_pictures(items)
                     items.append(
                         {"role": "user", "content": [{"type": "input_image", "image_url": picture, "detail": "high"}]}
                     )
