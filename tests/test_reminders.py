@@ -13,10 +13,12 @@ from voice_assistant.reminders import (
     REMINDER,
     SAID,
     SCHEDULED,
+    TELEGRAM,
     TIMER,
     VOICE,
     WAITING,
     WEB,
+    Clock,
     NewReminder,
     Reminders,
     ReminderTools,
@@ -278,3 +280,51 @@ def test_one_asked_for_earlier_in_the_same_reply_counts_as_set(reminders):
     cancel, _ = tools.call("cancel_reminder", {"id": rid}, now=NOW)
     twice, said = tools.call("cancel_reminder", {"id": rid}, now=NOW, pending=[cancel])
     assert twice is None and said.startswith("already")
+
+
+def on_telegram(reminders, **kw):
+    kw.setdefault("kind", REMINDER)
+    kw.setdefault("text", "call the bank")
+    kw.setdefault("due", NOW + 60)
+    return reminders.add(NewReminder(**kw), TELEGRAM, channel=TELEGRAM, now=NOW)
+
+
+def test_one_said_on_telegram_is_never_due_aloud_and_the_other_way_round(reminders):
+    aloud, written = add(reminders), on_telegram(reminders, for_name="alon")
+    assert [r["id"] for r in reminders.due(NOW + 61)] == [aloud]
+    assert [r["id"] for r in reminders.due(NOW + 61, channel=TELEGRAM)] == [written]
+    assert {r["id"] for r in reminders.active()} == {aloud, written}  # both models know about both
+
+
+def test_the_clock_at_home_doesnt_stop_for_one_said_on_telegram(reminders):
+    # The wake loop stops the moment the clock says something is due: for one it would never say, TARS would stop
+    # listening for "hey TARS" over and over.
+    on_telegram(reminders)
+    clock = Clock(reminders)
+    clock.read()
+    assert not clock.is_due(NOW + 61)
+    add(reminders)
+    clock.read()
+    assert clock.is_due(NOW + 61)
+
+
+def test_posted_on_telegram_is_said_once_even_if_it_waits_for_an_ack(reminders):
+    rid = on_telegram(reminders, needs_ack=True)
+    reminders.delivered(rid, now=NOW + 61)
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"], r["next_at"], r["last_said"]) == (SAID, 1, None, NOW + 61)
+    assert reminders.waiting() == []
+
+
+def test_a_message_that_waits_until_someone_is_back_cant_be_on_telegram(reminders):
+    back = NewReminder(MESSAGE, "the plumber called", "stacey", due=None)
+    with pytest.raises(ValueError, match="said aloud"):
+        reminders.add(back, TELEGRAM, voices=["stacey"], channel=TELEGRAM, now=NOW)
+    with pytest.raises(ValueError, match="aloud or on Telegram"):
+        reminders.add(NewReminder(REMINDER, "x", due=NOW + 60), VOICE, channel="sms", now=NOW)
+
+
+def test_one_on_telegram_can_move_to_being_said_aloud(reminders):
+    rid = on_telegram(reminders)
+    assert reminders.say_aloud(rid)
+    assert [r["id"] for r in reminders.due(NOW + 61)] == [rid]

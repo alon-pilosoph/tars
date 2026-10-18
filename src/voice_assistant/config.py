@@ -21,6 +21,7 @@ DEEPGRAM_HOST = "api.deepgram.com"
 DEEPGRAM_STT_MODEL = "nova-3"
 DEEPGRAM_VOICE = "flux-wes-en"
 OPENAI_KEY, DEEPGRAM_KEY, CARTESIA_KEY = "OPENAI_API_KEY", "DEEPGRAM_API_KEY", "CARTESIA_API_KEY"
+TELEGRAM_KEY = "TELEGRAM_BOT_TOKEN"
 
 
 class QuickProvider(NamedTuple):
@@ -177,6 +178,25 @@ class RemindersConfig:
 
 
 @dataclass
+class TelegramConfig:
+    # Chat with TARS on Telegram (docs/telegram.md): voice-assistant --telegram, with TELEGRAM_BOT_TOKEN in .env.
+    enabled: bool = False
+    # Who may: each person's name, as TARS knows them, and their Telegram chat id. Anyone else is ignored.
+    people: dict[str, int] = field(default_factory=dict)
+    # Things TARS sends at home for someone here ("send me the recipe") also come to their chat.
+    send_items: bool = True
+    # A chat is one conversation until it's been quiet this long (or someone sends /new); then the next message
+    # starts a new one. Longer than [llm] memory_minutes, since a written reply often comes back much later.
+    memory_minutes: float = 60.0
+    # Who answers a chat: "openai" ([llm] model, which has web search and sends links; Qwen if there's no OpenAI key)
+    # or "quick" (Qwen first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing.
+    brain: str = "openai"
+    # OpenAI's settings for chats: the standard tier (no one's waiting on a first word) and a little thinking.
+    service_tier: str = ""
+    reasoning_effort: str = "low"
+
+
+@dataclass
 class Config:
     audio: AudioConfig
     wake: WakeConfig
@@ -188,20 +208,40 @@ class Config:
     learning: LearningConfig
     web: WebConfig
     reminders: RemindersConfig
+    telegram: TelegramConfig
 
 
-def load_config(path: Path) -> Config:
-    try:
-        raw = tomllib.loads(path.read_text()) if path.exists() else {}
-    except tomllib.TOMLDecodeError as e:
-        raise ConfigError(f"{path}: {e}") from None
+# This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
+# on Telegram. Each setting in it replaces config.toml's, so the shared file stays generic and `git pull` never
+# meets a local edit.
+LOCAL_CONFIG = "config.local.toml"
+
+
+def load_config(path: Path, local: bool = True) -> Config:
+    """config.toml's settings, with this machine's from config.local.toml beside it on top (`local`; the tests read
+    the shipped file alone)."""
+    raw = _read(path)
+    where = str(path)
+    local_path = path.with_name(LOCAL_CONFIG)
+    if local and path.name != LOCAL_CONFIG and local_path.exists():
+        for name, values in _read(local_path).items():
+            both = isinstance(values, dict) and isinstance(raw.get(name), dict)
+            raw[name] = {**raw[name], **values} if both else values
+        where = f"{path} (with {local_path.name})"
     sections = {f.name: f.type for f in dataclasses.fields(Config)}
     problems = [f"there's no [{name}] section" for name in raw if name not in sections]
     cfg = Config(**{name: _section(kind, name, raw.get(name, {}), problems) for name, kind in sections.items()})
     problems = problems or _problems(cfg)  # the checks between settings assume each one is the right type
     if problems:
-        raise ConfigError(f"{path}: " + "; ".join(problems))
+        raise ConfigError(f"{where}: " + "; ".join(problems))
     return cfg
+
+
+def _read(path: Path) -> dict:
+    try:
+        return tomllib.loads(path.read_text()) if path.exists() else {}
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path}: {e}") from None
 
 
 def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
@@ -246,7 +286,14 @@ def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
     return dataclasses.replace(cfg, stt=stt, tts=tts, llm=llm), notes
 
 
-_KINDS = {str: "text", bool: "true or false", int: "a whole number", float: "a number", list: "a list"}
+_KINDS = {
+    str: "text",
+    bool: "true or false",
+    int: "a whole number",
+    float: "a number",
+    list: "a list",
+    dict: "a table, like { Alon = 123 }",
+}
 
 
 def _section(kind: type, name: str, values, problems: list[str]):
@@ -275,6 +322,9 @@ def _fits(value, kind) -> bool:
     if typing.get_origin(kind) is list:
         (item,) = typing.get_args(kind)
         return isinstance(value, list) and all(isinstance(v, item) for v in value)
+    if typing.get_origin(kind) is dict:
+        keys, values = typing.get_args(kind)
+        return isinstance(value, dict) and all(isinstance(k, keys) and _fits(v, values) for k, v in value.items())
     return isinstance(value, kind)
 
 
@@ -326,4 +376,14 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[reminders] timer_ring_min must be between 1 and 60")
     if not 2 <= cfg.reminders.ack_window_s <= 30:
         problems.append("[reminders] ack_window_s must be between 2 and 30")
+    if cfg.telegram.enabled and not cfg.telegram.people:
+        problems.append("[telegram] people must say who may chat with TARS, like { Alon = 123456789 }")
+    if any(not name.strip() for name in cfg.telegram.people):
+        problems.append("[telegram] people needs a name for each chat id")
+    if cfg.telegram.memory_minutes <= 0:
+        problems.append("[telegram] memory_minutes must be more than 0")
+    if cfg.telegram.brain not in ("openai", "quick"):
+        problems.append(f"[telegram] brain must be openai or quick, not {cfg.telegram.brain!r}")
+    if len(set(cfg.telegram.people.values())) < len(cfg.telegram.people):
+        problems.append("[telegram] people has the same chat id twice")
     return problems

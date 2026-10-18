@@ -427,6 +427,12 @@ class Brain(Protocol):
     def forget_last(self) -> None:
         """Drop the most recent exchange from the conversation history, finished or not. Once only."""
 
+    def remember_said(self, text: str) -> None:
+        """TARS said `text` without being asked (a reminder posted in a chat): part of the conversation from now."""
+
+    def start_over(self) -> None:
+        """Forget the whole conversation: the next question starts a new one."""
+
     def interrupt(self) -> None:
         """From another thread: stop writing the reply in progress; its stream ends with an error."""
 
@@ -541,11 +547,17 @@ class OpenAIChat:
         cfg: LLMConfig,
         reminders: ReminderTools | None = None,
         clock: Callable[[], float] | None = None,
+        channel_rules: str = "",
+        remind_tools: list[dict] | None = None,
     ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
         QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
-        a failed service is back (time.monotonic; the evals pass their own, to skip ahead)."""
+        a failed service is back (time.monotonic; the evals pass their own, to skip ahead). `channel_rules`: how
+        this conversation differs from one aloud (a Telegram chat, written), last in the instructions so they win.
+        `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud)."""
         self._clock = clock or (lambda: time.monotonic())
+        self._channel_rules = [channel_rules] if channel_rules else []
+        self._remind_tools = remind_tools or REMIND_TOOLS
         self._client = client
         self._cfg = cfg
         self._reminders = reminders
@@ -560,13 +572,13 @@ class OpenAIChat:
         self._tools = (
             ([web_search_tool(cfg)] if cfg.web_search else [])
             + ([SEND_TOOL] if cfg.send else [])
-            + (REMIND_TOOLS if reminders else [])
+            + (self._remind_tools if reminders else [])
         )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
         can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send
         rules.append(abilities(can, [], self._cant()))
-        self._instructions = "\n\n".join([self._system_prompt, *rules])
+        self._instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         # Only send optional settings that are configured; not every model accepts them.
         self._extra = {}
         if cfg.service_tier:
@@ -576,9 +588,7 @@ class OpenAIChat:
 
     def stream_reply(self, text: str) -> Iterator[str]:
         with self._lock:
-            # After a long pause, start fresh: old context confuses more than it helps, and it's private.
-            if self._history and self._clock() - self._last_turn_at > self._cfg.memory_minutes * 60:
-                self._history.clear()
+            self._forget_if_quiet()
             self._previous_turn_at, self._last_turn_at = self._last_turn_at, self._clock()
             self._asked = {"role": "user", "content": text}
             self._history.append(self._asked)
@@ -738,6 +748,25 @@ class OpenAIChat:
             self._last_turn_at = self._previous_turn_at
             self.sent, self.changes = [], []
 
+    def remember_said(self, text: str) -> None:
+        with self._lock:
+            self._forget_if_quiet()
+            self._history.append({"role": "assistant", "content": text})
+            self._history = self._history[-MAX_TURNS * 2 :]
+            self._last_turn_at = self._clock()
+
+    def start_over(self) -> None:
+        with self._lock:
+            self._history.clear()
+            self._asked = None
+            self._last_turn_at = self._previous_turn_at = 0.0
+
+    def _forget_if_quiet(self) -> None:
+        """After a long pause, start fresh: old context confuses more than it helps, and it's private. Call with the
+        lock held."""
+        if self._history and self._clock() - self._last_turn_at > self._cfg.memory_minutes * 60:
+            self._history.clear()
+
     def interrupt(self) -> None:
         _stop(self._writing, "interrupted")
 
@@ -786,11 +815,13 @@ class QuickChat(OpenAIChat):
         quick: list[QuickService],
         reminders: ReminderTools | None = None,
         clock: Callable[[], float] | None = None,
+        channel_rules: str = "",
+        remind_tools: list[dict] | None = None,
     ):
-        super().__init__(client, cfg, reminders, clock)
+        super().__init__(client, cfg, reminders, clock, channel_rules, remind_tools)
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
-        tools = REMIND_TOOLS * own_remind + [QUICK_SEND_TOOL] * own_send
+        tools = self._remind_tools * own_remind + [QUICK_SEND_TOOL] * own_send
         self._quick_tool_defs = tools  # as the Responses API takes them
         self._quick_tools = [_chat_tool(t) for t in tools]
         can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
@@ -810,7 +841,7 @@ class QuickChat(OpenAIChat):
         rules += [QUICK_SEND_RULES.format(links=links)] * own_send
         cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and client is None)
         rules.append(abilities(can, hand_offs, cant))
-        self._quick_instructions = "\n\n".join([self._system_prompt, *rules])
+        self._quick_instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
         self._quick_extra = {"reasoning_effort": effort} if effort else {}
 

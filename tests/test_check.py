@@ -16,7 +16,8 @@ from .conftest import raising
 
 @pytest.fixture
 def cfg():
-    return load_config(Path(__file__).parents[1] / "config.toml")  # the repo's: OpenAI, Deepgram, Groq and Cerebras
+    # The repo's, as shipped: OpenAI, Deepgram, Groq and Cerebras.
+    return load_config(Path(__file__).parents[1] / "config.toml", local=False)
 
 
 def test_missing_keys_say_what_runs_instead_and_where_to_put_them(cfg, tmp_path):
@@ -152,3 +153,19 @@ def test_echo_cancellation_warns_when_the_devices_delay_is_more_than_it_can_take
     assert check.echo_delay(0.1, 0.2).status == OK
     late = check.echo_delay(0.3, 0.3)
     assert late.status == WARN and "echo_bench" in late.fix
+
+
+def test_telegram_is_checked_only_when_its_on_and_says_who_its_for(cfg):
+    import dataclasses
+
+    from voice_assistant.config import TelegramConfig
+    from voice_assistant.telegram import TelegramError
+
+    off = dataclasses.replace(cfg, telegram=TelegramConfig())
+    assert check.telegram(off, "t", raising(AssertionError("not asked"))).status == SKIP
+    on = dataclasses.replace(cfg, telegram=TelegramConfig(enabled=True, people={"Alon": 1}))
+    assert check.telegram(on, None, raising(AssertionError("not asked"))).status == FAIL
+    refused = check.telegram(on, "t", raising(TelegramError("getMe: Unauthorized", 401)))
+    assert refused.status == FAIL and "TELEGRAM_BOT_TOKEN" in refused.fix
+    ok = check.telegram(on, "t", lambda token: {"username": "hey_tars_bot"})
+    assert ok.status == OK and "@hey_tars_bot" in ok.detail and "Alon" in ok.detail

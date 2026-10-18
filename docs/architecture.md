@@ -1,8 +1,9 @@
 # How TARS fits together
 
 TARS is two processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of data:
-the assistant, which listens and answers, and the web UI, which shows and edits what the assistant kept. Five
-principles shape the design:
+the assistant, which listens and answers, and the web UI, which shows and edits what the assistant kept. A third,
+optional, answers the household's Telegram chats ([TARS on Telegram](telegram.md)). Five principles shape the
+design:
 
 - **Local until it's sure.** The wake word, the double-check, the speech detector and speaker ID run on the machine.
   Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)). After a wake,
@@ -184,8 +185,11 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
     and the web search are told the city and country, so "what's the weather?" is about home; nothing closer. It also transcribes a request's recording when Deepgram's
     stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
     Deepgram, or the reply text instead of Cartesia.
-- **Never:** the event log, the audio kept for learning, voiceprints, and anything the web UI shows. The web UI is
-  served from the same machine and talks to nothing else.
+- **With `[telegram]` on,** Telegram gets what's written in the household's chats with TARS, its replies there, and
+  the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)). TARS asks
+  Telegram for new messages, so nothing at home is opened to the internet.
+- **Never:** the event log, the audio kept for learning, voiceprints, and anything else the web UI shows. The web UI
+  is served from the same machine and talks to nothing else.
 
 ## The web UI
 
@@ -216,12 +220,13 @@ The assistant is `src/voice_assistant/`:
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
-| Reminders | `reminders.py` (the table, what's due, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
+| Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
+| Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
 | Downloads | `models.py` (the small local models, on first use) |
-| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage) |
+| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Telegram) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),

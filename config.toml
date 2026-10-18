@@ -180,3 +180,26 @@ ack_window_s = 6.0
 # The web UI only answers to IP addresses, localhost, *.local, *.ts.net and single-label names (tars, the Pi's
 # hostname), so a web page elsewhere can't reach it through someone's browser. Add any other name you use here.
 allowed_hosts = []
+
+[telegram]
+# Chat with TARS on Telegram, and get what it sends you there (docs/telegram.md): voice-assistant --telegram, with a
+# bot's token (from @BotFather) as TELEGRAM_BOT_TOKEN in .env. It asks Telegram for new messages, so nothing at home
+# is opened to the internet. Turning it on sends Telegram what's written in the chats, and what TARS sends to them.
+enabled = false
+# Who may chat with it: each person's name, as TARS knows them, and their Telegram chat id, like { Alon = 123456789 }.
+# Set enabled and people in config.local.toml, this machine's own settings, so the ids stay out of the repo.
+# Anyone else is ignored; the logs (journalctl --user-unit voice-assistant-telegram) show a new person's chat id once
+# they've written to the bot.
+people = {}
+# What TARS sends at home for someone here ("send me the recipe") also comes to their chat. A reminder set in a chat
+# comes to the chat of the person it's for, if they're here; otherwise it's said aloud at home.
+send_items = true
+# A chat is one conversation until it's been quiet this long, or someone sends /new; then the next message starts a
+# new one. Longer than [llm]'s, since a written reply often comes back much later.
+memory_minutes = 60
+# Who answers a chat: "openai" ([llm] model: web search, real links; Qwen when there's no OpenAI key) or "quick" (Qwen
+# first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing there.
+brain = "openai"
+# OpenAI's settings for chats: the standard tier, since nobody's waiting on a first word, and a little thinking.
+service_tier = ""
+reasoning_effort = "low"

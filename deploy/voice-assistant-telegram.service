@@ -1,0 +1,27 @@
+# systemd *user* service for TARS on Telegram ([telegram] in config.toml, docs/telegram.md). Its own process, like the
+# web UI: a problem with Telegram never takes the voice down. deploy/install-pi.sh installs it when [telegram] is on.
+#
+#   cp deploy/voice-assistant-telegram.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now voice-assistant-telegram
+#
+#   journalctl --user-unit voice-assistant-telegram -f    # follow the logs (a new person's chat id shows up here)
+#
+# It only reaches out to Telegram, asking for new messages: nothing is opened to the internet.
+
+[Unit]
+Description=TARS on Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --telegram
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+# 78 (EX_CONFIG): a mistake in config.toml, a missing key, or a token Telegram refused. Restarting won't fix it.
+RestartPreventExitStatus=78
+
+[Install]
+WantedBy=default.target

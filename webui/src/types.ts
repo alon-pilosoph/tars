@@ -148,6 +148,7 @@ export interface ConversationWake {
 export interface Conversation {
   id: number;
   started: number;
+  via: "telegram" | null; // null: by voice
   speaker: Speaker | null;
   wake: ConversationWake | null;
   turns: Turn[];
@@ -165,7 +166,7 @@ export interface Reminder {
   text: string | null; // a timer's optional label
   for_name: string | null; // null: whoever is there
   from_name: string | null;
-  set_via: "voice" | "web";
+  set_via: "voice" | "web" | "telegram";
   conversation_id: number | null; // where it was set, by voice
   due: number | null; // null: when for_name's voice is next heard
   needs_ack: boolean;
@@ -177,7 +178,8 @@ export interface Reminder {
   last_said: number | null;
   acked_at: number | null;
   acked_by: string | null; // the recognized voice; null: an unknown voice, or the page
-  acked_via: "voice" | "web" | null;
+  acked_via: "voice" | "web" | "telegram" | null;
+  channel: "voice" | "telegram"; // where it's said: aloud at home, or in its person's Telegram chat
   says: string; // what TARS says
 }
 

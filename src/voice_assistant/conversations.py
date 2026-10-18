@@ -47,9 +47,11 @@ class ConversationLog:
         self.events = events
         self.store = events.store
 
-    def start(self, wake_event_id: int | None, ts: float | None = None) -> int:
+    def start(self, wake_event_id: int | None, ts: float | None = None, via: str | None = None) -> int:
+        """`via`: "telegram" for a chat there; None by voice."""
         return self.store.write(
-            "INSERT INTO conversations (started, wake_event_id) VALUES (?, ?)", (ts or time.time(), wake_event_id)
+            "INSERT INTO conversations (started, wake_event_id, via) VALUES (?, ?, ?)",
+            (ts or time.time(), wake_event_id, via),
         )
 
     def end(self, conversation_id: int, ts: float | None = None) -> None:
@@ -133,8 +135,10 @@ class ConversationLog:
         item: SentItem,
         for_name: str | None = None,
         ts: float | None = None,
+        delivered: float | None = None,
     ) -> int:
-        """Kept even if the conversation was deleted in the web UI meanwhile; it's then on its own."""
+        """Kept even if the conversation was deleted in the web UI meanwhile; it's then on its own. `delivered`: when
+        it was posted to a Telegram chat, if it already was."""
         if item.kind not in KINDS:
             raise ValueError(f"unknown item kind {item.kind!r}")
         if item.scope not in SCOPES:
@@ -145,8 +149,8 @@ class ConversationLog:
         with self.store.removed_on_failure(file_rel):
             return self.store.write(
                 "INSERT INTO items (conversation_id, turn_id, ts, kind, title, scope, for_name, url, site, "
-                "description, body, entries, file, mime, size, file_name) "
-                "VALUES ((SELECT id FROM conversations WHERE id=?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "description, body, entries, file, mime, size, file_name, delivered) "
+                "VALUES ((SELECT id FROM conversations WHERE id=?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     turn_id,
@@ -164,8 +168,20 @@ class ConversationLog:
                     item.mime,
                     len(item.file_bytes) if file_name else None,
                     file_name,
+                    delivered,
                 ),
             )
+
+    def undelivered(self, since: float) -> list[dict]:
+        """Items for a person, sent since `since` and not posted to a Telegram chat yet: the oldest first."""
+        return self.store.rows(
+            "SELECT * FROM items WHERE delivered IS NULL AND scope=? AND for_name IS NOT NULL AND ts >= ? "
+            "ORDER BY ts, id",
+            (PERSON, since),
+        )
+
+    def mark_delivered(self, item_id: int, ts: float | None = None) -> None:
+        self.store.write("UPDATE items SET delivered=? WHERE id=?", (ts or time.time(), item_id))
 
     def rate(self, turn_id: int, rating: str | None) -> None:
         self.store.write("UPDATE turns SET rating=? WHERE id=? AND role=?", (rating, turn_id, ROLE_TARS))
@@ -324,7 +340,7 @@ def _speaker(guess: str | None, people: dict, voice: Voice | None) -> dict | Non
 
 
 def _conversation(row: dict, wake: dict | None, voice: Voice | None, people: dict) -> dict:
-    out = {k: row[k] for k in ("id", "started", "ended")}
+    out = {k: row[k] for k in ("id", "started", "ended", "via")}
     out["wake"] = (
         {
             "event_id": wake["id"],

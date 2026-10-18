@@ -65,15 +65,24 @@ page is reachable over Tailscale, so that's how they're set remotely. It has no 
 who it's from, and an acknowledgement made there shows as "on this page". A reminder that was said, and what was said
 back, show on Home like any conversation.
 
+### On Telegram
+
+With [Telegram](telegram.md) on, a reminder or timer set in a chat comes to the chat of the person it's for (or of
+whoever set it, for a timer) when it's due, once, and isn't said aloud; for someone without a chat it's said aloud as
+usual. "Tell the house dinner's ready" or "tell Stacey at home to call me" in a chat is said aloud at home instead,
+and the chat is told when it was said and who said they got it. Saying "I took the pills" in a chat acknowledges one
+said aloud at home. Something waiting until someone's back is always said aloud.
+
 ## Design
 
-**One table, three users.** A `reminders` table in the event database: what, for and from whom, when (`due`; empty
-for "when they're back"), whether it waits for an acknowledgement, the repeat settings, and its state: `status`
-(scheduled, waiting, acknowledged, said, missed, cancelled), `tries`, `next_at` (when it's next said), `last_said`,
-and `acked_at` / `acked_by` / `acked_via`. `Reminders` in `reminders.py` owns it: creating, what's due, what to say,
-acknowledging, snoozing, stopping. The assistant says them, the brain's tools set them, and the web UI does both,
-each through that class. The web UI is another process; the assistant reads the table every 2 s, so a change on the
-page is picked up within that.
+**One table, several users.** A `reminders` table in the event database: what, for and from whom, when (`due`;
+empty for "when they're back"), whether it waits for an acknowledgement, the repeat settings, where it's said
+(`channel`: aloud, or to a Telegram chat), and its state: `status` (scheduled, waiting, acknowledged, said, missed,
+cancelled), `tries`, `next_at` (when it's next said), `last_said`, and `acked_at` / `acked_by` / `acked_via`.
+`Reminders` in `reminders.py` owns it: creating, what's due, what to say, acknowledging, snoozing, stopping. The
+assistant says them, the brain's tools set them, the web UI does both, and the Telegram service posts the ones due on
+Telegram, each through that class. The web UI and the Telegram service are other processes; the assistant reads the
+table every 2 s, so a change made there is picked up within that.
 
 **Interrupting the wait, not a conversation.** The wake loop (`VerifiedTrigger.wait`) asks once per block of mic
 audio (80 ms) whether anything is due, and returns `DUE` if so. `run_forever` then says it: the chime, each due line

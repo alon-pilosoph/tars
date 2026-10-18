@@ -12,6 +12,8 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
 - **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
 - **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
   can answer, and a request's recording when Deepgram's stream fails.
+- **Telegram,** with `[telegram]` on: what's written in the household's chats with TARS, and what it sends there
+  ([TARS on Telegram](telegram.md)).
 
 The event log, the audio kept for learning, voiceprints and the web UI never leave it
 ([what leaves the machine](architecture.md#what-leaves-the-machine)).
@@ -25,6 +27,7 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
 │   the React page + API over the same log       │◄── away from home: Tailscale (optional)
 │   regroup voices, switch wake models           │── nightly encrypted backup ──► S3 / B2 (optional)
+│ voice-assistant-telegram.service (optional)    │── asks for new messages ──► Telegram ◄── the household's phones
 └────────────────────────────────────────────────┘
 ```
 
@@ -36,7 +39,15 @@ uv run voice-assistant --list-devices
 ```
 
 Plug the speakerphone in and look for its name in the list. If it isn't marked as the default (`*`), put part of
-its name in `config.toml`, for example `input_device = "PowerConf"` and `output_device = "PowerConf"`. Set
+its name in `config.local.toml` (this machine's own settings, never committed, over `config.toml`):
+
+```toml
+[audio]
+input_device = "PowerConf"
+output_device = "PowerConf"
+```
+
+Set
 `[llm] home_city` and `home_country` to where the house is (Tel Aviv, IL in the repo), so "what's the weather?" is
 about home. Then:
 
@@ -73,7 +84,9 @@ does a missing speakerphone, and plugging it in starts TARS again
 ([`deploy/99-tars-speakerphone.rules`](../deploy/99-tars-speakerphone.rules)). The
 web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
-[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service).
+[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service). With `[telegram]` on, it also installs
+and starts [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service)
+([setting it up](telegram.md#setting-it-up)).
 
 ## Recognizing people from the start
 

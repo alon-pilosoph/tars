@@ -1,4 +1,6 @@
 .env
+# This machine's own settings, over config.toml (config.py LOCAL_CONFIG)
+config.local.toml
 .venv/
 __pycache__/
 *.pyc

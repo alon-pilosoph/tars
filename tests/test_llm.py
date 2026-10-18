@@ -122,6 +122,30 @@ def test_forgetting_twice_forgets_only_once():
     assert asked(client) == ["kept", "An answer.", "next"]
 
 
+def test_what_tars_said_by_itself_is_part_of_the_conversation(clock):
+    # A reminder posted in a chat: "remind me again in ten minutes" right after needs to know which.
+    client = fake_openai_chat(lambda messages: "Done.")
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False, memory_minutes=60))
+    brain.remember_said("Alon, a reminder: stretch.")
+    clock[0] += 30
+    "".join(brain.stream_reply("again in ten minutes"))
+    assert asked(client) == ["Alon, a reminder: stretch.", "again in ten minutes"]
+    clock[0] += 61 * 60
+    brain.remember_said("Your pasta timer is done.")  # long after: a new conversation
+    "".join(brain.stream_reply("thanks"))
+    assert asked(client) == ["Your pasta timer is done.", "thanks"]
+
+
+def test_starting_over_forgets_the_whole_conversation():
+    client = fake_openai_chat(lambda messages: "An answer.")
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False))
+    "".join(brain.stream_reply("first"))
+    brain.start_over()
+    brain.forget_last()  # nothing left to forget
+    "".join(brain.stream_reply("second"))
+    assert asked(client) == ["second"]
+
+
 def test_an_interrupted_reply_ends_with_an_error():
     brain = OpenAIChat(fake_openai_chat(lambda messages: "An answer."), LLMConfig(web_search=False, send=False))
     reply = brain.stream_reply("hi")
