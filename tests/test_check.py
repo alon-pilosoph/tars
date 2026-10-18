@@ -1,6 +1,8 @@
 """voice-assistant --check: each check's verdict and what it says to do, and that the run never stops or hangs."""
 
+import sys
 import time
+import types
 from pathlib import Path
 
 import numpy as np
@@ -192,8 +194,10 @@ def test_every_device_and_sensor_is_found_in_home_assistant(cfg):
     assert [r.status for r in check.house(home, None)] == [SKIP, SKIP]
 
 
-def test_the_blaster_needs_its_key_and_the_ac_a_profile(cfg, tmp_path):
+def test_the_blaster_needs_its_key_and_the_ac_a_profile(cfg, tmp_path, monkeypatch):
     from voice_assistant.config import HomeConfig
+
+    monkeypatch.setitem(sys.modules, "tinytuya", types.ModuleType("tinytuya"))  # an extra CI doesn't install
 
     assert check.blaster_check(cfg, tmp_path, set()).status == SKIP
     assert check.ac_check(cfg, tmp_path).status == SKIP
@@ -204,8 +208,10 @@ def test_the_blaster_needs_its_key_and_the_ac_a_profile(cfg, tmp_path):
     assert no_profile.status == FAIL and "ac_onboard capture" in no_profile.fix
 
 
-def test_the_fire_tv_must_have_let_tars_in(cfg, tmp_path):
+def test_the_fire_tv_must_have_let_tars_in(cfg, tmp_path, monkeypatch):
     from voice_assistant.config import HomeConfig
+
+    monkeypatch.setitem(sys.modules, "adb_shell", types.ModuleType("adb_shell"))  # an extra CI doesn't install
 
     assert check.firetv_check(cfg, tmp_path, set()).status == SKIP
     home = HomeConfig(devices=[{"name": "fire tv", "kind": "firetv", "address": "10.0.0.8"}])
