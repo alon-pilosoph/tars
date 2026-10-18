@@ -72,13 +72,18 @@ if the first was missed.
 The Samsung and the Polk need no recording: their codes are published, one fixed code per button, and TARS makes them
 itself (`ir.py`): Samsung's from [IRDB](https://github.com/probonopd/irdb), Polk's RE9641 remote (the Signa S2's) from
 [Flipper-IRDB](https://github.com/Lucaslhm/Flipper-IRDB). The soundbar does volume, mute, bass, voice, night and its
-sound modes; the TV its inputs, menus and an "off" that only ever turns it off. There's no code that only turns a
-Samsung on, so "turn on the TV" wakes the Fire TV instead, which turns the TV on over HDMI-CEC.
+sound modes; the TV its inputs and menus, and on and off. Besides the power button, which switches it either way (what
+the Smart Life app's TV remote sends), Samsung has codes that only turn it on and only turn it off, so "turn on the
+TV" can never turn it off. Not every set takes them: `python -m voice_assistant.ir test TV` tries each on yours. If
+yours ignores them, TARS uses the power button instead, but only when the Fire TV says the TV is the other way (it
+sleeps and wakes with the TV, over HDMI-CEC). "Turn on the TV" also wakes the Fire TV, so they agree.
 
 **The Fire TV** (`firetv.py`) is worked over ADB, which answers back: TARS knows whether it's awake, which app is in
 front, what's playing (the app's media session: "playing: Toy Story"), and the text on screen (the app's accessibility
 tree, the focused element marked), and can take a screenshot. So its changes are checked like the lock's: "open
-Stremio" is done only when Stremio is in front.
+Stremio" is done only when Stremio is in front, and still there three seconds later. Stremio sometimes crashes a moment
+after it starts, the first time after the stick boots: then TARS stops it and opens it again, up to three times, and
+the agent does the same whenever an app closes under it.
 
 **A task that takes several steps** ("play Toy Story on Stremio", "find the news on YouTube") goes to the Fire TV's
 agent: a model (`[home] tv_model`, OpenAI's `[llm] model` by default) that works the remote the way a person would.
@@ -227,7 +232,7 @@ knowing the AC is off. `send "cool 22 auto" --toggle` sends any one code by hand
 
 ### 7. The TV and the soundbar
 
-Nothing to record: add them, and try a button each.
+Nothing to record: add them, try a button each, and try the TV's on and off codes on your set.
 
 ```toml
 [[home.devices]]
@@ -239,6 +244,11 @@ codes = "samsung-tv"
 name = "soundbar"
 kind = "ir"
 codes = "polk-re9641"
+```
+
+```bash
+uv run python -m voice_assistant.ir press soundbar volume_up
+uv run python -m voice_assistant.ir test TV       # off, on and the power button, one at a time: say what the TV did
 ```
 
 If the soundbar doesn't answer "volume up", check its remote's model on the back: these are the RE9641's codes.

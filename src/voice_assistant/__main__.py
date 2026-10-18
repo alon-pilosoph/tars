@@ -3,6 +3,7 @@ web UI and install trained wake models. Heavy dependencies are imported lazily, 
 
 import argparse
 import dataclasses
+import functools
 import hashlib
 import json
 import sys
@@ -341,15 +342,19 @@ def make_home(cfg: Config, root: Path, announce=None):
     elif cfg.home.blaster:
         print(f"(no {TUYA_KEY}: the AC, the TV and the soundbar by IR aren't connected; see docs/home.md)")
     local = {}
-    for spec in cfg.home.devices:
+    # The Fire TV first: the TV's IR remote asks it whether the TV is on, before sending a power button that toggles.
+    for spec in sorted(cfg.home.devices, key=lambda d: d["kind"] != FIRETV):
         name = spec["name"].strip().lower()
         try:
             if spec["kind"] == AC and blaster:
                 local[name] = make_ac(spec, blaster, hass, root)
             elif spec["kind"] == IR and blaster:
-                from .ir import CODE_SETS, Remote
+                from .ir import CODE_SETS, TESTED, Remote
 
-                local[name] = Remote(name, CODE_SETS[spec["codes"]], blaster.send)
+                stick = next((d.stick for d in local.values() if hasattr(d, "stick")), None)
+                seems_on = functools.partial(_awake, stick) if stick else None
+                tested = root / TESTED / f"{name}.json"
+                local[name] = Remote(name, CODE_SETS[spec["codes"]], blaster.send, tested=tested, seems_on=seems_on)
             elif spec["kind"] == FIRETV:
                 local[name] = make_tv(cfg, spec, root, announce)
         except (ValueError, ConfigError) as e:
@@ -358,6 +363,16 @@ def make_home(cfg: Config, root: Path, announce=None):
     if home.devices:
         print(f"(the house: {', '.join(home.devices)})")
     return home
+
+
+def _awake(stick) -> bool | None:
+    """Whether the Fire TV is awake, which with HDMI-CEC is whether the TV is on; None if it doesn't answer."""
+    from .home import HomeError
+
+    try:
+        return stick.awake()
+    except HomeError:
+        return None
 
 
 def make_blaster(spec: dict, root: Path):

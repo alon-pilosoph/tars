@@ -194,13 +194,13 @@ never_says = ["\\bis (now )?playing\\b", "\\bstarted playing\\b"]
 
 [[scenario]]
 id = "tv-on"
-about = """"Turn on the TV" wakes the Fire TV, which turns the TV on: the Samsung has no code that only turns it on."""
+about = """"Turn on the TV": the TV's own on code and the Fire TV woken, so they agree."""
 tags = ["house", "tv"]
 house = { tv = "off" }
 
 [[scenario.turn]]
 say = "turn on the TV"
-home = [{ device = "fire tv", action = "on" }]
+home = [{ device = "tv", action = "on" }, { device = "fire tv", action = "on" }]
 
 [[scenario]]
 id = "louder"

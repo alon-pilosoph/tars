@@ -50,9 +50,43 @@ def test_a_remote_says_what_it_has_rather_than_guess():
     sent = []
     soundbar = Remote("soundbar", CODE_SETS["polk-re9641"], sent.append)
     assert soundbar.call("press", {"button": "netflix"}).startswith("error: the soundbar's buttons are")
-    assert "no off of its own" in soundbar.call("off", {})
-    tv = Remote("tv", CODE_SETS["samsung-tv"], sent.append)
-    assert tv.call("off", {}).startswith("sent: off") and sent == [CODE_SETS["samsung-tv"].pulses("off")]
+    assert "only has a power button" in soundbar.call("off", {})
+    assert soundbar.call("press", {"button": "power"}).startswith("sent: power")  # its only power: a button
+
+
+def samsung(tmp_path, works=None, seems_on=None):
+    sent, tested = [], tmp_path / "tv.json"
+    if works is not None:
+        tested.write_text(json.dumps(works))
+    tv = Remote("tv", CODE_SETS["samsung-tv"], sent.append, tested=tested, seems_on=seems_on)
+    return tv, sent
+
+
+def sent_buttons(sent):
+    codes = CODE_SETS["samsung-tv"]
+    return [next(b for b in codes.buttons if codes.pulses(b) == pulses) for pulses in sent]
+
+
+def test_the_tv_turns_on_and_off_with_the_codes_that_only_do_that(tmp_path):
+    tv, sent = samsung(tmp_path)
+    assert "not tried on this TV yet" in tv.call("on", {})
+    tv.call("off", {})
+    assert sent_buttons(sent) == ["on", "off"]
+    assert "power" not in tv.codes.presses() and "on" not in tv.codes.presses()
+
+
+def test_a_tv_that_ignores_them_gets_the_power_button_only_when_its_the_other_way(tmp_path):
+    state = {"on": False}
+    tv, sent = samsung(tmp_path, {"on": False, "off": True, "power": True}, seems_on=lambda: state["on"])
+    assert tv.call("on", {}) == "sent: the power button, to turn it on (IR can't confirm it)"
+    state["on"] = True
+    assert tv.call("on", {}).startswith("already on") and sent_buttons(sent) == ["power"]
+    assert "it works on this TV" in tv.call("off", {})
+
+
+def test_with_only_a_toggle_and_no_way_to_tell_it_sends_nothing(tmp_path):
+    tv, sent = samsung(tmp_path, {"on": False, "off": False, "power": True})
+    assert "can't tell if it's on" in tv.call("on", {}) and sent == []
 
 
 # The Fire TV.
@@ -151,13 +185,49 @@ def test_on_wakes_the_stick_and_waits_for_it_to_say_so():
     assert "input keyevent KEYCODE_WAKEUP" in stick.commands
 
 
-def test_an_app_is_open_only_when_its_in_front():
+def test_an_app_is_open_only_when_its_in_front_and_stays_there():
     stick = Stick()
-    assert tv(stick).call("open", {"app": "stremio"}, Request()) == "done: stremio is open (the fire tv says so)"
+    said = tv(stick).call("open", {"app": "stremio"}, Request())
+    assert said == "done: stremio is open and stayed open (the fire tv says so)"
     stuck = Stick()
     stuck.open = lambda package: None  # it never comes to the front
-    assert tv(stuck).call("open", {"app": "stremio"}, Request()).startswith("not confirmed")
+    assert tv(stuck).call("open", {"app": "stremio"}, Request()).startswith("not confirmed: opened stremio 3 times")
     assert tv(Stick()).call("open", {"app": "hbo"}, Request()).startswith("error: there's no app called 'hbo'")
+
+
+class CrashesOnce(Stick):
+    """Stremio after the stick boots: the first time, it comes up, then closes a moment later."""
+
+    def __init__(self):
+        super().__init__()
+        self.opens, self.reads = 0, 0
+
+    def app(self):
+        front = super().app()
+        if front == "com.stremio.one" and self.opens == 1:
+            self.reads += 1
+            if self.reads > 2:
+                self.state["front"] = "com.amazon.tv.launcher"
+        return super().app()
+
+    def open(self, package):
+        self.opens += 1
+        super().open(package)
+
+
+def test_an_app_that_crashes_right_after_opening_is_opened_again():
+    stick = CrashesOnce()
+    said = tv(stick).call("open", {"app": "stremio"}, Request())
+    assert said.startswith("done: stremio is open and stayed open") and "on try 2" in said
+    assert stick.opens == 2 and "am force-stop com.stremio.one" in stick.commands
+
+
+def test_the_agent_opens_apps_the_same_way():
+    stick = CrashesOnce()
+    client = calls(("open_app", {"app": "Stremio"}), ("done", {"success": True, "say": "Stremio is open."}))
+    agent = TvAgent(stick, client, "gpt", lambda line, who: None, sleep=lambda s: None)
+    assert agent.work("open stremio") == (True, "Stremio is open.")
+    assert stick.opens == 2 and "on try 2" in agent.log[1]
 
 
 def test_a_button_press_says_what_is_playing_after_it():

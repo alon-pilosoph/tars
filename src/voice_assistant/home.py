@@ -32,7 +32,7 @@ CAN = {
     BOILER: (STATUS, ON, OFF),
     SWITCH: (STATUS, ON, OFF),
     AC: (STATUS, ON, OFF, SET, IS_ON, IS_OFF),
-    IR: (PRESS, OFF),
+    IR: (PRESS, ON, OFF),
     FIRETV: (STATUS, ON, OFF, PRESS, OPEN, DO),
 }
 # How long a change waits for the device to report it: a Nuki turns its bolt in a few seconds, then reports it over
@@ -161,7 +161,8 @@ IR_RULES = (
     "is one, so volume and mute are its; use times for how many presses (a little: 3; a lot: 8). "
 )
 TV_RULES = (
-    "The fire tv is the TV's stick: turning it on turns the TV on (the only way to), and off turns both off. For "
+    "The fire tv is the TV's stick, and waking it turns the TV on too (HDMI-CEC). To turn the TV on or off, use the "
+    "TV's own on or off and the fire tv's, one call each, so they agree. For "
     'anything on screen that takes more than one button ("play Toy Story on Stremio", "find the news on YouTube"), use '
     "do with the goal in their words: it works it out on screen in the background, checking each step, and TARS says "
     "when it's done; say only that you're on it, in a few words. For one button (pause, back) use press; to open an "

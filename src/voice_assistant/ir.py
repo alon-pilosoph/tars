@@ -3,16 +3,19 @@ to be recorded. Unlike the AC's, these codes carry no settings: "volume up" is a
 
 Codes, as the household's remotes send them:
 - samsung-tv: Samsung's TVs (Samsung32 protocol, device 7), from IRDB (github.com/probonopd/irdb, codes/Samsung/TV)
-  and Flipper-IRDB's Samsung remotes for the power-off code: "off" only ever turns it off. The power button (0x02)
-  toggles, so it isn't offered: there's no published power-on code that works on every set, and the Fire TV turns the
-  TV on (HDMI-CEC) instead.
+  and Flipper-IRDB's Samsung remotes for the power-off code. Besides the power button (0x02), which switches it either
+  way, Samsung has codes that only turn it on (0x99: E0E09966, as the codes are often written) and only off (0x98:
+  E0E019E6). Not every set takes them: `python -m voice_assistant.ir test TV` tries each on the TV, and TARS uses what
+  worked (voice_data/ir/).
 - polk-re9641: Polk's RE9641 soundbar remote (NEC extended, address C8 91), the Signa S2's and MagniFi Mini's, from
   Flipper-IRDB (SoundBars/PolkAudio/POLK_RE9641_1.ir).
 """
 
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 HEADER_NEC, HEADER_SAMSUNG = (9000, 4500), (4500, 4500)
 MARK, ZERO, ONE = 560, 560, 1690
@@ -26,7 +29,13 @@ class CodeSet:
     header: tuple[int, int]
     address: tuple[int, int]  # the code's first two bytes
     buttons: dict[str, int]  # button: command byte
-    off: str = ""  # the button that only turns it off, if there is one
+    on: str = ""  # the code that only turns it on, if there is one
+    off: str = ""  # the code that only turns it off
+    power: str = ""  # the power button, which switches it either way
+
+    def presses(self) -> list[str]:
+        """The buttons to press: power ones aren't, where there's an on and off to use instead."""
+        return [b for b in self.buttons if not (self.on and b in (self.on, self.off, self.power))]
 
     def pulses(self, button: str) -> list[int]:
         """The marks and spaces, in microseconds, of one press: KeyError for a button it doesn't have."""
@@ -50,7 +59,9 @@ CODE_SETS = {
         HEADER_SAMSUNG,
         (0x07, 0x07),
         {
+            "on": 0x99,
             "off": 0x98,
+            "power": 0x02,
             "volume_up": 0x07,
             "volume_down": 0x0B,
             "mute": 0x0F,
@@ -70,7 +81,9 @@ CODE_SETS = {
             "home": 0x79,
             "info": 0x1F,
         },
+        on="on",
         off="off",
+        power="power",
     ),
     "polk-re9641": CodeSet(
         "a Polk soundbar",
@@ -101,33 +114,131 @@ CODE_SETS = {
 
 
 class Remote:
-    """The home tool's IR device: presses its buttons through the blaster. IR goes one way: "sent" is all it knows."""
+    """The home tool's IR device: presses its buttons through the blaster. IR goes one way: "sent" is all it knows.
 
-    def __init__(self, name: str, codes: CodeSet, send: Callable[[list[int]], None], sleep=time.sleep):
+    On and off use the codes that only turn it on or off, unless trying them on this set showed they don't work
+    (`tested`, from `python -m voice_assistant.ir test`); then the power button, which switches it either way, but only
+    when `seems_on()` (the Fire TV's say, through HDMI-CEC) says it's the other way now."""
+
+    def __init__(
+        self,
+        name: str,
+        codes: CodeSet,
+        send: Callable[[list[int]], None],
+        sleep=time.sleep,
+        tested: Path | None = None,
+        seems_on: Callable[[], bool | None] | None = None,
+    ):
         self.name, self.codes, self._send, self._sleep = name, codes, send, sleep
+        self._tested, self._seems_on = tested, seems_on
+
+    def works(self) -> dict[str, bool]:
+        """What trying the power codes on this set showed: {"on": True, "off": True, "power": True}; {} if untried."""
+        try:
+            return json.loads(self._tested.read_text()) if self._tested else {}
+        except FileNotFoundError, ValueError:
+            return {}
 
     def what(self) -> str:
-        off = ", off (only ever turns it off)" if self.codes.off else ""
-        return f"{self.codes.about}, by IR: press a button ({', '.join(self.codes.buttons)}){off}"
+        power = ", on, off" if self.codes.on else ""
+        return f"{self.codes.about}, by IR: press a button ({', '.join(self.codes.presses())}){power}"
 
     def status(self) -> str:
         return f"{self.name}: unknown (IR can't tell)"
 
     def call(self, action: str, args: dict, request=None) -> str:
-        if action == "off":
-            if not self.codes.off:
-                return f"error: the {self.name} has no off of its own; press power, which switches it either way"
-            button, times = self.codes.off, 1
-        else:
-            button = str(args.get("button") or "").strip().lower().replace(" ", "_").replace("-", "_")
-            if button not in self.codes.buttons:
-                return f"error: the {self.name}'s buttons are {', '.join(self.codes.buttons)}"
-            try:
-                times = max(1, min(MAX_PRESSES, int(args.get("times") or 1)))
-            except TypeError, ValueError:
-                times = 1
+        if action in ("on", "off"):
+            return self._power(action == "on")
+        button = str(args.get("button") or "").strip().lower().replace(" ", "_").replace("-", "_")
+        if button not in self.codes.presses():
+            return f"error: the {self.name}'s buttons are {', '.join(self.codes.presses())}"
+        try:
+            times = max(1, min(MAX_PRESSES, int(args.get("times") or 1)))
+        except TypeError, ValueError:
+            times = 1
         for i in range(times):
             if i:
                 self._sleep(GAP_S)
             self._send(self.codes.pulses(button))
         return f"sent: {button}{f' {times} times' if times > 1 else ''} to the {self.name} (IR can't confirm it)"
+
+    def _power(self, on: bool) -> str:
+        if not self.codes.on:
+            return f"error: the {self.name} only has a power button, which switches it either way: press power"
+        word, works = "on" if on else "off", self.works()
+        own = self.codes.on if on else self.codes.off
+        if works.get(word, True):
+            self._send(self.codes.pulses(own))
+            tried = "it works on this TV" if word in works else "not tried on this TV yet"
+            return f"sent: {word}, the code that only turns it {word} ({tried}; IR can't confirm it)"
+        if not works.get("power"):
+            return f"error: the {self.name} didn't take its {word} code or its power button when they were tried"
+        now = self._seems_on() if self._seems_on else None
+        if now is None:
+            return f"error: the {self.name}'s power button switches it either way, and TARS can't tell if it's {word}"
+        if now == on:
+            return f"already {word}, as far as the fire tv can tell, so nothing was sent"
+        self._send(self.codes.pulses(self.codes.power))
+        return f"sent: the power button, to turn it {word} (IR can't confirm it)"
+
+
+def test(remote: Remote, path: Path, ask: Callable[[str], bool]) -> dict[str, bool]:
+    """Tries the power codes on the set, with someone watching: which turn it on, off, or switch it."""
+    codes, works = remote.codes, {}
+    input(f"Turn the {remote.name} ON with its own remote, and watch it. Enter when it's on. ")
+    remote._send(codes.pulses(codes.off))
+    works["off"] = ask(f"Sent {remote.name} OFF. Did it turn off?")
+    if not works["off"]:
+        input("Turn it off with its own remote. Enter when it's off. ")
+    remote._send(codes.pulses(codes.on))
+    works["on"] = ask(f"Sent {remote.name} ON. Did it turn on?")
+    if not works["on"]:
+        input("Turn it on with its own remote. Enter when it's on. ")
+    remote._send(codes.pulses(codes.power))
+    works["power"] = ask("Sent the power button. Did it turn off?")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(works))
+    return works
+
+
+def main() -> None:
+    """python -m voice_assistant.ir test NAME | press NAME BUTTON: trying a TV's or soundbar's codes."""
+    import argparse
+
+    from dotenv import dotenv_values
+
+    from .ac import TUYA_KEY, Blaster
+    from .config import load_config
+
+    parser = argparse.ArgumentParser(prog="python -m voice_assistant.ir", description=main.__doc__)
+    parser.add_argument("command", choices=["test", "press"])
+    parser.add_argument("name", help="the device's name in config.toml")
+    parser.add_argument("button", nargs="?")
+    parser.add_argument("--config", type=Path, default=Path("config.toml"))
+    args = parser.parse_args()
+    root = args.config.resolve().parent
+    cfg = load_config(args.config)
+    spec = next((d for d in cfg.home.devices if d["kind"] == "ir" and d["name"].lower() == args.name.lower()), None)
+    if spec is None or not cfg.home.blaster:
+        raise SystemExit(f"config.toml needs [home] blaster and an ir device called {args.name!r}: see docs/home.md")
+    key = dotenv_values(root / ".env").get(TUYA_KEY)
+    if not key:
+        raise SystemExit(f"Put the blaster's local key in .env as {TUYA_KEY}")
+    b = cfg.home.blaster
+    blaster = Blaster(b["id"], b["address"], key, b.get("version", "3.3"))
+    name = spec["name"].lower()
+    remote = Remote(name, CODE_SETS[spec["codes"]], blaster.send, tested=root / TESTED / f"{name}.json")
+    if args.command == "press":
+        print(remote.call("press", {"button": args.button}))
+    elif not remote.codes.on:
+        print(f"The {name} has only a power button: nothing to test. Try: press {name} volume_up")
+    else:
+        works = test(remote, root / TESTED / f"{name}.json", lambda q: input(f"{q} (y/n) ").lower().startswith("y"))
+        print(f"Saved: {works}. TARS turns the {name} on and off with what worked.")
+
+
+TESTED = "voice_data/ir"  # what trying the power codes on each set showed
+
+
+if __name__ == "__main__":
+    main()

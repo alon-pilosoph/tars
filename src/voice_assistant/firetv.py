@@ -54,7 +54,11 @@ APPS = {
     "max": "com.wbd.stream",
 }
 PLAYBACK = {"0": "nothing", "1": "stopped", "2": "paused", "3": "playing", "6": "buffering", "7": "error"}
-SETTLE_S = 4.0  # how long waking, sleeping or opening an app gets to show on the stick
+SETTLE_S = 4.0  # how long waking or sleeping gets to show on the stick
+# Opening an app: it gets OPEN_WAIT_S to come to the front, and must still be there STAY_S later, since some (Stremio)
+# now and then crash a moment after starting, the first time after the stick boots. Then it's opened again, at most
+# OPEN_TRIES times.
+OPEN_WAIT_S, STAY_S, OPEN_TRIES = 8.0, 3.0, 3
 POLL_S = 0.5
 MAX_PRESSES = 20
 AGENT_STEPS = 30
@@ -198,6 +202,9 @@ class FireTV:
     def open(self, package: str) -> None:
         self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1")
 
+    def force_stop(self, package: str) -> None:
+        self.shell(f"am force-stop {package}")
+
     def find_app(self, name: str) -> str | None:
         """The package for an app's name: a known one, a package itself, or the installed package that mentions it."""
         wanted = name.strip().lower()
@@ -260,12 +267,11 @@ class TV:
             package = self.stick.find_app(name) if name else None
             if not package:
                 return f"error: there's no app called {name!r} on the fire tv"
-            if not self.stick.awake():
-                self.stick.wake()
-            self.stick.open(package)
-            if self._until(lambda: self.stick.app() == package):
-                return f"done: {name} is open (the fire tv says so)"
-            return f"not confirmed: asked the fire tv to open {name}, but {self.stick.app() or 'nothing'} is in front"
+            opened, tries, front = open_app(self.stick, package, self._sleep)
+            if opened:
+                again = f", on try {tries}: it closed or never came up before" if tries > 1 else ""
+                return f"done: {name} is open and stayed open (the fire tv says so){again}"
+            return f"not confirmed: opened {name} {tries} times, and {front or 'nothing'} is in front; it may be broken"
         if action == DO:
             goal = str(args.get("goal") or "").strip()
             if not goal:
@@ -284,6 +290,35 @@ class TV:
             if self._clock() >= deadline:
                 return False
             self._sleep(POLL_S)
+
+
+def open_app(stick: FireTV, package: str, sleep: Callable[[float], None] = time.sleep) -> tuple[bool, int, str]:
+    """Opens `package` and checks it stayed open: (it did, the tries it took, the package in front at the end). An app
+    that never came up, or crashed a moment after, is stopped and opened again, up to OPEN_TRIES times."""
+    front = ""
+    for attempt in range(1, OPEN_TRIES + 1):
+        if not stick.awake():
+            stick.wake()
+            sleep(2.0)
+        stick.open(package)
+        came = _watch(lambda: stick.app() == package, OPEN_WAIT_S, sleep)
+        stayed = came and not _watch(lambda: stick.app() != package, STAY_S, sleep)
+        front = stick.app()
+        if stayed:
+            return True, attempt, front
+        print(f"(fire tv: {package} {'closed again' if came else 'never came up'}; try {attempt} of {OPEN_TRIES})")
+        stick.force_stop(package)
+        sleep(1.0)
+    return False, OPEN_TRIES, front
+
+
+def _watch(happened: Callable[[], bool], seconds: float, sleep: Callable[[float], None]) -> bool:
+    """Whether `happened` comes true within `seconds`, looked at every POLL_S."""
+    for _ in range(int(seconds / POLL_S) + 1):
+        if happened():
+            return True
+        sleep(POLL_S)
+    return False
 
 
 def screen(stick: FireTV) -> str:
@@ -306,7 +341,8 @@ they asked: {goal}
 
 You have its remote's buttons, typing into whatever has focus, opening apps, and two ways to see the screen: look (the \
 app in front, what's playing, and the text the app shows, the focused element marked) and screenshot. Look after every \
-step and check it did what you meant before the next; when look shows no text, take a screenshot. Move the focus with \
+step and check it did what you meant before the next; when look shows no text, take a screenshot. If the app closes \
+or you're back on the Fire TV's home screen without meaning to be, open the app again. Move the focus with \
 the arrows and choose with select; back goes back. Fire TV apps often take a few seconds to load: wait, then look again.
 
 To play something: open the app, find it (its search, usually), choose the right title (the best known one, unless \
@@ -459,9 +495,14 @@ class TvAgent:
                         f"error: no app called {args.get('app')!r}; installed: {', '.join(self.stick.packages())}",
                         None,
                     )
-                self.stick.open(package)
-                self._sleep(3.0)
-                return f"opened {package}; look to check it's in front", None
+                opened, tries, front = open_app(self.stick, package, self._sleep)
+                if not opened:
+                    return (
+                        f"error: opened it {tries} times and it didn't stay open; {front or 'nothing'} is in front",
+                        None,
+                    )
+                again = f" on try {tries} (it closed before)" if tries > 1 else ""
+                return f"opened {package}{again}, and it stayed open; look to see where it is", None
             if name == "wait":
                 self._sleep(max(0.5, min(10.0, float(args.get("seconds") or 1))))
                 return "waited", None
