@@ -1,4 +1,4 @@
-import { retry, useStore } from "../store";
+import { failedHere, refreshNow, retry, useStore } from "../store";
 import { Empty } from "./Blocks";
 
 export function Loading() {
@@ -37,5 +37,23 @@ export function Unreachable() {
         </button>
       </div>
     </Empty>
+  );
+}
+
+/** Parts of the page that didn't load with the rest: shown as they last loaded, saying so and why. */
+export function LoadErrors() {
+  const s = useStore();
+  const failed = failedHere(s);
+  if (!failed.length) return null;
+  return (
+    <div className="load-error" role="alert">
+      <p>
+        <b>{`Couldn't load ${failed.map(f => f.what).join(" or ")}.`}</b> What's shown is from the last time it loaded.
+      </p>
+      <p className="hint">{failed.map(f => f.why).join("; ")}</p>
+      <button className="btn" onClick={() => s.refreshing || refreshNow()} aria-busy={s.refreshing}>
+        Try again
+      </button>
+    </div>
   );
 }

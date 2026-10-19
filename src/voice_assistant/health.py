@@ -1,7 +1,7 @@
 """What the web UI's Status page shows (docs/web-ui.md#the-status-page): whether each part of TARS is running, from
 the heartbeat each process writes; what TARS did today; the cloud services TARS uses, each asked with its own key (the
-same checks as --check) and each with its own status page; and the machine: CPU, memory, temperature, throttling,
-disk and uptime.
+same checks as --check) and each with its own status page, and Home Assistant; how the backup's last pass went, and its
+timer; and the machine: CPU, memory, temperature, throttling, disk and uptime.
 
 A heartbeat is a small file each long-running process rewrites every 30 seconds, under the event log's folder
 (heartbeats/<name>.json), from a thread of its own: the database isn't written to for it. A process that crashed, was
@@ -17,10 +17,11 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TypedDict
 
-from .check import FAIL, LOW_DISK_BYTES, SKIP, Check, Result, outcome
+from .check import FAIL, LOW_DISK_BYTES, SKIP, Check, Result, backup_timer, last_pass, outcome
 from .config import Config
 from .conversations import ConversationLog
 from .events import EventLog
@@ -96,6 +97,13 @@ class ServiceHealth(TypedDict):
     page: StatusPage | None
 
 
+class CheckLine(TypedDict):
+    name: str
+    status: str  # check.py's: ok, warn or fail
+    detail: str
+    fix: str
+
+
 class MachineHealth(TypedDict):
     host: str
     system: str
@@ -120,6 +128,7 @@ class Report(TypedDict):
     today: Today
     services: list[ServiceHealth]
     services_asked: float
+    backup: list[CheckLine] | None  # None: [backup] is off
     machine: MachineHealth
 
 
@@ -221,6 +230,24 @@ def _read_beat(path: Path) -> dict:
     if isinstance(found.get("version"), str):
         beat["version"] = found["version"]
     return beat
+
+
+# What the Status page calls the backup's lines, by the names --check gives them.
+BACKUP_LINES = {"Backup": "The last pass", "Backup lifecycle": "The bucket's rules"}
+
+
+def backup(folder: Path, unit_state: Callable[[str], str | None], now: float) -> list[CheckLine]:
+    """How the backup's last pass went, from what it left in the event log's folder (as --check says it, without
+    asking the bucket), and its timer, where there's systemd."""
+    from .backup import STATUS_FILE, Status
+
+    found = last_pass(Status.load(folder / STATUS_FILE), now)
+    timer = backup_timer(lambda unit: None if (state := unit_state(unit)) == "unknown" else state)
+    if timer.status != SKIP:
+        found.append(replace(timer, name="The timer"))
+    return [
+        {"name": BACKUP_LINES.get(r.name, r.name), "status": r.status, "detail": r.detail, "fix": r.fix} for r in found
+    ]
 
 
 def today(log: EventLog, conversations: ConversationLog, now: float) -> Today:
@@ -371,11 +398,13 @@ class Health:
         services: Services,
         unit_state: Callable[[str], str | None],
         read_throttled: Callable[[], int | None] | None = None,
+        backed_up: bool = False,
     ):
-        """`wanted`: the processes this setup runs (expected). `unit_state`: systemd's state of a unit, or None."""
+        """`wanted`: the processes this setup runs (expected). `unit_state`: systemd's state of a unit, or None.
+        `backed_up`: [backup] is on."""
         self._log, self._conversations = log, ConversationLog(log)
         self._wanted, self._services, self._unit_state = wanted, services, unit_state
-        self._read_throttled = read_throttled
+        self._read_throttled, self._backed_up = read_throttled, backed_up
 
     def report(self) -> Report:
         services, asked = self._services.get()
@@ -386,6 +415,7 @@ class Health:
             "today": today(self._log, self._conversations, now),
             "services": services,
             "services_asked": asked,
+            "backup": backup(self._log.folder, self._unit_state, now) if self._backed_up else None,
             "machine": machine(self._log.folder, self._read_throttled),
         }
 

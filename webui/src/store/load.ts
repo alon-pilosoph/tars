@@ -11,19 +11,61 @@ import type {
   Status,
   TarsEvent,
 } from "../types";
-import { type Snapshot, get, set, setNow } from "./core";
+import { type LoadPart, type Snapshot, type State, get, set, setNow } from "./core";
 import { healthLoaded, loadHealth } from "./health";
 import { errText, toast } from "./ui";
 
 interface Data {
   events: TarsEvent[];
   clusters: Cluster[];
-  models: ModelsInfo;
+  models: ModelsInfo | null;
   status: Status;
   convs: Conversation[];
   items: Item[];
-  reminders: RemindersInfo;
+  reminders: RemindersInfo | null;
 }
+
+type Answers = Omit<Data, "convs"> & { convs: ApiConversation[] };
+type Settled<T> = { [K in keyof T]: PromiseSettledResult<T[K]> };
+
+/** Each part as its endpoint answered it, or, where that failed, as it last loaded, with why it failed. Only when
+    every endpoint failed is the page unreachable: then the first one's error is thrown. */
+export function settle<T extends Record<LoadPart, unknown>>(
+  answers: Settled<T>,
+  last: T,
+): { data: T; failed: Partial<Record<LoadPart, string>> } {
+  const data = {} as T;
+  const failed: Partial<Record<LoadPart, string>> = {};
+  let error: unknown = null;
+  for (const part of Object.keys(answers) as LoadPart[]) {
+    const answer = answers[part];
+    if (answer.status === "fulfilled") data[part] = answer.value;
+    else {
+      data[part] = last[part];
+      failed[part] = errText(answer.reason) || "Failed to fetch";
+      error ??= answer.reason;
+    }
+  }
+  if (Object.keys(failed).length === Object.keys(answers).length) throw error;
+  return { data, failed };
+}
+
+/** What each part is, as the page names it, and the pages that show it (null: every page). */
+export const LOAD_PARTS: Record<LoadPart, { what: string; tabs: State["tab"][] | null }> = {
+  events: { what: "the wakes", tabs: ["review"] },
+  clusters: { what: "the voices", tabs: ["voices"] },
+  models: { what: "the models", tabs: ["models"] },
+  status: { what: "what's set up", tabs: null },
+  convs: { what: "the conversations", tabs: ["home"] },
+  items: { what: "what TARS sent", tabs: ["sent"] },
+  reminders: { what: "the reminders", tabs: ["reminders"] },
+};
+
+/** The parts the page in view shows that didn't load with the last Refresh or reload, with why. */
+export const failedHere = (s: Pick<State, "tab" | "loadErrors">) =>
+  (Object.entries(s.loadErrors) as [LoadPart, string][])
+    .filter(([part]) => LOAD_PARTS[part].tabs?.includes(s.tab) ?? true)
+    .map(([part, why]) => ({ part, what: LOAD_PARTS[part].what, why }));
 
 /** The API puts sent items inside the turns that sent them; the page keeps each item once, and ids in the turns. */
 export function normalize(apiConvs: ApiConversation[], apiItems: Item[]) {
@@ -64,8 +106,9 @@ export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap:
   };
 }
 
-async function fetchData(): Promise<Data> {
-  const [events, clusters, models, status, convs, items, reminders] = await Promise.all([
+/** Every part at once; one endpoint failing keeps that part as it last loaded, and says so on its page. */
+async function fetchData(): Promise<{ data: Data; failed: Partial<Record<LoadPart, string>> }> {
+  const [events, clusters, models, status, convs, items, reminders] = await Promise.allSettled([
     getJson<TarsEvent[]>("/api/events"),
     getJson<Cluster[]>("/api/clusters"),
     getJson<ModelsInfo>("/api/models"),
@@ -74,14 +117,15 @@ async function fetchData(): Promise<Data> {
     getJson<Item[]>("/api/items"),
     getJson<RemindersInfo>("/api/reminders"),
   ]);
-  return { events, clusters, models, status, reminders, ...normalize(convs, items) };
+  const { data, failed } = settle<Answers>({ events, clusters, models, status, convs, items, reminders }, get());
+  return { data: { ...data, ...normalize(data.convs, data.items) }, failed };
 }
 
 /** True if it worked. `quiet`: a failed reload shows no toast, because the caller already showed one. */
 async function fetchAll(fresh: boolean, quiet: boolean) {
   try {
     await writesDone();
-    let loaded: Data;
+    let loaded: Awaited<ReturnType<typeof fetchData>>;
     let writes;
     // A change made while this loaded may have reached the server after it answered: load again, or the page
     // would show it undone.
@@ -90,9 +134,9 @@ async function fetchAll(fresh: boolean, quiet: boolean) {
       loaded = await fetchData();
       await writesDone();
     } while (writes !== writesMade());
-    const snapshot = fresh ? snapshotOf(loaded) : get().snapshot;
-    const data = fresh ? loaded : within(snapshot, loaded);
-    setNow({ ...data, snapshot, phase: "ready" });
+    const snapshot = fresh ? snapshotOf(loaded.data) : get().snapshot;
+    const data = fresh ? loaded.data : within(snapshot, loaded.data);
+    setNow({ ...data, snapshot, phase: "ready", loadErrors: loaded.failed });
     return true;
   } catch (e) {
     if (fresh || get().phase !== "ready") set({ phase: "error", error: errText(e) || "Failed to fetch" });

@@ -95,13 +95,22 @@ export interface StatusPage {
   url: string;
 }
 
-/** A cloud service, asked with TARS's key, and as its own status page says it is. */
+/** A cloud service (or Home Assistant), asked with TARS's key, and as its own status page says it is. Keys that
+    can't run TARS are one service, "API keys", that failed. */
 export interface ServiceHealth {
   name: string;
   status: CheckStatus;
   detail: string;
   fix: string;
   page: StatusPage | null;
+}
+
+/** One line of --check, as the Status page shows the backup: how its last pass went, and its timer. */
+export interface CheckLine {
+  name: string;
+  status: CheckStatus;
+  detail: string;
+  fix: string;
 }
 
 export interface MachineHealth {
@@ -128,6 +137,7 @@ export interface Health {
   today: { wakes: number; answers: number; failed: number; last_wake: number | null };
   services: ServiceHealth[];
   services_asked: number;
+  backup: CheckLine[] | null; // null: the backup is off
   machine: MachineHealth;
 }
 

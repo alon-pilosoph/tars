@@ -352,6 +352,32 @@ def test_the_estimate_comes_from_earlier_runs_of_each_scenario(tmp_path):
     assert use["luna"]["searches"] == pytest.approx(2 * (2 + 1 + 1.5))  # b: one search per turn OpenAI answered
 
 
+def test_a_cut_short_transcript_line_is_left_out_of_the_estimate(tmp_path):
+    from evals.costs import estimate
+
+    (tmp_path / "2026-10-17-100000").mkdir()
+    whole = json.dumps({"scenario": "a", "usage": {"luna": {"input": 100}}, "turns": []})
+    (tmp_path / "2026-10-17-100000" / "runs.jsonl").write_text(whole + '\n{"scenario": "a", "usa')
+    a = Scenario("a", "x", [_turn({"say": "hi"}, "t")], ["t"])
+    use, unknown = estimate([a], runs=1, folder=tmp_path)
+    assert unknown == [] and use["luna"]["input"] == pytest.approx(100)
+
+
+def test_a_result_with_runs_that_werent_counted_is_never_saved_as_the_baseline(tmp_path, monkeypatch, capsys):
+    import evals.__main__ as cli
+    from evals.runner import RunResult
+
+    saved = []
+    monkeypatch.setattr(cli, "save_profile", saved.append)
+    a = Scenario("a", "x", [_turn({"say": "hi"}, "t")], ["t"])
+    path = tmp_path / "results.jsonl"
+    results = [RunResult("a", [], usage={"luna": {"input": 1}})]
+    assert not cli.save_result(path, {"not_run": 2}, [a], results)
+    assert not path.exists() and not saved and "2 run(s) aren't counted" in capsys.readouterr().out
+    assert cli.save_result(path, {"not_run": 0, "right": 1}, [a], results)
+    assert json.loads(path.read_text()) == {"not_run": 0, "right": 1} and len(saved) == 1
+
+
 def test_the_budget_stops_the_runs_once_its_spent():
     import evals.__main__ as cli
     from evals.costs import Prices

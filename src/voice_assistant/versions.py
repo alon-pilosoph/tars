@@ -244,8 +244,7 @@ class ModelVersions:
         empty = {"installed": None, "active": None, "versions": []}
         try:
             history = json.loads((self.folder / HISTORY).read_text())
-            if not isinstance(history, dict) or not isinstance(history.get("versions"), list):
-                raise TypeError("not a version history")
+            _check_history(history)
         except FileNotFoundError:
             return empty, None
         except (OSError, ValueError, TypeError) as e:
@@ -253,7 +252,11 @@ class ModelVersions:
                 f"The version history couldn't be read ({e}), so TARS uses the installed models. The next "
                 'install or "Use this" starts a new one; the old file is kept.'
             )
-        if history.get("installed") != self._installed_hash():
+        try:
+            installed = self._installed_hash()
+        except OSError as e:
+            return empty, f"The installed models couldn't be read ({e}), so the trained versions are ignored."
+        if history.get("installed") != installed:
             return empty, (
                 "The installed models have changed since these versions were trained, so TARS uses them. "
                 "The next install starts a new history."
@@ -263,10 +266,11 @@ class ModelVersions:
     def _writable(self) -> dict:
         """The history to change. One that can't be used is kept aside, and a new one started."""
         history, problem = self._read()
+        installed = self._installed_hash()  # before anything is set aside: without the installed pair, nothing changes
         path = self.folder / HISTORY
         if problem and path.exists():
             path.replace(path.with_name(f"history-{time.strftime('%Y%m%d-%H%M%S')}.old.json"))
-        history["installed"] = self._installed_hash()
+        history["installed"] = installed
         return history
 
     def _save(self, history: dict) -> None:
@@ -306,6 +310,22 @@ def pair_source(cfg: Config, root: Path) -> ModelVersions | FixedPair:
             "What TARS was installed with.",
         )
     )
+
+
+def _check_history(history) -> None:
+    """TypeError unless it has the shape every reader of it relies on."""
+    if not isinstance(history, dict) or not isinstance(history.get("versions"), list):
+        raise TypeError("not a version history")
+    if not (history.get("active") is None or isinstance(history["active"], str)):
+        raise TypeError(f"the version in use is {history['active']!r}")
+    for v in history["versions"]:
+        if not (
+            isinstance(v, dict)
+            and isinstance(v.get("version"), str)
+            and isinstance(v.get("folder"), str)
+            and isinstance(v.get("number"), int)
+        ):
+            raise TypeError(f"a version is {v!r}")
 
 
 def _check_pair(model: Path, check: dict, about: dict, load_model: bool = True) -> None:

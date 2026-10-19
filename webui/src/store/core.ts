@@ -60,11 +60,15 @@ export interface Snapshot {
   review: Set<number>;
 }
 
+/** What a load reads, an endpoint each: one that fails leaves the rest. */
+export type LoadPart = "events" | "clusters" | "models" | "status" | "convs" | "items" | "reminders";
+
 export interface State {
   tab: Tab;
   person: PersonFilter;
   phase: "loading" | "ready" | "error";
   error: string;
+  loadErrors: Partial<Record<LoadPart, string>>; // the parts the last load couldn't get, with why: shown as they were
   events: TarsEvent[];
   clusters: Cluster[];
   models: ModelsInfo | null;
@@ -91,6 +95,7 @@ let current: State = {
   person: LINK.person,
   phase: "loading",
   error: "",
+  loadErrors: {},
   events: [],
   clusters: [],
   models: null,

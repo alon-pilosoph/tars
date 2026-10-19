@@ -17,7 +17,7 @@ palette).
 | **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set (by voice, on this page or on Telegram), whether it's posted to a Telegram chat rather than said aloud, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice is back. The tab counts what's waiting for a got it. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
-| **Status** | Whether each part of TARS is running (the assistant, the web UI, Telegram), since when and which version; the day's wakes, answers and failed answers; each cloud service TARS uses, asked with TARS's own key, beside what the service's own status page says; and the machine: CPU, load, memory, temperature, the Pi's power and heat warnings, storage and uptime. |
+| **Status** | Whether each part of TARS is running (the assistant, the web UI, Telegram), since when and which version; the day's wakes, answers and failed answers; each cloud service TARS uses, asked with TARS's own key, beside what the service's own status page says, and Home Assistant when `[home]` uses it; how the backup's last pass went, and its timer, when `[backup]` is on; and the machine: CPU, load, memory, temperature, the Pi's power and heat warnings, storage and uptime. |
 
 On a phone the pages are tabs along the bottom, Voices, Models and Status sit under the ⋯ at the top, and menus and
 dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
@@ -74,6 +74,13 @@ own details), and each one's own status page is read (they all publish Statuspag
 because each answers a different question: the key works, and the service says it's fine. They're all asked at once
 and given 10 seconds together: one that hasn't answered by then is shown failing, so a service that hangs can't hold
 the page up. The answers are kept for a minute, and while they're being asked, another page gets the last ones.
+Keys that aren't enough to run TARS at all are one failing line, "API keys", saying which are missing, in place of the
+services that need them.
+
+**The backup says how its last pass went.** As `--check` says it (`check.last_pass`), from what the pass left in
+`<events folder>/backup.json`: files in the bucket and only there, and when the last good pass was (flagged after an
+hour), or why the last one failed; and whether the timer is running, where there's systemd. The bucket itself isn't
+asked, so the page costs no S3 request.
 **Trade-off:** the checks spend no tokens, but they are requests on TARS's keys, so the page asks only when it's
 opened or refreshed, never in the background.
 
@@ -81,12 +88,14 @@ opened or refreshed, never in the background.
 
 JSON over HTTP, all under `/api`. Errors carry a readable reason: `{"detail": "..."}`, or for a malformed body
 (422) a list of problems with a `msg` each. Requests from an unknown host get 421, and changes from another site
-get 403 (see [architecture](architecture.md#the-web-ui)).
+get 403 (see [architecture](architecture.md#the-web-ui)). A change to something switched off (reminders, regrouping
+voices, versions of a setup that has none) gets 501, saying what's off. The page loads each list on its own: one that
+fails is shown as it last loaded, saying so, and only when none answers is TARS unreachable.
 
 | Method and path | Does |
 |---|---|
 | `GET /api/status` | Whether voices can be regrouped, how many requests a voiceprint needs, and whether there's a Status page (`health`) |
-| `GET /api/health` | What the Status page shows: each process's heartbeat and systemd state, today's counts, the services (asked at most once a minute) and the machine |
+| `GET /api/health` | What the Status page shows: each process's heartbeat and systemd state, today's counts, the services (asked at most once a minute), the backup (`null` when it's off) and the machine |
 | `GET /api/conversations` | The newest 200 conversations, with their turns, sent items and the wake that started each |
 | `GET /api/conversations/{id}` | One conversation |
 | `DELETE /api/conversations/{id}` | It, its turns, audio and items, and the wake that started it |

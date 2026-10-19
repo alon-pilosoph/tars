@@ -10,6 +10,7 @@ import pytest
 
 from voice_assistant import events
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
+from voice_assistant.config import ConfigError
 from voice_assistant.events import (
     ASKED,
     NEAR_MISS,
@@ -230,6 +231,18 @@ def test_what_was_sent_before_telegram_isnt_posted_there_after_the_upgrade(tmp_p
 
 def test_a_new_database_starts_at_the_latest_version(log):
     assert log.store.rows("PRAGMA user_version")[0]["user_version"] == len(MIGRATIONS)
+
+
+def test_a_database_made_by_newer_code_is_refused_and_left_as_it_was(tmp_path):
+    folder = tmp_path / "events"
+    EventLog(folder)
+    newer = len(MIGRATIONS) + 1
+    with sqlite3.connect(folder / "events.db") as db:
+        db.execute(f"PRAGMA user_version={newer}")
+    with pytest.raises(ConfigError, match="newer TARS"):
+        EventLog(folder)
+    with sqlite3.connect(folder / "events.db") as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == newer
 
 
 def test_old_audio_nothing_learns_from_is_dropped_and_the_rest_kept(log):

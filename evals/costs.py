@@ -90,7 +90,10 @@ def _latest_runs(scenario: str, folder: Path, keep: int = 10) -> list[dict]:
     rows = []
     for path in sorted(folder.glob("*/runs.jsonl"), reverse=True):
         for line in path.read_text().splitlines():
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue  # cut short: the run stopped while it was being written
             if row["scenario"] == scenario and row.get("usage") and not row.get("unavailable"):
                 rows.append(row)
         if len(rows) >= keep:

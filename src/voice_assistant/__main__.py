@@ -245,7 +245,8 @@ def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
     from .check import service_checks, systemd_state
     from .health import Health, Services, expected
 
-    return Health(log, expected(cfg), Services(lambda: service_checks(cfg, root)), systemd_state).report
+    services = Services(lambda: service_checks(cfg, root))
+    return Health(log, expected(cfg), services, systemd_state, backed_up=cfg.backup.enabled).report
 
 
 def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) -> None:

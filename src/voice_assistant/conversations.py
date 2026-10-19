@@ -7,6 +7,7 @@ notes, lists, files) are what TARS "sends" to the web UI. There are no private i
 
 import json
 import time
+from collections.abc import Sequence
 from contextlib import closing
 from dataclasses import dataclass
 
@@ -47,12 +48,25 @@ class ConversationLog:
         self.events = events
         self.store = events.store
 
-    def start(self, wake_event_id: int | None, ts: float | None = None, via: str | None = None) -> int:
-        """`via`: "telegram" for a chat there; None by voice."""
-        return self.store.write(
-            "INSERT INTO conversations (started, wake_event_id, via) VALUES (?, ?, ?)",
-            (ts or time.time(), wake_event_id, via),
-        )
+    def start(
+        self,
+        wake_event_id: int | None,
+        ts: float | None = None,
+        via: str | None = None,
+        said: Sequence[tuple[float, str]] = (),
+    ) -> int:
+        """`via`: "telegram" for a chat there; None by voice. `said`: what TARS said before anyone spoke ("Yes,
+        Alon?"), as (when, what), its first turns: kept with the conversation or not at all."""
+        with self.store.transaction() as db:
+            conversation = db.execute(
+                "INSERT INTO conversations (started, wake_event_id, via) VALUES (?, ?, ?)",
+                (ts or time.time(), wake_event_id, via),
+            ).lastrowid
+            db.executemany(
+                "INSERT INTO turns (conversation_id, ts, role, text) VALUES (?, ?, ?, ?)",
+                [(conversation, at, ROLE_TARS, text) for at, text in said],
+            )
+        return conversation
 
     def end(self, conversation_id: int, ts: float | None = None) -> None:
         self.store.write("UPDATE conversations SET ended=? WHERE id=?", (ts or time.time(), conversation_id))
@@ -251,13 +265,11 @@ class ConversationLog:
         self.store.remove(files)
 
     def turn(self, turn_id: int) -> dict | None:
-        rows = self.store.rows("SELECT * FROM turns WHERE id=?", (turn_id,))
-        return rows[0] if rows else None
+        return self.store.row("SELECT * FROM turns WHERE id=?", (turn_id,))
 
-    def item(self, item_id: int) -> dict | None:
+    def item_row(self, item_id: int) -> dict | None:
         """The raw row, including the stored file path the browser must never see."""
-        rows = self.store.rows("SELECT * FROM items WHERE id=?", (item_id,))
-        return rows[0] if rows else None
+        return self.store.row("SELECT * FROM items WHERE id=?", (item_id,))
 
     def items(self) -> list[dict]:
         rows = self.store.rows("SELECT * FROM items ORDER BY ts DESC")

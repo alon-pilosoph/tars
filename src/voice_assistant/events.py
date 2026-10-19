@@ -200,8 +200,7 @@ class EventLog:
             db.execute("DELETE FROM clusters WHERE id=?", (absorb,))
 
     def get(self, event_id: int) -> dict | None:
-        rows = self.store.rows("SELECT * FROM events WHERE id=?", (event_id,))
-        return rows[0] if rows else None
+        return self.store.row("SELECT * FROM events WHERE id=?", (event_id,))
 
     def events(self, limit: int | None = None) -> list[dict]:
         """Newest first (all of them without a `limit`), each with its automatic label."""
@@ -259,8 +258,7 @@ class EventLog:
         }
 
     def cluster(self, cluster_id: int) -> dict | None:
-        rows = self.store.rows("SELECT * FROM clusters WHERE id=?", (cluster_id,))
-        return rows[0] if rows else None
+        return self.store.row("SELECT * FROM clusters WHERE id=?", (cluster_id,))
 
     def clusters(self) -> list[dict]:
         return self.store.rows(

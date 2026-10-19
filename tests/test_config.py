@@ -1,5 +1,6 @@
 """config.toml: the shipped one loads, and a setting that can't work stops the assistant with one clear line."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -152,6 +153,32 @@ def test_home_country_is_a_two_letter_code(tmp_path, country, ok):
     else:
         with pytest.raises(ConfigError, match="two-letter country code"):
             config(tmp_path, setup)
+
+
+@pytest.mark.parametrize(
+    "setup, says",
+    [
+        ("[wake]\nthreshold = 1.5", "[wake] threshold must be between 0 and 1"),
+        ("[wake]\nthreshold = 0", "[wake] threshold must be between 0 and 1"),
+        ("[wake]\ncheck_window_s = 0", "[wake] check_window_s must be more than 0"),
+        ("[speaker]\nthreshold = 50", "[speaker] threshold must be more than 0 and at most 1"),
+        ("[speaker]\nwake_threshold = -0.1", "[speaker] wake_threshold must be more than 0 and at most 1"),
+        ("[recorder]\nstart_timeout_s = 0", "[recorder] start_timeout_s must be more than 0"),
+        ("[recorder]\nmax_utterance_s = -1", "[recorder] max_utterance_s must be more than 0"),
+        ("[recorder]\nfollow_up_s = -1", "[recorder] follow_up_s must be 0 (off) or more"),
+        ("[recorder]\ngreet_after_s = -1", "[recorder] greet_after_s must be 0 (off) or more"),
+        ("[llm]\nhumor = 150", "[llm] humor must be a percentage"),
+        ("[llm]\nmemory_minutes = -5", "[llm] memory_minutes must be 0 or more"),
+    ],
+)
+def test_a_setting_out_of_its_range_stops_at_startup_saying_which(tmp_path, setup, says):
+    with pytest.raises(ConfigError, match=re.escape(says)):
+        config(tmp_path, setup)
+
+
+def test_switching_off_what_zero_switches_off_is_fine(tmp_path):
+    cfg = config(tmp_path, "[recorder]\nfollow_up_s = 0\ngreet_after_s = 0\n[llm]\nhumor = 0\nmemory_minutes = 0")
+    assert (cfg.recorder.follow_up_s, cfg.recorder.greet_after_s, cfg.llm.humor) == (0, 0, 0)
 
 
 def test_this_machines_own_settings_go_on_top_of_the_shared_file(tmp_path):

@@ -137,8 +137,8 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   house (with `[home]` devices), the backup (the bucket, and how the last pass went) and the systemd services. Each
   problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device: one that
   doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same when
-  it's opened or refreshed: whether each process is running, the services with their own status pages, and the
-  Pi's temperature, power and disk.
+  it's opened or refreshed: whether each process is running, the services with their own status pages, Home
+  Assistant, how the backup's last pass went, and the Pi's temperature, power and disk.
 
 ## A first test run
 

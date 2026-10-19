@@ -238,8 +238,9 @@ elsewhere could reach it through someone's browser:
 - **Host allow-list:** it only answers requests addressed to an IP address, `localhost`, `*.local`, `*.ts.net`, a
   single-label name (`tars`, the Pi's hostname) or a name in `[web] allowed_hosts`. Anything else gets 421, which
   stops DNS-rebinding attacks.
-- **Same-origin changes:** a request that changes something (POST, DELETE) must come from the TARS page itself, a
-  page at a name in `[web] allowed_hosts`, or `localhost`; anything else gets 403.
+- **Same-origin changes:** a request that changes something (POST, DELETE) must come from the TARS page itself or a
+  page at a name in `[web] allowed_hosts` (`npm run dev`'s page counts, its proxy passing its own address on);
+  anything else gets 403, a page on another port of `localhost` included.
 
 To use it away from home, put the Pi and the phone on Tailscale rather than forwarding a port.
 

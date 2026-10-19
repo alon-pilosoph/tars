@@ -114,7 +114,7 @@ def test_an_item_sent_after_its_conversation_was_deleted_stands_on_its_own(convo
     c = convos.start(None)
     convos.delete(c)  # in the web UI, while TARS was still answering
     item = convos.add_item(c, None, SentItem(NOTE, "Recipe", body="Boil water."), for_name="alon")
-    assert convos.item(item)["conversation_id"] is None
+    assert convos.item_row(item)["conversation_id"] is None
 
 
 def test_lists_tick_and_mark_the_list_seen(convos):
@@ -136,8 +136,8 @@ def test_files_are_stored_under_unique_names_and_keep_their_own(convos, log):
     )
     item = next(i for i in convos.items() if i["id"] == one)
     assert item["name"] == "trip plan.txt" and item["size"] == 10 and "file" not in item
-    assert (log.folder / convos.item(one)["file"]).read_bytes() == b"day 1: fly"
-    assert (log.folder / convos.item(two)["file"]).read_bytes() == b"day 2: swim"
+    assert (log.folder / convos.item_row(one)["file"]).read_bytes() == b"day 1: fly"
+    assert (log.folder / convos.item_row(two)["file"]).read_bytes() == b"day 2: swim"
 
 
 def test_a_sent_file_is_not_left_behind_when_its_item_cant_be_written(convos, log, monkeypatch):
@@ -154,7 +154,7 @@ def test_deleting_a_conversation_removes_everything(log, convos):
     c, wake = a_conversation(log, convos)
     t = convos.get(c)["turns"][1]["id"]
     f = convos.add_item(c, t, SentItem(FILE, "Notes", file_bytes=b"x", file_name="n.txt", mime="text/plain"))
-    files = [log.folder / convos.item(f)["file"]] + [
+    files = [log.folder / convos.item_row(f)["file"]] + [
         log.folder / convos.turn(x["id"])["audio"] for x in convos.get(c)["turns"] if x["role"] == ROLE_PERSON
     ]
     convos.delete(c)
@@ -175,6 +175,18 @@ def test_nothing_is_added_to_a_deleted_conversation(convos):
     convos.delete(c)
     assert convos.add_person_turn(c, "hello?", AUDIO) is None and convos.add_tars_turn(c, "Hi.") is None
     assert convos.store.rows("SELECT * FROM turns") == []
+
+
+def test_what_tars_said_before_anyone_spoke_is_kept_with_the_conversation_or_not_at_all(convos):
+    c = convos.start(None, ts=1.0, said=[(1.0, "Yes, Alon?"), (2.0, "Did you call me?")])
+    assert [(t["role"], t["text"]) for t in convos.get(c)["turns"]] == [
+        (ROLE_TARS, "Yes, Alon?"),
+        (ROLE_TARS, "Did you call me?"),
+    ]
+    with pytest.raises(sqlite3.IntegrityError):
+        convos.start(None, ts=3.0, said=[(3.0, "Yes?"), (None, "cut short")])
+    assert [r["id"] for r in convos.store.rows("SELECT id FROM conversations")] == [c]
+    assert len(convos.store.rows("SELECT * FROM turns")) == 2
 
 
 def test_the_api_lists_conversations_with_their_turns(log, convos, client):

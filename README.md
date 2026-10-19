@@ -33,7 +33,7 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:
-  every part running, the services, the Pi ([web UI](docs/web-ui.md)).
+  every part running, the services, the backup, the Pi ([web UI](docs/web-ui.md)).
 - **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
   sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
 - **Backed up to S3** every 15 minutes, with a snapshot of the database every six hours; old audio leaves the Pi for

@@ -392,6 +392,23 @@ def _problems(cfg: Config) -> list[str]:
     for name, section in (("stt", stt), ("tts", cfg.tts)):
         if not re.fullmatch(r"[a-z0-9.-]+", section.deepgram_host):
             problems.append(f"[{name}] deepgram_host must be a host name, like api.eu.deepgram.com")
+    if not 0 < cfg.wake.threshold < 1:
+        problems.append("[wake] threshold must be between 0 and 1")
+    if cfg.wake.check_window_s <= 0:
+        problems.append("[wake] check_window_s must be more than 0")
+    for name in ("threshold", "wake_threshold"):
+        if not 0 < getattr(cfg.speaker, name) <= 1:
+            problems.append(f"[speaker] {name} must be more than 0 and at most 1")
+    for name in ("start_timeout_s", "max_utterance_s"):
+        if getattr(r, name) <= 0:
+            problems.append(f"[recorder] {name} must be more than 0")
+    for name in ("follow_up_s", "greet_after_s"):
+        if getattr(r, name) < 0:
+            problems.append(f"[recorder] {name} must be 0 (off) or more")
+    if not 0 <= cfg.llm.humor <= 100:
+        problems.append("[llm] humor must be a percentage, from 0 to 100")
+    if cfg.llm.memory_minutes < 0:
+        problems.append("[llm] memory_minutes must be 0 or more")
     if cfg.recorder.greet not in GREETS:
         problems.append(f"[recorder] greet must be {', '.join(GREETS)}, not {cfg.recorder.greet!r}")
     if cfg.llm.think_timeout_s <= 0:

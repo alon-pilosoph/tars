@@ -29,6 +29,28 @@ from .versions import INSTALLED, FixedPair, ModelVersions
 
 STATIC = Path(__file__).with_name("webui_static")  # the React app in webui/, built with `npm run build`
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+# What the browser gets for a reminder (types.ts Reminder): not `reported`, what a chat was last told.
+REMINDER_FIELDS = (
+    "id",
+    "created",
+    "kind",
+    "text",
+    "for_name",
+    "from_name",
+    "set_via",
+    "conversation_id",
+    "due",
+    "repeat_every_s",
+    "max_tries",
+    "status",
+    "tries",
+    "next_at",
+    "last_said",
+    "acked_at",
+    "acked_by",
+    "acked_via",
+    "channel",
+)
 
 
 class Label(BaseModel):
@@ -105,9 +127,10 @@ def allowed_host(host: str, extra: frozenset[str] = frozenset()) -> bool:
 
 
 def same_site(origin: str, host: str, extra: frozenset[str] = frozenset()) -> bool:
-    """A change may only come from this page itself (or the dev server on this machine)."""
+    """A change may only come from this page itself, or one reached by a name in [web] allowed_hosts. The dev server
+    passes its own Host on, so its page counts as this one; another page on localhost doesn't."""
     parts = urlsplit(origin)
-    return parts.netloc == host or (parts.hostname or "") in LOOPBACK | extra
+    return parts.netloc == host or (parts.hostname or "") in extra
 
 
 def ranged(data: bytes, media_type: str, asked: str | None) -> Response:
@@ -221,7 +244,7 @@ def create_app(
         return turn
 
     def item_or_404(item_id: int) -> dict:
-        item = convos.item(item_id)
+        item = convos.item_row(item_id)
         if not item:
             raise HTTPException(404, "no such item")
         return item
@@ -238,11 +261,22 @@ def create_app(
         return r
 
     def public_reminder(r: dict) -> dict:
-        return {**r, "needs_ack": bool(r["needs_ack"]), "says": line(r)}
+        return {
+            **{k: r[k] for k in REMINDER_FIELDS},
+            "needs_ack": bool(r["needs_ack"]),
+            "says": line(r),
+        }
+
+    def inside(rel: str | None) -> Path:
+        """Where a stored file is, by the path its row keeps; 404 for none, or one outside the data folder."""
+        path = (log.folder / rel).resolve() if rel else None
+        if not (path and path.is_relative_to(log.folder.resolve())):
+            raise HTTPException(404, "no file")
+        return path
 
     def file_or_404(rel: str | None) -> Path:
-        path = (log.folder / rel).resolve() if rel else None
-        if not path or not path.is_relative_to(log.folder.resolve()) or not path.exists():
+        path = inside(rel)
+        if not path.exists():
             raise HTTPException(404, "no file")
         return path
 
@@ -284,9 +318,7 @@ def create_app(
     def recording(rel: str | None, request: Request) -> Response:
         """A recording, from this machine, or from the backup's bucket once it's been moved there. Read whole (they're
         seconds long), so one the backup removes meanwhile is fetched from the bucket instead."""
-        path = (log.folder / rel).resolve() if rel else None
-        if not (path and path.is_relative_to(log.folder.resolve())):
-            raise HTTPException(404, "no file")
+        path = inside(rel)
         try:
             data = path.read_bytes()
         except FileNotFoundError:
@@ -460,7 +492,7 @@ def create_app(
     @app.post("/api/models/use")
     def use_version(body: UseVersion):
         if not isinstance(pairs, ModelVersions):
-            raise HTTPException(404, "no such version")
+            raise HTTPException(501, "this setup has no versions to switch between: config.toml's pair is the one")
         try:
             pairs.use(body.version)
         except KeyError:

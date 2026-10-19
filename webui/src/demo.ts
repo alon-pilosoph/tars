@@ -747,8 +747,8 @@ function build(): DemoData {
   };
 }
 
-/** Mirrors the server's auto_label (events.py). */
-function demoAuto(e: DemoEvent, answered: number[]): [Label | null, string] {
+/** Mirrors the server's auto_label (events.py); logic.test.ts pins the cases tests/test_events.py does. */
+export function demoAuto(e: DemoEvent, answered: number[]): [Label | null, string] {
   if (e.kind === "near_miss") {
     const missed = answered.some(t => t - e.ts > 0 && t - e.ts <= MISSED_WINDOW_S);
     return missed
@@ -756,7 +756,8 @@ function demoAuto(e: DemoEvent, answered: number[]): [Label | null, string] {
       : [null, "it never woke up"];
   }
   if (e.outcome === "ignore") return ["not_real", "the double-check heard something else"];
-  if (e.follow === "asked") {
+  // A request but no follow: the reply failed.
+  if (e.follow === "asked" || (e.follow == null && e.transcript)) {
     return ["real", e.outcome === "answer" ? "a request followed" : "they answered “Did you call me?”"];
   }
   if (e.follow === "not_for_us") return ["not_real", "the reply wasn't meant for TARS"];
@@ -1158,6 +1159,7 @@ function demoHealth(at: number): Health {
       today: { wakes: 0, answers: 0, failed: 0, last_wake: null },
       services: [],
       services_asked: at - 2,
+      backup: null,
       machine: demoMachine(false),
     };
   return {
@@ -1188,8 +1190,25 @@ function demoHealth(at: number): Health {
         : answers("Deepgram", 0.2, "https://status.deepgram.com"),
       answers("Cartesia", 0.3, "https://status.cartesia.ai"),
       { ...answers("Telegram", 0.3, null), detail: "@hey_tars_bot answers (0.3 s), for Alon, Stacey" },
+      { ...answers("Home Assistant", 0.1, null), detail: "answers at http://homeassistant.local:8123 (0.1 s)" },
     ],
     services_asked: at - 20,
+    backup: [
+      trouble
+        ? {
+            name: "The last pass",
+            status: "fail",
+            detail: "the last pass: S3 put_object: Access Denied",
+            fix: "systemctl --user start voice-assistant-backup, and see journalctl --user-unit voice-assistant-backup",
+          }
+        : {
+            name: "The last pass",
+            status: "ok",
+            detail: "1284 files there, 912 only there; the last good pass 6 minutes ago",
+            fix: "",
+          },
+      { name: "The timer", status: "ok", detail: "running", fix: "" },
+    ],
     machine: demoMachine(trouble),
   };
 }

@@ -218,11 +218,12 @@ def test_a_check_that_raises_or_exits_is_a_failure_not_a_crash():
     assert "boom" in found[0]["detail"] and "OPENAI_API_KEY" in found[1]["detail"]
 
 
-def test_every_service_with_a_status_page_is_one_check_asks():
+def test_every_service_with_a_status_page_is_one_check_asks(tmp_path):
     from voice_assistant.check import service_checks
 
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=o\nDEEPGRAM_API_KEY=d\n")
     cfg = load_config(REPO / "config.toml", local=False)
-    names = {name for name, _ in service_checks(cfg, REPO / "no-such-folder")}
+    names = {name for name, _ in service_checks(cfg, tmp_path)}
     assert set(STATUS_PAGES) <= names
 
 
@@ -237,3 +238,37 @@ def test_the_status_page_is_served_only_when_set_up(log, convos):
     assert TestClient(create_app(log, health=report)).get("/api/status").json()["health"] is True
     bare = TestClient(create_app(log))
     assert bare.get("/api/health").status_code == 501 and bare.get("/api/status").json()["health"] is False
+
+
+def test_the_backup_says_how_its_last_pass_went_and_its_timer(log):
+    from voice_assistant.backup import STATUS_FILE, Status
+
+    timer = states(**{"voice-assistant-backup.timer": "active"})
+    assert [(b["name"], b["status"]) for b in health.backup(log.folder, timer, NOW)] == [
+        ("The last pass", "warn"),  # none yet
+        ("The timer", OK),
+    ]
+    Status(last_run=NOW - 60, last_ok=NOW - 60, in_bucket=12, only_in_bucket=3).save(log.folder / STATUS_FILE)
+    (last, _) = health.backup(log.folder, timer, NOW)
+    assert last["status"] == OK and "12 files there, 3 only there" in last["detail"]
+    Status(last_run=NOW, last_ok=NOW - 7200, error="S3 put_object: Access Denied").save(log.folder / STATUS_FILE)
+    (last,) = health.backup(log.folder, lambda unit: None, NOW)  # no systemd: no timer to ask
+    assert last["status"] == FAIL and "Access Denied" in last["detail"] and "journalctl" in last["fix"]
+
+
+def test_the_backup_is_on_the_status_page_only_when_its_on(log):
+    services = Services(list, lambda url: {})
+    off = Health(log, ["web"], services, states(), read_throttled=lambda: None).report()
+    on = Health(log, ["web"], services, states(), read_throttled=lambda: None, backed_up=True).report()
+    assert off["backup"] is None and on["backup"][0]["name"] == "The last pass"
+    assert set(on["backup"][0]) == set(health.CheckLine.__annotations__)
+
+
+def test_keys_that_cant_run_tars_show_as_one_failure_not_a_page_of_nothing(tmp_path):
+    from voice_assistant.check import service_checks
+
+    (tmp_path / ".env").write_text("GROQ_API_KEY=g\n")
+    cfg = load_config(REPO / "config.toml", local=False)
+    found, _ = Services(lambda: service_checks(cfg, tmp_path), lambda url: {}).get()
+    assert [(s["name"], s["status"]) for s in found] == [("API keys", FAIL)]
+    assert "OPENAI_API_KEY" in found[0]["detail"] and ".env" in found[0]["fix"]
