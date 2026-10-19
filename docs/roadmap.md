@@ -20,14 +20,9 @@ acknowledgements, nothing said over a conversation, and one set from a phone sai
 Built since, also alongside step 1: [the house](home.md) (Home Assistant's devices, an Android TV box and the agent
 that works it, plugins for the rest), [TARS on Telegram](telegram.md) (chats and voice messages, with reminders and
 what TARS sends on a phone), the web UI's [Status page](web-ui.md#the-status-page), and the
-[backup to S3](backup.md). The week checks them too (below). What each still lacks, from its own doc:
-
-- **The house:** the house from Telegram (a chat can't unlock, but could check and change the rest), scenes ("going
-  to bed"), evals of the TV's agent on a real TV, and a saved run of the house's scenario evals
-  ([evals](evals.md#method)).
-- **Telegram:** photos (OpenAI's model reads images), replies by voice in TARS's own voice, a "got it" for a reminder
-  posted to a chat, missed reminders at home forwarded to their person's chat before they're marked Missed, and
-  evals written for chats.
+[backup to S3](backup.md). The week checks them too (below). What's left for each is in its own doc: the house's
+"Not yet" under [things to know](home.md#things-to-know), [Telegram's](telegram.md#not-yet), and the web UI's
+[limitations](web-ui.md#limitations).
 
 ## 1. A week of real use
 

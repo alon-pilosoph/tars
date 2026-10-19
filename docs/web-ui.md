@@ -48,7 +48,7 @@ tap. The Status page loads its own data when it's opened, and with Refresh while
 
 TARS serves one household on its own network, so the web UI has no accounts. Instead, the server only answers to
 local addresses and names, Tailscale names and `[web] allowed_hosts` (421 otherwise), and only accepts changes from
-its own page or a page at one of those `allowed_hosts` (403 otherwise). That closes the two ways a page elsewhere
+its own page or a page at a name in `[web] allowed_hosts` (403 otherwise). That closes the two ways a page elsewhere
 could reach it through someone's browser ([how](architecture.md#the-web-ui)).
 **Trade-off:** anyone on the home network can use it, and Sent is one list for the whole house.
 
@@ -110,7 +110,7 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 | `POST /api/recluster` | Regroup the requests by voice and rebuild the voiceprints |
 | `GET /api/models` | The pair in use and its test results, the version history, and the labeled wakes since it was installed |
 | `POST /api/models/use` | `{"version": ...}` puts a version in use (`"installed"` is config.toml's) |
-| `GET /api/reminders` | Whether reminders are on, up to 200 of them (the active ones first, soonest first, then the rest, newest first) with what TARS will say, the names TARS knows by voice, and the defaults |
+| `GET /api/reminders` | Whether reminders are on; up to 200 reminders, active ones first (soonest first), then the rest (newest first), each with what TARS will say; the names TARS knows by voice; and the defaults |
 | `POST /api/reminders` | `{"kind", "text", "for_name", "from_name", "due" (Unix time) or "when_back": true, "needs_ack", "repeat_every_min", "max_tries"}`; 400 says what's wrong |
 | `POST /api/reminders/{id}/ack` | Acknowledged on the page |
 | `POST /api/reminders/{id}/snooze` | `{"minutes": n}` said again then, with all its tries |
@@ -122,7 +122,7 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 cd webui
 npm install
 npm run dev        # hot reload on :5173, API proxied to :8080 (or $TARS_API)
-npm test           # unit tests (Vitest): markdown, reminders, formatting, Status, Refresh, filters, changes
+npm test           # unit tests (Vitest): markdown, reminders, formatting, Status, Refresh, filters, pending edits
 npm run build      # typecheck, then rebuild src/voice_assistant/webui_static/ (committed)
 npm run e2e        # the functional checks against a real backend (below)
 npm run visual     # the screenshot tests (below); npm run visual:update accepts an intended change
@@ -144,8 +144,8 @@ and `src/linkStates.ts` are only loaded with `?demo`.
 
 ## The checks
 
-All three run headless with Playwright: in the installed Chrome locally, and the end-to-end check in Playwright's
-own Chromium in CI.
+All three run headless with Playwright: in the installed Chrome locally; in CI, the end-to-end check and the site
+build (`.github/workflows/pages.yml`, `npm run site`) run in Playwright's own Chromium.
 
 - **`npm run e2e`** (`checks/e2e.spec.ts`, a few seconds): builds a throwaway copy of the demo log with
   `tools/webui_demo.py`, serves it, and uses the page like a person would: rate and undo, fix a transcript, tick a
@@ -159,7 +159,8 @@ own Chromium in CI.
   loads from the build on disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.
 - **`npm run site`** (`checks/site.spec.ts`): builds the [How TARS works](https://tars.alonp.dev) page from
   `site/index.html` into `site/dist/`, cutting real pages of the demo (Review, Voices, Models, Reminders) into it,
-  with the fonts and icons inlined, and takes its link preview (`og.png`). It fails if a place it fills in is missing.
+  with the fonts and icons inlined, and takes its link preview (`og.png`). It fails if a placeholder it fills is
+  missing.
 
 After a change that's meant to look different, run `npm run visual:update`, look at the new images in the diff,
 and commit them with the change. `npm test` runs the unit tests (Vitest), `npm run lint` the linter

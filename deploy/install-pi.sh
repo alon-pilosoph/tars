@@ -28,7 +28,8 @@ UV="$HOME/.local/bin/uv"
 [ -x "$UV" ] || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 echo "== Python packages (uv installs its own Python)"
-"$UV" sync --frozen --all-extras  # echo cancellation, Claude, Android TV, the example plugin's and the S3 backup are extras
+# Every extra: echo cancellation, Claude, Android TV, the example house's IR blaster, the S3 backup.
+"$UV" sync --frozen --all-extras
 
 echo "== API keys (TARS uses the services there are keys for, and says what it does without the others)"
 [ -e .env ] || cp .env.example .env

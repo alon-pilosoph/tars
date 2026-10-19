@@ -160,7 +160,7 @@ def make_s3(cfg: BackupConfig, key_id: str, secret: str) -> S3:
         import boto3
         from botocore.config import Config as BotoConfig
     except ImportError:
-        raise ValueError('it needs the optional extra "backup": uv sync --extra backup') from None
+        raise ValueError('it needs the optional extra "backup": uv sync --all-extras') from None
     client = boto3.session.Session().client(
         "s3",
         region_name=cfg.region,

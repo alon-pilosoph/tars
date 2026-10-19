@@ -55,7 +55,7 @@ class AudioConfig:
     output_device: str = ""
     playback_prebuffer_s: float = 0.3
     # Take TARS's own sound out of what the mic hears, so the mic can stay open while TARS makes one (the optional
-    # extra "echo": uv sync --extra echo).
+    # extra "echo": uv sync --all-extras).
     echo_cancel: bool = False
 
 

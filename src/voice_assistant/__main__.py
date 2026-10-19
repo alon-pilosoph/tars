@@ -120,7 +120,7 @@ def load_echo_canceller():
 
         return EchoCanceller(SAMPLE_RATE)
     except ImportError:
-        raise RuntimeError('needs the optional extra "echo": run uv sync --extra echo') from None
+        raise RuntimeError('needs the optional extra "echo": run uv sync --all-extras') from None
 
 
 def make_echo_canceller(cfg: Config):

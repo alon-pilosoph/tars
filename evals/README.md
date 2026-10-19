@@ -38,11 +38,12 @@ date, is what the estimate goes on there, with no transcripts of earlier runs.
 
 Every run starts with an estimate, from what the same scenarios used in earlier runs and the prices in
 `evals/prices.toml` (check them against the providers' pages: they change). **Web searches are most of it**: OpenAI
-bills $10 per 1,000 on any tier, besides their results' tokens. The 29 scenarios before the house's, 3 runs each, make
-about 45 searches, take about a minute, and come to about $0.90: about $0.50 on OpenAI, most of it searches, and
-about $0.40 for Qwen on Cerebras ($0.99 per million tokens in, $1.49 out; its instructions are long, so it's mostly
-input). The house's 18 (`evals/scenarios/house.toml`) have no saved run yet, so until one is saved (`--save`), the
-estimate counts each as an average scenario, web searches included, and what a run of all 47 costs is a guess.
+bills $10 per 1,000 on any tier, besides their results' tokens. The first 29 scenarios, 3 runs each, make about 45
+searches, take about a minute, and come to about $0.90: about $0.50 on OpenAI, most of it searches, and about $0.40
+for Qwen on Cerebras ($0.99 per million tokens in, $1.49 out; its instructions are long, so it's mostly input). The
+house's 18 (`evals/scenarios/house.toml`) have no saved run yet: until a run of them is saved (`--save`), or kept
+locally in `evals/runs/`, the estimate counts each as an average scenario, web searches included, so what a run of
+all 47 costs is a guess.
 
 ```bash
 uv run python -m evals --estimate                 # what it would cost, and nothing else
@@ -97,7 +98,7 @@ about = """What it tests, and why it matters."""
 tags = ["reminders", "corrections"]     # --tag picks them; the report counts by tag
 # house = { lock = "locked", door = "closed", boiler = "off", ac = "off", blinds = "open", tv = "on" }   # optional:
 #   TARS's real home tool over a pretend Home Assistant and TV box (evals/house.py); jams = true or down = true for a
-#   lock that jams, or Home Assistant not answering. A turn's `home` needs it
+#   lock that jams, or Home Assistant not answering. Needed by any turn that checks home.
 
 [[scenario.seed]]                       # optional: a reminder set before the conversation, from the web page
 ref = "pasta"                           # its name, for a later cancel or snooze

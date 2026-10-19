@@ -39,7 +39,7 @@ Without the backup, the event log, the audio kept for learning, voiceprints and 
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync --all-extras && cp .env.example .env    # then your keys in .env: OpenAI, Deepgram, Groq, Cerebras, Cartesia
+uv sync --all-extras && cp .env.example .env    # then your keys in .env: OpenAI, Deepgram, Cartesia, Groq, Cerebras
 uv run voice-assistant --list-devices
 ```
 
@@ -79,23 +79,26 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 ```
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
-ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts the systemd user units, at boot too: the assistant and the web UI, TARS on Telegram with `[telegram]` on
-([setting it up](telegram.md#setting-it-up)), and the backup's timer with `[backup]` on
-([backing up to S3](backup.md)). Then it runs `voice-assistant --check`. Every key is optional: it says what
-TARS does without the ones `.env` doesn't have, and stops only when hearing, thinking or speaking has no service at all;
-add keys and run it again ([running on the keys there are](architecture.md#running-on-the-keys-there-are)). It's safe to
-rerun, and it restarts the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml`, or a
-stage left with no key, stops a service instead of restarting it every few seconds: `journalctl` says what's wrong. So
-does a missing speakerphone, and plugging it in starts TARS again
-([`deploy/99-tars-speakerphone.rules`](../deploy/99-tars-speakerphone.rules)). The
-web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of each unit:
+ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node),
+downloads the models, lists the audio devices, and installs and starts the systemd user units, at boot too: the
+assistant and the web UI, TARS on Telegram with `[telegram]` on ([setting it up](telegram.md#setting-it-up)), and the
+backup's timer with `[backup]` on ([backing up to S3](backup.md)). Then it runs `voice-assistant --check`.
+
+Every key is optional: it says what TARS does without the ones `.env` doesn't have, and stops only when hearing,
+thinking or speaking has no service at all; add keys and run it again
+([running on the keys there are](architecture.md#running-on-the-keys-there-are)). It's safe to rerun, and it
+restarts the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml`, or a stage left
+with no key, stops a service instead of restarting it every few seconds: `journalctl` says what's wrong. So does a
+missing speakerphone, and plugging it in starts TARS again
+([`deploy/99-tars-speakerphone.rules`](../deploy/99-tars-speakerphone.rules)).
+
+By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service),
 [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
 [`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
 [`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]` or
-`[backup]` turned off stops and disables that one.
+`[backup]` off stops and disables that unit.
 
 ## Recognizing people from the start
 

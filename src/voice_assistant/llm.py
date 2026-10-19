@@ -248,7 +248,7 @@ LOOK_UP = "<look-up>"
 # write their own reasoning between <think> tags.
 PONDER = "<ponder>"
 # How Qwen starts a tool call when it writes one out as text instead of making it, now and then in a long reply. Its
-# words go to the voice as they come, so the reply is cut off there, unsaid, and handled as one that ran out.
+# words go to the voice as they come, so the reply is cut off there, unsaid, and OpenAI takes the turn.
 TOOL_CALL_TEXT = ("<toolcall>", "<tool_call>", "<function=")
 
 
