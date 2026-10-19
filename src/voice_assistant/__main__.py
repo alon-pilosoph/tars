@@ -45,7 +45,6 @@ if TYPE_CHECKING:
     from .stt import Transcriber
 
 OPENAI_TIMEOUT_S = 15.0
-AGENT_TIMEOUT_S = 40.0  # one step of the Android TV agent, a screenshot to read
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
@@ -412,14 +411,14 @@ def make_home(cfg: Config, root: Path, announce=None):
 
 def make_tv_agent(cfg: Config, env: Path, announce, box):
     """The agent that works an Android TV box step by step, if there's OpenAI to run it; None otherwise."""
-    from .androidtv import TvAgent
+    from .androidtv import STEP_TIMEOUT_S, TvAgent
 
     if OPENAI_KEY not in env_keys(env):
         return None
     from openai import OpenAI
 
     # Each step reads a screenshot, so a step can take longer than a spoken reply may.
-    client = OpenAI(api_key=api_key(env, OPENAI_KEY), timeout=AGENT_TIMEOUT_S, max_retries=1)
+    client = OpenAI(api_key=api_key(env, OPENAI_KEY), timeout=STEP_TIMEOUT_S, max_retries=1)
     return TvAgent(box, client, cfg.home.tv_model or cfg.llm.model, announce, service_tier=cfg.llm.service_tier)
 
 

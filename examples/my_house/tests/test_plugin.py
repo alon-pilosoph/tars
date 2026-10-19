@@ -6,6 +6,7 @@ import json
 import pytest
 
 from examples.my_house import blaster as blaster_module
+from examples.my_house import ir
 from examples.my_house.ac import Profile
 from examples.my_house.direct_play import FireTv
 from examples.my_house.ir import Remote
@@ -46,6 +47,8 @@ def test_its_kinds_are_made_from_the_devices_config_lists(tmp_path):
     devices = built.tools.devices
     assert list(devices) == ["ac", "tv", "soundbar", "fire tv"]
     assert isinstance(devices["tv"], Remote) and isinstance(devices["fire tv"], FireTv)
+    # Where `python -m examples.my_house.ir test TV` keeps what it found: the name in lower case, on any machine.
+    assert devices["tv"].tested == ir.tested_path(tmp_path, "TV") == tmp_path / "voice_data" / "ir" / "tv.json"
     assert isinstance(devices["ac"].profile, Profile)
     rules = built.tools.rules()
     assert "is_on or is_off" in rules and "volume and mute are its" in rules and "play with the app" in rules

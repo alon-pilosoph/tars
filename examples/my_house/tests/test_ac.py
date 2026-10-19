@@ -2,7 +2,9 @@
 press; TARS then makes codes the way that remote does, and toggles the power only when it has to."""
 
 import json
+import math
 import random
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -232,8 +234,8 @@ def ac(tmp_path: Path, sensor=None, sent=None) -> tuple[AC, Sent, Path]:
     sent = sent or Sent()
     path = tmp_path / "state.json"
     hass = None
-    if sensor is not None:
-        hass = type("Hass", (), {"state": lambda self, entity: {"state": sensor()}})()
+    if sensor is not None:  # Home Assistant, as far as the light sensor goes: a state, or all of what it says
+        hass = type("Hass", (), {"state": lambda self, entity: _as_state(sensor())})()
     clock = [0.0]
 
     def sleep(s):
@@ -244,7 +246,23 @@ def ac(tmp_path: Path, sensor=None, sent=None) -> tuple[AC, Sent, Path]:
     return unit, sent, path
 
 
+def _as_state(found) -> dict:
+    return found if isinstance(found, dict) else {"state": found}
+
+
 NOTHING = {"mode": None, "temperature": None, "fan": None}
+START = 1_800_000_000  # when Home Assistant says the sensor last reported before the toggle
+
+
+def light(state: str, changed: float, reported: float) -> dict:
+    """The light sensor's state as Home Assistant has it: what it says, when that changed, when it last reported."""
+    at = [datetime.fromtimestamp(START + t, UTC).isoformat() for t in (changed, reported)]
+    return {"state": state, "last_changed": at[0], "last_reported": at[1]}
+
+
+def every_2_s(t: float) -> float:
+    """A sensor that reports every 2 s, changed or not."""
+    return 2 * math.floor(t / 2)
 
 
 def test_on_toggles_only_when_tars_thinks_its_off(tmp_path):
@@ -290,11 +308,48 @@ def test_the_last_settings_are_kept_for_next_time(tmp_path):
 
 
 def test_with_the_light_sensor_it_checks_and_sends_once_more_if_it_was_missed(tmp_path):
-    light = iter(["off"] * 3 + ["off"] * 13 + ["on"] * 10)  # before; missed the first toggle; then on
-    unit, sent, path = ac(tmp_path, sensor=lambda: next(light))
+    # The sensor reports every 2 s: still off well after the first toggle, so the AC missed it. The second one, sent
+    # at 6 s, turns it on.
+    def sensor():
+        t = unit._clock()
+        return light("on", 8, every_2_s(t)) if t >= 8 else light("off", -100, every_2_s(t))
+
+    unit, sent, path = ac(tmp_path, sensor=sensor)
     said = unit.call("on", NOTHING)
     assert said == "done: the AC is on (on the second try), its light says so"
     assert [toggle for toggle, _ in sent.codes] == [True, True] and State.load(path).how == "sensor"
+
+
+def test_a_slow_light_sensor_gets_no_second_toggle(tmp_path):
+    # The AC came on at once, but the sensor says so only after 7 s: a second toggle sent then would turn it off, and
+    # the late "on" would have said it was done.
+    def sensor():
+        t = unit._clock()
+        return light("on", 7, 7) if t >= 7 else light("off", -100, 0)
+
+    unit, sent, _ = ac(tmp_path, sensor=sensor)
+    said = unit.call("on", NOTHING)
+    assert said.startswith("not confirmed: sent it, but the AC's light sensor hasn't reported since")
+    assert [toggle for toggle, _ in sent.codes] == [True]
+
+
+class FailsAgain(Sent):
+    """The blaster sending the first code, then not answering."""
+
+    def __call__(self, pulses):
+        if self.codes:
+            raise HomeError("the IR blaster didn't answer")
+        super().__call__(pulses)
+
+
+def test_a_second_toggle_that_cant_be_sent_is_not_confirmed_rather_than_nothing_changed(tmp_path):
+    unit, sent, path = ac(tmp_path, sensor=lambda: light("off", -100, every_2_s(unit._clock())), sent=FailsAgain())
+    said = unit.call("on", NOTHING)
+    assert said == (
+        "not confirmed: sent it, and the AC's light still says off; sending it again failed (the IR blaster didn't "
+        "answer)"
+    )
+    assert len(sent.codes) == 1 and not State.load(path).on
 
 
 def test_a_light_sensor_that_doesnt_answer_gets_no_second_toggle(tmp_path):

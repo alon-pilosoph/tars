@@ -72,7 +72,7 @@ def test_a_film_plays_on_stremio_from_its_link_and_the_first_stream():
     tv, box, titles, goals = player()
     assert play(tv, "Ratatouille (2007)") == "done: Ratatouille (2007) is playing on Stremio (the fire tv says so)"
     link = next(c for c in box.commands if c.startswith("am start"))
-    assert "-d 'stremio:///detail/movie/tt0382932/tt0382932'" in link and link.endswith(f" {STREMIO}")
+    assert "-d stremio:///detail/movie/tt0382932/tt0382932 " in link and link.endswith(f" {STREMIO}")
     assert titles.asked == [Title("Ratatouille", 2007)] and goals == []
 
 
@@ -93,6 +93,17 @@ def test_a_series_without_an_episode_opens_its_page_and_asks_which():
     assert "ask which season and episode" in said and "KEYCODE_DPAD_CENTER" not in " ".join(box.commands)
 
 
+def test_a_series_page_that_never_comes_up_is_not_said_to_be_open():
+    tv, box, _, _ = player()
+    box.open_link = lambda uri, package, **kw: None  # Stremio didn't come to the front
+    assert play(tv, "Wednesday").startswith("not confirmed: asked Stremio to open Wednesday (2022)")
+
+
+def test_the_agent_is_told_how_stremio_lists_streams():
+    tv, _, _, _ = player()
+    assert "first one that plays" in tv.agent.extra_rules
+
+
 def test_what_it_cant_find_or_another_app_goes_to_the_agent():
     tv, box, _, goals = player(found=False)
     assert play(tv, "Ratatoullie").startswith("started") and goals == ["play Ratatoullie on stremio"]
@@ -108,6 +119,13 @@ def test_imdb_not_answering_goes_to_the_agent_too():
 
     titles.imdb = down
     assert play(tv, "Ratatouille").startswith("started") and goals == ["play Ratatouille on stremio"]
+
+
+def test_an_id_that_isnt_imdbs_is_never_taken():
+    def answer(request):
+        return httpx.Response(200, json={"d": [{"id": "tt1'; reboot", "l": "Ratatouille", "y": 2007, "qid": "movie"}]})
+
+    assert Catalog(httpx.Client(transport=httpx.MockTransport(answer))).imdb(Title("Ratatouille")) is None
 
 
 def test_the_catalog_reads_imdbs_suggestions_and_takes_the_first_of_the_right_kind():

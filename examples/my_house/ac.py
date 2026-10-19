@@ -6,15 +6,19 @@ send power as a toggle, a bit that means "switch over": the same press turns the
 on, and a press without it changes the settings and leaves the power alone. IR goes one way, so TARS can't ask the AC
 which it is: it keeps track of what it sent (voice_data/ac/state.json), and is told when that's wrong ("the AC is on").
 With a sensor that sees the AC's own light ([[home.devices]] state), it reads that instead, toggles only when it has
-to, and checks the light changed."""
+to, and checks the light changed: a toggle the AC missed is sent again only once the sensor has reported since and
+still shows the old state, never on a reading from before, since a slow sensor's late "on" would then be a second
+toggle turning the AC straight back off."""
 
 import json
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 
+from voice_assistant.files import atomic_write
 from voice_assistant.hass import HomeAssistant
 from voice_assistant.home import OFF, ON, SET, STATUS, Check, Device, HomeError
 
@@ -189,10 +193,7 @@ class State:
             return cls()
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({**asdict(self), "settings": asdict(self.settings) if self.settings else None}))
-        tmp.replace(path)
+        atomic_write(path, json.dumps({**asdict(self), "settings": asdict(self.settings) if self.settings else None}))
 
 
 class AC(Device):
@@ -258,7 +259,8 @@ class AC(Device):
             settings, problem = self._settings(state, args)
             if problem:
                 return f"error: {problem}"
-            seen = self._seen()
+            before = self._reading()
+            seen = _light(before)
             on_now = state.on if seen is None else seen
             if action == SET and not on_now:
                 return "error: the AC is off as far as TARS knows; to turn it on with these settings, use on"
@@ -278,42 +280,69 @@ class AC(Device):
                 seen = "its light says" if self._sensor else "TARS thinks"
                 return f"sent: {settings.said()}; {seen} the AC was already on, so its power wasn't touched"
             if self._sensor:
-                return self._confirm(state, settings, action == ON)
+                return self._confirm(state, settings, action == ON, before)
             verb = "turn on" if action == ON else "turn off"
             set_to = f", set to {settings.said()}" if action == ON else ""
             return f"sent: {verb}{set_to}; TARS can't see the AC, so if it didn't, someone should say so"
 
-    def _confirm(self, state: State, settings: Settings, want_on: bool) -> str:
-        """With a light sensor: wait for the light to change, and send the toggle again once if it still shows the
-        old state. A sensor that doesn't answer gets no second toggle: it could turn the AC straight back."""
-        seen = None
+    def _confirm(self, state: State, settings: Settings, want_on: bool, before: dict | None) -> str:
+        """With a light sensor: waits for the light to change. When the sensor has reported since the toggle and
+        still shows the old state, the AC missed it: it's sent again, once, and then only a change after that counts.
+        A sensor that hasn't reported since, or doesn't answer, gets no second toggle: it may only be slow, and the
+        second would turn the AC straight back."""
+        # The first time, the light showing it is enough: it showed the old state before. The second, it has to have
+        # changed after the reading that said the first was missed.
+        since, mark, word = _reported(before), None, "on" if want_on else "off"
         for attempt in (1, 2):
-            deadline = self._clock() + SENSOR_WAIT_S
-            while self._clock() < deadline:
-                seen = self._seen()
-                if seen is want_on:
-                    state.on, state.how = want_on, "sensor"
-                    state.save(self._path)
-                    tried = " (on the second try)" if attempt == 2 else ""
-                    return f"done: the AC is {'on' if want_on else 'off'}{tried}, its light says so"
-                self._sleep(SENSOR_POLL_S)
+            found = self._watch(want_on, mark)
+            seen = _light(found)
+            if _came(found, want_on, mark):
+                state.on, state.how = want_on, "sensor"
+                state.save(self._path)
+                tried = " (on the second try)" if attempt == 2 else ""
+                return f"done: the AC is {word}{tried}, its light says so"
             if seen is None:
                 return "not confirmed: sent it, but the AC's light sensor didn't answer"
-            if attempt == 1:
+            state.on, state.how = seen, "sensor"
+            state.save(self._path)
+            if attempt == 2:
+                break
+            reported = _reported(found)
+            if since is None or reported is None or reported <= since:
+                return (
+                    f"not confirmed: sent it, but the AC's light sensor hasn't reported since, so TARS can't tell if "
+                    f"it's {word}; if it isn't, someone should say so"
+                )
+            mark = reported
+            try:
                 self._send(self.profile.pulses(settings, True))
-        state.on, state.how = seen, "sensor"
-        state.save(self._path)
+            except HomeError as e:
+                old = "on" if seen else "off"
+                return f"not confirmed: sent it, and the AC's light still says {old}; sending it again failed ({e})"
         return f"not confirmed: sent it twice, and the AC's light still says {'on' if seen else 'off'}"
+
+    def _watch(self, want_on: bool, mark: datetime | None) -> dict | None:
+        """Reads the light sensor until it shows `want_on`, changed after `mark`, for SENSOR_WAIT_S: its last
+        reading, None if it didn't answer."""
+        deadline = self._clock() + SENSOR_WAIT_S
+        while True:
+            found = self._reading()
+            if _came(found, want_on, mark) or self._clock() >= deadline:
+                return found
+            self._sleep(SENSOR_POLL_S)
 
     def _seen(self) -> bool | None:
         """What the AC's light says (on or off), or None without a sensor, or one that doesn't answer."""
+        return _light(self._reading())
+
+    def _reading(self) -> dict | None:
+        """The light sensor's state, as Home Assistant has it, or None without a sensor, or one that doesn't answer."""
         if not self._sensor:
             return None
         try:
-            state = self._hass.state(self._sensor).get("state")
+            return self._hass.state(self._sensor)
         except HomeError:
             return None
-        return {"on": True, "off": False}.get(state)
 
     def _default(self) -> Settings:
         p = self.profile
@@ -351,3 +380,36 @@ class AC(Device):
         if SWING not in p.fields:
             s.swing = False
         return s, ""
+
+
+def _light(found: dict | None) -> bool | None:
+    """On or off, as the light sensor's reading says; None when it says neither."""
+    return {"on": True, "off": False}.get((found or {}).get("state"))
+
+
+def _time(found: dict | None, *keys: str) -> datetime | None:
+    for key in keys:
+        try:
+            return datetime.fromisoformat((found or {})[key])
+        except KeyError, TypeError, ValueError:
+            continue
+    return None
+
+
+def _reported(found: dict | None) -> datetime | None:
+    """When the sensor last reported, changed or not: Home Assistant's last_reported, or last_updated before 2024.3."""
+    return _time(found, "last_reported", "last_updated")
+
+
+def _changed(found: dict | None) -> datetime | None:
+    return _time(found, "last_changed")
+
+
+def _came(found: dict | None, want_on: bool, mark: datetime | None) -> bool:
+    """Whether the light shows `want_on`, and changed to it after `mark`."""
+    return _light(found) is want_on and _after(_changed(found), mark)
+
+
+def _after(at: datetime | None, mark: datetime | None) -> bool:
+    """Whether `at` came after `mark`; with no mark to go by, anything does."""
+    return mark is None or (at is not None and at > mark)

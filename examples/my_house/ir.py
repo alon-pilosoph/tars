@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from voice_assistant.home import OFF, ON, PRESS, STATUS, Check, Device
+from voice_assistant.home import OFF, ON, PRESS, STATUS, Check, Device, button, presses
 
 IR_RULES = (
     "What's worked by IR can't say whether a press worked: say it's sent, or done if you must be brief. The sound "
@@ -29,8 +29,13 @@ IR_RULES = (
 HEADER_NEC, HEADER_SAMSUNG = (9000, 4500), (4500, 4500)
 MARK, ZERO, ONE = 560, 560, 1690
 GAP_S = 0.15  # between presses of the same button
-MAX_PRESSES = 15
 TESTED = "voice_data/ir"  # what trying the power codes on each set showed
+
+
+def tested_path(root: Path, name: str) -> Path:
+    """Where what trying a set's power codes showed is kept: voice_data/ir/tv.json for the TV, by its name in
+    config.toml in lower case, so "TV" and "tv" are the same file wherever it runs."""
+    return root / TESTED / f"{name.strip().lower()}.json"
 
 
 @dataclass(frozen=True)
@@ -144,7 +149,7 @@ class Remote(Device):
         playing on it, through HDMI-CEC). `reachable()`: whether the blaster answers, for --check."""
         super().__init__(name)
         self.codes, self._send, self._sleep = codes, send, sleep
-        self._tested, self._seems_on, self._reachable = tested, seems_on, reachable
+        self.tested, self._seems_on, self._reachable = tested, seems_on, reachable
 
     @property
     def actions(self) -> tuple[str, ...]:
@@ -164,7 +169,7 @@ class Remote(Device):
     def works(self) -> dict[str, bool]:
         """What trying the power codes on this set showed: {"on": True, "off": True, "power": True}; {} if untried."""
         try:
-            return json.loads(self._tested.read_text()) if self._tested else {}
+            return json.loads(self.tested.read_text()) if self.tested else {}
         except FileNotFoundError, ValueError:
             return {}
 
@@ -178,18 +183,14 @@ class Remote(Device):
     def call(self, action: str, args: dict, request=None) -> str:
         if action in ("on", "off"):
             return self._power(action == "on")
-        button = str(args.get("button") or "").strip().lower().replace(" ", "_").replace("-", "_")
-        if button not in self.codes.presses():
+        pressed, times = button(args), presses(args)
+        if pressed not in self.codes.presses():
             return f"error: the {self.name}'s buttons are {', '.join(self.codes.presses())}"
-        try:
-            times = max(1, min(MAX_PRESSES, int(args.get("times") or 1)))
-        except TypeError, ValueError:
-            times = 1
         for i in range(times):
             if i:
                 self._sleep(GAP_S)
-            self._send(self.codes.pulses(button))
-        return f"sent: {button}{f' {times} times' if times > 1 else ''} to the {self.name} (IR can't confirm it)"
+            self._send(self.codes.pulses(pressed))
+        return f"sent: {pressed}{f' {times} times' if times > 1 else ''} to the {self.name} (IR can't confirm it)"
 
     def _power(self, on: bool) -> str:
         if not self.codes.on:
@@ -252,14 +253,14 @@ def main() -> None:
     if spec is None or spec.get("codes") not in CODE_SETS:
         raise SystemExit(f"config.toml needs a remote called {args.name!r}, with codes: README.md")
     name = spec["name"].lower()
-    tested = root / TESTED / f"{name}.json"
+    tested = tested_path(root, name)
     remote = Remote(name, CODE_SETS[spec["codes"]], from_config(args.config).send, tested=tested)
     if args.command == "press":
         print(remote.call("press", {"button": args.button}))
     elif not remote.codes.on:
         print(f"The {name} has only a power button: nothing to test. Try: press {name} volume_up")
     else:
-        works = test(remote, root / TESTED / f"{name}.json", lambda q: input(f"{q} (y/n) ").lower().startswith("y"))
+        works = test(remote, tested, lambda q: input(f"{q} (y/n) ").lower().startswith("y"))
         print(f"Saved: {works}. TARS turns the {name} on and off with what worked.")
 
 

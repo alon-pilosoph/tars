@@ -5,7 +5,8 @@ import httpx
 import pytest
 
 from evals.house import TOKEN, URL, PretendHA, entities
-from voice_assistant.hass import Climate, Cover, HomeAssistant, Lock, MediaPlayer, Sensor, Switch, entity_device
+from voice_assistant.config import HOME_DOMAINS, HOME_SENSORS
+from voice_assistant.hass import KINDS, Climate, Cover, HomeAssistant, Lock, MediaPlayer, Sensor, Switch, entity_device
 from voice_assistant.home import SETTINGS, HomeError
 
 TIMER = {"service": "switcher_kis.turn_on_with_timer", "field": "timer_minutes", "max": 150}
@@ -43,6 +44,10 @@ def test_each_domain_gets_its_kind_of_device():
     }
     for entity, kind in kinds.items():
         assert type(entity_device("x", {"entity": entity}, None)) is kind
+
+
+def test_every_domain_config_takes_has_its_kind_of_device():
+    assert set(KINDS) == set(HOME_DOMAINS + HOME_SENSORS)
 
 
 def test_locking_waits_for_the_lock_to_say_it_is_locked():
@@ -149,6 +154,59 @@ def test_a_media_player_presses_its_buttons_and_says_where_it_is_now():
     assert do(soundbar, "press", button="mute").endswith("now soundbar: on, muted")
     assert ha.calls[-1] == ("media_player.volume_mute", {"entity_id": "media_player.soundbar", "is_volume_muted": True})
     assert do(soundbar, "press", button="eject").startswith("error: the soundbar's buttons are")
+
+
+def test_mute_is_pressed_once_however_many_times_it_was_asked():
+    soundbar, ha = device({"name": "soundbar", "entity": "media_player.soundbar"})
+    assert do(soundbar, "press", button="mute", times=3) == "done: pressed mute; now soundbar: on, muted"
+    assert [c for c, _ in ha.calls] == ["media_player.volume_mute"]
+
+
+def test_a_press_nothing_reports_is_sent_not_done():
+    soundbar, _ = device({"name": "soundbar", "entity": "media_player.soundbar"})
+    assert do(soundbar, "press", button="play pause").startswith("sent: pressed play_pause, and nothing it reports")
+    loudest, ha = device({"name": "soundbar", "entity": "media_player.soundbar"})
+    ha.states["media_player.soundbar"][1]["volume_level"] = 1.0
+    assert do(loudest, "press", button="volume_up").startswith("sent: pressed volume_up, and nothing it reports")
+
+
+class Rounds(PretendHA):
+    """A thermostat that keeps its temperature in halves of a degree, as many do."""
+
+    def _serve(self, domain, service, entity, data):
+        super()._serve(domain, service, entity, data)
+        if service == "set_temperature":
+            self.states[entity][1]["temperature"] = round(data["temperature"] * 2) / 2
+
+
+def test_a_temperature_the_thermostat_rounds_to_its_own_steps_is_done():
+    house = entities({"ac": "heat"})
+    house["climate.living_room"][1].pop("assumed_state")
+    ha = Rounds(house)
+    ac = entity_device("AC", {"entity": "climate.living_room"}, HomeAssistant(URL, TOKEN, ha.transport))
+    assert do(ac, "set", temperature=21.3) == "done: AC: heat, set to 21.5 degrees, fan auto (it says so itself)"
+
+
+class Slow(PretendHA):
+    """Home Assistant doing the service, but not answering before TARS stops waiting: a lock that took a while."""
+
+    def handle(self, request):
+        response = super().handle(request)
+        if request.url.path.startswith("/api/services/"):
+            raise httpx.ReadTimeout("timed out", request=request)
+        return response
+
+
+def test_a_service_call_home_assistant_answers_late_is_read_back_not_said_to_have_failed():
+    ha = Slow(entities({"lock": "locked"}))
+    lock = entity_device("front door", LOCK, HomeAssistant(URL, TOKEN, ha.transport), sleep=lambda s: None)
+    assert do(lock, "unlock") == "done: front door reports unlocked"
+
+
+def test_home_assistant_not_reached_for_a_service_is_still_an_error():
+    lock, _ = device(LOCK, down=True)
+    with pytest.raises(HomeError, match="didn't answer"):
+        lock._hass.call("lock.unlock", {"entity_id": "lock.front_door"})
 
 
 def test_a_sensor_is_read_in_words_and_never_changed():

@@ -14,7 +14,19 @@ from evals.house import DEVICES, make_house
 from voice_assistant import llm
 from voice_assistant.config import ConfigError, HomeConfig, load_config
 from voice_assistant.draft import Draft
-from voice_assistant.home import ONE_MOMENT, SETTINGS, Context, Device, HomeTools, Request, build, load_plugin
+from voice_assistant.home import (
+    MAX_PRESSES,
+    ONE_MOMENT,
+    SETTINGS,
+    Context,
+    Device,
+    HomeTools,
+    Request,
+    build,
+    button,
+    load_plugin,
+    presses,
+)
 from voice_assistant.llm import LLMConfig, OpenAIChat, QuickChat, QuickService
 
 from .conftest import FakeStream, ToolCallStream, fake_openai_chat
@@ -225,6 +237,12 @@ def test_a_plugins_devices_are_made_from_its_kinds(plugin):
     built = build(cfg, Context(plugin, secrets()))
     assert built.tools.call(args("kettle", "status"), Request()) == "kettle: cold"
     assert built.unavailable == {"toaster": "its plugin has no kind 'toaster'"}
+    built.tools.stop()  # a device with nothing in the background stops as well
+
+
+def test_a_button_is_read_as_the_devices_list_them_and_pressed_a_sane_number_of_times():
+    assert button({"button": " Volume-Up"}) == button({"button": "volume up"}) == "volume_up"
+    assert [presses({"times": t}) for t in (None, 0, 3, "x", 99)] == [1, 1, 3, 1, MAX_PRESSES]
 
 
 def test_a_plugin_that_wont_load_costs_only_its_own_devices(plugin):

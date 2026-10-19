@@ -34,7 +34,7 @@ from voice_assistant.home import Context, Device, HomeError
 from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import Catalog, FireTv
-from .ir import CODE_SETS, TESTED, Remote
+from .ir import CODE_SETS, Remote, tested_path
 
 
 def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device]]:
@@ -87,9 +87,8 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
                 return None
 
         name = spec["name"]
-        tested = context.root / TESTED / f"{name}.json"
         codes, on = CODE_SETS[spec["codes"]], seems_on if box else None
-        return Remote(name, codes, b.send, tested=tested, seems_on=on, reachable=b.reachable)
+        return Remote(name, codes, b.send, tested=tested_path(context.root, name), seems_on=on, reachable=b.reachable)
 
     def firetv(spec: dict) -> FireTv:
         _only(spec, {"address"})

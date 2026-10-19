@@ -88,7 +88,9 @@ IR goes one way: TARS knows what it sent, not what the AC did. It keeps what it 
 `voice_data/ac/state.json`, says "sent", not "it's on", and is corrected when someone used the wall controller. A
 light sensor on the AC's indicator (`state`: any `binary_sensor` in Home Assistant, on when the light is) makes it
 sure: TARS reads the light before deciding to toggle, checks it changed, and sends the toggle once more if the first
-was missed.
+was missed: only once the sensor has reported since and still shows the old state (Home Assistant's
+`last_reported`). A slow sensor gets no second toggle, which would turn the AC straight back, and after a second one
+only a change that came after it counts.
 
 ## The TV and the soundbar
 

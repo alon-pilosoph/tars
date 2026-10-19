@@ -10,15 +10,34 @@ from collections.abc import Callable
 
 import httpx
 
-from .home import CLOSE, LOCK, OFF, ON, OPEN, PRESS, SET, STATUS, TOKEN_KEY, UNLOCK, Check, Device, HomeError
+from .home import (
+    CLOSE,
+    LOCK,
+    OFF,
+    ON,
+    OPEN,
+    PRESS,
+    SET,
+    STATUS,
+    TOKEN_KEY,
+    UNLOCK,
+    Check,
+    Device,
+    HomeError,
+    button,
+    presses,
+)
 
 HTTP_TIMEOUT_S = 5.0
+# Home Assistant answers a service call once the device has done it (a lock's bolt turning), so it gets longer.
+SERVICE_TIMEOUT_S = 30.0
 POLL_S = 0.5
 UNKNOWN = ("unknown", "unavailable", "")
 
 
 class HomeAssistant:
-    """Home Assistant's REST API. Every call is short: a device that doesn't answer is reported, never waited on."""
+    """Home Assistant's REST API. Reading a state is short: a device that doesn't answer is reported, never waited on.
+    A service call waits as long as Home Assistant does for the device, up to SERVICE_TIMEOUT_S."""
 
     def __init__(self, url: str, token: str, transport: httpx.BaseTransport | None = None):
         self._http = httpx.Client(
@@ -36,13 +55,21 @@ class HomeAssistant:
         return self._send("GET", f"/api/states/{entity}")
 
     def call(self, service: str, data: dict) -> None:
-        """Calls a service, "domain.service", with `data` (its entity_id and settings)."""
+        """Calls a service, "domain.service", with `data` (its entity_id and settings). Home Assistant not answering
+        in time, once it has the call, isn't an error: it may well be doing it, so what the entity says next tells."""
         domain, _, name = service.partition(".")
-        self._send("POST", f"/api/services/{domain}/{name}", data)
-
-    def _send(self, method: str, path: str, data: dict | None = None) -> dict:
         try:
-            response = self._http.request(method, path, json=data)
+            self._send(
+                "POST", f"/api/services/{domain}/{name}", data, httpx.Timeout(HTTP_TIMEOUT_S, read=SERVICE_TIMEOUT_S)
+            )
+        except HomeError as e:
+            if not isinstance(e.__cause__, httpx.ReadTimeout):
+                raise
+            print(f"(home: no answer to {service} after {SERVICE_TIMEOUT_S:.0f} s; reading back what it did)")
+
+    def _send(self, method: str, path: str, data: dict | None = None, timeout: httpx.Timeout | None = None) -> dict:
+        try:
+            response = self._http.request(method, path, json=data, **({"timeout": timeout} if timeout else {}))
         except httpx.HTTPError as e:
             raise HomeError(f"Home Assistant didn't answer ({type(e).__name__})") from e
         if response.status_code == 401:
@@ -121,24 +148,30 @@ class Entity(Device):
         self._hass.call(service, {"entity_id": self.entity, **data})
         if (before.get("attributes") or {}).get("assumed_state"):
             return f"sent: asked the {self.name} to {asked}; it can't report back, so nothing can tell if it did"
-        deadline, found = self._clock() + self.settle_s, before
-        while True:
-            found = self._hass.state(self.entity)
-            if done(found):
-                if found.get("state") in self.moving:
-                    return f"started: {self.name} reports {found['state']}"
-                return f"done: {self.name} reports {self._said(found)}"
-            if found.get("state") == "jammed":
-                return f"error: the {self.name} jammed; someone needs to check it"
-            if self._clock() >= deadline:
-                break
-            self._sleep(POLL_S)
+        ended, found = self._settled(lambda f: done(f) or f.get("state") == "jammed", self.settle_s)
+        if ended and done(found):
+            if found.get("state") in self.moving:
+                return f"started: {self.name} reports {found['state']}"
+            return f"done: {self.name} reports {self._said(found)}"
+        if ended:
+            return f"error: the {self.name} jammed; someone needs to check it"
         state = found.get("state", "")
         if state == "unavailable":
             return f"not confirmed: asked the {self.name} to {asked}, but Home Assistant can't reach it"
         if state in self.moving:
             return f"not confirmed: asked the {self.name} to {asked}, and it still says {state}"
         return f"not confirmed: asked the {self.name} to {asked}, but it still says {state or 'nothing'}"
+
+    def _settled(self, done: Callable[[dict], bool], seconds: float) -> tuple[bool, dict]:
+        """Reads the entity until `done(state)`, for at most `seconds`: (whether it came, what it said last)."""
+        deadline = self._clock() + seconds
+        while True:
+            found = self._hass.state(self.entity)
+            if done(found):
+                return True, found
+            if self._clock() >= deadline:
+                return False, found
+            self._sleep(POLL_S)
 
 
 def _state_is(*states: str) -> Callable[[dict], bool]:
@@ -280,9 +313,8 @@ class Climate(Entity):
             else:
                 steps.append(("climate.set_hvac_mode", {"hvac_mode": mode}, _state_is(mode)))
         if temperature is not None:
-            steps.append(
-                ("climate.set_temperature", {"temperature": temperature}, _attribute_is("temperature", temperature))
-            )
+            step = a.get("target_temp_step") or 0.5
+            steps.append(("climate.set_temperature", {"temperature": temperature}, _near(temperature, step)))
         if fan is not None:
             steps.append(("climate.set_fan_mode", {"fan_mode": fan}, _attribute_is("fan_mode", fan)))
         if not steps:
@@ -319,6 +351,16 @@ def _attribute_is(key: str, value) -> Callable[[dict], bool]:
     return lambda found: (found.get("attributes") or {}).get(key) == value
 
 
+def _near(temperature: float, step: float) -> Callable[[dict], bool]:
+    """Set to `temperature`, as near as the thermostat's own steps go: 21.3 asked of one in halves reads back 21.5."""
+
+    def done(found: dict) -> bool:
+        now = (found.get("attributes") or {}).get("temperature")
+        return isinstance(now, int | float) and abs(now - temperature) <= step / 2
+
+    return done
+
+
 def _said_settings(action: str, mode, temperature, fan) -> str:
     parts = [mode or "", f"{temperature:g} degrees" if temperature is not None else ""]
     parts += [f"fan {fan}" if fan else ""]
@@ -335,7 +377,9 @@ BUTTONS = {
     "next": "media_player.media_next_track",
     "previous": "media_player.media_previous_track",
 }
-MAX_PRESSES = 15
+# The buttons whose press shows in what the player reports (its volume, muted or not), and how long that gets to.
+HEARD = ("volume_up", "volume_down", "mute")
+PRESS_SETTLE_S = 2.0
 
 
 class MediaPlayer(Entity):
@@ -369,21 +413,25 @@ class MediaPlayer(Entity):
             )
         if action == OFF:
             return self._change("media_player.turn_off", {}, _state_is("off", "standby"), "turn off")
-        button = str(args.get("button") or "").strip().lower().replace(" ", "_")
-        if button not in BUTTONS:
+        pressed = button(args)
+        if pressed not in BUTTONS:
             return f"error: the {self.name}'s buttons are {', '.join(BUTTONS)}"
-        try:
-            times = max(1, min(MAX_PRESSES, int(args.get("times") or 1)))
-        except TypeError, ValueError:
-            times = 1
+        times = 1 if pressed == "mute" else presses(args)  # mute is set, not toggled: twice is once
         found = self._hass.state(self.entity)
         data = {"is_volume_muted": not (found.get("attributes") or {}).get("is_volume_muted")}
         for _ in range(times):
-            self._hass.call(BUTTONS[button], {"entity_id": self.entity, **(data if button == "mute" else {})})
-        pressed = f"{button}{f' {times} times' if times > 1 else ''}"
+            self._hass.call(BUTTONS[pressed], {"entity_id": self.entity, **(data if pressed == "mute" else {})})
+        said = f"{pressed}{f' {times} times' if times > 1 else ''}"
         if (found.get("attributes") or {}).get("assumed_state"):
-            return f"sent: {pressed} to the {self.name}; it can't report back, so nothing can tell if it took"
-        return f"done: pressed {pressed}; now {self.status()}"
+            return f"sent: {said} to the {self.name}; it can't report back, so nothing can tell if it took"
+        if pressed in HEARD and self._settled(lambda f: _sound(f) != _sound(found), PRESS_SETTLE_S)[0]:
+            return f"done: pressed {said}; now {self.status()}"
+        return f"sent: pressed {said}, and nothing it reports shows it; now {self.status()}"
+
+
+def _sound(found: dict) -> tuple:
+    a = found.get("attributes") or {}
+    return a.get("volume_level"), a.get("is_volume_muted")
 
 
 class Sensor(Entity):

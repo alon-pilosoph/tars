@@ -39,6 +39,8 @@ SETTINGS = ("minutes", "temperature", "mode", "fan", "button", "times", "app", "
 GO_AHEAD_TIMEOUT_S = 60.0
 # The words heard have to ask to unlock: the model can't unlock on its own reading of something else.
 UNLOCK_WORDS = re.compile(r"\bunlock\b", re.IGNORECASE)
+# The most presses of one button a call makes: "a lot louder" is 8.
+MAX_PRESSES = 15
 # Said before a change that takes a few seconds to confirm, when the reply hasn't said anything yet, so TARS doesn't
 # go silent while a bolt turns.
 ONE_MOMENT = "One moment."
@@ -109,6 +111,22 @@ class Device:
     def check(self) -> list[Check]:
         """What --check says about it, each line a Check; ask the device, but quickly."""
         return []
+
+    def stop(self) -> None:
+        """Stops anything it's still doing in the background (the Android TV agent), as TARS shuts down."""
+
+
+def button(args: dict) -> str:
+    """The button asked for, as the devices list them: "volume up" and "volume-up" are volume_up."""
+    return str(args.get("button") or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def presses(args: dict, most: int = MAX_PRESSES) -> int:
+    """How many times to press it: `times`, from 1 to `most`; once when it isn't a number."""
+    try:
+        return max(1, min(most, int(args.get("times") or 1)))
+    except TypeError, ValueError:
+        return 1
 
 
 @dataclass
@@ -319,5 +337,4 @@ class HomeTools:
     def stop(self) -> None:
         """Stops anything still working in the background (the Android TV agent)."""
         for d in self.devices.values():
-            if callable(stop := getattr(d, "stop", None)):
-                stop()
+            d.stop()

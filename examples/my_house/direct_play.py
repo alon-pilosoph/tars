@@ -13,7 +13,7 @@ from urllib.parse import quote
 
 import httpx
 
-from voice_assistant.androidtv import AndroidTV, TvAgent, TvDevice, wait_for
+from voice_assistant.androidtv import OPEN_WAIT_S, AndroidTV, TvAgent, TvDevice, wait_for
 
 STREMIO = "stremio"
 IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/{first}/{query}.json"
@@ -23,6 +23,9 @@ STREAMS_WAIT_S = 2.5  # Stremio's stream list filling in once its page is up
 PLAY_WAIT_S = 20.0  # the first stream starting to play
 EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
 YEAR = re.compile(r"\s*\((\d{4})\)\s*$")
+IMDB_ID = re.compile(r"tt\d+")
+# What the TV agent is told besides its own rules, for when a title goes to it on Stremio after all.
+STREMIO_RULES = "In Stremio, choosing a title lists streams from its add-ons: choose the first one that plays."
 
 
 @dataclass
@@ -68,13 +71,14 @@ class Catalog:
         response.raise_for_status()
         kinds = SERIES if title.season else MOVIES + SERIES
         for s in response.json().get("d", []):
-            if str(s.get("id", "")).startswith("tt") and s.get("qid") in kinds and title.year in (None, s.get("y")):
+            if IMDB_ID.fullmatch(str(s.get("id", ""))) and s.get("qid") in kinds and title.year in (None, s.get("y")):
                 return Found(s["id"], s.get("l") or title.name, s.get("y"), s["qid"] in SERIES)
         return None
 
 
 class FireTv(TvDevice):
-    """The household's Fire TV: the core Android TV device, with play going straight to Stremio."""
+    """The household's Fire TV: the core Android TV device, with play going straight to Stremio, and the agent told
+    how Stremio's streams work for anything that goes to it."""
 
     def __init__(
         self,
@@ -86,6 +90,8 @@ class FireTv(TvDevice):
     ):
         super().__init__(name, box, agent, sleep=sleep)
         self.catalog = catalog or Catalog()
+        if agent is not None:
+            agent.extra_rules = STREMIO_RULES
 
     def play(self, title: str, app: str) -> str:
         app = (app or STREMIO).strip().lower()  # this house watches on Stremio unless it says otherwise
@@ -107,7 +113,10 @@ class FireTv(TvDevice):
             self._sleep(2.0)
         if found.series and not wanted.season:
             self.box.open_link(f"stremio:///detail/series/{found.id}", package)
-            return f"done: {found.said()} is open in Stremio; it's a series, so ask which season and episode"
+            if wait_for(lambda: self.box.app() == package, OPEN_WAIT_S, self._sleep):
+                return f"done: {found.said()} is open in Stremio; it's a series, so ask which season and episode"
+            front = self.box.app() or "nothing"
+            return f"not confirmed: asked Stremio to open {found.said()}, but {front} is in front of the {self.name}"
         kind = "series" if found.series else "movie"
         video = f"{found.id}:{wanted.season}:{wanted.episode}" if found.series else found.id
         self.box.open_link(f"stremio:///detail/{kind}/{found.id}/{video}", package)
