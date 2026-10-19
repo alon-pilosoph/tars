@@ -233,8 +233,9 @@ def main() -> None:
 
 
 def save_result(path: Path, summary: dict, scenarios: list[Scenario], results: list[RunResult]) -> bool:
-    """Adds the totals to `path`, where they're the next baseline, and what each scenario used to evals/usage.json.
-    Not a result with runs that weren't counted: the scenarios left out would look as if they'd got better."""
+    """Adds the totals to `path`, where they're the next baseline, and what each scenario used to evals/usage.json;
+    True if it did. Not a result with runs that weren't counted: the scenarios left out would look as if they'd got
+    better."""
     if summary["not_run"]:
         print(f"\nNot saved to {path}: {summary['not_run']} run(s) aren't counted, so it isn't a whole result.")
         return False

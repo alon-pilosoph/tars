@@ -177,8 +177,7 @@ class Reminders:
         return NewReminder(new.kind, text, for_name, from_name, new.due, bool(new.needs_ack), repeat, tries)
 
     def get(self, reminder_id: int) -> dict | None:
-        rows = self.store.rows("SELECT * FROM reminders WHERE id=?", (reminder_id,))
-        return rows[0] if rows else None
+        return self.store.row("SELECT * FROM reminders WHERE id=?", (reminder_id,))
 
     def all(self, limit: int = 200) -> list[dict]:
         """The active ones first, soonest first; then the rest, newest first."""

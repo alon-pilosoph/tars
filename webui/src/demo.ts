@@ -2,6 +2,7 @@
 import type { Opts } from "./api";
 import { DEMO_LINK } from "./demoParams";
 import { personName } from "./format";
+import type { LoadPart } from "./store/core";
 import type {
   AnsweredBy,
   Cluster,
@@ -961,6 +962,17 @@ function data() {
   return D;
 }
 
+/** Where each part of a load comes from, for ?failed=. */
+const LOADED_FROM: Record<LoadPart, string> = {
+  events: "/api/events",
+  clusters: "/api/clusters",
+  models: "/api/models",
+  status: "/api/status",
+  convs: "/api/conversations",
+  items: "/api/items",
+  reminders: "/api/reminders",
+};
+
 export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
   const d = data();
   await sleep(60);
@@ -976,6 +988,8 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
     turns: c.turns.map(t => ({ ...clone(t), items: (t.items || []).filter(id => item(id)) })),
   });
   const p = new URL(path, "http://demo").pathname;
+  if (method === "GET" && DEMO_LINK.failed.some(part => LOADED_FROM[part] === p))
+    throw new Error("Internal Server Error");
   let m: RegExpMatchArray | null;
 
   if (p === "/api/events") {

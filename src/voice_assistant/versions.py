@@ -20,7 +20,7 @@ import shutil
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Protocol
 
@@ -110,11 +110,17 @@ class ModelVersions:
         """For the Models page, from one read of the history: the pair in use; every version, newest first and the
         installed pair last, as {version, ts, note, active}; and why the saved history is ignored, if it is."""
         history, problem = self._read()
+        try:
+            installed = self.installed()
+        except UNUSABLE as e:
+            pair = self._as_configured()
+            why = f"The installed models couldn't be read ({e!r}), so TARS can't listen: see voice-assistant --check."
+            return pair, [{"version": pair.version, "ts": pair.ts, "note": pair.note, "active": True}], why
         # The model itself is loaded here, as the assistant does, so a damaged one shows as not in use.
         pair, damaged = self._in_use(history, load_model=True)
         if damaged and not problem:
             problem = f"Couldn't load the wake models {damaged}, so TARS uses the installed ones."
-        rows = [self.installed()] + [p for p in (self._try_load(e) for e in history["versions"]) if p]
+        rows = [installed] + [p for p in (self._try_load(e) for e in history["versions"]) if p]
         return (
             pair,
             [
@@ -171,14 +177,18 @@ class ModelVersions:
             self._save(history)
 
     def installed(self) -> Pair:
+        check = json.loads((self._root / self._installed["check_model"]).read_text())
+        return replace(self._as_configured(), check=check)
+
+    def _as_configured(self) -> Pair:
+        """The installed pair as config.toml names it, without reading its files."""
         i = self._installed
-        check = json.loads((self._root / i["check_model"]).read_text())
         path = self._root / i["wake_model"]
         return Pair(
             INSTALLED,
             i["wake_model"],
             i["check_model"],
-            check,
+            None,
             i["threshold"],
             i["check_window_s"],
             path,
@@ -266,7 +276,7 @@ class ModelVersions:
     def _writable(self) -> dict:
         """The history to change. One that can't be used is kept aside, and a new one started."""
         history, problem = self._read()
-        installed = self._installed_hash()  # before anything is set aside: without the installed pair, nothing changes
+        installed = self._installed_hash()  # first: nothing is set aside when the installed pair can't be read
         path = self.folder / HISTORY
         if problem and path.exists():
             path.replace(path.with_name(f"history-{time.strftime('%Y%m%d-%H%M%S')}.old.json"))
@@ -312,7 +322,7 @@ def pair_source(cfg: Config, root: Path) -> ModelVersions | FixedPair:
     )
 
 
-def _check_history(history) -> None:
+def _check_history(history: object) -> None:
     """TypeError unless it has the shape every reader of it relies on."""
     if not isinstance(history, dict) or not isinstance(history.get("versions"), list):
         raise TypeError("not a version history")

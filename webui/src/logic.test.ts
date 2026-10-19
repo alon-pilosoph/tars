@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { post, writesDone, writesMade } from "./api";
+import { demoAuto } from "./demo";
 import {
   ago,
   checkLine,
@@ -22,10 +23,9 @@ import {
   timingLine,
   wakeLine,
 } from "./format";
-import { demoAuto } from "./demo";
 import { md, plain } from "./markdown";
 import { type State, forPerson, get, personShown } from "./store";
-import { failedHere, normalize, settle, snapshotOf, within } from "./store/load";
+import { loadFailures, normalize, settle, snapshotOf, within } from "./store/load";
 import type {
   ApiConversation,
   Cluster,
@@ -218,19 +218,19 @@ describe("the Status page", () => {
   });
   it("says what to do about a check, the backup's or a service's, only when it isn't fine", () => {
     const fix = "systemctl --user start voice-assistant-backup";
-    expect(checkLine({ status: "ok", detail: "running", fix })).toEqual({
+    expect(checkLine({ name: "The timer", status: "ok", detail: "running", fix })).toEqual({
       mark: "✓",
       text: "running",
       fix: "",
       bad: false,
     });
-    expect(checkLine({ status: "fail", detail: "the last pass: Access Denied", fix })).toEqual({
+    expect(checkLine({ name: "The last pass", status: "fail", detail: "Access Denied", fix })).toEqual({
       mark: "✗",
-      text: "the last pass: Access Denied",
+      text: "Access Denied",
       fix,
       bad: true,
     });
-    expect(checkLine({ status: "warn", detail: "no pass has run yet", fix }).bad).toBe(true);
+    expect(checkLine({ name: "The last pass", status: "warn", detail: "no pass has run yet", fix }).bad).toBe(true);
   });
   it("says the machine's numbers in words", () => {
     const gb = 1073741824;
@@ -395,14 +395,23 @@ describe("a load where some endpoints fail", () => {
   });
 
   it("is unreachable only when nothing answered", () => {
-    const none = Object.fromEntries(Object.keys(last).map(k => [k, no(`${k} timed out`)]));
-    expect(() => settle(none as never, last)).toThrow("events timed out");
+    const none = {
+      events: no("events timed out"),
+      clusters: no("clusters timed out"),
+      models: no("models timed out"),
+      status: no("status timed out"),
+      convs: no("convs timed out"),
+      items: no("items timed out"),
+      reminders: no("reminders timed out"),
+    };
+    expect(() => settle(none, last)).toThrow("events timed out");
   });
 
-  it("says so on the pages that show what failed, and on every page for what's set up", () => {
-    const loadErrors = { items: "HTTP 500", status: "HTTP 502" };
-    expect(failedHere({ tab: "sent", loadErrors }).map(f => f.what)).toEqual(["what TARS sent", "what's set up"]);
-    expect(failedHere({ tab: "home", loadErrors }).map(f => f.part)).toEqual(["status"]);
-    expect(failedHere({ tab: "home", loadErrors: {} })).toEqual([]);
+  it("names what failed, and why", () => {
+    expect(loadFailures({ items: "HTTP 500", status: "HTTP 502" })).toEqual([
+      { part: "items", what: "what TARS sent", why: "HTTP 500" },
+      { part: "status", what: "what's set up", why: "HTTP 502" },
+    ]);
+    expect(loadFailures({})).toEqual([]);
   });
 });

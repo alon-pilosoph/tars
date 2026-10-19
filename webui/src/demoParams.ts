@@ -9,8 +9,12 @@
    ?menu=item:<id>|wake:<id>|reply:<event id>|voice:<id>|who:<conversation id>: a menu open
    ?answered=<event id>:real|not_real: a wake answered on this page, before Refresh; with &refreshed=1, after it
    ?form=minutes|time|back|error: the New reminder form, filled in
-   ?toast=recluster|renamed     ?recluster=running     ?health=trouble: the Status page with everything wrong */
+   ?toast=recluster|renamed     ?recluster=running     ?health=trouble: the Status page with everything wrong
+   ?failed=items,reminders...: those parts of the load fail (store/core.ts LoadPart) */
 import { PARAMS, idParam, oneOf } from "./params";
+import type { LoadPart } from "./store/core";
+
+const PARTS: LoadPart[] = ["events", "clusters", "models", "status", "convs", "items", "reminders"];
 
 const MODALS = ["delete-conv", "delete-item", "note", "delete-wake", "newvoice", "merge", "rollback", "stop"] as const;
 const MENUS = ["item", "wake", "reply", "voice", "who"] as const;
@@ -39,4 +43,5 @@ export const DEMO_LINK = {
   toast: oneOf(PARAMS.get("toast"), ["recluster", "renamed"] as const),
   reclustering: PARAMS.get("recluster") === "running",
   health: oneOf(PARAMS.get("health"), ["trouble"] as const),
+  failed: (PARAMS.get("failed") || "").split(",").filter((p): p is LoadPart => PARTS.includes(p as LoadPart)),
 };

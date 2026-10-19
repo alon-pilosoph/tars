@@ -1,4 +1,4 @@
-import { failedHere, refreshNow, retry, useStore } from "../store";
+import { loadFailures, refreshNow, retry, useStore } from "../store";
 import { Empty } from "./Blocks";
 
 export function Loading() {
@@ -40,20 +40,25 @@ export function Unreachable() {
   );
 }
 
-/** Parts of the page that didn't load with the rest: shown as they last loaded, saying so and why. */
-export function LoadErrors() {
-  const s = useStore();
-  const failed = failedHere(s);
-  if (!failed.length) return null;
+/** Something that didn't load this time: what's shown is from the last time it did. */
+export function LoadError({ what, why }: { what: string; why: string }) {
+  const { refreshing } = useStore();
   return (
     <div className="load-error" role="alert">
       <p>
-        <b>{`Couldn't load ${failed.map(f => f.what).join(" or ")}.`}</b> What's shown is from the last time it loaded.
+        <b>{`Couldn't load ${what}.`}</b> What's shown is from the last time it loaded.
       </p>
-      <p className="hint">{failed.map(f => f.why).join("; ")}</p>
-      <button className="btn" onClick={() => s.refreshing || refreshNow()} aria-busy={s.refreshing}>
+      <p className="hint">{why}</p>
+      <button className="btn" onClick={() => refreshing || refreshNow()} aria-busy={refreshing}>
         Try again
       </button>
     </div>
   );
+}
+
+/** The parts the last load couldn't get, while the rest loaded. */
+export function LoadErrors() {
+  const failed = loadFailures(useStore().loadErrors);
+  if (!failed.length) return null;
+  return <LoadError what={failed.map(f => f.what).join(" or ")} why={failed.map(f => f.why).join("; ")} />;
 }

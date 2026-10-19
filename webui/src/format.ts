@@ -221,7 +221,7 @@ export function pageLine(page: StatusPage | null): HealthLine {
 const MARK = { ok: "✓", warn: "!", fail: "✗" } as const; // check.py's
 
 /** A check's verdict as --check prints it, and what to do about it only when it isn't fine. */
-export function checkLine(c: Pick<CheckLine, "status" | "detail" | "fix">) {
+export function checkLine(c: CheckLine) {
   const bad = c.status !== "ok";
   return { mark: MARK[c.status], text: c.detail, fix: bad ? c.fix : "", bad };
 }

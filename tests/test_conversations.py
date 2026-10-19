@@ -183,7 +183,7 @@ def test_what_tars_said_before_anyone_spoke_is_kept_with_the_conversation_or_not
         (ROLE_TARS, "Yes, Alon?"),
         (ROLE_TARS, "Did you call me?"),
     ]
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(sqlite3.IntegrityError):  # turns.ts is NOT NULL: the second turn can't be written
         convos.start(None, ts=3.0, said=[(3.0, "Yes?"), (None, "cut short")])
     assert [r["id"] for r in convos.store.rows("SELECT id FROM conversations")] == [c]
     assert len(convos.store.rows("SELECT * FROM turns")) == 2

@@ -223,7 +223,7 @@ def test_every_service_with_a_status_page_is_one_check_asks(tmp_path):
 
     (tmp_path / ".env").write_text("OPENAI_API_KEY=o\nDEEPGRAM_API_KEY=d\n")
     cfg = load_config(REPO / "config.toml", local=False)
-    names = {name for name, _ in service_checks(cfg, tmp_path)}
+    names = {name for name, _ in service_checks(cfg, tmp_path).listed()}
     assert set(STATUS_PAGES) <= names
 
 
@@ -241,27 +241,45 @@ def test_the_status_page_is_served_only_when_set_up(log, convos):
 
 
 def test_the_backup_says_how_its_last_pass_went_and_its_timer(log):
-    from voice_assistant.backup import STATUS_FILE, Status
+    from voice_assistant.backup import Status, status_file
 
     timer = states(**{"voice-assistant-backup.timer": "active"})
-    assert [(b["name"], b["status"]) for b in health.backup(log.folder, timer, NOW)] == [
+    assert [(b["name"], b["status"]) for b in health.backup_lines(log.folder, timer, NOW)] == [
         ("The last pass", "warn"),  # none yet
         ("The timer", OK),
     ]
-    Status(last_run=NOW - 60, last_ok=NOW - 60, in_bucket=12, only_in_bucket=3).save(log.folder / STATUS_FILE)
-    (last, _) = health.backup(log.folder, timer, NOW)
+    Status(last_run=NOW - 60, last_ok=NOW - 60, in_bucket=12, only_in_bucket=3).save(status_file(log.folder))
+    (last, _) = health.backup_lines(log.folder, timer, NOW)
     assert last["status"] == OK and "12 files there, 3 only there" in last["detail"]
-    Status(last_run=NOW, last_ok=NOW - 7200, error="S3 put_object: Access Denied").save(log.folder / STATUS_FILE)
-    (last,) = health.backup(log.folder, lambda unit: None, NOW)  # no systemd: no timer to ask
-    assert last["status"] == FAIL and "Access Denied" in last["detail"] and "journalctl" in last["fix"]
+    Status(last_run=NOW, last_ok=NOW - 7200, error="S3 put_object: Access Denied").save(status_file(log.folder))
+    (last,) = health.backup_lines(log.folder, lambda unit: None, NOW)  # no systemd: no timer to ask
+    assert last == {
+        "name": "The last pass",
+        "status": FAIL,
+        "detail": "S3 put_object: Access Denied",
+        "fix": "systemctl --user start voice-assistant-backup, and see journalctl --user-unit voice-assistant-backup",
+    }
+
+
+@pytest.mark.parametrize("damage", ["[]", '{"last_run": 1, "last_ok": null}', None])
+def test_a_damaged_backup_json_is_one_failing_line_not_a_broken_page(log, damage):
+    from voice_assistant.backup import status_file
+
+    path = status_file(log.folder)
+    if damage is None:
+        path.mkdir()  # can't be read as a file at all
+    else:
+        path.write_text(damage)
+    (last,) = health.backup_lines(log.folder, lambda unit: None, NOW)
+    assert last["name"] == "The last pass" and last["status"] == FAIL and "couldn't be read" in last["detail"]
 
 
 def test_the_backup_is_on_the_status_page_only_when_its_on(log):
     services = Services(list, lambda url: {})
     off = Health(log, ["web"], services, states(), read_throttled=lambda: None).report()
-    on = Health(log, ["web"], services, states(), read_throttled=lambda: None, backed_up=True).report()
+    on = Health(log, ["web"], services, states(), read_throttled=lambda: None, backup_enabled=True).report()
     assert off["backup"] is None and on["backup"][0]["name"] == "The last pass"
-    assert set(on["backup"][0]) == set(health.CheckLine.__annotations__)
+    assert set(on["backup"][0]) == {"name", "status", "detail", "fix"}  # types.ts CheckLine
 
 
 def test_keys_that_cant_run_tars_show_as_one_failure_not_a_page_of_nothing(tmp_path):
@@ -269,6 +287,6 @@ def test_keys_that_cant_run_tars_show_as_one_failure_not_a_page_of_nothing(tmp_p
 
     (tmp_path / ".env").write_text("GROQ_API_KEY=g\n")
     cfg = load_config(REPO / "config.toml", local=False)
-    found, _ = Services(lambda: service_checks(cfg, tmp_path), lambda url: {}).get()
+    found, _ = Services(lambda: service_checks(cfg, tmp_path).listed(), lambda url: {}).get()
     assert [(s["name"], s["status"]) for s in found] == [("API keys", FAIL)]
     assert "OPENAI_API_KEY" in found[0]["detail"] and ".env" in found[0]["fix"]

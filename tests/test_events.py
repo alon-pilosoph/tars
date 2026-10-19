@@ -10,7 +10,6 @@ import pytest
 
 from voice_assistant import events
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
-from voice_assistant.config import ConfigError
 from voice_assistant.events import (
     ASKED,
     NEAR_MISS,
@@ -23,7 +22,7 @@ from voice_assistant.events import (
     learning_label,
 )
 from voice_assistant.journal import Journal
-from voice_assistant.store import MIGRATIONS, TABLES
+from voice_assistant.store import MIGRATIONS, TABLES, NewerDatabaseError
 from voice_assistant.verify import ANSWER, ASK, IGNORE, NEAR_QUIET_S
 
 from .conftest import AUDIO, FakeTrigger, SilentMic, make_assistant, speech
@@ -239,7 +238,7 @@ def test_a_database_made_by_newer_code_is_refused_and_left_as_it_was(tmp_path):
     newer = len(MIGRATIONS) + 1
     with sqlite3.connect(folder / "events.db") as db:
         db.execute(f"PRAGMA user_version={newer}")
-    with pytest.raises(ConfigError, match="newer TARS"):
+    with pytest.raises(NewerDatabaseError, match="newer TARS"):
         EventLog(folder)
     with sqlite3.connect(folder / "events.db") as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == newer

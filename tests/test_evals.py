@@ -352,7 +352,7 @@ def test_the_estimate_comes_from_earlier_runs_of_each_scenario(tmp_path):
     assert use["luna"]["searches"] == pytest.approx(2 * (2 + 1 + 1.5))  # b: one search per turn OpenAI answered
 
 
-def test_a_cut_short_transcript_line_is_left_out_of_the_estimate(tmp_path):
+def test_a_transcript_cut_short_is_estimated_from_its_whole_lines(tmp_path):
     from evals.costs import estimate
 
     (tmp_path / "2026-10-17-100000").mkdir()
@@ -361,6 +361,9 @@ def test_a_cut_short_transcript_line_is_left_out_of_the_estimate(tmp_path):
     a = Scenario("a", "x", [_turn({"say": "hi"}, "t")], ["t"])
     use, unknown = estimate([a], runs=1, folder=tmp_path)
     assert unknown == [] and use["luna"]["input"] == pytest.approx(100)
+    (tmp_path / "2026-10-17-100000" / "runs.jsonl").write_text('{"scenario": "a", "usa\n' + whole + "\n")
+    with pytest.raises(ValueError):  # damage anywhere else isn't a run cut short
+        estimate([a], runs=1, folder=tmp_path)
 
 
 def test_a_result_with_runs_that_werent_counted_is_never_saved_as_the_baseline(tmp_path, monkeypatch, capsys):

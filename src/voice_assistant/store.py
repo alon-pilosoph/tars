@@ -179,6 +179,10 @@ MIGRATIONS = [
 ]
 
 
+class NewerDatabaseError(ConfigError):
+    """The database was made by a newer TARS: this code can't read it, and mustn't change it."""
+
+
 class Store:
     def __init__(self, folder: Path):
         self.folder = folder
@@ -251,7 +255,7 @@ class Store:
 def _migrate(db: sqlite3.Connection) -> None:
     version = db.execute("PRAGMA user_version").fetchone()[0]
     if version > len(MIGRATIONS):
-        raise ConfigError(
+        raise NewerDatabaseError(
             f"The event log's database is at version {version}, made by a newer TARS than this one (which knows "
             f"{len(MIGRATIONS)}): update the code to run it."
         )

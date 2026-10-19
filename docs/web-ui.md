@@ -69,20 +69,20 @@ the flip side is that a process stuck inside its own loop still beats (the assis
 mic stops, which is how it has hung before).
 
 **Each service is asked, and asked about.** The services are asked with the same checks as `--check`
-(`check.service_checks`), each reading something small with TARS's key (a model, the voices, the key's or the bot's
-own details), and each one's own status page is read (they all publish Statuspage's `/api/v2/status.json`). Both,
-because each answers a different question: the key works, and the service says it's fine. They're all asked at once
-and given 10 seconds together: one that hasn't answered by then is shown failing, so a service that hangs can't hold
-the page up. The answers are kept for a minute, and while they're being asked, another page gets the last ones.
-Keys that aren't enough to run TARS at all are one failing line, "API keys", saying which are missing, in place of the
-services that need them.
+(`check.service_checks`), each reading something small with TARS's key (a model, the voices, the key's or the bot's own
+details; Home Assistant, when `[home]` uses it, is pinged with its token and has no status page), and each one's own
+status page is read (they all publish Statuspage's `/api/v2/status.json`). Both, because each answers a different
+question: the key works, and the service says it's fine. They're all asked at once and given 10 seconds together: one
+that hasn't answered by then is shown failing, so a service that hangs can't hold the page up. The answers are kept for
+a minute, and while they're being asked, another page gets the last ones. Keys that aren't enough to run TARS at all are
+one failing line, "API keys", saying which are missing, in place of the services that need them. **Trade-off:** the
+checks spend no tokens, but they are requests on TARS's keys, so the page asks only when it's opened or refreshed, never
+in the background.
 
 **The backup says how its last pass went.** As `--check` says it (`check.last_pass`), from what the pass left in
 `<events folder>/backup.json`: files in the bucket and only there, and when the last good pass was (flagged after an
 hour), or why the last one failed; and whether the timer is running, where there's systemd. The bucket itself isn't
-asked, so the page costs no S3 request.
-**Trade-off:** the checks spend no tokens, but they are requests on TARS's keys, so the page asks only when it's
-opened or refreshed, never in the background.
+asked, so the page costs no S3 request. A `backup.json` that can't be read is one failing line, not a page that fails.
 
 ## The API
 

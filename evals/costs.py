@@ -89,11 +89,14 @@ def save_profile(by_scenario: dict[str, list[Use]], profile: Path = PROFILE) -> 
 def _latest_runs(scenario: str, folder: Path, keep: int = 10) -> list[dict]:
     rows = []
     for path in sorted(folder.glob("*/runs.jsonl"), reverse=True):
-        for line in path.read_text().splitlines():
+        lines = path.read_text().splitlines()
+        for i, line in enumerate(lines):
             try:
                 row = json.loads(line)
             except ValueError:
-                continue  # cut short: the run stopped while it was being written
+                if i == len(lines) - 1:
+                    continue  # cut short: the run stopped while writing it
+                raise
             if row["scenario"] == scenario and row.get("usage") and not row.get("unavailable"):
                 rows.append(row)
         if len(rows) >= keep:

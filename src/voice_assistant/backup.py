@@ -231,6 +231,11 @@ class Status:
         atomic_write(path, json.dumps(asdict(self), indent=1).encode())
 
 
+def status_file(folder: Path) -> Path:
+    """Where the passes say how the last one went, in the event log's `folder`."""
+    return folder / STATUS_FILE
+
+
 @dataclass
 class Fetched:
     """What --fetch-audio did: brought back, archived (or now being restored), and gone from the bucket (or not whole
@@ -259,7 +264,7 @@ class Backup:
         self._log, self._store, self._cfg, self._s3, self._clock = log, log.store, cfg, s3, clock
         self._conversations = ConversationLog(log)
         self._snapshot_files = snapshot_files or {}
-        self.status_path = log.folder / STATUS_FILE
+        self.status_path = status_file(log.folder)
 
     def check(self) -> None:
         """The bucket answers, and the keys may use it: BackupError if not."""

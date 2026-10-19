@@ -11,7 +11,7 @@ import type {
   Status,
   TarsEvent,
 } from "../types";
-import { type LoadPart, type Snapshot, type State, get, set, setNow } from "./core";
+import { type LoadErrors, type LoadPart, type Snapshot, get, set, setNow } from "./core";
 import { healthLoaded, loadHealth } from "./health";
 import { errText, toast } from "./ui";
 
@@ -33,9 +33,9 @@ type Settled<T> = { [K in keyof T]: PromiseSettledResult<T[K]> };
 export function settle<T extends Record<LoadPart, unknown>>(
   answers: Settled<T>,
   last: T,
-): { data: T; failed: Partial<Record<LoadPart, string>> } {
+): { data: T; failed: LoadErrors } {
   const data = {} as T;
-  const failed: Partial<Record<LoadPart, string>> = {};
+  const failed: LoadErrors = {};
   let error: unknown = null;
   for (const part of Object.keys(answers) as LoadPart[]) {
     const answer = answers[part];
@@ -50,22 +50,19 @@ export function settle<T extends Record<LoadPart, unknown>>(
   return { data, failed };
 }
 
-/** What each part is, as the page names it, and the pages that show it (null: every page). */
-export const LOAD_PARTS: Record<LoadPart, { what: string; tabs: State["tab"][] | null }> = {
-  events: { what: "the wakes", tabs: ["review"] },
-  clusters: { what: "the voices", tabs: ["voices"] },
-  models: { what: "the models", tabs: ["models"] },
-  status: { what: "what's set up", tabs: null },
-  convs: { what: "the conversations", tabs: ["home"] },
-  items: { what: "what TARS sent", tabs: ["sent"] },
-  reminders: { what: "the reminders", tabs: ["reminders"] },
+const PART_NAMES: Record<LoadPart, string> = {
+  events: "the wakes",
+  clusters: "the voices",
+  models: "the models",
+  status: "what's set up",
+  convs: "the conversations",
+  items: "what TARS sent",
+  reminders: "the reminders",
 };
 
-/** The parts the page in view shows that didn't load with the last Refresh or reload, with why. */
-export const failedHere = (s: Pick<State, "tab" | "loadErrors">) =>
-  (Object.entries(s.loadErrors) as [LoadPart, string][])
-    .filter(([part]) => LOAD_PARTS[part].tabs?.includes(s.tab) ?? true)
-    .map(([part, why]) => ({ part, what: LOAD_PARTS[part].what, why }));
+/** The parts the last load couldn't get, with why: every page says so, since most read several parts. */
+export const loadFailures = (errors: LoadErrors) =>
+  (Object.entries(errors) as [LoadPart, string][]).map(([part, why]) => ({ part, what: PART_NAMES[part], why }));
 
 /** The API puts sent items inside the turns that sent them; the page keeps each item once, and ids in the turns. */
 export function normalize(apiConvs: ApiConversation[], apiItems: Item[]) {
@@ -106,8 +103,10 @@ export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap:
   };
 }
 
-/** Every part at once; one endpoint failing keeps that part as it last loaded, and says so on its page. */
-async function fetchData(): Promise<{ data: Data; failed: Partial<Record<LoadPart, string>> }> {
+/** Every part at once; one endpoint failing keeps that part as it last loaded, and says so. */
+type Loaded = { data: Data; failed: LoadErrors };
+
+async function fetchData(): Promise<Loaded> {
   const [events, clusters, models, status, convs, items, reminders] = await Promise.allSettled([
     getJson<TarsEvent[]>("/api/events"),
     getJson<Cluster[]>("/api/clusters"),
@@ -125,7 +124,7 @@ async function fetchData(): Promise<{ data: Data; failed: Partial<Record<LoadPar
 async function fetchAll(fresh: boolean, quiet: boolean) {
   try {
     await writesDone();
-    let loaded: Awaited<ReturnType<typeof fetchData>>;
+    let loaded: Loaded;
     let writes;
     // A change made while this loaded may have reached the server after it answered: load again, or the page
     // would show it undone.

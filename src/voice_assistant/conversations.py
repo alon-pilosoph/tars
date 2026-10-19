@@ -62,7 +62,7 @@ class ConversationLog:
                 "INSERT INTO conversations (started, wake_event_id, via) VALUES (?, ?, ?)",
                 (ts or time.time(), wake_event_id, via),
             ).lastrowid
-            db.executemany(
+            db.executemany(  # TARS turns as add_tars_turn writes them, in this transaction
                 "INSERT INTO turns (conversation_id, ts, role, text) VALUES (?, ?, ?, ?)",
                 [(conversation, at, ROLE_TARS, text) for at, text in said],
             )

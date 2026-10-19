@@ -158,8 +158,8 @@ def test_home_country_is_a_two_letter_code(tmp_path, country, ok):
 @pytest.mark.parametrize(
     "setup, says",
     [
-        ("[wake]\nthreshold = 1.5", "[wake] threshold must be between 0 and 1"),
-        ("[wake]\nthreshold = 0", "[wake] threshold must be between 0 and 1"),
+        ("[wake]\nthreshold = 1.5", "[wake] threshold must be more than 0 and less than 1"),
+        ("[wake]\nthreshold = 0", "[wake] threshold must be more than 0 and less than 1"),
         ("[wake]\ncheck_window_s = 0", "[wake] check_window_s must be more than 0"),
         ("[speaker]\nthreshold = 50", "[speaker] threshold must be more than 0 and at most 1"),
         ("[speaker]\nwake_threshold = -0.1", "[speaker] wake_threshold must be more than 0 and at most 1"),

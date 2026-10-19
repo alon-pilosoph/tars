@@ -497,6 +497,8 @@ def create_app(
             pairs.use(body.version)
         except KeyError:
             raise HTTPException(404, "no such version, or it can't be loaded") from None
+        except OSError as e:
+            raise HTTPException(503, f"the installed models couldn't be read ({e}), so nothing was changed") from None
         return {"ok": True}
 
     @app.get("/api/reminders")

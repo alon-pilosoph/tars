@@ -62,13 +62,15 @@ export interface Snapshot {
 
 /** What a load reads, an endpoint each: one that fails leaves the rest. */
 export type LoadPart = "events" | "clusters" | "models" | "status" | "convs" | "items" | "reminders";
+/** The parts the last load couldn't get, with why. */
+export type LoadErrors = Partial<Record<LoadPart, string>>;
 
 export interface State {
   tab: Tab;
   person: PersonFilter;
   phase: "loading" | "ready" | "error";
   error: string;
-  loadErrors: Partial<Record<LoadPart, string>>; // the parts the last load couldn't get, with why: shown as they were
+  loadErrors: LoadErrors;
   events: TarsEvent[];
   clusters: Cluster[];
   models: ModelsInfo | null;

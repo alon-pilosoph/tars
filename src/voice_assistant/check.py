@@ -65,6 +65,26 @@ class Result:
 Check = Callable[[], Result | Iterable[Result]]
 
 
+@dataclass(frozen=True)
+class ServiceChecks:
+    """The services TARS uses, each asked with its own key (service_checks)."""
+
+    keyed: list[tuple[str, Check]]  # the paid ones, by name; none when the keys can't run TARS
+    keys: Check  # the keys themselves, which --check runs first
+    telegram: Check
+    telegram_reminders: Check
+    home_assistant: Check
+
+    def listed(self) -> list[tuple[str, Check]]:
+        """The web UI's Status page's: the paid services, or the keys' failure in their place, then the others."""
+        return [
+            *(self.keyed or [("API keys", self.keys)]),
+            ("Telegram", self.telegram),
+            ("Telegram reminders", self.telegram_reminders),
+            ("Home Assistant", self.home_assistant),
+        ]
+
+
 def run(checks: list[tuple[str, Check]]) -> list[Result]:
     """Every check, in order, each printed as it's done."""
     results = []
@@ -252,13 +272,29 @@ def voiceprints(names: list[str]) -> Result:
     return Result("Voiceprints", OK, ", ".join(names))
 
 
-def web_port(unit: Path = WEB_UNIT) -> int:
-    """The port the web UI serves on: its installed unit's --port, else the one --web uses by default."""
+def web_port(exec_start: Callable[[str], str] | None = None, unit_file: Path = WEB_UNIT) -> int:
+    """The port the web UI serves on: its unit's --port, as systemd runs it (drop-ins included) or else as installed;
+    without either, the one --web uses by default."""
     try:
-        found = re.search(r"^ExecStart=.*--port[= ](\d+)", unit.read_text(), re.MULTILINE)
+        installed = unit_file.read_text()
     except OSError:
-        found = None
-    return int(found[1]) if found else WEB_PORT
+        installed = ""
+    for found in ((exec_start or unit_exec_start)("voice-assistant-web"), installed):
+        if port := re.search(r"^ExecStart=.*?--port[= ](\d+)", found, re.MULTILINE):
+            return int(port[1])
+    return WEB_PORT
+
+
+def unit_exec_start(unit: str) -> str:
+    """The command systemd runs for a unit, as `systemctl show` says it ("ExecStart={ path=... argv[]=... }"); "" with
+    no systemd to ask."""
+    if not shutil.which("systemctl"):
+        return ""
+    try:
+        command = ["systemctl", "--user", "show", "-p", "ExecStart", unit]
+        return subprocess.run(command, capture_output=True, text=True, check=False, timeout=5).stdout
+    except subprocess.TimeoutExpired:
+        return ""
 
 
 def web(get: Callable[[str], int], port: int = WEB_PORT) -> Result:
@@ -340,7 +376,8 @@ def backup(cfg: Config, make: Callable[[], Backup], now: float | None = None) ->
         return [late]
     where = f"s3://{cfg.backup.bucket}/{cfg.backup.prefix} answers ({time.perf_counter() - t:.1f} s)"
     first, *rest = last_pass(Status.load(job.status_path), now or time.time())
-    return [replace(first, detail=f"{where}; {first.detail}"), *rest]
+    said = f"the last pass failed: {first.detail}" if first.status == FAIL else first.detail
+    return [replace(first, detail=f"{where}; {said}"), *rest]
 
 
 def last_pass(status: BackupStatus, now: float) -> list[Result]:
@@ -349,7 +386,7 @@ def last_pass(status: BackupStatus, now: float) -> list[Result]:
     if not status.last_run:
         return [Result("Backup", WARN, "no pass has run yet", start)]
     if status.error:
-        return [Result("Backup", FAIL, f"the last pass: {status.error}", start)]
+        return [Result("Backup", FAIL, status.error, start)]
     ago = _ago(now - status.last_ok)
     files = f"{status.in_bucket} files there, {status.only_in_bucket} only there; the last good pass {ago}"
     stale = now - status.last_ok > STALE_BACKUP_S
@@ -467,10 +504,9 @@ def with_keys_there(cfg: Config, env: Path) -> tuple[Config, set[str], bool]:
         return cfg, have, False
 
 
-def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
-    """The cloud services TARS uses, each asked with its own key: --check runs them, and so does the web UI's Status
-    page. A service TARS doesn't use, as config.toml and .env set it up, is a SKIP. Keys that aren't enough to run
-    TARS are one failure, "API keys", in place of the services that need them."""
+def service_checks(cfg: Config, root: Path) -> ServiceChecks:
+    """The cloud services TARS uses, and Home Assistant, each asked with its own key: --check runs them, and so does
+    the web UI's Status page. A service TARS doesn't use, as config.toml and .env set it up, is a SKIP."""
     import httpx
 
     from . import __main__ as cli
@@ -532,9 +568,16 @@ def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
 
         return Bot(token).me()
 
+    def hass_ping(token: str) -> str:
+        hass = HomeAssistant(cfg.home.url, token)
+        try:
+            return hass.ping()
+        finally:
+            hass.close()
+
     def hass():
         token = env_value(env, TOKEN_KEY)
-        return home_assistant(cfg, token, lambda: HomeAssistant(cfg.home.url, token or "").ping())
+        return home_assistant(cfg, token, lambda: hass_ping(token or ""))
 
     keyed: list[tuple[str, Check]] = [
         ("OpenAI", openai),
@@ -542,12 +585,13 @@ def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
         ("Deepgram", deepgram),
         ("Cartesia", cartesia),
     ]
-    return [
-        *(keyed if have_keys else [("API keys", lambda: keys(asked, env))]),
-        ("Telegram", lambda: telegram(cfg, env_value(env, TELEGRAM_KEY), bot_me)),
-        ("Telegram reminders", lambda: telegram_waiting(cfg, root / cfg.learning.folder)),
-        ("Home Assistant", hass),
-    ]
+    return ServiceChecks(
+        keyed if have_keys else [],
+        lambda: keys(asked, env),
+        lambda: telegram(cfg, env_value(env, TELEGRAM_KEY), bot_me),
+        lambda: telegram_waiting(cfg, root / cfg.learning.folder),
+        hass,
+    )
 
 
 def check_all(cfg: Config, root: Path) -> int:
@@ -594,29 +638,22 @@ def check_all(cfg: Config, root: Path) -> int:
 
         return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")
 
-    def secret(name: str) -> str | None:
-        return env_value(env, name)
-
-    @functools.cache
     def made_house():
         from .home import Context, build
 
-        context = Context(root, secret, announce=lambda line: None)
+        context = Context(root, functools.partial(env_value, env), announce=lambda line: None)
         from .androidtv import make_tv_agent
 
         context.tv_agent = functools.partial(make_tv_agent, cfg, env, context.announce)
-        return build(cfg.home, context), context
+        return build(cfg.home, context)
 
-    # The services, but for the keys and Home Assistant: the keys come first, and the house's devices ask whether
-    # Home Assistant answered, asking it once.
     services = service_checks(asked, root)
-    hass_check = functools.cache(dict(services)["Home Assistant"])
-    services = [(name, c) for name, c in services if name not in ("API keys", "Home Assistant")]
+    hass_check = functools.cache(services.home_assistant)  # asked once: the house's devices want to know too
 
     def devices():
         if not cfg.home.devices:
             return Result("The house", SKIP, "no devices ([[home.devices]] in config.toml)")
-        built, _ = made_house()
+        built = made_house()
         return within(60, "The house", lambda: house(built, hass_check().status == OK), "a device didn't answer", "")
 
     def models():
@@ -656,13 +693,15 @@ def check_all(cfg: Config, root: Path) -> int:
         )
 
     checks: list[tuple[str, Check]] = [
-        ("API keys", lambda: keys(asked, env)),
+        ("API keys", services.keys),
         ("Input device", lambda: audio_device("input")),
         ("Output device", lambda: audio_device("output")),
         ("Local models", models),
         ("Echo cancellation", echo),
         ("Voiceprints", speakers),
-        *services,
+        *services.keyed,
+        ("Telegram", services.telegram),
+        ("Telegram reminders", services.telegram_reminders),
         ("Voice", speaking),
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),

@@ -179,14 +179,16 @@ def test_a_history_of_the_wrong_shape_falls_back_to_the_installed_pair(root, dam
     assert versions.install(trained(root, "again")) == "v2"
 
 
-def test_unreadable_installed_models_ignore_the_versions_and_set_nothing_aside(root, log):
+@pytest.mark.parametrize("missing", ["hey_tars.tflite", "hey_tars_check.json"])
+def test_unreadable_installed_models_say_so_and_change_nothing(root, log, missing):
     versions = versions_in(root)
     versions.install(trained(root))
-    (root / "models/generic/hey_tars.tflite").unlink()
-    page = TestClient(create_app(log, pairs=versions)).get("/api/models")
+    (root / "models/generic" / missing).unlink()
+    client = TestClient(create_app(log, pairs=versions))
+    page = client.get("/api/models")
     assert page.status_code == 200 and "installed models couldn't be read" in page.json()["problem"]
-    with pytest.raises(FileNotFoundError):
-        versions.use(INSTALLED)
+    refused = client.post("/api/models/use", json={"version": INSTALLED})
+    assert refused.status_code == 503 and "nothing was changed" in refused.json()["detail"]
     assert not list(versions.folder.glob("history-*.old.json"))
 
 

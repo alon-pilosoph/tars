@@ -1163,6 +1163,13 @@ select {
 .form-error {
   color: var(--accent);
 }
+.form-error {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 14px;
+  font-weight: 500;
+}
 .load-error {
   display: flex;
   flex-direction: column;
@@ -1175,13 +1182,6 @@ select {
 }
 .load-error p {
   margin: 0;
-}
-.form-error {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  font-size: 14px;
-  font-weight: 500;
 }
 .tick {
   display: flex;

@@ -119,7 +119,8 @@ npm run e2e && npm run visual                # against a real backend, and the s
 npm run site                                 # the How TARS works page, from site/ into site/dist/
 ```
 
-CI runs the tests, lint and format checks, a check that the committed web build is current, and an end-to-end run.
+CI runs the tests with every extra installed, lint and format checks, a check that the committed web build is
+current, and an end-to-end run; the How TARS works site deploys only after CI passes on `main`.
 
 ## License
 
