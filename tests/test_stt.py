@@ -337,7 +337,8 @@ def test_a_recording_is_read_as_16_khz_samples_whatever_it_was():
     soundfile.write(voice, tone, 48_000, format="OGG", subtype="OPUS")  # as Telegram sends a voice message
     pcm = decode_recording(voice.getvalue())
     assert pcm.dtype == np.int16 and abs(len(pcm) - 24_000) < 400
-    assert 0.3 < np.abs(pcm).max() / 32767 < 0.7  # the same loudness, near enough
+    middle = pcm[4_000:-4_000].astype(np.float64) / 32767  # Opus overshoots a little at the edges
+    assert 0.3 < np.sqrt(np.mean(middle**2)) < 0.42  # the same loudness, near enough: a 0.5 sine's RMS is 0.354
     with pytest.raises(ValueError, match="can't read the recording") as e:
         decode_recording(b"not audio at all")
     assert "BytesIO" not in str(e.value)
