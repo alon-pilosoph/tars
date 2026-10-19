@@ -248,8 +248,8 @@ tv_model = ""
 # address = "192.168.1.60"
 
 [backup]
-# Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and once a day the
-# database, voiceprints and trained wake models. voice-assistant --backup does it, every 15 minutes by its systemd
+# Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and every six hours
+# the database, voiceprints and trained wake models. voice-assistant --backup does it, every 15 minutes by its systemd
 # timer, with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env. Set enabled, bucket and region in config.local.toml.
 enabled = false
 bucket = ""
@@ -259,7 +259,8 @@ prefix = "tars"
 # A recording stays on the machine this long, then only in the bucket (the web UI still plays it). What training
 # learns from, each voice's newest requests, and what TARS sent stay on the machine too. 0 = keep everything here.
 keep_local_days = 30
-# Then S3 moves the audio to Glacier Deep Archive: the cheapest storage, and up to 48 hours to bring back. 0 = never.
-archive_after_days = 180
-# The daily copy of the database, voiceprints and trained wake models, kept this long; the newest always stays.
+# Move the audio to Glacier Deep Archive this many days after it's made: cheaper storage, but up to 48 hours to bring
+# back, and at a household's few GB a year the moves cost about what it saves. 0 = never.
+archive_after_days = 0
+# The copy of the database, voiceprints and trained wake models, kept this long; the newest always stays.
 keep_snapshots_days = 30

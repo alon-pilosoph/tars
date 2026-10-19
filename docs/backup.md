@@ -3,8 +3,7 @@
 SD cards die, and what TARS keeps is the household's own: the labels and recordings it learns from, the voiceprints,
 the wake models trained on the household's voices, months of conversations. With `[backup]` on, TARS copies all of it
 to an Amazon S3 bucket a few minutes after it's made, and keeps the Pi's card from filling with recordings: after a
-month, most recordings live only in the bucket, and after six months S3 moves them to Glacier Deep Archive, its
-cheapest storage.
+month, most recordings live only in the bucket.
 
 ## What it does
 
@@ -26,13 +25,14 @@ cheapest storage.
    would delete more than half of the bucket, and more than 20 files, stops instead and says so: that's far likelier a
    database gone wrong than a household deleting its whole history. If it really is that, `voice-assistant --backup
    --delete-anyway` does it.
-4. **Takes a snapshot, once a day.** The database (through SQLite's backup API, so the copy is consistent while TARS
+4. **Takes a snapshot, every six hours.** The database (through SQLite's backup API, so the copy is consistent while TARS
    writes), the voiceprints, the wake models trained on the household (the self-learning pairs and
    `models/personal/`) and `config.local.toml`, as one `.tar.gz` under `<prefix>/snapshots/`. Never `.env`: the keys
    stay on the Pi. Snapshots older than `keep_snapshots_days` (30) are deleted then, but never the newest: a Pi that
    was off for longer still has one to restore.
-5. **Keeps the bucket's lifecycle rule in step** with `[backup]`: the audio moves to Deep Archive after
-   `archive_after_days` (180). Only TARS's own rule is touched; any other rule on the bucket stays.
+5. **Keeps the bucket's lifecycle rule in step** with `[backup]`: with `archive_after_days` set (it's 0, off, by
+   default), the audio moves to Glacier Deep Archive that many days after it's made ([what it costs](#what-it-costs)).
+   Only TARS's own rule is touched; any other rule on the bucket stays.
 
 What's in the bucket is recorded in the database (`remote_files`), so a pass only looks at what's new. How the last
 pass went is in `voice_data/events/backup.json`, and `--check` reads it.
@@ -40,8 +40,8 @@ pass went is in `voice_data/events/backup.json`, and `--check` reads it.
 ```mermaid
 flowchart LR
     pi["The Pi: voice_data/"] -->|"every 15 min: new files"| standard["S3 Standard"]
-    standard -->|"after 180 days, S3 itself"| deep["Glacier Deep Archive"]
-    pi -->|"once a day"| snaps["snapshots/ (30 days, the newest always)"]
+    standard -.->|"with archive_after_days, S3 itself"| deep["Glacier Deep Archive"]
+    pi -->|"every six hours"| snaps["snapshots/ (30 days, the newest always)"]
     standard -.->|"the web UI plays one that's left the Pi"| pi
 ```
 
@@ -72,7 +72,7 @@ flowchart LR
    ```
 
    Without the lifecycle permissions the backup still works; `--check` warns, and the rule is set by hand (S3, the
-   bucket, Management, Lifecycle rules: `tars/audio/` to Glacier Deep Archive after 180 days).
+   bucket, Management, Lifecycle rules: `tars/audio/` to Glacier Deep Archive), if you've set `archive_after_days`.
 3. **The key and the settings.** In `.env`: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. TARS reads them from
    there only, never from the shell or `~/.aws`. In `config.local.toml`:
 
@@ -100,17 +100,22 @@ flowchart LR
   voice-assistant-backup.timer`), then `uv run voice-assistant --restore-backup`. It puts the latest snapshot in place
   (the database, voiceprints, wake models and `config.local.toml`), each where this Pi's config puts it, and refuses
   while TARS or a backup pass is running, or over a database with a history of its own: if TARS heard anything before
-  the restore, move `voice_data/events/events.db` away first. Start TARS again; the recordings play from the bucket,
-  and `--fetch-audio` brings them back onto the Pi. Until the restore, the new Pi's backup writes nothing to the
+  the restore, move `voice_data/events/events.db` away first. Start TARS again. The first backup pass (within 15 minutes, or
+  `uv run voice-assistant --backup` now) brings back what has to be on the Pi: the wake windows training learns
+  from, each voice's newest requests, and the files TARS sent. The other recordings play from the bucket, and
+  `--fetch-audio` brings them back onto the Pi too. A restore puts back the database as it was at the last snapshot,
+  so up to six hours of conversations can be missing; their recordings stay in the bucket, unused. Until the restore, the new Pi's backup writes nothing to the
   bucket, and `--check` says why. To start a new backup from scratch instead, set `[backup] prefix` to a new folder.
 
 ## What it costs
 
 At about 60 wakes and requests a day, TARS keeps about 12 MB of audio a day, 4-5 GB a year. As a rough guide (check
 [S3's prices](https://aws.amazon.com/s3/pricing/) for your region): a year of it in S3 Standard is about $0.10 a
-month, in Deep Archive a cent or two; moving each recording to Deep Archive costs about $1 a year in all, and a pass
-every 15 minutes a few cents a month in requests. Deep Archive keeps an object for at least 180 days: deleting one
-sooner (a conversation deleted in the web UI) is charged as if it had stayed.
+month, and a pass every 15 minutes a few cents a month in requests. Deep Archive would store a year's audio for a
+cent or two a month, but moving each recording there costs about $1 a year in all, about what it saves for the first
+few years, and an archived recording takes up to 48 hours to bring back and can't be played in the web UI. That's
+why `archive_after_days` is 0 (off) by default. With it on, Deep Archive keeps an object for at least 180 days:
+deleting one sooner (a conversation deleted in the web UI) is charged as if it had stayed.
 
 ## What it sends AWS
 

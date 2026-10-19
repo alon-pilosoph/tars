@@ -36,8 +36,8 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
   every part running, the services, the Pi ([web UI](docs/web-ui.md)).
 - **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
   sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
-- **Backed up to S3** every 15 minutes, with a daily snapshot; old audio leaves the Pi for the bucket, then Glacier
-  Deep Archive ([backup](docs/backup.md)).
+- **Backed up to S3** every 15 minutes, with a snapshot of the database every six hours; old audio leaves the Pi for
+  the bucket ([backup](docs/backup.md)).
 
 How a request is answered:
 

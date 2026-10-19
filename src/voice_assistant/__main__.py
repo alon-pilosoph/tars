@@ -573,7 +573,7 @@ def snapshot_files(cfg: Config, root: Path) -> dict[str, Path]:
 
 def make_backup(cfg: Config, root: Path, log: EventLog | None = None) -> Backup:
     """The backup to [backup]'s bucket, of `log` (made from config.toml if not given): the event log's files, and a
-    daily snapshot of the database and snapshot_files. ConfigError if it's off, or can't be."""
+    snapshot of the database and snapshot_files every six hours. ConfigError if it's off, or can't be."""
     from .backup import Backup
 
     s3 = make_s3(cfg, root)
@@ -642,7 +642,10 @@ def restore_backup(cfg: Config, root: Path) -> None:
         key = restore_snapshot(make_s3(cfg, root), cfg.backup, places)
     except (ValueError, BackupError, Busy) as e:
         raise SystemExit(f"Couldn't restore: {e}") from None
-    print(f"Restored {key}. Start TARS again; --fetch-audio brings the recordings back, if training needs them.")
+    print(
+        f"Restored {key}. Start TARS again: the first backup pass (within 15 minutes, or --backup now) brings back "
+        "what has to be on this machine; the other recordings play from the bucket, and --fetch-audio brings them here."
+    )
 
 
 def phrase_folder(cfg: Config, root: Path) -> Path:

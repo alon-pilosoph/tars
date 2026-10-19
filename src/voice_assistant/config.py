@@ -237,11 +237,11 @@ class BackupConfig:
     # A recording stays on the machine this long, then only in the bucket (the web UI still plays it). What training
     # learns from, each voice's newest requests, and what TARS sent stay on the machine too. 0 = keep everything here.
     keep_local_days: float = 30.0
-    # Then S3 moves it to Glacier Deep Archive, the cheapest storage, which takes up to 48 hours to bring back.
-    # 0 = never.
-    archive_after_days: int = 180
-    # A copy of the database, the voiceprints and the trained wake models is made once a day, and kept this long; the
-    # newest always stays.
+    # Move the audio to Glacier Deep Archive this many days after it's made: cheaper storage, but up to 48 hours to
+    # bring back, and at a household's few GB a year the moves cost about what it saves. 0 = never.
+    archive_after_days: int = 0
+    # A copy of the database, the voiceprints and the trained wake models is made every six hours, and kept this
+    # long; the newest always stays.
     keep_snapshots_days: int = 30
 
 

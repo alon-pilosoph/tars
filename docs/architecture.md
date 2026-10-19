@@ -205,9 +205,9 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
 - **When the web UI's Status page is opened,** each service TARS uses is asked for something small with its key (a
   model, the voices, the key's or the bot's own details: no conversation, no tokens), and each one's public status
   page is read (nothing is sent to it).
-- **With `[backup]` on,** your own S3 bucket gets everything TARS keeps: the recordings, the files it sent, and once
-  a day the database (transcripts and voice embeddings included), the voiceprints and the wake models trained on the
-  household, encrypted at rest ([backing up to S3](backup.md#what-it-sends-aws)). `.env` never goes.
+- **With `[backup]` on,** your own S3 bucket gets everything TARS keeps: the recordings, the files it sent, and every
+  six hours the database (transcripts and voice embeddings included), the voiceprints and the wake models trained on
+  the household, encrypted at rest ([backing up to S3](backup.md#what-it-sends-aws)). `.env` never goes.
 - **Never, without `[backup]`:** the event log, the audio kept for learning, voiceprints, and anything else the web UI
   shows. The web UI is served from the same machine, and talks to nothing else but the Status page's checks and,
   with `[backup]` on, that bucket, to play a recording that's moved there.

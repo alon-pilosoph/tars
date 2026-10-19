@@ -8,14 +8,14 @@
 2. A recording older than [backup] keep_local_days is removed from the machine, once the bucket is checked to have it
    whole. What something reads from the machine later stays there too: wake windows training learns from, each
    voice's newest requests (its voiceprint is rebuilt from them), and the files TARS sent. A file that becomes one of
-   those (a wake labeled in Review) comes back.
+   those (a wake labeled in Review) comes back, as does all of it on a machine just restored from a snapshot.
 3. Whatever TARS no longer keeps (a conversation deleted in the web UI, old audio dropped by [learning]
    keep_audio_days) is deleted from the bucket too: the bucket holds what TARS keeps, no more.
-4. Once a day, a snapshot: the database (through sqlite's backup API, so it's consistent while TARS writes), the
+4. Every six hours, a snapshot: the database (through sqlite's backup API, so it's consistent while TARS writes), the
    voiceprints, the wake models trained on the household and config.local.toml, as one .tar.gz. Never .env. Snapshots
    older than keep_snapshots_days are deleted then, but never the newest.
 5. The bucket's lifecycle rule, kept in step with [backup], moves the audio to Glacier Deep Archive after
-   archive_after_days.
+   archive_after_days, if that's set (it's off by default).
 
 What's in the bucket is kept in the database (remote_files), so a pass looks only at what's new. The web UI plays a
 recording that's no longer on the machine straight from the bucket, until it's archived. `--fetch-audio` brings
@@ -48,7 +48,7 @@ from .events import DAY_S, EventLog, KeptFile
 from .files import atomic_write
 from .store import DB_FILE
 
-SNAPSHOT_EVERY_S = DAY_S
+SNAPSHOT_EVERY_S = 6 * 3600  # files go every pass; the database this often, so a restore loses a few hours at most
 STATUS_FILE = "backup.json"  # in the event log's folder: how the last pass went, for --check
 LOCK_FILE = "backup.lock"  # in the event log's folder: held by a pass or a fetch, so two never run at once
 OWNER = "owner.json"  # under [backup] prefix: which database's backup it is
@@ -353,17 +353,21 @@ class Backup:
 
     def _offload(self, status: Status) -> None:
         """Removes from the machine what's old enough (or was fetched back long enough ago), may go, and the bucket
-        is checked to have whole."""
+        is checked to have whole. A file the database says is here but isn't (a machine restored from a snapshot
+        has none of the old one's files) is marked as only in the bucket: the web UI plays it from there, and one
+        that must be here comes back (_bring_back)."""
         status.offloaded = 0
-        if self._cfg.keep_local_days <= 0:
-            return
-        cutoff, kept = self._clock() - self._cfg.keep_local_days * DAY_S, self.kept()
+        cutoff, kept, missing = self._clock() - self._cfg.keep_local_days * DAY_S, self.kept(), 0
         for rel, row in self._remote().items():
             k = kept.get(rel)
-            if row["offloaded"] is not None or k is None or k.stays or max(k.ts, row["fetched"] or 0) > cutoff:
+            if row["offloaded"] is not None or k is None:
                 continue
             path = self._store.folder / rel
             if not path.exists():
+                self._store.write("UPDATE remote_files SET offloaded=? WHERE path=?", (self._clock(), rel))
+                missing += 1
+                continue
+            if self._cfg.keep_local_days <= 0 or k.stays or max(k.ts, row["fetched"] or 0) > cutoff:
                 continue
             if self._s3.size(self.key(rel)) != path.stat().st_size:
                 status.notes.append(f"{rel} wasn't whole in the bucket: it's uploaded again")
@@ -372,10 +376,15 @@ class Backup:
             path.unlink()
             self._store.write("UPDATE remote_files SET offloaded=? WHERE path=?", (self._clock(), rel))
             status.offloaded += 1
+        if missing:
+            status.notes.append(
+                f"{missing} files weren't on this machine (restored from a snapshot?): the bucket has them"
+            )
 
     def _bring_back(self, status: Status) -> None:
         """A file that's only in the bucket, and must be on the machine now (a wake labeled in Review since, which
-        training learns from), comes back."""
+        training learns from, or everything that must stay on a machine just restored from a snapshot), comes
+        back."""
         status.brought_back = 0
         kept = self.kept()
         for rel, row in self._remote().items():
@@ -421,8 +430,8 @@ class Backup:
         status.deleted = len(gone)
 
     def _snapshot(self, status: Status) -> None:
-        """Once a day; then the snapshots older than keep_snapshots_days go, but never the newest, so a machine that
-        was down for longer still has one to restore."""
+        """Every SNAPSHOT_EVERY_S; then the snapshots older than keep_snapshots_days go, but never the newest, so a
+        machine that was down for longer still has one to restore."""
         now = self._clock()
         if now - status.last_snapshot < SNAPSHOT_EVERY_S:
             return

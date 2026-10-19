@@ -114,8 +114,8 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years,
   and with the backup on, a request's audio leaves the card after a month.
 - **Backup.** SD cards die, and the labels are the valuable part. With `[backup]` on, everything TARS keeps goes to an
-  S3 bucket every 15 minutes, with a daily snapshot of the database, voiceprints and wake models, and old audio moves
-  to Glacier Deep Archive ([backing up to S3](backup.md)).
+  S3 bucket every 15 minutes, with a snapshot of the database, voiceprints and wake models every six hours, and old
+  audio leaves the Pi for the bucket ([backing up to S3](backup.md)).
 - **Separate processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning

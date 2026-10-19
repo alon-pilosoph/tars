@@ -1,8 +1,8 @@
 """The backup to S3, against a pretend bucket: a bucket is one database's backup, and no other's writes go there;
 everything TARS keeps is uploaded once; old recordings make room on the machine only once the bucket has them whole,
 and never what's read from the machine later; what TARS stops keeping leaves the bucket too, but never most of it by
-mistake; a daily snapshot, the newest always kept, goes back onto a new machine only with TARS stopped; and the
-bucket's lifecycle rule follows [backup]."""
+mistake; a snapshot every six hours, the newest always kept, goes back onto a new machine only with TARS stopped,
+whose first pass brings back what must be on it; and the bucket's lifecycle rule follows [backup]."""
 
 import dataclasses
 import io
@@ -291,12 +291,15 @@ def test_a_pass_never_deletes_most_of_the_bucket_unless_told_to(log, s3, now):
 # Snapshots, and a new machine.
 
 
-def test_a_snapshot_a_day_and_the_old_ones_go(log, s3, now):
+def test_a_snapshot_every_six_hours_and_the_old_ones_go(log, s3, now):
     job = backup(log, s3, now, keep_snapshots_days=3)
     assert job.run().last_snapshot == NOW
     now[0] += 3600
     job.run()
     assert len(snapshot_keys(s3)) == 1  # not due again yet
+    now[0] += 5 * 3600
+    job.run()
+    assert len(snapshot_keys(s3)) == 2
     for _ in range(5):
         now[0] += DAY_S
         job.run()
@@ -337,6 +340,24 @@ def test_a_new_machine_gets_the_latest_snapshot_back(log, convos, s3, now, tmp_p
     with sqlite3.connect(new / "voice_data/events/events.db") as db:
         assert db.execute("SELECT count(*) FROM conversations").fetchone() == (1,)
     assert not [p for p in new.rglob("*") if p.name.endswith(".restoring")]
+
+
+def test_a_restored_machines_first_pass_brings_back_what_must_be_on_it(log, convos, s3, now, tmp_path):
+    wake, request, conversation = a_request(log, convos, NOW, speaker=None)
+    convos.add_item(conversation, None, SentItem("file", "List", file_name="list.md", file_bytes=b"# eggs"))
+    sent = log.store.rows("SELECT file FROM items")[0]["file"]
+    backup(log, s3, now).run()  # all of it uploaded, and still on the old machine: the snapshot says so
+    new = tmp_path / "new-pi"
+    restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+    restored = EventLog(new / "voice_data/events")
+    status = backup(restored, s3, now).run()
+    assert status.error == "" and status.brought_back == 2
+    assert on_machine(restored, audio_of(restored, wake))  # training learns from it
+    assert (restored.folder / sent).read_bytes() == b"# eggs"  # the web UI hands it out from the machine
+    assert not on_machine(restored, request) and status.only_in_bucket == 1  # nothing reads it here: it stays there
+    assert any("weren't on this machine" in n for n in status.notes)
+    assert backup(restored, s3, now).read(request) == (log.folder / request).read_bytes()  # the web UI plays it
+    assert backup(restored, s3, now).run().brought_back == 0  # once
 
 
 def test_a_new_machine_never_writes_over_the_backup_and_carries_it_on_once_restored(log, convos, s3, now, tmp_path):
@@ -469,9 +490,16 @@ def test_the_lifecycle_rule_follows_backup_and_leaves_others_alone(log, s3, now)
     assert {r["ID"] for r in s3.rules} == {"someone-elses"}
 
 
+def test_archiving_is_off_unless_asked_for(log, s3, now):
+    backup(log, s3, now).run()
+    assert {r["ID"] for r in s3.rules} == {"someone-elses"}
+    assert BackupConfig().archive_after_days == 0
+    assert load_config(REPO_CONFIG, local=False).backup.archive_after_days == 0
+
+
 def test_no_archiving_and_no_other_rules_leaves_the_bucket_without_any(log, s3, now):
     s3.rules = []
-    backup(log, s3, now).run()
+    backup(log, s3, now, archive_after_days=180).run()
     assert [r["ID"] for r in s3.rules] == [ARCHIVE_RULE]
     backup(log, s3, now, archive_after_days=0).run()
     assert s3.rules == []
@@ -480,7 +508,7 @@ def test_no_archiving_and_no_other_rules_leaves_the_bucket_without_any(log, s3, 
 def test_a_key_that_may_not_set_lifecycle_rules_leaves_a_note_and_the_backup_goes_on(log, convos, s3, now):
     a_request(log, convos, NOW)
     s3.lifecycle_allowed = False
-    status = backup(log, s3, now).run()
+    status = backup(log, s3, now, archive_after_days=180).run()
     assert status.error == "" and status.uploaded == 2 and not status.lifecycle_ok
     assert any("set them by hand" in n for n in status.notes)
 
