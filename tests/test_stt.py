@@ -1,12 +1,16 @@
-"""Speech to text: Deepgram's stream, and OpenAI transcribing the same recording when the stream fails."""
+"""Speech to text: Deepgram's stream, and OpenAI transcribing the same recording when the stream fails; and
+whole recordings (a voice message), to Deepgram's endpoint for them, then OpenAI."""
 
 import json
 import threading
 import types
 
+import httpx
+import numpy as np
 import pytest
 
 from voice_assistant import stt
+from voice_assistant.audio import decode_recording
 from voice_assistant.stt import BufferedSession, DeepgramSession, FallbackTranscriber, FluxSession, TurnState
 
 from .conftest import ScriptedTranscriber
@@ -287,3 +291,96 @@ def test_the_fallback_session_passes_flux_s_turns_through(flux):
     fallback.finish()
     assert fallback.transcript() == "what time is it"
     assert with_backup(BufferedSession(lambda pcm: ""), "").turn_state is None
+
+
+# A whole recording: a voice message on Telegram.
+
+
+def recorded(handler):
+    """A DeepgramFileTranscriber over a pretend Deepgram that answers with `handler(request)`."""
+    from voice_assistant.config import STTConfig
+
+    cfg = STTConfig(provider="flux", deepgram_host="api.eu.deepgram.com")
+    return stt.DeepgramFileTranscriber("dg-key", cfg, httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_a_whole_recording_goes_to_deepgrams_endpoint_for_them_on_its_eu_servers():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        alternatives = [{"transcript": " remind me to call mum at six "}]
+        return httpx.Response(200, json={"results": {"channels": [{"alternatives": alternatives}]}})
+
+    pcm = np.zeros(1600, dtype=np.int16)
+    assert stt.transcribe_recording(recorded(handler), pcm) == "remind me to call mum at six"
+    (request,) = seen
+    assert request.url.host == "api.eu.deepgram.com" and request.url.path == "/v1/listen"
+    assert request.url.params["model"] == "nova-3"  # Flux has no endpoint for whole recordings
+    assert request.headers["Authorization"] == "Token dg-key" and request.content.startswith(b"RIFF")
+
+
+def test_a_whole_recording_deepgram_cant_take_goes_to_the_backup():
+    deepgram = recorded(lambda request: httpx.Response(503))
+    pcm = np.zeros(1600, dtype=np.int16)
+    assert stt.transcribe_recording(FallbackTranscriber(deepgram, ScriptedTranscriber(["heard"])), pcm) == "heard"
+
+
+def test_a_recording_is_read_as_16_khz_samples_whatever_it_was():
+    import io
+
+    import soundfile
+
+    t = np.linspace(0, 1.5, 72_000, endpoint=False)
+    tone = (0.5 * np.sin(2 * np.pi * 300 * t)).astype("float32")
+    voice = io.BytesIO()
+    soundfile.write(voice, tone, 48_000, format="OGG", subtype="OPUS")  # as Telegram sends a voice message
+    pcm = decode_recording(voice.getvalue())
+    assert pcm.dtype == np.int16 and abs(len(pcm) - 24_000) < 400
+    middle = pcm[4_000:-4_000].astype(np.float64) / 32767  # Opus overshoots a little at the edges
+    assert 0.3 < np.sqrt(np.mean(middle**2)) < 0.42  # the same loudness, near enough: a 0.5 sine's RMS is 0.354
+    with pytest.raises(ValueError, match="can't read the recording") as e:
+        decode_recording(b"not audio at all")
+    assert "BytesIO" not in str(e.value)
+
+
+def test_voice_messages_go_to_deepgram_then_openai_as_requests_at_home_do(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from voice_assistant.__main__ import make_recording_transcriber
+    from voice_assistant.config import load_config, with_keys
+
+    asked = []
+    deepgram_up = [True]
+
+    def deepgram(request):
+        asked.append("deepgram")
+        if not deepgram_up[0]:
+            return httpx.Response(503)
+        return httpx.Response(200, json={"results": {"channels": [{"alternatives": [{"transcript": "by Deepgram"}]}]}})
+
+    def openai_transcribes(**kw):
+        asked.append("openai")
+        return types.SimpleNamespace(text="by OpenAI")
+
+    openai = types.SimpleNamespace(audio=types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=None)))
+    openai.audio.transcriptions.create = openai_transcribes
+    openai.with_options = lambda **kw: openai
+    real_client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(deepgram)))
+    shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    env = tmp_path / ".env"
+    env.write_text("DEEPGRAM_API_KEY=x\nOPENAI_API_KEY=x\n")
+    pcm = np.zeros(1600, dtype=np.int16)
+
+    def heard(keys: set[str], client) -> str:
+        cfg, _ = with_keys(shipped, keys | {"CARTESIA_API_KEY", "GROQ_API_KEY"})
+        return stt.transcribe_recording(make_recording_transcriber(cfg, env, client), pcm)
+
+    both = {"DEEPGRAM_API_KEY", "OPENAI_API_KEY"}
+    assert heard(both, openai) == "by Deepgram" and asked == ["deepgram"]
+    deepgram_up[0] = False
+    assert heard(both, openai) == "by OpenAI" and asked[1:] == ["deepgram", "openai"]
+    assert heard({"OPENAI_API_KEY"}, openai) == "by OpenAI" and asked[-1] == "openai"
+    deepgram_up[0] = True
+    assert heard({"DEEPGRAM_API_KEY"}, None) == "by Deepgram"

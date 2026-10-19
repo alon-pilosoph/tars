@@ -3,6 +3,7 @@
 import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 import pytest
@@ -27,13 +28,18 @@ from voice_assistant.reminders import (
     ReminderTools,
 )
 from voice_assistant.telegram import (
+    CANT_READ,
     CHAT_REMIND_TOOLS,
     COMMANDS,
+    COULDNT_LISTEN,
     FRESH,
     HELLO,
-    ONLY_TEXT,
+    MAX_VOICE_S,
+    NO_VOICE,
+    NO_WORDS,
     SORRY,
     STALE_S,
+    TOO_LONG,
     Bot,
     TelegramError,
     TelegramTars,
@@ -42,7 +48,7 @@ from voice_assistant.telegram import (
     tidy,
 )
 
-from .conftest import fake_openai_chat
+from .conftest import ScriptedTranscriber, fake_openai_chat
 
 ALON, STACEY = 111, 222
 PEOPLE = {"Alon": ALON}
@@ -206,7 +212,7 @@ def test_a_photo_or_voice_note_gets_a_plain_answer():
     update = message("")
     del update["message"]["text"]
     tars(bot, [ScriptedBrain()]).handle(update)
-    assert bot.said() == [ONLY_TEXT]
+    assert bot.said() == [CANT_READ]
 
 
 def test_a_message_that_came_while_tars_was_off_is_not_answered_as_if_new():
@@ -665,7 +671,6 @@ def test_reminders_set_at_home_are_never_reported_to_a_chat(convos):
 
 def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path):
     import dataclasses
-    from pathlib import Path
 
     from voice_assistant.__main__ import chat_brain_config
     from voice_assistant.config import load_config
@@ -682,3 +687,154 @@ def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path)
     assert cfg.telegram.memory_minutes > cfg.llm.memory_minutes
     for has_openai in (True, False):
         assert chat_brain_config(cfg, has_openai).memory_minutes == cfg.telegram.memory_minutes
+
+
+# Voice messages.
+
+
+def voice_note(seconds: float = 1.0) -> bytes:
+    """A voice message as Telegram's apps record one: Opus in Ogg, at 48 kHz."""
+    import io
+
+    import numpy as np
+    import soundfile
+
+    t = np.linspace(0, seconds, int(48_000 * seconds), endpoint=False)
+    out = io.BytesIO()
+    soundfile.write(out, (0.3 * np.sin(2 * np.pi * 220 * t)).astype("float32"), 48_000, format="OGG", subtype="OPUS")
+    return out.getvalue()
+
+
+class ListeningBot(FakeBot):
+    """Telegram, with a voice message to hand over: its recording, or the error fetching it raises."""
+
+    def __init__(self, recording=None, **kw):
+        super().__init__(**kw)
+        self.recording, self.downloaded = recording if recording is not None else voice_note(), []
+
+    def download(self, file_id):
+        self.downloaded.append(file_id)
+        if isinstance(self.recording, Exception):
+            raise self.recording
+        return self.recording
+
+
+def spoken(duration=1, sent_at=None, file_size=20_000):
+    update = message("", sent_at=sent_at)
+    del update["message"]["text"]
+    voice = {"file_id": "AwACAgQ", "duration": duration, "mime_type": "audio/ogg", "file_size": file_size}
+    update["message"]["voice"] = voice
+    return update
+
+
+def test_a_voice_message_is_written_down_and_answered_and_its_recording_kept(convos):
+    bot, brain, heard = ListeningBot(), ScriptedBrain(["Nine o'clock."]), ScriptedTranscriber(["what time is it?"])
+    tars(bot, [brain], convos, transcriber=heard).handle(spoken())
+    assert bot.downloaded == ["AwACAgQ"] and bot.said() == ["Nine o'clock."]
+    assert brain.asked == ["[Speaker: Alon] [Voice message] what time is it?"]
+    assert len(heard.heard[0]) == 2 * 16_000  # one second, as 16 kHz samples
+    (conversation,) = convos.conversations()
+    person, answer = conversation["turns"]
+    assert person["text"] == "what time is it?" and person["has_audio"] and answer["text"] == "Nine o'clock."
+
+
+def test_a_voice_message_that_came_while_tars_was_off_is_not_listened_to():
+    bot = ListeningBot()
+    tars(bot, [ScriptedBrain()], transcriber=ScriptedTranscriber([])).handle(spoken(sent_at=time.time() - STALE_S - 60))
+    assert bot.downloaded == [] and "I was off when this came in" in bot.said()[0]
+
+
+@pytest.mark.parametrize(
+    "transcriber, voice, says",
+    [
+        (None, {}, NO_VOICE),  # no speech to text at all
+        (ScriptedTranscriber([]), {"duration": MAX_VOICE_S + 1}, TOO_LONG),
+        (ScriptedTranscriber([]), {"file_size": 50_000_000}, TOO_LONG),
+    ],
+)
+def test_a_voice_message_it_wont_listen_to_says_why_without_fetching_it(transcriber, voice, says):
+    bot, brain = ListeningBot(), ScriptedBrain()
+    tars(bot, [brain], transcriber=transcriber).handle(spoken(**voice))
+    assert bot.said() == [says] and bot.downloaded == [] and brain.asked == []
+
+
+def test_a_recording_longer_than_its_message_said_is_turned_down_before_speech_to_text(monkeypatch):
+    from voice_assistant import telegram
+
+    monkeypatch.setattr(telegram, "MAX_VOICE_S", 0.5)
+    bot, heard = ListeningBot(recording=voice_note(1.0)), ScriptedTranscriber([])
+    tars(bot, [ScriptedBrain()], transcriber=heard).handle(spoken(duration=0))  # it said nothing of its length
+    assert bot.said() == [TOO_LONG] and heard.heard == []
+
+
+def test_a_voice_message_with_no_words_in_it_asks_again_and_is_kept(convos):
+    bot, brain = ListeningBot(), ScriptedBrain()
+    tars(bot, [brain], convos, transcriber=ScriptedTranscriber([""])).handle(spoken())
+    assert bot.said() == [NO_WORDS] and brain.asked == []
+    person, said = convos.conversations()[0]["turns"]
+    assert person["has_audio"] and said["text"] == NO_WORDS and not said["failed_at"]
+
+
+def test_a_tap_on_the_button_isnt_sent_to_speech_to_text():
+    bot, heard = ListeningBot(recording=voice_note(0.05)), ScriptedTranscriber([])
+    tars(bot, [ScriptedBrain()], transcriber=heard).handle(spoken())
+    assert bot.said() == [NO_WORDS] and heard.heard == []
+
+
+def test_speech_to_text_failing_is_said_and_kept_with_the_recording(convos):
+    bot, brain = ListeningBot(), ScriptedBrain()
+    tars(bot, [brain], convos, transcriber=ScriptedTranscriber([ConnectionError("both down")])).handle(spoken())
+    assert bot.said() == [COULDNT_LISTEN] and brain.asked == []
+    person, failed = convos.conversations()[0]["turns"]
+    assert person["has_audio"] and failed["failed_at"] == "stt" and "both down" in failed["error"]
+
+
+def test_a_voice_message_telegram_wont_hand_over_is_kept_as_telegram_failing(convos):
+    bot = ListeningBot(recording=TelegramError("getFile: Bad Request: file is too big", 400))
+    tars(bot, [ScriptedBrain()], convos, transcriber=ScriptedTranscriber([])).handle(spoken())
+    assert bot.said() == [COULDNT_LISTEN]
+    person, failed = convos.conversations()[0]["turns"]
+    assert not person["has_audio"] and failed["failed_at"] == "other" and "too big" in failed["error"]
+
+
+def test_nothing_tars_posts_by_itself_lands_while_a_voice_message_is_written_down(convos):
+    # Writing it down takes seconds: the posting thread's round can come meanwhile, and must wait for the answer.
+    bot, tools, now = ListeningBot(), tools_with(convos), time.time()
+    timer = NewReminder(TIMER, "pasta", from_name="Alon", due=now - 1)
+    tools.reminders.add(timer, TELEGRAM, channel=TELEGRAM, now=now - 60)
+    brain, heard = ScriptedBrain(["Nine o'clock."]), ScriptedTranscriber(["what time is it?"])
+    t = tars(bot, [brain], convos, tools, transcriber=heard)
+    writing_down = heard._transcribe
+
+    def transcribe(pcm):
+        t.deliver()  # as the posting thread would, mid-transcription
+        return writing_down(pcm)
+
+    heard._transcribe = transcribe
+    t.handle(spoken())
+    assert bot.said() == ["Nine o'clock."] and brain.remembered == []
+    t.deliver()
+    assert bot.said() == ["Nine o'clock.", "Your pasta timer is done."]
+
+
+def test_the_bot_downloads_a_file_by_its_id_and_never_puts_the_token_in_an_error():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path.endswith("/getFile"):
+            assert json.loads(request.content) == {"file_id": "AwACAgQ"}
+            return httpx.Response(200, json={"ok": True, "result": {"file_path": "voice/file_7.oga"}})
+        return httpx.Response(200, content=b"OggS...")
+
+    assert bot_answering(handler).download("AwACAgQ") == b"OggS..."
+    assert seen == ["/bot123:SECRET/getFile", "/file/bot123:SECRET/voice/file_7.oga"]
+
+    def gone(request):
+        if request.url.path.endswith("/getFile"):
+            return httpx.Response(200, json={"ok": True, "result": {"file_path": "voice/file_7.oga"}})
+        return httpx.Response(404)
+
+    with pytest.raises(TelegramError) as e:
+        bot_answering(gone).download("AwACAgQ")
+    assert e.value.status == 404 and "SECRET" not in str(e.value)

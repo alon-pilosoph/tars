@@ -157,11 +157,22 @@ class ScriptedRecorder:
 
 
 class ScriptedTranscriber:
+    """Speech to text that writes down each recording as the next of `texts`; one that's an exception is raised
+    instead. `heard`: the recordings it was given."""
+
     def __init__(self, texts):
         self.texts = iter(texts)
+        self.heard: list[bytes] = []
 
     def session(self):
-        return BufferedSession(lambda pcm: next(self.texts))
+        return BufferedSession(self._transcribe)
+
+    def _transcribe(self, pcm: bytes) -> str:
+        self.heard.append(pcm)
+        text = next(self.texts)
+        if isinstance(text, Exception):
+            raise text
+        return text
 
 
 class RecordingBrain:

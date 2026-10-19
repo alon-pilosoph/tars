@@ -25,6 +25,25 @@ BLOCK_SECONDS = BLOCK_SAMPLES / SAMPLE_RATE
 INAUDIBLE = 100
 
 
+def decode_recording(data: bytes) -> np.ndarray:
+    """A recording in any format libsndfile reads (Telegram's voice messages are Opus in Ogg, at 48 kHz), as the
+    16 kHz mono 16-bit samples every recording is kept in. ValueError if it can't be read."""
+    import soundfile
+    from scipy.signal import resample_poly
+
+    try:
+        samples, rate = soundfile.read(io.BytesIO(data), dtype="float32", always_2d=True)
+    except soundfile.LibsndfileError as e:
+        raise ValueError(f"can't read the recording ({e.error_string})") from None
+    except (RuntimeError, TypeError) as e:
+        raise ValueError(f"can't read the recording ({e})") from None
+    mono = samples.mean(axis=1)
+    if rate != SAMPLE_RATE:
+        divisor = np.gcd(int(rate), SAMPLE_RATE)
+        mono = resample_poly(mono, SAMPLE_RATE // divisor, int(rate) // divisor)
+    return (np.clip(mono, -1.0, 1.0) * 32767).astype(np.int16)
+
+
 def wav_bytes(pcm: bytes | np.ndarray) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as f:
