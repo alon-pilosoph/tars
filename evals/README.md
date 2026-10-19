@@ -105,6 +105,9 @@ in_minutes = 10
 [[scenario.turn]]
 say = "set a pasta timer for eight minutes"
 reminders = [{ kind = "timer", in_minutes = 8, ref = "pasta" }]
+# house = { lock = "locked", door = "closed", boiler = "off", ac = "off", blinds = "open", tv = "on" }   # optional:
+#   TARS's real home tool over a pretend Home Assistant and TV box (evals/house.py); jams = true or down = true for a
+#   lock that jams, or Home Assistant not answering
 
 [[scenario.turn]]
 say = "cancel that"
@@ -124,6 +127,7 @@ A turn's settings. Everything but `say` is optional, and anything left out isn't
 | `active` | exactly the reminders that should be set after the turn, entries as above |
 | `active_has` | reminders that should be among those set after it |
 | `sent` | exactly what it should send to the TARS page: `{ kind = "list", entries = 3 }`; `kind` can be a list of kinds |
+| `home` | exactly the changes it should make in the house, in any order; `[]` = none: `{ device = "boiler", action = "on", minutes = 40 }`, with any of `minutes`, `temperature`, `mode`, `fan`, `button` and `app` checked if given, and `title` and `goal` as regular expressions. A refused unlock isn't a change. Needs the scenario's `house` |
 | `says`, `never_says` | regular expressions (any case) that have to appear, or mustn't, in what's said |
 | `quick` | make Qwen's service fail on this turn: `down` or `limited` ("too many requests"). It then sits out its cooldown, as in TARS |
 | `after_minutes` | quiet before the turn; past `[llm] memory_minutes`, TARS starts fresh |

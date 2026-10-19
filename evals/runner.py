@@ -19,6 +19,7 @@ from openai import APIConnectionError, AuthenticationError, PermissionDeniedErro
 
 from voice_assistant.config import LLMConfig
 from voice_assistant.events import EventLog
+from voice_assistant.home import Request
 from voice_assistant.llm import (
     ACK_MARK,
     ASKED_TAG,
@@ -33,6 +34,7 @@ from voice_assistant.llm import (
 from voice_assistant.reminders import ADD, VOICE, WEB, NewReminder, Reminders, ReminderTools
 from voice_assistant.speech import split_sentences
 
+from .house import House, make_house
 from .scenarios import (
     ACKED,
     ROUTE_OF,
@@ -47,6 +49,7 @@ from .scenarios import (
     describe,
     describe_change,
     describe_row,
+    did,
     pair,
     row_matches,
 )
@@ -246,12 +249,14 @@ def play(
         quick = QuickClient(quick_client, usage)
         openai = OpenAIClient(openai_client, usage) if openai_client is not None else None
         quick_services = [QuickService(name, quick, model, cap) for name, cap in services]
-        brain = QuickChat(openai, llm, quick_services, reminders=tools, clock=clock)
+        house = make_house(scenario.house) if scenario.house is not None else None
+        home = house.tools if house else None
+        brain = QuickChat(openai, llm, quick_services, reminders=tools, clock=clock, home=home)
         turns, unavailable = [], ""
         for turn in scenario.turns:
             clock.skipped += turn.after_minutes * 60
             try:
-                turns.append(_play_turn(brain, quick, tools, turn, refs))
+                turns.append(_play_turn(brain, quick, tools, turn, refs, house))
             except Unavailable as e:
                 unavailable = str(e)
             unavailable = unavailable or quick.unavailable
@@ -262,11 +267,17 @@ def play(
         shutil.rmtree(folder, ignore_errors=True)
 
 
-def _play_turn(brain: QuickChat, quick: QuickClient, tools: ReminderTools, turn: Turn, refs: dict) -> TurnResult:
+def _play_turn(
+    brain: QuickChat, quick: QuickClient, tools: ReminderTools, turn: Turn, refs: dict, house: House | None = None
+) -> TurnResult:
     quick.fail, asked = turn.quick, prompt(turn)
     asked_at, start, first, said = time.time(), time.monotonic(), None, ""
+    known = turn.speaker != "unknown"
+    # Heard by voice, as at home; a voice speaker ID knows is named surely, an unknown one isn't named at all.
+    request = Request(turn.speaker if known else None, 0.9 if known else None, by_voice=True, heard=turn.say)
+    before = len(house.changes) if house else 0
     try:
-        for piece in brain.stream_reply(asked):
+        for piece in brain.stream_reply(asked, request):
             if first is None and piece.strip():
                 first = time.monotonic() - start
             said += piece
@@ -298,6 +309,11 @@ def _play_turn(brain: QuickChat, quick: QuickClient, tools: ReminderTools, turn:
         )
         wrong += [f"didn't send a {' or '.join(e.kind)}" for e in missing]
         wrong += [f"also sent a {s.kind}: {s.title!r}" for s in extra]
+    home_changes = house.changed_since(before) if house else []
+    if turn.home is not None:
+        _, missing, extra = pair(turn.home, home_changes, lambda e, c: e.matches(c))
+        wrong += [f"didn't {e.said()}" for e in missing]
+        wrong += [f"also did: {did(c['action'])} the {c['device']} ({c['result']})" for c in extra]
 
     if route == SKIPPED:
         brain.forget_last()  # overheard: nothing kept, nothing done
@@ -320,7 +336,7 @@ def _play_turn(brain: QuickChat, quick: QuickClient, tools: ReminderTools, turn:
         first,
         total,
         brain.quick_service,
-        [describe_change(c) for c in changes],
+        [describe_change(c) for c in changes] + [f"home: {did(c['action'])} the {c['device']}" for c in home_changes],
         [f"{s.kind}: {s.title}" for s in brain.sent],
     )
 

@@ -412,7 +412,7 @@ def test_a_conversation_deleted_while_it_goes_on_stays_deleted(speaker, tmp_path
     brain = assistant.brain
     original = brain.stream_reply
 
-    def delete_after_first(text):
+    def delete_after_first(text, request=None):
         if len(brain.asked) == 1:
             convos.delete(convos.conversations()[0]["id"])  # from the web UI, mid-conversation
         return original(text)
@@ -504,7 +504,7 @@ def test_a_failed_answer_is_kept_with_where_it_failed(speaker, tmp_path, monkeyp
 
 def test_a_bug_is_kept_as_a_failure_too(speaker, tmp_path):
     assistant, convos = logged_assistant(speaker, tmp_path, [b"q"], ["hi"])
-    assistant.brain.stream_reply = lambda text: iter(["fine"])
+    assistant.brain.stream_reply = lambda text, request=None: iter(["fine"])
     assistant._speak = raising(KeyError("oops"))
     assistant.converse(follow_up_s=4.0)
     assert turns_of(convos)[-1]["failed_at"] == "other"
@@ -612,7 +612,7 @@ def test_a_reply_that_acknowledges_a_reminder_and_puts_it_off_puts_it_off(speake
     )
     stream = assistant.brain.stream_reply
 
-    def putting_it_off(text):
+    def putting_it_off(text, request=None):
         assistant.brain.changes = [Change(SNOOZE, id=rid, minutes=10)]
         return stream(text)
 
@@ -629,7 +629,7 @@ def test_a_reminder_set_by_voice_is_made_once_the_answer_is_kept_in_its_conversa
     change = Change(ADD, NewReminder(TIMER, "pasta", due=time.time() + 720))
     stream = assistant.brain.stream_reply
 
-    def asking_for_a_timer(text):
+    def asking_for_a_timer(text, request=None):
         assistant.brain.changes = [change]
         return stream(text)
 

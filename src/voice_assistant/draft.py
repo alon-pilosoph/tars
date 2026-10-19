@@ -1,7 +1,8 @@
 """An answer prepared in the background after a short pause, while the recording goes on.
 
 It is played, logged and allowed to send anything only once the turn is confirmed over; if the speaker carries on,
-it is discarded. An early start costs at most a wasted request.
+it is discarded. An early start costs at most a wasted request. Anything the answer does in the house waits for
+go(): a draft may be thrown away, but a door it unlocked stays unlocked.
 """
 
 import threading
@@ -21,7 +22,8 @@ class Draft[T]:
 
     def __init__(self, turn: threading.Lock, prepare: Callable[[Draft[T]], T], discard: Callable[[T], None]):
         self.cancelled = False
-        self._ready, self._settled = threading.Event(), threading.Event()
+        self.going = False
+        self._ready, self._settled, self._decided = threading.Event(), threading.Event(), threading.Event()
         self._result: T | None = None
         self._error: Exception | None = None
         self._discard = discard
@@ -52,10 +54,22 @@ class Draft[T]:
         assert self._result is not None
         return self._result
 
+    def go(self) -> None:
+        """The turn is over and this answer will be heard: what it does may be done (may_act)."""
+        self.going = not self.cancelled
+        self._decided.set()
+
+    def may_act(self, timeout_s: float) -> bool:
+        """From the answer's own thread: blocks until the turn is over (True: go ahead) or the draft is thrown away
+        (False), at most `timeout_s`; False if neither happened by then."""
+        self._decided.wait(timeout_s)
+        return self.going and not self.cancelled
+
     def keep(self) -> None:
         self._settled.set()
 
     def cancel(self) -> None:
         """Returns at once; the draft's own thread discards the result."""
         self.cancelled = True
+        self._decided.set()
         self._settled.set()

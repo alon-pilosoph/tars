@@ -5,6 +5,7 @@ It says "TARS is ready." through the speaker and listens to the mic for a few se
 the mic is shared (PipeWire), so it works either way.
 """
 
+import functools
 import os
 import shutil
 import subprocess
@@ -310,6 +311,42 @@ def service_status(name: str, key: str, status: int, took: float) -> Result:
     return Result(name, OK, f"answers ({took:.1f} s)")
 
 
+def home_assistant(cfg: Config, token: str | None, ping: Callable[[], object]) -> Result:
+    """Home Assistant answers, with the token TARS has. `ping`: asks it, raising HomeError."""
+    from .home import TOKEN_KEY, HomeError
+
+    if not cfg.home.url:
+        return Result("Home Assistant", SKIP, "not used ([home] url is empty)")
+    if not token:
+        fix = f"in Home Assistant: your profile, Security, Long-lived access tokens; put it in .env as {TOKEN_KEY}"
+        return Result("Home Assistant", FAIL, f"no {TOKEN_KEY}", fix)
+    t = time.perf_counter()
+    try:
+        ping()
+    except HomeError as e:
+        return Result("Home Assistant", FAIL, str(e), f"is it running at {cfg.home.url}? docs/home.md")
+    return Result("Home Assistant", OK, f"answers at {cfg.home.url} ({time.perf_counter() - t:.1f} s)")
+
+
+def house(built, hass_ok: bool) -> list[Result]:
+    """Every device in [home], as TARS made it (home.build), and what each says about itself: the entities it reads,
+    whether a box or a blaster answers, a profile that was never tried. One that couldn't be made says why."""
+    from .hass import Entity
+    from .home import HomeError
+
+    results = [Result(name, FAIL, why, "docs/home.md") for name, why in built.unavailable.items()]
+    for name, device in (built.tools.devices if built.tools else {}).items():
+        if isinstance(device, Entity) and not hass_ok:
+            results.append(Result(name, SKIP, "needs Home Assistant"))
+            continue
+        try:
+            found = device.check()
+        except HomeError as e:
+            found = [(FAIL, str(e), "")]
+        results += [Result(name, status, detail, fix) for status, detail, fix in found] or [Result(name, OK, "ready")]
+    return results
+
+
 def check_all(cfg: Config, root: Path) -> int:
     import sounddevice as sd
     from dotenv import dotenv_values
@@ -415,6 +452,33 @@ def check_all(cfg: Config, root: Path) -> int:
 
         return Bot(token).me()
 
+    def secret(name: str) -> str | None:
+        return dotenv_values(env).get(name) or None
+
+    @functools.cache
+    def made_house():
+        """The house as TARS makes it: once, for both lines below."""
+        from .home import Context, build
+
+        context = Context(root, secret, announce=lambda line: None)
+        context.tv_agent = functools.partial(cli.make_tv_agent, cfg, env, context.announce)
+        return build(cfg.home, context), context
+
+    @functools.cache
+    def hass_check():
+        from .home import TOKEN_KEY
+
+        if not cfg.home.url:
+            return home_assistant(cfg, None, lambda: None)
+        _, context = made_house()
+        return home_assistant(cfg, secret(TOKEN_KEY), lambda: context.hass.ping())
+
+    def devices():
+        if not cfg.home.devices:
+            return Result("The house", SKIP, "no devices ([[home.devices]] in config.toml)")
+        built, _ = made_house()
+        return within(60, "The house", lambda: house(built, hass_check().status == OK), "a device didn't answer", "")
+
     def models():
         def load():
             t = time.perf_counter()
@@ -466,6 +530,8 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
+        ("Home Assistant", hass_check),
+        ("The house", devices),
         ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
         ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
         ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
