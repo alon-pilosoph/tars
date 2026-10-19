@@ -53,8 +53,8 @@ Anyone can acknowledge anything; the status records who.
   conversation is over. (Interrupting needs ["TARS stop"](roadmap.md#2-tars-stop-interrupting-a-reply).)
 - **Late ones say so.** Anything that came due while TARS was off, or in a long conversation, is said as soon as it
   can be, with "This was due at 8:00." A snoozed one is on time at its new time.
-- **When the voice is down**, only the chime plays; the reminder isn't counted as said, and it's tried again a
-  minute later.
+- **When the voice is down**, nothing plays, not even the chime: the line's audio is made first, and the chime and
+  the line come only once it exists. The reminder isn't counted as said, and it's tried again a minute later.
 
 ### On the web UI
 
@@ -88,12 +88,12 @@ assistant says them, the brain's tools set them, the web UI does both, and the T
 Telegram, each through that class. The web UI and the Telegram service are other processes; the assistant reads the
 table every 2 s, so a change made there is picked up within that.
 
-**Interrupting the wait, not a conversation.** The wake loop (`VerifiedTrigger.wait`) asks once per block of mic
-audio (80 ms) whether anything is due, and returns `DUE` if so. `run_forever` then says it: the chime, each due line
-(made ahead, as soon as the reminder is set, so it plays at once), then, for any that wait, a few seconds of
-listening without the wake word. While a conversation is going on nothing asks, so the "never over a conversation"
-rule needs no code of its own. What's said back answers the reminder, never the last wake, so it can't turn a
-rejected wake into a "real" one for training.
+**Interrupting the wait, not a conversation.** The wake loop (`VerifiedTrigger.wait`) asks once per block of mic audio
+(80 ms) whether anything is due, and returns `DUE` if so. `run_forever` then says it: the chime, each due line (made
+ahead, as soon as the reminder is set, so it plays at once; with no line ready, no chime either), then, for any that
+wait, a few seconds of listening without the wake word. While a conversation is going on nothing asks, so the "never
+over a conversation" rule needs no code of its own. What's said back answers the reminder, never the last wake, so it
+can't turn a rejected wake into a "real" one for training.
 
 **When the table fails** (a full SD card, a damaged file), what it says is due would stay due, and the wake loop
 stops the moment something is. So the clock that answers the wake loop keeps its own holds: a reminder it couldn't

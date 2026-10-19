@@ -27,9 +27,21 @@ from .reminders import Change, ReminderTools
 # growing the prompt forever.
 MAX_TURNS = 50
 
+
+def _escaped(marker: str) -> str:
+    """A marker as Qwen sometimes writes it, HTML-escaped ("&lt;look-up&gt;"): the same marker, and never to be said."""
+    return marker.replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _could_become(start: str, forms: tuple[str, ...]) -> bool:
+    """Whether a reply that so far is `start` may yet turn out to start with one of `forms`."""
+    return any(len(start) < len(form) and form.startswith(start) for form in forms)
+
+
 FOLLOW_UP_TAG = "[Follow-up, no wake word]"
 ASKED_TAG = "[Reply to your 'Did you call me?']"
 SKIP = "<skip>"
+SKIPS = (SKIP, _escaped(SKIP))
 SKIP_RULES = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "
@@ -41,7 +53,8 @@ SKIP_RULES = (
 REMINDER_TAG = "[Reply to the reminder you just said]"
 # How a reply acknowledges reminders: "<ack>" for the ones just said, "<ack 12>" (or "<ack 12, 14>") by number.
 ACK = "<ack>"
-ACK_MARK = re.compile(r"\s*<ack((?:[\s,]*\d+)*)\s*>")
+ACK_MARK = re.compile(r"\s*(?:<|&lt;)ack((?:[\s,]*\d+)*)\s*(?:>|&gt;)")
+ACK_STARTS = ("<ack", _escaped("<ack"))
 GOT_IT = "Got it."  # said for a bare <ack>
 ACK_RULES = (
     f"Messages starting with {REMINDER_TAG} answer a reminder, timer or message you just said aloud, or a timer "
@@ -53,19 +66,6 @@ ACK_RULES = (
 )
 
 
-def _escaped(marker: str) -> str:
-    """A marker as Qwen sometimes writes it, HTML-escaped ("&lt;look-up&gt;"): the same marker, and never to be said."""
-    return marker.replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _unescaped(text: str) -> str:
-    """`text` with its markers as written, whether or not Qwen HTML-escaped them."""
-    return text.replace("&lt;", "<").replace("&gt;", ">")
-
-
-ACK_STARTS = ("<ack", _escaped("<ack"))
-
-
 def split_ack(pieces: Iterable[str]) -> tuple[list[int] | None, Iterator[str]]:
     """Peek at the start of a streamed reply: (the reminder numbers acknowledged, [] for a bare <ack>, the rest of
     the reply) if it starts with an ack, as written or HTML-escaped, else (None, the whole reply). A bare <ack> with
@@ -75,14 +75,13 @@ def split_ack(pieces: Iterable[str]) -> tuple[list[int] | None, Iterator[str]]:
     for piece in stream:
         head += piece
         start = head.lstrip()
-        maybe = any(form.startswith(start[: len(form)]) for form in ACK_STARTS)
-        if not maybe or ">" in _unescaped(start) or len(start) > 40:
+        maybe = _could_become(start, ACK_STARTS) or start.startswith(ACK_STARTS)
+        if not maybe or ">" in start or "&gt;" in start or len(start) > 40:
             break
-    unescaped = _unescaped(head)
-    if not (mark := ACK_MARK.match(unescaped)):
+    if not (mark := ACK_MARK.match(head)):
         return None, itertools.chain([head], stream)
     ids = [int(n) for n in re.findall(r"\d+", mark.group(1))]
-    return ids, _or_else(itertools.chain([unescaped[mark.end() :]], stream), GOT_IT)
+    return ids, _or_else(itertools.chain([head[mark.end() :]], stream), GOT_IT)
 
 
 def _or_else(pieces: Iterable[str], default: str) -> Iterator[str]:
@@ -453,9 +452,6 @@ class Brain(Protocol):
         """Get a connection ready, when TARS wakes, so the reply doesn't wait to connect."""
 
 
-SKIPS = (SKIP, _escaped(SKIP))
-
-
 def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
     """Peek at the start of a streamed reply: (True, empty) if the model chose to skip, as written or HTML-escaped,
     else the full stream."""
@@ -464,7 +460,7 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
     for piece in stream:
         head += piece
         start = head.lstrip()
-        if not any(len(start) < len(form) and form.startswith(start) for form in SKIPS):
+        if not _could_become(start, SKIPS):
             break
     if head.strip().startswith(SKIPS):
         for _ in stream:  # Finish the stream so the exchange is recorded before it's forgotten.

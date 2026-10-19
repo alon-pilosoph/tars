@@ -12,6 +12,7 @@ import pytest
 import voice_assistant.assistant as assistant_module
 from voice_assistant.androidtv import AndroidTV, TvAgent, TvDevice, screen
 from voice_assistant.assistant import Announcements
+from voice_assistant.audio import chime
 from voice_assistant.home import HomeError, Request
 
 from .conftest import make_assistant, speech
@@ -358,29 +359,61 @@ def test_what_tars_announces_is_said_after_a_chime_and_joins_the_conversation(sp
     assert not assistant._due()
 
 
-def test_what_the_voice_couldnt_say_waits_and_is_said_once_it_can(speaker):
+def announcing(speaker, down):
+    """An assistant whose voice can't make the lines in `down`, and what it played; the clock moves by now[0]."""
     now = [1000.0]
     assistant, brain = make_assistant(speaker, [], [])
     played = []
     speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
-    down = [True]
 
     def voice(text):
-        if down[0]:
+        if text in down:
             raise ConnectionError("no voice")
         return iter([text.encode()])
 
     assistant.voice.stream = voice
     assistant.announcements = Announcements(clock=lambda: now[0])
+    return assistant, brain, played, now
+
+
+def test_what_the_voice_couldnt_say_waits_silently_and_is_said_once_it_can(speaker):
+    down = {"Toy Story is playing."}
+    assistant, brain, played, now = announcing(speaker, down)
     assistant.announcements.add("Toy Story is playing.")
     assistant.say_announcements()
-    assert b"Toy Story is playing." not in played and brain.remembered == []
+    assert played == [] and brain.remembered == []  # not even the chime
     assert not assistant._due()  # not tried again at once: the wake loop would do nothing else
-    down[0] = False
+    down.clear()
     now[0] += assistant_module.VOICE_RETRY_S
     assert assistant._due()
     assistant.say_announcements()
-    assert played[-1] == b"Toy Story is playing." and brain.remembered == ["Toy Story is playing."]
+    assert played == [chime(24_000), b"Toy Story is playing."] and brain.remembered == ["Toy Story is playing."]
+
+
+def test_what_couldnt_be_said_keeps_its_place_and_a_new_line_is_tried_at_once(speaker):
+    down = {"Netflix is open."}
+    assistant, _, played, _ = announcing(speaker, down)
+    assistant.announcements.add("Netflix is open.")
+    assistant.announcements.add("Toy Story is playing.")
+    assistant.say_announcements()
+    assert played[1:] == [b"Toy Story is playing."]
+    down.clear()
+    assistant.announcements.add("The volume is at 20.")
+    assert assistant._due()  # the voice may be back: no need to wait out the minute
+    played.clear()
+    assistant.say_announcements()
+    assert played[1:] == [b"Netflix is open.", b"The volume is at 20."]
+
+
+def test_a_line_that_waited_too_long_is_old_news_and_dropped(speaker):
+    down = {"Toy Story is playing."}
+    assistant, _, played, now = announcing(speaker, down)
+    assistant.announcements.add("Toy Story is playing.")
+    assistant.say_announcements()
+    down.clear()
+    now[0] += assistant_module.ANNOUNCEMENT_KEEP_S
+    assistant.say_announcements()
+    assert played == [] and not assistant.announcements.waiting()
 
 
 def test_a_reply_to_an_announcement_is_heard_without_the_wake_word(speaker):

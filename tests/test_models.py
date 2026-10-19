@@ -33,4 +33,6 @@ def test_a_stalled_download_fails_instead_of_hanging_the_first_start(tmp_path, m
     downloading.start()
     downloading.join(5)
     server.close()
-    assert failed and not path.exists() and not path.with_suffix(".onnx.part").exists()
+    for connection, _ in accepted:
+        connection.close()
+    assert accepted and failed and not path.exists() and not path.with_suffix(".onnx.part").exists()

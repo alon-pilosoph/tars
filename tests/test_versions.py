@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from voice_assistant import __main__ as cli
+from voice_assistant.config import ConfigError, load_config
 from voice_assistant.verify import ANSWER, VerifiedTrigger
 from voice_assistant.versions import ABOUT, CHECK, INSTALLED, MODEL, FixedPair, ModelVersions, Pair
 from voice_assistant.webui import create_app
@@ -274,3 +276,9 @@ def test_installs_and_the_web_ui_never_lose_each_others_changes(root):
     for t in threads:
         t.join(10)
     assert sorted(version_names(web)) == [INSTALLED, "v1", "v2", "v3", "v4"]
+
+
+def test_installing_models_without_a_learned_double_check_is_a_setup_problem(tmp_path):
+    (tmp_path / "config.toml").write_text("[wake]\nverify = false\n")
+    with pytest.raises(ConfigError, match="check_model"):
+        cli.install_models(load_config(tmp_path / "config.toml", local=False), tmp_path, tmp_path / "pair", None)

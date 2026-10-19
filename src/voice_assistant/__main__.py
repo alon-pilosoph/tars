@@ -446,7 +446,10 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt), brain, voice
     key = api_key(env, DEEPGRAM_KEY)
-    streaming = FluxTranscriber(key, cfg.stt) if cfg.stt.provider == "flux" else DeepgramTranscriber(key, cfg.stt)
+    if cfg.stt.provider == "flux":
+        streaming = FluxTranscriber(key, cfg.stt, has_backup=client is not None)
+    else:
+        streaming = DeepgramTranscriber(key, cfg.stt)
     if client is None:
         return streaming, brain, voice
     backup = OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
@@ -647,7 +650,7 @@ def phrase_folder(cfg: Config, root: Path) -> Path:
 
 def typed(cfg: Config, root: Path) -> None:
     """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
-    from .assistant import Assistant
+    from .assistant import UNPROMPTED_WAIT_S, Assistant
 
     made: list = []  # the assistant, once made: what the TV agent says when it's done is said through it
     # One at a time: the agent's line, from its own thread, never over a reply or in the middle of one.
@@ -657,8 +660,8 @@ def typed(cfg: Config, root: Path) -> None:
         print(f"\nTARS:  {line}\n\nYou:  ", end="", flush=True)
         if made:
             with speaking:
-                made[0].say(line, keep=False)
-                made[0].brain.remember_said(line)
+                if made[0].say(line, keep=False, wait_s=UNPROMPTED_WAIT_S):
+                    made[0].brain.remember_said(line)
 
     _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce))
     with Speaker(
@@ -717,7 +720,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             name_threshold=cfg.speaker.wake_threshold,
             journal=journal,
             humor=cfg.llm.humor,
-            phrases=phrase_folder(cfg, root),
+            phrase_folder=phrase_folder(cfg, root),
             reminders=reminders,
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,

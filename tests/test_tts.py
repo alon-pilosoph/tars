@@ -229,3 +229,14 @@ def test_no_more_than_a_few_sentences_synthesize_at_once_and_the_rest_wait_their
 
 def test_cartesia_makes_no_more_sentences_at_once_than_its_free_plan_allows():
     assert cartesia([])._turns._value == CartesiaSpeech.AT_ONCE == 2
+
+
+def test_a_garbled_message_from_the_voice_is_the_service_failing_not_a_bug():
+    garbled = FakeSocket(True)
+    garbled.recv = lambda timeout=None: "<html>502 Bad Gateway</html>"
+    with pytest.raises(ServiceError, match="Deepgram voice"):
+        b"".join(voice("flux-cliff-en", [garbled]).stream("Hi."))
+    no_audio = CartesiaSocket()
+    no_audio.recv = lambda timeout=None: json.dumps({"type": "chunk"})
+    with pytest.raises(ServiceError, match="Cartesia voice"):
+        b"".join(cartesia([no_audio]).stream("Hi."))

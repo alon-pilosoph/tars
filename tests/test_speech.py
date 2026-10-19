@@ -78,14 +78,14 @@ def test_html_entities_are_said_as_what_they_stand_for():
 def test_the_half_sentence_left_when_a_reply_is_stopped_never_reaches_the_voice():
     asked = []
     voice = types.SimpleNamespace(stream=lambda text: asked.append(text) or iter([b"audio"]))
-    made, stopped = [], threading.Event()
+    made, constructed = [], threading.Event()
 
     def pieces():
         yield "Half a sent"
-        stopped.wait()
+        constructed.wait()
         made[0].stop()  # thrown away while it was being written
         yield "ence."
 
     made.append(StreamedReply(pieces(), voice, lambda sentence: None))
-    stopped.set()
+    constructed.set()
     assert list(made[0]) == [] and asked == []

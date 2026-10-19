@@ -69,19 +69,14 @@ def test_split_skip_drains_the_stream_so_the_exchange_is_recorded():
     assert consumed == [SKIP, " trailing"]
 
 
-class FakeClock:
-    """Seconds that pass only when a test says: clock.now += 60."""
-
-    def __init__(self):
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
+@pytest.fixture
+def now():
+    return [1000.0]
 
 
 @pytest.fixture
-def clock():
-    return FakeClock()
+def clock(now):
+    return lambda: now[0]
 
 
 def seen_messages(brain, text):
@@ -89,24 +84,24 @@ def seen_messages(brain, text):
     return int("".join(brain.stream_reply(text)))
 
 
-def test_memory_keeps_the_whole_conversation_until_it_goes_quiet(clock):
+def test_memory_keeps_the_whole_conversation_until_it_goes_quiet(clock, now):
     brain = OpenAIChat(fake_openai_chat(lambda m: str(len(m) - 1)), LLMConfig(memory_minutes=10), clock=clock)
     assert seen_messages(brain, "first") == 1
-    clock.now += 60
+    now[0] += 60
     assert seen_messages(brain, "second") == 3
-    clock.now += 9 * 60
+    now[0] += 9 * 60
     assert seen_messages(brain, "after 9 minutes") == 5
-    clock.now += 11 * 60
+    now[0] += 11 * 60
     assert seen_messages(brain, "after 11 minutes") == 1
 
 
-def test_forgotten_chatter_does_not_keep_memory_alive(clock):
+def test_forgotten_chatter_does_not_keep_memory_alive(clock, now):
     brain = OpenAIChat(fake_openai_chat(lambda m: str(len(m) - 1)), LLMConfig(memory_minutes=10), clock=clock)
     seen_messages(brain, "real question")
-    clock.now += 8 * 60
+    now[0] += 8 * 60
     seen_messages(brain, "overheard")
     brain.forget_last()
-    clock.now += 3 * 60  # 11 minutes since the last real exchange
+    now[0] += 3 * 60  # 11 minutes since the last real exchange
     assert seen_messages(brain, "next real question") == 1
 
 
@@ -137,15 +132,15 @@ def test_forgetting_twice_forgets_only_once():
     assert asked(client) == ["kept", "An answer.", "next"]
 
 
-def test_what_tars_said_by_itself_is_part_of_the_conversation(clock):
+def test_what_tars_said_by_itself_is_part_of_the_conversation(clock, now):
     # A reminder posted in a chat: "remind me again in ten minutes" right after needs to know which.
     client = fake_openai_chat(lambda messages: "Done.")
     brain = OpenAIChat(client, LLMConfig(web_search=False, send=False, memory_minutes=60), clock=clock)
     brain.remember_said("Alon, a reminder: stretch.")
-    clock.now += 30
+    now[0] += 30
     "".join(brain.stream_reply("again in ten minutes"))
     assert asked(client) == ["Alon, a reminder: stretch.", "again in ten minutes"]
-    clock.now += 61 * 60
+    now[0] += 61 * 60
     brain.remember_said("Your pasta timer is done.")  # long after: a new conversation
     "".join(brain.stream_reply("thanks"))
     assert asked(client) == ["Your pasta timer is done.", "thanks"]
@@ -398,15 +393,15 @@ def test_when_cerebras_says_nothing_openai_answers():
     assert brain.answered_by == llm.FALLBACK
 
 
-def test_after_cerebras_fails_openai_answers_alone_for_a_while(clock):
+def test_after_cerebras_fails_openai_answers_alone_for_a_while(clock, now):
     down = [True]
     brain, _, cerebras = cerebras_brain(lambda m: OpenAIError("timed out") if down[0] else "Quick.", clock=clock)
     assert "".join(brain.stream_reply("hi")) == "From OpenAI." and len(cerebras.requests) == 1
     down[0] = False
-    clock.now += llm.QUICK_COOLDOWN_S - 1
+    now[0] += llm.QUICK_COOLDOWN_S - 1
     assert "".join(brain.stream_reply("again")) == "From OpenAI."
     assert len(cerebras.requests) == 1 and brain.answered_by == llm.FALLBACK  # no waiting out its timeout
-    clock.now += 2
+    now[0] += 2
     assert "".join(brain.stream_reply("and now?")) == "Quick." and brain.answered_by == llm.QUICK
 
 
@@ -433,14 +428,14 @@ def test_groq_answers_first_and_cerebras_is_never_asked():
     assert groq.requests[0]["max_completion_tokens"] == llm.QUICK_MAX_TOKENS
 
 
-def test_when_groq_is_out_of_tokens_cerebras_answers_until_groq_says_to_come_back(clock):
+def test_when_groq_is_out_of_tokens_cerebras_answers_until_groq_says_to_come_back(clock, now):
     limited = [True]
     brain, groq, _ = groq_then_cerebras(lambda m: too_many_requests("30") if limited[0] else "From Groq.", clock=clock)
     assert "".join(brain.stream_reply("hi")) == "From Cerebras." and brain.answered_by == llm.QUICK
     limited[0] = False
-    clock.now += 29
+    now[0] += 29
     assert "".join(brain.stream_reply("again")) == "From Cerebras." and len(groq.requests) == 1
-    clock.now += 2
+    now[0] += 2
     assert "".join(brain.stream_reply("and now?")) == "From Groq."
     assert [m["content"] for m in groq.requests[-1]["messages"][1:]] == [
         "hi",
@@ -624,8 +619,9 @@ def test_both_models_are_told_what_they_cant_do_so_they_never_pretend(send):
         ("  <ack>  ", [], llm.GOT_IT),
         ("<ack 12> Noted.", [12], "Noted."),
         ("<ack 12, 14>Both done.", [12, 14], "Both done."),
-        ("&lt;ack&gt;", [], llm.GOT_IT),  # Qwen HTML-escapes a marker now and then
+        ("&lt;ack&gt;", [], llm.GOT_IT),
         ("&lt;ack 12&gt; Noted.", [12], "Noted."),
+        ("&lt;ack 3&gt; 5 &lt; 6.", [3], "5 &lt; 6."),  # what follows is left as written
         ("&amp; then some.", None, "&amp; then some."),
         ("A <ack> later on isn't one.", None, "A <ack> later on isn't one."),
         ("<acknowledged>", None, "<acknowledged>"),

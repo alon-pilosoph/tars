@@ -442,12 +442,12 @@ def test_a_house_change_doesnt_hold_the_conversation_while_it_waits_for_the_turn
 
 def test_a_reply_stopped_while_the_house_answers_makes_no_more_calls_and_leaves_the_next_reply_alone():
     h = house(boiler="off")
-    made, nexts = [], []
+    made = []
     call = h.tools.call
 
     def thrown_away_meanwhile(a, request):
-        made[0].interrupt()  # they kept talking: the draft is thrown away while the boiler turns on
-        nexts.append(made[0].stream_reply("and the lights?"))  # the next one starts
+        made[0].interrupt()  # they kept talking while the boiler turned on: this reply is thrown away,
+        made[0].stream_reply("and the lights?")  # and the next one has begun
         return call(a, request)
 
     h.tools.call = thrown_away_meanwhile

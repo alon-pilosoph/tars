@@ -90,8 +90,8 @@ to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice whi
 | Qwen's reply runs into its cap after saying or doing something | OpenAI's model carries on, told what was already said, so nothing is said twice |
 | Qwen writes a tool call out as text (`<toolcall>`, `<function=`, also HTML-escaped) | the reply is cut off there, unsaid, and OpenAI takes the turn |
 | Qwen writes a marker HTML-escaped (`&lt;look-up&gt;`, `&lt;skip&gt;`) | it still counts as the marker: it isn't spoken, and does what the marker does |
-| The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed; a reminder or how a task on the TV went waits and is tried again a minute later, and the lines made ahead are tried again once a minute, not at every chance |
-| Speaker ID | the request is answered as from an unknown voice |
+| The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed; a reminder or how a task on the TV went waits, with no chime, and is tried again a minute later; the lines made ahead are tried again once a minute, not at every chance |
+| Speaker ID | "Yes?" for the wake word, and the request answered as from an unknown voice |
 | The microphone stops delivering audio | the assistant exits so systemd restarts it |
 | A write to the event log | `journal.py` absorbs it; the reply goes ahead |
 
@@ -149,21 +149,21 @@ something it could have done. Turning a feature off in config changes both promp
 | `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
 | `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
 
-With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links,
-which need web search) and uses them itself, saving those turns the hand-off. A request with a part of each ("set a
-timer, and what's the weather?") gets both: Qwen does its part with its tools, then hands the rest over, and what its
-tools did goes along, so nothing is done twice (the tools also turn down a repeat). Told only to reply with the marker
-"and nothing else", Qwen deliberated over which to do until it ran out of tokens, and the turn fell to OpenAI as if
-Qwen had failed ([evals](evals.md#what-it-found)). Now and then, in a long reply, Qwen writes a tool call out as text
-(`<toolcall> <function=send> ...`) instead of making it. Its words go to the voice as they come, so the reply is cut
-off at the first sign of one (`TOOL_CALL_TEXT`, also when written HTML-escaped), unsaid, and OpenAI takes the turn.
-An HTML-escaped marker (`&lt;look-up&gt;`, and so `<skip>` and `<ack>`) still counts as the marker: it isn't spoken, and the turn is handed over
-as usual. Groq's replies are capped at 500 tokens (its free key allows 1,000 a minute), Cerebras's at 2,000: a reply
-that runs out on Groq before anything was said or done, like a long note, is written on Cerebras instead; one that
-already said something goes to OpenAI, which is told what was said and carries on from it. A tool round never says
-again what the reply already said. `tools/capability_bench.py` checks it gets them right; [choosing the quick
-model](models.md) has every model and reasoning effort tried, and how to try the next. The marker
-isn't `<think>` because Qwen 3 models write their own reasoning between those tags.
+With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links, which
+need web search) and uses them itself, saving those turns the hand-off. A request with a part of each ("set a timer, and
+what's the weather?") gets both: Qwen does its part with its tools, then hands the rest over, and what its tools did
+goes along, so nothing is done twice (the tools also turn down a repeat). Told only to reply with the marker "and
+nothing else", Qwen deliberated over which to do until it ran out of tokens, and the turn fell to OpenAI as if Qwen had
+failed ([evals](evals.md#what-it-found)). Now and then, in a long reply, Qwen writes a tool call out as text
+(`<toolcall> <function=send> ...`) instead of making it. Its words go to the voice as they come, so the reply is cut off
+at the first sign of one (`TOOL_CALL_TEXT`, also when written HTML-escaped), unsaid, and OpenAI takes the turn. An
+HTML-escaped marker (`&lt;look-up&gt;`, `&lt;skip&gt;`, `&lt;ack&gt;`) still counts as the marker: it isn't spoken, and
+does what the marker does. Groq's replies are capped at 500 tokens (its free key allows 1,000 a minute), Cerebras's at
+2,000: a reply that runs out on Groq before anything was said or done, like a long note, is written on Cerebras instead;
+one that already said something goes to OpenAI, which is told what was said and carries on from it. A tool round never
+says again what the reply already said. `tools/capability_bench.py` checks it gets them right; [choosing the quick
+model](models.md) has every model and reasoning effort tried, and how to try the next. The marker isn't `<think>`
+because Qwen 3 models write their own reasoning between those tags.
 
 **Why a quick model that hands off, rather than one model for everything:** Qwen on Groq starts its first sentence
 in about 0.4 s against about 0.7 s for OpenAI's model, and answers what it can itself. The turns that need the web
@@ -252,7 +252,7 @@ The assistant is `src/voice_assistant/`:
 | Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
-| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late), `errors.py` (a voice or speech-to-text service failing, as one error) |
+| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API) |
 | The house | `home.py` (the `home` tool, its rules, the `Device` interface, plugins), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |

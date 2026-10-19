@@ -157,16 +157,21 @@ class DeepgramFileTranscriber:
         return BufferedSession(self._transcribe)
 
     def _transcribe(self, pcm: bytes) -> str:
+        import httpx
+
         if not pcm:
             return ""
-        response = self._http.post(
-            self._url,
-            content=wav_bytes(pcm),
-            headers={"Authorization": f"Token {self._key}", "Content-Type": "audio/wav"},
-        )
-        response.raise_for_status()
-        channels = response.json()["results"]["channels"]
-        return channels[0]["alternatives"][0]["transcript"].strip() if channels else ""
+        try:
+            response = self._http.post(
+                self._url,
+                content=wav_bytes(pcm),
+                headers={"Authorization": f"Token {self._key}", "Content-Type": "audio/wav"},
+            )
+            response.raise_for_status()
+            channels = response.json()["results"]["channels"]
+            return channels[0]["alternatives"][0]["transcript"].strip() if channels else ""
+        except (httpx.HTTPError, ValueError, KeyError, IndexError) as e:  # the last three: an answer garbled
+            raise ServiceError(f"Deepgram speech to text: {e!r}") from e
 
 
 def transcribe_recording(transcriber: Transcriber, pcm: bytes | np.ndarray) -> str:
@@ -212,10 +217,10 @@ class DeepgramSession:
         self._outbox.put(json.dumps({"type": "Finalize"}))
         with self._answered:
             self._answered.wait_for(lambda: self._got >= wanted or self._closed, FINAL_TIMEOUT_S)
-            if self._got < wanted and self._error:
-                raise ServiceError(f"Deepgram's speech to text failed: {self._error!r}") from self._error
             if self._got < wanted:
-                raise ServiceError("Deepgram didn't finish the transcript in time")
+                if self._error:
+                    raise ServiceError(f"Deepgram speech to text: {self._error!r}") from self._error
+                raise ServiceError("Deepgram speech to text: no transcript in time")
             return " ".join(self._final).strip()
 
     def finish(self) -> None:
@@ -266,10 +271,11 @@ class DeepgramSession:
 
 class FluxTranscriber:
     """Deepgram's Flux: transcribes while you talk and also decides when you're done, from how you sound and what
-    you've said."""
+    you've said. `has_backup`: another transcriber has the whole recording (FallbackTranscriber), so a turn whose last
+    words never came raises for it rather than returning the words so far."""
 
-    def __init__(self, api_key: str, cfg: STTConfig):
-        self._key = api_key
+    def __init__(self, api_key: str, cfg: STTConfig, has_backup: bool = False):
+        self._key, self._has_backup = api_key, has_backup
         params = {
             "model": "flux-general-en",
             "encoding": "linear16",
@@ -281,7 +287,7 @@ class FluxTranscriber:
         self._url = f"{FLUX_URL.format(host=cfg.deepgram_host)}?{urlencode(params)}"
 
     def session(self) -> Session:
-        return FluxSession(self._url, self._key)
+        return FluxSession(self._url, self._key, self._has_backup)
 
 
 class FluxSession:
@@ -289,7 +295,8 @@ class FluxSession:
     (turn_state()). Flux closes a connection that's sent a KeepAlive, so none is sent; it keeps an idle one open
     well past the few seconds TARS waits for a follow-up."""
 
-    def __init__(self, url: str, key: str):
+    def __init__(self, url: str, key: str, has_backup: bool = False):
+        self._has_backup = has_backup
         self._outbox: queue.Queue[bytes | None] = queue.Queue()
         self._changed = threading.Condition()
         self._state, self._text = TurnState.LISTENING, ""
@@ -313,9 +320,9 @@ class FluxSession:
 
     def transcript(self) -> str:
         """The words so far, at once, until the recording is finished; then the turn's last words, which Flux sends
-        within a moment. "" if nobody said anything. Raises if Flux failed before the turn was over, or never sent
-        its last words, even with some words in: they may be only the start, and the backup has the whole
-        recording."""
+        within a moment. "" if nobody said anything. Raises if Flux failed before the turn was over, even with some
+        words in: they may be only the start, and the backup has the whole recording. If it never sent the last
+        words, raises when there's a backup, and otherwise returns the words so far."""
         if not self._fed:
             return ""
         with self._changed:
@@ -324,9 +331,9 @@ class FluxSession:
                     lambda: self._state == TurnState.DONE or self._closed or self._error is not None, FLUX_LAST_WORDS_S
                 )
             if self._failed():
-                raise ServiceError(f"Flux failed: {self._error!r}") from self._error
-            if self._finished and self._state != TurnState.DONE and not self._closed:
-                raise ServiceError("Flux didn't send the last words in time")
+                raise ServiceError(f"Flux: {self._error!r}") from self._error
+            if self._finished and self._state != TurnState.DONE and not self._closed and self._has_backup:
+                raise ServiceError("Flux: no last words in time")
             return self._text.strip()
 
     def _failed(self) -> bool:
