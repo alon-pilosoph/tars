@@ -48,8 +48,8 @@ tap. The Status page loads its own data when it's opened, and with Refresh while
 
 TARS serves one household on its own network, so the web UI has no accounts. Instead, the server only answers to
 local addresses and names, Tailscale names and `[web] allowed_hosts` (421 otherwise), and only accepts changes from
-its own page (403 otherwise). That closes the two ways a page elsewhere could reach it through someone's browser
-([how](architecture.md#the-web-ui)).
+its own page or a page at one of those `allowed_hosts` (403 otherwise). That closes the two ways a page elsewhere
+could reach it through someone's browser ([how](architecture.md#the-web-ui)).
 **Trade-off:** anyone on the home network can use it, and Sent is one list for the whole house.
 
 ### A committed build
@@ -104,13 +104,13 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 | `POST /api/events/{id}/cluster` | `{"cluster_id": n}` moves a request to a voice and pins it there |
 | `DELETE /api/events/{id}` | A wake and its audio (its conversation stays) |
 | `GET /api/clusters` | Voices, with sizes and their newest request clips |
-| `POST /api/clusters` | `{"name": ...}` a new voice |
+| `POST /api/clusters` | `{"name": ..., "kind": ...}` a new voice; without `kind`, a person if it has a name, unknown if not |
 | `POST /api/clusters/{id}` | `{"name": ..., "kind": ...}` rename, or mark "not a person"; without `kind`, a "not a person" voice stays one |
 | `POST /api/clusters/merge` | `{"keep": a, "absorb": b}` |
 | `POST /api/recluster` | Regroup the requests by voice and rebuild the voiceprints |
 | `GET /api/models` | The pair in use and its test results, the version history, and the labeled wakes since it was installed |
 | `POST /api/models/use` | `{"version": ...}` puts a version in use (`"installed"` is config.toml's) |
-| `GET /api/reminders` | Whether reminders are on, every one (active first) with what TARS will say, the names TARS knows by voice, and the defaults |
+| `GET /api/reminders` | Whether reminders are on, up to 200 of them (the active ones first, soonest first, then the rest, newest first) with what TARS will say, the names TARS knows by voice, and the defaults |
 | `POST /api/reminders` | `{"kind", "text", "for_name", "from_name", "due" (Unix time) or "when_back": true, "needs_ack", "repeat_every_min", "max_tries"}`; 400 says what's wrong |
 | `POST /api/reminders/{id}/ack` | Acknowledged on the page |
 | `POST /api/reminders/{id}/snooze` | `{"minutes": n}` said again then, with all its tries |
@@ -122,11 +122,12 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 cd webui
 npm install
 npm run dev        # hot reload on :5173, API proxied to :8080 (or $TARS_API)
-npm test           # unit tests (Vitest): markdown, formatting, folding, the Refresh snapshot
+npm test           # unit tests (Vitest): markdown, reminders, formatting, Status, Refresh, filters, changes
 npm run build      # typecheck, then rebuild src/voice_assistant/webui_static/ (committed)
 npm run e2e        # the functional checks against a real backend (below)
 npm run visual     # the screenshot tests (below); npm run visual:update accepts an intended change
 npm run screenshots  # docs/screenshots/, from the current build
+npm run site       # the How TARS works page, site/index.html into site/dist/ (below)
 ```
 
 Add `?demo` to the URL for built-in sample data with no server (`?demo=empty` for none, `?demo=long` for
@@ -137,12 +138,14 @@ use.
 **Layout:** `src/store/` holds the state (`core.ts`), what views derive from it (`selectors.ts`), loading and the
 Refresh snapshot (`load.ts`), tabs and filters (`nav.ts`), menus, dialogs and scrolling (`ui.ts`), and the actions
 by area (`items.ts`, `conversations.ts`, `voices.ts`, `models.ts`, `reminders.ts`, with the shared shapes in
-`actions.ts`), and the Status page's own load (`health.ts`); `index.ts` exports them all. `src/components/` has one file per page or part. `src/demo.ts`,
-`src/demoParams.ts` and `src/linkStates.ts` are only loaded with `?demo`.
+`actions.ts`), and the Status page's own load (`health.ts`); `index.ts` exports all but `actions.ts`, which the
+action files import directly. `src/components/` has one file per page or part. `src/demo.ts`, `src/demoParams.ts`
+and `src/linkStates.ts` are only loaded with `?demo`.
 
 ## The checks
 
-Both run headless in the installed Chrome with Playwright.
+All three run headless with Playwright: in the installed Chrome locally, and the end-to-end check in Playwright's
+own Chromium in CI.
 
 - **`npm run e2e`** (`checks/e2e.spec.ts`, a few seconds): builds a throwaway copy of the demo log with
   `tools/webui_demo.py`, serves it, and uses the page like a person would: rate and undo, fix a transcript, tick a
@@ -154,6 +157,9 @@ Both run headless in the installed Chrome with Playwright.
 - **`npm run visual`** (`checks/visual.spec.ts`, under 2 minutes): Playwright's `toHaveScreenshot()` on the states
   a link can open and after interactions (opening a menu, rating, ticking, a dialog), on desktop and phone. The page
   loads from the build on disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.
+- **`npm run site`** (`checks/site.spec.ts`): builds the [How TARS works](https://tars.alonp.dev) page from
+  `site/index.html` into `site/dist/`, cutting real pages of the demo (Review, Voices, Models, Reminders) into it,
+  with the fonts and icons inlined, and takes its link preview (`og.png`). It fails if a place it fills in is missing.
 
 After a change that's meant to look different, run `npm run visual:update`, look at the new images in the diff,
 and commit them with the change. `npm test` runs the unit tests (Vitest), `npm run lint` the linter

@@ -83,9 +83,9 @@ flowchart LR
    region = "eu-central-1"
    ```
 
-4. **Start it.** On a Mac, `uv sync --extra backup` first (on the Pi, `install-pi.sh` installs every extra).
-   `uv run voice-assistant --backup` runs a pass now; the first uploads everything kept so far, which can take a
-   while. `deploy/install-pi.sh` installs and starts the timer. `uv run voice-assistant --check` then has a Backup
+4. **Start it.** On a Mac, `uv sync --all-extras` first, for boto3, the `backup` extra (on the Pi, `install-pi.sh`
+   installs every extra). `uv run voice-assistant --backup` runs a pass now; the first uploads everything kept so
+   far, which can take a while. `deploy/install-pi.sh` installs and starts the timer. `uv run voice-assistant --check` then has a Backup
    line: the bucket answers, how many files are there, and when the last good pass was.
 
 ## Bringing things back

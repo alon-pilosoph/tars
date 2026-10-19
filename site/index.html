@@ -29,7 +29,7 @@
         document.documentElement.dataset.level = "basic";
       }
     </script>
-    <!-- The only external request. To self-host, swap for @font-face rules pointing at the woff2 files the web app uses. -->
+    <!-- The only external request. To self-host, swap for @font-face rules pointing at the woff2 files the web UI uses. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -37,7 +37,7 @@
       href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap"
     />
     <style>
-      /* Tokens: the web app's Day journal system, in its dark palette.
+      /* Tokens: the web UI's Day journal system, in its dark palette.
      The same names as app.css, so the app panels inside their shadow roots inherit them. */
       :root {
         --paper: #11151c;
@@ -1122,7 +1122,7 @@
         font-weight: 600;
       }
 
-      /* App panels: a piece of the real web app, cut in at build time */
+      /* App panels: a piece of the real web UI, cut in at build time */
       .shot {
         margin: 0;
         display: flex;
@@ -1772,7 +1772,7 @@
           <h2>Every wake teaches the next pair of models</h2>
           <p class="lead">
             The generic models start out good on voices they have never heard. The loop makes them good on yours. People
-            only take part in three places, all in the web app.
+            only take part in three places, all in the web UI.
           </p>
         </div>
         <ol class="loop">
@@ -1798,7 +1798,7 @@
             <span class="num people">3</span>
             <div class="split">
               <div class="text">
-                <div class="k">People, in the web app</div>
+                <div class="k">People, in the web UI</div>
                 <h3>People answer the rest in Review</h3>
                 <p>
                   A few taps a day. Each unsure wake has its audio, what TARS heard, what happened, and TARS's guess
@@ -1815,7 +1815,7 @@
             <span class="num people">4</span>
             <div class="split">
               <div class="text">
-                <div class="k">People, in the web app</div>
+                <div class="k">People, in the web UI</div>
                 <h3>Voices are grouped automatically</h3>
                 <p>Naming one lets TARS greet that person by name.</p>
               </div>
@@ -1910,7 +1910,7 @@
           <div class="kicker">Reminders, timers and messages</div>
           <h2>It says it again until someone says “got it”</h2>
           <p class="lead">
-            The same voice that answers can also speak first. You set it by voice or from the web app, and TARS says it
+            The same voice that answers can also speak first. You set it by voice or from the web UI, and TARS says it
             when it's due.
           </p>
         </div>
@@ -2121,7 +2121,7 @@
           </tbody>
         </table>
         <p class="ladder-note">
-          A failed answer is kept in its conversation, with where it failed, and the web app shows it.
+          A failed answer is kept in its conversation, with where it failed, and the web UI shows it.
         </p>
       </section>
 
@@ -2135,7 +2135,7 @@
             <h3>A process for each job, one folder</h3>
             <div class="procs">
               <div>The assistant</div>
-              <div>The web app, FastAPI and React</div>
+              <div>The web UI, FastAPI and React</div>
               <div>Telegram, if it's on</div>
               <div>A backup to S3 every 15 minutes, if it's on</div>
               <div class="db">One SQLite database, WAL mode</div>
@@ -2155,16 +2155,17 @@
             <h3>Every answer is measured, every change evaluated</h3>
             <p>
               Each answer is kept with how long each stage took, which model wrote it and, if it failed, where and why.
-              29 whole conversations, hand-offs followed through, check the brain: 143 of 145 runs right.
+              47 whole conversations, hand-offs followed through, check the brain: the first 29 got 143 of 145 runs
+              right, and the house's 18 are still to be measured.
             </p>
           </div>
           <div>
             <h3>One command checks it all</h3>
             <p>
               <code>voice-assistant --check</code> checks the keys, devices, models, services, the voice and the mic,
-              and says what's wrong and what to do. Once it runs, the web app's Status page shows much of the same,
-              live: each process by its heartbeat, each service with its key and its own status page, and the Pi's CPU,
-              memory, temperature and disk.
+              and says what's wrong and what to do. Once it runs, the web UI's Status page shows much of the same each
+              time it's opened or refreshed: each process by its heartbeat, each service with its key and its own status
+              page, and the Pi's CPU, memory, temperature and disk.
             </p>
           </div>
           <div>

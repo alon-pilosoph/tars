@@ -71,10 +71,11 @@ language = "en"
 deepgram_host = "api.eu.deepgram.com"
 
 [llm]
-# The quick brain, the same Qwen on two services. Groq answers first (GROQ_API_KEY in .env): about 0.15 s to its first
-# sentence, served from Frankfurt. Its free key allows 8,000 tokens a minute, 1,000 of them written, so when it says
-# "too many requests", Cerebras answers (CEREBRAS_API_KEY; about 0.25 s, from the US) until Groq is ready again; if
-# Groq hasn't started answering within half a second, Cerebras is asked too and the first to answer is kept.
+# The quick brain, the same Qwen on two services. Groq answers first (GROQ_API_KEY in .env): about 0.4 s to its first
+# sentence at the low reasoning and tools below, served from Frankfurt. Its free key allows 8,000 tokens a minute, 1,000
+# of them written, so when it says "too many requests", Cerebras answers (CEREBRAS_API_KEY; about 0.6 s, from the US)
+# until Groq is ready again; if Groq hasn't started answering within half a second, Cerebras is asked too and the
+# first to answer is kept.
 # Anything that needs the web, or a tool it doesn't have, goes to `model` below, and so does everything while both fail.
 # Empty, or no key for it = not used; neither = `model` answers everything.
 groq_model = "qwen/qwen3.8-27b"
@@ -128,7 +129,8 @@ never read the tag aloud, and if it says unknown, don't guess who it is."""
 [tts]
 # deepgram: model = a Flux TTS or Aura-2 voice, e.g. "flux-wes-en" or "aura-2-zeus-en" (voice and instructions
 # are then ignored). openai: model = "gpt-4o-mini-tts" with the voice and instructions below; Onyx sounds best, but
-# TARS answers about 0.6 s later with it (docs/latency.md). cartesia: model = "sonic-3.6" with cartesia_voice.
+# its first audio comes about 0.8 s later than James's (docs/latency.md). cartesia: model = "sonic-3.6" with
+# cartesia_voice.
 provider = "cartesia"
 model = "sonic-3.6"
 voice = "onyx"
@@ -224,8 +226,8 @@ tv_model = ""
 # module = "examples.my_house"
 
 # One [[home.devices]] for each thing TARS may work, by the name people call it. Home Assistant's entity ids are in
-# Settings > Devices & services > Entities; TARS works locks, switches, lights, fans, covers, climate, media players,
-# and reads sensors.
+# Settings > Devices & services > Entities; TARS works locks, switches, lights, fans, toggle helpers (input_boolean),
+# covers, climate, media players, and reads sensors.
 #
 # [[home.devices]]
 # name = "front door"
@@ -249,8 +251,9 @@ tv_model = ""
 
 [backup]
 # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and every six hours
-# the database, voiceprints and trained wake models. voice-assistant --backup does it, every 15 minutes by its systemd
-# timer, with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env. Set enabled, bucket and region in config.local.toml.
+# the database, voiceprints, trained wake models and config.local.toml. voice-assistant --backup does it, every 15
+# minutes by its systemd timer, with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env. Set enabled, bucket and
+# region in config.local.toml.
 enabled = false
 bucket = ""
 region = ""
@@ -262,5 +265,6 @@ keep_local_days = 30
 # Move the audio to Glacier Deep Archive this many days after it's made: cheaper storage, but up to 48 hours to bring
 # back, and at a household's few GB a year the moves cost about what it saves. 0 = never.
 archive_after_days = 0
-# The copy of the database, voiceprints and trained wake models, kept this long; the newest always stays.
+# The copy of the database, voiceprints, trained wake models and config.local.toml, kept this long; the newest always
+# stays.
 keep_snapshots_days = 30

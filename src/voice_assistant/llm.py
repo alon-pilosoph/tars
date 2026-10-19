@@ -829,11 +829,11 @@ def _cooldown(e: Exception) -> float:
 
 
 class QuickChat(OpenAIChat):
-    """Answers with Qwen on the first of its services that isn't failing (Groq about 0.15 s to the first sentence,
-    Cerebras about 0.25 s, against about 0.7 s for OpenAI's), with its own tools when `quick_tools` is on, and hands
-    a turn to OpenAI's model, tools and all, when it needs the web (or anything it has no tool for), to the thinking
-    model when it needs real thinking, and to OpenAI when every service fails. One conversation: each sees what the
-    others said."""
+    """Answers with Qwen on the first of its services that isn't failing (at low reasoning with its tools, Groq about
+    0.4 s to the first sentence, Cerebras about 0.6 s, against about 0.7 s for OpenAI's), with its own tools when
+    `quick_tools` is on, and hands a turn to OpenAI's model, tools and all, when it needs the web (or anything it has
+    no tool for), to the thinking model when it needs real thinking, and to OpenAI when every service fails. One
+    conversation: each sees what the others said."""
 
     first_answerer = QUICK
 

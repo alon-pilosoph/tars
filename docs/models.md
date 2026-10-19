@@ -216,7 +216,7 @@ uv run python tools/router_bench.py                                     # Jev as
 `--brain` is where it runs: `cerebras`, `groq` and `openai` through the Chat Completions API (any compatible service
 works the same way; without `--model`, `cerebras` and `groq` take their `[llm]` model), `responses` through OpenAI's
 Responses API (`ResponsesQuickChat`: OpenAI's models only take tools with reasoning there), `claude` through
-Anthropic's Messages API (`ClaudeQuickChat`, needs `uv sync --extra claude`). Keys come from `.env`:
+Anthropic's Messages API (`ClaudeQuickChat`, needs the `claude` extra: `uv sync --all-extras`). Keys come from `.env`:
 `CEREBRAS_API_KEY`, `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. Try each reasoning effort the model has,
 lowest first, and paste the new rows in. Before switching TARS to a new model, read its wrong answers in the run's
 output too, not only its score: what it gets wrong matters as much as how often.
