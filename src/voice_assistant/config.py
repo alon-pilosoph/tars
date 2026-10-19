@@ -197,6 +197,33 @@ class TelegramConfig:
     reasoning_effort: str = "low"
 
 
+# The Home Assistant domains TARS works ([[home.devices]] entity = "<domain>.<id>"); sensors are only read.
+HOME_DOMAINS = ("lock", "switch", "light", "fan", "input_boolean", "cover", "climate", "media_player")
+HOME_SENSORS = ("sensor", "binary_sensor")
+# A device worked over ADB rather than through Home Assistant ([[home.devices]] kind = "androidtv").
+ANDROID_TV = "androidtv"
+EVERYTHING = "everything"  # what the home tool calls all the devices at once, for their status
+_ENTITY = re.compile(r"[a-z_]+\.[a-z0-9_]+")
+_SERVICE = re.compile(r"[a-z_]+\.[a-z0-9_]+")
+_MODULE = re.compile(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*")
+
+
+@dataclass
+class HomeConfig:
+    # Home Assistant on the home network (docs/home.md), whose token is HOME_ASSISTANT_TOKEN in .env. Empty = none.
+    url: str = ""
+    # Who may unlock by voice, by their names in the Voices list. Empty = nobody.
+    unlock_voices: list[str] = field(default_factory=list)
+    # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
+    unlock_threshold: float = 0.6
+    # The model that works an Android TV step by step, reading its screen. Empty = [llm] model.
+    tv_model: str = ""
+    # Code of your own for devices Home Assistant doesn't work: a name, and { module = "...", and its own settings }.
+    plugins: dict[str, dict] = field(default_factory=dict)
+    # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).
+    devices: list[dict] = field(default_factory=list)
+
+
 @dataclass
 class BackupConfig:
     # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): voice-assistant --backup, every 15 minutes by
@@ -231,6 +258,7 @@ class Config:
     web: WebConfig
     reminders: RemindersConfig
     telegram: TelegramConfig
+    home: HomeConfig
     backup: BackupConfig
 
 
@@ -426,4 +454,90 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
+    return problems + _home_problems(cfg.home)
+
+
+def _home_problems(home: HomeConfig) -> list[str]:
+    """What's wrong with [home]. A plugin's devices are checked by the plugin when they're made; here only that
+    the plugin is named."""
+    problems: list[str] = []
+    if home.url and not re.fullmatch(r"https?://[^\s/]+(:\d+)?/?", home.url):
+        problems.append(f"[home] url must be an address like http://homeassistant.local:8123, not {home.url!r}")
+    if not 0 < home.unlock_threshold <= 1:
+        problems.append("[home] unlock_threshold must be more than 0 and at most 1")
+    if any(not v.strip() for v in home.unlock_voices):
+        problems.append("[home] unlock_voices has an empty name")
+    for name, plugin in home.plugins.items():
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+            problems.append(f"[home.plugins] {name!r}: a name is lowercase letters, digits and _")
+        if not (isinstance(plugin.get("module"), str) and _MODULE.fullmatch(plugin["module"])):
+            problems.append(f'[home.plugins.{name}] needs module, the Python module to load, like "my_house"')
+    names: set[str] = set()
+    for i, d in enumerate(home.devices, 1):
+        name = d.get("name")
+        where = f"[[home.devices]] {name!r}" if isinstance(name, str) and name.strip() else f"[[home.devices]] #{i}"
+        if not (isinstance(name, str) and name.strip()):
+            problems.append(f"{where} needs a name")
+        elif name.strip().lower() == EVERYTHING:
+            problems.append(f"{where}: {EVERYTHING!r} is the name for every device at once")
+        elif name.strip().lower() in names:
+            problems.append(f"{where}: two devices have that name")
+        else:
+            names.add(name.strip().lower())
+        kind = d.get("kind")
+        if kind is None:
+            problems += _entity_problems(home, d, where)
+        elif kind == ANDROID_TV:
+            if not (isinstance(d.get("address"), str) and d["address"].strip()):
+                problems.append(f"{where} ({ANDROID_TV}) needs address, its IP address on the home network")
+            extra = [k for k in d if k not in ("name", "kind", "address")]
+            problems += [f"{where} ({ANDROID_TV}) has no setting {k}" for k in extra]
+        elif not (isinstance(kind, str) and kind.partition(".")[0] in home.plugins and kind.partition(".")[2]):
+            problems.append(
+                f"{where}: kind must be {ANDROID_TV} or a plugin's, like my_house.ac, with the plugin under "
+                f"[home.plugins]; for a Home Assistant entity leave kind out (not {kind!r})"
+            )
+    return problems
+
+
+def _entity_problems(home: HomeConfig, d: dict, where: str) -> list[str]:
+    """A device worked through Home Assistant: its entity, and the settings its domain may have."""
+    entity, problems = d.get("entity"), []
+    if not (isinstance(entity, str) and _ENTITY.fullmatch(entity)):
+        return [f"{where} needs entity, Home Assistant's id for it, like lock.front_door (or a kind)"]
+    domain = entity.partition(".")[0]
+    if domain not in HOME_DOMAINS + HOME_SENSORS:
+        kinds = ", ".join(HOME_DOMAINS + HOME_SENSORS)
+        problems.append(f"{where}: TARS works {kinds}; not {domain}")
+    if not home.url:
+        problems.append(f"{where} goes through Home Assistant: set [home] url")
+    allowed = {"name", "entity", "details"}
+    allowed |= {"door", "battery"} if domain == "lock" else set()
+    allowed |= {"timer"} if domain in ("switch", "light", "fan", "input_boolean") else set()
+    problems += [f"{where} ({domain}) has no setting {k}" for k in d if k not in allowed]
+    for key, domains in (("door", ("binary_sensor",)), ("battery", ("sensor",))):
+        value = d.get(key)
+        if key in d and not (isinstance(value, str) and _ENTITY.fullmatch(value) and value.split(".")[0] in domains):
+            problems.append(f"{where}: {key} must be a {domains[0]}.* entity, not {value!r}")
+    details = d.get("details", [])
+    if not (isinstance(details, list) and all(isinstance(e, str) and _ENTITY.fullmatch(e) for e in details)):
+        problems.append(f'{where}: details must be a list of entity ids, like ["sensor.boiler_time_left"]')
+    if "timer" in d:
+        t = d["timer"]
+        fine = (
+            isinstance(t, dict)
+            and set(t) == {"service", "field", "max"}
+            and isinstance(t["service"], str)
+            and _SERVICE.fullmatch(t["service"])
+            and isinstance(t["field"], str)
+            and t["field"].strip()
+            and isinstance(t["max"], int)
+            and not isinstance(t["max"], bool)
+            and 1 <= t["max"] <= 24 * 60
+        )
+        if not fine:
+            problems.append(
+                f'{where}: timer must be {{ service = "<domain>.<service>", field = "<its minutes field>", '
+                "max = <minutes, up to 1440> }"
+            )
     return problems

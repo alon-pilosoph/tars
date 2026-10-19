@@ -64,7 +64,10 @@ def estimate(
             per_run[s.id] = saved[s.id]
         else:
             unknown.append(s.id)
-    typical = _average_use(list(per_run.values())) if per_run else {}
+    # A scenario never run costs what an average one does: of those picked, or else of every one on record, so a run
+    # of only new scenarios isn't estimated at nothing.
+    known = list(per_run.values()) or list(saved.values())
+    typical = _average_use(known) if known else {}
     total: Use = {}
     for s in scenarios:
         for model, u in per_run.get(s.id, typical).items():

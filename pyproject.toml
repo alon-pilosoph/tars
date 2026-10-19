@@ -23,6 +23,9 @@ dependencies = [
     "uvicorn>=0.30",
     "websockets>=14",
     "onnxruntime>=1.20",
+    "psutil>=7",  # the Status page's CPU, memory, temperature and uptime
+    "soundfile>=0.14.0",  # reading voice messages (Opus in Ogg)
+    "httpx>=0.28",  # Home Assistant, Telegram, Deepgram's endpoint for whole recordings, and the status pages
 ]
 
 [project.urls]
@@ -43,6 +46,14 @@ echo = [
 backup = [
     "boto3>=1.40",
 ]
+# An Android TV box, over ADB ([[home.devices]] kind = "androidtv").
+tv = [
+    "adb-shell>=0.4.4",
+]
+# examples/my_house: its Tuya IR blaster.
+my-house = [
+    "tinytuya>=1.17",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -54,11 +65,9 @@ packages = ["src/voice_assistant"]
 [dependency-groups]
 dev = [
     "anthropic>=1",
-    "httpx>=0.28.1",
     "livekit>=1.1",
     "pytest>=9.1.1",
     "ruff==0.16.10",
-    "soundfile>=0.14.0",
 ]
 # What training/ needs from this environment (training.household, training.hub): uv run --group training ...
 training = [
@@ -73,6 +82,11 @@ training = [
 name = "openwakeword"
 version = "0.6.0"
 requires-dist = ["onnxruntime>=1.10,<2", "tqdm>=4,<5", "scipy>=1.3,<2", "scikit-learn>=1,<2", "requests>=2,<3"]
+
+[tool.pytest.ini_options]
+# examples/ holds plugins with their own tests, imported as TARS imports them: from the project's folder.
+testpaths = ["tests", "examples"]
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 120

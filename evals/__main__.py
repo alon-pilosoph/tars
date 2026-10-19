@@ -46,7 +46,14 @@ REPO = Path(__file__).parents[1]
 PROVIDERS = {p.name.lower(): p for p in QUICK_PROVIDERS}
 WAITS_S = (10, 20, 40, 60, 60)
 # What the brain's behavior comes from besides config.toml: its rules, prompts and tools.
-BRAIN_CODE = ("src/voice_assistant/llm.py", "src/voice_assistant/reminders.py", "src/voice_assistant/conversations.py")
+BRAIN_CODE = (
+    "src/voice_assistant/llm.py",
+    "src/voice_assistant/reminders.py",
+    "src/voice_assistant/conversations.py",
+    "src/voice_assistant/home.py",
+    "src/voice_assistant/hass.py",
+    "src/voice_assistant/androidtv.py",
+)
 
 
 class Stop:

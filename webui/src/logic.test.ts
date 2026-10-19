@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { post, writesDone, writesMade } from "./api";
 import {
+  ago,
+  diskLine,
+  duration,
   failedLine,
   fmtSize,
   metricChange,
+  pageLine,
   personName,
+  processLine,
+  processorLine,
   reminderEnded,
   reminderSetVia,
   reminderWhere,
@@ -18,7 +24,16 @@ import {
 import { md, plain } from "./markdown";
 import { type State, forPerson, get, personShown } from "./store";
 import { normalize, snapshotOf, within } from "./store/load";
-import type { ApiConversation, Cluster, Item, Reminder, TarsEvent } from "./types";
+import type {
+  ApiConversation,
+  Cluster,
+  Item,
+  MachineHealth,
+  ProcessHealth,
+  Reminder,
+  StatusPage,
+  TarsEvent,
+} from "./types";
 
 describe("md", () => {
   it("escapes before adding any tag", () => {
@@ -152,6 +167,58 @@ describe("format", () => {
     );
     expect(metricChange({ name: "TV", current: "0.0", candidate: "0.0", lower_is_better: true })?.verdict).toBe("same");
     expect(metricChange({ name: "odd", current: "n/a", candidate: "1" })).toBeNull();
+  });
+});
+
+describe("the Status page", () => {
+  const NOW = 1_800_000_000;
+  const proc = (x: Partial<ProcessHealth>): ProcessHealth => ({
+    name: "assistant",
+    label: "The assistant",
+    running: true,
+    started: NOW - 3 * 86400,
+    beat: NOW - 12,
+    version: "9bc2ba5",
+    unit_state: "active",
+    ...x,
+  });
+  it("says how long, in the unit that reads best", () => {
+    expect([duration(40), duration(12 * 60), duration(5 * 3600), duration(3 * 86400)]).toEqual([
+      "40 seconds",
+      "12 minutes",
+      "5 hours",
+      "3 days",
+    ]);
+    expect([ago(NOW - 3, NOW), ago(NOW - 600, NOW)]).toEqual(["just now", "10 minutes ago"]);
+    expect(fmtSize(58 * 1073741824)).toBe("58.0 GB");
+  });
+  it("says a process is running, stopped, or never seen, and flags all but the first", () => {
+    expect(processLine(proc({}), NOW)).toEqual({ text: "Running for 3 days, commit 9bc2ba5", bad: false });
+    expect(processLine(proc({ unit_state: null, version: "" }), NOW).text).toBe("Running for 3 days");
+    expect(processLine(proc({ running: false, beat: NOW - 7200, unit_state: "failed" }), NOW)).toEqual({
+      text: "Stopped: last heard from 2 hours ago; systemd says failed",
+      bad: true,
+    });
+    expect(processLine(proc({ running: false, beat: null, started: null, unit_state: null }), NOW)).toEqual({
+      text: "Not seen running",
+      bad: true,
+    });
+  });
+  it("flags a service's own trouble, but not a status page it couldn't read", () => {
+    const page = (indicator: StatusPage["indicator"], description: string) => ({ indicator, description, url: "" });
+    expect(pageLine(page("none", "All Systems Operational"))).toEqual({ text: "All Systems Operational", bad: false });
+    expect(pageLine(page("minor", "Partially Degraded Service")).bad).toBe(true);
+    expect(pageLine(page("unknown", "Couldn't read it (ConnectError)"))).toEqual({
+      text: "Couldn't read it (ConnectError)",
+      bad: false,
+    });
+    expect(pageLine(null)).toEqual({ text: "No status page", bad: false });
+  });
+  it("says the machine's numbers in words", () => {
+    const gb = 1073741824;
+    const m = { disk_total: 58 * gb, disk_free: 37 * gb, cpu_percent: 13.6, load: [0.42, 0.5, 0.48], cores: 4 };
+    expect(diskLine(m as MachineHealth)).toBe("37.0 GB free of 58.0 GB (36% used)");
+    expect(processorLine(m as MachineHealth)).toBe("14% busy; load 0.42, 0.5, 0.48 on 4 cores");
   });
 });
 

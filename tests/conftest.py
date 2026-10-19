@@ -157,17 +157,30 @@ class ScriptedRecorder:
 
 
 class ScriptedTranscriber:
+    """Speech to text that writes down each recording as the next of `texts`; one that's an exception is raised
+    instead. `heard`: the recordings it was given."""
+
     def __init__(self, texts):
         self.texts = iter(texts)
+        self.heard: list[bytes] = []
 
     def session(self):
-        return BufferedSession(lambda pcm: next(self.texts))
+        return BufferedSession(self._transcribe)
+
+    def _transcribe(self, pcm: bytes) -> str:
+        self.heard.append(pcm)
+        text = next(self.texts)
+        if isinstance(text, Exception):
+            raise text
+        return text
 
 
 class RecordingBrain:
     def __init__(self, replies=()):
         self.replies = iter(replies)
         self.asked = []
+        self.requests = []
+        self.remembered = []
         self.forgotten = 0
         self.sent = []
         self.changes = []
@@ -180,12 +193,16 @@ class RecordingBrain:
     def interrupt(self):
         pass
 
-    def stream_reply(self, text):
+    def stream_reply(self, text, request=None):
         self.asked.append(text)
+        self.requests.append(request)
         return iter([next(self.replies, "ok")])
 
     def forget_last(self):
         self.forgotten += 1
+
+    def remember_said(self, text):
+        self.remembered.append(text)
 
 
 class SilentReply:

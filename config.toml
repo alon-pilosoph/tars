@@ -204,6 +204,49 @@ brain = "openai"
 service_tier = ""
 reasoning_effort = "low"
 
+[home]
+# The house (docs/home.md): TARS checks and changes the devices listed below, by voice ("is the front door locked?",
+# "boiler on for 40 minutes", "make it 22", "close the blinds", "play Toy Story on Stremio"). A change is "done" only
+# when the device reports it, and a reply that's still a draft changes nothing. Put this machine's own [home] in
+# config.local.toml: the address, the entity ids and who may unlock are the household's, not the repo's.
+#
+# Home Assistant on the home network; its token is HOME_ASSISTANT_TOKEN in .env. Empty = none.
+url = ""
+# Who may unlock by voice, by their names in the web UI's Voices list. TARS unlocks only for them, recognised from the
+# request itself, and only when they said "unlock"; never from a typed message or a chat. Empty = nobody.
+unlock_voices = []
+# How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
+unlock_threshold = 0.6
+# The model that works an Android TV step by step, reading its screen. Empty = [llm] model.
+tv_model = ""
+# Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
+# [home.plugins.my_house]
+# module = "examples.my_house"
+
+# One [[home.devices]] for each thing TARS may work, by the name people call it. Home Assistant's entity ids are in
+# Settings > Devices & services > Entities; TARS works locks, switches, lights, fans, covers, climate, media players,
+# and reads sensors.
+#
+# [[home.devices]]
+# name = "front door"
+# entity = "lock.front_door"
+# door = "binary_sensor.front_door_door"            # optional: TARS won't lock an open door
+#
+# [[home.devices]]
+# name = "boiler"
+# entity = "switch.boiler"
+# details = ["sensor.boiler_time_left"]             # optional: read out with its status
+# timer = { service = "switcher_kis.turn_on_with_timer", field = "timer_minutes", max = 150 }  # optional: "on for 40"
+#
+# [[home.devices]]
+# name = "AC"
+# entity = "climate.living_room"
+#
+# [[home.devices]]
+# name = "tv"
+# kind = "androidtv"                                # over ADB: python -m voice_assistant.androidtv pair
+# address = "192.168.1.60"
+
 [backup]
 # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and once a day the
 # database, voiceprints and trained wake models. voice-assistant --backup does it, every 15 minutes by its systemd

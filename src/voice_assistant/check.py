@@ -5,6 +5,7 @@ It says "TARS is ready." through the speaker and listens to the mic for a few se
 the mic is shared (PipeWire), so it works either way.
 """
 
+import functools
 import os
 import shutil
 import subprocess
@@ -60,19 +61,24 @@ Check = Callable[[], Result | Iterable[Result]]
 
 
 def run(checks: list[tuple[str, Check]]) -> list[Result]:
-    """Every check, in order. One that raises is a failure with the error, never the end of the run."""
+    """Every check, in order, each printed as it's done."""
     results = []
     for name, check in checks:
-        try:
-            got = check()
-        except (Exception, SystemExit) as e:  # noqa: BLE001 - reported, and the rest still run (a bad setting exits)
-            got = Result(name, FAIL, str(e) if isinstance(e, SystemExit) else f"{type(e).__name__}: {e}")
-            if not isinstance(e, OSError | RuntimeError | ValueError | SystemExit):
-                traceback.print_exc()
-        for r in [got] if isinstance(got, Result) else got:
+        for r in outcome(name, check):
             print(line(r), flush=True)
             results.append(r)
     return results
+
+
+def outcome(name: str, check: Check) -> list[Result]:
+    """A check's results. One that raises is a failure with the error, never the end of a run (a bad setting exits)."""
+    try:
+        got = check()
+    except (Exception, SystemExit) as e:  # noqa: BLE001 - reported, and the rest still run
+        got = Result(name, FAIL, str(e) if isinstance(e, SystemExit) else f"{type(e).__name__}: {e}")
+        if not isinstance(e, OSError | RuntimeError | ValueError | SystemExit):
+            traceback.print_exc()
+    return [got] if isinstance(got, Result) else list(got)
 
 
 def line(r: Result) -> str:
@@ -372,54 +378,64 @@ def service_status(name: str, key: str, status: int, took: float) -> Result:
     return Result(name, OK, f"answers ({took:.1f} s)")
 
 
-def check_all(cfg: Config, root: Path) -> int:
-    import sounddevice as sd
+def home_assistant(cfg: Config, token: str | None, ping: Callable[[], object]) -> Result:
+    """Home Assistant answers, with the token TARS has. `ping`: asks it, raising HomeError."""
+    from .home import TOKEN_KEY, HomeError
+
+    if not cfg.home.url:
+        return Result("Home Assistant", SKIP, "not used ([home] url is empty)")
+    if not token:
+        fix = f"in Home Assistant: your profile, Security, Long-lived access tokens; put it in .env as {TOKEN_KEY}"
+        return Result("Home Assistant", FAIL, f"no {TOKEN_KEY}", fix)
+    t = time.perf_counter()
+    try:
+        ping()
+    except HomeError as e:
+        return Result("Home Assistant", FAIL, str(e), f"is it running at {cfg.home.url}? docs/home.md")
+    return Result("Home Assistant", OK, f"answers at {cfg.home.url} ({time.perf_counter() - t:.1f} s)")
+
+
+def house(built, hass_ok: bool) -> list[Result]:
+    """Every device in [home], as TARS made it (home.build), and what each says about itself: the entities it reads,
+    whether a box or a blaster answers, a profile that was never tried. One that couldn't be made says why."""
+    from .hass import Entity
+    from .home import HomeError
+
+    results = [Result(name, FAIL, why, "docs/home.md") for name, why in built.unavailable.items()]
+    for name, device in (built.tools.devices if built.tools else {}).items():
+        if isinstance(device, Entity) and not hass_ok:
+            results.append(Result(name, SKIP, "needs Home Assistant"))
+            continue
+        try:
+            found = device.check()
+        except HomeError as e:
+            found = [(FAIL, str(e), "")]
+        results += [Result(name, status, detail, fix) for status, detail, fix in found] or [Result(name, OK, "ready")]
+    return results
+
+
+def with_keys_there(cfg: Config, env: Path) -> tuple[Config, set[str], bool]:
+    """The setup cut down to the keys in `env` (config.with_keys), the keys, and whether they're enough to run on; if
+    they aren't, the setup as it's written."""
+    from . import __main__ as cli
+
+    have = cli.env_keys(env)
+    try:
+        return with_keys(cfg, have)[0], have, True
+    except ConfigError:
+        return cfg, have, False
+
+
+def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
+    """The cloud services TARS uses, each asked with its own key: --check runs them, and so does the web UI's Status
+    page. A service TARS doesn't use, as config.toml and .env set it up, is a SKIP."""
     from dotenv import dotenv_values
 
     from . import __main__ as cli
-    from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
     from .tts import CARTESIA_API, CARTESIA_VERSION
 
     env = root / ".env"
-    have, asked = cli.env_keys(env), cfg
-    try:
-        cfg, _ = with_keys(cfg, have)
-        have_keys = True
-    except ConfigError:
-        have_keys = False
-
-    def audio_device(kind: str):
-        names, default_in, default_out = device_names()
-        wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
-        return device(kind, wanted, find_device, names, default_in if kind == "input" else default_out)
-
-    def listen():
-        print(f"(listening {LISTEN_S:.0f} s: say something)", flush=True)
-
-        def measure():
-            with Microphone(find_device(cfg.audio.input_device, "input")) as mic:
-                return mic_level(mic.read, round(LISTEN_S / BLOCK_SECONDS))
-
-        return within(
-            LISTEN_S + 7,
-            "Microphone",
-            measure,
-            "it didn't open, or sent no audio",
-            "it may be waiting for permission (macOS: run it from a terminal you can see, and allow the microphone), "
-            "or in use by something that won't share it",
-        )
-
-    def speaking():
-        if not have_keys:
-            return Result("Voice", SKIP, "needs the API keys")
-        _, _, tts = cli.make_pipeline(cfg, root, typed=True)
-        out = find_device(cfg.audio.output_device, "output")
-
-        def say():
-            with Speaker(out, tts.sample_rate, cfg.audio.playback_prebuffer_s) as speaker:
-                return voice(tts.stream, lambda audio: speaker.play_pcm_stream(iter(audio), tts.sample_rate))
-
-        return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")
+    cfg, have, have_keys = with_keys_there(cfg, env)
 
     def openai():
         if OPENAI_KEY not in have:
@@ -462,6 +478,8 @@ def check_all(cfg: Config, root: Path) -> int:
     def cartesia():
         if cfg.tts.provider != "cartesia":
             return Result("Cartesia", SKIP, "not used")
+        if not have_keys:
+            return Result("Cartesia", SKIP, "needs the API keys")
         key = cli.api_key(env, CARTESIA_KEY)
         t = time.perf_counter()
         try:
@@ -476,6 +494,87 @@ def check_all(cfg: Config, root: Path) -> int:
         from .telegram import Bot
 
         return Bot(token).me()
+
+    return [
+        ("OpenAI", openai),
+        *((provider.name, lambda provider=provider: quick(provider)) for provider in QUICK_PROVIDERS),
+        ("Deepgram", deepgram),
+        ("Cartesia", cartesia),
+        ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
+    ]
+
+
+def check_all(cfg: Config, root: Path) -> int:
+    import sounddevice as sd
+    from dotenv import dotenv_values
+
+    from . import __main__ as cli
+    from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
+    from .health import PROCESSES, expected
+
+    env = root / ".env"
+    asked = cfg
+    cfg, _, have_keys = with_keys_there(cfg, env)
+
+    def audio_device(kind: str):
+        names, default_in, default_out = device_names()
+        wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
+        return device(kind, wanted, find_device, names, default_in if kind == "input" else default_out)
+
+    def listen():
+        print(f"(listening {LISTEN_S:.0f} s: say something)", flush=True)
+
+        def measure():
+            with Microphone(find_device(cfg.audio.input_device, "input")) as mic:
+                return mic_level(mic.read, round(LISTEN_S / BLOCK_SECONDS))
+
+        return within(
+            LISTEN_S + 7,
+            "Microphone",
+            measure,
+            "it didn't open, or sent no audio",
+            "it may be waiting for permission (macOS: run it from a terminal you can see, and allow the microphone), "
+            "or in use by something that won't share it",
+        )
+
+    def speaking():
+        if not have_keys:
+            return Result("Voice", SKIP, "needs the API keys")
+        _, _, tts = cli.make_pipeline(cfg, root, typed=True)
+        out = find_device(cfg.audio.output_device, "output")
+
+        def say():
+            with Speaker(out, tts.sample_rate, cfg.audio.playback_prebuffer_s) as speaker:
+                return voice(tts.stream, lambda audio: speaker.play_pcm_stream(iter(audio), tts.sample_rate))
+
+        return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")
+
+    def secret(name: str) -> str | None:
+        return dotenv_values(env).get(name) or None
+
+    @functools.cache
+    def made_house():
+        """The house as TARS makes it: once, for both lines below."""
+        from .home import Context, build
+
+        context = Context(root, secret, announce=lambda line: None)
+        context.tv_agent = functools.partial(cli.make_tv_agent, cfg, env, context.announce)
+        return build(cfg.home, context), context
+
+    @functools.cache
+    def hass_check():
+        from .home import TOKEN_KEY
+
+        if not cfg.home.url:
+            return home_assistant(cfg, None, lambda: None)
+        _, context = made_house()
+        return home_assistant(cfg, secret(TOKEN_KEY), lambda: context.hass.ping())
+
+    def devices():
+        if not cfg.home.devices:
+            return Result("The house", SKIP, "no devices ([[home.devices]] in config.toml)")
+        built, _ = made_house()
+        return within(60, "The house", lambda: house(built, hass_check().status == OK), "a device didn't answer", "")
 
     def models():
         def load():
@@ -520,23 +619,15 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Local models", models),
         ("Echo cancellation", echo),
         ("Voiceprints", speakers),
-        ("OpenAI", openai),
-        *((provider.name, lambda provider=provider: quick(provider)) for provider in QUICK_PROVIDERS),
-        ("Deepgram", deepgram),
-        ("Cartesia", cartesia),
+        *service_checks(asked, root),
         ("Voice", speaking),
         ("Microphone", listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status)),
-        ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
+        ("Home Assistant", hass_check),
+        ("The house", devices),
         ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
-        ("voice-assistant", lambda: systemd("voice-assistant", systemd_state)),
-        ("voice-assistant-web", lambda: systemd("voice-assistant-web", systemd_state)),
-        *(
-            [("voice-assistant-telegram", lambda: systemd("voice-assistant-telegram", systemd_state))]
-            if cfg.telegram.enabled
-            else []
-        ),
+        *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),
     ]
     print("Checking TARS...\n", flush=True)

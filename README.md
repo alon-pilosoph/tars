@@ -26,13 +26,18 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 - **Evaluated as whole conversations**: hand-offs followed through, corrections, failures mid-conversation, every turn
   checked, with costs estimated and capped ([evals](docs/evals.md)).
 - **Reminders, timers and messages** that repeat until someone says "got it" ([reminders](docs/reminders.md)).
+- **Works the house** through Home Assistant: locks, switches, lights, covers, the AC, the TV. A change is "done"
+  only when the device reports it, nothing is done by a draft, and the door unlocks only for a trusted voice that
+  asked. An agent plays things on an Android TV, checking the screen step by step; anything else is a plugin
+  ([the house](docs/home.md)).
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
+- **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:
+  every part running, the services, the Pi ([web UI](docs/web-ui.md)).
+- **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
+  sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
 - **Backed up to S3** every 15 minutes, with a daily snapshot; old audio leaves the Pi for the bucket, then Glacier
   Deep Archive ([backup](docs/backup.md)).
-- **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices ([web UI](docs/web-ui.md)).
-- **On Telegram too**: chat with it away from home, and get its reminders and what it sends on your phone, with
-  nothing at home opened to the internet ([Telegram](docs/telegram.md)).
 
 How a request is answered:
 
@@ -96,7 +101,8 @@ assistant, edit the system prompt.
 | [Reminders, timers and messages](docs/reminders.md) | setting, saying and acknowledging them |
 | [The web UI](docs/web-ui.md) | pages, the Refresh rule, the API, checks |
 | [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
-| [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, a test run |
+| [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
+| [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
 | [Backing up to S3](docs/backup.md) | what goes to the bucket, making room on the Pi, archiving, bringing it back |
 | [What's next](docs/roadmap.md) | real use, interrupting, the hard-question hand-off, memory |
 
@@ -104,7 +110,7 @@ assistant, edit the system prompt.
 
 ```bash
 uv run pytest                                # offline tests: no devices or API keys
-uv run ruff check src tests tools training evals && uv run ruff format src tests tools training evals
+uv run ruff check src tests tools training evals examples && uv run ruff format src tests tools training evals examples
 uv run python -m evals --estimate            # what the scenario evals would cost; without it they run (paid APIs)
 cd webui && npm install
 npm test && npm run lint && npm run format   # the web UI's unit tests, lint and formatting

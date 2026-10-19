@@ -32,6 +32,7 @@ export const ICONS = {
   arrow: `<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>`,
   merge: `<path d="M6 3v5a8 8 0 0 0 8 8h5"/><path d="M6 21v-5"/><path d="m16 13 3 3-3 3"/>`,
   voices: `<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18.5 14a6.5 6.5 0 0 1 3 6"/>`,
+  pulse: `<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>`,
   chip: `<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/>`,
 } as const;
 

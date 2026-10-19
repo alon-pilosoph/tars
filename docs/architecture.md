@@ -127,6 +127,11 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   title) sent twice in one reply is sent once, whichever model asks the second time. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
 - **Reminders** (`remind`, `cancel_reminder`, `snooze_reminder`): see [reminders](reminders.md).
+- **The house** (`home`, with `[[home.devices]]`): devices through Home Assistant, an Android TV box over ADB with an
+  agent for tasks that take several steps on screen, and a plugin's own. A change is "done" only when the device
+  reports it, waits until the turn is over (a draft thrown away changes nothing), and unlocking has rules in code: by
+  voice, a trusted voice recognised surely on the request itself, and the word "unlock" heard. See
+  [the house](home.md).
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.
@@ -137,7 +142,7 @@ something it could have done. Turning a feature off in config changes both promp
 
 | Marker | When | To | TARS says first |
 |---|---|---|---|
-| `<look-up>` | the web: weather, news, prices, a real link; and reminders and sending, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
+| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
 | `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links,
@@ -189,15 +194,23 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
     and the web search are told the city and country, so "what's the weather?" is about home; nothing closer. It also transcribes a request's recording when Deepgram's
     stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
     Deepgram, or the reply text instead of Cartesia.
-- **With `[telegram]` on,** Telegram gets what's written in the household's chats with TARS, its replies there, and
-  the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)). TARS asks
+- **With `[telegram]` on,** Telegram gets what's written and said in the household's chats with TARS, its replies
+  there, and the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)).
+  A voice message there goes to Deepgram (or OpenAI) to be written down, as a request at home does. TARS asks
   Telegram for new messages, so nothing at home is opened to the internet.
+- **With `[home]` devices,** Home Assistant, the devices and an Android TV box are all on the home network. The
+  models see only what the home tool answered, as part of the conversation; the TV's agent (OpenAI) also sees the
+  TV's screen while it works a task. A plugin says what it sends: `examples/my_house` looks titles up on IMDb
+  ([the house](home.md#what-leaves-the-house)).
+- **When the web UI's Status page is opened,** each service TARS uses is asked for something small with its key (a
+  model, the voices, the key's or the bot's own details: no conversation, no tokens), and each one's public status
+  page is read (nothing is sent to it).
 - **With `[backup]` on,** your own S3 bucket gets everything TARS keeps: the recordings, the files it sent, and once
   a day the database (transcripts and voice embeddings included), the voiceprints and the wake models trained on the
   household, encrypted at rest ([backing up to S3](backup.md#what-it-sends-aws)). `.env` never goes.
 - **Never, without `[backup]`:** the event log, the audio kept for learning, voiceprints, and anything else the web UI
-  shows. The web UI is served from the same machine, and talks to nothing else but that bucket, to play a recording
-  that's moved there.
+  shows. The web UI is served from the same machine, and talks to nothing else but the Status page's checks and,
+  with `[backup]` on, that bucket, to play a recording that's moved there.
 
 ## The web UI
 
@@ -206,6 +219,11 @@ React page built from `webui/` (committed as `src/voice_assistant/webui_static/`
 assistant writes and the web UI reads and edits (as does TARS on Telegram, when it's on): SQLite in WAL mode lets
 them all work at once, and every change of more than one row is one transaction. Each runs as its own service, so a
 crash in one never takes another down. The web UI is described in [the web UI](web-ui.md).
+
+**Each process writes a heartbeat**, `voice_data/events/heartbeats/<name>.json`, every 30 seconds (`health.py`), and
+the web UI's Status page reads them: a process whose heartbeat is older than three beats has stopped, crashed or
+frozen whole, on a Mac as on the Pi ([the Status page](web-ui.md#the-status-page)). It's written from a thread of
+its own, never touches the database, and one that can't be written costs a line in the log.
 
 **It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
 elsewhere could reach it through someone's browser:
@@ -230,15 +248,19 @@ The assistant is `src/voice_assistant/`:
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API) |
+| The house | `home.py` (the `home` tool, its rules, the `Device` interface, plugins), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
 | Downloads | `models.py` (the small local models, on first use) |
-| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Telegram, the backup) |
+| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, the services and Telegram, voice, mic, storage, the web UI, Home Assistant and each device in the house, the backup, and systemd's services) |
+| Is it all running | `health.py` (heartbeats, today's counts, the services and their status pages, the machine: what the Status page shows) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),
 `tools/` (benchmarks: `latency_bench.py`, `turn_bench.py`, `wakeword_bench.py`, `verifier_bench.py`;
 `capability_bench.py` and `router_bench.py` for the quick model's tools and hand-offs; `echo_bench.py` for echo
 cancellation in the room), `evals/` (whole conversations played through the brain, hand-offs followed through,
-[docs/evals.md](evals.md)), `deploy/` (the Pi's install script and services) and `tests/`.
+[docs/evals.md](evals.md)), `deploy/` (the Pi's install script and services, and `home-assistant/`: Home Assistant in
+Docker), `examples/` (plugins: one household's own devices, [examples/my_house](../examples/my_house/README.md)) and
+`tests/`.

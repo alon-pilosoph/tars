@@ -241,6 +241,12 @@ class EventLog:
             )
         ]
 
+    def wakes_since(self, ts: float) -> int:
+        return self.store.rows("SELECT count(*) AS n FROM events WHERE kind=? AND ts >= ?", (WAKE, ts))[0]["n"]
+
+    def last_wake(self) -> float | None:
+        return self.store.rows("SELECT max(ts) AS ts FROM events WHERE kind=?", (WAKE,))[0]["ts"]
+
     def learning(self, since: float | None = None) -> dict:
         """Counts of what training would learn from (see learning_label), plus wakes still waiting in Review."""
         rows = [e for e in self.events() if e["audio"] and (since is None or e["ts"] > since)]

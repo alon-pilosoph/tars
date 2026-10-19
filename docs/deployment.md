@@ -6,14 +6,14 @@ operation, storage and backup, and a first test run.
 TARS is local-first: the Pi listens, records, serves the web UI and learns voiceprints. Nothing leaves the house
 until a wake is confirmed, and then only the turn itself, and only to the services `.env` has keys for:
 
-- **Deepgram,** on its EU servers: your request's audio, for speech to text.
+- **Deepgram,** on its EU servers: your request's audio, and a voice message sent on Telegram, for speech to text.
 - **Cartesia:** TARS's reply text, a sentence at a time, for its voice.
 - **Groq:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
 - **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
 - **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
-  can answer, and a request's recording when Deepgram's stream fails.
-- **Telegram,** with `[telegram]` on: what's written in the household's chats with TARS, and what it sends there
-  ([TARS on Telegram](telegram.md)).
+  can answer, and a request's recording (or a Telegram voice message) when Deepgram fails.
+- **Telegram,** with `[telegram]` on: what's written and said in the household's chats with TARS, and what it sends
+  there ([TARS on Telegram](telegram.md)).
 - **Your own S3 bucket,** with `[backup]` on: a copy of everything TARS keeps, encrypted at rest, every 15 minutes
   ([backing up to S3](backup.md)).
 
@@ -120,13 +120,15 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
   with what TARS does without any that are missing), both audio devices, the local models, echo cancellation (only
-  when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram and
-  Cartesia (each with how long it took, Deepgram on the servers `deepgram_host` names, and any without a key or not
-  in use skipped), the
-  voice (it says "TARS is ready."), the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Telegram
-  (its bot's token, when `[telegram]` is on), the backup (the bucket, and how the last pass went) and the services.
-  Each problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device:
-  one that doesn't open in time is a failure.
+  when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram,
+  Cartesia and Telegram (each with how long it took, Deepgram on the servers `deepgram_host` names, Telegram's bot
+  token when `[telegram]` is on, and any without a key or not in use skipped), the voice (it says "TARS is ready."),
+  the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant and each device in the
+  house (with `[home]` devices), the backup (the bucket, and how the last pass went) and the systemd services. Each
+  problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device: one that
+  doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same, live:
+  whether each process is running, the services with their own status pages, and the Pi's temperature, power and
+  disk.
 
 ## A first test run
 

@@ -23,6 +23,7 @@ from pydantic import BaseModel, field_validator
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, UNKNOWN, EventLog
+from .health import Report
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .versions import INSTALLED, FixedPair, ModelVersions
 
@@ -168,14 +169,16 @@ def create_app(
     allowed_hosts: frozenset[str] = frozenset(),
     reminders: Reminders | None = None,
     voice_names: Callable[[], list[str]] = list,
+    health: Callable[[], Report] | None = None,
     bucket: Callable[[str], bytes | None] | None = None,
 ) -> FastAPI:
     """`recluster` regroups the voices (see clustering.regroup); None hides the button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
     `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts.
     `reminders`: TARS's timers, reminders and messages; None when they're off. `voice_names`: the names TARS knows
-    by voice (speaker ID's voiceprints), which a message waiting until someone is back needs. `bucket`: a recording
-    that's only in the backup's bucket now, by its path ([backup], Backup.read); None if it isn't there either."""
+    by voice (speaker ID's voiceprints), which a message waiting until someone is back needs. `health`: what the
+    Status page shows (health.py); None hides it. `bucket`: a recording that's only in the backup's bucket now, by
+    its path ([backup], Backup.read); None if it isn't there either."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
@@ -519,7 +522,15 @@ def create_app(
 
     @app.get("/api/status")
     def status():
-        return {"clustering": recluster is not None, "enroll_at": MIN_REQUESTS_TO_ENROLL}
+        return {"clustering": recluster is not None, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": health is not None}
+
+    @app.get("/api/health")
+    def health_now():
+        """The Status page: TARS's processes, today, the services it uses and the machine. Asking the services takes
+        a few seconds the first time in a minute, ten at most."""
+        if health is None:
+            raise HTTPException(501, "the Status page isn't set up")
+        return health()
 
     return app
 

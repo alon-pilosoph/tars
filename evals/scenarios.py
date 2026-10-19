@@ -9,6 +9,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from voice_assistant.home import ACTIONS, STATUS
 from voice_assistant.llm import FALLBACK, LOOKED_UP, PONDERED, QUICK
 from voice_assistant.reminders import ADD, CANCEL, KINDS, SNOOZE, Change, due_at
 
@@ -60,6 +61,45 @@ class ExpectedSend:
 
 
 @dataclass
+class ExpectedHome:
+    """A change a turn should make in the house: the device and action, and any of the settings, if given."""
+
+    device: str
+    action: str
+    minutes: float | None = None
+    temperature: int | None = None
+    mode: str | None = None
+    fan: str | None = None
+    button: str | None = None
+    app: str | None = None
+    title: str | None = None  # a regular expression the title has to match (any case)
+    goal: str | None = None  # a regular expression the goal has to match (any case)
+
+    def matches(self, call: dict) -> bool:
+        if (self.device, self.action) != (call.get("device"), call.get("action")):
+            return False
+        loose = ("goal", "title")
+        wanted = {k: v for k, v in vars(self).items() if k not in ("device", "action", *loose) and v is not None}
+        if any(
+            getattr(self, k) and not re.search(getattr(self, k), str(call.get(k) or ""), re.IGNORECASE) for k in loose
+        ):
+            return False
+        return all(
+            str(call.get(k)).lower() == str(v).lower() if isinstance(v, str) else call.get(k) == v
+            for k, v in wanted.items()
+        )
+
+    def said(self) -> str:
+        extra = ", ".join(f"{k} {v}" for k, v in vars(self).items() if k not in ("device", "action") and v is not None)
+        return f"{did(self.action)} the {self.device}{f' ({extra})' if extra else ''}"
+
+
+def did(action: str) -> str:
+    """A home action as it reads in the report: "turn on the boiler"."""
+    return {"on": "turn on", "off": "turn off", "is_on": "note as on", "is_off": "note as off"}.get(action, action)
+
+
+@dataclass
 class Turn:
     say: str
     speaker: str = "alon"  # "unknown": a voice TARS doesn't know
@@ -69,6 +109,7 @@ class Turn:
     active: list[Expected] | None = None  # exactly these active after the turn; None = not checked
     active_has: list[Expected] = field(default_factory=list)  # at least these active after it
     sent: list[ExpectedSend] | None = None  # exactly these sent; [] = nothing; None = not checked
+    home: list[ExpectedHome] | None = None  # exactly these changes in the house; [] = none; None = not checked
     says: list[str] = field(default_factory=list)  # each has to match (a regex, any case)
     never_says: list[str] = field(default_factory=list)
     quick: str = ""  # a failure for the quick model on this turn: FAILURES
@@ -95,6 +136,7 @@ class Scenario:
     turns: list[Turn]
     tags: list[str] = field(default_factory=list)
     seeds: list[Seed] = field(default_factory=list)
+    house: dict | None = None  # the house it plays in (evals.house): what's on, locked or broken at the start
     file: str = ""
     fingerprint: str = ""  # of its definition: results are comparable only while it's unchanged
 
@@ -121,7 +163,7 @@ def _only(raw: dict, allowed: set[str], where: str) -> None:
 
 def _scenario(raw: dict, file: str) -> Scenario:
     where = f"{file}: {raw.get('id', '(no id)')}"
-    _only(raw, {"id", "about", "tags", "seed", "turn"}, where)
+    _only(raw, {"id", "about", "tags", "seed", "turn", "house"}, where)
     if not raw.get("id") or not raw.get("about") or not raw.get("turn"):
         raise ValueError(f"{where}: a scenario needs an id, an about and at least one turn")
     seeds = [_seed(s, where) for s in raw.get("seed", [])]
@@ -135,8 +177,22 @@ def _scenario(raw: dict, file: str) -> Scenario:
             if e.action == ADD and e.ref:
                 refs.add(e.ref)
         turns.append(turn)
+    house = _house(raw["house"], where) if "house" in raw else None
+    if house is None and any(t.home is not None for t in turns):
+        raise ValueError(f"{where}: a turn checks the house, so the scenario needs a [scenario.house]")
     fingerprint = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()[:12]
-    return Scenario(raw["id"], raw["about"].strip(), turns, list(raw.get("tags", [])), seeds, file, fingerprint)
+    tags = list(raw.get("tags", []))
+    return Scenario(raw["id"], raw["about"].strip(), turns, tags, seeds, house, file, fingerprint)
+
+
+def _house(raw: dict, where: str) -> dict:
+    from .house import HOUSE_FLAGS, HOUSE_KEYS
+
+    _only(raw, set(HOUSE_KEYS) | set(HOUSE_FLAGS), f"{where}, house")
+    for key, values in HOUSE_KEYS.items():
+        if key in raw and raw[key] not in values:
+            raise ValueError(f"{where}, house: {key} must be {' or '.join(values)}")
+    return dict(raw)
 
 
 def _seed(raw: dict, where: str) -> Seed:
@@ -147,7 +203,7 @@ def _seed(raw: dict, where: str) -> Seed:
 
 
 def _turn(raw: dict, where: str) -> Turn:
-    keys = {"say", "speaker", "tag", "route", "reminders", "active", "active_has", "sent", "says", "never_says"}
+    keys = {"say", "speaker", "tag", "route", "reminders", "active", "active_has", "sent", "says", "never_says", "home"}
     _only(raw, keys | {"quick", "after_minutes"}, where)
     route = raw.get("route", ())
     route = (route,) if isinstance(route, str) else tuple(route)
@@ -168,6 +224,18 @@ def _turn(raw: dict, where: str) -> Turn:
             _only(s, {"kind", "entries"}, f"{where}, sent")
             kind = (s["kind"],) if isinstance(s["kind"], str) else tuple(s["kind"])
             sent.append(ExpectedSend(kind, s.get("entries")))
+    home = None
+    if "home" in raw:
+        home = []
+        for h in raw["home"]:
+            _only(
+                h,
+                {"device", "action", "minutes", "temperature", "mode", "fan", "button", "app", "title", "goal"},
+                f"{where}, home",
+            )
+            if h.get("action") not in ACTIONS or h["action"] == STATUS:
+                raise ValueError(f"{where}, home: action must be one of {[a for a in ACTIONS if a != STATUS]}")
+            home.append(ExpectedHome(**{**h, "device": str(h["device"]).lower()}))
     return Turn(
         say=raw["say"],
         speaker=raw.get("speaker", "alon"),
@@ -177,6 +245,7 @@ def _turn(raw: dict, where: str) -> Turn:
         active=expected("active"),
         active_has=expected("active_has") or [],
         sent=sent,
+        home=home,
         says=list(raw.get("says", [])),
         never_says=list(raw.get("never_says", [])),
         quick=raw.get("quick", ""),

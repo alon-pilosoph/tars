@@ -247,6 +247,11 @@ function moreMenu(s: State) {
       <MenuItem icon="chip" act={() => setTab("models")} checked={s.tab === "models"}>
         Models
       </MenuItem>
+      {s.status.health && (
+        <MenuItem icon="pulse" act={() => setTab("status")} checked={s.tab === "status"}>
+          Status
+        </MenuItem>
+      )}
     </>
   );
 }
