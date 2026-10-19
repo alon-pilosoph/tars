@@ -55,8 +55,10 @@ could reach it through someone's browser ([how](architecture.md#the-web-ui)).
 ### A committed build
 
 `npm run build` writes the page into `src/voice_assistant/webui_static/`, which is committed, so the Pi runs the web
-UI with Python alone. CI rebuilds it and fails if the result differs from what's committed, so the build can't drift
-from the source.
+UI with Python alone. The build ends by writing `source.txt` beside it, a hash of everything in `webui/` it was built
+from (tests aside), and CI fails if that hash isn't the source's, so the build can't drift from the source. CI then
+builds it again, for the end-to-end check. The hash, not the built files, is compared: a registry mirror a patch behind
+gives the same page with other minified names.
 
 ### The Status page
 

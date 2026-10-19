@@ -38,7 +38,8 @@ jobs:
       - run: npm run lint
       - run: npm run format:check
       - run: npm test
-      - name: The committed build is the current one
-        run: npm run build && test -z "$(git status --porcelain -- ../src/voice_assistant/webui_static)"
+      - name: The committed build is from the current source
+        run: node stamp.mjs check
+      - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test -c checks/e2e.config.ts
