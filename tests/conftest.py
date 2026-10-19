@@ -1,6 +1,7 @@
 """Stand-ins for the audio devices and APIs, so the pipeline can be tested offline in milliseconds."""
 
 import json
+import time
 import types
 from contextlib import contextmanager
 from pathlib import Path
@@ -223,14 +224,22 @@ def no_tts(monkeypatch):
     monkeypatch.setattr(assistant_module, "StreamedReply", SilentReply)
 
 
-def make_assistant(speaker, utterances, transcripts, replies=(), journal=None):
+def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, clock=time.monotonic):
     speaker.play_pcm_stream = lambda chunks, *a, **kw: list(chunks)
     voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
     recorder = ScriptedRecorder(utterances)
     trigger = types.SimpleNamespace(last_audio=None)
     assistant = Assistant(
-        FakeMic(), speaker, trigger, recorder, ScriptedTranscriber(transcripts), brain, voice, journal=journal
+        FakeMic(),
+        speaker,
+        trigger,
+        recorder,
+        ScriptedTranscriber(transcripts),
+        brain,
+        voice,
+        journal=journal,
+        clock=clock,
     )
     return assistant, brain
 

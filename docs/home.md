@@ -103,7 +103,7 @@ agent: a model (`[home] tv_model`, OpenAI's `[llm] model` by default) that works
 Each step it chooses from what it sees, presses, types or opens an app, then looks again to check it did what it
 meant, for up to 30 steps and two and a half minutes. It runs in the background: TARS answers "On it." at once, and
 says how it went after a chime, like a reminder: "Toy Story is playing.", or why not ("Stremio found no streams for
-Toy Story."). If it isn't clear which was meant, it asks ("Toy Story, or Toy Story 4?"), and TARS listens for the
+Toy Story."). If the voice is down then, the line waits and is tried again a minute later. If it isn't clear which was meant, it asks ("Toy Story, or Toy Story 4?"), and TARS listens for the
 answer without the wake word. Asking the TV for anything else stops the agent, and waits for the step it's on (an app
 opening, a wait) to end first, so the two never fight over the screen. A press is never sent twice: one the box may
 have had before it stopped answering isn't tried again. A task costs a few cents of OpenAI: each step is one request,

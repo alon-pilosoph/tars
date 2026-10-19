@@ -17,6 +17,8 @@ from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, NoDeviceError, Spe
 from .config import (
     AWS_KEY_ID,
     AWS_SECRET,
+    CARTESIA_KEY,
+    DEEPGRAM_KEY,
     LOCAL_CONFIG,
     OPENAI_KEY,
     OPENAI_STT_MODEL,
@@ -77,7 +79,7 @@ def keyed(cfg: Config, root: Path) -> Config:
 def make_openai_client(env_path: Path):
     from openai import OpenAI
 
-    key = api_key(env_path, "OPENAI_API_KEY")
+    key = api_key(env_path, OPENAI_KEY)
     # The SDK default is 10 minutes per request plus 2 retries. A voice assistant should give up quickly, so a dropped
     # connection costs one "that didn't work" rather than a frozen assistant.
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
@@ -111,6 +113,15 @@ def make_event_log(cfg: Config, root: Path):
     from .events import EventLog
 
     return EventLog(root / cfg.learning.folder)
+
+
+def start_heartbeat(events: EventLog | None, process: str, root: Path) -> None:
+    """The heartbeat the web UI's Status page reads for this process (health.py), kept with the event log."""
+    if events is None:
+        return
+    from .health import Heartbeat
+
+    Heartbeat(events.folder, process, root).start()
 
 
 def load_echo_canceller():
@@ -156,7 +167,6 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
 
 
 def record_voice_session(cfg: Config, person: str, mic_name: str, root: Path) -> None:
-    from .audio import SAMPLE_RATE
     from .enroll import record_voice
 
     print(
@@ -195,14 +205,12 @@ def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
 
 
 def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
-    from functools import partial
-
     from .clustering import regroup
     from .webui import serve
 
     log = make_event_log(cfg, root)
     if log is None:
-        raise SystemExit("The web UI shows the event log: set log_events = true under [learning] in config.toml.")
+        raise ConfigError("The web UI shows the event log: set log_events = true under [learning] in config.toml.")
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     try:
         pairs = pair_source(cfg, root)
@@ -211,9 +219,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .reminders import Reminders
 
     reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
-    from .health import Heartbeat
-
-    Heartbeat(log.folder, "web", root).start()
+    start_heartbeat(log, "web", root)
     bucket = None
     if cfg.backup.enabled:
         try:
@@ -224,7 +230,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         log,
         host,
         port,
-        recluster=partial(regroup, log, speaker_id),
+        recluster=functools.partial(regroup, log, speaker_id),
         pairs=pairs,
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
         reminders=reminders,
@@ -246,7 +252,7 @@ def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) 
     """Adds a pair training.household made and puts it in use; a running assistant switches within seconds."""
     versions = model_versions(cfg, root)
     if versions is None:
-        raise SystemExit(
+        raise ConfigError(
             "Trained wake models need a microWakeWord model (.tflite) with a learned double-check: set "
             "[wake] model, verify and check_model in config.toml."
         )
@@ -429,9 +435,9 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     client = make_openai_client(env) if OPENAI_KEY in keys else None
     brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders, home=home)
     if cfg.tts.provider == "deepgram":
-        speech = DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
+        speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
     elif cfg.tts.provider == "cartesia":
-        speech = CartesiaSpeech(api_key(env, "CARTESIA_API_KEY"), cfg.tts)
+        speech = CartesiaSpeech(api_key(env, CARTESIA_KEY), cfg.tts)
     else:
         speech = OpenAISpeech(client, cfg.tts)
     voice = apply_effect(speech, cfg.tts.effect)
@@ -439,7 +445,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
         return None, brain, voice
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt), brain, voice
-    key = api_key(env, "DEEPGRAM_API_KEY")
+    key = api_key(env, DEEPGRAM_KEY)
     streaming = FluxTranscriber(key, cfg.stt) if cfg.stt.provider == "flux" else DeepgramTranscriber(key, cfg.stt)
     if client is None:
         return streaming, brain, voice
@@ -457,7 +463,7 @@ def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
         client = client.with_options(timeout=FILE_TIMEOUT_S)  # a few minutes of audio, not one request
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt)
-    deepgram = DeepgramFileTranscriber(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt)
+    deepgram = DeepgramFileTranscriber(api_key(env, DEEPGRAM_KEY), cfg.stt)
     if client is None:
         return deepgram
     return FallbackTranscriber(
@@ -507,10 +513,7 @@ def telegram(cfg: Config, root: Path) -> None:
             raise refused_token_error(env) from None
         raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
     events = make_event_log(cfg, root)
-    if events:
-        from .health import Heartbeat
-
-        Heartbeat(events.folder, "telegram", root).start()
+    start_heartbeat(events, "telegram", root)
     tools = None
     if cfg.reminders.enabled and events:
         voiceprints = root / cfg.speaker.voiceprints
@@ -685,10 +688,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     from .journal import Journal
 
     events = make_event_log(cfg, root)
-    if events:
-        from .health import Heartbeat
-
-        Heartbeat(events.folder, "assistant", root).start()
+    start_heartbeat(events, "assistant", root)
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
     announcements = Announcements()

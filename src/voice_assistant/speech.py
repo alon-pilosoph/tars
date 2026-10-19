@@ -72,6 +72,8 @@ class _Prefetch:
     def _fetch(self, voice: Voice, text: str, stop: threading.Event) -> None:
         audio = None
         try:
+            if stop.is_set():  # a sentence of a reply thrown away while it waited never reaches the voice
+                return
             audio = voice.stream(text)
             for chunk in audio:
                 if stop.is_set():  # a reply thrown away frees its connection to the voice

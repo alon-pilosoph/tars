@@ -34,7 +34,6 @@ class Seen:
         with _lock:
             everything = self._read()
             everything[key] = {**everything.get(key, {}), **{k: v for k, v in values.items() if v}}
-            self.path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write(self.path, json.dumps(everything, indent=1))
 
     def _read(self) -> dict:

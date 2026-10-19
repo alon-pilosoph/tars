@@ -315,3 +315,16 @@ def test_with_reminders_off_the_page_says_so(log):
     client = TestClient(create_app(log))
     assert client.get("/api/reminders").json()["enabled"] is False
     assert client.post("/api/reminders", json={"kind": "timer", "due": time.time() + 60}).status_code == 501
+
+
+def test_the_web_ui_without_the_event_log_is_a_setup_problem_its_service_doesnt_restart_over(tmp_path):
+    import dataclasses
+    from pathlib import Path
+
+    from voice_assistant import __main__ as cli
+    from voice_assistant.config import ConfigError, load_config
+
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    cfg = dataclasses.replace(cfg, learning=dataclasses.replace(cfg.learning, log_events=False))
+    with pytest.raises(ConfigError, match="log_events"):  # exit code 78: RestartPreventExitStatus
+        cli.web_ui(cfg, tmp_path, "127.0.0.1", 0)

@@ -9,6 +9,7 @@ import pytest
 from websockets.exceptions import ConnectionClosed
 
 from voice_assistant.config import TTSConfig
+from voice_assistant.errors import ServiceError
 from voice_assistant.tts import CartesiaSpeech, DeepgramSpeech
 
 
@@ -87,7 +88,7 @@ def test_a_deepgram_error_ends_the_reply_with_the_reason():
     socket = FakeSocket(True)
     socket.send = lambda message: socket.inbox.append(json.dumps({"type": "Error", "description": "bad model"}))
     v = voice("flux-nobody-en", [socket])
-    with pytest.raises(RuntimeError, match="bad model"):
+    with pytest.raises(ServiceError, match="bad model"):
         b"".join(v.stream("Hi."))
     assert socket.closed
 
@@ -114,8 +115,9 @@ def test_a_warm_connection_found_closed_before_any_audio_is_replaced():
 def test_a_stalled_voice_is_not_retried():
     stalled, spare = Stalls(True), FakeSocket(True)
     v = voice("flux-cliff-en", [stalled, spare])
-    with pytest.raises(TimeoutError):
+    with pytest.raises(ServiceError, match="nothing for 4 s") as e:
         b"".join(v.stream("Hi."))
+    assert isinstance(e.value.__cause__, TimeoutError)
     assert stalled.closed and spare.spoken == []  # no second 4 s wait
 
 
@@ -188,7 +190,7 @@ def test_cartesia_speaks_each_sentence_as_its_own_context_on_a_reused_connection
 
 def test_a_cartesia_error_ends_the_reply_with_the_reason():
     socket = CartesiaSocket(error="voice not found")
-    with pytest.raises(RuntimeError, match="voice not found"):
+    with pytest.raises(ServiceError, match="voice not found"):
         b"".join(cartesia([socket]).stream("Hi."))
     assert socket.closed
 

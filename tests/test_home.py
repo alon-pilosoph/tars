@@ -438,3 +438,26 @@ def test_a_house_change_doesnt_hold_the_conversation_while_it_waits_for_the_turn
     draft.go()
     reply.join(2)
     assert h.ha.state("switch.boiler") == "on"
+
+
+def test_a_reply_stopped_while_the_house_answers_makes_no_more_calls_and_leaves_the_next_reply_alone():
+    h = house(boiler="off")
+    made, nexts = [], []
+    call = h.tools.call
+
+    def thrown_away_meanwhile(a, request):
+        made[0].interrupt()  # they kept talking: the draft is thrown away while the boiler turns on
+        nexts.append(made[0].stream_reply("and the lights?"))  # the next one starts
+        return call(a, request)
+
+    h.tools.call = thrown_away_meanwhile
+    note = {"kind": "note", "title": "Boiler", "body": "on", "for": "household"}
+
+    def calls_for(messages):
+        done = messages[-1].get("type") == "function_call_output"
+        return [] if done else [("home", args("boiler", "on")), ("send", note)]
+
+    made.append(OpenAIChat(fake_openai_chat(lambda m: "", calls_for), LLMConfig(), home=h.tools))
+    with pytest.raises(llm.ReplyFailed):
+        "".join(made[0].stream_reply("boiler on, and note it", ALON))
+    assert made[0].sent == []  # the note was never sent, so the next reply doesn't say it sent one

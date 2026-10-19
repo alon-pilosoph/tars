@@ -11,6 +11,7 @@ import pytest
 
 from voice_assistant import stt
 from voice_assistant.audio import decode_recording
+from voice_assistant.errors import ServiceError
 from voice_assistant.stt import BufferedSession, DeepgramSession, FallbackTranscriber, FluxSession, TurnState
 
 from .conftest import ScriptedTranscriber
@@ -102,15 +103,16 @@ def test_a_connection_that_fails_raises_instead_of_returning_nothing(deepgram):
 
     session = deepgram(refuse)
     session.feed(b"12")
-    with pytest.raises(ConnectionRefusedError):
+    with pytest.raises(ServiceError, match="no route to Deepgram") as e:
         session.transcript()
+    assert isinstance(e.value.__cause__, ConnectionRefusedError)
 
 
 def test_no_answer_times_out(deepgram, monkeypatch):
     monkeypatch.setattr(stt, "FINAL_TIMEOUT_S", 0.2)
     session = deepgram(FakeDeepgram(answer=False))
     session.feed(b"12")
-    with pytest.raises(TimeoutError):
+    with pytest.raises(ServiceError, match="in time"):
         session.transcript()
     session.close()
 
@@ -157,6 +159,22 @@ def test_a_dropped_stream_is_transcribed_by_the_backup_from_the_same_audio():
     session.feed(b"12")
     session.feed(b"34")
     assert session.transcript() == "from the backup" and heard == [b"1234"]
+
+
+def test_once_the_stream_fails_the_backup_writes_down_the_rest_without_waiting_on_it_again():
+    class Stalled(BrokenStream):
+        tries = 0
+
+        def transcript(self):
+            self.tries += 1  # each one a FINAL_TIMEOUT_S wait, on a stream that's connected but stalled
+            raise ServiceError("Deepgram didn't finish the transcript in time")
+
+    stalled = Stalled()
+    session = FallbackTranscriber(stalled, ScriptedTranscriber(["what's the", "what's the time"])).session()
+    session.feed(b"12")
+    assert session.transcript() == "what's the"  # at a pause
+    session.feed(b"34")
+    assert session.transcript() == "what's the time" and stalled.tries == 1  # at the end
 
 
 def test_a_working_stream_never_calls_the_backup():
@@ -246,6 +264,24 @@ def test_a_recording_that_ends_before_flux_does_gets_flux_s_last_words(flux):
     assert session.transcript() == "what should I cook, um"
 
 
+class FluxThatGoesQuiet(FakeFlux):
+    """Never ends the turn, and stays open after the recording is over: no last words, and no close."""
+
+    def __exit__(self, *exc):
+        pass
+
+
+def test_flux_that_never_sends_the_last_words_hands_the_whole_recording_to_the_backup(flux, monkeypatch):
+    monkeypatch.setattr(stt, "FLUX_LAST_WORDS_S", 0.05)
+    session = flux(FluxThatGoesQuiet([("StartOfTurn", "turn off the"), ("Update", "turn off the kitchen")]))
+    fallback = with_backup(session, "turn off the kitchen lights")
+    fallback.feed(b"\0\0")
+    fallback.feed(b"\0\0")
+    wait_for_text(session, "turn off the kitchen")
+    fallback.finish()  # the recorder's backstop ended the turn, and Flux never says it's over
+    assert fallback.transcript() == "turn off the kitchen lights"
+
+
 def test_a_turn_with_no_words_is_empty_not_an_error(flux):
     session = flux(FakeFlux([]))
     session.feed(b"\0\0")
@@ -261,7 +297,7 @@ def test_flux_failing_hands_over_to_the_recorder_and_the_backup(flux):
     session.feed(b"\0\0")
     wait_for(session, TurnState.FAILED)
     session.finish()
-    with pytest.raises(ConnectionRefusedError):
+    with pytest.raises(ServiceError, match="no Flux today"):
         session.transcript()
 
 

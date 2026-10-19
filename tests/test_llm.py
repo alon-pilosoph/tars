@@ -32,7 +32,14 @@ from .conftest import FakeStream, ToolCallStream, fake_openai_chat, gone, raisin
 
 @pytest.mark.parametrize(
     "pieces",
-    [["<sk", "ip>"], [" <skip>"], ["<skip>", ""], ["<", "s", "k", "i", "p", ">"]],
+    [
+        ["<sk", "ip>"],
+        [" <skip>"],
+        ["<skip>", ""],
+        ["<", "s", "k", "i", "p", ">"],
+        ["&lt;skip&gt;"],  # Qwen HTML-escapes a marker now and then
+        ["&l", "t;skip&gt;"],
+    ],
 )
 def test_split_skip_detects_skip_even_when_split_across_chunks(pieces):
     skipped, rest = split_skip(pieces)
@@ -42,7 +49,7 @@ def test_split_skip_detects_skip_even_when_split_across_chunks(pieces):
 
 @pytest.mark.parametrize(
     "pieces",
-    [["Sure", ", Paris."], ["<", "b>bold"], ["", " ", "Yes."], ["<ski"], []],
+    [["Sure", ", Paris."], ["<", "b>bold"], ["", " ", "Yes."], ["<ski"], [], ["&lt;b&gt;bold"], ["&amp; more"]],
 )
 def test_split_skip_passes_normal_replies_through_untouched(pieces):
     skipped, rest = split_skip(pieces)
@@ -62,11 +69,19 @@ def test_split_skip_drains_the_stream_so_the_exchange_is_recorded():
     assert consumed == [SKIP, " trailing"]
 
 
+class FakeClock:
+    """Seconds that pass only when a test says: clock.now += 60."""
+
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 @pytest.fixture
-def clock(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
-    return now
+def clock():
+    return FakeClock()
 
 
 def seen_messages(brain, text):
@@ -75,23 +90,23 @@ def seen_messages(brain, text):
 
 
 def test_memory_keeps_the_whole_conversation_until_it_goes_quiet(clock):
-    brain = OpenAIChat(fake_openai_chat(lambda m: str(len(m) - 1)), LLMConfig(memory_minutes=10))
+    brain = OpenAIChat(fake_openai_chat(lambda m: str(len(m) - 1)), LLMConfig(memory_minutes=10), clock=clock)
     assert seen_messages(brain, "first") == 1
-    clock[0] += 60
+    clock.now += 60
     assert seen_messages(brain, "second") == 3
-    clock[0] += 9 * 60
+    clock.now += 9 * 60
     assert seen_messages(brain, "after 9 minutes") == 5
-    clock[0] += 11 * 60
+    clock.now += 11 * 60
     assert seen_messages(brain, "after 11 minutes") == 1
 
 
 def test_forgotten_chatter_does_not_keep_memory_alive(clock):
-    brain = OpenAIChat(fake_openai_chat(lambda m: str(len(m) - 1)), LLMConfig(memory_minutes=10))
+    brain = OpenAIChat(fake_openai_chat(lambda m: str(len(m) - 1)), LLMConfig(memory_minutes=10), clock=clock)
     seen_messages(brain, "real question")
-    clock[0] += 8 * 60
+    clock.now += 8 * 60
     seen_messages(brain, "overheard")
     brain.forget_last()
-    clock[0] += 3 * 60  # 11 minutes since the last real exchange
+    clock.now += 3 * 60  # 11 minutes since the last real exchange
     assert seen_messages(brain, "next real question") == 1
 
 
@@ -125,12 +140,12 @@ def test_forgetting_twice_forgets_only_once():
 def test_what_tars_said_by_itself_is_part_of_the_conversation(clock):
     # A reminder posted in a chat: "remind me again in ten minutes" right after needs to know which.
     client = fake_openai_chat(lambda messages: "Done.")
-    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False, memory_minutes=60))
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False, memory_minutes=60), clock=clock)
     brain.remember_said("Alon, a reminder: stretch.")
-    clock[0] += 30
+    clock.now += 30
     "".join(brain.stream_reply("again in ten minutes"))
     assert asked(client) == ["Alon, a reminder: stretch.", "again in ten minutes"]
-    clock[0] += 61 * 60
+    clock.now += 61 * 60
     brain.remember_said("Your pasta timer is done.")  # long after: a new conversation
     "".join(brain.stream_reply("thanks"))
     assert asked(client) == ["Your pasta timer is done.", "thanks"]
@@ -344,9 +359,9 @@ def fake_cerebras(reply_for):
     return client
 
 
-def cerebras_brain(quick_reply, openai_reply="From OpenAI.", **cfg):
+def cerebras_brain(quick_reply, openai_reply="From OpenAI.", clock=None, **cfg):
     openai, cerebras = fake_openai_chat(lambda m: openai_reply), fake_cerebras(quick_reply)
-    brain = QuickChat(openai, LLMConfig(**cfg), [QuickService("Cerebras", cerebras, "qwen")])
+    brain = QuickChat(openai, LLMConfig(**cfg), [QuickService("Cerebras", cerebras, "qwen")], clock=clock)
     return brain, openai, cerebras
 
 
@@ -383,17 +398,15 @@ def test_when_cerebras_says_nothing_openai_answers():
     assert brain.answered_by == llm.FALLBACK
 
 
-def test_after_cerebras_fails_openai_answers_alone_for_a_while(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
+def test_after_cerebras_fails_openai_answers_alone_for_a_while(clock):
     down = [True]
-    brain, _, cerebras = cerebras_brain(lambda m: OpenAIError("timed out") if down[0] else "Quick.")
+    brain, _, cerebras = cerebras_brain(lambda m: OpenAIError("timed out") if down[0] else "Quick.", clock=clock)
     assert "".join(brain.stream_reply("hi")) == "From OpenAI." and len(cerebras.requests) == 1
     down[0] = False
-    now[0] += llm.QUICK_COOLDOWN_S - 1
+    clock.now += llm.QUICK_COOLDOWN_S - 1
     assert "".join(brain.stream_reply("again")) == "From OpenAI."
     assert len(cerebras.requests) == 1 and brain.answered_by == llm.FALLBACK  # no waiting out its timeout
-    now[0] += 2
+    clock.now += 2
     assert "".join(brain.stream_reply("and now?")) == "Quick." and brain.answered_by == llm.QUICK
 
 
@@ -403,14 +416,14 @@ def too_many_requests(retry_after: str | None) -> RateLimitError:
     return RateLimitError("429 too many requests", response=response, body=None)
 
 
-def groq_then_cerebras(groq_reply, cerebras_reply=lambda m: "From Cerebras."):
+def groq_then_cerebras(groq_reply, cerebras_reply=lambda m: "From Cerebras.", clock=None):
     openai, groq, cerebras = (
         fake_openai_chat(lambda m: "From OpenAI."),
         fake_cerebras(groq_reply),
         fake_cerebras(cerebras_reply),
     )
     quick = [QuickService("Groq", groq, "qwen-g"), QuickService("Cerebras", cerebras, "qwen-c")]
-    return QuickChat(openai, LLMConfig(), quick), groq, cerebras
+    return QuickChat(openai, LLMConfig(), quick, clock=clock), groq, cerebras
 
 
 def test_groq_answers_first_and_cerebras_is_never_asked():
@@ -420,16 +433,14 @@ def test_groq_answers_first_and_cerebras_is_never_asked():
     assert groq.requests[0]["max_completion_tokens"] == llm.QUICK_MAX_TOKENS
 
 
-def test_when_groq_is_out_of_tokens_cerebras_answers_until_groq_says_to_come_back(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
+def test_when_groq_is_out_of_tokens_cerebras_answers_until_groq_says_to_come_back(clock):
     limited = [True]
-    brain, groq, _ = groq_then_cerebras(lambda m: too_many_requests("30") if limited[0] else "From Groq.")
+    brain, groq, _ = groq_then_cerebras(lambda m: too_many_requests("30") if limited[0] else "From Groq.", clock=clock)
     assert "".join(brain.stream_reply("hi")) == "From Cerebras." and brain.answered_by == llm.QUICK
     limited[0] = False
-    now[0] += 29
+    clock.now += 29
     assert "".join(brain.stream_reply("again")) == "From Cerebras." and len(groq.requests) == 1
-    now[0] += 2
+    clock.now += 2
     assert "".join(brain.stream_reply("and now?")) == "From Groq."
     assert [m["content"] for m in groq.requests[-1]["messages"][1:]] == [
         "hi",
@@ -483,13 +494,11 @@ def test_a_reply_cut_off_at_the_token_cap_is_carried_on_by_openai_without_benchi
     assert len(groq.requests) == 2
 
 
-def test_without_openai_qwen_answers_alone_and_a_failure_is_an_error(monkeypatch):
-    now = [1000.0]
-    monkeypatch.setattr(llm.time, "monotonic", lambda: now[0])
+def test_without_openai_qwen_answers_alone_and_a_failure_is_an_error(clock):
     down = [False]
     groq = fake_cerebras(lambda m: OpenAIError("down") if down[0] else "From Groq.")
     cfg = LLMConfig(web_search=False, send=False, think_effort="")
-    brain = QuickChat(None, cfg, [QuickService("Groq", groq, "qwen")])
+    brain = QuickChat(None, cfg, [QuickService("Groq", groq, "qwen")], clock=clock)
     OpenAIChat.warm(brain)
     assert "".join(brain.stream_reply("hi")) == "From Groq."
     assert LOOK_UP not in groq.requests[0]["messages"][0]["content"]
@@ -615,6 +624,9 @@ def test_both_models_are_told_what_they_cant_do_so_they_never_pretend(send):
         ("  <ack>  ", [], llm.GOT_IT),
         ("<ack 12> Noted.", [12], "Noted."),
         ("<ack 12, 14>Both done.", [12, 14], "Both done."),
+        ("&lt;ack&gt;", [], llm.GOT_IT),  # Qwen HTML-escapes a marker now and then
+        ("&lt;ack 12&gt; Noted.", [12], "Noted."),
+        ("&amp; then some.", None, "&amp; then some."),
         ("A <ack> later on isn't one.", None, "A <ack> later on isn't one."),
         ("<acknowledged>", None, "<acknowledged>"),
         ("Okay.", None, "Okay."),

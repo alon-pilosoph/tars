@@ -81,7 +81,7 @@ to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice whi
 
 | What fails | What TARS does |
 |---|---|
-| Deepgram's speech-to-text stream | OpenAI transcribes the same recording |
+| Deepgram's speech-to-text stream, or Flux never sending a turn's last words | OpenAI transcribes the same recording, and the rest of that request, so a stalled stream costs its timeout once |
 | Flux's end of turn | the local rules (Silero VAD, then Smart Turn) take over for that turn |
 | Groq: slow to start | after 0.5 s, Cerebras is asked too, and the first to start answering is kept |
 | Groq or Cerebras: an error, or "too many requests" | the next one answers, and the failed one is skipped for two minutes, or for as long as it asks after "too many requests" |
@@ -89,8 +89,9 @@ to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice whi
 | Qwen's reply runs into its cap (500 tokens on Groq, for its free key; 2,000 on Cerebras) before saying or doing anything | Cerebras writes it, with room for a long note |
 | Qwen's reply runs into its cap after saying or doing something | OpenAI's model carries on, told what was already said, so nothing is said twice |
 | Qwen writes a tool call out as text (`<toolcall>`, `<function=`, also HTML-escaped) | the reply is cut off there, unsaid, and OpenAI takes the turn |
-| Qwen writes a marker HTML-escaped (`&lt;look-up&gt;`) | it still counts as the marker: it isn't spoken, and the turn is handed over as usual |
-| The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed |
+| Qwen writes a marker HTML-escaped (`&lt;look-up&gt;`, `&lt;skip&gt;`) | it still counts as the marker: it isn't spoken, and does what the marker does |
+| The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed; a reminder or how a task on the TV went waits and is tried again a minute later, and the lines made ahead are tried again once a minute, not at every chance |
+| Speaker ID | the request is answered as from an unknown voice |
 | The microphone stops delivering audio | the assistant exits so systemd restarts it |
 | A write to the event log | `journal.py` absorbs it; the reply goes ahead |
 
@@ -156,7 +157,7 @@ tools did goes along, so nothing is done twice (the tools also turn down a repea
 Qwen had failed ([evals](evals.md#what-it-found)). Now and then, in a long reply, Qwen writes a tool call out as text
 (`<toolcall> <function=send> ...`) instead of making it. Its words go to the voice as they come, so the reply is cut
 off at the first sign of one (`TOOL_CALL_TEXT`, also when written HTML-escaped), unsaid, and OpenAI takes the turn.
-An HTML-escaped marker (`&lt;look-up&gt;`) still counts as the marker: it isn't spoken, and the turn is handed over
+An HTML-escaped marker (`&lt;look-up&gt;`, and so `<skip>` and `<ack>`) still counts as the marker: it isn't spoken, and the turn is handed over
 as usual. Groq's replies are capped at 500 tokens (its free key allows 1,000 a minute), Cerebras's at 2,000: a reply
 that runs out on Groq before anything was said or done, like a long note, is written on Cerebras instead; one that
 already said something goes to OpenAI, which is told what was said and carries on from it. A tool round never says
@@ -251,7 +252,7 @@ The assistant is `src/voice_assistant/`:
 | Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
-| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late) |
+| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `draft.py` (start early, speak late), `errors.py` (a voice or speech-to-text service failing, as one error) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API) |
 | The house | `home.py` (the `home` tool, its rules, the `Device` interface, plugins), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |

@@ -9,6 +9,7 @@ import types
 
 import pytest
 
+import voice_assistant.assistant as assistant_module
 from voice_assistant.androidtv import AndroidTV, TvAgent, TvDevice, screen
 from voice_assistant.assistant import Announcements
 from voice_assistant.home import HomeError, Request
@@ -355,6 +356,31 @@ def test_what_tars_announces_is_said_after_a_chime_and_joins_the_conversation(sp
     assistant.say_announcements(follow_up_s=4.0)
     assert played[-1] == b"Toy Story is playing." and brain.remembered == ["Toy Story is playing."]
     assert not assistant._due()
+
+
+def test_what_the_voice_couldnt_say_waits_and_is_said_once_it_can(speaker):
+    now = [1000.0]
+    assistant, brain = make_assistant(speaker, [], [])
+    played = []
+    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    down = [True]
+
+    def voice(text):
+        if down[0]:
+            raise ConnectionError("no voice")
+        return iter([text.encode()])
+
+    assistant.voice.stream = voice
+    assistant.announcements = Announcements(clock=lambda: now[0])
+    assistant.announcements.add("Toy Story is playing.")
+    assistant.say_announcements()
+    assert b"Toy Story is playing." not in played and brain.remembered == []
+    assert not assistant._due()  # not tried again at once: the wake loop would do nothing else
+    down[0] = False
+    now[0] += assistant_module.VOICE_RETRY_S
+    assert assistant._due()
+    assistant.say_announcements()
+    assert played[-1] == b"Toy Story is playing." and brain.remembered == ["Toy Story is playing."]
 
 
 def test_a_reply_to_an_announcement_is_heard_without_the_wake_word(speaker):

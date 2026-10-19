@@ -1,7 +1,11 @@
 """The small local models TARS downloads on first use, into models/ (gitignored)."""
 
+import shutil
 import urllib.request
 from pathlib import Path
+
+# The longest a download may go without a byte, so a stalled one fails the first start instead of hanging it.
+DOWNLOAD_TIMEOUT_S = 30.0
 
 
 def fetch(path: Path, url: str, what: str) -> Path:
@@ -9,7 +13,12 @@ def fetch(path: Path, url: str, what: str) -> Path:
         print(f"Downloading {what} to {path}...")
         path.parent.mkdir(parents=True, exist_ok=True)
         partial = path.with_suffix(path.suffix + ".part")
-        urllib.request.urlretrieve(url, partial)
+        try:
+            with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_S) as response, partial.open("wb") as out:
+                shutil.copyfileobj(response, out)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
         partial.replace(path)
     return path
 

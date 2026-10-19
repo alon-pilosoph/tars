@@ -20,6 +20,7 @@ import numpy as np
 
 from .audio import SAMPLE_RATE, wav_bytes
 from .config import DEEPGRAM_STT_MODEL, STTConfig
+from .errors import ServiceError
 
 if TYPE_CHECKING:
     import httpx
@@ -57,7 +58,8 @@ class Session(Protocol):
         """16 kHz mono int16 audio, as it's recorded."""
 
     def transcript(self) -> str:
-        """The words in everything fed so far. More audio may follow until finish()."""
+        """The words in everything fed so far. More audio may follow until finish(). A streaming service that fails
+        raises ServiceError (OpenAI's, OpenAIError)."""
 
     def finish(self) -> None:
         """The recording is over. May do nothing."""
@@ -210,8 +212,10 @@ class DeepgramSession:
         self._outbox.put(json.dumps({"type": "Finalize"}))
         with self._answered:
             self._answered.wait_for(lambda: self._got >= wanted or self._closed, FINAL_TIMEOUT_S)
+            if self._got < wanted and self._error:
+                raise ServiceError(f"Deepgram's speech to text failed: {self._error!r}") from self._error
             if self._got < wanted:
-                raise self._error or TimeoutError("Deepgram didn't finish the transcript in time")
+                raise ServiceError("Deepgram didn't finish the transcript in time")
             return " ".join(self._final).strip()
 
     def finish(self) -> None:
@@ -309,8 +313,9 @@ class FluxSession:
 
     def transcript(self) -> str:
         """The words so far, at once, until the recording is finished; then the turn's last words, which Flux sends
-        within a moment. "" if nobody said anything. Raises if Flux failed before the turn was over, even with some
-        words in: they may be only the start, and the backup has the whole recording."""
+        within a moment. "" if nobody said anything. Raises if Flux failed before the turn was over, or never sent
+        its last words, even with some words in: they may be only the start, and the backup has the whole
+        recording."""
         if not self._fed:
             return ""
         with self._changed:
@@ -319,10 +324,10 @@ class FluxSession:
                     lambda: self._state == TurnState.DONE or self._closed or self._error is not None, FLUX_LAST_WORDS_S
                 )
             if self._failed():
-                raise self._error
-            if self._text or self._closed or not self._finished:
-                return self._text.strip()
-            raise TimeoutError("Flux didn't send the last words in time")
+                raise ServiceError(f"Flux failed: {self._error!r}") from self._error
+            if self._finished and self._state != TurnState.DONE and not self._closed:
+                raise ServiceError("Flux didn't send the last words in time")
+            return self._text.strip()
 
     def _failed(self) -> bool:
         return self._error is not None and self._state != TurnState.DONE
@@ -387,6 +392,9 @@ class _FallbackSession:
         # A main session that decides when the turn is over keeps doing so; if it fails, the recorder's own
         # silence rule ends the turn and the backup transcribes.
         self.turn_state = main.turn_state
+        # Once the main session fails, the backup has every transcript after: a stream that's stalled would
+        # otherwise make each one wait out its timeout first.
+        self._main_failed = False
 
     def finish(self) -> None:
         self._main.finish()
@@ -396,11 +404,13 @@ class _FallbackSession:
         self._backup.feed(pcm)
 
     def transcript(self) -> str:
-        try:
-            return self._main.transcript()
-        except Exception as e:  # noqa: BLE001 - whatever broke the stream, the recording is still here
-            print(f"(speech to text failed: {e!r}; using the backup)")
-            return self._backup.transcript()
+        if not self._main_failed:
+            try:
+                return self._main.transcript()
+            except Exception as e:  # noqa: BLE001 - whatever broke the stream, the recording is still here
+                print(f"(speech to text failed: {e!r}; using the backup)")
+                self._main_failed = True
+        return self._backup.transcript()
 
     def close(self) -> None:
         self._main.close()
