@@ -1,0 +1,31 @@
+# Home Assistant on the Pi, beside TARS (docs/home.md). Everything it keeps is in config/ here, which git ignores.
+#
+#   cd deploy/home-assistant && docker compose up -d
+#
+# With devices that report over MQTT (a Nuki lock, Zigbee2MQTT), start the broker too, once mosquitto/passwords is made
+# (docs/home.md; without it Docker makes a folder there, and Mosquitto won't start):
+#
+#   docker compose --profile mqtt up -d
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    # The host's network, so it finds the devices on the home network as they announce themselves.
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./config:/config
+      - /etc/localtime:/etc/localtime:ro # the Pi's time zone
+      - /run/dbus:/run/dbus:ro # Bluetooth devices
+
+  mosquitto:
+    profiles: [mqtt]
+    image: eclipse-mosquitto:2
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwords:/mosquitto/config/passwords:ro
+      - ./mosquitto/data:/mosquitto/data

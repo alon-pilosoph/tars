@@ -3,9 +3,11 @@ web UI and install trained wake models. Heavy dependencies are imported lazily, 
 
 import argparse
 import dataclasses
+import functools
 import hashlib
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
     from .llm import QuickService
 
 OPENAI_TIMEOUT_S = 15.0
+AGENT_TIMEOUT_S = 40.0  # one step of the Android TV agent, a screenshot to read
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
@@ -340,9 +343,42 @@ def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
     return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list)
 
 
-def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
+def make_home(cfg: Config, root: Path, announce=None):
+    """The devices in the house, as [home] lists them (a HomeTools), or None. Like every service, optional: one that
+    can't be made (no token, a missing extra, a plugin's own problem) is left out with a line saying why.
+    `announce(line)`: how TARS says something on its own, later (how a task on the TV went)."""
+    if not cfg.home.devices:
+        return None
+    from .home import Context, build
+
+    env = root / ".env"
+    context = Context(root, lambda name: dotenv_values(env).get(name) or None, announce=announce)
+    context.tv_agent = functools.partial(make_tv_agent, cfg, env, announce) if announce else None
+    built = build(cfg.home, context)
+    for name, why in built.unavailable.items():
+        print(f"(the {name} isn't connected: {why}; see docs/home.md)")
+    if built.tools:
+        print(f"(the house: {', '.join(built.tools.devices)})")
+    return built.tools
+
+
+def make_tv_agent(cfg: Config, env: Path, announce, box):
+    """The agent that works an Android TV box step by step, if there's OpenAI to run it; None otherwise."""
+    from .androidtv import TvAgent
+
+    if OPENAI_KEY not in env_keys(env):
+        return None
+    from openai import OpenAI
+
+    # Each step reads a screenshot, so a step can take longer than a spoken reply may.
+    client = OpenAI(api_key=api_key(env, OPENAI_KEY), timeout=AGENT_TIMEOUT_S, max_retries=1)
+    return TvAgent(box, client, cfg.home.tv_model or cfg.llm.model, announce, service_tier=cfg.llm.service_tier)
+
+
+def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
-    With `reminders` (a ReminderTools), the brain can set them and knows what's set."""
+    With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
+    can work the devices in the house."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -356,7 +392,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
-    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders)
+    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders, home=home)
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, "DEEPGRAM_API_KEY"), cfg.tts)
     elif cfg.tts.provider == "cartesia":
@@ -378,7 +414,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None):
 
 def make_brain(client, llm: LLMConfig, env: Path, reminders=None, **channel):
     """Qwen first, handing over to OpenAI's `client`, or OpenAI alone when no quick service is set up. `channel`:
-    a chat's channel_rules and remind_tools (see OpenAIChat)."""
+    a chat's channel_rules and remind_tools, or the house's home (see OpenAIChat)."""
     from .llm import OpenAIChat, QuickChat
 
     quick = quick_services(llm, env)
@@ -452,11 +488,23 @@ def typed(cfg: Config, root: Path) -> None:
     """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
     from .assistant import Assistant
 
-    _, brain, voice = make_pipeline(cfg, root, typed=True)
+    made: list = []  # the assistant, once made: what the TV agent says when it's done is said through it
+    # One at a time: the agent's line, from its own thread, never over a reply or in the middle of one.
+    speaking = threading.Lock()
+
+    def announce(line: str) -> None:
+        print(f"\nTARS:  {line}\n\nYou:  ", end="", flush=True)
+        if made:
+            with speaking:
+                made[0].say(line, keep=False)
+                made[0].brain.remember_said(line)
+
+    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce))
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
         assistant = Assistant(None, speaker, None, None, None, brain, voice)
+        made.append(assistant)
         while True:
             try:
                 text = input("\nYou:  ").strip()
@@ -466,7 +514,8 @@ def typed(cfg: Config, root: Path) -> None:
             if not text:
                 continue
             try:
-                assistant.answer_text(text)
+                with speaking:
+                    assistant.answer_text(text)
             except AudioDeviceError:
                 raise
             except Exception as e:  # noqa: BLE001 - a failed question shouldn't end the session
@@ -474,7 +523,7 @@ def typed(cfg: Config, root: Path) -> None:
 
 
 def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
-    from .assistant import Assistant
+    from .assistant import Announcements, Assistant
     from .journal import Journal
 
     events = make_event_log(cfg, root)
@@ -484,7 +533,9 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         Heartbeat(events.folder, "assistant", root).start()
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
-    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders)
+    announcements = Announcements()
+    home = make_home(cfg, root, announcements.add)
+    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home)
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
     speaker = Speaker(
@@ -511,6 +562,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             phrases=phrase_folder(cfg, root),
             reminders=reminders,
             ack_window_s=cfg.reminders.ack_window_s,
+            announcements=announcements,
         )
         assistant.run_forever(
             idle_message,

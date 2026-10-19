@@ -13,6 +13,9 @@ TARS's real brain, hand-offs followed through to OpenAI's model and the thinking
 
 - **29 scenarios, 46 turns**, in four groups: hand-offs (9), reminders over a conversation (9), the conversation
   itself (8: follow-ups without the wake word, memory, voices, what TARS can't do, its humor setting) and failures (3).
+  A fifth group, [the house](home.md) (18, in `evals/scenarios/house.toml`), plays TARS's real home tool over a
+  pretend Home Assistant and TV box: only what was asked changed, only what the tool answered said, and the door
+  unlocked for a trusted voice and nobody else. It came after the results below, and isn't in them yet.
 - **TARS's own brain and prompts**, set up from `config.toml`: Qwen (`qwen-3.8-27b`) at low reasoning with its own
   tools, OpenAI's `gpt-6-luna` for the web and as the fallback, and the same model at high reasoning for hard
   questions.

@@ -177,3 +177,38 @@ def test_the_service_checks_skip_what_has_no_key(tmp_path):
     checks = check.service_checks(cfg, tmp_path)
     assert [name for name, _ in checks] == ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram"]
     assert all(c().status == SKIP for _, c in checks)  # no keys: nothing is used
+
+
+def test_home_assistant_is_checked_only_when_its_used_and_says_what_to_do():
+    from voice_assistant.config import HomeConfig
+    from voice_assistant.home import HomeError
+
+    off = check.home_assistant(cfg_with(HomeConfig()), "t", raising(AssertionError("not asked")))
+    assert off.status == SKIP
+    on = cfg_with(HomeConfig(url="http://ha:8123"))
+    assert "Long-lived access tokens" in check.home_assistant(on, None, lambda: None).fix
+    refused = check.home_assistant(on, "t", raising(HomeError("Home Assistant refused the token")))
+    assert refused.status == FAIL and "running at http://ha:8123" in refused.fix
+    assert check.home_assistant(on, "t", lambda: "API running.").status == OK
+
+
+def cfg_with(home):
+    import dataclasses
+
+    from voice_assistant.config import load_config
+
+    return dataclasses.replace(load_config(Path(__file__).parents[1] / "config.toml", local=False), home=home)
+
+
+def test_the_house_says_each_device_as_it_was_made_and_what_it_found():
+    from evals.house import make_house
+    from voice_assistant.home import Built
+
+    h = make_house({"lock": "locked"})
+    results = check.house(Built(h.tools, {"garage": "the plugin garden didn't load: oops"}), hass_ok=True)
+    by_name = {r.name: r for r in results}
+    assert by_name["garage"].status == FAIL and "didn't load" in by_name["garage"].detail
+    assert by_name["front door"].status == OK and "lock.front_door locked" in by_name["front door"].detail
+    assert by_name["tv"].status == OK and "it does tasks with pretend" in by_name["tv"].detail
+    without = {r.name: r.status for r in check.house(Built(h.tools, {}), hass_ok=False)}
+    assert without["front door"] == SKIP and without["tv"] == OK  # the box needs no Home Assistant
