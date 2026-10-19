@@ -15,6 +15,7 @@ import traceback
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -33,6 +34,9 @@ from .config import (
 )
 from .echo import MAX_DELAY_S
 
+if TYPE_CHECKING:
+    from .backup import Backup
+
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
 MARKS = {OK: "✓", WARN: "!", FAIL: "✗", SKIP: "-"}
 LISTEN_S = 3.0
@@ -41,6 +45,8 @@ LOW_DISK_BYTES = 2 * 1024**3
 WEB_URL = f"http://127.0.0.1:{WEB_PORT}/api/status"
 MODELS_S = 300.0  # long enough to download every local model on a slow line, the first time
 READY = "TARS is ready."
+STALE_BACKUP_S = 3600.0  # the timer runs a pass every 15 minutes: an hour without a good one is worth a look
+BACKUP_CHECK_S = 20.0  # S3's client retries a bucket that doesn't answer; --check never waits longer than this
 
 
 @dataclass
@@ -273,6 +279,62 @@ def telegram(cfg: Config, token: str | None, me: Callable[[str], dict]) -> Resul
         return Result("Telegram", FAIL, str(e), "check the network")
     people = ", ".join(cfg.telegram.people)
     return Result("Telegram", OK, f"@{bot.get('username')} answers ({time.perf_counter() - t:.1f} s), for {people}")
+
+
+def backup(cfg: Config, make: Callable[[], Backup], now: float | None = None) -> list[Result]:
+    """The S3 bucket answers with the key TARS has, and how the timer's last pass went. `make`: the Backup, raising
+    ConfigError if it can't be made."""
+    from .backup import BackupError, Status
+
+    if not cfg.backup.enabled:
+        return [Result("Backup", SKIP, "off ([backup] enabled)")]
+    try:
+        job = make()
+    except ConfigError as e:
+        return [Result("Backup", FAIL, str(e.code), "docs/backup.md")]
+    t = time.perf_counter()
+    try:
+        late = within(BACKUP_CHECK_S, "Backup", job.check, "the bucket didn't answer", "check the network")
+    except BackupError as e:
+        fix = "check the bucket's name and region, and the key's policy (docs/backup.md)"
+        return [Result("Backup", FAIL, str(e), fix)]
+    if late is not None:  # within's own failure: no answer in time
+        return [late]
+    took = time.perf_counter() - t
+    status, now = Status.load(job.status_path), now or time.time()
+    where = f"s3://{cfg.backup.bucket}/{cfg.backup.prefix} answers ({took:.1f} s)"
+    start = "systemctl --user start voice-assistant-backup, and see journalctl --user-unit voice-assistant-backup"
+    if not status.last_run:
+        return [Result("Backup", WARN, f"{where}; no pass has run yet", start)]
+    if status.error:
+        return [Result("Backup", FAIL, f"the last pass: {status.error}", start)]
+    ago = _ago(now - status.last_ok)
+    files = f"{status.in_bucket} files there, {status.only_in_bucket} only there; the last good pass {ago}"
+    stale = now - status.last_ok > STALE_BACKUP_S
+    results = [Result("Backup", WARN if stale else OK, f"{where}: {files}", start if stale else "")]
+    if not status.lifecycle_ok:
+        results.append(Result("Backup lifecycle", WARN, status.lifecycle, "set the rules by hand (docs/backup.md)"))
+    return results
+
+
+def _ago(seconds: float) -> str:
+    if seconds < 90:
+        return "just now"
+    if seconds < 90 * 60:
+        return f"{round(seconds / 60)} minutes ago"
+    return f"{seconds / 3600:.1f} hours ago"
+
+
+def backup_timer(active: Callable[[str], str | None]) -> Result:
+    """The backup's timer, whose passes log under the service it starts."""
+    found = systemd("voice-assistant-backup.timer", active)
+    if found.status == WARN:
+        fix = (
+            "systemctl --user enable --now voice-assistant-backup.timer; the passes' logs: "
+            "journalctl --user-unit voice-assistant-backup"
+        )
+        return Result(found.name, WARN, found.detail, fix)
+    return found
 
 
 def systemd(unit: str, active: Callable[[str], str | None]) -> Result:
@@ -564,7 +626,9 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Web UI", lambda: web(http_status)),
         ("Home Assistant", hass_check),
         ("The house", devices),
+        ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
+        *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),
     ]
     print("Checking TARS...\n", flush=True)
     results = run(checks)

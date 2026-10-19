@@ -8,6 +8,7 @@ win over the automatic ones.
 import sqlite3
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -21,6 +22,20 @@ PERSON, NOT_PERSON, UNKNOWN = "person", "not_person", "unknown"
 MISSED_WINDOW_S = 6.0  # a near-miss followed this soon by a real wake was probably a missed "hey TARS"
 DAY_S = 24 * 3600
 REVIEW_SHOWN = 500  # Review shows this many of the newest wakes waiting for an answer, and as many answered ones
+# The newest requests of each voice stay on the machine whatever a backup does: a person's voiceprint is rebuilt from
+# them when voices are regrouped (clustering.enroll_named), and a few dozen make a good one.
+VOICEPRINT_REQUESTS = 25
+
+
+class KeptFile(NamedTuple):
+    """A file the event log keeps, by its path in the log's folder: when it was made, and whether it must stay on
+    this machine (something reads it from here later) or may live only in a backup."""
+
+    path: str
+    ts: float
+    stays: bool
+
+
 SAMPLES = 4  # requests a voice is shown with
 
 
@@ -111,6 +126,34 @@ class EventLog:
                     dropped.append(r)
         self.store.remove([rel for r in dropped for rel in (r["audio"], r["utterance_audio"])])
         return len(dropped)
+
+    def kept_files(self) -> list[KeptFile]:
+        """Every recording the events keep. A wake window training learns from stays on the machine (training reads
+        it from here), as do the newest VOICEPRINT_REQUESTS requests of each voice that may be a person's: a voiceprint
+        is rebuilt from them, so a voice named long after it was heard still has them here."""
+        rows = self._labeled(
+            self.store.rows(
+                "SELECT id, ts, kind, label, outcome, follow, transcript, audio, utterance_audio FROM events "
+                "WHERE audio IS NOT NULL OR utterance_audio IS NOT NULL"
+            )
+        )
+        voiceprints = {
+            r["utterance_audio"]
+            for r in self.store.rows(
+                "SELECT utterance_audio FROM (SELECT e.utterance_audio, "
+                "row_number() OVER (PARTITION BY e.cluster_id ORDER BY e.ts DESC) AS newest "
+                "FROM events e JOIN clusters c ON c.id = e.cluster_id "
+                "WHERE c.kind != ? AND e.utterance_audio IS NOT NULL) WHERE newest <= ?",
+                (NOT_PERSON, VOICEPRINT_REQUESTS),
+            )
+        }
+        files = []
+        for r in rows:
+            if r["audio"]:
+                files.append(KeptFile(r["audio"], r["ts"], learning_label(r) is not None))
+            if r["utterance_audio"]:
+                files.append(KeptFile(r["utterance_audio"], r["ts"], r["utterance_audio"] in voiceprints))
+        return files
 
     def set_label(self, event_id: int, label: str | None) -> None:
         self.store.write("UPDATE events SET label=? WHERE id=?", (label, event_id))

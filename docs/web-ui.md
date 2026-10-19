@@ -92,14 +92,14 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 | `DELETE /api/conversations/{id}` | It, its turns, audio and items, and the wake that started it |
 | `POST /api/turns/{id}/rating` | `{"rating": "good" \| "bad" \| null}`, TARS's turns only |
 | `POST /api/turns/{id}/correction` | `{"text": "..."}` what was really said; the original text clears it |
-| `GET /api/audio/turn/{id}` | What someone said, as WAV |
+| `GET /api/audio/turn/{id}` | What someone said, as WAV, from the [backup](backup.md)'s bucket once it's left the machine |
 | `GET /api/items` | Everything sent |
 | `POST /api/items/{id}/seen` | Marks it seen |
 | `POST /api/items/{id}/entries/{n}` | `{"done": true}` ticks a list entry |
 | `GET /api/items/{id}/file` | A sent file, always as a download |
 | `DELETE /api/items/{id}` | One sent item |
 | `GET /api/events` | What Review needs: the newest 500 wakes and near-misses waiting for an answer and the newest 500 answered ones, with automatic labels and why (`?limit=n` for the newest n of everything) |
-| `GET /api/audio/{event}/wake`, `/request` | What woke it, and the request after it, as WAV |
+| `GET /api/audio/{event}/wake`, `/request` | What woke it, and the request after it, as WAV, from the backup's bucket once it's left the machine |
 | `POST /api/events/{id}/label` | `{"label": "real" \| "not_real" \| null}` |
 | `POST /api/events/{id}/cluster` | `{"cluster_id": n}` moves a request to a voice and pins it there |
 | `DELETE /api/events/{id}` | A wake and its audio (its conversation stays) |

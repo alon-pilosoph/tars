@@ -16,7 +16,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
@@ -110,6 +110,30 @@ def same_site(origin: str, host: str, extra: frozenset[str] = frozenset()) -> bo
     return parts.netloc == host or (parts.hostname or "") in LOOPBACK | extra
 
 
+def ranged(data: bytes, media_type: str, asked: str | None) -> Response:
+    """The bytes, or the one range of them a `Range: bytes=...` header asks for: Safari plays audio only from a server
+    that answers ranges. Several ranges at once, or a header that isn't one, gets the whole."""
+    whole = Response(data, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+    if not asked or not asked.startswith("bytes=") or "," in asked:
+        return whole
+    first, _, last = asked.removeprefix("bytes=").strip().partition("-")
+    try:
+        if first:
+            start, end = int(first), min(int(last) if last else len(data) - 1, len(data) - 1)
+        else:
+            start, end = max(len(data) - int(last), 0), len(data) - 1
+    except ValueError:
+        return whole
+    if start > end or start >= len(data):
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{len(data)}"})
+    return Response(
+        data[start : end + 1],
+        status_code=206,
+        media_type=media_type,
+        headers={"Accept-Ranges": "bytes", "Content-Range": f"bytes {start}-{end}/{len(data)}"},
+    )
+
+
 def event(e: dict) -> dict:
     """What the browser gets for an event: whether it has audio, not where it's stored."""
     out = {
@@ -146,13 +170,15 @@ def create_app(
     reminders: Reminders | None = None,
     voice_names: Callable[[], list[str]] = list,
     health: Callable[[], Report] | None = None,
+    bucket: Callable[[str], bytes | None] | None = None,
 ) -> FastAPI:
     """`recluster` regroups the voices (see clustering.regroup); None hides the button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
     `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts.
     `reminders`: TARS's timers, reminders and messages; None when they're off. `voice_names`: the names TARS knows
     by voice (speaker ID's voiceprints), which a message waiting until someone is back needs. `health`: what the
-    Status page shows (health.py); None hides it."""
+    Status page shows (health.py); None hides it. `bucket`: a recording that's only in the backup's bucket now, by
+    its path ([backup], Backup.read); None if it isn't there either."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
@@ -255,15 +281,34 @@ def create_app(
         """Without a `limit`: every event still waiting for an answer, and the newest answered ones."""
         return [event(e) for e in (log.events(limit) if limit else log.for_review())]
 
+    def recording(rel: str | None, request: Request) -> Response:
+        """A recording, from this machine, or from the backup's bucket once it's been moved there. Read whole (they're
+        seconds long), so one the backup removes meanwhile is fetched from the bucket instead."""
+        path = (log.folder / rel).resolve() if rel else None
+        if not (path and path.is_relative_to(log.folder.resolve())):
+            raise HTTPException(404, "no file")
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            data = None
+        if data is None and bucket:
+            try:
+                data = bucket(rel)
+            except Exception as e:  # noqa: BLE001 - the bucket not answering is a recording that can't be played
+                print(f"(web UI: couldn't fetch {rel} from the backup: {e!r})")
+        if data is None:
+            raise HTTPException(404, "not on this machine, nor in the backup's bucket (or archived there)")
+        return ranged(data, "audio/wav", request.headers.get("range"))
+
     # Before /api/audio/{event_id}/{which}, or "turn" would be taken for an event id.
     @app.get("/api/audio/turn/{turn_id}")
-    def turn_audio(turn_id: int):
-        return FileResponse(file_or_404(turn_or_404(turn_id)["audio"]), media_type="audio/wav")
+    def turn_audio(turn_id: int, request: Request):
+        return recording(turn_or_404(turn_id)["audio"], request)
 
     @app.get("/api/audio/{event_id}/{which}")
-    def audio(event_id: int, which: Literal["wake", "request"]):
+    def audio(event_id: int, which: Literal["wake", "request"], request: Request):
         column = {"wake": "audio", "request": "utterance_audio"}[which]
-        return FileResponse(file_or_404(event_or_404(event_id)[column]), media_type="audio/wav")
+        return recording(event_or_404(event_id)[column], request)
 
     @app.post("/api/events/{event_id}/label")
     def label(event_id: int, body: Label):

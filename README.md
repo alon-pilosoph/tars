@@ -36,6 +36,8 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
   every part running, the services, the Pi ([web UI](docs/web-ui.md)).
 - **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
   sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
+- **Backed up to S3** every 15 minutes, with a snapshot of the database every six hours; old audio leaves the Pi for
+  the bucket ([backup](docs/backup.md)).
 
 How a request is answered:
 
@@ -63,7 +65,7 @@ Needs [uv](https://docs.astral.sh/uv/). On Linux (a Pi included), first `sudo ap
 
 ```bash
 git clone https://github.com/alon-pilosoph/tars.git && cd tars
-uv sync --all-extras                   # echo cancellation and Claude are extras
+uv sync --all-extras                   # echo cancellation, Claude and the S3 backup are extras
 cp .env.example .env                   # then add your API keys: OpenAI, Deepgram, Groq, Cerebras, or some of them
 uv run voice-assistant --check         # keys, devices, models, services, the voice and the mic: what's wrong, and what to do
 uv run voice-assistant --mic-test      # loudness, speech and wake-word meters; no API key needed
@@ -101,6 +103,7 @@ assistant, edit the system prompt.
 | [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
 | [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
+| [Backing up to S3](docs/backup.md) | what goes to the bucket, making room on the Pi, archiving, bringing it back |
 | [What's next](docs/roadmap.md) | real use, interrupting, the hard-question hand-off, memory |
 
 ## Development

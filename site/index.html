@@ -1782,7 +1782,8 @@
               <h3>Every wake is kept</h3>
               <p>
                 Its 3 seconds of audio, the scores and what followed. Close calls, the near-misses, too. All of it stays
-                on the Pi; nothing leaves the house for learning.
+                on the Pi, and in the household's own bucket if the backup is on: none of it is sent anywhere to learn
+                from.
               </p>
             </div>
           </li>
@@ -2136,9 +2137,14 @@
               <div>The assistant</div>
               <div>The web app, FastAPI and React</div>
               <div>Telegram, if it's on</div>
+              <div>A backup to S3 every 15 minutes, if it's on</div>
               <div class="db">One SQLite database, WAL mode</div>
             </div>
-            <p>They share the database on the same machine, and a crash in one never takes another down.</p>
+            <p>
+              They share the database on the same machine, and a crash in one never takes another down.<span class="d">
+                The backup copies everything to an S3 bucket, and makes room on the card after a month.</span
+              >
+            </p>
           </div>
           <div>
             <h3>Every stage is an interface</h3>

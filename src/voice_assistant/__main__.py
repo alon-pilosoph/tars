@@ -15,6 +15,9 @@ from dotenv import dotenv_values
 
 from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, NoDeviceError, Speaker, find_device, list_devices
 from .config import (
+    AWS_KEY_ID,
+    AWS_SECRET,
+    LOCAL_CONFIG,
     OPENAI_KEY,
     OPENAI_STT_MODEL,
     QUICK_PROVIDERS,
@@ -28,12 +31,14 @@ from .config import (
     with_keys,
 )
 from .recorder import make_recorder
+from .store import DB_FILE
 from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from .backup import S3, Backup
     from .events import EventLog
     from .health import Report
     from .llm import QuickService
@@ -210,6 +215,12 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .health import Heartbeat
 
     Heartbeat(log.folder, "web", root).start()
+    bucket = None
+    if cfg.backup.enabled:
+        try:
+            bucket = make_backup(cfg, root, log).read
+        except ConfigError as e:
+            print(f"(the web UI plays only what's on this machine: {e.code})")
     serve(
         log,
         host,
@@ -220,6 +231,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         reminders=reminders,
         voice_names=speaker_id.names if speaker_id else list,
         health=make_health(cfg, root, log),
+        bucket=bucket,
     )
 
 
@@ -271,6 +283,28 @@ def main() -> None:
     parser.add_argument(
         "--telegram", action="store_true", help="chat with TARS on Telegram ([telegram] in config.toml)"
     )
+    backup = parser.add_mutually_exclusive_group()
+    backup.add_argument(
+        "--backup", action="store_true", help="back up to S3 once, as its timer does ([backup] in config.toml)"
+    )
+    backup.add_argument(
+        "--fetch-audio",
+        action="store_true",
+        help="bring back the audio that's only in the S3 bucket (for training, or a new machine)",
+    )
+    parser.add_argument(
+        "--restore-archived",
+        action="store_true",
+        help="with --fetch-audio: ask S3 to restore archived audio too, to fetch with a later run (up to 48 hours)",
+    )
+    parser.add_argument(
+        "--delete-anyway",
+        action="store_true",
+        help="with --backup: delete from the bucket what TARS no longer keeps, even if it's most of it",
+    )
+    backup.add_argument(
+        "--restore-backup", action="store_true", help="put the bucket's latest snapshot in place on a new machine"
+    )
     parser.add_argument(
         "--install-models",
         type=Path,
@@ -281,6 +315,10 @@ def main() -> None:
         "--based-on", metavar="VERSION", help="with --install-models: only if this version is still the one in use"
     )
     args = parser.parse_args()
+    if args.restore_archived and not args.fetch_audio:
+        parser.error("--restore-archived goes with --fetch-audio")
+    if args.delete_anyway and not args.backup:
+        parser.error("--delete-anyway goes with --backup")
 
     if args.list_devices:
         list_devices()
@@ -312,6 +350,15 @@ def main() -> None:
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)
+            return
+        if args.backup:
+            backup_pass(cfg, root, delete_anyway=args.delete_anyway)
+            return
+        if args.fetch_audio:
+            fetch_audio(cfg, root, restore_archived=args.restore_archived)
+            return
+        if args.restore_backup:
+            restore_backup(cfg, root)
             return
         if args.install_models:
             install_models(cfg, root, args.install_models, args.based_on)
@@ -496,6 +543,109 @@ def telegram(cfg: Config, root: Path) -> None:
         send_items=cfg.telegram.send_items,
         transcriber=make_recording_transcriber(cfg, env, client),
     ).run_forever(me)
+
+
+def make_s3(cfg: Config, root: Path) -> S3:
+    """[backup]'s bucket, with the key in .env. ConfigError if the backup is off, or can't be."""
+    from .backup import make_s3 as connect
+
+    if not cfg.backup.enabled:
+        raise ConfigError("Set enabled = true, bucket and region under [backup] (docs/backup.md).")
+    env = root / ".env"
+    try:
+        return connect(cfg.backup, api_key(env, AWS_KEY_ID), api_key(env, AWS_SECRET))
+    except ValueError as e:
+        raise ConfigError(f"The backup {e}.") from None
+
+
+def snapshot_files(cfg: Config, root: Path) -> dict[str, Path]:
+    """What a snapshot holds besides the database, by its name there, and where each is on this machine: the
+    voiceprints, the wake models trained on the household (the self-learning pairs, and models/personal/) and this
+    machine's own settings (config.local.toml; never .env, which holds the keys). A restore puts each back where this
+    machine's config says, so the two machines' folders needn't match."""
+    return {
+        "voiceprints.npz": root / cfg.speaker.voiceprints,
+        "wake_models": root / cfg.learning.folder / "wake_models",
+        "models/personal": root / "models/personal",
+        LOCAL_CONFIG: root / LOCAL_CONFIG,
+    }
+
+
+def make_backup(cfg: Config, root: Path, log: EventLog | None = None) -> Backup:
+    """The backup to [backup]'s bucket, of `log` (made from config.toml if not given): the event log's files, and a
+    snapshot of the database and snapshot_files every six hours. ConfigError if it's off, or can't be."""
+    from .backup import Backup
+
+    s3 = make_s3(cfg, root)
+    log = log or make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("The backup is of the event log: set log_events = true under [learning] in config.toml.")
+    return Backup(log, cfg.backup, s3, snapshot_files(cfg, root))
+
+
+def backup_pass(cfg: Config, root: Path, delete_anyway: bool = False) -> None:
+    """--backup: one pass, as its timer runs it."""
+    from .backup import Busy
+
+    try:
+        status = make_backup(cfg, root).run(delete_anyway=delete_anyway)
+    except Busy as e:
+        print(f"(backup: {e}; this pass is skipped)")
+        return
+    print(
+        f"(backup: {status.uploaded} uploaded, {status.offloaded} removed from this machine, {status.brought_back} "
+        f"brought back, {status.deleted} deleted from the bucket; {status.in_bucket} files in it, "
+        f"{status.only_in_bucket} only there)"
+    )
+    for note in status.notes:
+        print(f"({note})")
+    if status.error:
+        raise SystemExit(f"The backup didn't finish: {status.error}")
+
+
+def fetch_audio(cfg: Config, root: Path, restore_archived: bool = False) -> None:
+    """--fetch-audio: brings back onto this machine every recording that's only in the bucket."""
+    from .backup import BackupError, Busy
+
+    try:
+        done = make_backup(cfg, root).fetch(restore=restore_archived)
+    except (BackupError, Busy) as e:
+        raise SystemExit(f"Couldn't fetch the audio: {e}") from None
+    said = [f"Fetched {done.fetched} files."]
+    if done.restoring:
+        said.append(f"{done.restoring} archived ones are being restored: run this again in up to 48 hours.")
+    if done.archived:
+        said.append(f"{done.archived} are archived: add --restore-archived to bring them back.")
+    if done.missing:
+        said.append(f"{done.missing} weren't in the bucket any more.")
+    print(" ".join(said))
+
+
+def restore_backup(cfg: Config, root: Path) -> None:
+    """--restore-backup: the bucket's latest snapshot, put in place on a new machine, with TARS stopped."""
+    from .backup import SNAPSHOT_DB, BackupError, Busy, restore_snapshot
+    from .check import systemd_state
+
+    units = [
+        "voice-assistant",
+        "voice-assistant-web",
+        "voice-assistant-telegram",
+        "voice-assistant-backup.timer",
+        "voice-assistant-backup.service",
+    ]
+    # Anything but stopped counts as running: "activating" is a backup pass under way.
+    running = [u for u in units if systemd_state(u) not in (None, "inactive", "failed")]
+    if running:
+        raise SystemExit(f"Stop TARS first: systemctl --user stop {' '.join(running)}")
+    places = {SNAPSHOT_DB: root / cfg.learning.folder / DB_FILE, **snapshot_files(cfg, root)}
+    try:
+        key = restore_snapshot(make_s3(cfg, root), cfg.backup, places)
+    except (ValueError, BackupError, Busy) as e:
+        raise SystemExit(f"Couldn't restore: {e}") from None
+    print(
+        f"Restored {key}. Start TARS again: the first backup pass (within 15 minutes, or --backup now) brings back "
+        "what has to be on this machine; the other recordings play from the bucket, and --fetch-audio brings them here."
+    )
 
 
 def phrase_folder(cfg: Config, root: Path) -> Path:

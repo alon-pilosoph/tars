@@ -414,7 +414,8 @@ def test_a_reminder_posted_late_says_when_it_was_due(convos):
     bot, tools, now = FakeBot(), tools_with(convos), noon.timestamp()
     tools.reminders.add(NewReminder(REMINDER, "call mum", "alon", due=now + 60), TELEGRAM, channel=TELEGRAM, now=now)
     tars(bot, [ScriptedBrain()], convos, tools, clock=lambda: now + 3600).deliver()
-    assert bot.said()[0].startswith("Alon, a reminder: call mum. This was due at")
+    # "This was due at 8:00 PM.", or with its day when an hour later is tomorrow: either way, when it was due.
+    assert bot.said()[0].startswith("Alon, a reminder: call mum. This was due ")
 
 
 def test_a_reminder_for_someone_whose_chat_was_removed_is_said_aloud_instead(convos):

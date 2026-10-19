@@ -6,6 +6,7 @@ requests becomes a voiceprint.
 """
 
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -68,12 +69,21 @@ def enroll_named(log: EventLog, speaker_id: SpeakerID) -> list[str]:
     people: dict[str, tuple[str, list]] = {}
     for c in log.clusters():
         if c["kind"] == PERSON and (key := person_key(c["name"])):
-            people.setdefault(key, (c["name"].strip(), []))[1].extend(log.request_audio(c["id"]))
+            people.setdefault(key, (c["name"].strip(), []))[1].extend(_readable(log.request_audio(c["id"])))
     enough = {key: (name, clips) for key, (name, clips) in people.items() if len(clips) >= MIN_REQUESTS_TO_ENROLL}
-    speaker_id.set_cluster_voiceprints(
-        {key: speaker_id.voiceprint([read_wav(p) for p in clips]) for key, (_, clips) in enough.items()}
-    )
+    speaker_id.set_cluster_voiceprints({key: speaker_id.voiceprint(clips) for key, (_, clips) in enough.items()})
     return sorted(name for name, _ in enough.values())
+
+
+def _readable(paths: list[Path]) -> list[np.ndarray]:
+    """The recordings, but one removed since it was listed (the backup making room on the machine) is left out."""
+    out = []
+    for path in paths:
+        try:
+            out.append(read_wav(path))
+        except FileNotFoundError:
+            continue
+    return out
 
 
 def regroup(log: EventLog, speaker_id: SpeakerID | None) -> dict:

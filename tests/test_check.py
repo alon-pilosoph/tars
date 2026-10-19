@@ -9,7 +9,7 @@ import pytest
 from voice_assistant import check
 from voice_assistant.audio import NoDeviceError
 from voice_assistant.check import FAIL, OK, SKIP, WARN, Result
-from voice_assistant.config import load_config
+from voice_assistant.config import ConfigError, load_config
 
 from .conftest import raising
 
@@ -169,6 +169,30 @@ def test_telegram_is_checked_only_when_its_on_and_says_who_its_for(cfg):
     assert refused.status == FAIL and "TELEGRAM_BOT_TOKEN" in refused.fix
     ok = check.telegram(on, "t", lambda token: {"username": "hey_tars_bot"})
     assert ok.status == OK and "@hey_tars_bot" in ok.detail and "Alon" in ok.detail
+
+
+def test_the_backup_says_how_its_last_pass_went(cfg, log, convos, tmp_path):
+    import dataclasses
+
+    from voice_assistant.backup import S3, Backup
+    from voice_assistant.config import BackupConfig
+
+    from .test_backup import NOW, PretendS3, a_request
+
+    on = dataclasses.replace(cfg, backup=BackupConfig(enabled=True, bucket="tars-home", region="eu-central-1"))
+    assert check.backup(cfg, raising(AssertionError("not asked")))[0].status == SKIP
+    bucket = PretendS3()
+    job = Backup(log, on.backup, S3(bucket, "tars-home"), clock=lambda: NOW)
+    (never,) = check.backup(on, lambda: job, now=NOW)
+    assert never.status == WARN and "no pass has run yet" in never.detail
+    a_request(log, convos, NOW)
+    job.run()
+    (fine,) = check.backup(on, lambda: job, now=NOW + 60)
+    assert fine.status == OK and "s3://tars-home/tars answers" in fine.detail and "2 files there" in fine.detail
+    assert check.backup(on, lambda: job, now=NOW + 3 * 3600)[0].status == WARN  # no good pass for hours
+    bucket.down = True
+    assert check.backup(on, lambda: job, now=NOW)[0].status == FAIL
+    assert check.backup(on, raising(ConfigError("The backup: put AWS_ACCESS_KEY_ID in .env")))[0].status == FAIL
 
 
 def test_the_service_checks_skip_what_has_no_key(tmp_path):

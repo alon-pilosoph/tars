@@ -42,6 +42,10 @@ claude = [
 echo = [
     "livekit>=1.1",
 ]
+# Backing up to S3 ([backup]).
+backup = [
+    "boto3>=1.40",
+]
 # An Android TV box, over ADB ([[home.devices]] kind = "androidtv").
 tv = [
     "adb-shell>=0.4.4",

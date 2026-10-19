@@ -28,7 +28,7 @@ UV="$HOME/.local/bin/uv"
 [ -x "$UV" ] || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 echo "== Python packages (uv installs its own Python)"
-"$UV" sync --frozen --all-extras  # echo cancellation, Claude, Android TV and the example plugin's are extras
+"$UV" sync --frozen --all-extras  # echo cancellation, Claude, Android TV, the example plugin's and the S3 backup are extras
 
 echo "== API keys (TARS uses the services there are keys for, and says what it does without the others)"
 [ -e .env ] || cp .env.example .env
@@ -69,6 +69,15 @@ raise SystemExit(0 if load_config(Path('config.toml')).telegram.enabled else 1)"
 elif [ -e "$HOME/.config/systemd/user/voice-assistant-telegram.service" ]; then
   systemctl --user disable --now voice-assistant-telegram || true
 fi
+# The backup to S3, every 15 minutes, if [backup] is on (docs/backup.md).
+if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \
+raise SystemExit(0 if load_config(Path('config.toml')).backup.enabled else 1)"; then
+  cp deploy/voice-assistant-backup.service deploy/voice-assistant-backup.timer "$HOME/.config/systemd/user/"
+  systemctl --user daemon-reload
+  systemctl --user enable --now voice-assistant-backup.timer
+elif [ -e "$HOME/.config/systemd/user/voice-assistant-backup.timer" ]; then
+  systemctl --user disable --now voice-assistant-backup.timer || true
+fi
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
 # With no speakerphone TARS stays stopped; this starts it when one is plugged in.
 RULE=/etc/udev/rules.d/99-tars-speakerphone.rules
@@ -83,4 +92,5 @@ sleep 3  # the services just restarted
 
 echo
 echo "Done. Say \"hey TARS\". The web UI is at http://$(hostname).local:8080"
-echo "Logs: journalctl --user-unit voice-assistant -f   (and --user-unit voice-assistant-web, voice-assistant-telegram)"
+echo "Logs: journalctl --user-unit voice-assistant -f   (and --user-unit voice-assistant-web,"
+echo "      --user-unit voice-assistant-telegram, --user-unit voice-assistant-backup)"

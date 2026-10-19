@@ -14,8 +14,10 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
   can answer, and a request's recording (or a Telegram voice message) when Deepgram fails.
 - **Telegram,** with `[telegram]` on: what's written and said in the household's chats with TARS, and what it sends
   there ([TARS on Telegram](telegram.md)).
+- **Your own S3 bucket,** with `[backup]` on: a copy of everything TARS keeps, encrypted at rest, every 15 minutes
+  ([backing up to S3](backup.md)).
 
-The event log, the audio kept for learning, voiceprints and the web UI never leave it
+Without the backup, the event log, the audio kept for learning, voiceprints and the web UI never leave it
 ([what leaves the machine](architecture.md#what-leaves-the-machine)).
 
 ```
@@ -26,7 +28,8 @@ The event log, the audio kept for learning, voiceprints and the web UI never lea
 │   writes voice_data/events/ (SQLite + WAVs)    │
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
 │   the React page + API over the same log       │◄── away from home: Tailscale (optional)
-│   regroup voices, switch wake models           │── nightly encrypted backup ──► S3 / B2 (optional)
+│   regroup voices, switch wake models           │
+│ voice-assistant-backup.timer (optional)        │── every 15 min, encrypted ──► an S3 bucket
 │ voice-assistant-telegram.service (optional)    │── asks for new messages ──► Telegram ◄── the household's phones
 └────────────────────────────────────────────────┘
 ```
@@ -108,9 +111,11 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   anywhere, but only connects from your tailnet.
 - **Storage.** A wake window is 3 s (96 KB), a request about 4 s (130 KB). At around 60 events a day that's about
   12 MB a day. Audio training wouldn't learn from is dropped after `[learning] keep_audio_days` (60); audio with
-  an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years.
-- **Backup.** SD cards die, and the labels are the valuable part. A nightly `restic` or `rclone` job sending an
-  encrypted copy of `voice_data/` and `models/personal/` to S3 or Backblaze B2 costs cents a month.
+  an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years,
+  and with the backup on, a request's audio leaves the card after a month.
+- **Backup.** SD cards die, and the labels are the valuable part. With `[backup]` on, everything TARS keeps goes to an
+  S3 bucket every 15 minutes, with a snapshot of the database, voiceprints and wake models every six hours, and old
+  audio leaves the Pi for the bucket ([backing up to S3](backup.md)).
 - **Separate processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
 - **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
@@ -119,10 +124,11 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   Cartesia and Telegram (each with how long it took, Deepgram on the servers `deepgram_host` names, Telegram's bot
   token when `[telegram]` is on, and any without a key or not in use skipped), the voice (it says "TARS is ready."),
   the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant and each device in the
-  house (with `[home]` devices), and the systemd services. Each problem comes with what to do about it, and it exits 1
-  if anything is broken. It never hangs on a device: one that doesn't open in time is a failure. Without a terminal,
-  the web UI's **Status** page shows much of the same, live: whether each process is running, the services with
-  their own status pages, and the Pi's temperature, power and disk.
+  house (with `[home]` devices), the backup (the bucket, and how the last pass went) and the systemd services. Each
+  problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device: one that
+  doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same, live:
+  whether each process is running, the services with their own status pages, and the Pi's temperature, power and
+  disk.
 
 ## A first test run
 
@@ -171,7 +177,8 @@ household, the Pi-only setup is simpler and private, which is why TARS is built 
 ## Limitations
 
 - **No accounts.** The web UI is for the home network, or a tailnet away from home; never forward its port.
-- **Backup is yours to set up.** `install-pi.sh` doesn't install the nightly copy described above.
+- **The backup is AWS's.** It needs an S3 bucket and an IAM key ([backing up to S3](backup.md)); without them,
+  nothing leaves the Pi but the turns themselves.
 - **Measured on the development Mac.** The wake stages' cost and the response times come from the Mac; the Pi should
   be comfortable (stage 1 is tiny), but running the wake model and the voice's playback at once on the Pi is still to
   be checked ([what's next](roadmap.md#2-tars-stop-interrupting-a-reply)).
