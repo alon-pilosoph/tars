@@ -1,7 +1,7 @@
 /* Functional check of the web UI against the real backend and a throwaway copy of the demo log. `npm run e2e`.
    The steps run in order in one page and depend on each other. */
 import { type APIRequestContext, type Locator, type Page, expect, test } from "@playwright/test";
-import type { ApiConversation, Cluster, Item, ModelsInfo, RemindersInfo, TarsEvent } from "../src/types";
+import type { ApiConversation, Cluster, Health, Item, ModelsInfo, RemindersInfo, TarsEvent } from "../src/types";
 
 const api = (r: APIRequestContext) => {
   const json = async <T>(path: string) => (await (await r.get(path)).json()) as T;
@@ -13,6 +13,7 @@ const api = (r: APIRequestContext) => {
     conv: (id: number) => json<ApiConversation>(`/api/conversations/${id}`),
     models: () => json<ModelsInfo>("/api/models"),
     reminders: () => json<RemindersInfo>("/api/reminders"),
+    health: () => json<Health>("/api/health"),
   };
 };
 const reviewTodo = (events: TarsEvent[]) => events.filter(e => e.follow !== "asked" && !e.label).length;
@@ -381,4 +382,22 @@ test("Models shows the pair in use and how it tested, and Use this switches back
   await expect(toast()).toHaveText("Now using the installed models.");
   await expect.poll(async () => (await A.models()).active?.version).toBe("installed");
   await expect(page.locator(".kv dd").first()).toHaveText("installed");
+});
+
+test("Status shows each process by its heartbeat, today's counts, and the services with their own pages", async () => {
+  await nav("Status").click();
+  const health = await A.health();
+  const rows = page.locator(".cmp.health").first().locator("tr");
+  await expect(rows).toHaveCount(health.processes.length);
+  await expect(rows.filter({ hasText: "The web UI" })).toContainText("Running for"); // this server's own heartbeat
+  await expect(rows.filter({ hasText: "The assistant" })).toContainText("Not seen running");
+  await expect(page.locator(".health-counts b").first()).toHaveText(String(health.today.wakes));
+  const services = page.locator(".cmp.health").last().locator("tbody tr");
+  await expect(services).toHaveCount(health.services.length); // one not used isn't listed
+  await expect(services.filter({ hasText: "Deepgram" })).toContainText("check DEEPGRAM_API_KEY in .env");
+  await expect(services.filter({ hasText: "OpenAI" }).getByRole("link")).toHaveAttribute(
+    "href",
+    "https://status.openai.com",
+  );
+  await expect(page.locator(".kv")).toContainText(health.machine.host);
 });

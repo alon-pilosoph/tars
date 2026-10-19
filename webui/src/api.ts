@@ -39,7 +39,7 @@ async function request<T>(path: string, { timeoutMs = TIMEOUT_MS, ...opts }: Opt
   return r.json();
 }
 
-export const getJson = <T>(path: string) => request<T>(path, {});
+export const getJson = <T>(path: string, opts: Pick<Opts, "timeoutMs"> = {}) => request<T>(path, opts);
 
 // Changes go to the server one at a time, in the order they were made, and reads wait for them: two quick taps
 // can't arrive out of order, and a Refresh never reads what was there before your last tap.

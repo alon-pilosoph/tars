@@ -1,7 +1,7 @@
 # The web UI
 
 The household's window into TARS: what was said, what TARS sent, the wakes it wasn't sure about, the reminders it's
-holding, and the voices it has heard. It runs on the same machine as the assistant (`voice-assistant --web`) and is
+holding, the voices it has heard, and whether it's all running. It runs on the same machine as the assistant (`voice-assistant --web`) and is
 opened from a phone or laptop on the home network. It is a React app over a small FastAPI API, its build is
 committed so the Pi needs no Node, and it is covered by unit tests, an end-to-end check against a real backend in CI,
 and screenshot tests. The design came from Claude Design (the Day journal direction, in the Linen and ink blue
@@ -17,9 +17,10 @@ palette).
 | **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set (by voice, on this page or on Telegram), whether it's posted to a Telegram chat rather than said aloud, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice is back. The tab counts what's waiting for a got it. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
+| **Status** | Whether each part of TARS is running (the assistant, the web UI, Telegram), since when and which version; the day's wakes, answers and failed answers; each cloud service TARS uses, asked with TARS's own key, beside what the service's own status page says; and the machine: CPU, load, memory, temperature, the Pi's power and heat warnings, storage and uptime. |
 
-On a phone the pages are tabs along the bottom, Voices and Models sit under the ⋯ at the top, and menus and dialogs
-open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
+On a phone the pages are tabs along the bottom, Voices, Models and Status sit under the ⋯ at the top, and menus and
+dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
 
 | Home | Review, on a phone |
 |---|---|
@@ -41,7 +42,7 @@ nothing else.
 In code this is one snapshot of ids taken at each Refresh (`store/load.ts`): reloads after an action only update
 what the snapshot showed. Changes go to the server one at a time, in the order they were made, and a reload waits
 for them, so two quick taps can't arrive out of order and a Refresh never reads what was there before your last
-tap.
+tap. The Status page loads its own data when it's opened, and with Refresh while it's open.
 
 ### No accounts, guarded by host and origin
 
@@ -57,6 +58,25 @@ its own page (403 otherwise). That closes the two ways a page elsewhere could re
 UI with Python alone. CI rebuilds it and fails if the result differs from what's committed, so the build can't drift
 from the source.
 
+### The Status page
+
+**Each process says it's running.** The assistant, the web UI and Telegram each rewrite a small file every 30
+seconds, `<events folder>/heartbeats/<name>.json`, with when they started and the commit they run (`health.py`). One
+whose file is older than three beats has stopped: it crashed, was stopped, or froze whole. It works the same without
+systemd (on a Mac), and where there is systemd, the unit's state is shown too when it isn't "active". The heartbeat
+is written from a thread of its own, so it never touches the database and nothing the assistant does waits on it;
+the flip side is that a process stuck inside its own loop still beats (the assistant's own watchdog exits when the
+mic stops, which is how it has hung before).
+
+**Each service is asked, and asked about.** The services are asked with the same checks as `--check`
+(`check.service_checks`), each reading something small with TARS's key (a model, the voices, the key's or the bot's
+own details), and each one's own status page is read (they all publish Statuspage's `/api/v2/status.json`). Both,
+because each answers a different question: the key works, and the service says it's fine. They're all asked at once
+and given 10 seconds together: one that hasn't answered by then is shown failing, so a service that hangs can't hold
+the page up. The answers are kept for a minute, and while they're being asked, another page gets the last ones.
+**Trade-off:** the checks spend no tokens, but they are requests on TARS's keys, so the page asks only when it's
+opened or refreshed, never in the background.
+
 ## The API
 
 JSON over HTTP, all under `/api`. Errors carry a readable reason: `{"detail": "..."}`, or for a malformed body
@@ -65,7 +85,8 @@ get 403 (see [architecture](architecture.md#the-web-ui)).
 
 | Method and path | Does |
 |---|---|
-| `GET /api/status` | Whether voices can be regrouped, and how many requests a voiceprint needs |
+| `GET /api/status` | Whether voices can be regrouped, how many requests a voiceprint needs, and whether there's a Status page (`health`) |
+| `GET /api/health` | What the Status page shows: each process's heartbeat and systemd state, today's counts, the services (asked at most once a minute) and the machine |
 | `GET /api/conversations` | The newest 200 conversations, with their turns, sent items and the wake that started each |
 | `GET /api/conversations/{id}` | One conversation |
 | `DELETE /api/conversations/{id}` | It, its turns, audio and items, and the wake that started it |
@@ -116,7 +137,7 @@ use.
 **Layout:** `src/store/` holds the state (`core.ts`), what views derive from it (`selectors.ts`), loading and the
 Refresh snapshot (`load.ts`), tabs and filters (`nav.ts`), menus, dialogs and scrolling (`ui.ts`), and the actions
 by area (`items.ts`, `conversations.ts`, `voices.ts`, `models.ts`, `reminders.ts`, with the shared shapes in
-`actions.ts`); `index.ts` exports them all. `src/components/` has one file per page or part. `src/demo.ts`,
+`actions.ts`), and the Status page's own load (`health.ts`); `index.ts` exports them all. `src/components/` has one file per page or part. `src/demo.ts`,
 `src/demoParams.ts` and `src/linkStates.ts` are only loaded with `?demo`.
 
 ## The checks
@@ -125,8 +146,9 @@ Both run headless in the installed Chrome with Playwright.
 
 - **`npm run e2e`** (`checks/e2e.spec.ts`, a few seconds): builds a throwaway copy of the demo log with
   `tools/webui_demo.py`, serves it, and uses the page like a person would: rate and undo, fix a transcript, tick a
-  list, open a note, delete, move a voice, name one with Enter, filter, check that nothing moves until Refresh, and
-  switch wake models on the Models page. Every step is checked against what the server then says. The demo log's
+  list, open a note, delete, move a voice, name one with Enter, filter, check that nothing moves until Refresh,
+  switch wake models on the Models page, and read the Status page (the demo's services are pretend: no key or
+  network is used). Every step is checked against what the server then says. The demo log's
   audio is committed (`tools/demo_audio/`, four synthetic voices made by `tools/make_demo_audio.py`), so it runs on
   any machine. A step that finds the demo missing what it needs fails rather than skipping.
 - **`npm run visual`** (`checks/visual.spec.ts`, under 2 minutes): Playwright's `toHaveScreenshot()` on the states

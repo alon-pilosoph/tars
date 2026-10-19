@@ -171,6 +171,14 @@ def test_telegram_is_checked_only_when_its_on_and_says_who_its_for(cfg):
     assert ok.status == OK and "@hey_tars_bot" in ok.detail and "Alon" in ok.detail
 
 
+def test_the_service_checks_skip_what_has_no_key(tmp_path):
+    (tmp_path / ".env").write_text("")
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    checks = check.service_checks(cfg, tmp_path)
+    assert [name for name, _ in checks] == ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram"]
+    assert all(c().status == SKIP for _, c in checks)  # no keys: nothing is used
+
+
 def test_home_assistant_is_checked_only_when_its_used_and_says_what_to_do():
     from voice_assistant.config import HomeConfig
     from voice_assistant.home import HomeError

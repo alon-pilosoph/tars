@@ -1850,3 +1850,29 @@ details.how {
     right: 0;
   }
 }
+
+/* ---------- Status ---------- */
+.cmp.health td:first-child {
+  width: 1%;
+  white-space: nowrap;
+}
+.cmp.health .bad,
+.health-counts .bad,
+.kv .bad {
+  color: var(--accent);
+}
+.cmp.health .fix {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+}
+.cmp.health a {
+  color: inherit;
+}
+.cmp.health a .icon {
+  margin-left: 4px;
+  vertical-align: -2px;
+}
+.health-counts {
+  margin-top: 24px;
+}

@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from voice_assistant.check import FAIL, OK, SKIP, Check, Result
 from voice_assistant.clustering import recluster
 from voice_assistant.config import load_config
 from voice_assistant.conversations import (
@@ -38,6 +39,7 @@ from voice_assistant.events import (
     SAID_NOTHING,
     EventLog,
 )
+from voice_assistant.health import Health, Heartbeat, Services
 from voice_assistant.llm import FALLBACK, LOOKED_UP, QUICK
 from voice_assistant.reminders import MESSAGE, REMINDER, TIMER, VOICE, WEB, NewReminder, Reminders
 from voice_assistant.speaker import SpeakerID
@@ -454,6 +456,7 @@ def main() -> None:
         return
     log = EventLog(args.folder / "events")
     cfg = load_config(REPO / "config.toml")
+    Heartbeat(log.folder, "web", REPO).start()  # the assistant's is never seen: it isn't running
     serve(
         log,
         "127.0.0.1",
@@ -462,7 +465,21 @@ def main() -> None:
         pairs=demo_versions(cfg, args.folder),
         reminders=Reminders(log.store),
         voice_names=lambda: ["alon"],  # the demo's voiceprints
+        health=Health(log, ["assistant", "web"], Services(demo_services, demo_page), lambda unit: None).report,
     )
+
+
+def demo_services() -> list[tuple[str, Check]]:
+    """The services, as if asked with keys: no key or network is used."""
+    return [
+        ("OpenAI", lambda: Result("OpenAI", OK, "answers (0.4 s)")),
+        ("Deepgram", lambda: Result("Deepgram", FAIL, "HTTP 401", "check DEEPGRAM_API_KEY in .env")),
+        ("Telegram", lambda: Result("Telegram", SKIP, "not used")),
+    ]
+
+
+def demo_page(url: str) -> dict:
+    return {"status": {"indicator": "none", "description": "All Systems Operational"}}
 
 
 if __name__ == "__main__":

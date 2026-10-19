@@ -1,14 +1,14 @@
 /* The page's link parameters, for linking to a view:
 
-   ?tab=home|sent|review|reminders|voices|models     ?person=all|household|<voice id>
+   ?tab=home|sent|review|reminders|voices|models|status     ?person=all|household|<voice id>
    ?conv=<id>     that conversation, open and scrolled to
    ?item=<id>     scrolled to that item
    ?demo          built-in sample data, no server; demoParams.ts adds more parameters for the screenshot tests */
 
-export type Tab = "home" | "sent" | "review" | "reminders" | "voices" | "models";
+export type Tab = "home" | "sent" | "review" | "reminders" | "voices" | "models" | "status";
 export type PersonFilter = "all" | "household" | number;
 
-const TABS: Tab[] = ["home", "sent", "review", "reminders", "voices", "models"];
+const TABS: Tab[] = ["home", "sent", "review", "reminders", "voices", "models", "status"];
 
 export const PARAMS = new URLSearchParams(location.search);
 export const idParam = (v: string | null | undefined) => (v && /^\d+$/.test(v) ? Number(v) : null);

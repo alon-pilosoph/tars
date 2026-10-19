@@ -198,8 +198,11 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
   models see only what the home tool answered, as part of the conversation; the TV's agent (OpenAI) also sees the
   TV's screen while it works a task. A plugin says what it sends: `examples/my_house` looks titles up on IMDb
   ([the house](home.md#what-leaves-the-house)).
+- **When the web UI's Status page is opened,** each service TARS uses is asked for something small with its key (a
+  model, the voices, the key's or the bot's own details: no conversation, no tokens), and each one's public status
+  page is read (nothing is sent to it).
 - **Never:** the event log, the audio kept for learning, voiceprints, and anything else the web UI shows. The web UI
-  is served from the same machine and talks to nothing else.
+  is served from the same machine and talks to nothing else but the Status page's checks.
 
 ## The web UI
 
@@ -208,6 +211,11 @@ React page built from `webui/` (committed as `src/voice_assistant/webui_static/`
 assistant writes and the web UI reads and edits (as does TARS on Telegram, when it's on): SQLite in WAL mode lets
 them all work at once, and every change of more than one row is one transaction. Each runs as its own service, so a
 crash in one never takes another down. The web UI is described in [the web UI](web-ui.md).
+
+**Each process writes a heartbeat**, `voice_data/events/heartbeats/<name>.json`, every 30 seconds (`health.py`), and
+the web UI's Status page reads them: a process whose heartbeat is older than three beats has stopped, crashed or
+frozen whole, on a Mac as on the Pi ([the Status page](web-ui.md#the-status-page)). It's written from a thread of
+its own, never touches the database, and one that can't be written costs a line in the log.
 
 **It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
 elsewhere could reach it through someone's browser:
@@ -237,7 +245,8 @@ The assistant is `src/voice_assistant/`:
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes) |
 | Downloads | `models.py` (the small local models, on first use) |
-| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, services, voice, mic, storage, Home Assistant and each device in the house, Telegram) |
+| Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, the services and Telegram, voice, mic, storage, the web UI, Home Assistant and each device in the house, and systemd's services) |
+| Is it all running | `health.py` (heartbeats, today's counts, the services and their status pages, the machine: what the Status page shows) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),

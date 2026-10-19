@@ -7,6 +7,7 @@ import { Models } from "./components/Models";
 import { Reminders } from "./components/Reminders";
 import { Review } from "./components/Review";
 import { Loading, Unreachable } from "./components/States";
+import { StatusView } from "./components/Status";
 import { Toasts } from "./components/Toasts";
 import { Voices } from "./components/Voices";
 import { type Tab, linkTo } from "./params";
@@ -22,7 +23,15 @@ import {
   useStore,
 } from "./store";
 
-const VIEWS = { home: Home, sent: Sent, review: Review, reminders: Reminders, voices: Voices, models: Models };
+const VIEWS = {
+  home: Home,
+  sent: Sent,
+  review: Review,
+  reminders: Reminders,
+  voices: Voices,
+  models: Models,
+  status: StatusView,
+};
 
 const COUNTED: Partial<Record<Tab, string>> = { review: "to review", reminders: "waiting for got it" };
 
@@ -95,6 +104,7 @@ export function App() {
           <nav className="nav-2" aria-label="More pages">
             <NavLink s={s} tab="voices" label="Voices" />
             <NavLink s={s} tab="models" label="Models" />
+            {s.status.health && <NavLink s={s} tab="status" label="Status" />}
           </nav>
           <button className="refresh" onClick={() => busy || refreshNow()} aria-busy={s.refreshing}>
             <Icon name="refresh" size="s" />
