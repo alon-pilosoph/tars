@@ -91,9 +91,7 @@ function Body({ h }: { h: Health }) {
         <Count n={today.answers} one="answer" many="answers" />
         <Count n={today.failed} one="answer failed" many="answers failed" bad={today.failed > 0} />
       </div>
-      <p className="hint">
-        {today.last_wake != null ? `The last wake was ${ago(today.last_wake, h.now)}.` : "No wakes yet."}
-      </p>
+      {today.last_wake != null && <p className="hint">{`The last wake was ${ago(today.last_wake, h.now)}.`}</p>}
 
       <SecHead title="Services">
         <span className="muted">{`Asked at ${time(h.services_asked)}`}</span>
