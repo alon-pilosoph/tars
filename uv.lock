@@ -1364,6 +1364,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "scipy" },
     { name = "sounddevice" },
+    { name = "soundfile" },
     { name = "uvicorn" },
     { name = "vosk" },
     { name = "websockets" },
@@ -1389,7 +1390,6 @@ dev = [
     { name = "livekit" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "soundfile" },
 ]
 training = [
     { name = "huggingface-hub" },
@@ -1416,6 +1416,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "sounddevice", specifier = ">=0.4.7" },
+    { name = "soundfile", specifier = ">=0.14.0" },
     { name = "tinytuya", marker = "extra == 'my-house'", specifier = ">=1.17" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "vosk", specifier = "==0.3.44" },
@@ -1429,7 +1430,6 @@ dev = [
     { name = "livekit", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = "==0.16.10" },
-    { name = "soundfile", specifier = ">=0.14.0" },
 ]
 training = [
     { name = "huggingface-hub", specifier = ">=1.0" },

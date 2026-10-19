@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from .events import EventLog
     from .health import Report
     from .llm import QuickService
+    from .stt import Transcriber
 
 OPENAI_TIMEOUT_S = 15.0
 AGENT_TIMEOUT_S = 40.0  # one step of the Android TV agent, a screenshot to read
@@ -412,6 +413,24 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     return FallbackTranscriber(streaming, backup), brain, voice
 
 
+def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
+    """Speech to text for a whole recording (a voice message), with the services make_pipeline picks for the voice at
+    home: Deepgram's endpoint for whole recordings, with OpenAI's `client` as the backup, or whichever of the two
+    there's a key for. `cfg` has been through with_keys."""
+    from .stt import FILE_TIMEOUT_S, DeepgramFileTranscriber, FallbackTranscriber, OpenAITranscriber
+
+    if client is not None:
+        client = client.with_options(timeout=FILE_TIMEOUT_S)  # a few minutes of audio, not one request
+    if cfg.stt.provider == "openai":
+        return OpenAITranscriber(client, cfg.stt)
+    deepgram = DeepgramFileTranscriber(api_key(env, "DEEPGRAM_API_KEY"), cfg.stt)
+    if client is None:
+        return deepgram
+    return FallbackTranscriber(
+        deepgram, OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
+    )
+
+
 def make_brain(client, llm: LLMConfig, env: Path, reminders=None, **channel):
     """Qwen first, handing over to OpenAI's `client`, or OpenAI alone when no quick service is set up. `channel`:
     a chat's channel_rules and remind_tools, or the house's home (see OpenAIChat)."""
@@ -475,6 +494,7 @@ def telegram(cfg: Config, root: Path) -> None:
         tools,
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
+        transcriber=make_recording_transcriber(cfg, env, client),
     ).run_forever(me)
 
 

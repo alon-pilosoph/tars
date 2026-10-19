@@ -190,8 +190,9 @@ voice effect's code (`effects.py`), delete that folder so the lines are made aga
     and the web search are told the city and country, so "what's the weather?" is about home; nothing closer. It also transcribes a request's recording when Deepgram's
     stream fails. With `[stt]` or `[tts] provider = "openai"`, or no Deepgram key, it gets the audio instead of
     Deepgram, or the reply text instead of Cartesia.
-- **With `[telegram]` on,** Telegram gets what's written in the household's chats with TARS, its replies there, and
-  the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)). TARS asks
+- **With `[telegram]` on,** Telegram gets what's written and said in the household's chats with TARS, its replies
+  there, and the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)).
+  A voice message there goes to Deepgram (or OpenAI) to be written down, as a request at home does. TARS asks
   Telegram for new messages, so nothing at home is opened to the internet.
 - **With `[home]` devices,** Home Assistant, the devices and an Android TV box are all on the home network. The
   models see only what the home tool answered, as part of the conversation; the TV's agent (OpenAI) also sees the

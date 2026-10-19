@@ -34,8 +34,8 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:
   every part running, the services, the Pi ([web UI](docs/web-ui.md)).
-- **On Telegram too**: chat with it away from home, and get its reminders and what it sends on your phone, with
-  nothing at home opened to the internet ([Telegram](docs/telegram.md)).
+- **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
+  sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
 
 How a request is answered:
 

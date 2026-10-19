@@ -24,7 +24,8 @@ dependencies = [
     "websockets>=14",
     "onnxruntime>=1.20",
     "psutil>=7",  # the Status page's CPU, memory, temperature and uptime
-    "httpx>=0.28",  # Home Assistant, Telegram, and the services' status pages
+    "soundfile>=0.14.0",  # reading voice messages (Opus in Ogg)
+    "httpx>=0.28",  # Home Assistant, Telegram, Deepgram's endpoint for whole recordings, and the status pages
 ]
 
 [project.urls]
@@ -63,7 +64,6 @@ dev = [
     "livekit>=1.1",
     "pytest>=9.1.1",
     "ruff==0.16.10",
-    "soundfile>=0.14.0",
 ]
 # What training/ needs from this environment (training.household, training.hub): uv run --group training ...
 training = [
