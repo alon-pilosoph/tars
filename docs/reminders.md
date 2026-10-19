@@ -36,7 +36,7 @@ Anyone can acknowledge anything; the status records who.
   for a timer, "stop" or "turn it off".
 - **Later:** "hey TARS, I got the message" acknowledges the one that's waiting (the most recent, if there are
   several and it isn't clear which).
-- **On the web UI:** Got it, or Turn off for a ringing timer.
+- **On the web UI:** Got it, or Turn off for a ringing timer; there, also for one not said yet.
 - **Who** is recorded as the recognized voice, "an unknown voice", or "on this page".
 
 ### When it's said
@@ -73,6 +73,10 @@ usual. "Tell the house dinner's ready" or "tell Stacey at home to call me" in a 
 and the chat is told when it was said and who said they got it. Saying "I took the pills" in a chat acknowledges one
 said aloud at home. Something waiting until someone's back is always said aloud.
 
+If Telegram isn't running, reminders set there wait, and are posted late, with when they were due: someone who set
+one in a chat is usually away, so saying it to the house wouldn't reach them. `--check` and the
+[Status page](web-ui.md#the-status-page) say how many are waiting.
+
 ## Design
 
 **One table, several users.** A `reminders` table in the event database: what, for and from whom, when (`due`;
@@ -103,7 +107,8 @@ again in ten minutes" puts that one off, rather than setting a second one beside
 reply both acknowledges a reminder and puts it off or cancels it, the change wins: acknowledged, it could no longer be
 put off, and would never be said again. Every active reminder is in both models' instructions by number (after the part that can be
 cached, like the time of day), so "what reminders do I have?" needs no tool, and a later "hey TARS, I got the
-message" gets `<ack 12>`. **Why not a phrase list:** people say "okay thanks" a hundred ways, and a list would miss
+message" gets `<ack 12>`. An `<ack>` only ever ends one that was said and is waiting: a number the model gets wrong
+can't end one still to come. **Why not a phrase list:** people say "okay thanks" a hundred ways, and a list would miss
 them.
 
 **Setting by voice** uses three tools (`remind`, `snooze_reminder`, `cancel_reminder`). Qwen has them itself

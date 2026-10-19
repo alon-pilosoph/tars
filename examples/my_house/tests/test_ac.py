@@ -230,19 +230,20 @@ class Sent:
         self.codes.append((d.bits[0] == "1", d.bits))
 
 
-def ac(tmp_path: Path, sensor=None, sent=None) -> tuple[AC, Sent, Path]:
-    sent = sent or Sent()
+def ac(tmp_path: Path, sensor=None, sent=None, clock=None) -> tuple[AC, Sent, Path]:
+    """The AC, its blaster, and where it keeps its state. `sensor()`: the light sensor's state, or all of what Home
+    Assistant says of it. `clock`: [seconds], which only waiting moves."""
+    sent, clock = sent or Sent(), clock or [0.0]
     path = tmp_path / "state.json"
     hass = None
-    if sensor is not None:  # Home Assistant, as far as the light sensor goes: a state, or all of what it says
+    if sensor is not None:
         hass = type("Hass", (), {"state": lambda self, entity: _as_state(sensor())})()
-    clock = [0.0]
 
     def sleep(s):
         clock[0] += s
 
-    unit = AC("AC", Profile(electra_profile()), sent, path, hass, "binary_sensor.ac_light" * (sensor is not None))
-    unit._clock, unit._sleep = (lambda: clock[0]), sleep
+    light = "binary_sensor.ac_light" * (sensor is not None)
+    unit = AC("AC", Profile(electra_profile()), sent, path, hass, light, clock=lambda: clock[0], sleep=sleep)
     return unit, sent, path
 
 
@@ -310,24 +311,31 @@ def test_the_last_settings_are_kept_for_next_time(tmp_path):
 def test_with_the_light_sensor_it_checks_and_sends_once_more_if_it_was_missed(tmp_path):
     # The sensor reports every 2 s: still off well after the first toggle, so the AC missed it. The second one, sent
     # at 6 s, turns it on.
+    clock = [0.0]
+
     def sensor():
-        t = unit._clock()
+        t = clock[0]
         return light("on", 8, every_2_s(t)) if t >= 8 else light("off", -100, every_2_s(t))
 
-    unit, sent, path = ac(tmp_path, sensor=sensor)
+    unit, sent, path = ac(tmp_path, sensor=sensor, clock=clock)
     said = unit.call("on", NOTHING)
     assert said == "done: the AC is on (on the second try), its light says so"
     assert [toggle for toggle, _ in sent.codes] == [True, True] and State.load(path).how == "sensor"
 
 
-def test_a_slow_light_sensor_gets_no_second_toggle(tmp_path):
+@pytest.mark.parametrize("reported", [0.0, 0.3])  # nothing since; once, a moment after the toggle, before it showed
+def test_a_slow_light_sensor_gets_no_second_toggle(tmp_path, reported):
     # The AC came on at once, but the sensor says so only after 7 s: a second toggle sent then would turn it off, and
     # the late "on" would have said it was done.
-    def sensor():
-        t = unit._clock()
-        return light("on", 7, 7) if t >= 7 else light("off", -100, 0)
+    clock = [0.0]
 
-    unit, sent, _ = ac(tmp_path, sensor=sensor)
+    def sensor():
+        t = clock[0]
+        if t >= 7:
+            return light("on", 7, 7)
+        return light("off", -100, reported if t >= reported else -100)
+
+    unit, sent, _ = ac(tmp_path, sensor=sensor, clock=clock)
     said = unit.call("on", NOTHING)
     assert said.startswith("not confirmed: sent it, but the AC's light sensor hasn't reported since")
     assert [toggle for toggle, _ in sent.codes] == [True]
@@ -343,7 +351,8 @@ class FailsAgain(Sent):
 
 
 def test_a_second_toggle_that_cant_be_sent_is_not_confirmed_rather_than_nothing_changed(tmp_path):
-    unit, sent, path = ac(tmp_path, sensor=lambda: light("off", -100, every_2_s(unit._clock())), sent=FailsAgain())
+    clock = [0.0]
+    unit, sent, path = ac(tmp_path, lambda: light("off", -100, every_2_s(clock[0])), FailsAgain(), clock)
     said = unit.call("on", NOTHING)
     assert said == (
         "not confirmed: sent it, and the AC's light still says off; sending it again failed (the IR blaster didn't "

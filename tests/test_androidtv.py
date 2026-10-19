@@ -9,7 +9,7 @@ import types
 
 import pytest
 
-from voice_assistant.androidtv import AGENT_RULES, AndroidTV, TvAgent, TvDevice, screen
+from voice_assistant.androidtv import AndroidTV, TvAgent, TvDevice, screen
 from voice_assistant.assistant import Announcements
 from voice_assistant.home import HomeError, Request
 
@@ -46,7 +46,7 @@ class Box(AndroidTV):
         self.state = {"awake": awake, "front": front, "media": media, "ui": ui}
         self.commands: list[str] = []
 
-    def _run(self, command, decode=True, timeout_s=10.0):
+    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False):
         self.commands.append(command)
         s = self.state
         if command.startswith("dumpsys power"):
@@ -95,7 +95,7 @@ def test_typing_goes_as_one_word_with_quotes_kept():
     box.type("it's toy story")
     clear, typed = box.commands[-1].split("; ")
     assert clear.startswith("input keyevent KEYCODE_MOVE_END KEYCODE_DEL")  # what an earlier search left is cleared
-    assert typed == "input text 'it'\\''s%stoy%sstory'"
+    assert shlex.split(typed) == ["input", "text", "it's%stoy%sstory"]
 
 
 def test_a_link_and_its_extras_reach_the_box_as_they_are_never_as_commands():
@@ -107,19 +107,20 @@ def test_a_link_and_its_extras_reach_the_box_as_they_are_never_as_commands():
 
 
 class Flaky(AndroidTV):
-    """A box whose connection fails once with `error`, then answers: what was run on it is kept."""
+    """A box whose connection fails with each of `errors` in turn (None: it answers): what was run is kept, and the
+    clock moves only when told."""
 
-    def __init__(self, error: Exception):
-        super().__init__("10.0.0.8", key_path=None)
-        self.error, self.ran = error, []
+    def __init__(self, *errors: Exception | None):
+        super().__init__("10.0.0.8", key_path=None, clock=lambda: self.now)
+        self.errors, self.ran, self.now = list(errors), [], 0.0
 
     def _device(self):
-        return types.SimpleNamespace(shell=self._shell, close=lambda: None)
+        self._adb = self._adb or types.SimpleNamespace(shell=self._shell, close=lambda: None)
+        return self._adb
 
     def _shell(self, command, **kw):
         self.ran.append(command)
-        if self.error:
-            error, self.error = self.error, None
+        if self.errors and (error := self.errors.pop(0)):
             raise error
         return "  mWakefulness=Awake"
 
@@ -131,12 +132,23 @@ def test_a_press_that_may_have_reached_the_box_is_never_sent_twice():
     assert box.ran == ["input keyevent KEYCODE_DPAD_CENTER KEYCODE_DPAD_CENTER"]
 
 
-def test_a_read_or_a_press_on_a_connection_already_gone_is_tried_again():
-    reading = Flaky(TimeoutError("read timed out"))
-    assert reading.awake() and len(reading.ran) == 2
+def test_a_read_waking_the_box_or_a_press_on_a_connection_already_gone_is_tried_again():
+    assert Flaky(TimeoutError("read timed out")).awake()
+    waking = Flaky(TimeoutError("read timed out"))
+    waking.wake()
+    assert len(waking.ran) == 2
     pressing = Flaky(ConnectionResetError("reset by peer"))
     pressing.press("select")
     assert len(pressing.ran) == 2
+
+
+def test_a_connection_left_idle_is_checked_before_a_press_so_a_dead_one_costs_nothing():
+    # The box slept, or moved, since the last command: its old connection only times out.
+    box = Flaky()
+    box.awake()
+    box.now, box.errors = 60.0, [TimeoutError("read timed out")]
+    box.press("select")
+    assert box.ran[1:] == ["echo", "echo", "input keyevent KEYCODE_DPAD_CENTER"]
 
 
 def test_apps_are_found_by_name_or_among_whats_installed():
@@ -269,7 +281,7 @@ def test_the_agent_works_step_by_step_and_finishes_with_what_to_say():
     assert agent.work("play Toy Story on Stremio") == (True, "Toy Story is playing.")
     assert "input keyevent KEYCODE_WAKEUP" in box.commands  # it woke the TV first
     assert box.state["front"] == "com.stremio.one"
-    assert any(c.endswith("input text 'toy%sstory'") for c in box.commands)
+    assert any(c.endswith("input text toy%sstory") for c in box.commands)
     assert client.requests[-1]["reasoning"] == {"effort": "low"}
     pressed = next(i["output"] for i in client.requests[-1]["input"] if str(i.get("output", "")).startswith("pressed"))
     assert "the screen now:\napp: " in pressed  # no extra round trip to look
@@ -313,7 +325,6 @@ def test_the_agent_carries_a_households_own_rules_and_none_of_its_own():
     agent = TvAgent(Box(), client, "gpt", lambda line: None, sleep=lambda s: None, extra_rules="Stremio: the first.")
     agent.work("play Toy Story")
     assert client.requests[0]["instructions"].endswith("\n\nStremio: the first.")
-    assert "Stremio, choosing" not in AGENT_RULES
 
 
 def test_a_stopped_agent_says_nothing():

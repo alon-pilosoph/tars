@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from voice_assistant.files import atomic_write
 from voice_assistant.home import OFF, ON, PRESS, STATUS, Check, Device, button, presses
 
 IR_RULES = (
@@ -226,8 +227,7 @@ def test(remote: Remote, path: Path, ask: Callable[[str], bool]) -> dict[str, bo
         input("Turn it on with its own remote. Enter when it's on. ")
     remote._send(codes.pulses(codes.power))
     works["power"] = ask("Sent the power button. Did it turn off?")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(works))
+    atomic_write(path, json.dumps(works))
     return works
 
 
@@ -252,7 +252,7 @@ def main() -> None:
     )
     if spec is None or spec.get("codes") not in CODE_SETS:
         raise SystemExit(f"config.toml needs a remote called {args.name!r}, with codes: README.md")
-    name = spec["name"].lower()
+    name = spec["name"]
     tested = tested_path(root, name)
     remote = Remote(name, CODE_SETS[spec["codes"]], from_config(args.config).send, tested=tested)
     if args.command == "press":

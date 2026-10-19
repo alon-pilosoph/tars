@@ -110,6 +110,13 @@ def test_acknowledging_records_who_and_how_and_only_counts_once(reminders):
     assert not reminders.ack(rid, None, WEB) and reminders.waiting() == [] and reminders.due(NOW + 10_000) == []
 
 
+def test_only_one_already_said_can_be_acknowledged_by_a_reply_though_the_page_can_end_any(reminders):
+    # A reply's <ack 12> with the wrong number mustn't end a reminder that hasn't been said yet.
+    rid = add(reminders)
+    assert not reminders.ack(rid, "alon", VOICE) and reminders.get(rid)["status"] == SCHEDULED
+    assert reminders.dismiss(rid, None, WEB) and reminders.get(rid)["status"] == ACKNOWLEDGED
+
+
 def test_snoozing_starts_it_over_even_once_missed_and_cancelling_ends_it(reminders):
     rid = add(reminders, max_tries=1)
     reminders.said(rid, now=NOW + 60)

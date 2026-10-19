@@ -33,7 +33,7 @@ from voice_assistant.home import Context, Device, HomeError
 
 from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
-from .direct_play import Catalog, FireTv
+from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, Remote, tested_path
 
 
@@ -99,7 +99,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         except ImportError:
             raise ValueError('it needs the optional extra "tv": uv sync --all-extras') from None
         box = AndroidTV(spec["address"], context.root / KEY_FILE, seen=Seen(context.root / FOUND_FILE))
-        agent = context.tv_agent(box) if context.tv_agent else None
+        agent = context.tv_agent(box, extra_rules=STREMIO_RULES) if context.tv_agent else None
         return FireTv(spec["name"], box, agent, Catalog())
 
     return {"ac": ac, "remote": remote, "firetv": firetv}

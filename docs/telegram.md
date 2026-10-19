@@ -88,7 +88,10 @@ the chat is in the model's list, by number, for an hour after, and snoozed it's 
 
 **Never in the middle of an exchange.** Posting runs on its own thread, every 2 s. While TARS is answering
 someone, nothing it posts by itself goes to their chat: a reminder that comes due meanwhile is posted right after the
-answer, so neither the chat nor what the model remembers has it between a question and its answer.
+answer, so neither the chat nor what the model remembers has it between a question and its answer. Telegram not
+answering, or asking it to wait, puts everything off for 30 s; one thing it will never take (a chat that blocked the
+bot, a file too big) is given up on alone, so it can't hold up the rest: a reminder is said aloud at home instead,
+anything else stays on the TARS page. "typing..." is stopped before a reply is sent.
 
 **Voice messages, heard as at home.** A voice message (up to five minutes) is fetched from Telegram, read from its
 Opus into the 16 kHz audio TARS keeps of everything said at home, and written down by the same speech to text, from
@@ -110,13 +113,18 @@ a slow answer comes ("Looking it up.", "Let me think about that for a moment.") 
 
 **Done once it's delivered.** As by voice, what a reply asks for (a reminder set, something sent) happens only once
 the reply has reached the person: a reply that can't be sent, after three tries, is forgotten, so a reminder they
-never saw confirmed isn't set behind their back.
+never saw confirmed isn't set behind their back. A long reply that arrived in part counts as sent: what they read may
+be "Set for 5pm.".
 
 **Where a reminder is said.** Each reminder has a `channel`: `voice` (aloud at home) or `telegram` (to its person's
 chat). One set in a chat goes to the chat of the person it's for, or of whoever set it when it's for "whoever's
 there" (a timer), if they have one; otherwise it's aloud at home. Messages that wait until someone's back are always
 aloud: they wait for a voice. The assistant at home only ever sees `voice` reminders (`Reminders.due` and the clock
-filter by channel), so it never stops listening for one it won't say.
+filter by channel), so it never stops listening for one it won't say. **If Telegram isn't running** (with
+`[telegram]` off, or its process stopped, as after Telegram refused the token), reminders set there wait, and are
+posted late, with when they were due; `--check` and the Status page say how many are waiting. A reminder whose chat
+blocked the bot is said aloud at home instead, like any reminder there: said again until someone says "got it", if
+it was set to wait for that.
 
 **Aloud at home, from a chat.** A chat's `remind` tool has one more field, `aloud`: said aloud at home rather than
 posted to a chat. For the whole house it's a message for "everyone" ("Everyone, a message from Alon: …"), due now or

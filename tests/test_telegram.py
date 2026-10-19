@@ -1,6 +1,8 @@
 """TARS on Telegram: who it answers, what it writes back, what it sends them, and where reminders set there go."""
 
 import json
+import sqlite3
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -8,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from voice_assistant.config import LLMConfig
+from voice_assistant.config import ConfigError, LLMConfig
 from voice_assistant.conversations import FILE, LIST, NOTE, OTHER, SentItem
 from voice_assistant.llm import SEARCHING, THINKING, OpenAIChat
 from voice_assistant.reminders import (
@@ -43,6 +45,7 @@ from voice_assistant.telegram import (
     Bot,
     TelegramError,
     TelegramTars,
+    _Typing,
     channel_rules,
     split_text,
     tidy,
@@ -470,6 +473,91 @@ def test_tidy_takes_out_the_lines_said_while_waiting():
     assert tidy(f"{SEARCHING} It's 24 degrees.") == "It's 24 degrees."
     assert tidy(f"Timer set. {THINKING} Rome first.") == "Timer set. Rome first."
     assert tidy("Line one.\n\nLine two.") == "Line one.\n\nLine two."
+
+
+def test_a_long_reply_that_arrived_in_part_counts_as_sent(convos):
+    # They read "Set for 5pm." in its first part: the reminder is set, though the rest never came.
+    bot, brain = FakeBot(), ScriptedBrain(["Set for 5pm. " + "a" * 4090 + "\n\n" + "b" * 100])
+    post = bot.send
+
+    def send(chat_id, text):
+        if text.startswith("b"):
+            raise TelegramError("sendMessage: ConnectError")
+        post(chat_id, text)
+
+    bot.send = send
+    tools = tools_with(convos)
+    brain.next_changes = [Change(ADD, NewReminder(REMINDER, "call mum", due=time.time() + 600))]
+    tars(bot, [brain], convos, tools).handle(message("remind me at 5"))
+    assert bot.said()[0] == "Set for 5pm." and "b" * 100 not in bot.said() and brain.forgotten == 0
+    assert [r["text"] for r in tools.reminders.active()] == ["call mum"]
+
+
+def test_typing_has_stopped_before_the_reply_goes():
+    happened, typing = [], threading.Event()
+
+    class SlowToType(FakeBot):
+        def typing(self, chat_id):
+            happened.append("typing")
+            typing.set()
+            time.sleep(0.2)
+            happened.append("typed")
+
+    with _Typing(SlowToType(), ALON):
+        assert typing.wait(5)
+    happened.append("reply")
+    assert happened == ["typing", "typed", "reply"]
+
+
+def test_one_item_that_can_never_be_posted_doesnt_hold_up_the_rest(convos):
+    class TooBig(FakeBot):
+        def send_file(self, chat_id, name, data, mime, caption=""):
+            raise TelegramError("sendDocument: Request Entity Too Large", 413)
+
+    bot = TooBig()
+    t = tars(bot, [ScriptedBrain()], convos)
+    big = SentItem(FILE, "Video", file_name="v.mp4", file_bytes=b"x", mime="video/mp4")
+    convos.add_item(None, None, big, for_name="Alon")
+    broken = convos.add_item(None, None, SentItem(LIST, "Shopping", entries=["eggs"]), for_name="Alon")
+    convos.store.write("UPDATE items SET entries='{not json' WHERE id=?", (broken,))
+    convos.add_item(None, None, SentItem(NOTE, "Pasta", body="Boil water."), for_name="Alon")
+    t.deliver()  # doesn't raise: neither will ever go, so they're given up on
+    assert bot.said() == ["Pasta\n\nBoil water."] and convos.undelivered(since=0) == []
+
+
+def test_a_reminder_posted_whose_record_failed_is_never_said_aloud_as_well(convos):
+    bot, tools, now = FakeBot(), tools_with(convos), time.time()
+    rid = tools.reminders.add(NewReminder(REMINDER, "call mum", "alon", due=now), TELEGRAM, channel=TELEGRAM, now=now)
+    tools.reminders.delivered = lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked"))
+    with pytest.raises(sqlite3.OperationalError):  # the round rests, and the table is tried again
+        tars(bot, [ScriptedBrain()], convos, tools, clock=lambda: now + 1).deliver()
+    assert len(bot.said()) == 1 and tools.reminders.get(rid)["channel"] == TELEGRAM
+
+
+def test_a_refused_token_gives_up_on_nothing_and_stops_saying_where_the_token_is(convos):
+    class Refused(FakeBot):
+        def send(self, chat_id, text):
+            raise TelegramError("sendMessage: Unauthorized", 401)
+
+        def updates(self, offset):
+            raise TelegramError("getUpdates: Unauthorized", 401)
+
+    tools, now = tools_with(convos), time.time()
+    rid = tools.reminders.add(NewReminder(REMINDER, "call mum", "alon", due=now), TELEGRAM, channel=TELEGRAM, now=now)
+    convos.add_item(None, None, SentItem(NOTE, "Pasta", body="x"), for_name="Alon")
+    with pytest.raises(TelegramError):
+        tars(Refused(), [ScriptedBrain()], convos, tools, clock=lambda: now + 1).deliver()
+    assert tools.reminders.get(rid)["channel"] == TELEGRAM and len(convos.undelivered(since=0)) == 1
+    polling = tars(Refused(), [ScriptedBrain()], env="/home/tars/.env", sleep=lambda s: threading.Event().wait())
+    with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN: check it in /home/tars/.env"):
+        polling.run_forever({"username": "hey_tars_bot"})
+
+
+def test_a_numbered_ack_in_a_chat_never_ends_a_reminder_not_said_yet(convos):
+    tools, now = tools_with(convos), time.time()
+    rid = tools.reminders.add(NewReminder(REMINDER, "call mum", "alon", due=now + 3600), TELEGRAM, now=now)
+    tars(FakeBot(), [ScriptedBrain([f"<ack {rid}> Noted."])], convos, tools).handle(message("thanks"))
+    assert tools.reminders.get(rid)["status"] == SCHEDULED
 
 
 def test_a_long_reply_that_fails_partway_doesnt_post_its_start_twice():

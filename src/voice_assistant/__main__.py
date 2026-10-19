@@ -396,6 +396,7 @@ def make_home(cfg: Config, root: Path, announce=None):
     `announce(line)`: how TARS says something on its own, later (how a task on the TV went)."""
     if not cfg.home.devices:
         return None
+    from .androidtv import make_tv_agent
     from .home import Context, build
 
     env = root / ".env"
@@ -407,19 +408,6 @@ def make_home(cfg: Config, root: Path, announce=None):
     if built.tools:
         print(f"(home: the house has {', '.join(built.tools.devices)})")
     return built.tools
-
-
-def make_tv_agent(cfg: Config, env: Path, announce, box):
-    """The agent that works an Android TV box step by step, if there's OpenAI to run it; None otherwise."""
-    from .androidtv import STEP_TIMEOUT_S, TvAgent
-
-    if OPENAI_KEY not in env_keys(env):
-        return None
-    from openai import OpenAI
-
-    # Each step reads a screenshot, so a step can take longer than a spoken reply may.
-    client = OpenAI(api_key=api_key(env, OPENAI_KEY), timeout=STEP_TIMEOUT_S, max_retries=1)
-    return TvAgent(box, client, cfg.home.tv_model or cfg.llm.model, announce, service_tier=cfg.llm.service_tier)
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None):
@@ -504,7 +492,7 @@ def telegram(cfg: Config, root: Path) -> None:
     from .conversations import ConversationLog
     from .reminders import Reminders, ReminderTools
     from .speaker import voiceprint_names
-    from .telegram import CHAT_REMIND_TOOLS, Bot, TelegramError, TelegramTars, channel_rules
+    from .telegram import CHAT_REMIND_TOOLS, Bot, TelegramError, TelegramTars, channel_rules, refused_token_error
 
     if not cfg.telegram.enabled:
         raise ConfigError(
@@ -515,8 +503,8 @@ def telegram(cfg: Config, root: Path) -> None:
     try:
         me = bot.me()
     except TelegramError as e:
-        if e.status in (401, 404):
-            raise ConfigError(f"Telegram refused {TELEGRAM_KEY}: check it in {env}.") from None
+        if e.refused:
+            raise refused_token_error(env) from None
         raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
     events = make_event_log(cfg, root)
     if events:
@@ -541,6 +529,7 @@ def telegram(cfg: Config, root: Path) -> None:
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
         transcriber=make_recording_transcriber(cfg, env, client),
+        env=env,
     ).run_forever(me)
 
 

@@ -28,7 +28,7 @@ import httpx
 import numpy as np
 
 from .audio import SAMPLE_RATE, decode_recording
-from .config import ConfigError
+from .config import TELEGRAM_KEY, ConfigError
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .llm import REMIND_TOOLS, SEARCHING, THINKING, Brain, split_ack
@@ -46,6 +46,7 @@ from .reminders import (
     late,
     line,
     name,
+    twelve_hour,
 )
 from .stt import Transcriber, transcribe_recording
 
@@ -60,12 +61,12 @@ DELIVER_EVERY_S = 2.0
 # backlog of old notes would only be noise (they're on the TARS page).
 ITEMS_WITHIN_S = 60 * 60.0
 RETRY_S = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)  # waiting for Telegram again, after each failure in a row
-# Telegram saying a chat can't get messages from the bot, for good: blocked (403), or no such chat (400). Trying
-# again won't help.
-UNREACHABLE = (400, 403)
+REFUSED = (401, 404)  # Telegram turning the bot's token down: a setup problem, which trying again won't fix
 DELIVERY_REST_S = 30.0
 SEND_TRIES = 3
 TYPING_EVERY_S = 4.0  # "typing..." shows for 5 s
+# The longest a "typing..." may take, and so the longest a reply waits for one on its way, so it can't come after.
+TYPING_TIMEOUT_S = 5.0
 SORRY = "That didn't work. Try again in a moment."
 CANT_READ = "I can only read text and listen to voice messages for now."
 # The longest voice message TARS listens to: a few minutes is a message, and anything longer is better written. Five
@@ -131,6 +132,25 @@ class TelegramError(Exception):
         super().__init__(message)
         self.status, self.retry_after = status, retry_after
 
+    @property
+    def retryable(self) -> bool:
+        """Whether trying again later may work: Telegram not reached, asking to wait (429), or its own trouble (5xx)."""
+        return self.status is None or self.status == 429 or self.status >= 500
+
+    @property
+    def refused(self) -> bool:
+        """Telegram turning the bot's token down: nothing works until it's fixed."""
+        return self.status in REFUSED
+
+    @property
+    def for_good(self) -> bool:
+        """Telegram turning this one message down for good: a chat that blocked the bot, a file too big."""
+        return not (self.retryable or self.refused)
+
+
+def refused_token_error(env: Path | str) -> ConfigError:
+    return ConfigError(f"Telegram refused {TELEGRAM_KEY}: check it in {env}.")
+
 
 class Bot:
     """The few methods of Telegram's Bot API that TARS uses. The token is part of every address, so no error says
@@ -141,12 +161,14 @@ class Bot:
         self._files = f"{API}/file/bot{token}"
         self._http = http or httpx.Client(timeout=httpx.Timeout(POLL_S + 10, connect=10))
 
-    def call(self, method: str, files: dict | None = None, **params):
+    def call(self, method: str, files: dict | None = None, wait_s: float | None = None, **params):
+        """`wait_s`: how long to wait for Telegram's answer, if not the client's own."""
+        timeout = httpx.USE_CLIENT_DEFAULT if wait_s is None else wait_s
         try:
             if files:
-                response = self._http.post(f"{self._base}/{method}", data=params, files=files)
+                response = self._http.post(f"{self._base}/{method}", data=params, files=files, timeout=timeout)
             else:
-                response = self._http.post(f"{self._base}/{method}", json=params)
+                response = self._http.post(f"{self._base}/{method}", json=params, timeout=timeout)
         except httpx.HTTPError as e:
             raise TelegramError(f"{method}: {type(e).__name__}") from None
         try:
@@ -179,7 +201,7 @@ class Bot:
         self.call("sendDocument", files={"document": (name, data, mime)}, **params)
 
     def typing(self, chat_id: int) -> None:
-        self.call("sendChatAction", chat_id=chat_id, action="typing")
+        self.call("sendChatAction", wait_s=TYPING_TIMEOUT_S, chat_id=chat_id, action="typing")
 
     def download(self, file_id: str) -> bytes:
         """A file someone sent (a voice message), by its id. Telegram lets a bot fetch files of up to 20 MB."""
@@ -250,7 +272,7 @@ def report(r: dict) -> str:
 
 
 def _clock(at: float) -> str:
-    return f"{datetime.fromtimestamp(at).astimezone():%I:%M %p}".lstrip("0")
+    return twelve_hour(datetime.fromtimestamp(at).astimezone())
 
 
 def tidy(reply: str) -> str:
@@ -297,6 +319,7 @@ class _Typing:
 
     def __exit__(self, *exc):
         self._stop.set()
+        self._thread.join(TYPING_TIMEOUT_S)
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -321,17 +344,19 @@ class TelegramTars:
         typing: bool = True,
         sleep: Callable[[float], None] = time.sleep,
         transcriber: Transcriber | None = None,
+        env: Path | str = ".env",
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
         each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
         `send_items`: also post what TARS sends at home for someone with a chat. `transcriber`: speech to text for
-        voice messages (None: they're turned down). `clock`, `typing` and `sleep` are for the tests."""
+        voice messages (None: they're turned down). `env`: where the token is, for saying so when Telegram refuses it.
+        `clock`, `typing` and `sleep` are for the tests."""
         self._bot, self._make_brain = bot, make_brain
         self._chats = {chat_id: Chat(name, chat_id, make_brain()) for name, chat_id in people.items()}
         self._by_person = {person_key(name): chat_id for name, chat_id in people.items()}
         self._conversations, self._tools = conversations, reminder_tools
         self._memory_s, self._send_items, self._clock, self._typing = memory_s, send_items, clock, typing
-        self._sleep, self._transcriber = sleep, transcriber
+        self._sleep, self._transcriber, self._env = sleep, transcriber, env
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
@@ -352,8 +377,8 @@ class TelegramTars:
                 updates = self._bot.updates(offset)
                 failures = 0
             except TelegramError as e:
-                if e.status in (401, 404):
-                    raise ConfigError("Telegram refused TELEGRAM_BOT_TOKEN: check it in .env.") from None
+                if e.refused:
+                    raise refused_token_error(self._env) from None
                 wait = e.retry_after or RETRY_S[min(failures, len(RETRY_S) - 1)]
                 failures += 1
                 if e.status == 409:
@@ -482,8 +507,9 @@ class TelegramTars:
     def deliver(self) -> None:
         """Posts the reminders due on Telegram, how those set here and said at home went, and what TARS sent at home
         for someone with a chat. A chat in the middle of an exchange is left for the next round, so nothing TARS
-        posts by itself lands between a question and its answer. Raises TelegramError when Telegram can't be reached;
-        what wasn't posted is tried again next time."""
+        posts by itself lands between a question and its answer. Raises TelegramError when Telegram can't be reached
+        or refuses the token, and the table's own errors: what wasn't posted is tried again next time. One Telegram
+        turns down for good, or that can't be read, is given up on alone, so it can't hold up the rest."""
         now = self._clock()
         if self._tools:
             reminders = self._tools.reminders
@@ -521,7 +547,7 @@ class TelegramTars:
         try:
             self._bot.send(chat.chat_id, text)
         except TelegramError as e:
-            if e.status not in UNREACHABLE:
+            if not e.for_good:
                 raise
             print(f"(Telegram: can't post reminder {r['id']} ({e}); it's said aloud at home instead)")
             reminders.say_aloud(r["id"])
@@ -536,7 +562,7 @@ class TelegramTars:
         try:
             self._bot.send(chat.chat_id, text)
         except TelegramError as e:
-            if e.status not in UNREACHABLE:
+            if not e.for_good:
                 raise
             print(f"(Telegram: can't tell {chat.person} how reminder {r['id']} went ({e}))")
             self._tools.reminders.reported(r["id"], r["status"])
@@ -548,16 +574,11 @@ class TelegramTars:
         log = self._conversations
         try:
             item = stored_item(row, log.store.folder)
-        except OSError as e:  # its file is gone: there's nothing to post, now or later
-            print(f"(Telegram: couldn't read {row['title']!r} to post it: {e!r})")
-            log.mark_delivered(row["id"], now)
-            return
-        try:
             self._post_item(chat.chat_id, item, raises=True)
-        except TelegramError as e:
-            if e.status not in UNREACHABLE:
+        except (TelegramError, OSError, ValueError) as e:  # Telegram's no, its file gone, or its list unreadable
+            if isinstance(e, TelegramError) and not e.for_good:
                 raise
-            print(f"(Telegram: can't post {row['title']!r} ({e}); it's on the TARS page)")
+            print(f"(Telegram: can't post {row['title']!r} ({e!r}); it's on the TARS page)")
             log.mark_delivered(row["id"], now)
             return
         log.mark_delivered(row["id"], now)
@@ -616,9 +637,12 @@ class TelegramTars:
         return self._clock()
 
     def _send(self, chat_id: int, text: str, tries: int = 1) -> None:
-        """Raises TelegramError after `tries` failures of one part of `text`; a single try's failure is only printed.
-        Each part is tried on its own, so one that failed doesn't post those before it again."""
-        for part in split_text(text):
+        """Each part of `text` is tried `tries` times on its own, so one that failed doesn't post those before it
+        again. With one try a failure is only printed. With more, TelegramError when none of it arrived; once a part
+        has, the rest failing is printed, and it counts as sent: they've read some of it, which may say what it did
+        ("Set for 5pm."), so that must be done."""
+        parts = split_text(text)
+        for sent, part in enumerate(parts):
             for attempt in range(tries):
                 try:
                     self._bot.send(chat_id, part)
@@ -628,7 +652,10 @@ class TelegramTars:
                         print(f"(Telegram: couldn't send a message: {e})")
                         return
                     if attempt == tries - 1:
-                        raise
+                        if sent == 0:
+                            raise
+                        print(f"(Telegram: only {sent} of the {len(parts)} parts of a message arrived: {e})")
+                        return
                     self._sleep(e.retry_after or RETRY_S[attempt])
 
     def _conversation(self, chat: Chat, now: float) -> int | None:

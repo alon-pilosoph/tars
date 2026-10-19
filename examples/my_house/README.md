@@ -88,9 +88,7 @@ IR goes one way: TARS knows what it sent, not what the AC did. It keeps what it 
 `voice_data/ac/state.json`, says "sent", not "it's on", and is corrected when someone used the wall controller. A
 light sensor on the AC's indicator (`state`: any `binary_sensor` in Home Assistant, on when the light is) makes it
 sure: TARS reads the light before deciding to toggle, checks it changed, and sends the toggle once more if the first
-was missed: only once the sensor has reported since and still shows the old state (Home Assistant's
-`last_reported`). A slow sensor gets no second toggle, which would turn the AC straight back, and after a second one
-only a change that came after it counts.
+was missed, but never on a slow sensor's old reading, which would turn the AC straight back (`ac.py` says how).
 
 ## The TV and the soundbar
 
@@ -109,8 +107,8 @@ goes straight to Stremio, in seconds and with no model working the screen. The t
 search suggestions (Stremio's add-ons go by IMDb's ids), its page opened by link
 (`stremio:///detail/movie/tt0382932/tt0382932`, or a series' `.../tt13443470:1:3` for season 1 episode 3), the first
 stream chosen, and it's said to be playing only once the stick's media session says so. A series without an episode
-opens its page, and TARS asks which. Another app, or a title IMDb doesn't find, goes to the agent as usual. The title
-asked for is all that goes to IMDb.
+opens its page, and TARS asks which. Another app, or a title IMDb doesn't find, goes to the agent as usual, told how
+Stremio lists streams (the plugin's own rule for it). The title asked for is all that goes to IMDb.
 
 ## Setting it up
 

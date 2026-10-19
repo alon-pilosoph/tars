@@ -24,7 +24,7 @@ PLAY_WAIT_S = 20.0  # the first stream starting to play
 EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
 YEAR = re.compile(r"\s*\((\d{4})\)\s*$")
 IMDB_ID = re.compile(r"tt\d+")
-# What the TV agent is told besides its own rules, for when a title goes to it on Stremio after all.
+# What the TV agent is told besides its own rules, for a title that goes to it on Stremio after all.
 STREMIO_RULES = "In Stremio, choosing a title lists streams from its add-ons: choose the first one that plays."
 
 
@@ -77,8 +77,7 @@ class Catalog:
 
 
 class FireTv(TvDevice):
-    """The household's Fire TV: the core Android TV device, with play going straight to Stremio, and the agent told
-    how Stremio's streams work for anything that goes to it."""
+    """The household's Fire TV: the core Android TV device, with play going straight to Stremio."""
 
     def __init__(
         self,
@@ -90,8 +89,6 @@ class FireTv(TvDevice):
     ):
         super().__init__(name, box, agent, sleep=sleep)
         self.catalog = catalog or Catalog()
-        if agent is not None:
-            agent.extra_rules = STREMIO_RULES
 
     def play(self, title: str, app: str) -> str:
         app = (app or STREMIO).strip().lower()  # this house watches on Stremio unless it says otherwise

@@ -93,9 +93,10 @@ flowchart LR
 
 - **A recording the web UI plays** comes from the bucket by itself, until it's archived.
 - **Training on another machine** reads the labeled wake windows from the Pi, which keeps them. For anything else,
-  `uv run voice-assistant --fetch-audio` brings back every file the bucket has and the Pi doesn't, to stay for
-  another `keep_local_days`. Archived audio needs `--fetch-audio --restore-archived`: S3 restores it within 48 hours
-  (the bulk tier, the cheapest), and running `--fetch-audio` again then brings it back.
+  `uv run voice-assistant --fetch-audio` brings back every file TARS keeps that the bucket has and the Pi doesn't, to
+  stay for another `keep_local_days` (not one deleted in the web UI since: the next pass takes it out of the bucket).
+  Archived audio needs `--fetch-audio --restore-archived`: S3 restores it within 48 hours (the bulk tier, the
+  cheapest), and running `--fetch-audio` again then brings it back.
 - **A new Pi.** Install TARS (`deploy/install-pi.sh`), put the key in `.env` and `[backup]` in `config.local.toml`,
   stop TARS (`systemctl --user stop voice-assistant voice-assistant-web voice-assistant-telegram
   voice-assistant-backup.timer`), then `uv run voice-assistant --restore-backup`. It puts the latest snapshot in place

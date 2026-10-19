@@ -113,7 +113,8 @@ class Device:
         return []
 
     def stop(self) -> None:
-        """Stops anything it's still doing in the background (the Android TV agent), as TARS shuts down."""
+        """Stops anything it's still doing in the background (the Android TV agent): as TARS shuts down, or someone
+        takes over (a button pressed while the agent works the screen)."""
 
 
 def button(args: dict) -> str:
@@ -121,11 +122,11 @@ def button(args: dict) -> str:
     return str(args.get("button") or "").strip().lower().replace(" ", "_").replace("-", "_")
 
 
-def presses(args: dict, most: int = MAX_PRESSES) -> int:
-    """How many times to press it: `times`, from 1 to `most`; once when it isn't a number."""
+def presses(args: dict) -> int:
+    """How many times to press it: `times`, from 1 to MAX_PRESSES; once when it isn't a number."""
     try:
-        return max(1, min(most, int(args.get("times") or 1)))
-    except TypeError, ValueError:
+        return max(1, min(MAX_PRESSES, int(args.get("times") or 1)))
+    except TypeError, ValueError, OverflowError:
         return 1
 
 
@@ -139,7 +140,8 @@ class Context:
     secret: Callable[[str], str | None]
     hass: object | None = None  # hass.HomeAssistant
     announce: Callable[[str], None] | None = None
-    tv_agent: Callable[[object], object | None] | None = None  # androidtv: a box -> its TvAgent, or None
+    # androidtv.make_tv_agent: a box, and TvAgent's own settings (extra_rules) -> its agent, or None
+    tv_agent: Callable[..., object | None] | None = None
     devices: dict[str, Device] = field(default_factory=dict)  # by name, in lower case
 
 
@@ -337,4 +339,5 @@ class HomeTools:
     def stop(self) -> None:
         """Stops anything still working in the background (the Android TV agent)."""
         for d in self.devices.values():
-            d.stop()
+            if callable(stop := getattr(d, "stop", None)):  # a plugin's device needn't subclass Device
+                stop()

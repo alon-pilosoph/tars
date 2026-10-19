@@ -242,7 +242,7 @@ def test_a_plugins_devices_are_made_from_its_kinds(plugin):
 
 def test_a_button_is_read_as_the_devices_list_them_and_pressed_a_sane_number_of_times():
     assert button({"button": " Volume-Up"}) == button({"button": "volume up"}) == "volume_up"
-    assert [presses({"times": t}) for t in (None, 0, 3, "x", 99)] == [1, 1, 3, 1, MAX_PRESSES]
+    assert [presses({"times": t}) for t in (None, 0, 3, "x", 99, float("inf"))] == [1, 1, 3, 1, MAX_PRESSES, 1]
 
 
 def test_a_plugin_that_wont_load_costs_only_its_own_devices(plugin):

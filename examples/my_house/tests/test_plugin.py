@@ -54,6 +54,17 @@ def test_its_kinds_are_made_from_the_devices_config_lists(tmp_path):
     assert "is_on or is_off" in rules and "volume and mute are its" in rules and "play with the app" in rules
 
 
+def test_the_fire_tvs_agent_is_told_how_stremio_lists_streams(tmp_path):
+    made = []
+    cfg = HomeConfig(
+        plugins={"my_house": {"module": "examples.my_house"}},
+        devices=[{"name": "fire tv", "kind": "my_house.firetv", "address": "192.168.1.60"}],
+    )
+    context = Context(tmp_path, {}.get, tv_agent=lambda box, **settings: made.append(settings))
+    build(cfg, context)
+    assert "first one that plays" in made[0]["extra_rules"]
+
+
 def test_what_a_device_is_missing_is_said_for_that_device_alone(tmp_path):
     built, _ = house(
         tmp_path,

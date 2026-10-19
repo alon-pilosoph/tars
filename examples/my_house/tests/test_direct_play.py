@@ -19,7 +19,7 @@ class Box(AndroidTV):
         super().__init__("10.0.0.8", key_path=None)
         self.front, self.session, self.commands = "com.amazon.tv.launcher", "", []
 
-    def _run(self, command, decode=True, timeout_s=10.0):
+    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False):
         self.commands.append(command)
         if command.startswith("dumpsys power"):
             return "  mWakefulness=Awake"
@@ -97,11 +97,6 @@ def test_a_series_page_that_never_comes_up_is_not_said_to_be_open():
     tv, box, _, _ = player()
     box.open_link = lambda uri, package, **kw: None  # Stremio didn't come to the front
     assert play(tv, "Wednesday").startswith("not confirmed: asked Stremio to open Wednesday (2022)")
-
-
-def test_the_agent_is_told_how_stremio_lists_streams():
-    tv, _, _, _ = player()
-    assert "first one that plays" in tv.agent.extra_rules
 
 
 def test_what_it_cant_find_or_another_app_goes_to_the_agent():

@@ -47,6 +47,7 @@ MODELS_S = 300.0  # long enough to download every local model on a slow line, th
 READY = "TARS is ready."
 STALE_BACKUP_S = 3600.0  # the timer runs a pass every 15 minutes: an hour without a good one is worth a look
 BACKUP_CHECK_S = 20.0  # S3's client retries a bucket that doesn't answer; --check never waits longer than this
+OVERDUE_S = 3 * 60.0  # a reminder Telegram should have posted this long ago is waiting for it
 
 
 @dataclass
@@ -281,6 +282,30 @@ def telegram(cfg: Config, token: str | None, me: Callable[[str], dict]) -> Resul
     return Result("Telegram", OK, f"@{bot.get('username')} answers ({time.perf_counter() - t:.1f} s), for {people}")
 
 
+def telegram_waiting(cfg: Config, folder: Path, now: float | None = None) -> Result:
+    """Reminders for a Telegram chat that are overdue while nothing posts them: they wait, and are posted late, with
+    when they were due. `folder`: the event log's."""
+    from .store import DB_FILE
+
+    name = "Telegram reminders"
+    if not (cfg.reminders.enabled and (folder / DB_FILE).exists()):
+        return Result(name, SKIP, "no reminders")
+    from .events import EventLog
+    from .health import processes
+    from .reminders import Reminders
+
+    now = time.time() if now is None else now
+    waiting = len(Reminders(EventLog(folder).store).overdue(now - OVERDUE_S))
+    if not waiting:
+        return Result(name, SKIP, "none waiting")
+    said = f"{waiting} waiting to be posted"
+    if not cfg.telegram.enabled:
+        return Result(name, WARN, f"{said}, with [telegram] off", "turn it back on to post them, late")
+    if not processes(folder, ["telegram"], lambda unit: None, now)[0]["running"]:
+        return Result(name, FAIL, f"{said}: Telegram isn't running", "systemctl --user status voice-assistant-telegram")
+    return Result(name, SKIP, f"{said}; Telegram is running")
+
+
 def backup(cfg: Config, make: Callable[[], Backup], now: float | None = None) -> list[Result]:
     """The S3 bucket answers with the key TARS has, and how the timer's last pass went. `make`: the Backup, raising
     ConfigError if it can't be made."""
@@ -501,6 +526,7 @@ def service_checks(cfg: Config, root: Path) -> list[tuple[str, Check]]:
         ("Deepgram", deepgram),
         ("Cartesia", cartesia),
         ("Telegram", lambda: telegram(cfg, dotenv_values(env).get(TELEGRAM_KEY), bot_me)),
+        ("Telegram reminders", lambda: telegram_waiting(cfg, root / cfg.learning.folder)),
     ]
 
 
@@ -558,7 +584,9 @@ def check_all(cfg: Config, root: Path) -> int:
         from .home import Context, build
 
         context = Context(root, secret, announce=lambda line: None)
-        context.tv_agent = functools.partial(cli.make_tv_agent, cfg, env, context.announce)
+        from .androidtv import make_tv_agent
+
+        context.tv_agent = functools.partial(make_tv_agent, cfg, env, context.announce)
         return build(cfg.home, context), context
 
     @functools.cache

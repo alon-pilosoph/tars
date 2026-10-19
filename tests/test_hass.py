@@ -46,7 +46,7 @@ def test_each_domain_gets_its_kind_of_device():
         assert type(entity_device("x", {"entity": entity}, None)) is kind
 
 
-def test_every_domain_config_takes_has_its_kind_of_device():
+def test_every_domain_config_accepts_has_a_kind():
     assert set(KINDS) == set(HOME_DOMAINS + HOME_SENSORS)
 
 
@@ -162,12 +162,27 @@ def test_mute_is_pressed_once_however_many_times_it_was_asked():
     assert [c for c, _ in ha.calls] == ["media_player.volume_mute"]
 
 
-def test_a_press_nothing_reports_is_sent_not_done():
+class Plays(PretendHA):
+    """A media player whose play and pause show in its state."""
+
+    def _serve(self, domain, service, entity, data):
+        super()._serve(domain, service, entity, data)
+        if service == "media_play_pause":
+            self.states[entity][0] = "paused" if self.states[entity][0] == "playing" else "playing"
+
+
+def test_a_press_is_done_only_once_what_the_player_reports_shows_it():
     soundbar, _ = device({"name": "soundbar", "entity": "media_player.soundbar"})
-    assert do(soundbar, "press", button="play pause").startswith("sent: pressed play_pause, and nothing it reports")
+    unchanged = "sent: play_pause to the soundbar, and what it reports hasn't changed"
+    assert do(soundbar, "press", button="play pause").startswith(unchanged)
     loudest, ha = device({"name": "soundbar", "entity": "media_player.soundbar"})
     ha.states["media_player.soundbar"][1]["volume_level"] = 1.0
-    assert do(loudest, "press", button="volume_up").startswith("sent: pressed volume_up, and nothing it reports")
+    assert do(loudest, "press", button="volume_up").startswith("sent: volume_up to the soundbar, and what it")
+    playing = Plays(entities({}))
+    player = entity_device(
+        "soundbar", {"entity": "media_player.soundbar"}, HomeAssistant(URL, TOKEN, playing.transport)
+    )
+    assert do(player, "press", button="play_pause").startswith("done: pressed play_pause; now soundbar: playing")
 
 
 class Rounds(PretendHA):
@@ -199,14 +214,24 @@ class Slow(PretendHA):
 
 def test_a_service_call_home_assistant_answers_late_is_read_back_not_said_to_have_failed():
     ha = Slow(entities({"lock": "locked"}))
-    lock = entity_device("front door", LOCK, HomeAssistant(URL, TOKEN, ha.transport), sleep=lambda s: None)
+    hass = HomeAssistant(URL, TOKEN, ha.transport)
+    assert hass.call("lock.lock", {"entity_id": "lock.front_door"}) is False  # sent, and no answer
+    lock = entity_device("front door", LOCK, hass, sleep=lambda s: None)
     assert do(lock, "unlock") == "done: front door reports unlocked"
 
 
+def test_presses_stop_at_the_first_home_assistant_doesnt_answer_and_what_it_did_is_read_back():
+    ha = Slow(entities({}))
+    soundbar = entity_device("soundbar", {"entity": "media_player.soundbar"}, HomeAssistant(URL, TOKEN, ha.transport))
+    said = do(soundbar, "press", button="volume_up", times=8)
+    assert said.startswith("done: pressed volume_up (of 8: Home Assistant stopped answering); now soundbar: on")
+    assert len(ha.calls) == 1
+
+
 def test_home_assistant_not_reached_for_a_service_is_still_an_error():
-    lock, _ = device(LOCK, down=True)
+    ha = PretendHA(entities({}), down=True)
     with pytest.raises(HomeError, match="didn't answer"):
-        lock._hass.call("lock.unlock", {"entity_id": "lock.front_door"})
+        HomeAssistant(URL, TOKEN, ha.transport).call("lock.unlock", {"entity_id": "lock.front_door"})
 
 
 def test_a_sensor_is_read_in_words_and_never_changed():

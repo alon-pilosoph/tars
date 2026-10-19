@@ -558,6 +558,15 @@ def test_fetching_brings_back_everything_the_machine_lacks_and_asks_for_archived
     assert s3.restoring == [f"tars/{passing}"]
 
 
+def test_fetching_never_brings_back_what_tars_no_longer_keeps(log, convos, s3, now):
+    passing = a_passing_wake(log, NOW)
+    gone = audio_of(log, passing)
+    job = backup(log, s3, now)
+    job.run()
+    log.delete(passing)  # in the web UI's Review, before the next pass takes it out of the bucket
+    assert job.fetch().fetched == 0 and not on_machine(log, gone)
+
+
 def test_what_was_fetched_stays_on_the_machine_a_while(log, convos, s3, now):
     _, request, _ = a_request(log, convos, NOW - 40 * DAY_S, speaker=None)
     job = backup(log, s3, now)

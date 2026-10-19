@@ -157,8 +157,10 @@ def setup(settings: dict, context: Context) -> dict:
   what `--check` should, as `Check(status, detail, fix)` lines.
 - **`context`** has the project's folder (`root`, for files under `voice_data/`), `secret(name)` for a key in `.env`,
   Home Assistant (`hass`), `announce(line)` to say something later on its own, `tv_agent(box)`, and `devices`, every
-  device made so far (Home Assistant's and the Android TVs first). The TV agent knows no app of its own: its
-  `extra_rules` are where a plugin tells it how one of the household's works (my_house: how Stremio lists streams).
+  device made so far (Home Assistant's and the Android TVs first). The TV agent knows no app of its own:
+  `tv_agent(box, extra_rules=...)` tells it how one of the household's works (my_house: how Stremio lists streams).
+- **`stop()`** ends anything the device still does in the background, as TARS shuts down or someone takes over; the
+  base class's does nothing.
 - **`button(args)`** and **`presses(args)`** read a press as every device does: "volume up" is `volume_up`, and
   `times` is 1 to 15.
 - A plugin that won't load, or a device it can't make (raise `ValueError` saying why), costs only those devices:
@@ -203,7 +205,8 @@ About half an hour, on the Pi (or the Mac while you try it).
    the box and its hardware (MAC) address in `voice_data/found.json`, and if the router gives it another address,
    finds it again by knocking on the ADB port across the home network and matching that address. Then run
    `uv run python -m voice_assistant.androidtv pair` and tick "Always allow" on the TV. `... androidtv look` shows
-   what TARS sees; `... androidtv do "play Toy Story on Stremio"` tries the agent.
+   what TARS sees; `... androidtv do "play Toy Story on Stremio"` tries the agent (the core one, without a plugin's
+   rules).
 5. **Check it.** `uv run voice-assistant --check` has a line for Home Assistant and one for each device: what it
    reads, whether it answers, and what to do if not. Then restart TARS and try each device aloud;
    `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered,
