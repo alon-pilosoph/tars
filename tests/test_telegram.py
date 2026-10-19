@@ -2,6 +2,7 @@
 
 import json
 import time
+from datetime import datetime
 
 import httpx
 import pytest
@@ -402,7 +403,9 @@ def test_a_reminder_due_while_tars_is_answering_is_posted_after_the_answer(convo
 
 
 def test_a_reminder_posted_late_says_when_it_was_due(convos):
-    bot, tools, now = FakeBot(), tools_with(convos), time.time()
+    # At noon: an hour late from after 23:00 would be the next day, "This was due Sunday at...".
+    noon = datetime.now().astimezone().replace(hour=12, minute=0, second=0, microsecond=0)
+    bot, tools, now = FakeBot(), tools_with(convos), noon.timestamp()
     tools.reminders.add(NewReminder(REMINDER, "call mum", "alon", due=now + 60), TELEGRAM, channel=TELEGRAM, now=now)
     tars(bot, [ScriptedBrain()], convos, tools, clock=lambda: now + 3600).deliver()
     assert bot.said()[0].startswith("Alon, a reminder: call mum. This was due at")
