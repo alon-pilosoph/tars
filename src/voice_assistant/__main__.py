@@ -404,9 +404,9 @@ def make_home(cfg: Config, root: Path, announce=None):
     context.tv_agent = functools.partial(make_tv_agent, cfg, env, announce) if announce else None
     built = build(cfg.home, context)
     for name, why in built.unavailable.items():
-        print(f"(the {name} isn't connected: {why}; see docs/home.md)")
+        print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
     if built.tools:
-        print(f"(the house: {', '.join(built.tools.devices)})")
+        print(f"(home: the house has {', '.join(built.tools.devices)})")
     return built.tools
 
 

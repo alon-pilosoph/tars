@@ -199,7 +199,8 @@ About half an hour, on the Pi (or the Mac while you try it).
    what TARS sees; `... androidtv do "play Toy Story on Stremio"` tries the agent.
 5. **Check it.** `uv run voice-assistant --check` has a line for Home Assistant and one for each device: what it
    reads, whether it answers, and what to do if not. Then restart TARS and try each device aloud;
-   `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered.
+   `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered,
+   the devices TARS started with, any that isn't connected and why, and a box or blaster found at a new address.
 
 ## What leaves the house
 
