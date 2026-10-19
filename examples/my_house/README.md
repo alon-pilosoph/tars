@@ -117,7 +117,9 @@ for the Nuki (`docker compose --profile mqtt up -d`).
 
 1. **The Nuki.** In the Nuki app, the lock's settings, MQTT (under Smart Home, or Features & Configuration): host the
    Pi's address, port 1883, user `nuki` with its Mosquitto password, and Home Assistant auto discovery on. Leave
-   Wi-Fi power mode on Automatic, and give the Pi a fixed address in the router. The lock, its door sensor and its
+   Wi-Fi power mode on Automatic. The lock connects to the Pi, so the Pi's address mustn't change: use its name on the
+   home network if the app takes one (the router's, like `homepi.lan`), or fix the address, in the router or, if the
+   router can't, on the Pi itself (an address outside the router's range). The lock, its door sensor and its
    battery appear in Home Assistant within a few minutes; if not, reload the MQTT integration. Use the ids they have
    (`lock.front_door_2` is fine).
 2. **The Switcher.** Home Assistant finds it on the home network: add the Switcher integration. A newer Switcher asks
@@ -128,8 +130,10 @@ for the Nuki (`docker compose --profile mqtt up -d`).
    project (Smart Home, data center Central Europe for a Smart Life account made in Israel); in it, Devices, Link App
    Account, and scan the code with the Smart Life app; then `uv run python -m tinytuya wizard` with the project's
    Access ID and Secret. It writes `devices.json` (git ignores it): the blaster is the entry whose category is
-   `wnykq`. Put its key in `.env` as `TUYA_LOCAL_KEY`, its id, address and version in the plugin's `blaster`, give it
-   a fixed address in the router, and delete `devices.json`, `tinytuya.json`, `snapshot.json` and `tuya-raw.json`.
+   `wnykq`. Put its key in `.env` as `TUYA_LOCAL_KEY`, its id, address and version in the plugin's `blaster`, and
+   delete `devices.json`, `tinytuya.json`, `snapshot.json` and `tuya-raw.json`. Its address needn't be fixed: if the
+   router gives it another, TARS finds it again by its id, which it announces on the home network every few seconds
+   (`voice_data/found.json` keeps where it is now).
    If `--check` says the blaster "didn't say which IR protocol it speaks" (a v3.5 Smart IR doesn't), set
    `control_type`: 2 for the newer protocol, or 1; the one the TV obeys with `python -m examples.my_house.ir press TV
    power` is it.

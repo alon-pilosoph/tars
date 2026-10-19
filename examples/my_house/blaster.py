@@ -1,9 +1,9 @@
 """The Tuya IR blaster that sends the AC's, the TV's and the soundbar's codes: on the home network, through tinytuya,
 with no cloud. Its local key is TUYA_LOCAL_KEY in .env (README.md says how to get it)."""
 
-import socket
 from pathlib import Path
 
+from voice_assistant.found import FOUND_FILE, Seen, reachable
 from voice_assistant.home import Check, HomeError
 
 TUYA_KEY = "TUYA_LOCAL_KEY"
@@ -18,27 +18,47 @@ TUYA_PORT, REACH_TIMEOUT_S = 6668, 1.5
 class Blaster:
     """The Tuya IR blaster, on the home network (tinytuya: local, no cloud)."""
 
-    def __init__(self, device_id: str, address: str, local_key: str, version: str = "3.3", control_type: int = 0):
+    def __init__(
+        self,
+        device_id: str,
+        address: str,
+        local_key: str,
+        version: str = "3.3",
+        control_type: int = 0,
+        seen: Seen | None = None,
+    ):
         """`control_type`: which of Tuya's two IR protocols it speaks; 0 = found on first use, from its status, which
-        some blasters never give."""
-        self._id, self._address, self._key, self._version = device_id, address, local_key, float(version)
+        some blasters never give. `seen`: where it was last found, so that a blaster the router gave another address
+        is found again by its id (voice_assistant/found.py); None: only ever at `address`."""
+        self._id, self._key, self._version = device_id, local_key, float(version)
+        self._seen, self._seen_key = seen, f"tuya:{device_id}"
+        self._address = (seen.get(self._seen_key).get("address") if seen else None) or address
         self._control_type = control_type
         self._reachable: Check | None = None
 
     @classmethod
-    def from_spec(cls, spec: dict, local_key: str) -> Blaster:
+    def from_spec(cls, spec: dict, local_key: str, seen: Seen | None = None) -> Blaster:
         """From [home.plugins.my_house] blaster."""
-        return cls(spec["id"], spec["address"], local_key, spec.get("version", "3.3"), spec.get("control_type", 0))
+        version, control_type = spec.get("version", "3.3"), spec.get("control_type", 0)
+        return cls(spec["id"], spec["address"], local_key, version, control_type, seen)
+
+    def _locate(self) -> None:
+        """One quick look first: finding out which of Tuya's protocols it speaks takes three tries, each with its own
+        timeout, before a blaster that's off the Wi-Fi is given up on. Not there: it's looked for by its id, which it
+        announces on the home network every few seconds."""
+        if reachable(self._address, TUYA_PORT, REACH_TIMEOUT_S):
+            return
+        found = find_by_id(self._id) if self._seen is not None else None
+        if not found or not reachable(found, TUYA_PORT, REACH_TIMEOUT_S):
+            raise HomeError(f"the IR blaster didn't answer at {self._address}, and isn't announcing itself elsewhere")
+        print(f"(the IR blaster moved from {self._address} to {found}: the router gave it a new address)", flush=True)
+        self._address = found
+        self._seen.put(self._seen_key, address=found)
 
     def _device(self):
         from tinytuya.Contrib.IRRemoteControlDevice import IRRemoteControlDevice
 
-        # One quick look first: finding out which of Tuya's protocols it speaks takes three tries, each with its own
-        # timeout, before a blaster that's off the Wi-Fi is given up on.
-        try:
-            socket.create_connection((self._address, TUYA_PORT), timeout=REACH_TIMEOUT_S).close()
-        except OSError as e:
-            raise HomeError(f"the IR blaster didn't answer at {self._address} ({type(e).__name__})") from e
+        self._locate()
 
         ir = IRRemoteControlDevice(
             self._id,
@@ -93,6 +113,14 @@ class Blaster:
         return self._reachable
 
 
+def find_by_id(device_id: str) -> str | None:
+    """Where the Tuya device with this id is announcing itself now (up to tinytuya's scan time, 18 s; it stops as soon
+    as the id is heard), or None."""
+    import tinytuya
+
+    return tinytuya.find_device(dev_id=device_id).get("ip")
+
+
 def check_spec(spec) -> str:
     """What's wrong with [home.plugins.my_house] blaster, or ""."""
     if not isinstance(spec, dict):
@@ -123,4 +151,4 @@ def from_config(config: Path) -> Blaster:
     key = dotenv_values(config.resolve().parent / ".env").get(TUYA_KEY)
     if not key:
         raise SystemExit(f"Put the blaster's local key in .env as {TUYA_KEY} (README.md says how to get it)")
-    return Blaster.from_spec(spec, key)
+    return Blaster.from_spec(spec, key, Seen(config.resolve().parent / FOUND_FILE))

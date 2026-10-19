@@ -191,8 +191,10 @@ About half an hour, on the Pi (or the Mac while you try it).
    ```
 
 4. **An Android TV box, if there is one.** On the TV: turn on ADB debugging (on a Fire TV: Settings, My Fire TV,
-   About, click the device name seven times, then Developer Options), give the box a fixed address in the router, and
-   check HDMI-CEC is on. Add it with `kind = "androidtv"` and its `address`, then run
+   About, click the device name seven times, then Developer Options), and check HDMI-CEC is on. Add it with
+   `kind = "androidtv"` and its `address` today; it needn't be fixed in the router. TARS keeps where it last found
+   the box and its hardware (MAC) address in `voice_data/found.json`, and if the router gives it another address,
+   finds it again by knocking on the ADB port across the home network and matching that address. Then run
    `uv run python -m voice_assistant.androidtv pair` and tick "Always allow" on the TV. `... androidtv look` shows
    what TARS sees; `... androidtv do "play Toy Story on Stremio"` tries the agent.
 5. **Check it.** `uv run voice-assistant --check` has a line for Home Assistant and one for each device: what it
