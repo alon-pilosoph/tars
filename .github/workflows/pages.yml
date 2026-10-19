@@ -1,9 +1,11 @@
 name: Pages
 
+# Deployed once CI has passed on a push to main, never from a commit whose tests fail; or by hand.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths: [site/**, webui/**, .github/workflows/pages.yml]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +19,9 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -26,6 +31,8 @@ jobs:
         working-directory: webui
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }} # the commit CI passed
       - uses: actions/setup-node@v4
         with:
           node-version: 22

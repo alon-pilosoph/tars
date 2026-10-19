@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1 # for sounddevice and Vosk
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync --frozen
+      - run: uv sync --frozen --all-extras # every extra, as the Pi has them, so the backup tests on boto3 run too
       - run: uv run ruff check src tests tools training evals examples
       - run: uv run ruff format --check src tests tools training evals examples
       - run: for f in deploy/*.sh training/*/*.sh; do bash -n "$f"; done
