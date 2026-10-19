@@ -28,6 +28,7 @@ In config.toml (or config.local.toml):
 from collections.abc import Callable
 
 from voice_assistant.androidtv import KEY_FILE, AndroidTV
+from voice_assistant.found import FOUND_FILE, Seen
 from voice_assistant.home import Context, Device, HomeError
 
 from .ac import AC, FOLDER, PROFILE, STATE, Profile
@@ -58,7 +59,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
                 import tinytuya  # noqa: F401 - only whether it's there
             except ImportError:
                 raise ValueError('the IR blaster needs the optional extra "my-house": uv sync --all-extras') from None
-            made.append(Blaster.from_spec(spec, key))
+            made.append(Blaster.from_spec(spec, key, Seen(context.root / FOUND_FILE)))
         return made[0]
 
     def ac(spec: dict) -> AC:
@@ -98,7 +99,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
             import adb_shell  # noqa: F401 - only whether it's there
         except ImportError:
             raise ValueError('it needs the optional extra "tv": uv sync --all-extras') from None
-        box = AndroidTV(spec["address"], context.root / KEY_FILE)
+        box = AndroidTV(spec["address"], context.root / KEY_FILE, seen=Seen(context.root / FOUND_FILE))
         agent = context.tv_agent(box) if context.tv_agent else None
         return FireTv(spec["name"], box, agent, Catalog())
 

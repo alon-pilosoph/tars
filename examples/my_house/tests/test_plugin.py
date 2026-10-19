@@ -5,12 +5,14 @@ import json
 
 import pytest
 
+from examples.my_house import blaster as blaster_module
 from examples.my_house.ac import Profile
 from examples.my_house.direct_play import FireTv
 from examples.my_house.ir import Remote
 from examples.my_house.tests.test_ac import electra_profile
 from voice_assistant.config import HomeConfig
-from voice_assistant.home import Context, build
+from voice_assistant.found import Seen
+from voice_assistant.home import Context, HomeError, build
 
 BLASTER = {"id": "bf0123456789abcdef", "address": "192.168.1.50", "version": "3.5", "control_type": 2}
 
@@ -98,3 +100,20 @@ def test_a_setting_a_kind_doesnt_have_is_said(tmp_path, spec, says):
 def test_a_setting_the_plugin_doesnt_have_costs_its_devices(tmp_path):
     built, _ = house(tmp_path, [{"name": "fire tv", "kind": "my_house.firetv", "address": "1"}], colour="white")
     assert "didn't load" in built.unavailable["fire tv"] and "colour" in built.unavailable["fire tv"]
+
+
+def test_a_blaster_the_router_moved_is_found_by_its_id_and_remembered(tmp_path, monkeypatch):
+    seen = Seen(tmp_path / "found.json")
+    monkeypatch.setattr(blaster_module, "reachable", lambda host, port, timeout_s: host == "192.168.1.77")
+    monkeypatch.setattr(blaster_module, "find_by_id", lambda device_id: "192.168.1.77" if device_id == "bf01" else None)
+    b = blaster_module.Blaster("bf01", "192.168.1.50", "key", "3.5", 1, seen)
+    b._locate()
+    assert b._address == "192.168.1.77" and seen.get("tuya:bf01") == {"address": "192.168.1.77"}
+    assert blaster_module.Blaster("bf01", "192.168.1.50", "key", "3.5", 1, seen)._address == "192.168.1.77"
+
+
+def test_a_blaster_thats_nowhere_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(blaster_module, "reachable", lambda host, port, timeout_s: False)
+    monkeypatch.setattr(blaster_module, "find_by_id", lambda device_id: None)
+    with pytest.raises(HomeError, match="isn't announcing itself elsewhere"):
+        blaster_module.Blaster("bf01", "192.168.1.50", "key", seen=Seen(tmp_path / "found.json"))._locate()

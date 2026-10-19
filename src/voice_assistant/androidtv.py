@@ -19,6 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from xml.etree import ElementTree
 
+from .found import FOUND_FILE, Seen, find_by_mac, mac_of, reachable
 from .home import DO, OFF, ON, OPEN, PLAY, PRESS, STATUS, Check, Context, Device, HomeError, Request
 
 # The remote's buttons, as Android's key codes.
@@ -77,12 +78,33 @@ class AndroidTV:
     """One ADB connection, made when first needed and again after it drops. Every call is short, and a box that
     doesn't answer is a HomeError."""
 
-    def __init__(self, address: str, key_path: Path, auth_timeout_s: float = 3.0):
+    def __init__(self, address: str, key_path: Path, auth_timeout_s: float = 3.0, seen: Seen | None = None):
+        """`seen`: where the box was last found, and its hardware address, so that a box the router gave another
+        address is found again (found.py); None: only ever at `address`."""
         host, _, port = address.partition(":")
-        self._host, self._port = host, int(port or 5555)
+        self._key = f"androidtv:{address}"  # the address in config.toml names the box, wherever it is now
+        self._seen = seen
+        self._host, self._port = (seen.get(self._key).get("address") if seen else None) or host, int(port or 5555)
         self._key_path, self._auth_timeout_s = key_path, auth_timeout_s
         self._adb = None
         self._lock = threading.RLock()
+
+    def _locate(self) -> None:
+        """If the box doesn't answer where it was, looks for its hardware address on the home network."""
+        mac = self._seen.get(self._key).get("mac") if self._seen else None
+        if not mac or reachable(self._host, self._port, CONNECT_TIMEOUT_S):
+            return
+        found = find_by_mac(mac, self._port, near=self._host)
+        if found and found != self._host:
+            print(f"(the TV box moved from {self._host} to {found}: the router gave it a new address)", flush=True)
+            self._host = found
+
+    def _remember(self) -> None:
+        if self._seen is not None:
+            known = self._seen.get(self._key)
+            mac = mac_of(self._host) or known.get("mac")
+            if known != {**known, "address": self._host, "mac": mac}:
+                self._seen.put(self._key, address=self._host, mac=mac or "")
 
     def _device(self):
         if self._adb is not None:
@@ -95,6 +117,7 @@ class AndroidTV:
             self._key_path.parent.mkdir(parents=True, exist_ok=True)
             keygen(str(self._key_path))
         signer = PythonRSASigner(Path(f"{self._key_path}.pub").read_text(), self._key_path.read_text())
+        self._locate()
         # Short: a box that's unplugged or off the Wi-Fi is said to be, rather than leaving a voice turn waiting.
         adb = AdbDeviceTcp(self._host, self._port, default_transport_timeout_s=CONNECT_TIMEOUT_S)
         try:
@@ -102,6 +125,7 @@ class AndroidTV:
         except Exception as e:
             raise HomeError(f"the TV box didn't answer at {self._host} ({type(e).__name__}: {e})") from e
         self._adb = adb
+        self._remember()
         return adb
 
     def _run(self, command: str, decode: bool = True, timeout_s: float = 10.0):
@@ -590,7 +614,7 @@ def make(name: str, spec: dict, context: Context) -> TvDevice:
         import adb_shell  # noqa: F401 - only whether it's there
     except ImportError:
         raise ValueError('it needs the optional extra "tv": uv sync --all-extras') from None
-    box = AndroidTV(spec["address"], context.root / KEY_FILE)
+    box = AndroidTV(spec["address"], context.root / KEY_FILE, seen=Seen(context.root / FOUND_FILE))
     agent = context.tv_agent(box) if context.tv_agent else None
     return TvDevice(name, box, agent)
 
@@ -617,7 +641,7 @@ def main() -> None:
         found = ", ".join(d["name"] for d in boxes) or "none"
         raise SystemExit(f"config.toml needs one TV box with an address (found: {found}); pick one with --device")
     print('Connecting; if the TV asks "Allow USB debugging?", tick Always allow and choose OK.', flush=True)
-    box = AndroidTV(boxes[0]["address"], root / KEY_FILE, auth_timeout_s=60.0)
+    box = AndroidTV(boxes[0]["address"], root / KEY_FILE, auth_timeout_s=60.0, seen=Seen(root / FOUND_FILE))
     try:
         if args.command == "pair":
             print(f"Connected: the box is {'awake' if box.awake() else 'asleep'}; in front: {box.app() or '-'}")
