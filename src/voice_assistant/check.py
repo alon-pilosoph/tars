@@ -33,6 +33,7 @@ from .config import (
     with_keys,
 )
 from .echo import MAX_DELAY_S
+from .errors import SERVICE_FAILURES
 
 if TYPE_CHECKING:
     from .backup import Backup
@@ -77,7 +78,7 @@ def outcome(name: str, check: Check) -> list[Result]:
         got = check()
     except (Exception, SystemExit) as e:  # noqa: BLE001 - reported, and the rest still run
         got = Result(name, FAIL, str(e) if isinstance(e, SystemExit) else f"{type(e).__name__}: {e}")
-        if not isinstance(e, OSError | RuntimeError | ValueError | SystemExit):
+        if not isinstance(e, (OSError, RuntimeError, ValueError, SystemExit, *SERVICE_FAILURES)):
             traceback.print_exc()
     return [got] if isinstance(got, Result) else list(got)
 

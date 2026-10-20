@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from openai import OpenAI, Timeout
 
 from .config import TTSConfig
+from .errors import ServiceError
 from .stt import deepgram_connect
 
 # A reply's audio normally starts within a second. After this long with nothing, TARS gives up and says so in a
@@ -29,7 +30,8 @@ class Voice(Protocol):
     sample_rate: int
 
     def stream(self, text: str) -> Iterator[bytes]:
-        """Yields 16-bit mono PCM chunks as they're synthesized."""
+        """Yields 16-bit mono PCM chunks as they're synthesized. A service that fails raises ServiceError (OpenAI's,
+        OpenAIError)."""
 
     def warm(self) -> None:
         """Called when TARS wakes, so the reply doesn't wait to connect. May do nothing."""
@@ -76,7 +78,8 @@ class WarmSockets:
     KEEP = 3  # the most kept idle (a long reply synthesizes several sentences at once)
     AT_ONCE = 3
     MAX_IDLE_S = 100.0
-    name = "voice"
+    name = "voice"  # for its threads
+    title = "Voice"  # for its errors
 
     def __init__(self):
         self._idle: queue.LifoQueue = queue.LifoQueue()
@@ -86,8 +89,13 @@ class WarmSockets:
         threading.Thread(target=self._top_up, daemon=True, name=f"{self.name}-voice").start()
 
     def stream(self, text: str) -> Iterator[bytes]:
+        from websockets.exceptions import WebSocketException
+
         with self._turns:
-            yield from self._stream(text)
+            try:
+                yield from self._stream(text)
+            except (WebSocketException, OSError, ValueError, KeyError) as e:  # ValueError, KeyError: a garbled message
+                raise ServiceError(f"{self.title}: {e!r}") from e
 
     def _stream(self, text: str) -> Iterator[bytes]:
         from websockets.exceptions import ConnectionClosed
@@ -162,7 +170,7 @@ class WarmSockets:
 class DeepgramSpeech(WarmSockets):
     """Deepgram's streaming voices, Flux TTS (flux-*) and Aura-2 (aura-2-*)."""
 
-    name = "deepgram"
+    name, title = "deepgram", "Deepgram voice"
 
     def __init__(self, api_key: str, cfg: TTSConfig):
         super().__init__()
@@ -185,7 +193,7 @@ class DeepgramSpeech(WarmSockets):
                 continue
             event = json.loads(message)
             if event.get("type") == "Error":
-                raise RuntimeError(f"Deepgram voice: {event.get('description') or event}")
+                raise ServiceError(f"{self.title}: {event.get('description') or event}")
             if event.get("type") == self._last:
                 return
 
@@ -196,7 +204,7 @@ class DeepgramSpeech(WarmSockets):
 class CartesiaSpeech(WarmSockets):
     """Cartesia's Sonic voices: each sentence is its own context, its audio base64 chunks until "done"."""
 
-    name = "cartesia"
+    name, title = "cartesia", "Cartesia voice"
     AT_ONCE = 2  # the free plan's limit on sentences being made at once
 
     def __init__(self, api_key: str, cfg: TTSConfig):
@@ -220,7 +228,7 @@ class CartesiaSpeech(WarmSockets):
             if kind == "chunk":
                 yield base64.b64decode(event["data"])
             elif kind == "error":
-                raise RuntimeError(f"Cartesia voice: {event.get('message') or event.get('title') or event}")
+                raise ServiceError(f"{self.title}: {event.get('message') or event.get('title') or event}")
             elif kind == "done" or event.get("done"):
                 return
 

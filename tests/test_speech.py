@@ -1,10 +1,13 @@
 """A streamed reply as TARS says it: split into sentences, cleaned of what can't be read out, and the TARS effect."""
 
+import threading
+import types
+
 import numpy as np
 import pytest
 
 from voice_assistant.effects import SpeakerBox, VoiceWithEffect, apply_effect
-from voice_assistant.speech import clean_for_speech, split_sentences
+from voice_assistant.speech import StreamedReply, clean_for_speech, split_sentences
 
 
 def test_sentences_are_split_as_they_stream_in():
@@ -70,3 +73,19 @@ def test_no_effect_returns_the_voice_unchanged():
 
 def test_html_entities_are_said_as_what_they_stand_for():
     assert clean_for_speech("Salt &amp; pepper, 5&nbsp;minutes") == "Salt & pepper, 5\xa0minutes"
+
+
+def test_the_half_sentence_left_when_a_reply_is_stopped_never_reaches_the_voice():
+    asked = []
+    voice = types.SimpleNamespace(stream=lambda text: asked.append(text) or iter([b"audio"]))
+    made, constructed = [], threading.Event()
+
+    def pieces():
+        yield "Half a sent"
+        constructed.wait()
+        made[0].stop()  # thrown away while it was being written
+        yield "ence."
+
+    made.append(StreamedReply(pieces(), voice, lambda sentence: None))
+    constructed.set()
+    assert list(made[0]) == [] and asked == []

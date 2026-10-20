@@ -98,16 +98,18 @@ lock's: "open Stremio" is done only when Stremio is in front, and still there th
 crashes a moment after it starts is stopped and opened again, up to three times. With HDMI-CEC, the box wakes and
 sleeps with the TV, so "turn on the TV" can go through it.
 
-**Anything that takes several steps** ("play Toy Story on Stremio", "find the news on YouTube") goes to the TV's
-agent: a model (`[home] tv_model`, OpenAI's `[llm] model` by default) that works the remote the way a person would.
-Each step it chooses from what it sees, presses, types or opens an app, then looks again to check it did what it
-meant, for up to 30 steps and two and a half minutes. It runs in the background: TARS answers "On it." at once, and
-says how it went after a chime, like a reminder: "Toy Story is playing.", or why not ("Stremio found no streams for
-Toy Story."). If it isn't clear which was meant, it asks ("Toy Story, or Toy Story 4?"), and TARS listens for the
-answer without the wake word. Asking the TV for anything else stops the agent, and waits for the step it's on (an app
-opening, a wait) to end first, so the two never fight over the screen. A press is never sent twice: one the box may
-have had before it stopped answering isn't tried again. A task costs a few cents of OpenAI: each step is one request,
-with a screenshot when the app's text isn't enough, and only the latest screenshot is sent again.
+**Anything that takes several steps** ("play Toy Story on Stremio", "find the news on YouTube") goes to the TV's agent:
+a model (`[home] tv_model`, OpenAI's `[llm] model` by default) that works the remote the way a person would. Each step
+it chooses from what it sees, presses, types or opens an app, then looks again to check it did what it meant, for up to
+30 steps and two and a half minutes. It runs in the background: TARS answers "On it." at once, and says how it went
+after a chime, like a reminder: "Toy Story is playing.", or why not ("Stremio found no streams for Toy Story."). If the
+voice is down then, nothing plays, not even the chime: the line waits, is tried again a minute later or with the next
+one, and is dropped as old news after ten minutes. If it isn't clear which was meant, it asks ("Toy Story, or Toy Story
+4?"), and TARS listens for the answer without the wake word. Asking the TV for anything else stops the agent, and waits
+for the step it's on (an app opening, a wait) to end first, so the two never fight over the screen. A press is never
+sent twice: one the box may have had before it stopped answering isn't tried again. A task costs a few cents of OpenAI:
+each step is one request, with a screenshot when the app's text isn't enough, and only the latest screenshot is sent
+again.
 
 ### Your own devices
 

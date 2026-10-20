@@ -27,9 +27,21 @@ from .reminders import Change, ReminderTools
 # growing the prompt forever.
 MAX_TURNS = 50
 
+
+def _escaped(marker: str) -> str:
+    """A marker as Qwen sometimes writes it, HTML-escaped ("&lt;look-up&gt;"): the same marker, and never to be said."""
+    return marker.replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _could_become(start: str, forms: tuple[str, ...]) -> bool:
+    """Whether a reply that so far is `start` may yet turn out to start with one of `forms`."""
+    return any(len(start) < len(form) and form.startswith(start) for form in forms)
+
+
 FOLLOW_UP_TAG = "[Follow-up, no wake word]"
 ASKED_TAG = "[Reply to your 'Did you call me?']"
 SKIP = "<skip>"
+SKIPS = (SKIP, _escaped(SKIP))
 SKIP_RULES = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "
@@ -41,7 +53,8 @@ SKIP_RULES = (
 REMINDER_TAG = "[Reply to the reminder you just said]"
 # How a reply acknowledges reminders: "<ack>" for the ones just said, "<ack 12>" (or "<ack 12, 14>") by number.
 ACK = "<ack>"
-ACK_MARK = re.compile(r"\s*<ack((?:[\s,]*\d+)*)\s*>")
+ACK_MARK = re.compile(r"\s*(?:<|&lt;)ack((?:[\s,]*\d+)*)\s*(?:>|&gt;)")
+ACK_STARTS = ("<ack", _escaped("<ack"))
 GOT_IT = "Got it."  # said for a bare <ack>
 ACK_RULES = (
     f"Messages starting with {REMINDER_TAG} answer a reminder, timer or message you just said aloud, or a timer "
@@ -55,14 +68,15 @@ ACK_RULES = (
 
 def split_ack(pieces: Iterable[str]) -> tuple[list[int] | None, Iterator[str]]:
     """Peek at the start of a streamed reply: (the reminder numbers acknowledged, [] for a bare <ack>, the rest of
-    the reply) if it starts with an ack, else (None, the whole reply). A bare <ack> with nothing after it says
-    GOT_IT."""
+    the reply) if it starts with an ack, as written or HTML-escaped, else (None, the whole reply). A bare <ack> with
+    nothing after it says GOT_IT."""
     stream = iter(pieces)
     head = ""
     for piece in stream:
         head += piece
         start = head.lstrip()
-        if not "<ack".startswith(start[:4]) or ">" in start or len(start) > 40:
+        maybe = _could_become(start, ACK_STARTS) or start.startswith(ACK_STARTS)
+        if not maybe or ">" in start or "&gt;" in start or len(start) > 40:
             break
     if not (mark := ACK_MARK.match(head)):
         return None, itertools.chain([head], stream)
@@ -252,11 +266,6 @@ PONDER = "<ponder>"
 TOOL_CALL_TEXT = ("<toolcall>", "<tool_call>", "<function=")
 
 
-def _escaped(marker: str) -> str:
-    """A marker as Qwen sometimes writes it, HTML-escaped ("&lt;look-up&gt;"): the same marker, and never to be said."""
-    return marker.replace("<", "&lt;").replace(">", "&gt;")
-
-
 # After a quick service fails (down, slow), it's skipped for this long, so each turn doesn't wait out its timeout
 # first. After "too many requests", it's skipped for as long as the service asks (Retry-After), or for the minute its
 # limits are counted over if it doesn't say.
@@ -444,15 +453,16 @@ class Brain(Protocol):
 
 
 def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
-    """Peek at the start of a streamed reply: (True, empty) if the model chose to skip, else the full stream."""
+    """Peek at the start of a streamed reply: (True, empty) if the model chose to skip, as written or HTML-escaped,
+    else the full stream."""
     stream = iter(pieces)
     head = ""
     for piece in stream:
         head += piece
         start = head.lstrip()
-        if len(start) >= len(SKIP) or not SKIP.startswith(start):
+        if not _could_become(start, SKIPS):
             break
-    if head.strip().startswith(SKIP):
+    if head.strip().startswith(SKIPS):
         for _ in stream:  # Finish the stream so the exchange is recorded before it's forgotten.
             pass
         return True, iter(())
@@ -561,7 +571,7 @@ class OpenAIChat:
         this conversation differs from one aloud (a Telegram chat, written), last in the instructions so they win.
         `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud).
         `home`: the devices in the house, when there are any."""
-        self._clock = clock or (lambda: time.monotonic())
+        self._clock = clock or time.monotonic
         self._channel_rules = [channel_rules] if channel_rules else []
         self._remind_tools = remind_tools or REMIND_TOOLS
         self._client = client
@@ -659,9 +669,9 @@ class OpenAIChat:
                 break
             if said:
                 context.append({"role": "assistant", "content": said})
-            if wait := self._one_moment([(c.name, c.arguments) for c in calls], answer):
-                answer += wait
-                yield wait
+            if moment := self._one_moment([(c.name, c.arguments) for c in calls], answer):
+                answer += moment
+                yield moment
             with self._lock:
                 _check(writing)
                 for call in calls:
@@ -726,7 +736,8 @@ class OpenAIChat:
 
     def _run_tool(self, call, no_links: str = "", writing: _Writing | None = None) -> str:
         """Called with the lock held. `no_links`: what this model should do instead of sending a link, which needs
-        web search; empty if it can. `writing`: the reply the call is part of, whose request the home tool goes by."""
+        web search; empty if it can. `writing`: the reply the call is part of, whose request the home tool goes by.
+        Raises ReplyFailed if that reply was stopped while the house answered."""
         try:
             args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
@@ -752,13 +763,17 @@ class OpenAIChat:
         if self._home and call.name == "home":
             # A device can take seconds (a bolt turning), and a change first waits for the turn to be over: the
             # conversation isn't held meanwhile, so nothing else the brain does waits on the house.
+            writing = writing or self._writing
             self._lock.release()
             try:
-                return self._home.call(args, (writing or self._writing).request)
+                result = self._home.call(args, writing.request)
             except Exception as e:  # noqa: BLE001 - a device that fails never costs the reply: the model says so
-                return f"error: couldn't reach the device ({e!r}); nothing is known to have changed"
+                result = f"error: couldn't reach the device ({e!r}); nothing is known to have changed"
             finally:
                 self._lock.acquire()
+            # Stopped meanwhile, its other calls aren't made: what they sent or set would land on the next reply.
+            _check(writing)
+            return result
         return f"error: no tool called {call.name}"
 
     def forget_last(self) -> None:
@@ -956,7 +971,7 @@ class QuickChat(OpenAIChat):
             return
         limit = self._cfg.think_timeout_s
         timer = threading.Timer(limit, _stop, (writing, f"no answer within {limit:.0f} s"))
-        timer.daemon = True
+        timer.daemon, timer.name = True, "think-timeout"
         timer.start()
         try:
             yield from super()._stream_reply(context, writing, said_first=answer, think=True)
@@ -1088,9 +1103,9 @@ class QuickChat(OpenAIChat):
                     ],
                 }
             )
-            if wait := self._one_moment([(c["name"], c["arguments"]) for c in calls], earlier):
-                earlier += wait
-                yield wait
+            if moment := self._one_moment([(c["name"], c["arguments"]) for c in calls], earlier):
+                earlier += moment
+                yield moment
             with self._lock:
                 _check(writing)
                 for c in calls:
@@ -1174,9 +1189,9 @@ class ResponsesQuickChat(QuickChat):
             writing.stream = None
             if not calls:
                 return
-            if wait := self._one_moment([(c.name, c.arguments) for c in calls], said):
-                said += wait
-                yield wait
+            if moment := self._one_moment([(c.name, c.arguments) for c in calls], said):
+                said += moment
+                yield moment
             with self._lock:
                 _check(writing)
                 for call in calls:
@@ -1269,9 +1284,9 @@ class ClaudeQuickChat(QuickChat):
             if not uses:
                 return
             messages.append({"role": "assistant", "content": final.content})
-            if wait := self._one_moment([(u.name, json.dumps(u.input)) for u in uses], said):
-                said += wait
-                yield wait
+            if moment := self._one_moment([(u.name, json.dumps(u.input)) for u in uses], said):
+                said += moment
+                yield moment
             results = []
             with self._lock:
                 _check(writing)

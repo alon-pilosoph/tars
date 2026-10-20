@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from voice_assistant import __main__ as cli
 from voice_assistant import webui
 from voice_assistant.clustering import MIN_REQUESTS_TO_ENROLL, enroll_named, recluster
+from voice_assistant.config import ConfigError, load_config
 from voice_assistant.events import NOT_PERSON, PERSON, REAL, UNKNOWN
 from voice_assistant.reminders import NewReminder, Reminders
 from voice_assistant.verify import ANSWER
@@ -315,3 +317,9 @@ def test_with_reminders_off_the_page_says_so(log):
     client = TestClient(create_app(log))
     assert client.get("/api/reminders").json()["enabled"] is False
     assert client.post("/api/reminders", json={"kind": "timer", "due": time.time() + 60}).status_code == 501
+
+
+def test_the_web_ui_without_the_event_log_is_a_setup_problem_its_service_doesnt_restart_over(tmp_path):
+    (tmp_path / "config.toml").write_text("[learning]\nlog_events = false\n")
+    with pytest.raises(ConfigError, match="log_events"):  # exit code 78: RestartPreventExitStatus
+        cli.web_ui(load_config(tmp_path / "config.toml", local=False), tmp_path, "127.0.0.1", 0)

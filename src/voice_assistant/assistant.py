@@ -5,7 +5,6 @@ sentence by sentence as the brain writes it. Short lines ("Yes?", "Did you call 
 and kept on disk, so they play at once, even offline.
 """
 
-import hashlib
 import random
 import threading
 import time
@@ -19,17 +18,17 @@ from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
-from openai import OpenAIError
 
 from .audio import AudioDeviceError, Microphone, Speaker, chime
 from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
 from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .echo import without_echo
-from .files import atomic_write
+from .errors import SERVICE_FAILURES
 from .home import Request
 from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
+from .phrases import Audio, Phrases
 from .recorder import UtteranceRecorder
 from .reminders import VOICE, Change, Clock, Reminders, ReminderTools, held_line, late, says_line
 from .reminders import line as reminder_line
@@ -54,7 +53,10 @@ ERROR_LINES = {
 DRY_FROM_HUMOR = 50  # percent
 PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes, <name>?" after the wake word
 ERROR_LINE_WAIT_S = 1.0
-VOICE_RETRY_S = 60.0  # a reminder the voice couldn't say is tried again after this
+PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes, Alon?")
+UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
+VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
+ANNOUNCEMENT_KEEP_S = 600.0  # how the TV went is old news after this, and isn't said any more
 REMINDERS_REST_S = 30.0  # after the reminders table fails, nothing is said for this long
 
 
@@ -73,24 +75,41 @@ NOBODY = Identified(None, None, None)
 
 class Announcements:
     """What TARS says on its own once it's free, from another thread: how a task on the TV went. Kept in order; said
-    after a chime, between conversations, like a reminder."""
+    after a chime, between conversations, like a reminder. A line not said within ANNOUNCEMENT_KEEP_S of being added
+    is dropped. `clock`: seconds."""
 
-    def __init__(self):
-        self._lines: deque[str] = deque()
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._lines: deque[tuple[float, str]] = deque()  # (when it was added, the line)
+        self._taken: dict[str, float] = {}  # the lines last taken, by line: when each was added
         self._lock = threading.Lock()
+        self._clock = clock
+        self._not_before = 0.0
 
     def add(self, line: str) -> None:
         if line.strip():
             with self._lock:
-                self._lines.append(line.strip())
+                self._lines.append((self._clock(), line.strip()))
+                self._not_before = 0.0
 
     def waiting(self) -> bool:
-        return bool(self._lines)
+        return bool(self._lines) and self._clock() >= self._not_before
 
     def take(self) -> list[str]:
         with self._lock:
-            lines, self._lines = list(self._lines), deque()
-        return lines
+            taken, self._lines = list(self._lines), deque()
+            self._taken = {line: at for at, line in taken}
+        fresh = [line for at, line in taken if self._clock() - at < ANNOUNCEMENT_KEEP_S]
+        if len(fresh) < len(taken):
+            print(f"(dropped {len(taken) - len(fresh)} announcement(s) too old to say)")
+        return fresh
+
+    def put_back(self, lines: list[str], retry_in_s: float) -> None:
+        """Lines taken but not said (the voice is down): first in line again, in their order, tried again in
+        `retry_in_s`, or as soon as a new line is added, which may find the voice back."""
+        with self._lock:
+            now = self._clock()
+            self._lines.extendleft(reversed([(self._taken.get(line, now), line) for line in lines]))
+            self._not_before = now + retry_in_s
 
 
 @dataclass
@@ -144,11 +163,14 @@ class Assistant:
         name_threshold: float = SpeakerConfig.wake_threshold,
         journal: Journal | None = None,
         humor: int = LLMConfig.humor,
-        phrases: Path | None = None,
+        phrase_folder: Path | None = None,
         reminders: ReminderTools | None = None,
         ack_window_s: float = RemindersConfig.ack_window_s,
         announcements: Announcements | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
+        """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
+        `clock`: seconds, for when a line that failed to make is tried again."""
         self.mic = mic
         self.speaker = speaker
         self.trigger = trigger
@@ -166,21 +188,18 @@ class Assistant:
         self._only_echo = False  # the last request heard was nothing but a trace of TARS's own greeting
         self._identifying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="speaker-id")
         self._thinking = threading.Lock()  # drafts take turns
-        # Its own pool, so making phrases never delays speaker ID, which an answer waits on.
-        self._phrasing = ThreadPoolExecutor(max_workers=1, thread_name_prefix="phrases")
-        self._phrases: dict[str, Future[list[bytes]]] = {}
-        self._phrase_dir = phrases  # the short lines' audio for this voice, so they survive an offline restart
+        self.phrases = Phrases(voice, phrase_folder, clock)
         self.ack_window_s = ack_window_s
         self.announcements = announcements
         self.reminder_tools: ReminderTools | None = None
-        self._clock: Clock | None = None
+        self._reminder_clock: Clock | None = None
         self.use_reminders(reminders)
         self._just_said: list[int] = []  # reminders just said, waiting for an acknowledgement
         self._last_who: str | None = None
 
     def use_reminders(self, tools: ReminderTools | None) -> None:
         self.reminder_tools = tools
-        self._clock = Clock(tools.reminders, on_read=self._prepare_reminders) if tools else None
+        self._reminder_clock = Clock(tools.reminders, on_read=self._prepare_reminders) if tools else None
 
     @property
     def reminders(self) -> Reminders | None:
@@ -190,15 +209,16 @@ class Assistant:
         self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0, greet: str = PAUSE
     ) -> None:
         self.prepare_phrases()
-        if self._clock:
-            self._clock.start()
+        if self._reminder_clock:
+            self._reminder_clock.start()
         while True:
             print(f"\n{idle_message}")
-            woke = self.trigger.wait(self.mic, due=self._due if self._clock or self.announcements else None)
+            due = self._due if self._reminder_clock or self.announcements else None
+            woke = self.trigger.wait(self.mic, due=due)
             if woke == DUE:
                 if self.announcements and self.announcements.waiting():
                     self.say_announcements(follow_up_s)
-                if self._clock and self._clock.is_due():
+                if self._reminder_clock and self._reminder_clock.is_due():
                     self.say_reminders(follow_up_s)
                 continue
             if woke == ASK:
@@ -213,65 +233,51 @@ class Assistant:
         people enrolled since and retry lines that failed."""
         names = list(self.speaker_id.voiceprints) if self.speaker_id else []
         for line in [ASK_PHRASE, greeting(None), *self.error_lines] + [greeting(n) for n in names]:
-            self._phrase(line)
+            self.phrases.get(line, ahead=True)
 
-    def _phrase(self, text: str, keep: bool = True) -> Future[list[bytes]]:
-        """The line's audio: made already, being made, or queued now (again, if it failed before). `keep`: saved
-        for the next run too (the fixed lines, not a reminder's)."""
-        made = self._phrases.get(text)
-        if made is None or (made.done() and made.exception()):
-            made = self._phrases[text] = self._saved_phrase(text) or self._phrasing.submit(
-                self._make_phrase, text, keep
-            )
-        return made
-
-    def _phrase_path(self, text: str) -> Path | None:
-        return self._phrase_dir / f"{hashlib.sha256(text.encode()).hexdigest()[:16]}.pcm" if self._phrase_dir else None
-
-    def _saved_phrase(self, text: str) -> Future[list[bytes]] | None:
-        """A line made in an earlier run, read here rather than queued behind lines still waiting on the network."""
-        path = self._phrase_path(text)
+    def say(
+        self,
+        text: str,
+        keep: bool = True,
+        on_first_audio: Callable[[], None] | None = None,
+        wait_s: float = PHRASE_WAIT_S,
+    ) -> bool:
+        """Plays a short line, made ahead if possible (`keep`: one of the fixed lines), waiting at most `wait_s` for
+        it to be made. False if it couldn't be said."""
         try:
-            audio = path.read_bytes() if path else None
-        except OSError:
-            return None
-        if not audio:
-            return None
-        saved: Future[list[bytes]] = Future()
-        saved.set_result([audio])
-        return saved
-
-    def _make_phrase(self, text: str, keep: bool = True) -> list[bytes]:
-        audio = list(self.voice.stream(text))
-        if keep and (path := self._phrase_path(text)):
-            try:
-                atomic_write(path, b"".join(audio))
-            except OSError as e:  # only a head start for the next run
-                print(f"(couldn't save {text!r} for next time: {e!r})")
-        return audio
-
-    def say(self, text: str, keep: bool = True, on_first_audio: Callable[[], None] | None = None) -> bool:
-        """Plays a short line, made ahead if possible. False if it couldn't be said."""
-        try:
-            audio = self._phrase(text, keep).result()
+            audio = self.phrases.get(text, keep).result(timeout=wait_s)
         except Exception as e:  # noqa: BLE001 - a line TARS can't say is skipped, never fatal
             print(f"(couldn't say {text!r}: {e!r})")
             return False
+        self._play(audio, on_first_audio)
+        return True
+
+    def _play(self, audio: list[bytes], on_first_audio: Callable[[], None] | None = None) -> None:
         with self._mic_paused():
             self.speaker.play_pcm_stream(iter(audio), self.voice.sample_rate, on_first_audio=on_first_audio)
-        return True
+
+    def _made_now(self, lines: list[str]) -> dict[str, list[bytes]]:
+        """The audio of each of `lines` that could be made within UNPROMPTED_WAIT_S."""
+        made: dict[str, Audio] = {line: self.phrases.get(line, keep=False) for line in lines}
+        wait(made.values(), UNPROMPTED_WAIT_S)
+        ready = {line: audio.result() for line, audio in made.items() if audio.done() and not audio.exception()}
+        for line, audio in made.items():
+            if line not in ready:
+                why = repr(audio.exception()) if audio.done() else "not made in time"
+                print(f"(couldn't say {line!r}: {why})")
+        return ready
+
+    def _chime(self) -> None:
+        self._play([chime(self.voice.sample_rate)])
 
     def _mic_paused(self):
         return self.mic.paused() if self.mic else nullcontext()
 
     def say_error(self) -> None:
         # One still being made gets a moment: it's quicker than asking again.
-        wait([f for line in self.error_lines if (f := self._phrases.get(line))], ERROR_LINE_WAIT_S, FIRST_COMPLETED)
-        ready = [
-            line
-            for line in self.error_lines
-            if (made := self._phrases.get(line)) and made.done() and not made.exception()
-        ]
+        made = {line: audio for line in self.error_lines if (audio := self.phrases.made_ahead(line))}
+        wait(made.values(), ERROR_LINE_WAIT_S, FIRST_COMPLETED)
+        ready = [line for line, audio in made.items() if audio.done() and not audio.exception()]
         if not ready:  # the voice was never reachable, so there's nothing to say it with
             print("(couldn't say what went wrong: the voice isn't reachable either)")
             return
@@ -281,29 +287,29 @@ class Assistant:
 
     def _prepare_reminders(self, active: list[dict]) -> None:
         """Makes each active reminder's line ahead, so it plays at once when it's due."""
-        for r in active:
-            self._phrase(reminder_line(r) if r["due"] is not None else held_line(r), keep=False)
+        self.phrases.keep_only({reminder_line(r) if r["due"] is not None else held_line(r) for r in active})
 
     def _due(self) -> bool:
-        return bool(self.announcements and self.announcements.waiting()) or bool(self._clock and self._clock.is_due())
+        clock = self._reminder_clock
+        return bool(self.announcements and self.announcements.waiting()) or bool(clock and clock.is_due())
 
     def say_announcements(self, follow_up_s: float = 0.0) -> None:
         """Says what's waiting to be said (the TV is playing, or why it isn't), then listens a moment, without the
         wake word, in case it asked something ("Toy Story, or Toy Story 4?"). What's said joins the conversation."""
         lines = self.announcements.take() if self.announcements else []
-        if not lines:
-            return
-        self.journal.unprompted()
-        with self._mic_paused():
-            self.speaker.play_pcm_stream(iter([chime(self.voice.sample_rate)]), self.voice.sample_rate)
-        said = []
-        for line in lines:
-            print(f"Bot:  {line}  (on its own)")
-            if self.say(line, keep=False):
-                self.journal.said(line)
-                said.append(line)
+        audio = self._made_now(lines)
+        if unsaid := [line for line in lines if line not in audio]:
+            print(f"(trying {len(unsaid)} announcement(s) again in {VOICE_RETRY_S:.0f} s)")
+            self.announcements.put_back(unsaid, VOICE_RETRY_S)
+        said = [line for line in lines if line in audio]
         if not said:
             return
+        self.journal.unprompted()
+        self._chime()
+        for line in said:
+            print(f"Bot:  {line}  (on its own)")
+            self._play(audio[line])
+            self.journal.said(line)
         self.brain.remember_said(" ".join(said))
         heard = self.listen(start_timeout_s=follow_up_s, follow_up=True) if follow_up_s else None
         if heard is None:
@@ -313,29 +319,32 @@ class Assistant:
 
     def say_reminders(self, follow_up_s: float = 0.0) -> None:
         """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""
+        clock = self._reminder_clock
         try:
-            due = [r for r in self.reminders.due() if not (self._clock and self._clock.held(r["id"]))]
+            due = [r for r in self.reminders.due() if not (clock and clock.held(r["id"]))]
         except Exception as e:  # noqa: BLE001 - the table failed: give it a rest, or the wake loop would stop for it
             print(f"(couldn't read the reminders: {e!r})")
-            if self._clock:
-                self._clock.pause(REMINDERS_REST_S)
+            if clock:
+                clock.pause(REMINDERS_REST_S)
             return
-        if not due:
-            self._reread_reminders()
-            return
-        self.journal.unprompted()  # what's said back answers the reminder, not the last wake
-        with self._mic_paused():
-            self.speaker.play_pcm_stream(iter([chime(self.voice.sample_rate)]), self.voice.sample_rate)
+        lines = {r["id"]: [t for t in [reminder_line(r), late(r)] if t] if says_line(r) else [] for r in due}
+        audio = self._made_now([t for texts in lines.values() for t in texts])
         said = []
         for r in due:
-            lines = [t for t in [reminder_line(r), late(r)] if t] if says_line(r) else []
-            spoken = [t for t in lines if self._say_reminder(r, t, self.journal.said)]
-            if lines and not spoken:  # the voice is down: it isn't heard, so it isn't said
+            if lines[r["id"]] and not any(t in audio for t in lines[r["id"]]):
                 print(f"(couldn't say reminder {r['id']}; trying again in {VOICE_RETRY_S:.0f} s)")
                 self._hold(r["id"], VOICE_RETRY_S)
-                continue
+            else:
+                said.append(r)
+        if said:
+            self.journal.unprompted()  # what's said back answers the reminder, not the last wake
+            self._chime()
+        for r in said:
+            for text in [t for t in lines[r["id"]] if t in audio]:
+                print(f"Bot:  {text}  (reminder {r['id']})")
+                self._play(audio[text])
+                self.journal.said(text)
             self._mark_said(r)
-            said.append(r)
         self._reread_reminders()
         self._just_said = [r["id"] for r in said if r["needs_ack"]]
         try:
@@ -347,11 +356,12 @@ class Assistant:
         finally:
             self._just_said = []
 
-    def _say_reminder(self, r: dict, text: str, log: Callable[[str], None]) -> bool:
+    def _say_held_line(self, r: dict) -> bool:
+        text = held_line(r)
         print(f"Bot:  {text}  (reminder {r['id']})")
-        if not self.say(text, keep=False):
+        if not self.say(text, keep=False, wait_s=UNPROMPTED_WAIT_S):
             return False
-        log(text)
+        self.journal.tars_said(text)
         return True
 
     def _mark_said(self, r: dict) -> None:
@@ -362,12 +372,12 @@ class Assistant:
             self._hold(r["id"], r["repeat_every_s"])
 
     def _hold(self, reminder_id: int, seconds: float) -> None:
-        if self._clock:
-            self._clock.hold(reminder_id, time.time() + seconds)
+        if self._reminder_clock:
+            self._reminder_clock.hold(reminder_id, time.time() + seconds)
 
     def _reread_reminders(self) -> None:
-        if self._clock:
-            self._clock.read()
+        if self._reminder_clock:
+            self._reminder_clock.read()
 
     def _ack(self, ids: list[int], who: str | None, changed: Collection[int] = ()) -> None:
         """A bare <ack> is for the reminders just said, or else the one said last. `changed`: the reminders the same
@@ -376,7 +386,7 @@ class Assistant:
             ids = ids or self._just_said or [r["id"] for r in self.reminders.waiting()[:1]]
             for i in [i for i in ids if i not in changed]:
                 # Just said, it may still be scheduled: the table didn't take its saying.
-                said = i in self._just_said or (self._clock and self._clock.held(i))
+                said = i in self._just_said or (self._reminder_clock and self._reminder_clock.held(i))
                 if (self.reminders.dismiss if said else self.reminders.ack)(i, who, VOICE):
                     print(f"(reminder {i} acknowledged by {who or 'an unknown voice'})")
         except Exception as e:  # noqa: BLE001 - the reply was said; only the record of it failed
@@ -384,9 +394,14 @@ class Assistant:
         self._reread_reminders()
 
     def wake_speaker(self) -> str | None:
+        """Who said the wake word, for the greeting; None if nobody is sure, or speaker ID couldn't tell."""
         if not self.speaker_id or (audio := self.trigger.last_audio) is None:
             return None
-        return self.speaker_id.identify(audio.astype("int16").tobytes(), threshold=self.name_threshold)
+        try:
+            return self.speaker_id.identify(audio.astype("int16").tobytes(), threshold=self.name_threshold)
+        except Exception as e:  # noqa: BLE001 - greeted without a name
+            print(f"(couldn't tell who spoke: {e!r})")
+            return None
 
     def greet(self) -> None:
         text = greeting(self.wake_speaker())
@@ -404,7 +419,7 @@ class Assistant:
         text = greeting(self.wake_speaker())
         print(f"Bot:  {text}  (listening while it's said)")
         try:
-            audio = self._phrase(text).result()
+            audio = self.phrases.get(text).result(timeout=PHRASE_WAIT_S)
         except Exception as e:  # noqa: BLE001 - no greeting, but still listening
             print(f"(couldn't say {text!r}: {e!r})")
             return self.listen()
@@ -519,14 +534,16 @@ class Assistant:
 
     def _converse(self, follow_up_s: float, first: Utterance | None, greet_after_s: float, greet: str) -> None:
         heard = first
-        if heard is None and greet == ALWAYS:
-            heard = self.greet_and_listen()
-        elif heard is None and greet == PAUSE and greet_after_s:
-            heard = self.listen(start_timeout_s=greet_after_s)
-            if heard is None:
-                self.greet()
         if heard is None:
-            heard = self.listen()
+            if greet == ALWAYS:
+                heard = self.greet_and_listen()
+            elif greet == PAUSE and greet_after_s:
+                heard = self.listen(start_timeout_s=greet_after_s)
+                if heard is None:
+                    self.greet()
+                    heard = self.listen()
+            else:
+                heard = self.listen()
         if heard is None:
             print("(didn't hear anything)")
             self.journal.nobody_spoke()
@@ -538,7 +555,7 @@ class Assistant:
                 raise
             except Exception as e:  # noqa: BLE001 - one failed request shouldn't take the assistant down
                 print(f"Error: {e!r}")
-                if not isinstance(e, OpenAIError):  # a service failing (Cerebras's too) is no bug to trace
+                if not isinstance(e, SERVICE_FAILURES):  # a service failing is no bug to trace
                     traceback.print_exc()
                 self.say_error()
                 return
@@ -570,7 +587,7 @@ class Assistant:
         except Exception as e:  # noqa: BLE001 - they wait for the next time
             print(f"(couldn't read the reminders: {e!r})")
             return False
-        said = [r for r in held if self._say_reminder(r, held_line(r), self.journal.tars_said)]
+        said = [r for r in held if self._say_held_line(r)]
         if not said:  # nothing held, or the voice is down: it waits for the next time they're heard
             return False
         for r in said:
@@ -680,7 +697,7 @@ class Assistant:
             mark_failed_at(e, STT)
             raise
         stt_s = time.perf_counter() - t
-        answer = Answer(text, Identified(*identifying.result()) if identifying else NOBODY, stt_s)
+        answer = Answer(text, self._who(identifying), stt_s)
         if not text or draft.cancelled:
             return answer
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
@@ -691,6 +708,17 @@ class Assistant:
         except Exception as e:  # noqa: BLE001 - raised again in handle(), after what was heard is kept
             answer.asked, answer.error = False, e  # already forgotten
             return answer
+
+    @staticmethod
+    def _who(identifying: Future[tuple[str | None, float | None, np.ndarray | None]] | None) -> Identified:
+        """Who spoke, or NOBODY if speaker ID couldn't tell: the request is answered either way."""
+        if identifying is None:
+            return NOBODY
+        try:
+            return Identified(*identifying.result())
+        except Exception as e:  # noqa: BLE001 - answered as for an unknown voice
+            print(f"(couldn't tell who spoke: {e!r})")
+            return NOBODY
 
     def _start_reply(self, answer: Answer, prompt: str, may_skip: bool, request: Request | None = None) -> Answer:
         answer.asked, answer.t_asked = True, time.perf_counter()

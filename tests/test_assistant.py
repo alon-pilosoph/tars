@@ -9,9 +9,11 @@ import pytest
 from openai import OpenAIError
 
 import voice_assistant.assistant as assistant_module
+from voice_assistant import phrases
 from voice_assistant.assistant import ASK_PHRASE, ERROR_LINES, Assistant
 from voice_assistant.audio import SpeakerError, chime
 from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, TIMINGS, SentItem
+from voice_assistant.errors import ServiceError
 from voice_assistant.events import EventLog
 from voice_assistant.journal import Journal
 from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK, REMINDER_TAG
@@ -134,7 +136,8 @@ def test_when_the_voice_is_down_too_it_stays_quiet(speaker):
 
 
 def test_an_error_line_that_failed_to_make_is_made_again_later(speaker):
-    assistant, _ = make_assistant(speaker, [b"a"], [])
+    now = [1000.0]
+    assistant, _ = make_assistant(speaker, [b"a"], [], clock=lambda: now[0])
     down = [True]
 
     def flaky(text):
@@ -146,6 +149,7 @@ def test_an_error_line_that_failed_to_make_is_made_again_later(speaker):
     assistant.prepare_phrases()
     assistant.say_error()  # the lines failed: nothing to say it with
     down[0] = False
+    now[0] += phrases.RETRY_S
     played = []
     speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
     failing(assistant, RuntimeError("boom"))
@@ -163,7 +167,7 @@ def with_phrases(speaker, folder, stream):
         assistant.transcriber,
         assistant.brain,
         assistant.voice,
-        phrases=folder,
+        phrase_folder=folder,
     )
     assistant.voice.stream = stream
     return assistant
@@ -172,7 +176,7 @@ def with_phrases(speaker, folder, stream):
 def test_an_error_line_made_once_plays_after_a_restart_with_the_voice_down(speaker, tmp_path):
     first = with_phrases(speaker, tmp_path, lambda text: iter([text.encode()]))
     first.prepare_phrases()
-    first._phrasing.shutdown(wait=True)  # every line made, and saved
+    first.phrases.drain()  # every line made, and saved
 
     def down(text):
         raise ConnectionError("no network since boot")
@@ -209,6 +213,27 @@ def test_a_line_that_failed_to_make_is_tried_again_when_it_is_needed(speaker):
     assert not assistant.say(ASK_PHRASE)  # just after boot, before the network is up
     down[0] = False
     assert assistant.say(ASK_PHRASE) and played == [ASK_PHRASE.encode()]
+
+
+def test_a_line_stuck_behind_the_voice_keeps_nobody_waiting_long(speaker):
+    assistant, _ = make_assistant(speaker, [], [])
+    stuck = threading.Event()
+    assistant.voice.stream = lambda text: stuck.wait() and iter([text.encode()])
+    try:
+        t = time.monotonic()
+        assert not assistant.say("Yes, Alon?", wait_s=0.05)
+        assert time.monotonic() - t < 1
+    finally:
+        stuck.set()
+
+
+def test_a_reminders_line_is_made_ahead_and_let_go_once_its_done(speaker, tmp_path):
+    assistant, _, _, _ = reminding(speaker, tmp_path, [None], [], needs_ack=False)
+    assistant._reminder_clock.read()
+    line = "Stacey, a message from Alon: dinner's at eight."
+    assert line in assistant.phrases
+    assistant.say_reminders()  # said, and it doesn't wait for "got it": done
+    assert line not in assistant.phrases
 
 
 def test_a_new_voice_makes_its_lines_again(tmp_path):
@@ -283,6 +308,31 @@ def test_greeting_without_a_confident_name_is_just_yes(speaker):
     assistant.say = lambda text, **kw: said.append(text)
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
     assert said == ["Yes?"]
+
+
+@pytest.mark.parametrize("greet, heard", [("always", [b"q", None]), ("pause", [None, b"q", None])])
+def test_when_speaker_id_fails_on_the_wake_word_the_greeting_is_just_yes(speaker, greet, heard):
+    assistant, brain, played = greeting_at_once(speaker, heard, ["what time is it"])
+    assistant.speaker_id.identify = raising(ValueError("shapes (256,) and (192,) not aligned"))
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet)
+    assert played[0] == b"Yes?" and brain.asked[0].endswith("what time is it")
+
+
+def test_when_speaker_id_fails_the_request_is_answered_as_from_an_unknown_voice(speaker):
+    assistant, brain = make_assistant(speaker, [b"q", None], ["what time is it"])
+    assistant.speaker_id = FakeSpeakerID("alon")
+    assistant.speaker_id.describe = raising(ValueError("the voiceprints file is broken"))
+    assistant.converse(follow_up_s=4.0)
+    assert brain.asked == ["[Speaker: unknown] what time is it"]
+
+
+def test_a_service_failing_is_a_line_in_the_log_not_a_traceback(speaker, capsys):
+    assistant, _ = make_assistant(speaker, [b"a"], [])
+    failing(assistant, ServiceError("the deepgram voice failed: TimeoutError()"))
+    assistant.converse(follow_up_s=4.0)
+    out, err = capsys.readouterr()
+    assert "ServiceError" in out and "Traceback" not in err
 
 
 def test_asking_straight_away_skips_the_greeting(speaker):
@@ -708,7 +758,7 @@ def test_a_reminder_that_cant_be_marked_said_doesnt_stop_the_assistant_or_repeat
     assert spoken(played) == ["Stacey, a message from Alon: dinner's at eight."]
     played.clear()
     assistant.say_reminders()  # the table still says it's due, but it's held: said once, not in a loop
-    assert played == [] and not assistant._clock.is_due()
+    assert played == [] and not assistant._reminder_clock.is_due()
     assistant, reminders, _ = holding(speaker, tmp_path / "2", "stacey", [b"q", None], ["what's the time"], ["Nine."])
     monkeypatch.setattr(reminders, "said", raising(OSError("disk full")))
     assistant.converse(follow_up_s=4.0)  # the held message is said, and the conversation carries on
@@ -728,25 +778,31 @@ def test_a_got_it_to_a_reminder_never_lands_on_an_old_wake(speaker, tmp_path):
     assert conversation["wake"] is None and reminders.get(rid)["status"] == ACKNOWLEDGED
 
 
-def test_a_reminder_the_voice_couldnt_say_isnt_counted_and_is_tried_again(speaker, tmp_path):
-    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [], [])
+def test_a_reminder_the_voice_couldnt_say_isnt_counted_and_is_tried_again_without_a_chime(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [None], [])
     assistant.voice.stream = raising(OSError("offline"))
-    assistant.say_reminders()  # only the chime: no line, so no listening for "got it" either
+    assistant.say_reminders()  # no line, so no chime, and no listening for "got it" either
     r = reminders.get(rid)
-    assert (r["status"], r["tries"]) == ("scheduled", 0) and assistant._clock.held(rid)
+    assert (r["status"], r["tries"]) == ("scheduled", 0) and assistant._reminder_clock.held(rid)
+    assert played == [] and assistant.journal.conversations.conversations() == []
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() - 1, rid))
+    assistant._reminder_clock.hold(rid, 0)
+    assistant.say_reminders()  # the voice is back: the chime, then the line
+    assert played[0] == chime(24_000) and spoken(played) == ["Stacey, a message from Alon: dinner's at eight."]
 
 
 def test_when_the_table_fails_the_wake_word_keeps_working(speaker, tmp_path, monkeypatch):
     assistant, reminders, _, _ = reminding(speaker, tmp_path, [], [])
-    assistant._clock.read()
-    assert assistant._clock.is_due()
+    assistant._reminder_clock.read()
+    assert assistant._reminder_clock.is_due()
     monkeypatch.setattr(reminders, "due", raising(OSError("database disk image is malformed")))
     assistant.say_reminders()
-    assert not assistant._clock.is_due()  # rested, rather than "due" on every block of audio
+    assert not assistant._reminder_clock.is_due()  # rested, rather than "due" on every block of audio
     monkeypatch.setattr(reminders, "active", raising(OSError("malformed")))
-    assistant._clock.pause(0)
-    assistant._clock.read()
-    assert not assistant._clock.is_due()
+    assistant._reminder_clock.pause(0)
+    assistant._reminder_clock.read()
+    assert not assistant._reminder_clock.is_due()
 
 
 def test_a_bare_got_it_later_in_the_conversation_is_for_all_the_reminders_just_said(speaker, tmp_path):
@@ -800,6 +856,12 @@ def test_if_all_it_heard_was_its_own_greeting_it_keeps_listening(speaker):
     assistant.converse(follow_up_s=4.0, greet="always")
     assert len(brain.asked) == 1 and brain.asked[0].endswith("what time is it")
     assert heard[0] == ("", None, None)
+
+
+def test_greeting_at_once_listens_once_when_nobody_speaks(speaker):
+    assistant, brain, _ = greeting_at_once(speaker, [None, None], [])
+    assistant.converse(follow_up_s=4.0, greet="always")
+    assert assistant.recorder.timeouts == [None] and brain.asked == []  # one wait, not two
 
 
 def test_never_greeting_waits_quietly(speaker):
