@@ -1,7 +1,7 @@
 """What the web UI's Status page shows (docs/web-ui.md#the-status-page): whether each part of TARS is running, from
 the heartbeat each process writes; what TARS did today; the cloud services TARS uses, each asked with its own key (the
-same checks as --check) and each with its own status page; and the machine: CPU, memory, temperature, throttling,
-disk and uptime.
+same checks as --check) and each with its own status page, and Home Assistant; how the backup's last pass went, and its
+timer; and the machine: CPU, memory, temperature, throttling, disk and uptime.
 
 A heartbeat is a small file each long-running process rewrites every 30 seconds, under the event log's folder
 (heartbeats/<name>.json), from a thread of its own: the database isn't written to for it. A process that crashed, was
@@ -18,9 +18,9 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict
+from typing import Literal, TypedDict
 
-from .check import FAIL, LOW_DISK_BYTES, SKIP, Check, Result, outcome
+from .check import FAIL, LOW_DISK_BYTES, SKIP, Check, Result, backup_timer, last_pass, outcome
 from .config import Config
 from .conversations import ConversationLog
 from .events import EventLog
@@ -88,11 +88,14 @@ class StatusPage(TypedDict):
     url: str
 
 
-class ServiceHealth(TypedDict):
+class CheckLine(TypedDict):
     name: str
-    status: str  # check.py's: ok, warn or fail
+    status: Literal["ok", "warn", "fail"]  # check.py's
     detail: str
     fix: str
+
+
+class ServiceHealth(CheckLine):
     page: StatusPage | None
 
 
@@ -120,6 +123,7 @@ class Report(TypedDict):
     today: Today
     services: list[ServiceHealth]
     services_asked: float
+    backup: list[CheckLine] | None  # None: [backup] is off
     machine: MachineHealth
 
 
@@ -193,7 +197,7 @@ def processes(
         label, unit = PROCESSES[name]
         beat = _read_beat(folder / HEARTBEATS / f"{name}.json")
         last = beat.get("beat")
-        state = unit_state(unit)
+        state = _asked(unit_state(unit))
         out.append(
             {
                 "name": name,
@@ -202,7 +206,7 @@ def processes(
                 "started": beat.get("started"),
                 "beat": last,
                 "version": beat.get("version") or "",
-                "unit_state": None if state == "unknown" else state,  # systemd there, but no user session to ask
+                "unit_state": state,
             }
         )
     return out
@@ -221,6 +225,36 @@ def _read_beat(path: Path) -> dict:
     if isinstance(found.get("version"), str):
         beat["version"] = found["version"]
     return beat
+
+
+def _asked(state: str | None) -> str | None:
+    """A unit's state as systemd says it, or None with no systemd to ask: "unknown" is systemd with no user session."""
+    return None if state == "unknown" else state
+
+
+# What the Status page calls the backup's lines, by the names --check gives them.
+BACKUP_LINES = {
+    "Backup": "The last pass",
+    "Backup lifecycle": "The bucket's rules",
+    "voice-assistant-backup.timer": "The timer",
+}
+
+
+def backup_lines(folder: Path, unit_state: Callable[[str], str | None], now: float) -> list[CheckLine]:
+    """How the backup's last pass went, from what it left in the event log's folder (as --check says it, without
+    asking the bucket), and its timer, where there's systemd."""
+    from .backup import Status, status_file
+
+    try:
+        found = last_pass(Status.load(status_file(folder)), now)
+    except Exception as e:  # noqa: BLE001 - a damaged file is one line saying so, not a page that fails
+        found = [Result("Backup", FAIL, f"backup.json couldn't be read ({e!r})", "remove it: the next pass writes it")]
+    timer = backup_timer(lambda unit: _asked(unit_state(unit)))
+    return [_line(r, BACKUP_LINES.get(r.name, r.name)) for r in [*found, timer] if r.status != SKIP]
+
+
+def _line(r: Result, name: str | None = None) -> CheckLine:
+    return {"name": name or r.name, "status": r.status, "detail": r.detail, "fix": r.fix}
 
 
 def today(log: EventLog, conversations: ConversationLog, now: float) -> Today:
@@ -341,7 +375,7 @@ class Services:
                 page = done.get(("page", name)) or {"indicator": "unknown", "description": late, "url": url}
             for r in done.get(("check", name)) or [Result(name, FAIL, late)]:
                 if r.status != SKIP:
-                    found.append({"name": r.name, "status": r.status, "detail": r.detail, "fix": r.fix, "page": page})
+                    found.append({**_line(r), "page": page})
         return found
 
 
@@ -371,11 +405,13 @@ class Health:
         services: Services,
         unit_state: Callable[[str], str | None],
         read_throttled: Callable[[], int | None] | None = None,
+        backup_enabled: bool = False,
     ):
-        """`wanted`: the processes this setup runs (expected). `unit_state`: systemd's state of a unit, or None."""
+        """`wanted`: the processes this setup runs (expected). `unit_state`: systemd's state of a unit, or None.
+        `backup_enabled`: [backup] is on."""
         self._log, self._conversations = log, ConversationLog(log)
         self._wanted, self._services, self._unit_state = wanted, services, unit_state
-        self._read_throttled = read_throttled
+        self._read_throttled, self._backup_enabled = read_throttled, backup_enabled
 
     def report(self) -> Report:
         services, asked = self._services.get()
@@ -386,6 +422,7 @@ class Health:
             "today": today(self._log, self._conversations, now),
             "services": services,
             "services_asked": asked,
+            "backup": backup_lines(self._log.folder, self._unit_state, now) if self._backup_enabled else None,
             "machine": machine(self._log.folder, self._read_throttled),
         }
 

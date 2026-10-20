@@ -3,6 +3,7 @@
 import time
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pytest
 
@@ -91,6 +92,23 @@ def test_voiceprints_web_ui_and_services(tmp_path):
     assert check.systemd("voice-assistant", lambda u: "failed").status == WARN
 
 
+def test_the_web_ui_is_looked_for_on_the_port_its_unit_serves_on(tmp_path):
+    unit = tmp_path / "voice-assistant-web.service"
+
+    def no_systemd(unit):
+        return ""
+
+    assert check.web_port(no_systemd, unit) == 8080  # not installed: --web's own
+    shipped = (Path(__file__).parents[1] / "deploy" / "voice-assistant-web.service").read_text()
+    unit.write_text(shipped.replace("--port 8080", "--port 8443"))
+    assert check.web_port(no_systemd, unit) == 8443
+    shown = "ExecStart={ path=/home/tars/.local/bin/uv ; argv[]=uv run voice-assistant --web --port 9000 ; }\n"
+    assert check.web_port(lambda unit: shown, unit) == 9000  # a drop-in changed it: systemd's word wins
+    asked = []
+    assert check.web(lambda url: asked.append(url) or 200, 9000).detail == "running on port 9000"
+    assert asked == ["http://127.0.0.1:9000/api/status"]
+
+
 def test_the_voice_is_made_then_played(tmp_path):
     played = []
     results = check.voice(lambda text: iter([text.encode()]), played.extend)
@@ -145,7 +163,7 @@ def test_http_status_gives_any_status_and_raises_when_nothing_answers():
     threading.Thread(target=server.handle_request, daemon=True).start()
     assert check.http_status(f"http://127.0.0.1:{server.server_port}/") == 401
     server.server_close()
-    with pytest.raises(OSError):
+    with pytest.raises(httpx.TransportError):
         check.http_status(f"http://127.0.0.1:{server.server_port}/")
 
 
@@ -174,7 +192,7 @@ def test_telegram_is_checked_only_when_its_on_and_says_who_its_for(cfg):
 def test_the_backup_says_how_its_last_pass_went(cfg, log, convos, tmp_path):
     import dataclasses
 
-    from voice_assistant.backup import S3, Backup
+    from voice_assistant.backup import S3, Backup, Status
     from voice_assistant.config import BackupConfig
 
     from .test_backup import NOW, PretendS3, a_request
@@ -190,18 +208,47 @@ def test_the_backup_says_how_its_last_pass_went(cfg, log, convos, tmp_path):
     (fine,) = check.backup(on, lambda: job, now=NOW + 60)
     assert fine.status == OK and "s3://tars-home/tars answers" in fine.detail and "2 files there" in fine.detail
     assert check.backup(on, lambda: job, now=NOW + 3 * 3600)[0].status == WARN  # no good pass for hours
+    Status(last_run=NOW, last_ok=NOW - 60, error="S3 put_object: Access Denied").save(job.status_path)
+    (failed,) = check.backup(on, lambda: job, now=NOW)
+    assert failed.status == FAIL
+    assert failed.detail.startswith("s3://tars-home/tars answers (")
+    assert failed.detail.endswith("; the last pass failed: S3 put_object: Access Denied")
     bucket.down = True
     assert check.backup(on, lambda: job, now=NOW)[0].status == FAIL
     assert check.backup(on, raising(ConfigError("The backup: put AWS_ACCESS_KEY_ID in .env")))[0].status == FAIL
 
 
 def test_the_service_checks_skip_what_has_no_key(tmp_path):
-    (tmp_path / ".env").write_text("")
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=o\n")
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
-    checks = check.service_checks(cfg, tmp_path)
-    names = ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram", "Telegram reminders"]
+    checks = check.service_checks(cfg, tmp_path).listed()
+    names = ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram", "Telegram reminders", "Home Assistant"]
     assert [name for name, _ in checks] == names
-    assert all(c().status == SKIP for _, c in checks)  # no keys: nothing is used
+    assert all(c().status == SKIP for name, c in checks if name != "OpenAI")  # no key for them, or not used
+
+
+def test_keys_that_cant_run_tars_are_one_failure_in_place_of_the_services(tmp_path):
+    (tmp_path / ".env").write_text("GROQ_API_KEY=g\n")
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    services = check.service_checks(cfg, tmp_path)
+    assert services.keyed == [] and [name for name, _ in services.listed()] == [
+        "API keys",
+        "Telegram",
+        "Telegram reminders",
+        "Home Assistant",
+    ]
+    keys = services.keys()
+    assert keys.status == FAIL and "DEEPGRAM_API_KEY or OPENAI_API_KEY" in keys.detail
+
+
+def test_home_assistant_is_one_of_the_services_when_home_uses_it(tmp_path):
+    from voice_assistant.config import HomeConfig
+
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=o\n")
+    assert check.service_checks(cfg_with(HomeConfig()), tmp_path).home_assistant().status == SKIP
+    on = cfg_with(HomeConfig(url="http://ha.invalid:8123"))
+    hass = check.service_checks(on, tmp_path).home_assistant()
+    assert hass.status == FAIL and "HOME_ASSISTANT_TOKEN" in hass.detail
 
 
 def test_reminders_waiting_for_telegram_are_counted_while_nothing_posts_them(log):

@@ -54,6 +54,9 @@ class HomeAssistant:
     def ping(self) -> str:
         return self._send("GET", "/api/").get("message", "")
 
+    def close(self) -> None:
+        self._http.close()
+
     def state(self, entity: str) -> dict:
         """{"state": ..., "attributes": {...}}; HomeError if there's no such entity."""
         return self._send("GET", f"/api/states/{entity}")

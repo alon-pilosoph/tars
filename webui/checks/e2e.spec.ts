@@ -392,7 +392,7 @@ test("Status shows each process by its heartbeat, today's counts, and the servic
   await expect(rows.filter({ hasText: "The web UI" })).toContainText("Running for"); // this server's own heartbeat
   await expect(rows.filter({ hasText: "The assistant" })).toContainText("Not seen running");
   await expect(page.locator(".health-counts b").first()).toHaveText(String(health.today.wakes));
-  const services = page.locator(".cmp.health").last().locator("tbody tr");
+  const services = page.locator(".cmp.health.services tbody tr");
   await expect(services).toHaveCount(health.services.length); // one not used isn't listed
   await expect(services.filter({ hasText: "Deepgram" })).toContainText("check DEEPGRAM_API_KEY in .env");
   await expect(services.filter({ hasText: "OpenAI" }).getByRole("link")).toHaveAttribute(

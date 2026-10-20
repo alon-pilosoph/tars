@@ -15,11 +15,12 @@ from pathlib import Path
 import numpy as np
 
 from .audio import save_wav
+from .config import ConfigError
+
+DB_FILE = "events.db"  # in the event log's folder
 
 # AUTOINCREMENT so an id is never reused: the web UI deletes rows while the assistant adds them, and a reused id
 # would silently attach a new wake to an old conversation (or delete it along with one).
-DB_FILE = "events.db"  # in the event log's folder
-
 TABLES = {
     "events": """CREATE TABLE events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,6 +179,10 @@ MIGRATIONS = [
 ]
 
 
+class NewerDatabaseError(ConfigError):
+    """The database was made by a newer TARS: this code can't read it, and mustn't change it."""
+
+
 class Store:
     def __init__(self, folder: Path):
         self.folder = folder
@@ -213,6 +218,10 @@ class Store:
         with closing(self.connect()) as db:
             return [dict(r) for r in db.execute(sql, args)]
 
+    def row(self, sql: str, args: tuple | list = ()) -> dict | None:
+        rows = self.rows(sql, args)
+        return rows[0] if rows else None
+
     def save_audio(self, pcm: np.ndarray | bytes, name: str) -> str:
         rel = f"audio/{time.strftime('%Y%m%d')}/{name}.wav"
         save_wav(self.folder / rel, pcm)
@@ -245,6 +254,11 @@ class Store:
 
 def _migrate(db: sqlite3.Connection) -> None:
     version = db.execute("PRAGMA user_version").fetchone()[0]
+    if version > len(MIGRATIONS):
+        raise NewerDatabaseError(
+            f"The event log's database is at version {version}, made by a newer TARS than this one (which knows "
+            f"{len(MIGRATIONS)}): update the code to run it."
+        )
     if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone():
         for statement in [*TABLES.values(), *INDEXES]:
             db.execute(statement)

@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { post, writesDone, writesMade } from "./api";
+import { demoAuto } from "./demo";
 import {
   ago,
+  checkLine,
   diskLine,
   duration,
   failedLine,
@@ -23,7 +25,7 @@ import {
 } from "./format";
 import { md, plain } from "./markdown";
 import { type State, forPerson, get, personShown } from "./store";
-import { normalize, snapshotOf, within } from "./store/load";
+import { loadFailures, normalize, settle, snapshotOf, within } from "./store/load";
 import type {
   ApiConversation,
   Cluster,
@@ -214,6 +216,22 @@ describe("the Status page", () => {
     });
     expect(pageLine(null)).toEqual({ text: "No status page", bad: false });
   });
+  it("says what to do about a check, the backup's or a service's, only when it isn't fine", () => {
+    const fix = "systemctl --user start voice-assistant-backup";
+    expect(checkLine({ name: "The timer", status: "ok", detail: "running", fix })).toEqual({
+      mark: "✓",
+      text: "running",
+      fix: "",
+      bad: false,
+    });
+    expect(checkLine({ name: "The last pass", status: "fail", detail: "Access Denied", fix })).toEqual({
+      mark: "✗",
+      text: "Access Denied",
+      fix,
+      bad: true,
+    });
+    expect(checkLine({ name: "The last pass", status: "warn", detail: "no pass has run yet", fix }).bad).toBe(true);
+  });
   it("says the machine's numbers in words", () => {
     const gb = 1073741824;
     const m = { disk_total: 58 * gb, disk_free: 37 * gb, cpu_percent: 13.6, load: [0.42, 0.5, 0.48], cores: 4 };
@@ -308,5 +326,92 @@ describe("changes", () => {
     );
     await expect(post("/json")).rejects.toThrow("no such voice");
     await expect(post("/text")).rejects.toThrow("changes can only come from the TARS page itself");
+  });
+});
+
+describe("the demo's automatic labels", () => {
+  const demoEvent: Parameters<typeof demoAuto>[0] = {
+    id: 1,
+    ts: 1000,
+    kind: "wake",
+    outcome: "answer",
+    wake_score: 0.9,
+    heard: "hey tars",
+    confidence: 0.9,
+    transcript: null,
+    follow: null,
+    cluster_id: null,
+    cluster_pinned: false,
+    label: null,
+    has_wake_audio: true,
+    has_request_audio: false,
+  };
+  const wake = (outcome: TarsEvent["outcome"], follow: TarsEvent["follow"], transcript: string | null = null) => ({
+    ...demoEvent,
+    outcome,
+    follow,
+    transcript,
+  });
+  const label = (e: typeof demoEvent, answered: number[] = []) => demoAuto(e, answered)[0];
+
+  it("follow what happened next, as the server's do (tests/test_events.py)", () => {
+    expect(label(wake("answer", "asked"))).toBe("real");
+    expect(label(wake("ask", "said_nothing"))).toBe("not_real");
+    expect(label(wake("ignore", null))).toBe("not_real");
+    expect(label(wake("answer", "not_for_us"))).toBe("not_real");
+    expect(label(wake("answer", null, "what's the weather"))).toBe("real"); // and then TARS couldn't answer
+    expect(demoAuto(wake("ask", null, "yes, what's the time"), [])).toEqual([
+      "real",
+      "they answered “Did you call me?”",
+    ]);
+    expect(demoAuto(wake("answer", "said_nothing"), [])).toEqual([null, "it woke, but nobody spoke"]);
+  });
+
+  it("count a near-miss right before a real wake as a missed hey TARS", () => {
+    const nearMiss = { ...demoEvent, kind: "near_miss" as const, outcome: null, ts: 1000 };
+    expect(label(nearMiss, [1003])).toBe("real");
+    expect(demoAuto(nearMiss, [2000])).toEqual([null, "it never woke up"]);
+  });
+});
+
+describe("a load where some endpoints fail", () => {
+  const ok = <T>(value: T): PromiseSettledResult<T> => ({ status: "fulfilled", value });
+  const no = (why: string): PromiseSettledResult<never> => ({ status: "rejected", reason: new Error(why) });
+  const last = { events: [1], clusters: [2], models: "m", status: "s", convs: [3], items: [4], reminders: "r" };
+  const answers = { events: ok([10]), clusters: ok([20]), models: ok("M"), status: ok("S"), convs: ok([30]) };
+
+  it("keeps what failed as it last loaded, and says why", () => {
+    const { data, failed } = settle({ ...answers, items: no("HTTP 500"), reminders: ok("R") }, last);
+    expect(data).toEqual({
+      events: [10],
+      clusters: [20],
+      models: "M",
+      status: "S",
+      convs: [30],
+      items: [4],
+      reminders: "R",
+    });
+    expect(failed).toEqual({ items: "HTTP 500" });
+  });
+
+  it("is unreachable only when nothing answered", () => {
+    const none = {
+      events: no("events timed out"),
+      clusters: no("clusters timed out"),
+      models: no("models timed out"),
+      status: no("status timed out"),
+      convs: no("convs timed out"),
+      items: no("items timed out"),
+      reminders: no("reminders timed out"),
+    };
+    expect(() => settle(none, last)).toThrow("events timed out");
+  });
+
+  it("names what failed, and why", () => {
+    expect(loadFailures({ items: "HTTP 500", status: "HTTP 502" })).toEqual([
+      { part: "items", what: "what TARS sent", why: "HTTP 500" },
+      { part: "status", what: "what's set up", why: "HTTP 502" },
+    ]);
+    expect(loadFailures({})).toEqual([]);
   });
 });

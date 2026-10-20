@@ -1,9 +1,12 @@
+# The site, deployed once CI has passed on a push to main (never from a commit whose tests fail), or by hand. CI runs
+# can finish out of order, so only main's newest commit is deployed: an older one never lands over it.
 name: Pages
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths: [site/**, webui/**, .github/workflows/pages.yml]
   workflow_dispatch:
 
 permissions:
@@ -13,10 +16,36 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false # an older commit's run mustn't cancel the newest one's deploy
 
 jobs:
+  newest:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.tip.outputs.sha }}
+    steps:
+      - id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PASSED: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [ "$tip" = "$PASSED" ]; then
+            echo "sha=$PASSED" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not deployed: main is at $tip now, and its own CI run deploys it."
+          fi
+
   deploy:
+    needs: newest
+    if: needs.newest.outputs.sha != ''
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -26,6 +55,8 @@ jobs:
         working-directory: webui
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.newest.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22

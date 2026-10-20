@@ -18,8 +18,8 @@ Every run starts with an estimate of what it will cost, from earlier runs and ev
 start a run estimated over it, and stops one that gets there (web searches are most of it: $10 per 1,000).
 
 Exit status: 0 if it passes, 1 if --fail-under or --no-regressions fails it, 2 if some runs couldn't be run (still
-rate-limited, or a service refused the account: out of credits, a bad key; the eval then stops early), 3 if it was
-over --budget: estimated over it, so not started, or stopped when it got there.
+rate-limited, or a service refused the account: out of credits, a bad key; the eval then stops early, and --save keeps
+nothing), 3 if it was over --budget: estimated over it, so not started, or stopped when it got there.
 """
 
 import argparse
@@ -119,7 +119,10 @@ def main() -> None:
     parser.add_argument("--baseline", help="compare with the last result saved in this file (results.jsonl)")
     parser.add_argument("--no-regressions", action="store_true", help="fail if a scenario got worse than --baseline")
     parser.add_argument("--fail-under", type=float, help="fail if fewer runs than this share are right (e.g. 0.85)")
-    parser.add_argument("--save", help="add the totals, as a line of JSON, to this file (e.g. evals/results.jsonl)")
+    parser.add_argument(
+        "--save",
+        help="add the totals, as a line of JSON, to this file (e.g. evals/results.jsonl), if every run was counted",
+    )
     parser.add_argument("--list", action="store_true", help="list the scenarios, and stop")
     parser.add_argument("--budget", type=float, help="dollars: don't start a run estimated over this, stop at it")
     parser.add_argument("--estimate", action="store_true", help="say what the run would cost, and stop")
@@ -218,10 +221,7 @@ def main() -> None:
     folder = keep_transcripts(started, scenarios, results, summary)
     print(f"\nTranscripts: {folder.relative_to(REPO)}/")
     if args.save:
-        with open(args.save, "a") as f:
-            f.write(json.dumps(summary) + "\n")
-        save_profile({s.id: [r.usage for r in results if r.scenario == s.id and r.counted] for s in scenarios})
-        print(f"Saved to {args.save}, and what each scenario used to evals/usage.json.")
+        save_result(Path(args.save), summary, scenarios, results)
 
     if why := gate(summary, changes, args.fail_under, args.no_regressions):
         print("\nFAILED: " + "; ".join(why))
@@ -230,6 +230,20 @@ def main() -> None:
         why = stop.why or f"still rate-limited after {sum(WAITS_S)} s"
         print(f"\n{summary['not_run']} run(s) aren't counted: {why}")
         sys.exit(3 if why.startswith(OVER_BUDGET) else 2)
+
+
+def save_result(path: Path, summary: dict, scenarios: list[Scenario], results: list[RunResult]) -> bool:
+    """Adds the totals to `path`, where they're the next baseline, and what each scenario used to evals/usage.json;
+    True if it did. Not a result with runs that weren't counted: the scenarios left out would look as if they'd got
+    better."""
+    if summary["not_run"]:
+        print(f"\nNot saved to {path}: {summary['not_run']} run(s) aren't counted, so it isn't a whole result.")
+        return False
+    with open(path, "a") as f:
+        f.write(json.dumps(summary) + "\n")
+    save_profile({s.id: [r.usage for r in results if r.scenario == s.id and r.counted] for s in scenarios})
+    print(f"Saved to {path}, and what each scenario used to evals/usage.json.")
+    return True
 
 
 def pick(scenarios: list[Scenario], ids: list[str] | None, tags: list[str] | None) -> list[Scenario]:

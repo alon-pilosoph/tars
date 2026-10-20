@@ -161,6 +161,37 @@ def test_pairs_made_from_other_installed_models_are_set_aside(root):
     assert versions.install(trained(root, "second")) == "v2"  # numbers go on: v1's folder is still there
 
 
+@pytest.mark.parametrize(
+    "damage",
+    [
+        lambda h: {**h, "active": 3},
+        lambda h: {**h, "versions": ["v1"]},
+        lambda h: {**h, "versions": [{"version": 1, "number": 1, "folder": "v1"}]},
+        lambda h: {**h, "versions": [{"version": "v1"}]},
+    ],
+)
+def test_a_history_of_the_wrong_shape_falls_back_to_the_installed_pair(root, damage):
+    versions = versions_in(root)
+    versions.install(trained(root))
+    history = versions.folder / "history.json"
+    history.write_text(json.dumps(damage(json.loads(history.read_text()))))  # still for these installed models
+    assert versions.in_use().version == INSTALLED and "couldn't be read" in versions.overview()[2]
+    assert versions.install(trained(root, "again")) == "v2"
+
+
+@pytest.mark.parametrize("missing", ["hey_tars.tflite", "hey_tars_check.json"])
+def test_unreadable_installed_models_say_so_and_change_nothing(root, log, missing):
+    versions = versions_in(root)
+    versions.install(trained(root))
+    (root / "models/generic" / missing).unlink()
+    client = TestClient(create_app(log, pairs=versions))
+    page = client.get("/api/models")
+    assert page.status_code == 200 and "installed models couldn't be read" in page.json()["problem"]
+    refused = client.post("/api/models/use", json={"version": INSTALLED})
+    assert refused.status_code == 503 and "nothing was changed" in refused.json()["detail"]
+    assert not list(versions.folder.glob("history-*.old.json"))
+
+
 class RecordingVerifier:
     def __init__(self):
         self.used: list[dict] = []
@@ -262,7 +293,7 @@ def test_without_versions_the_page_shows_what_config_installs(log):
         "check_window_s": 2.5,
         "replaced": None,
     }
-    assert page["history"] == [] and client.post("/api/models/use", json={"version": INSTALLED}).status_code == 404
+    assert page["history"] == [] and client.post("/api/models/use", json={"version": INSTALLED}).status_code == 501
 
 
 def test_installs_and_the_web_ui_never_lose_each_others_changes(root):

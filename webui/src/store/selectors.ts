@@ -29,8 +29,6 @@ export const speakerName = (s: State, sp: Speaker | null | undefined) =>
 
 export const people = (s: State) =>
   s.clusters.filter((c): c is Cluster & { name: string } => !!c.name && c.kind === "person");
-export const unnamedVoices = (s: State) => s.clusters.filter(c => !c.name && c.kind !== "not_person");
-export const notPeople = (s: State) => s.clusters.filter(c => c.kind === "not_person");
 
 /** A wake that a request followed labels itself; only the rest need a look. */
 export const reviewEvents = (s: State) => s.events.filter(e => e.follow !== "asked");
@@ -50,11 +48,6 @@ export const forPerson = (i: Item, p: PersonFilter) =>
   p === "all" || (p === "household" ? i.scope === "household" : i.scope !== "household" && i.for?.cluster_id === p);
 export const convPerson = (c: Conversation, p: PersonFilter) =>
   p === "all" || p === "household" || c.speaker?.cluster_id === p;
-
-export function forLabel(s: State, i: Item) {
-  if (i.scope === "household") return "For the household";
-  return `For ${i.for?.name || clusterName(s, i.for?.cluster_id) || "whoever asked"}`;
-}
 
 const menuKey = (t: MenuTarget) => [t.kind, "id" in t ? t.id : ""].join(":");
 export const menuOpen = (s: State, target: MenuTarget) => !!s.menu && menuKey(s.menu) === menuKey(target);

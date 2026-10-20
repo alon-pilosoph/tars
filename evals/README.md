@@ -58,7 +58,8 @@ uv run python -m evals --tag hand-off --budget 1  # refuses to start if estimate
 - **Every run's transcript**, in `evals/runs/<time>/runs.jsonl` (not committed): for each turn, the prompt, the reply
   as written and as heard, where it went, what it changed and sent, the times and what was wrong; and
   `summary.json`. That's what to read when a scenario fails, and what a judge model grades.
-- **With `--save`, a line in `results.jsonl`**, the baseline: the totals, each scenario's result with a fingerprint
+- **With `--save`, a line in `results.jsonl`**, the baseline, only when every run was counted (a result with runs not
+  run is never the baseline): the totals, each scenario's result with a fingerprint
   of its definition, a fingerprint of the brain (its settings, prompt included, the quick model, and the code its
   rules and tools are in), the commit, and whether `src`, `config.toml` or the scenarios had uncommitted changes.
 - **With `--baseline`, a comparison**: a scenario is *worse* when its share of runs right drops by half or more
@@ -68,7 +69,8 @@ uv run python -m evals --tag hand-off --budget 1  # refuses to start if estimate
   (nothing worse than the baseline) fails it; 3 if it was over `--budget` (estimated over it, so not started, or
   stopped when it got there); 2 if the result is incomplete: some runs were still rate-limited after
   five pauses, or a service refused the account (out of credits, a bad key, no access). A refusal stops the eval
-  early, since every run after it would fail the same way, and it's never scored as TARS getting a turn wrong.
+  early, since every run after it would fail the same way, and it's never scored as TARS getting a turn wrong; and
+  `--save` keeps nothing.
 
 **What it runs:** TARS's real `QuickChat`, set up from `config.toml` as TARS sets it up (the model, reasoning effort,
 tools and prompts). Qwen runs on Cerebras (`CEREBRAS_API_KEY`), which serves the same model as Groq with room for

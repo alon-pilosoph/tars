@@ -134,10 +134,7 @@ class Journal:
             self._gone = True
 
     def _start(self, said: list[tuple[float, str]], ts: float) -> int:
-        conversation = self.conversations.start(self._wake, ts=said[0][0] if said else ts)
-        for said_at, text in said:
-            self.conversations.add_tars_turn(conversation, text, ts=said_at)
-        return conversation
+        return self.conversations.start(self._wake, ts=said[0][0] if said else ts, said=said)
 
     def answered(
         self,

@@ -11,7 +11,16 @@ import {
   stamp,
 } from "../format";
 import { DEMO, linkTo } from "../params";
-import { ackReminder, cancelReminder, convById, goConv, setReminder, snoozeReminder, useStore } from "../store";
+import {
+  ackReminder,
+  cancelReminder,
+  convById,
+  goConv,
+  isActiveReminder,
+  setReminder,
+  snoozeReminder,
+  useStore,
+} from "../store";
 import type { Reminder, ReminderKind, RemindersInfo } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
@@ -23,7 +32,8 @@ export function Reminders() {
   const s = useStore();
   const info = s.reminders;
   const [adding, setAdding] = useState(() => DEMO && !!DEMO_LINK.form);
-  if (!info?.enabled)
+  if (!info) return <PageHead title="Reminders" sub={SUB} />; // they never loaded: LoadErrors says why
+  if (!info.enabled)
     return (
       <>
         <PageHead title="Reminders" sub={SUB} />
@@ -42,7 +52,7 @@ export function Reminders() {
   const rs = info.reminders;
   const now = rs.filter(r => r.status === "waiting");
   const next = rs.filter(r => r.status === "scheduled");
-  const past = rs.filter(r => r.status !== "waiting" && r.status !== "scheduled");
+  const past = rs.filter(r => !isActiveReminder(r));
   return (
     <>
       <PageHead title="Reminders" sub={SUB}>

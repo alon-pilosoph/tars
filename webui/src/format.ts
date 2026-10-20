@@ -1,5 +1,6 @@
 import type {
   AnsweredBy,
+  CheckLine,
   ConversationWake,
   FailedAt,
   Item,
@@ -8,26 +9,15 @@ import type {
   ProcessHealth,
   Reminder,
   StatusPage,
-  TarsEvent,
   Turn,
 } from "./types";
 
-export type Kind = "answer" | "ask" | "ignore" | "near_miss";
-
-export const KIND_LABEL: Record<Kind, string> = {
-  answer: "Answered",
-  ask: "Asked",
-  ignore: "Ignored",
-  near_miss: "Near-miss",
-};
-export const ITEM_KIND_LABEL = { link: "Link", note: "Note", list: "List", file: "File" } as const;
 export const COPY_LABEL = { link: "Copy link", note: "Copy text", list: "Copy list" } as const;
 
 /** The server's version name for the models TARS was installed with. */
 export const INSTALLED = "installed";
 export const versionName = (v: string) => (v === INSTALLED ? "the installed models" : v);
 
-export const kindOf = (e: TarsEvent): Kind => (e.kind === "near_miss" ? "near_miss" : (e.outcome ?? "answer"));
 /** The double-check writes a word it didn't know as "[unk]". */
 export const heardText = (s: string) => s.replace(/\[unk\]/g, "…");
 export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -226,6 +216,14 @@ export function processLine(p: ProcessHealth, now: number): HealthLine {
 export function pageLine(page: StatusPage | null): HealthLine {
   if (!page) return { text: "No status page", bad: false };
   return { text: page.description, bad: page.indicator !== "none" && page.indicator !== "unknown" };
+}
+
+const MARK = { ok: "✓", warn: "!", fail: "✗" } as const; // check.py's
+
+/** A check's verdict as --check prints it, and what to do about it only when it isn't fine. */
+export function checkLine(c: CheckLine) {
+  const bad = c.status !== "ok";
+  return { mark: MARK[c.status], text: c.detail, fix: bad ? c.fix : "", bad };
 }
 
 export function processorLine(m: MachineHealth) {

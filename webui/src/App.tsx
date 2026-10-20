@@ -6,7 +6,7 @@ import { Menu } from "./components/Menu";
 import { Models } from "./components/Models";
 import { Reminders } from "./components/Reminders";
 import { Review } from "./components/Review";
-import { Loading, Unreachable } from "./components/States";
+import { LoadErrors, Loading, Unreachable } from "./components/States";
 import { StatusView } from "./components/Status";
 import { Toasts } from "./components/Toasts";
 import { Voices } from "./components/Voices";
@@ -124,7 +124,18 @@ export function App() {
           </button>
         </div>
       </header>
-      <main>{s.phase === "loading" ? <Loading /> : s.phase === "error" ? <Unreachable /> : <View />}</main>
+      <main>
+        {s.phase === "loading" ? (
+          <Loading />
+        ) : s.phase === "error" ? (
+          <Unreachable />
+        ) : (
+          <>
+            <LoadErrors />
+            <View />
+          </>
+        )}
+      </main>
       <nav className="tabbar" aria-label="Pages">
         <BarLink s={s} tab="home" label="Home" icon="home" />
         <BarLink s={s} tab="sent" label="Sent" icon="sent" n={counts.sent} />

@@ -25,13 +25,6 @@ export function followed(i: Item) {
   setTimeout(() => markSeen(itemById(get(), i.id)), 0);
 }
 
-export function openLink(i: Item | undefined) {
-  const url = safeUrl(i?.url);
-  if (!i || !url) return;
-  window.open(url, "_blank", "noopener,noreferrer");
-  markSeen(i);
-}
-
 export function download(i: Item | undefined) {
   if (!i?.url) return;
   Object.assign(document.createElement("a"), { href: i.url, download: i.name || "" }).click();

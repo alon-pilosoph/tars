@@ -11,19 +11,58 @@ import type {
   Status,
   TarsEvent,
 } from "../types";
-import { type Snapshot, get, set, setNow } from "./core";
+import { type LoadErrors, type LoadPart, type Snapshot, get, set, setNow } from "./core";
 import { healthLoaded, loadHealth } from "./health";
 import { errText, toast } from "./ui";
 
 interface Data {
   events: TarsEvent[];
   clusters: Cluster[];
-  models: ModelsInfo;
+  models: ModelsInfo | null;
   status: Status;
   convs: Conversation[];
   items: Item[];
-  reminders: RemindersInfo;
+  reminders: RemindersInfo | null;
 }
+
+type Answers = Omit<Data, "convs"> & { convs: ApiConversation[] };
+type Settled<T> = { [K in keyof T]: PromiseSettledResult<T[K]> };
+
+/** Each part as its endpoint answered it, or, where that failed, as it last loaded, with why it failed. Only when
+    every endpoint failed is the page unreachable: then the first one's error is thrown. */
+export function settle<T extends Record<LoadPart, unknown>>(
+  answers: Settled<T>,
+  last: T,
+): { data: T; failed: LoadErrors } {
+  const data = {} as T;
+  const failed: LoadErrors = {};
+  let error: unknown = null;
+  for (const part of Object.keys(answers) as LoadPart[]) {
+    const answer = answers[part];
+    if (answer.status === "fulfilled") data[part] = answer.value;
+    else {
+      data[part] = last[part];
+      failed[part] = errText(answer.reason) || "Failed to fetch";
+      error ??= answer.reason;
+    }
+  }
+  if (Object.keys(failed).length === Object.keys(answers).length) throw error;
+  return { data, failed };
+}
+
+const PART_NAMES: Record<LoadPart, string> = {
+  events: "the wakes",
+  clusters: "the voices",
+  models: "the models",
+  status: "what's set up",
+  convs: "the conversations",
+  items: "what TARS sent",
+  reminders: "the reminders",
+};
+
+/** The parts the last load couldn't get, with why: every page says so, since most read several parts. */
+export const loadFailures = (errors: LoadErrors) =>
+  (Object.entries(errors) as [LoadPart, string][]).map(([part, why]) => ({ part, what: PART_NAMES[part], why }));
 
 /** The API puts sent items inside the turns that sent them; the page keeps each item once, and ids in the turns. */
 export function normalize(apiConvs: ApiConversation[], apiItems: Item[]) {
@@ -64,8 +103,11 @@ export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap:
   };
 }
 
-async function fetchData(): Promise<Data> {
-  const [events, clusters, models, status, convs, items, reminders] = await Promise.all([
+/** Every part at once; one endpoint failing keeps that part as it last loaded, and says so. */
+type Loaded = { data: Data; failed: LoadErrors };
+
+async function fetchData(): Promise<Loaded> {
+  const [events, clusters, models, status, convs, items, reminders] = await Promise.allSettled([
     getJson<TarsEvent[]>("/api/events"),
     getJson<Cluster[]>("/api/clusters"),
     getJson<ModelsInfo>("/api/models"),
@@ -74,14 +116,15 @@ async function fetchData(): Promise<Data> {
     getJson<Item[]>("/api/items"),
     getJson<RemindersInfo>("/api/reminders"),
   ]);
-  return { events, clusters, models, status, reminders, ...normalize(convs, items) };
+  const { data, failed } = settle<Answers>({ events, clusters, models, status, convs, items, reminders }, get());
+  return { data: { ...data, ...normalize(data.convs, data.items) }, failed };
 }
 
 /** True if it worked. `quiet`: a failed reload shows no toast, because the caller already showed one. */
 async function fetchAll(fresh: boolean, quiet: boolean) {
   try {
     await writesDone();
-    let loaded: Data;
+    let loaded: Loaded;
     let writes;
     // A change made while this loaded may have reached the server after it answered: load again, or the page
     // would show it undone.
@@ -90,9 +133,9 @@ async function fetchAll(fresh: boolean, quiet: boolean) {
       loaded = await fetchData();
       await writesDone();
     } while (writes !== writesMade());
-    const snapshot = fresh ? snapshotOf(loaded) : get().snapshot;
-    const data = fresh ? loaded : within(snapshot, loaded);
-    setNow({ ...data, snapshot, phase: "ready" });
+    const snapshot = fresh ? snapshotOf(loaded.data) : get().snapshot;
+    const data = fresh ? loaded.data : within(snapshot, loaded.data);
+    setNow({ ...data, snapshot, phase: "ready", loadErrors: loaded.failed });
     return true;
   } catch (e) {
     if (fresh || get().phase !== "ready") set({ phase: "error", error: errText(e) || "Failed to fetch" });

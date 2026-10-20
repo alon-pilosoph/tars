@@ -152,7 +152,10 @@ def test_requests_to_other_names_and_changes_from_other_sites_are_refused(log):
     assert refused.json() == {"detail": "changes can only come from the TARS page itself"}
     assert home.post(url, json={"label": REAL}, headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
     assert home.post(url, json={"label": REAL}, headers={"Origin": "http://tars.local:8080"}).status_code == 200
-    assert home.post(url, json={"label": None}, headers={"Origin": "http://localhost:5173"}).status_code == 200  # dev
+    assert home.post(url, json={"label": None}, headers={"Origin": "http://localhost:5173"}).status_code == 403
+    dev = TestClient(create_app(log), base_url="http://localhost:5173")  # Vite's proxy keeps its own Host
+    assert dev.post(url, json={"label": None}, headers={"Origin": "http://localhost:5173"}).status_code == 200
+    assert dev.post(url, json={"label": None}, headers={"Origin": "http://localhost:3000"}).status_code == 403
     assert home.get("/api/events", headers={"Origin": "https://evil.example"}).status_code == 200  # reads: CORS
 
 
@@ -269,6 +272,7 @@ def test_reminders_are_set_on_the_page_and_listed_with_what_tars_will_say(remind
     (r,) = got["reminders"]
     assert (r["id"], r["set_via"], r["status"], r["needs_ack"]) == (rid, "web", "scheduled", True)
     assert r["says"] == "Stacey, a message from Alon: dinner's at eight."
+    assert "reported" not in r and r["channel"] == "voice"
     custom = {**body, "repeat_every_min": 5, "max_tries": 3, "needs_ack": False}
     r = reminders.get(client.post("/api/reminders", json=custom).json()["id"])
     assert (r["repeat_every_s"], r["max_tries"], r["needs_ack"]) == (300, 3, 0)

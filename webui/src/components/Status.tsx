@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import {
   ago,
+  checkLine,
   diskLine,
   duration,
   memoryLine,
@@ -11,12 +12,10 @@ import {
   time,
 } from "../format";
 import { loadHealth, useStore } from "../store";
-import type { Health } from "../types";
+import type { CheckLine, Health } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
-import { Loading } from "./States";
-
-const MARK = { ok: "✓", warn: "!", fail: "✗" } as const; // check.py's
+import { LoadError, Loading } from "./States";
 
 export function StatusView() {
   const s = useStore();
@@ -25,9 +24,15 @@ export function StatusView() {
   }, []);
   return (
     <>
-      <PageHead title="Status" sub="Whether every part of TARS is running, the services it uses, and this machine." />
+      <PageHead
+        title="Status"
+        sub={`Whether every part of TARS is running, the services it uses, ${s.health?.backup ? "its backup, " : ""}and this machine.`}
+      />
       {s.health ? (
-        <Body h={s.health} />
+        <>
+          {s.healthError && <LoadError what="the status" why={s.healthError} />}
+          <Body h={s.health} />
+        </>
       ) : s.healthError ? (
         <Empty role="alert" title="Couldn't get the status" text={s.healthError}>
           <div className="btns">
@@ -49,6 +54,17 @@ function Count({ n, one, many, bad }: { n: number; one: string; many: string; ba
       <b>{n}</b>
       <span>{n === 1 ? one : many}</span>
     </div>
+  );
+}
+
+function CheckCell({ line }: { line: CheckLine }) {
+  const c = checkLine(line);
+  return (
+    <td className={c.bad ? "bad" : undefined}>
+      <span aria-hidden="true">{c.mark} </span>
+      {c.text}
+      {c.fix && <span className="fix">{c.fix}</span>}
+    </td>
   );
 }
 
@@ -85,7 +101,7 @@ function Body({ h }: { h: Health }) {
       {h.services.length === 0 ? (
         <p className="muted">TARS uses no cloud service with the keys it has.</p>
       ) : (
-        <table className="cmp health">
+        <table className="cmp health services">
           <thead>
             <tr>
               <th>Service</th>
@@ -99,11 +115,7 @@ function Body({ h }: { h: Health }) {
               return (
                 <tr key={svc.name}>
                   <td>{svc.name}</td>
-                  <td className={svc.status === "ok" ? undefined : "bad"}>
-                    <span aria-hidden="true">{MARK[svc.status]} </span>
-                    {svc.detail}
-                    {svc.fix && svc.status !== "ok" && <span className="fix">{svc.fix}</span>}
-                  </td>
+                  <CheckCell line={svc} />
                   <td className={page.bad ? "bad" : undefined}>
                     {svc.page ? (
                       <a href={svc.page.url} target="_blank" rel="noreferrer">
@@ -119,6 +131,22 @@ function Body({ h }: { h: Health }) {
             })}
           </tbody>
         </table>
+      )}
+
+      {h.backup && (
+        <>
+          <SecHead title="Backup" />
+          <table className="cmp health backup">
+            <tbody>
+              {h.backup.map(b => (
+                <tr key={b.name}>
+                  <td>{b.name}</td>
+                  <CheckCell line={b} />
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
 
       <SecHead title="This machine" />

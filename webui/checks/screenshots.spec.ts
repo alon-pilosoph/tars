@@ -1,7 +1,7 @@
 /* The screenshots in docs/screenshots/, of the current build with its demo data. `npm run screenshots`. */
 import { test } from "@playwright/test";
 import path from "node:path";
-import { ORIGIN, REPO, SIZES, pageReady, serveFromDisk } from "./serve";
+import { ORIGIN, REPO, SIZES, pageReady, serveFromDisk, settled } from "./serve";
 
 const PAGES = ["home", "sent", "review", "reminders", "voices", "models", "status"];
 
@@ -12,6 +12,7 @@ for (const tab of PAGES)
       await page.setViewportSize(viewport);
       await page.goto(`${ORIGIN}/index.html?demo&tab=${tab}`);
       await pageReady(page);
+      await settled(page); // the Status page loads its own data after the rest
       const file = path.join(REPO, "docs/screenshots", `${tab}-${size}.png`);
       await page.screenshot({ path: file, animations: "disabled" });
     });
