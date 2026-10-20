@@ -523,6 +523,15 @@ def reminding(speaker, tmp_path, utterances, transcripts, replies=(), **kw):
     return assistant, assistant.reminders, rid, played
 
 
+def test_got_it_for_one_just_said_counts_though_the_table_didnt_take_its_saying(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [b"ok", None], ["got it"], replies=["<ack>"])
+    marking = reminders.said
+    reminders.said = lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full"))
+    assistant.say_reminders(follow_up_s=4.0)
+    reminders.said = marking
+    assert reminders.get(rid)["status"] == ACKNOWLEDGED
+
+
 def spoken(played):
     return [c.decode() for c in played if c != chime(24_000)]
 

@@ -13,6 +13,7 @@ import base64
 import contextlib
 import json
 import re
+import shlex
 import threading
 import time
 from collections.abc import Callable
@@ -20,7 +21,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from .found import FOUND_FILE, Seen, find_by_mac, mac_of, reachable
-from .home import DO, OFF, ON, OPEN, PLAY, PRESS, STATUS, Check, Context, Device, HomeError, Request
+from .home import DO, OFF, ON, OPEN, PLAY, PRESS, STATUS, Check, Context, Device, HomeError, Request, button, presses
 
 # The remote's buttons, as Android's key codes.
 KEYS = {
@@ -64,21 +65,33 @@ SETTLE_S = 4.0  # how long waking or sleeping gets to show on the box
 # OPEN_TRIES times.
 OPEN_WAIT_S, STAY_S, OPEN_TRIES = 8.0, 3.0, 3
 POLL_S = 0.5
-MAX_PRESSES = 20
 AGENT_STEPS = 30
-AGENT_TIMEOUT_S = 150.0
+TASK_TIMEOUT_S = 150.0  # all of a task's steps together
+STEP_TIMEOUT_S = 40.0  # one step: the model's answer, a screenshot to read
+# How long a new task, or someone's own command, waits for the step the agent is on to end (a model's answer can't be
+# cut short: it's thrown away when it comes).
+STOP_WAIT_S = 5.0
 # Working a remote is many small, easy choices: at the model's default effort each step thought for seconds.
 AGENT_EFFORT = "low"
 UI_DUMP = "/sdcard/tars_ui.xml"
 KEY_FILE = "voice_data/androidtv/adbkey"  # TARS's ADB key: the box asks once whether to trust it
 CONNECT_TIMEOUT_S = 3.0
+# A connection unused this long may have gone (the box slept, or moved): it's checked before a press goes over it.
+IDLE_S = 30.0
 
 
 class AndroidTV:
     """One ADB connection, made when first needed and again after it drops. Every call is short, and a box that
     doesn't answer is a HomeError."""
 
-    def __init__(self, address: str, key_path: Path, auth_timeout_s: float = 3.0, seen: Seen | None = None):
+    def __init__(
+        self,
+        address: str,
+        key_path: Path,
+        auth_timeout_s: float = 3.0,
+        seen: Seen | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         """`seen`: where the box was last found, and its hardware address, so that a box the router gave another
         address is found again (found.py); None: only ever at `address`."""
         host, _, port = address.partition(":")
@@ -88,6 +101,7 @@ class AndroidTV:
         self._key_path, self._auth_timeout_s = key_path, auth_timeout_s
         self._adb = None
         self._lock = threading.RLock()
+        self._clock, self._used = clock, 0.0
 
     def _locate(self) -> None:
         """If the box doesn't answer where it was, looks for its hardware address on the home network."""
@@ -128,21 +142,32 @@ class AndroidTV:
         self._remember()
         return adb
 
-    def _run(self, command: str, decode: bool = True, timeout_s: float = 10.0):
+    def _run(self, command: str, decode: bool = True, timeout_s: float = 10.0, repeatable: bool = False):
+        """`repeatable`: running it twice does no harm (a read, waking the box), so it's tried again on a new
+        connection whatever went wrong. Anything else (a press, typing) is tried again only after a connection error,
+        which usually means it never went out: after a timeout the box may have done it, and twice would press twice.
+        So a connection left idle is checked first, where trying again is safe."""
         with self._lock:
+            if not repeatable and self._adb is not None and self._clock() - self._used > IDLE_S:
+                self._run("echo", repeatable=True)
             for attempt in (1, 2):
                 try:
-                    return self._device().shell(command, read_timeout_s=timeout_s, timeout_s=timeout_s, decode=decode)
+                    out = self._device().shell(command, read_timeout_s=timeout_s, timeout_s=timeout_s, decode=decode)
+                    self._used = self._clock()
+                    return out
                 except HomeError:
                     raise
                 except Exception as e:
                     self.close()
                     if attempt == 2:
                         raise HomeError(f"the TV box stopped answering ({type(e).__name__})") from e
+                    if not (repeatable or isinstance(e, ConnectionError)):
+                        why = f"the TV box didn't answer in time ({type(e).__name__}); it may have done it all the same"
+                        raise HomeError(why) from e
         raise AssertionError("unreachable")
 
-    def shell(self, command: str, timeout_s: float = 10.0) -> str:
-        return self._run(command, timeout_s=timeout_s) or ""
+    def shell(self, command: str, timeout_s: float = 10.0, repeatable: bool = False) -> str:
+        return self._run(command, timeout_s=timeout_s, repeatable=repeatable) or ""
 
     def close(self) -> None:
         with self._lock:
@@ -154,18 +179,18 @@ class AndroidTV:
     # What it's doing.
 
     def awake(self) -> bool:
-        return "mWakefulness=Awake" in self.shell("dumpsys power | grep mWakefulness=")
+        return "mWakefulness=Awake" in self.shell("dumpsys power | grep mWakefulness=", repeatable=True)
 
     def app(self) -> str:
         """The package in front ("com.stremio.one"), or ""."""
         # Not "dumpsys window windows": on Fire OS 8 (Android 11) that prints nothing.
-        out = self.shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'")
+        out = self.shell("dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'", repeatable=True)
         found = re.search(r"\s([\w.]+)/[\w.$]+", out)
         return found.group(1) if found else ""
 
     def media(self) -> list[tuple[str, str, str]]:
         """What the media sessions say: (package, playing/paused/..., title), the active ones first."""
-        out = self.shell("dumpsys media_session")
+        out = self.shell("dumpsys media_session", repeatable=True)
         sessions = []
         for block in re.split(r"(?=^\s*package=)", out, flags=re.MULTILINE):  # each session's lines start there
             package = re.search(r"package=([\w.]+)", block)
@@ -188,7 +213,8 @@ class AndroidTV:
     def ui(self) -> str:
         """The text on screen, as the app describes it to accessibility tools: one line per element, the focused one
         marked. Empty if the app doesn't say (games, some video players): then only a screenshot shows it."""
-        out = self.shell(f"uiautomator dump {UI_DUMP} >/dev/null 2>&1; cat {UI_DUMP}; rm -f {UI_DUMP}", timeout_s=15)
+        dump = f"uiautomator dump {UI_DUMP} >/dev/null 2>&1; cat {UI_DUMP}; rm -f {UI_DUMP}"
+        out = self.shell(dump, timeout_s=15, repeatable=True)
         start = out.find("<?xml")
         if start < 0:
             return ""
@@ -205,22 +231,22 @@ class AndroidTV:
         return "\n".join(dict.fromkeys(lines))[:6000]
 
     def screenshot(self) -> bytes:
-        png = self._run("screencap -p", decode=False, timeout_s=15)
+        png = self._run("screencap -p", decode=False, timeout_s=15, repeatable=True)
         if not png or not png.startswith(b"\x89PNG"):
             raise HomeError("the TV box didn't give a screenshot")
         return png
 
     def packages(self) -> list[str]:
-        out = self.shell("pm list packages")
+        out = self.shell("pm list packages", repeatable=True)
         return sorted(line.removeprefix("package:").strip() for line in out.splitlines() if line.startswith("package:"))
 
     # Doing things.
 
     def wake(self) -> None:
-        self.shell("input keyevent KEYCODE_WAKEUP")
+        self.shell("input keyevent KEYCODE_WAKEUP", repeatable=True)
 
     def sleep(self) -> None:
-        self.shell("input keyevent KEYCODE_SLEEP")
+        self.shell("input keyevent KEYCODE_SLEEP", repeatable=True)
 
     def press(self, key: str, times: int = 1) -> None:
         """One `input` for all the presses: each starts Android's input tool, about a second on a Fire TV."""
@@ -228,22 +254,25 @@ class AndroidTV:
 
     def type(self, text: str) -> None:
         """Types into whatever has focus, in place of what's there. `input text` takes no spaces: they go as %s."""
-        quoted = text.replace("'", "'\\''").replace(" ", "%s")
-        self.shell(f"input keyevent KEYCODE_MOVE_END {' '.join(['KEYCODE_DEL'] * CLEAR_CHARS)}; input text '{quoted}'")
+        typed = shlex.quote(text.replace(" ", "%s"))
+        self.shell(f"input keyevent KEYCODE_MOVE_END {' '.join(['KEYCODE_DEL'] * CLEAR_CHARS)}; input text {typed}")
 
     def open(self, package: str) -> None:
-        self.shell(f"monkey -p {package} -c android.intent.category.LAUNCHER 1")
+        """Brings it to the front: opening one already open does nothing more, so it's repeatable."""
+        self.shell(f"monkey -p {shlex.quote(package)} -c android.intent.category.LAUNCHER 1", repeatable=True)
 
     def open_link(
         self, uri: str, package: str, component: str = "", flags: str = "", extras: dict | None = None
     ) -> None:
-        """Opens `uri` in `package` (Android's VIEW intent), returning once the app is up."""
-        parts = ["am start -W -a android.intent.action.VIEW", f"-d '{uri}'"]
-        parts += [f"-f {flags}"] * bool(flags) + [f"-e {k} '{v}'" for k, v in (extras or {}).items()]
-        self.shell(" ".join([*parts, f"-n {component}" if component else package]), timeout_s=15)
+        """Opens `uri` in `package` (Android's VIEW intent), returning once the app is up. Each part is quoted for the
+        box's shell, so a link can't run anything of its own there."""
+        q = shlex.quote
+        parts = ["am start -W -a android.intent.action.VIEW", f"-d {q(uri)}"]
+        parts += [f"-f {q(flags)}"] * bool(flags) + [f"-e {q(k)} {q(str(v))}" for k, v in (extras or {}).items()]
+        self.shell(" ".join([*parts, f"-n {q(component)}" if component else q(package)]), timeout_s=15, repeatable=True)
 
     def force_stop(self, package: str) -> None:
-        self.shell(f"am force-stop {package}")
+        self.shell(f"am force-stop {shlex.quote(package)}", repeatable=True)
 
     def find_app(self, name: str) -> str | None:
         """The package for an app's name, among those installed: the known one, the package itself, or the shortest
@@ -259,33 +288,55 @@ class AndroidTV:
         return min(matches, key=len) if matches else None
 
 
-def open_app(box: AndroidTV, package: str, sleep: Callable[[float], None] = time.sleep) -> tuple[bool, int, str]:
+def open_app(
+    box: AndroidTV,
+    package: str,
+    sleep: Callable[[float], None] = time.sleep,
+    stopped: threading.Event | None = None,
+) -> tuple[bool, int, str]:
     """Opens `package` and checks it stayed open: (it did, the tries it took, the package in front at the end). An app
-    that never came up, or crashed a moment after, is stopped and opened again, up to OPEN_TRIES times."""
+    that never came up, or crashed a moment after, is stopped and opened again, up to OPEN_TRIES times. `stopped`:
+    the agent was stopped, so this returns at once, touching nothing more: someone else is working the TV now."""
     front = ""
     for attempt in range(1, OPEN_TRIES + 1):
+        if stopped and stopped.is_set():
+            return False, attempt, front
         if not box.awake():
             box.wake()
             sleep(2.0)
         box.open(package)
-        came = wait_for(lambda: box.app() == package, OPEN_WAIT_S, sleep)
-        stayed = came and not wait_for(lambda: box.app() != package, STAY_S, sleep)
+        came = wait_for(lambda: box.app() == package, OPEN_WAIT_S, sleep, stopped)
+        stayed = came and not wait_for(lambda: box.app() != package, STAY_S, sleep, stopped)
         front = box.app()
         if stayed:
             return True, attempt, front
+        if stopped and stopped.is_set():
+            return False, attempt, front
         print(f"(tv: {package} {'closed again' if came else 'never came up'}; try {attempt} of {OPEN_TRIES})")
         box.force_stop(package)
         sleep(1.0)
     return False, OPEN_TRIES, front
 
 
-def wait_for(happened: Callable[[], bool], seconds: float, sleep: Callable[[float], None]) -> bool:
-    """Whether `happened` comes true within `seconds`, looked at every POLL_S."""
+def wait_for(
+    happened: Callable[[], bool],
+    seconds: float,
+    sleep: Callable[[float], None],
+    stopped: threading.Event | None = None,
+) -> bool:
+    """Whether `happened` comes true within `seconds`, looked at every POLL_S; False at once if `stopped` is set."""
     for _ in range(int(seconds / POLL_S) + 1):
+        if stopped and stopped.is_set():
+            return False
         if happened():
             return True
         sleep(POLL_S)
     return False
+
+
+def pause(seconds: float, sleep: Callable[[float], None], stopped: threading.Event | None = None) -> None:
+    """Waits `seconds`, a POLL_S at a time, ending early if `stopped` is set."""
+    wait_for(lambda: False, seconds, sleep, stopped)
 
 
 def screen(box: AndroidTV) -> str:
@@ -294,13 +345,6 @@ def screen(box: AndroidTV) -> str:
         return "asleep: the screen is off"
     app, playing, ui = box.app(), box.playing(), box.ui()
     return f"app: {app or 'none'}\n{playing}\non screen:\n{ui or '(no text: take a screenshot)'}"
-
-
-def _times(args: dict) -> int:
-    try:
-        return max(1, min(MAX_PRESSES, int(args.get("times") or 1)))
-    except TypeError, ValueError:
-        return 1
 
 
 CLEAR_CHARS = 40  # what typing deletes first: longer than any search left in a box
@@ -318,8 +362,7 @@ the arrows and choose with select; back goes back. TV apps often take a few seco
 To play something: open the app, find it, choose the right title (the best known one, unless they said which), and \
 start it. If it's already on screen (in Continue Watching, say), choose it there. Otherwise search: type_text into the \
 search box, then press enter to search (select on the on-screen keyboard types a letter), and look for the results. \
-In Stremio, choosing a title lists streams from its add-ons: choose the first one that plays. It's playing only when \
-look says playing, or a screenshot shows the video itself.
+It's playing only when look says playing, or a screenshot shows the video itself.
 
 Finish with done: success true only when what they asked for is on screen, and in say, one short spoken line for them \
 ("Toy Story is playing."); if it can't be done, success false and why, in one line ("Stremio found no streams for Toy \
@@ -370,12 +413,15 @@ class TvAgent:
         model: str,
         announce: Callable[[str], None],
         steps: int = AGENT_STEPS,
-        timeout_s: float = AGENT_TIMEOUT_S,
+        timeout_s: float = TASK_TIMEOUT_S,
         sleep: Callable[[float], None] = time.sleep,
         service_tier: str = "",
+        extra_rules: str = "",
     ):
-        """`service_tier`: OpenAI's, as [llm] has it ("fast"); "" = the default."""
+        """`service_tier`: OpenAI's, as [llm] has it ("fast"); "" = the default. `extra_rules`: what the household's
+        own apps need besides AGENT_RULES, from a plugin (examples/my_house: how Stremio lists streams)."""
         self.box, self._client, self.model, self._announce = box, client, model, announce
+        self._extra_rules = extra_rules
         self._extra = {"reasoning": {"effort": AGENT_EFFORT}} | ({"service_tier": service_tier} if service_tier else {})
         self._steps, self._timeout_s, self._sleep = steps, timeout_s, sleep
         self._stopped = threading.Event()
@@ -391,7 +437,12 @@ class TvAgent:
             self._thread.join()
 
     def stop(self) -> None:
+        """Stops the goal being worked on, and returns once the step it's on has ended (a wait, or an app being
+        opened, ends early), or after STOP_WAIT_S: whatever comes next can't be fought over by both."""
         self._stopped.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(STOP_WAIT_S)
 
     def _run(self, goal: str, stopped: threading.Event) -> None:
         try:
@@ -421,7 +472,7 @@ class TvAgent:
                 break
             response = self._client.responses.create(
                 model=self.model,
-                instructions=AGENT_RULES.format(goal=goal),
+                instructions="\n\n".join(r for r in (AGENT_RULES.format(goal=goal), self._extra_rules) if r),
                 input=items,
                 tools=AGENT_TOOLS,
                 tool_choice="required",
@@ -439,7 +490,7 @@ class TvAgent:
                 if call.name == "done":
                     self.log.append(f"done: {args}")
                     return bool(args.get("success")), str(args.get("say") or "").strip() or "Done."
-                output, image = self._step(call.name, args)
+                output, image = self._step(call.name, args, stopped)
                 self.log.append(f"{call.name} {args}: {output[:200]}")
                 items += [
                     {"type": "function_call", "call_id": call.call_id, "name": call.name, "arguments": call.arguments},
@@ -456,7 +507,7 @@ class TvAgent:
     def _look(self) -> str:
         return screen(self.box)
 
-    def _step(self, name: str, args: dict) -> tuple[str, bytes | None]:
+    def _step(self, name: str, args: dict, stopped: threading.Event) -> tuple[str, bytes | None]:
         try:
             if name == "look":
                 return self._look(), None
@@ -465,7 +516,7 @@ class TvAgent:
             if name == "press":
                 if args.get("button") not in KEYS:
                     return f"error: buttons are {', '.join(KEYS)}", None
-                self.box.press(args["button"], _times(args))
+                self.box.press(args["button"], presses(args))
                 self._sleep(0.6)
                 return f"pressed; the screen now:\n{self._look()}", None
             if name == "type_text":
@@ -479,7 +530,7 @@ class TvAgent:
                         f"error: no app called {args.get('app')!r}; installed: {', '.join(self.box.packages())}",
                         None,
                     )
-                opened, tries, front = open_app(self.box, package, self._sleep)
+                opened, tries, front = open_app(self.box, package, self._sleep, stopped)
                 if not opened:
                     return (
                         f"error: opened it {tries} times and it didn't stay open; {front or 'nothing'} is in front",
@@ -488,7 +539,7 @@ class TvAgent:
                 again = f" on try {tries} (it closed before)" if tries > 1 else ""
                 return f"opened {package}{again}, and it stayed open; the screen now:\n{self._look()}", None
             if name == "wait":
-                self._sleep(max(0.5, min(10.0, float(args.get("seconds") or 1))))
+                pause(max(0.5, min(10.0, float(args.get("seconds") or 1))), self._sleep, stopped)
                 return "waited", None
         except HomeError as e:
             return f"error: {e}", None
@@ -564,10 +615,10 @@ class TvDevice(Device):
                 return f"done: the {self.name} is {'awake' if want else 'asleep'} (it says so itself); {tv}"
             return f"not confirmed: asked the {self.name} to {'wake' if want else 'sleep'}, but it says otherwise"
         if action == PRESS:
-            key = str(args.get("button") or "").strip().lower().replace(" ", "_")
+            key = button(args)
             if key not in KEYS:
                 return f"error: the {self.name}'s buttons are {', '.join(KEYS)}"
-            times = _times(args)
+            times = presses(args)
             self.box.press(key, times)
             return f"done: pressed {key}{f' {times} times' if times > 1 else ''}; {self.box.playing()}"
         if action == OPEN:
@@ -608,6 +659,24 @@ class TvDevice(Device):
             self._sleep(POLL_S)
 
 
+def make_tv_agent(cfg, env: Path, announce: Callable[[str], None], box: AndroidTV, **settings) -> TvAgent | None:
+    """The agent that works `box` step by step, if .env has an OpenAI key; None otherwise. `settings`: TvAgent's own,
+    as a plugin's box needs them (extra_rules)."""
+    from dotenv import dotenv_values
+
+    from .config import OPENAI_KEY
+
+    key = dotenv_values(env).get(OPENAI_KEY) if env.exists() else None
+    if not key:
+        return None
+    from openai import OpenAI
+
+    # Each step reads a screenshot, so a step can take longer than a spoken reply may.
+    client = OpenAI(api_key=key, timeout=STEP_TIMEOUT_S, max_retries=1)
+    model, tier = cfg.home.tv_model or cfg.llm.model, cfg.llm.service_tier
+    return TvAgent(box, client, model, announce, service_tier=tier, **settings)
+
+
 def make(name: str, spec: dict, context: Context) -> TvDevice:
     """A [[home.devices]] entry with kind = "androidtv": its box at `address`, and the agent if there's one to make."""
     try:
@@ -621,10 +690,8 @@ def make(name: str, spec: dict, context: Context) -> TvDevice:
 
 def main() -> None:
     """python -m voice_assistant.androidtv pair | look | screenshot FILE | do "GOAL" [--device NAME]: setting up and
-    trying an Android TV box."""
+    trying an Android TV box. do runs the core agent, without any plugin's rules."""
     import argparse
-
-    from dotenv import dotenv_values
 
     from .config import OPENAI_KEY, load_config
 
@@ -652,13 +719,9 @@ def main() -> None:
             path.write_bytes(box.screenshot())
             print(f"Saved {path}")
         else:
-            from openai import OpenAI
-
-            key = dotenv_values(root / ".env").get(OPENAI_KEY)
-            if not key:
+            agent = make_tv_agent(cfg, root / ".env", lambda line: print(f"TARS: {line}"), box)
+            if agent is None:
                 raise SystemExit(f"do needs {OPENAI_KEY} in .env")
-            model, tier = cfg.home.tv_model or cfg.llm.model, cfg.llm.service_tier
-            agent = TvAgent(box, OpenAI(api_key=key), model, lambda line: print(f"TARS: {line}"), service_tier=tier)
             success, say = agent.work(args.argument or "")
             print("\n".join(agent.log))
             print(f"TARS: {say}  ({'done' if success else 'not done'})")

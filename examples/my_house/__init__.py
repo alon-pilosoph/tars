@@ -33,8 +33,8 @@ from voice_assistant.home import Context, Device, HomeError
 
 from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
-from .direct_play import Catalog, FireTv
-from .ir import CODE_SETS, TESTED, Remote
+from .direct_play import STREMIO_RULES, Catalog, FireTv
+from .ir import CODE_SETS, Remote, tested_path
 
 
 def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device]]:
@@ -87,9 +87,8 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
                 return None
 
         name = spec["name"]
-        tested = context.root / TESTED / f"{name}.json"
         codes, on = CODE_SETS[spec["codes"]], seems_on if box else None
-        return Remote(name, codes, b.send, tested=tested, seems_on=on, reachable=b.reachable)
+        return Remote(name, codes, b.send, tested=tested_path(context.root, name), seems_on=on, reachable=b.reachable)
 
     def firetv(spec: dict) -> FireTv:
         _only(spec, {"address"})
@@ -100,7 +99,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         except ImportError:
             raise ValueError('it needs the optional extra "tv": uv sync --all-extras') from None
         box = AndroidTV(spec["address"], context.root / KEY_FILE, seen=Seen(context.root / FOUND_FILE))
-        agent = context.tv_agent(box) if context.tv_agent else None
+        agent = context.tv_agent(box, extra_rules=STREMIO_RULES) if context.tv_agent else None
         return FireTv(spec["name"], box, agent, Catalog())
 
     return {"ac": ac, "remote": remote, "firetv": firetv}

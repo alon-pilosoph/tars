@@ -5,16 +5,22 @@ An AC remote sends its whole display with every press: mode, temperature, fan, s
 send power as a toggle, a bit that means "switch over": the same press turns the AC on when it's off and off when it's
 on, and a press without it changes the settings and leaves the power alone. IR goes one way, so TARS can't ask the AC
 which it is: it keeps track of what it sent (voice_data/ac/state.json), and is told when that's wrong ("the AC is on").
+
 With a sensor that sees the AC's own light ([[home.devices]] state), it reads that instead, toggles only when it has
-to, and checks the light changed."""
+to, and checks the light changed. A toggle the AC missed is sent again, once: only when the sensor has reported again
+since what it said FRESH_S after the toggle went out, and still shows the old state. A report before then may be a
+slow sensor's from before the AC answered, and a second toggle on it would turn the AC straight back. After a second
+toggle, only a change since it counts."""
 
 import json
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 
+from voice_assistant.files import atomic_write
 from voice_assistant.hass import HomeAssistant
 from voice_assistant.home import OFF, ON, SET, STATUS, Check, Device, HomeError
 
@@ -31,6 +37,7 @@ FOLDER, PROFILE, STATE = Path("voice_data/ac"), "profile.json", "state.json"
 # How long the light sensor gets to show the AC came on (or went off) before the toggle is sent again, once.
 SENSOR_WAIT_S = 6.0
 SENSOR_POLL_S = 0.5
+FRESH_S = 2.0  # a report later than this after the toggle went out could have seen it
 MAX_PULSE_US = 65535  # a Tuya code is 16-bit microseconds
 AC_RULES = (
     "The AC can't tell TARS whether it's on: TARS keeps track of what it sent. When the tool says what it sent rather "
@@ -189,10 +196,7 @@ class State:
             return cls()
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({**asdict(self), "settings": asdict(self.settings) if self.settings else None}))
-        tmp.replace(path)
+        atomic_write(path, json.dumps({**asdict(self), "settings": asdict(self.settings) if self.settings else None}))
 
 
 class AC(Device):
@@ -284,36 +288,62 @@ class AC(Device):
             return f"sent: {verb}{set_to}; TARS can't see the AC, so if it didn't, someone should say so"
 
     def _confirm(self, state: State, settings: Settings, want_on: bool) -> str:
-        """With a light sensor: wait for the light to change, and send the toggle again once if it still shows the
-        old state. A sensor that doesn't answer gets no second toggle: it could turn the AC straight back."""
-        seen = None
-        for attempt in (1, 2):
-            deadline = self._clock() + SENSOR_WAIT_S
-            while self._clock() < deadline:
-                seen = self._seen()
-                if seen is want_on:
-                    state.on, state.how = want_on, "sensor"
-                    state.save(self._path)
-                    tried = " (on the second try)" if attempt == 2 else ""
-                    return f"done: the AC is {'on' if want_on else 'off'}{tried}, its light says so"
-                self._sleep(SENSOR_POLL_S)
-            if seen is None:
-                return "not confirmed: sent it, but the AC's light sensor didn't answer"
-            if attempt == 1:
-                self._send(self.profile.pulses(settings, True))
-        state.on, state.how = seen, "sensor"
+        """With a light sensor: waits for the light to show the toggle, and sends it again once if the AC missed it
+        (the module's docstring says when)."""
+        word, old = ("on", "off") if want_on else ("off", "on")
+        found, early = self._watch(want_on)
+        if _light(found) is want_on:
+            return self._noted(state, want_on, f"done: the AC is {word}, its light says so")
+        if _light(found) is None:
+            return "not confirmed: sent it, but the AC's light sensor didn't answer"
+        self._noted(state, not want_on)
+        if not _after(_reported(found), _reported(early)):
+            return (
+                f"not confirmed: sent it, but the AC's light sensor hasn't reported since, so TARS can't tell if it's "
+                f"{word}; if it isn't, someone should say so"
+            )
+        try:
+            self._send(self.profile.pulses(settings, True))
+        except HomeError as e:
+            return f"not confirmed: sent it, and the AC's light still says {old}; sending it again failed ({e})"
+        found, _ = self._watch(want_on, changed_after=_reported(found))
+        if _light(found) is want_on:
+            return self._noted(state, want_on, f"done: the AC is {word} (on the second try), its light says so")
+        return f"not confirmed: sent it twice, and the AC's light still says {old}"
+
+    def _watch(self, want_on: bool, changed_after: datetime | None = None) -> tuple[dict | None, dict | None]:
+        """Reads the light sensor until it shows `want_on` (changed after `changed_after`, if that's given), for
+        SENSOR_WAIT_S: (the last reading, the last before FRESH_S had passed), each None if it didn't answer."""
+        start = self._clock()
+        early = None
+        while True:
+            found = self._reading()
+            if self._clock() - start < FRESH_S:
+                early = found
+            if _light(found) is want_on and (changed_after is None or _after(_changed(found), changed_after)):
+                return found, early
+            if self._clock() - start >= SENSOR_WAIT_S:
+                return found, early
+            self._sleep(SENSOR_POLL_S)
+
+    def _noted(self, state: State, on: bool, said: str = "") -> str:
+        """What the light says, kept as what TARS knows of the AC."""
+        state.on, state.how = on, "sensor"
         state.save(self._path)
-        return f"not confirmed: sent it twice, and the AC's light still says {'on' if seen else 'off'}"
+        return said
 
     def _seen(self) -> bool | None:
         """What the AC's light says (on or off), or None without a sensor, or one that doesn't answer."""
+        return _light(self._reading())
+
+    def _reading(self) -> dict | None:
+        """The light sensor's state, as Home Assistant has it, or None without a sensor, or one that doesn't answer."""
         if not self._sensor:
             return None
         try:
-            state = self._hass.state(self._sensor).get("state")
+            return self._hass.state(self._sensor)
         except HomeError:
             return None
-        return {"on": True, "off": False}.get(state)
 
     def _default(self) -> Settings:
         p = self.profile
@@ -351,3 +381,32 @@ class AC(Device):
         if SWING not in p.fields:
             s.swing = False
         return s, ""
+
+
+def _light(found: dict | None) -> bool | None:
+    """On or off, as the light sensor's reading says; None when it says neither."""
+    return {"on": True, "off": False}.get((found or {}).get("state"))
+
+
+def _time(found: dict | None, *keys: str) -> datetime | None:
+    """The first of `keys` the reading has, as a time; None if it has none of them."""
+    for key in keys:
+        try:
+            return datetime.fromisoformat((found or {})[key])
+        except KeyError, TypeError, ValueError:
+            continue
+    return None
+
+
+def _reported(found: dict | None) -> datetime | None:
+    """When the sensor last reported, changed or not: Home Assistant's last_reported, or last_updated before 2024.3."""
+    return _time(found, "last_reported", "last_updated")
+
+
+def _changed(found: dict | None) -> datetime | None:
+    """When what the sensor says last changed."""
+    return _time(found, "last_changed")
+
+
+def _after(at: datetime | None, mark: datetime | None) -> bool:
+    return at is not None and mark is not None and at > mark

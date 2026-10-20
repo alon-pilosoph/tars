@@ -498,7 +498,7 @@ def create_app(
     @app.post("/api/reminders/{reminder_id}/ack")
     def ack_reminder(reminder_id: int):
         reminder_or_404(reminder_id)
-        if not reminders_or_501().ack(reminder_id, None, WEB):
+        if not reminders_or_501().dismiss(reminder_id, None, WEB):
             raise HTTPException(409, "it's over already")
         return {"ok": True}
 

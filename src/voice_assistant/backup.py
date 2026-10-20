@@ -490,13 +490,13 @@ class Backup:
         status.lifecycle, status.lifecycle_ok = _lifecycle_summary(self._cfg), True
 
     def fetch(self, restore: bool = False) -> Fetched:
-        """Brings every file the bucket has and the machine doesn't back onto the machine, to stay there for
+        """Brings every file TARS keeps that the bucket has and the machine doesn't back onto the machine, to stay for
         keep_local_days. One that's archived is asked to be restored (`restore`), to be fetched by a later run once
         it's back (up to 48 hours). Busy if a pass is running."""
         with exclusive(self._log.folder):
-            done = Fetched()
+            done, kept = Fetched(), self.kept()
             for rel, row in self._remote().items():
-                if (self._store.folder / rel).exists():
+                if rel not in kept or (self._store.folder / rel).exists():
                     continue
                 try:
                     self._download(rel, row["size"])

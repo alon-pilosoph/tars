@@ -6,6 +6,7 @@ import json
 import pytest
 
 from examples.my_house import blaster as blaster_module
+from examples.my_house import ir
 from examples.my_house.ac import Profile
 from examples.my_house.direct_play import FireTv
 from examples.my_house.ir import Remote
@@ -46,9 +47,22 @@ def test_its_kinds_are_made_from_the_devices_config_lists(tmp_path):
     devices = built.tools.devices
     assert list(devices) == ["ac", "tv", "soundbar", "fire tv"]
     assert isinstance(devices["tv"], Remote) and isinstance(devices["fire tv"], FireTv)
+    # Where `python -m examples.my_house.ir test TV` keeps what it found: the name in lower case, on any machine.
+    assert devices["tv"].tested == ir.tested_path(tmp_path, "TV") == tmp_path / "voice_data" / "ir" / "tv.json"
     assert isinstance(devices["ac"].profile, Profile)
     rules = built.tools.rules()
     assert "is_on or is_off" in rules and "volume and mute are its" in rules and "play with the app" in rules
+
+
+def test_the_fire_tvs_agent_is_told_how_stremio_lists_streams(tmp_path):
+    made = []
+    cfg = HomeConfig(
+        plugins={"my_house": {"module": "examples.my_house"}},
+        devices=[{"name": "fire tv", "kind": "my_house.firetv", "address": "192.168.1.60"}],
+    )
+    context = Context(tmp_path, {}.get, tv_agent=lambda box, **settings: made.append(settings))
+    build(cfg, context)
+    assert "first one that plays" in made[0]["extra_rules"]
 
 
 def test_what_a_device_is_missing_is_said_for_that_device_alone(tmp_path):

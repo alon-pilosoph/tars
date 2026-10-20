@@ -199,8 +199,32 @@ def test_the_service_checks_skip_what_has_no_key(tmp_path):
     (tmp_path / ".env").write_text("")
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     checks = check.service_checks(cfg, tmp_path)
-    assert [name for name, _ in checks] == ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram"]
+    names = ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram", "Telegram reminders"]
+    assert [name for name, _ in checks] == names
     assert all(c().status == SKIP for _, c in checks)  # no keys: nothing is used
+
+
+def test_reminders_waiting_for_telegram_are_counted_while_nothing_posts_them(log):
+    import dataclasses
+
+    from voice_assistant.config import TelegramConfig
+    from voice_assistant.health import Heartbeat
+    from voice_assistant.reminders import REMINDER, TELEGRAM, NewReminder, Reminders
+
+    base = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    on = dataclasses.replace(base, telegram=TelegramConfig(enabled=True, people={"Alon": 1}))
+    now = time.time()
+    assert check.telegram_waiting(on, log.folder, now).status == SKIP  # none
+    reminders = Reminders(log.store)
+    for minutes in (10, 1):  # one long overdue, one only just due
+        new = NewReminder(REMINDER, "call mum", "alon", due=now - minutes * 60)
+        reminders.add(new, TELEGRAM, channel=TELEGRAM, now=now - minutes * 60 - 1)
+    stopped = check.telegram_waiting(on, log.folder, now)
+    assert stopped.status == FAIL and stopped.detail == "1 waiting to be posted: Telegram isn't running"
+    off = check.telegram_waiting(dataclasses.replace(on, telegram=TelegramConfig()), log.folder, now)
+    assert off.status == WARN and "[telegram] off" in off.detail
+    Heartbeat(log.folder, "telegram").beat()
+    assert check.telegram_waiting(on, log.folder, time.time()).status == SKIP  # it's running: it'll post them
 
 
 def test_home_assistant_is_checked_only_when_its_used_and_says_what_to_do():

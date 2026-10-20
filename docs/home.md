@@ -37,9 +37,12 @@ lock until it reports locked, for up to 12 seconds, and answers the model with o
 - `not confirmed: asked the front door to lock, and it still says locking`
 - `error: the front door jammed; someone needs to check it`, or `error: Home Assistant didn't answer ...`
 
-The model is told to say what the tool answered, and never that something's done when it isn't. TARS says "One
-moment." first while a lock turns or the TV wakes, so the wait isn't silent. A door sensor that says the door is open
-stops TARS locking it: the bolt would go into the frame.
+The model is told to say what the tool answered, and never that something's done when it isn't. Home Assistant
+answers a service call once the device has done it, so a slow lock gets 30 seconds, and one that answers later still
+isn't said to have failed: the tool reads back what the lock says, as ever. A media player's press is done once its
+volume or mute shows it; anything it can't show (play, next) is sent. TARS says "One moment." first while a lock
+turns or the TV wakes, so the wait isn't silent. A door sensor that says the door is open stops TARS locking it: the
+bolt would go into the frame.
 
 **A draft changes nothing.** TARS starts answering at the first pause, before it knows you've finished
 ([response time](latency.md)). A change waits until the turn is over (`Draft.go()` in `assistant.handle`), and a
@@ -101,9 +104,10 @@ Each step it chooses from what it sees, presses, types or opens an app, then loo
 meant, for up to 30 steps and two and a half minutes. It runs in the background: TARS answers "On it." at once, and
 says how it went after a chime, like a reminder: "Toy Story is playing.", or why not ("Stremio found no streams for
 Toy Story."). If it isn't clear which was meant, it asks ("Toy Story, or Toy Story 4?"), and TARS listens for the
-answer without the wake word. Asking the TV for anything else stops the agent. A task costs a few cents of OpenAI:
-each step is one request, with a screenshot when the app's text isn't enough, and only the latest screenshot is sent
-again.
+answer without the wake word. Asking the TV for anything else stops the agent, and waits for the step it's on (an app
+opening, a wait) to end first, so the two never fight over the screen. A press is never sent twice: one the box may
+have had before it stopped answering isn't tried again. A task costs a few cents of OpenAI: each step is one request,
+with a screenshot when the app's text isn't enough, and only the latest screenshot is sent again.
 
 ### Your own devices
 
@@ -153,7 +157,12 @@ def setup(settings: dict, context: Context) -> dict:
   what `--check` should, as `Check(status, detail, fix)` lines.
 - **`context`** has the project's folder (`root`, for files under `voice_data/`), `secret(name)` for a key in `.env`,
   Home Assistant (`hass`), `announce(line)` to say something later on its own, `tv_agent(box)`, and `devices`, every
-  device made so far (Home Assistant's and the Android TVs first).
+  device made so far (Home Assistant's and the Android TVs first). The TV agent knows no app of its own:
+  `tv_agent(box, extra_rules=...)` tells it how one of the household's works (my_house: how Stremio lists streams).
+- **`stop()`** ends anything the device still does in the background, as TARS shuts down or someone takes over; the
+  base class's does nothing.
+- **`button(args)`** and **`presses(args)`** read a press as every device does: "volume up" is `volume_up`, and
+  `times` is 1 to 15.
 - A plugin that won't load, or a device it can't make (raise `ValueError` saying why), costs only those devices:
   TARS starts without them, and `--check` says why.
 - Its tests sit beside it and run with TARS's (`pytest` collects `examples/`), and CI lints it.
@@ -196,7 +205,8 @@ About half an hour, on the Pi (or the Mac while you try it).
    the box and its hardware (MAC) address in `voice_data/found.json`, and if the router gives it another address,
    finds it again by knocking on the ADB port across the home network and matching that address. Then run
    `uv run python -m voice_assistant.androidtv pair` and tick "Always allow" on the TV. `... androidtv look` shows
-   what TARS sees; `... androidtv do "play Toy Story on Stremio"` tries the agent.
+   what TARS sees; `... androidtv do "play Toy Story on Stremio"` tries the agent (the core one, without a plugin's
+   rules).
 5. **Check it.** `uv run voice-assistant --check` has a line for Home Assistant and one for each device: what it
    reads, whether it answers, and what to do if not. Then restart TARS and try each device aloud;
    `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered,

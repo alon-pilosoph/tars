@@ -375,7 +375,9 @@ class Assistant:
         try:
             ids = ids or self._just_said or [r["id"] for r in self.reminders.waiting()[:1]]
             for i in [i for i in ids if i not in changed]:
-                if self.reminders.ack(i, who, VOICE):
+                # Just said, it may still be scheduled: the table didn't take its saying.
+                said = i in self._just_said or (self._clock and self._clock.held(i))
+                if (self.reminders.dismiss if said else self.reminders.ack)(i, who, VOICE):
                     print(f"(reminder {i} acknowledged by {who or 'an unknown voice'})")
         except Exception as e:  # noqa: BLE001 - the reply was said; only the record of it failed
             print(f"(couldn't mark the reminder acknowledged: {e!r})")
