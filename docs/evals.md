@@ -11,18 +11,19 @@ TARS's real brain, hand-offs followed through to OpenAI's model and the thinking
 
 ## Method
 
-- **29 scenarios, 46 turns**, in four groups: hand-offs (9), reminders over a conversation (9), the conversation
-  itself (8: follow-ups without the wake word, memory, voices, what TARS can't do, its humor setting) and failures (3).
-  A fifth group, [the house](home.md) (18, in `evals/scenarios/house.toml`), plays TARS's real home tool over a
-  pretend Home Assistant and TV box: only what was asked changed, only what the tool answered said, and the door
-  unlocked for a trusted voice and nobody else. It came after the results below, and isn't in them yet.
+- **47 scenarios, 64 turns**, in five groups: hand-offs (9), reminders over a conversation (9), the conversation
+  itself (8: follow-ups without the wake word, memory, voices, what TARS can't do, its humor setting), failures (3)
+  and [the house](home.md) (18, in `evals/scenarios/house.toml`). The house scenarios play TARS's real home tool
+  over a pretend Home Assistant and TV box: only what was asked changed, only what the tool answered said, and the
+  door unlocked for a trusted voice and nobody else. They run with every other scenario, but were added after the
+  results below (the first 29 scenarios, 46 turns), and no run of them has been saved yet.
 - **TARS's own brain and prompts**, set up from `config.toml`: Qwen (`qwen-3.8-27b`) at low reasoning with its own
   tools, OpenAI's `gpt-6-luna` for the web and as the fallback, and the same model at high reasoning for hard
   questions.
 - **Qwen runs on Cerebras.** It's the same model TARS asks on Groq first, and Cerebras's paid tier allows 150,000
-  tokens a minute against Groq's free 7,000-8,000, so a whole run takes about a minute instead of a day. TARS's two
-  services are both played there, each with its own reply cap (Groq's 500 tokens, then Cerebras's 2,000), so a reply
-  too long for Groq runs out as it would at home. Whether Groq's copy answers the same way is
+  tokens a minute against Groq's free 7,000-8,000, so a run of the first 29 took about a minute instead of a day.
+  TARS's two services are both played there, each with its own reply cap (Groq's 500 tokens, then Cerebras's 2,000),
+  so a reply too long for Groq runs out as it would at home. Whether Groq's copy answers the same way is
   [not yet checked](#limitations).
 - **On request, never a check.** Evals run from the command line, or from a pull request comment (`#evals`), and
   nothing waits on them ([evals/README.md](../evals/README.md#on-a-pull-request)).
@@ -36,8 +37,9 @@ TARS's real brain, hand-offs followed through to OpenAI's model and the thinking
 - **OpenAI on its standard tier.** `config.toml` asks for priority processing (`service_tier = "fast"`), which costs
   more per token and changes only how soon OpenAI answers, so the evals leave it off unless `--fast` asks for it.
   The baseline below ran on it, before that was the default.
-- **Three runs of each**, run 6 at a time. Times are from the request to the first words, with runs in parallel, so
-  they are a little slower than one at a time ([response time](latency.md) has the careful numbers).
+- **Three runs of each**, several at a time (`--parallel`, 4 by default). Times are from the request to the first
+  words, with runs in parallel, so they are a little slower than one at a time ([response time](latency.md) has the
+  careful numbers).
 
 ## Results
 
@@ -61,10 +63,10 @@ An earlier full run the same day, before the harness kept transcripts, came out 
 | Handed to the thinking model ("Let me think about that for a moment.") | 0.38 / 1.25 | 7 |
 | OpenAI, because Qwen couldn't | 1.64 / 2.62 | 22 |
 
-A full run is 217 requests: 146 to Qwen (341,000 tokens in, 19,000 out, 12,000 of them reasoning) and 71 to OpenAI
-(589,000 in, mostly web search results, and 12,000 out). It costs about $0.90: about $0.50 on OpenAI's standard tier,
-most of it the 45 or so web searches ($10 per 1,000, on any tier), and about $0.40 for Qwen on Cerebras, mostly its
-long instructions; `--estimate` says what a run will cost before it starts.
+Three runs of those 29 scenarios are 217 requests: 146 to Qwen (341,000 tokens in, 19,000 out, 12,000 of them
+reasoning) and 71 to OpenAI (589,000 in, mostly web search results, and 12,000 out). They cost about $0.90: about
+$0.50 on OpenAI's standard tier, most of it the 45 or so web searches ($10 per 1,000, on any tier), and about $0.40
+for Qwen on Cerebras, mostly its long instructions. `--estimate` says what a run will cost before it starts.
 
 **What holds up:** a follow-up after a web answer is handed over again rather than answered from the old one (3/3);
 Qwen answers from OpenAI's answer when it can (spelling a name from it); corrections ("actually, make it 8", "cancel
@@ -120,10 +122,11 @@ Each fix is its own pull request, measured with these scenarios before and after
 
 | Every scenario that wasn't 100% | escaped markers recognized, no repeats within or across a hand-off, clearer send, link, message and "which one?" rules, Groq's capped replies written on Cerebras when nothing was said yet, and three checks that failed fine answers made fair | 15 of 29 scenarios below 100% | 1 |
 
-With all of them, 5 runs of each scenario: **143/145** (95% interval 95-100%), for $1.54 ($0.89 on OpenAI, $0.65 on
-Cerebras). The one scenario left,
-a reminder and a hard question in one request, is 3/5: Qwen starts working the question out itself after setting the
-reminder, instead of handing it over.
+With all of them, 5 runs of each of the 29 scenarios: **143/145** (95% interval 95-100%), for about $1.53 at
+`evals/prices.toml`'s prices: $0.886 on OpenAI (78 web searches are $0.78 of it) and $0.648 for Qwen on Cerebras.
+The one scenario left, a reminder and a hard question in one request, is 3/5: Qwen starts working the question out
+itself after setting the reminder, instead of handing it over. (The run's line in `results.jsonl` says `cost_usd`
+0.886, OpenAI's part alone: Qwen's price wasn't in `prices.toml` yet when it ran, so its tokens counted as nothing.)
 
 ## Limitations
 

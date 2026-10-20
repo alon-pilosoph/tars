@@ -11,7 +11,9 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
 - **Groq:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
 - **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
 - **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
-  can answer, and a request's recording (or a Telegram voice message) when Deepgram fails.
+  can answer, and a request's recording (or a Telegram voice message) when Deepgram fails. With an Android TV box in
+  `[home]`, the TV's agent also sends it the TV's screen, as text and screenshots, step by step, while it works a
+  task in the background ([the house](home.md#what-leaves-the-house)).
 - **Telegram,** with `[telegram]` on: what's written and said in the household's chats with TARS, and what it sends
   there ([TARS on Telegram](telegram.md)).
 - **Your own S3 bucket,** with `[backup]` on: a copy of everything TARS keeps, encrypted at rest, every 15 minutes
@@ -37,7 +39,7 @@ Without the backup, the event log, the audio kept for learning, voiceprints and 
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync --all-extras && cp .env.example .env    # then your keys in .env: OpenAI, Deepgram, Groq, Cerebras, Cartesia
+uv sync --all-extras && cp .env.example .env    # then your keys in .env: OpenAI, Deepgram, Cartesia, Groq, Cerebras
 uv run voice-assistant --list-devices
 ```
 
@@ -77,19 +79,26 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 ```
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
-ready-made build for the Pi, so nothing compiles), downloads the models, lists the audio devices, and installs and
-starts both systemd user services, at boot too, then runs `voice-assistant --check`. Every key is optional: it says what
-TARS does without the ones `.env` doesn't have, and stops only when hearing, thinking or speaking has no service at all;
-add keys and run it again ([running on the keys there are](architecture.md#running-on-the-keys-there-are)). It's safe to
-rerun, and it restarts the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml`, or a
-stage left with no key, stops a service instead of restarting it every few seconds: `journalctl` says what's wrong. So
-does a missing speakerphone, and plugging it in starts TARS again
-([`deploy/99-tars-speakerphone.rules`](../deploy/99-tars-speakerphone.rules)). The
-web UI's build is committed, so the Pi needs no Node. By hand, the steps are at the top of
-[`deploy/voice-assistant.service`](../deploy/voice-assistant.service) and
-[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service). With `[telegram]` on, it also installs
-and starts [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service)
-([setting it up](telegram.md#setting-it-up)).
+ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node),
+downloads the models, lists the audio devices, and installs and starts the systemd user units, at boot too: the
+assistant and the web UI, TARS on Telegram with `[telegram]` on ([setting it up](telegram.md#setting-it-up)), and the
+backup's timer with `[backup]` on ([backing up to S3](backup.md)). Then it runs `voice-assistant --check`.
+
+Every key is optional: it says what TARS does without the ones `.env` doesn't have, and stops only when hearing,
+thinking or speaking has no service at all; add keys and run it again
+([running on the keys there are](architecture.md#running-on-the-keys-there-are)). It's safe to rerun, and it
+restarts the services, so after a `git pull` it puts the new code in use. A mistake in `config.toml`, or a stage left
+with no key, stops a service instead of restarting it every few seconds: `journalctl` says what's wrong. So does a
+missing speakerphone, and plugging it in starts TARS again
+([`deploy/99-tars-speakerphone.rules`](../deploy/99-tars-speakerphone.rules)).
+
+By hand, the steps are at the top of each unit:
+[`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
+[`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service),
+[`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
+[`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
+[`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]` or
+`[backup]` off stops and disables that unit.
 
 ## Recognizing people from the start
 
@@ -114,10 +123,11 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years,
   and with the backup on, a request's audio leaves the card after a month.
 - **Backup.** SD cards die, and the labels are the valuable part. With `[backup]` on, everything TARS keeps goes to an
-  S3 bucket every 15 minutes, with a snapshot of the database, voiceprints and wake models every six hours, and old
-  audio leaves the Pi for the bucket ([backing up to S3](backup.md)).
+  S3 bucket every 15 minutes, with a snapshot of the database, voiceprints, wake models and `config.local.toml`
+  every six hours, and old audio leaves the Pi for the bucket ([backing up to S3](backup.md)).
 - **Separate processes, one log** ([how](architecture.md#the-web-ui)). Speaker ID picks up new voiceprints on its own.
-- **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself when either service starts.
+- **Upgrades.** `git pull && deploy/install-pi.sh`. The database upgrades itself the first time any of TARS's
+  processes opens it after the pull: the assistant, the web UI, Telegram or a backup pass.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
   with what TARS does without any that are missing), both audio devices, the local models, echo cancellation (only
   when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram,
@@ -126,9 +136,9 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant and each device in the
   house (with `[home]` devices), the backup (the bucket, and how the last pass went) and the systemd services. Each
   problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device: one that
-  doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same, live:
-  whether each process is running, the services with their own status pages, and the Pi's temperature, power and
-  disk.
+  doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same when
+  it's opened or refreshed: whether each process is running, the services with their own status pages, and the
+  Pi's temperature, power and disk.
 
 ## A first test run
 

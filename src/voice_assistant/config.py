@@ -55,7 +55,7 @@ class AudioConfig:
     output_device: str = ""
     playback_prebuffer_s: float = 0.3
     # Take TARS's own sound out of what the mic hears, so the mic can stay open while TARS makes one (the optional
-    # extra "echo": uv sync --extra echo).
+    # extra "echo": uv sync --all-extras).
     echo_cancel: bool = False
 
 
@@ -240,8 +240,8 @@ class BackupConfig:
     # Move the audio to Glacier Deep Archive this many days after it's made: cheaper storage, but up to 48 hours to
     # bring back, and at a household's few GB a year the moves cost about what it saves. 0 = never.
     archive_after_days: int = 0
-    # A copy of the database, the voiceprints and the trained wake models is made every six hours, and kept this
-    # long; the newest always stays.
+    # A copy of the database, the voiceprints, the trained wake models and config.local.toml is made every six hours,
+    # and kept this long; the newest always stays.
     keep_snapshots_days: int = 30
 
 

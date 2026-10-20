@@ -5,7 +5,7 @@
 #   cp deploy/voice-assistant-web.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now voice-assistant-web
-#   sudo loginctl enable-linger $USER    # start at boot, without logging in (once, for both services)
+#   sudo loginctl enable-linger $USER    # start at boot, without logging in (once, for all of TARS's services)
 #
 #   journalctl --user-unit voice-assistant-web -f    # follow the logs
 #

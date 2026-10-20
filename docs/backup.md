@@ -83,7 +83,8 @@ flowchart LR
    region = "eu-central-1"
    ```
 
-4. **Start it.** On a Mac, `uv sync --extra backup` first (on the Pi, `install-pi.sh` installs every extra).
+4. **Start it.** On a Mac, run `uv sync --all-extras` first; the backup needs boto3, from the `backup` extra
+   (`--extra backup` alone would uninstall the other extras). On the Pi, `install-pi.sh` installs every extra.
    `uv run voice-assistant --backup` runs a pass now; the first uploads everything kept so far, which can take a
    while. `deploy/install-pi.sh` installs and starts the timer. `uv run voice-assistant --check` then has a Backup
    line: the bucket answers, how many files are there, and when the last good pass was.
@@ -120,8 +121,8 @@ deleting one sooner (a conversation deleted in the web UI) is charged as if it h
 ## What it sends AWS
 
 AWS gets everything TARS keeps: the recordings, the files it sent, and in the snapshots the database, with its
-transcripts and voice embeddings, the voiceprints and the wake models. It's encrypted at rest, in a bucket only the
-backup's key may read. Nothing else goes there, and `.env` never does.
+transcripts and voice embeddings, the voiceprints, the wake models and `config.local.toml`. It's encrypted at rest,
+in a bucket only the backup's key may read. Nothing else goes there, and `.env` never does.
 
 ## Design
 

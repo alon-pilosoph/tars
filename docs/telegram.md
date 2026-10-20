@@ -157,7 +157,7 @@ chat that isn't a secret chat.
   photo could go to OpenAI's model, which reads images. TARS answers a voice message in writing; it could answer in
   its own voice, as a voice message.
 - **"Got it" for a reminder posted to a chat.** It's posted once and done, so there's nothing to acknowledge;
-  "remind me again in ten minutes" sets it again.
+  "remind me again in ten minutes" snoozes it, and it's posted again then.
 - **Missed reminders at home forwarded to a phone.** A reminder nobody acknowledged aloud could go to its person's
   chat before it's marked Missed.
 - **Evals.** The conversation evals ([evals](evals.md)) play conversations aloud; a set written for chats would check

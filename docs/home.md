@@ -199,7 +199,8 @@ About half an hour, on the Pi (or the Mac while you try it).
    what TARS sees; `... androidtv do "play Toy Story on Stremio"` tries the agent.
 5. **Check it.** `uv run voice-assistant --check` has a line for Home Assistant and one for each device: what it
    reads, whether it answers, and what to do if not. Then restart TARS and try each device aloud;
-   `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered.
+   `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered,
+   the devices TARS started with, any that isn't connected and why, and a box or blaster found at a new address.
 
 ## What leaves the house
 
@@ -220,5 +221,6 @@ IMDb.
   `voice_data/androidtv/`. The TV's "Allow USB debugging?" is what lets a new one in.
 - **A device that doesn't answer costs a sentence, not the reply.** Home Assistant down, a box off the Wi-Fi: TARS
   says what didn't work, and everything else goes on.
-- **Not yet:** the house from Telegram (a chat can't unlock, but could check and change the rest), scenes ("going
-  to bed"), and evals of the TV's agent on a real TV.
+- **Not yet:** working the house from Telegram (a chat can't unlock, but could check and change the rest), scenes
+  ("going to bed"), evals of the TV's agent on a real TV, and a saved run of the house's scenario evals
+  ([evals](evals.md#method)).

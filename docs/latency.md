@@ -323,7 +323,7 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 | `[llm] groq_model` | `"qwen/qwen3.8-27b"` | the quick brain, on Groq, asked first; empty, or no `GROQ_API_KEY`: not used |
 | `[llm] cerebras_model` | `"qwen-3.8-27b"` | the same Qwen on Cerebras, asked when Groq is being skipped, fails, or hasn't started answering within 0.5 s; empty, or no `CEREBRAS_API_KEY`: not used. Neither: OpenAI's `model` answers everything (~0.3 s slower) |
 | `[stt] deepgram_host`, `[tts] deepgram_host` | `"api.eu.deepgram.com"` | Deepgram's servers: the EU's, or `api.deepgram.com` for the US (from Israel, the voice's first audio ~0.2 s later) |
-| `[tts] provider`, `model`, `cartesia_voice` | `"cartesia"`, `"sonic-3.6"`, James's id | the voice; `deepgram` with a Flux or Aura-2 voice as the model; `openai` with `gpt-4o-mini-tts` takes delivery instructions but starts ~0.6 s later |
+| `[tts] provider`, `model`, `cartesia_voice` | `"cartesia"`, `"sonic-3.6"`, James's id | the voice; `deepgram` with a Flux or Aura-2 voice as the model; `openai` with `gpt-4o-mini-tts` takes delivery instructions but starts ~0.8 s later |
 | `[tts] effect` | `""` | `"tars"`: a speaker in a metal box, applied as the voice streams |
 | `[recorder] end_silence_s` | `0.8` | without Flux: silence that ends your turn |
 | `[recorder] max_pause_s` | `1.6` | without Flux: how long a pause may be when you sounded mid-thought |

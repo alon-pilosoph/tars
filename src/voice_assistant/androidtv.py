@@ -96,7 +96,7 @@ class AndroidTV:
             return
         found = find_by_mac(mac, self._port, near=self._host)
         if found and found != self._host:
-            print(f"(the TV box moved from {self._host} to {found}: the router gave it a new address)", flush=True)
+            print(f"(tv: the box moved from {self._host} to {found}: the router gave it a new address)", flush=True)
             self._host = found
 
     def _remember(self) -> None:

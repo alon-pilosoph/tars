@@ -6,7 +6,7 @@ through to OpenAI's model or the thinking model, and keep going: the next turn, 
 without the wake word, a failure partway through. The results and what they found: [docs/evals.md](../docs/evals.md).
 
 ```bash
-uv run python -m evals                                   # every scenario, 3 runs each (about a minute)
+uv run python -m evals                                   # every scenario, 3 runs each
 uv run python -m evals --tag hand-off --runs 5           # one kind
 uv run python -m evals --scenario cancel-that --show     # one scenario, every turn printed
 uv run python -m evals --list                            # what there is
@@ -38,9 +38,12 @@ date, is what the estimate goes on there, with no transcripts of earlier runs.
 
 Every run starts with an estimate, from what the same scenarios used in earlier runs and the prices in
 `evals/prices.toml` (check them against the providers' pages: they change). **Web searches are most of it**: OpenAI
-bills $10 per 1,000 on any tier, besides their results' tokens, and a full run makes about 45. A full run (29
-scenarios, 3 runs each) comes to about $0.90: about $0.50 on OpenAI, most of it searches, and about $0.40 for Qwen on
-Cerebras ($0.99 per million tokens in, $1.49 out; its instructions are long, so it's mostly input).
+bills $10 per 1,000 on any tier, besides their results' tokens. The first 29 scenarios, 3 runs each, make about 45
+searches, take about a minute, and come to about $0.90: about $0.50 on OpenAI, most of it searches, and about $0.40
+for Qwen on Cerebras ($0.99 per million tokens in, $1.49 out; its instructions are long, so it's mostly input). The
+house's 18 (`evals/scenarios/house.toml`) have no saved run yet: until a run of them is saved (`--save`), or kept
+locally in `evals/runs/`, the estimate counts each as an average scenario, web searches included, so what a run of
+all 47 costs is a guess.
 
 ```bash
 uv run python -m evals --estimate                 # what it would cost, and nothing else
@@ -93,6 +96,9 @@ mistake (an unknown setting, a route that doesn't exist, cancelling a reminder n
 id = "cancel-that"                      # unique; --scenario picks it
 about = """What it tests, and why it matters."""
 tags = ["reminders", "corrections"]     # --tag picks them; the report counts by tag
+# house = { lock = "locked", door = "closed", boiler = "off", ac = "off", blinds = "open", tv = "on" }   # optional:
+#   TARS's real home tool over a pretend Home Assistant and TV box (evals/house.py); jams = true or down = true for a
+#   lock that jams, or Home Assistant not answering. Needed by any turn that checks home.
 
 [[scenario.seed]]                       # optional: a reminder set before the conversation, from the web page
 ref = "pasta"                           # its name, for a later cancel or snooze
@@ -105,9 +111,6 @@ in_minutes = 10
 [[scenario.turn]]
 say = "set a pasta timer for eight minutes"
 reminders = [{ kind = "timer", in_minutes = 8, ref = "pasta" }]
-# house = { lock = "locked", door = "closed", boiler = "off", ac = "off", blinds = "open", tv = "on" }   # optional:
-#   TARS's real home tool over a pretend Home Assistant and TV box (evals/house.py); jams = true or down = true for a
-#   lock that jams, or Home Assistant not answering
 
 [[scenario.turn]]
 say = "cancel that"

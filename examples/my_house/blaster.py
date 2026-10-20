@@ -51,7 +51,10 @@ class Blaster:
         found = find_by_id(self._id) if self._seen is not None else None
         if not found or not reachable(found, TUYA_PORT, REACH_TIMEOUT_S):
             raise HomeError(f"the IR blaster didn't answer at {self._address}, and isn't announcing itself elsewhere")
-        print(f"(the IR blaster moved from {self._address} to {found}: the router gave it a new address)", flush=True)
+        print(
+            f"(home: the IR blaster moved from {self._address} to {found}: the router gave it a new address)",
+            flush=True,
+        )
         self._address = found
         self._seen.put(self._seen_key, address=found)
 

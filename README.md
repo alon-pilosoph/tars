@@ -14,7 +14,7 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 | [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 97% of the owner's (never heard), 1 false answer in an hour of TV |
 | [Response time](docs/latency.md) | 1.2-1.5 s from you stopping to the first sound, down from about 3.5 s |
 | [Quick model](docs/models.md) | Qwen on Groq, then Cerebras, hedged at 0.5 s; 149/156 on the capability benchmark at low reasoning |
-| [Whole conversations](docs/evals.md) | 29 scenarios played through the real brain, hand-offs followed through: 143/145 runs right (from 76/87), run on request from a pull request comment |
+| [Whole conversations](docs/evals.md) | 47 scenarios played through the real brain, hand-offs followed through: 143/145 runs right on the 29 measured so far (from 76/87); run on request from a pull request comment |
 | [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |
 | [Runs on](docs/deployment.md) | Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or a Mac |
 
@@ -65,9 +65,9 @@ Needs [uv](https://docs.astral.sh/uv/). On Linux (a Pi included), first `sudo ap
 
 ```bash
 git clone https://github.com/alon-pilosoph/tars.git && cd tars
-uv sync --all-extras                   # echo cancellation, Claude and the S3 backup are extras
-cp .env.example .env                   # then add your API keys: OpenAI, Deepgram, Groq, Cerebras, or some of them
-uv run voice-assistant --check         # keys, devices, models, services, the voice and the mic: what's wrong, and what to do
+uv sync --all-extras                   # every extra: echo cancellation, Claude, Android TV, the IR blaster, S3 backup
+cp .env.example .env                   # then your API keys: OpenAI, Deepgram, Cartesia, Groq, Cerebras, or some
+uv run voice-assistant --check         # keys, devices, models, services, voice and mic: what's wrong, what to do
 uv run voice-assistant --mic-test      # loudness, speech and wake-word meters; no API key needed
 uv run voice-assistant                 # say "hey TARS", then ask something
 uv run voice-assistant --web           # in a second terminal: the web UI at http://127.0.0.1:8080

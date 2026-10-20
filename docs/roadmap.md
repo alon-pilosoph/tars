@@ -17,6 +17,13 @@ Benched for now: [learning from how conversations go](#benched-learning-from-how
 during the week of real use and TARS couldn't set one. The week checks them too: "got it" and its variants taken as
 acknowledgements, nothing said over a conversation, and one set from a phone said on time.
 
+Built since, also alongside step 1: [the house](home.md) (Home Assistant's devices, an Android TV box and the agent
+that works it, plugins for the rest), [TARS on Telegram](telegram.md) (chats and voice messages, with reminders and
+what TARS sends on a phone), the web UI's [Status page](web-ui.md#the-status-page), and the
+[backup to S3](backup.md). The week checks them too (below). What's left for each is in its own doc: the house's
+"Not yet" under [things to know](home.md#things-to-know), [Telegram's](telegram.md#not-yet), and the web UI's
+[limitations](web-ui.md#limitations).
+
 ## 1. A week of real use
 
 **Goal:** data, and a list of what actually goes wrong. With the speakerphone on the Mac (or the Pi), run the
@@ -41,6 +48,11 @@ once it has 5 requests.
 | Turns Groq couldn't take | `quick_service` in the `turns` table: `Cerebras`, or none with `answered_by = 'fallback'` | rare; if Groq's free key runs out often, a paid Groq key or Cerebras first |
 | Failed answers | Home, in red: where it failed (speech to text, the answer, the voice) and why | rare, and no one stage over and over |
 | Answers you'd rate bad | Home's good / bad buttons | a list, for steps 3 and 4 |
+| The house: a change not made, or not asked for | the conversation in Home, and `journalctl --user-unit voice-assistant \| grep -E 'home:\|tv:'` | none; "done" only when the device reported it, and the door unlocked only for a trusted voice that asked |
+| TV tasks that didn't finish | `tv:` lines in the same log (`done` or `not done`), and what TARS said after the chime | most finish; one that doesn't says why |
+| Telegram | the chats, and their conversations in Home | reminders posted on time, voice messages written down right |
+| Backup passes | `--check`'s Backup line, and `journalctl --user-unit voice-assistant-backup` | every pass good; `--check` warns when the last good one is over an hour old |
+| A part that stopped | the Status page | none, or restarted by systemd |
 
 **At the end of the week:** answer what's left in Review and name the voices. The Models page then shows how many
 real, missed and not-real wakes there are to train on. Then check the order below still holds: if missed wakes, false
