@@ -64,6 +64,9 @@ SPOKEN_FRAME = re.compile(
 )
 # Two reminders this close together, of the same kind, for the same person and about the same thing, are one.
 SAME_TIME_S = 60.0
+# A phone joins the Wi-Fi a little before its person is through the door ([presence]): a message waiting for them is
+# said this long after their phone comes home, unless they speak to TARS first.
+ARRIVAL_GRACE_S = 60.0
 
 
 @dataclass
@@ -104,11 +107,13 @@ class Reminders:
         conversation_id: int | None = None,
         now: float | None = None,
         channel: str = VOICE,
+        phones: Collection[str] = (),
     ) -> int:
-        """Raises ValueError, saying what's wrong, for anything that can't be done. `voices`: the names TARS knows by
-        voice, which waiting until someone's back needs. `channel`: where it's said, VOICE or TELEGRAM."""
+        """Raises ValueError, saying what's wrong, for anything that can't be done. `voices` and `phones`: the names
+        TARS knows by voice and by phone, one of which waiting until someone's back needs. `channel`: where it's said,
+        VOICE or TELEGRAM."""
         now = time.time() if now is None else now
-        r = self.check(new, voices, now)
+        r = self.check(new, voices, now, phones)
         if channel not in (VOICE, TELEGRAM):
             raise ValueError(f"it can be said aloud or on Telegram, not {channel!r}")
         if channel == TELEGRAM and r.due is None:
@@ -135,7 +140,9 @@ class Reminders:
             ),
         )
 
-    def check(self, new: NewReminder, voices: Collection[str] = (), now: float | None = None) -> NewReminder:
+    def check(
+        self, new: NewReminder, voices: Collection[str] = (), now: float | None = None, phones: Collection[str] = ()
+    ) -> NewReminder:
         """The reminder tidied up and with its defaults, or ValueError saying what's wrong."""
         now = time.time() if now is None else now
         if new.kind not in KINDS:
@@ -152,9 +159,10 @@ class Reminders:
         if new.due is None:
             if not for_name:
                 raise ValueError("it needs a time, or someone to wait for")
-            if person_key(for_name) not in {person_key(v) for v in voices}:
+            if person_key(for_name) not in {person_key(v) for v in [*voices, *phones]}:
+                known = "voice or phone" if phones else "voice"
                 raise ValueError(
-                    f"TARS doesn't know {for_name}'s voice yet, so it can't wait until they're back; give a time"
+                    f"TARS doesn't know {for_name}'s {known} yet, so it can't wait until they're back; give a time"
                 )
         elif new.due < now - LATE_S:
             raise ValueError("that time has already passed")
@@ -285,31 +293,34 @@ class Reminders:
 
     def say_aloud(self, reminder_id: int) -> bool:
         """One due on Telegram that can't be posted (its person has no chat there any more, or the chat turned the bot
-        down for good): said aloud at home instead, like any reminder there, waiting for "got it" if it was set to."""
+        down for good): said aloud at home instead, like any reminder there, waiting for "got it" if it was set to.
+        It stays aloud, so one moved to the chat because its person was out (to_chat) can't bounce back."""
         return self._change(
-            f"UPDATE reminders SET channel=? WHERE id=? AND status IN ({_marks(ACTIVE)})",
+            f"UPDATE reminders SET channel=?, kept_aloud=1 WHERE id=? AND status IN ({_marks(ACTIVE)})",
             (VOICE, reminder_id, *ACTIVE),
         )
 
     def to_chat(self, reminder_id: int) -> bool:
-        """One due aloud whose person is out (presence.py): posted to their Telegram chat instead, once, like one set
+        """One due aloud whose person is out ([presence]): posted to their Telegram chat instead, once, like one set
         there. The Telegram service posts it, and says it aloud after all if it can't."""
         return self._change(
-            f"UPDATE reminders SET channel=? WHERE id=? AND channel=? AND status IN ({_marks(ACTIVE)})",
+            "UPDATE reminders SET channel=? WHERE id=? AND channel=? AND kept_aloud=0 "
+            f"AND status IN ({_marks(ACTIVE)})",
             (TELEGRAM, reminder_id, VOICE, *ACTIVE),
         )
 
     def arrived(self, name: str, at: float) -> list[int]:
-        """`name` just came home (presence.py): their messages waiting until they're back are due at `at`, said
-        aloud like any reminder, unless they're heard first. The ids scheduled."""
-        held = self.held_for(name)
+        """`name` just came home ([presence]): their messages waiting until they're back are due at `at`, said aloud
+        like any reminder, unless they're heard first. The ids scheduled now."""
+        scheduled = []
         with self.store.transaction() as db:
-            for r in held:
-                db.execute(
+            for r in self.held_for(name):
+                changed = db.execute(
                     "UPDATE reminders SET next_at=? WHERE id=? AND status=? AND due IS NULL AND next_at IS NULL",
                     (at, r["id"], SCHEDULED),
-                )
-        return [r["id"] for r in held if r["next_at"] is None]
+                ).rowcount
+                scheduled += [r["id"]] * changed
+        return scheduled
 
     def ack(self, reminder_id: int, by: str | None, via: str, now: float | None = None) -> bool:
         """One that was said and is waiting for it; False otherwise (not said yet, acknowledged already, cancelled,
@@ -548,13 +559,12 @@ class ReminderTools:
         reminders: Reminders,
         voices: Callable[[], Collection[str]] = lambda: (),
         phones: Callable[[], Collection[str]] = lambda: (),
+        is_home: Callable[[str], bool] = lambda who: False,
     ):
-        """`voices`: the names TARS knows by voice; `phones`: those it knows by their phone ([presence] people). A
-        message can wait until either one is back."""
-        self.reminders, self._voices, self._phones = reminders, voices, phones
-
-    def _known(self) -> list[str]:
-        return [*self._voices(), *self._phones()]
+        """`voices`: the names TARS knows by voice; `phones`: those it knows by their phone ([presence] people, when
+        the routers can be asked). A message can wait until either one is back. `is_home(name)`: whether their phone
+        says they're home now, when a message for when they're back is left: then it's said in a minute."""
+        self.reminders, self._voices, self._phones, self._is_home = reminders, voices, phones, is_home
 
     def _back(self, who: str) -> str:
         """When a message waiting for `who` is said."""
@@ -636,10 +646,15 @@ class ReminderTools:
             due=due,
             needs_ack=bool(args.get("wait_for_ack", True)),
         )
-        new = self.reminders.check(new, self._known(), now)
+        new = self.reminders.check(new, self._voices(), now, self._phones())
+        aloud = bool(args.get("aloud"))
+        # They're home already: it's said in a minute, rather than once they've gone out and come back.
+        if new.due is None and self._is_home(new.for_name):
+            new = dataclasses.replace(new, due=now + ARRIVAL_GRACE_S)
+            aloud = True
+            due = new.due
         said = line({**new.__dict__, "from_name": None})
         at = when(due, now) if due is not None else self._back(new.for_name)
-        aloud = bool(args.get("aloud"))
         where = " aloud at home" if aloud else ""
         if self._already_set(new, pending):
             return None, f'already set for {at}, nothing new set; TARS will say{where}: "{said}"'
@@ -674,7 +689,8 @@ class ReminderTools:
             self.reminders.add(
                 new,
                 via,
-                voices=self._known(),
+                voices=self._voices(),
+                phones=self._phones(),
                 conversation_id=conversation_id,
                 now=change.asked_at or None,
                 channel=channel,
@@ -687,3 +703,38 @@ class ReminderTools:
 
 def _words(text: str | None) -> str:
     return " ".join(re.sub(r"[^\w\s]", "", (text or "").lower()).split())
+
+
+class ChatWhenOut:
+    """A reminder or message due aloud for someone who's out ([presence]), and on Telegram, goes to their chat instead,
+    once. A timer, or one for whoever's there, rings at home as ever, and so does one Telegram handed back."""
+
+    def __init__(self, reminders: Reminders, is_out: Callable[[str], bool], chats: Collection[str]):
+        """`is_out(name)`: whether they're known to be out now; not known is not out."""
+        self.reminders, self._is_out = reminders, is_out
+        self._chats = {person_key(c) for c in chats}
+
+    def __call__(self, r: dict) -> bool:
+        """True if `r` went to its person's chat, and isn't to be said aloud."""
+        who = r["for_name"]
+        if r["kind"] not in (REMINDER, MESSAGE) or r["due"] is None or person_key(who) not in self._chats:
+            return False
+        try:
+            if not (self._is_out(who) and self.reminders.to_chat(r["id"])):
+                return False
+        except Exception as e:  # noqa: BLE001 - said aloud, as it would have been
+            print(f"(reminders: couldn't send reminder {r['id']} to {who}'s chat: {e!r})")
+            return False
+        print(f"(reminders: {name(who)} is out: reminder {r['id']} goes to their Telegram chat)")
+        return True
+
+
+def on_arrival(reminders: Reminders, grace_s: float = ARRIVAL_GRACE_S) -> Callable[[str, bool], None]:
+    """What to do when someone comes home or goes out ([presence]): their messages waiting until they're back are said
+    `grace_s` after they come home."""
+
+    def changed(person: str, home: bool) -> None:
+        if home and (ids := reminders.arrived(person, time.time() + grace_s)):
+            print(f"(reminders: {person} is home: their waiting messages {ids} are said in {grace_s:.0f} s)")
+
+    return changed

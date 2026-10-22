@@ -17,7 +17,7 @@ from voice_assistant.errors import ServiceError
 from voice_assistant.events import EventLog
 from voice_assistant.journal import Journal
 from voice_assistant.llm import ASKED_TAG, FOLLOW_UP_TAG, QUICK, REMINDER_TAG
-from voice_assistant.presence import Board, ChatRouting, People, State
+from voice_assistant.presence import Board, People, State
 from voice_assistant.reminders import (
     ACKNOWLEDGED,
     ADD,
@@ -32,6 +32,7 @@ from voice_assistant.reminders import (
     WAITING,
     WEB,
     Change,
+    ChatWhenOut,
     NewReminder,
     Reminders,
     ReminderTools,
@@ -345,9 +346,9 @@ def test_asking_straight_away_skips_the_greeting(speaker):
     assert said == [] and brain.asked == ["what time is it"]
 
 
-def logged_assistant(speaker, tmp_path, utterances, transcripts, replies=()):
+def logged_assistant(speaker, tmp_path, utterances, transcripts, replies=(), elsewhere=None):
     journal = Journal(EventLog(tmp_path / "events"))
-    assistant, _ = make_assistant(speaker, utterances, transcripts, replies, journal=journal)
+    assistant, _ = make_assistant(speaker, utterances, transcripts, replies, journal=journal, elsewhere=elsewhere)
     journal.wake(AUDIO, 0.9, "answer", "hey tars", 0.9, "", "")
     assistant.trigger = types.SimpleNamespace(last_audio=None)
     return assistant, journal.conversations
@@ -562,9 +563,10 @@ def test_a_bug_is_kept_as_a_failure_too(speaker, tmp_path):
     assert turns_of(convos)[-1]["failed_at"] == "other"
 
 
-def reminding(speaker, tmp_path, utterances, transcripts, replies=(), **kw):
-    """A logged assistant with one reminder due now; returns (assistant, reminders, its id, what was played)."""
-    assistant, convos = logged_assistant(speaker, tmp_path, utterances, transcripts, replies)
+def reminding(speaker, tmp_path, utterances, transcripts, replies=(), elsewhere=None, **kw):
+    """A logged assistant with one reminder due now; returns (assistant, reminders, its id, what was played).
+    `elsewhere`: where a reminder due aloud may go instead."""
+    assistant, convos = logged_assistant(speaker, tmp_path, utterances, transcripts, replies, elsewhere)
     assistant.journal.end_conversation()  # a reminder comes due while TARS waits, not after a wake
     assistant.use_reminders(ReminderTools(Reminders(convos.store)))
     played = []
@@ -612,16 +614,17 @@ def test_nobody_answering_leaves_it_waiting_to_be_said_again(speaker, tmp_path):
     assert assistant.journal.conversations.conversations() == []  # nothing said back, no conversation
 
 
-def routed(assistant, reminders, stacey_home: bool | None):
-    """The assistant with [presence]: Stacey home, out or not known, and on Telegram."""
-    board = Board(reminders.store, People({"Stacey": ["ca:fe:00:00:00:02"]}))
-    board.write({"stacey": State(stacey_home, None, time.time())}, {}, time.time())
-    assistant._route = ChatRouting(board, reminders, ["Stacey"])
+def chat_when_out(tmp_path, stacey_home: bool | None) -> ChatWhenOut:
+    """With [presence] and Telegram: Stacey home, out or not known, as the assistant last wrote it."""
+    store = EventLog(tmp_path / "events").store
+    board = Board(store, People({"Stacey": ["ca:fe:00:00:00:02"]}))
+    board.write({"stacey": State(stacey_home, None, time.time())}, [], time.time())
+    return ChatWhenOut(Reminders(store), board.is_out, ["Stacey"])
 
 
 def test_a_reminder_for_someone_out_goes_to_their_chat_and_isnt_said_to_an_empty_room(speaker, tmp_path):
-    assistant, reminders, rid, played = reminding(speaker, tmp_path, [], [])
-    routed(assistant, reminders, stacey_home=False)
+    out = chat_when_out(tmp_path, stacey_home=False)
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [], [], elsewhere=out)
     assistant.say_reminders()
     assert played == [] and reminders.get(rid)["channel"] == TELEGRAM
     assert assistant.reminders.due() == []  # the Telegram service posts it now
@@ -629,8 +632,8 @@ def test_a_reminder_for_someone_out_goes_to_their_chat_and_isnt_said_to_an_empty
 
 @pytest.mark.parametrize("stacey_home", [True, None])
 def test_for_someone_home_or_not_known_its_said_aloud_as_ever(speaker, tmp_path, stacey_home):
-    assistant, reminders, rid, played = reminding(speaker, tmp_path, [None], [])
-    routed(assistant, reminders, stacey_home)
+    here = chat_when_out(tmp_path, stacey_home)
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [None], [], elsewhere=here)
     assistant.say_reminders()
     assert spoken(played) == ["Stacey, a message from Alon: dinner's at eight."]
     assert reminders.get(rid)["channel"] == VOICE

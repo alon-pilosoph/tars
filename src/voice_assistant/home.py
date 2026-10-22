@@ -150,10 +150,10 @@ class Built(NamedTuple):
     unavailable: dict[str, str]  # a device in config.toml that couldn't be made, by its name there: why
 
 
-def build(cfg: HomeConfig, context: Context) -> Built:
-    """The devices [home] lists, made: Home Assistant's, then Android TVs, then each plugin's. Like every service,
-    optional: a device that can't be made (no token, a missing extra, a plugin's own problem) is left out with why,
-    and TARS starts without it."""
+def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = None) -> Built:
+    """The devices [home] lists, made: Home Assistant's, then Android TVs, then each plugin's, then `extra`, made
+    already (TARS's own, like who's home). Like every service, optional: a device that can't be made (no token, a
+    missing extra, a plugin's own problem) is left out with why, and TARS starts without it."""
     from . import androidtv, hass
 
     unavailable: dict[str, str] = {}
@@ -192,6 +192,8 @@ def build(cfg: HomeConfig, context: Context) -> Built:
         except Exception as e:  # noqa: BLE001 - one device that can't be made never stops the others
             unavailable[name] = str(e) or type(e).__name__
             continue
+        context.devices[name.lower()] = device
+    for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
     tools = HomeTools(cfg, dict(context.devices)) if context.devices else None
     return Built(tools, unavailable)

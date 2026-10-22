@@ -52,6 +52,8 @@ READY = "TARS is ready."
 STALE_BACKUP_S = 3600.0  # the timer runs a pass every 15 minutes: an hour without a good one is worth a look
 BACKUP_CHECK_S = 20.0  # S3's client retries a bucket that doesn't answer; --check never waits longer than this
 OVERDUE_S = 3 * 60.0  # a reminder Telegram should have posted this long ago is waiting for it
+PRESENCE = "Who's home"
+ROUTER_FIX = "check its address, user, and its password in .env (the name under secret); docs/presence.md"
 
 
 @dataclass
@@ -83,7 +85,7 @@ class ServiceChecks:
             ("Telegram", self.telegram),
             ("Telegram reminders", self.telegram_reminders),
             ("Home Assistant", self.home_assistant),
-            ("Who's home", self.presence),
+            (PRESENCE, self.presence),
         ]
 
 
@@ -490,10 +492,6 @@ def house(built, hass_ok: bool) -> list[Result]:
     return results
 
 
-PRESENCE = "Who's home"
-ROUTER_FIX = "check its address, user, and its password in .env (the name under secret); docs/presence.md"
-
-
 def routers_now(
     cfg: Config, secret: Callable[[str], str | None], make_router: Callable | None = None
 ) -> Result | list[Result]:
@@ -526,26 +524,31 @@ def routers_now(
 
 
 def routers_last(cfg: Config, folder: Path, now: float | None = None) -> Result | list[Result]:
-    """The Status page's: how each router last answered the assistant, from the event log."""
-    from .presence import STALE_AFTER_S, Board, People
-    from .store import Store
+    """The Status page's: how each router last answered the assistant, and who's home, from the event log; it never
+    signs into a router itself. `folder`: the event log's."""
+    from .store import DB_FILE
 
     if not cfg.presence.enabled:
         return Result(PRESENCE, SKIP, "off ([presence] enabled)")
     if not cfg.learning.log_events:
         return Result(PRESENCE, FAIL, "it's kept in the event log", "set [learning] log_events = true")
+    if not (folder / DB_FILE).exists():
+        return Result(PRESENCE, WARN, "the routers haven't been asked yet", "is the assistant running? (it asks them)")
+    from .events import EventLog
+    from .presence import STALE_AFTER_S, Board, People
+
     now = time.time() if now is None else now
-    board = Board(Store(folder), People(cfg.presence.people), clock=lambda: now)
-    by_address = {a.get("address"): a for a in board.routers().values()}
-    results = []
+    board = Board(EventLog(folder).store, People(cfg.presence.people), clock=lambda: now)
+    answers, results = board.routers(), []
     for spec in cfg.presence.routers:
-        where, a = f"Router {spec['address']}", by_address.get(spec["address"], {})
-        if a.get("error"):
-            results.append(Result(where, FAIL, a["error"], ROUTER_FIX))
-        elif a.get("ok_at") is None or now - a["ok_at"] > STALE_AFTER_S:
+        where, a = f"Router {spec['address']}", answers.get(spec["address"])
+        last = max((t for t in (a.ok_at, a.error_at) if t is not None), default=None) if a else None
+        if last is None or now - last > STALE_AFTER_S:
             results.append(Result(where, WARN, "not asked lately", "is the assistant running? (it asks the routers)"))
+        elif a.error:
+            results.append(Result(where, FAIL, a.error, ROUTER_FIX))
         else:
-            results.append(Result(where, OK, f"{a.get('connected', 0)} devices connected, {_ago(now - a['ok_at'])}"))
+            results.append(Result(where, OK, f"{a.connected} devices connected, {_ago(now - a.ok_at)}"))
     results.append(Result(PRESENCE, OK, board.summary()))
     return results
 

@@ -257,11 +257,11 @@ tv_model = ""
 # config.local.toml: whose phone is whose and the routers are the household's, not the repo's.
 enabled = false
 # Each person, by the name TARS knows them by, and their phone as the routers list it: its Wi-Fi address (on an
-# iPhone: Settings > Wi-Fi > (i) > Wi-Fi Address, with Private Wi-Fi Address set to Fixed, not Rotating; each network
-# name has its own) or the name a router shows it under.
+# iPhone: Settings > Wi-Fi > (i) > Wi-Fi Address, with Private Wi-Fi Address turned off for each home network, so
+# it's the same on every band and router) or the name a router shows it under ("Alons-iPhone").
 people = {}
 # people = { Alon = ["ca:fe:00:00:00:01"], Stacey = ["staceys-iphone", "ca:fe:00:00:00:02"] }
-# How often the routers are asked.
+# How often the routers are asked, from 5 to 120 seconds.
 every_s = 30
 # Someone whose phone no router has seen for this long, while every router answered, has gone out. A phone asleep on a
 # table drops off the Wi-Fi now and then for a few minutes, so this is longer than that.

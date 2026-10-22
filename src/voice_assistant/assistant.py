@@ -168,11 +168,11 @@ class Assistant:
         ack_window_s: float = RemindersConfig.ack_window_s,
         announcements: Announcements | None = None,
         clock: Callable[[], float] = time.monotonic,
-        route: Callable[[dict], bool] | None = None,
+        elsewhere: Callable[[dict], bool] | None = None,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
-        `clock`: seconds, for when a line that failed to make is tried again. `route(reminder)`: True if a reminder
-        due aloud went somewhere else instead (presence.ChatRouting: its person is out)."""
+        `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
+        reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out)."""
         self.mic = mic
         self.speaker = speaker
         self.trigger = trigger
@@ -193,7 +193,7 @@ class Assistant:
         self.phrases = Phrases(voice, phrase_folder, clock)
         self.ack_window_s = ack_window_s
         self.announcements = announcements
-        self._route = route
+        self._elsewhere = elsewhere
         self.reminder_tools: ReminderTools | None = None
         self._reminder_clock: Clock | None = None
         self.use_reminders(reminders)
@@ -333,8 +333,8 @@ class Assistant:
             if clock:
                 clock.pause(REMINDERS_REST_S)
             return
-        if self._route and (gone := [r["id"] for r in due if self._route(r)]):
-            due = [r for r in due if r["id"] not in gone]
+        if self._elsewhere and len(kept := [r for r in due if not self._elsewhere(r)]) < len(due):
+            due = kept
             self._reread_reminders()
         lines = {r["id"]: [t for t in [reminder_line(r), late(r)] if t] if says_line(r) else [] for r in due}
         audio = self._made_now([t for texts in lines.values() for t in texts])

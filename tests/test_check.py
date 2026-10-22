@@ -13,6 +13,7 @@ from voice_assistant.check import FAIL, OK, SKIP, WARN, Result
 from voice_assistant.config import ConfigError, load_config
 
 from .conftest import raising
+from .test_presence import FakeHomeware, FakeXiaomi, presence_config
 
 
 @pytest.fixture
@@ -222,8 +223,17 @@ def test_the_service_checks_skip_what_has_no_key(tmp_path):
     (tmp_path / ".env").write_text("OPENAI_API_KEY=o\n")
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     checks = check.service_checks(cfg, tmp_path).listed()
-    names = ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram", "Telegram reminders", "Home Assistant"]
-    names.append("Who's home")
+    names = [
+        "OpenAI",
+        "Groq",
+        "Cerebras",
+        "Deepgram",
+        "Cartesia",
+        "Telegram",
+        "Telegram reminders",
+        "Home Assistant",
+        "Who's home",
+    ]
     assert [name for name, _ in checks] == names
     assert all(c().status == SKIP for name, c in checks if name != "OpenAI")  # no key for them, or not used
 
@@ -309,3 +319,56 @@ def test_the_house_says_each_device_as_it_was_made_and_what_it_found():
     assert by_name["tv"].status == OK and "it does tasks with pretend" in by_name["tv"].detail
     without = {r.name: r.status for r in check.house(Built(h.tools, {}), hass_ok=False)}
     assert without["front door"] == SKIP and without["tv"] == OK  # the box needs no Home Assistant
+
+
+# Who's home: --check signs into each router; the Status page goes by how they last answered the assistant.
+
+TWO_ROUTERS = (
+    '[presence]\nenabled = true\npeople = { Alon = ["ca:fe:00:00:00:01"] }\n'
+    '[[presence.routers]]\nkind = "technicolor"\naddress = "192.168.1.1"\nsecret = "ROUTER_PASSWORD"\n'
+    '[[presence.routers]]\nkind = "xiaomi"\naddress = "192.168.1.160"\nsecret = "XIAOMI_PASSWORD"\n'
+)
+
+
+def test_check_signs_into_each_router_and_says_whose_phone_it_sees(tmp_path):
+    from voice_assistant.routers import make
+
+    fakes = {"technicolor": FakeHomeware(), "xiaomi": FakeXiaomi()}
+    results = check.routers_now(
+        presence_config(tmp_path, TWO_ROUTERS),
+        {"ROUTER_PASSWORD": "hunter2!"}.get,
+        lambda spec, password: make(spec, password, httpx.MockTransport(fakes[spec["kind"]])),
+    )
+    assert [(r.name, r.status, r.detail) for r in results] == [
+        ("Router 192.168.1.1", OK, "3 devices connected; sees the phone of Alon"),
+        ("Router 192.168.1.160", FAIL, "no XIAOMI_PASSWORD in .env"),
+    ]
+    assert check.routers_now(cfg_(), {}.get).status == SKIP
+
+
+def cfg_():
+    return load_config(Path(__file__).parents[1] / "config.toml", local=False)
+
+
+def test_the_status_page_goes_by_how_the_routers_last_answered_the_assistant(tmp_path):
+    from voice_assistant.presence import Board, People, RouterStatus, State
+    from voice_assistant.store import Store
+
+    cfg, folder, now = presence_config(tmp_path, TWO_ROUTERS), tmp_path / "events", 1_800_000_000.0
+    assert check.routers_last(cfg, folder, now).status == WARN  # no event log yet: asked about, never made
+    assert not folder.exists()
+    board = Board(Store(folder), People(cfg.presence.people))
+    routers = [
+        RouterStatus("192.168.1.1", "technicolor", ok_at=now, connected=9),
+        RouterStatus("192.168.1.160", "xiaomi", ok_at=now - 600, error="no answer", error_at=now - 30),
+    ]
+    board.write({"alon": State(True, None, now)}, routers, now)
+    assert [(r.status, r.detail) for r in check.routers_last(cfg, folder, now + 30)] == [
+        (OK, "9 devices connected, just now"),
+        (FAIL, "no answer"),
+        (OK, "Alon: home"),
+    ]
+    # Hours later, with the assistant stopped: nothing is known now, failing or not.
+    later = check.routers_last(cfg, folder, now + 3 * 3600)
+    assert [r.status for r in later] == [WARN, WARN, OK] and later[-1].detail == "Alon: not known yet"
+    assert check.routers_last(cfg_(), folder).status == SKIP

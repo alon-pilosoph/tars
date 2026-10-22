@@ -119,7 +119,9 @@ be "Set for 5pm.".
 **Where a reminder is said.** Each reminder has a `channel`: `voice` (aloud at home) or `telegram` (to its person's
 chat). One set in a chat goes to the chat of the person it's for, or of whoever set it when it's for "whoever's
 there" (a timer), if they have one; otherwise it's aloud at home. Messages that wait until someone's back are always
-aloud: they wait for a voice. The assistant at home only ever sees `voice` reminders (`Reminders.due` and the clock
+aloud: they wait for a voice, or a phone coming home. With [who's home](presence.md), a reminder due aloud for
+someone who's out, and who has a chat, goes to their chat instead, once (`Reminders.to_chat`); one their chat turns
+down is said aloud and stays aloud. The assistant at home only ever sees `voice` reminders (`Reminders.due` and the clock
 filter by channel), so it never stops listening for one it won't say. **If Telegram isn't running** (with
 `[telegram]` off, or its process stopped, as after Telegram refused the token), reminders set there wait, and are
 posted late, with when they were due; `--check` and the Status page say how many are waiting. A reminder whose chat

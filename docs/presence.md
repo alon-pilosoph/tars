@@ -68,9 +68,10 @@ access-point mode, with the same network names and password as the main one, and
 network.
 
 Neither router has an official API for this. Each is signed into the way its own web page does it, worked out from
-the page's own scripts, byte for byte for the Technicolor's SRP ([`tests/presence_data/srp_vectors.json`](../tests/presence_data/srp_vectors.json)
-are checked against the gateway's script, run in a browser). A Homeware gateway locks sign-in out for a while after
-wrong passwords, so a refused password isn't tried again for 15 minutes.
+the page's own scripts, byte for byte for the Technicolor's SRP: the
+[test vectors](../tests/presence_data/srp_vectors.json) were checked against the gateway's own script, run in a
+browser. A Homeware gateway locks sign-in out for a while after wrong passwords, so a refused password isn't tried
+again for 15 minutes.
 
 Another kind of router is a class in [`routers.py`](../src/voice_assistant/routers.py) with `_sign_in` and `_read`,
 returning the devices connected now.
@@ -105,7 +106,10 @@ A timer, or one for whoever's there, rings at home as ever, and someone not know
 
 **Messages waiting until someone's back** are said a minute after their phone comes home (the phone joins the Wi-Fi a
 little before they're through the door), aloud and waiting for "got it" like any reminder; or as soon as they speak to
-TARS, if that's first. Someone TARS knows only by their phone, with no voiceprint yet, can be left one too.
+TARS, if that's first. Someone TARS knows only by their phone, with no voiceprint yet, can be left one too, by voice,
+in a chat or on the web UI, as long as a router can be asked. One left for someone who's home already is said in a
+minute: waiting for them to go out and come back would be waiting for nothing. A reminder Telegram can't post (their
+chat blocked the bot) is said aloud and stays aloud, rather than going back and forth.
 
 ## Design
 
@@ -118,6 +122,22 @@ opened would be the same again.
 out) and so would Google's or Apple's location sharing; the routers know only home or not, which is what TARS needs,
 and they're already there. Nothing leaves the house.
 
-**Next**: a door sensor (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) to tell a phone that went
-to sleep from someone who left: the door opening, then a phone dropping off, is someone leaving now, not ten minutes
-later. And the Nuki lock's own events, which say who unlocked it, so TARS can greet them by name as they come in.
+**Detected, not how.** The rules (`Tracker`) take the set of people detected in a round, not router answers, so a
+door or a lock can feed them as well as a phone. Minutes are counted on a monotonic clock: a Pi has no clock of its own
+while it's off, and its time of day jumps when it sets itself after a boot. After a restart, the rules start from what
+was last written, if it's fresh, so someone out when TARS restarted who comes home soon after has come home.
+
+**A router that can't be read is a router that didn't answer.** Whatever goes wrong (no answer, a refused password, a
+page this doesn't understand, even a bug in one router's code) is that router not answering for the round: nobody is
+marked out for it, and the watching goes on. A device page with no devices on it at all is one of those, never
+"nobody is home": a real one always lists some.
+
+## Not yet
+
+- **A door sensor** (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) to tell a phone that went to
+  sleep from someone who left: the door opening, then a phone dropping off, is someone leaving now, not ten minutes
+  later.
+- **The Nuki lock's own events**, which say who unlocked it, so TARS can greet them by name as they come in, and say
+  what's waiting for them.
+- **Phones on a second access point show on the main router as wired devices**, counted present while it gives them
+  an IP address. It's been seen to clear that for a device that's gone, but not yet watched as someone leaves.
