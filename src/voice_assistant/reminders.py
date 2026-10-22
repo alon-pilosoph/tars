@@ -291,6 +291,26 @@ class Reminders:
             (VOICE, reminder_id, *ACTIVE),
         )
 
+    def to_chat(self, reminder_id: int) -> bool:
+        """One due aloud whose person is out (presence.py): posted to their Telegram chat instead, once, like one set
+        there. The Telegram service posts it, and says it aloud after all if it can't."""
+        return self._change(
+            f"UPDATE reminders SET channel=? WHERE id=? AND channel=? AND status IN ({_marks(ACTIVE)})",
+            (TELEGRAM, reminder_id, VOICE, *ACTIVE),
+        )
+
+    def arrived(self, name: str, at: float) -> list[int]:
+        """`name` just came home (presence.py): their messages waiting until they're back are due at `at`, said
+        aloud like any reminder, unless they're heard first. The ids scheduled."""
+        held = self.held_for(name)
+        with self.store.transaction() as db:
+            for r in held:
+                db.execute(
+                    "UPDATE reminders SET next_at=? WHERE id=? AND status=? AND due IS NULL AND next_at IS NULL",
+                    (at, r["id"], SCHEDULED),
+                )
+        return [r["id"] for r in held if r["next_at"] is None]
+
     def ack(self, reminder_id: int, by: str | None, via: str, now: float | None = None) -> bool:
         """One that was said and is waiting for it; False otherwise (not said yet, acknowledged already, cancelled,
         missed). A reply's <ack N> comes here, so a number the model gets wrong can't end one still to come."""
@@ -523,8 +543,23 @@ class ReminderTools:
     """The brain's side of reminders: what's set now, for its instructions, and its tools, which check what the model
     asks for and say what's wrong so it can try again."""
 
-    def __init__(self, reminders: Reminders, voices: Callable[[], Collection[str]] = lambda: ()):
-        self.reminders, self._voices = reminders, voices
+    def __init__(
+        self,
+        reminders: Reminders,
+        voices: Callable[[], Collection[str]] = lambda: (),
+        phones: Callable[[], Collection[str]] = lambda: (),
+    ):
+        """`voices`: the names TARS knows by voice; `phones`: those it knows by their phone ([presence] people). A
+        message can wait until either one is back."""
+        self.reminders, self._voices, self._phones = reminders, voices, phones
+
+    def _known(self) -> list[str]:
+        return [*self._voices(), *self._phones()]
+
+    def _back(self, who: str) -> str:
+        """When a message waiting for `who` is said."""
+        phone = person_key(who) in {person_key(p) for p in self._phones()}
+        return f"when {name(who)} is next heard{' or comes home' * phone}"
 
     def note(self, now: float | None = None) -> str:
         """The active reminders, and those just posted to a chat, by number, for the instructions; "" if there are
@@ -538,7 +573,7 @@ class ReminderTools:
         for r in posted:
             rows.append(f'[{r["id"]}] posted to {name(r["for_name"] or r["from_name"])}\'s Telegram chat: "{line(r)}"')
         for r in active:
-            at = when(r["next_at"], now) if r["next_at"] is not None else f"when {name(r['for_name'])} is next heard"
+            at = when(r["next_at"], now) if r["next_at"] is not None else self._back(r["for_name"])
             state = (
                 f"said {r['tries']} time{'s' * (r['tries'] != 1)}, waiting for someone to acknowledge it"
                 if r["status"] == WAITING
@@ -601,9 +636,9 @@ class ReminderTools:
             due=due,
             needs_ack=bool(args.get("wait_for_ack", True)),
         )
-        new = self.reminders.check(new, self._voices(), now)
+        new = self.reminders.check(new, self._known(), now)
         said = line({**new.__dict__, "from_name": None})
-        at = when(due, now) if due is not None else f"when {name(new.for_name)} is next heard"
+        at = when(due, now) if due is not None else self._back(new.for_name)
         aloud = bool(args.get("aloud"))
         where = " aloud at home" if aloud else ""
         if self._already_set(new, pending):
@@ -639,7 +674,7 @@ class ReminderTools:
             self.reminders.add(
                 new,
                 via,
-                voices=self._voices(),
+                voices=self._known(),
                 conversation_id=conversation_id,
                 now=change.asked_at or None,
                 channel=channel,

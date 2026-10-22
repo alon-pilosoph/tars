@@ -124,6 +124,13 @@ TABLES = {
     key TEXT PRIMARY KEY,            -- "id": this database's own, which a backup marks its bucket with (backup.py)
     value TEXT NOT NULL
 )""",
+    "presence": """CREATE TABLE presence (
+    person TEXT PRIMARY KEY,         -- as [presence] people names them
+    home INTEGER,                    -- 1 home, 0 out; NULL until the routers have said (presence.py)
+    since REAL,                      -- when they came home or went out, as far as the routers can tell
+    last_seen REAL,                  -- when a router last saw their phone
+    updated REAL NOT NULL            -- when the assistant last wrote this row
+)""",
 }
 INDEXES = [
     "CREATE INDEX events_ts ON events(ts)",
@@ -175,6 +182,12 @@ MIGRATIONS = [
     fetched REAL
 )""",
         "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    ],
+    [
+        (
+            "CREATE TABLE presence (person TEXT PRIMARY KEY, home INTEGER, since REAL, last_seen REAL, "
+            "updated REAL NOT NULL)"
+        ),
     ],
 ]
 

@@ -223,6 +223,7 @@ def test_the_service_checks_skip_what_has_no_key(tmp_path):
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     checks = check.service_checks(cfg, tmp_path).listed()
     names = ["OpenAI", "Groq", "Cerebras", "Deepgram", "Cartesia", "Telegram", "Telegram reminders", "Home Assistant"]
+    names.append("Who's home")
     assert [name for name, _ in checks] == names
     assert all(c().status == SKIP for name, c in checks if name != "OpenAI")  # no key for them, or not used
 
@@ -236,6 +237,7 @@ def test_keys_that_cant_run_tars_are_one_failure_in_place_of_the_services(tmp_pa
         "Telegram",
         "Telegram reminders",
         "Home Assistant",
+        "Who's home",
     ]
     keys = services.keys()
     assert keys.status == FAIL and "DEEPGRAM_API_KEY or OPENAI_API_KEY" in keys.detail

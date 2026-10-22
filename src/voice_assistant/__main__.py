@@ -388,33 +388,85 @@ def main() -> None:
 
 def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
     """Reminders need the event log to keep them in, and the wake loop to say them: not with push-to-talk, which
-    waits on Enter instead. Waiting until someone's back needs speaker ID's voiceprints."""
+    waits on Enter instead. Waiting until someone's back needs their voiceprint, or their phone ([presence])."""
     if not (cfg.reminders.enabled and events) or push_to_talk or cfg.wake.mode == "push-to-talk":
         return None
     from .reminders import Reminders, ReminderTools
 
     reminders = Reminders.from_config(events.store, cfg.reminders)
-    return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list)
+    return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list, phones=phones(cfg, events))
 
 
-def make_home(cfg: Config, root: Path, announce=None):
-    """The devices in the house, as [home] lists them (a HomeTools), or None. Like every service, optional: one that
-    can't be made (no token, a missing extra, a plugin's own problem) is left out with a line saying why.
-    `announce(line)`: how TARS says something on its own, later (how a task on the TV went)."""
-    if not cfg.home.devices:
+def phones(cfg: Config, events):
+    """Who TARS knows by their phone ([presence] people): a message can wait until they're home."""
+    people = list(cfg.presence.people) if cfg.presence.enabled and events else []
+    return lambda: people
+
+
+def make_presence_board(cfg: Config, events):
+    """Who's home, as the assistant keeps it in the event log ([presence]), for any process to read; None if off."""
+    if not (cfg.presence.enabled and events):
         return None
-    from .androidtv import make_tv_agent
-    from .home import Context, build
+    from .presence import Board, People
+
+    return Board(events.store, People(cfg.presence.people))
+
+
+def start_presence(cfg: Config, root: Path, events, reminders=None) -> None:
+    """The assistant's: asks the routers from now on. A message waiting for someone is said soon after they're home."""
+    if not (cfg.presence.enabled and events):
+        if cfg.presence.enabled:
+            print("(presence: off: it's kept in the event log, so it needs [learning] log_events)")
+        return
+    from .presence import arrivals, make_watcher
 
     env = root / ".env"
-    context = Context(root, lambda name: dotenv_values(env).get(name) or None, announce=announce)
-    context.tv_agent = functools.partial(make_tv_agent, cfg, env, announce) if announce else None
-    built = build(cfg.home, context)
-    for name, why in built.unavailable.items():
-        print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
-    if built.tools:
-        print(f"(home: the house has {', '.join(built.tools.devices)})")
-    return built.tools
+    on_change = arrivals(reminders.reminders) if reminders else None
+    watcher, missing = make_watcher(
+        cfg.presence, events.store, lambda name: dotenv_values(env).get(name) or None, on_change
+    )
+    for line in missing:
+        print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
+    if watcher:
+        print(f"(presence: asking {len(watcher.routers)} router(s) every {cfg.presence.every_s:.0f} s)")
+        watcher.start()
+
+
+def chat_routing(cfg: Config, board, reminders):
+    """With [presence] and [telegram]: a reminder due aloud for someone out goes to their chat instead."""
+    if not (board and reminders and cfg.telegram.enabled and cfg.telegram.people):
+        return None
+    from .presence import ChatRouting
+
+    return ChatRouting(board, reminders.reminders, cfg.telegram.people)
+
+
+def make_home(cfg: Config, root: Path, announce=None, presence=None, devices: bool = True):
+    """The devices in the house, as [home] lists them, and "who's home" with a presence board (a HomeTools), or
+    None. Like every service, optional: one that can't be made (no token, a missing extra, a plugin's own problem) is
+    left out with a line saying why. `announce(line)`: how TARS says something on its own, later (how a task on the TV
+    went). `devices`: False for "who's home" alone (in a chat, which works nothing)."""
+    from .home import Context, HomeTools, build
+
+    made = {}
+    if devices and cfg.home.devices:
+        from .androidtv import make_tv_agent
+
+        env = root / ".env"
+        context = Context(root, lambda name: dotenv_values(env).get(name) or None, announce=announce)
+        context.tv_agent = functools.partial(make_tv_agent, cfg, env, announce) if announce else None
+        built = build(cfg.home, context)
+        for name, why in built.unavailable.items():
+            print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
+        made = dict(built.tools.devices) if built.tools else {}
+    if presence:
+        from .presence import DEVICE, WhoIsHome
+
+        made[DEVICE] = WhoIsHome(presence, cfg.presence.away_after_min)
+    if not made:
+        return None
+    print(f"(home: the house has {', '.join(made)})")
+    return HomeTools(cfg.home, made)
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None):
@@ -522,7 +574,11 @@ def telegram(cfg: Config, root: Path) -> None:
     if cfg.reminders.enabled and events:
         voiceprints = root / cfg.speaker.voiceprints
         names = (lambda: voiceprint_names(voiceprints)) if cfg.speaker.enabled else list
-        tools = ReminderTools(Reminders.from_config(events.store, cfg.reminders), voices=names)
+        tools = ReminderTools(
+            Reminders.from_config(events.store, cfg.reminders), voices=names, phones=phones(cfg, events)
+        )
+    # A chat works nothing in the house, but can ask who's home.
+    home = make_home(cfg, root, presence=make_presence_board(cfg, events), devices=False)
     client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
@@ -530,7 +586,7 @@ def telegram(cfg: Config, root: Path) -> None:
     TelegramTars(
         bot,
         cfg.telegram.people,
-        lambda: make_brain(client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS),
+        lambda: make_brain(client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS, home=home),
         ConversationLog(events) if events else None,
         tools,
         memory_s=llm.memory_minutes * 60,
@@ -664,7 +720,8 @@ def typed(cfg: Config, root: Path) -> None:
                 if made[0].say(line, keep=False, wait_s=UNPROMPTED_WAIT_S):
                     made[0].brain.remember_said(line)
 
-    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce))
+    board = make_presence_board(cfg, make_event_log(cfg, root)) if cfg.presence.enabled else None
+    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce, presence=board))
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
@@ -695,8 +752,10 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     start_heartbeat(events, "assistant", root)
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
+    start_presence(cfg, root, events, reminders)
+    board = make_presence_board(cfg, events)
     announcements = Announcements()
-    home = make_home(cfg, root, announcements.add)
+    home = make_home(cfg, root, announcements.add, presence=board)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home)
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
@@ -725,6 +784,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             reminders=reminders,
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
+            route=chat_routing(cfg, board, reminders),
         )
         assistant.run_forever(
             idle_message,

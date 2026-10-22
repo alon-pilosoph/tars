@@ -74,6 +74,7 @@ class ServiceChecks:
     telegram: Check
     telegram_reminders: Check
     home_assistant: Check
+    presence: Check  # how the routers last answered the assistant: the Status page never signs into them itself
 
     def listed(self) -> list[tuple[str, Check]]:
         """The web UI's Status page's: the paid services, or the keys' failure in their place, then the others."""
@@ -82,6 +83,7 @@ class ServiceChecks:
             ("Telegram", self.telegram),
             ("Telegram reminders", self.telegram_reminders),
             ("Home Assistant", self.home_assistant),
+            ("Who's home", self.presence),
         ]
 
 
@@ -488,6 +490,66 @@ def house(built, hass_ok: bool) -> list[Result]:
     return results
 
 
+PRESENCE = "Who's home"
+ROUTER_FIX = "check its address, user, and its password in .env (the name under secret); docs/presence.md"
+
+
+def routers_now(
+    cfg: Config, secret: Callable[[str], str | None], make_router: Callable | None = None
+) -> Result | list[Result]:
+    """--check's: each router in [[presence.routers]], signed into now, and whose phone it sees."""
+    from .presence import People
+    from .routers import RouterError, make
+
+    if not cfg.presence.enabled:
+        return Result(PRESENCE, SKIP, "off ([presence] enabled)")
+    make_router = make_router or make
+    people, results = People(cfg.presence.people), []
+    for spec in cfg.presence.routers:
+        where = f"Router {spec['address']}"
+        password = secret(spec["secret"])
+        if not password:
+            results.append(Result(where, FAIL, f"no {spec['secret']} in .env", ROUTER_FIX))
+            continue
+        router = make_router(spec, password)
+        try:
+            seen = router.connected()
+        except RouterError as e:
+            results.append(Result(where, FAIL, str(e), ROUTER_FIX))
+            continue
+        finally:
+            router.close()
+        here = sorted(people.names[p] for p in people.whose(seen))
+        phones = f"; sees the phone of {', '.join(here)}" if here else "; sees nobody's phone just now"
+        results.append(Result(where, OK, f"{len(seen)} devices connected{phones}"))
+    return results
+
+
+def routers_last(cfg: Config, folder: Path, now: float | None = None) -> Result | list[Result]:
+    """The Status page's: how each router last answered the assistant, from the event log."""
+    from .presence import STALE_AFTER_S, Board, People
+    from .store import Store
+
+    if not cfg.presence.enabled:
+        return Result(PRESENCE, SKIP, "off ([presence] enabled)")
+    if not cfg.learning.log_events:
+        return Result(PRESENCE, FAIL, "it's kept in the event log", "set [learning] log_events = true")
+    now = time.time() if now is None else now
+    board = Board(Store(folder), People(cfg.presence.people), clock=lambda: now)
+    by_address = {a.get("address"): a for a in board.routers().values()}
+    results = []
+    for spec in cfg.presence.routers:
+        where, a = f"Router {spec['address']}", by_address.get(spec["address"], {})
+        if a.get("error"):
+            results.append(Result(where, FAIL, a["error"], ROUTER_FIX))
+        elif a.get("ok_at") is None or now - a["ok_at"] > STALE_AFTER_S:
+            results.append(Result(where, WARN, "not asked lately", "is the assistant running? (it asks the routers)"))
+        else:
+            results.append(Result(where, OK, f"{a.get('connected', 0)} devices connected, {_ago(now - a['ok_at'])}"))
+    results.append(Result(PRESENCE, OK, board.summary()))
+    return results
+
+
 def env_value(env: Path, name: str) -> str | None:
     return dotenv_values(env).get(name) or None
 
@@ -591,6 +653,7 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
         lambda: telegram(cfg, env_value(env, TELEGRAM_KEY), bot_me),
         lambda: telegram_waiting(cfg, root / cfg.learning.folder),
         hass,
+        lambda: routers_last(cfg, root / cfg.learning.folder),
     )
 
 
@@ -649,6 +712,7 @@ def check_all(cfg: Config, root: Path) -> int:
 
     services = service_checks(asked, root)
     hass_check = functools.cache(services.home_assistant)  # asked once: the house's devices want to know too
+    secret = functools.partial(env_value, env)
 
     def devices():
         if not cfg.home.devices:
@@ -708,6 +772,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Web UI", lambda: web(http_status, web_port())),
         ("Home Assistant", hass_check),
         ("The house", devices),
+        (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),

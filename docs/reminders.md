@@ -16,7 +16,7 @@ timers or reminders (`CANT_RULES` in `llm.py`) instead of pretending it did.
 | **Timer** | "set a pasta timer for twelve minutes" | "Your pasta timer is done.", then it rings until turned off |
 | **Reminder** | "remind me to call the bank at nine" | "Alon, a reminder: call the bank." |
 | **Message** | "tell Stacey dinner's at eight, at seven thirty" | "Stacey, a message from Alon: dinner's at eight." |
-| **Message when they're back** | "tell Stacey the plumber called when she's back" | the next time TARS recognizes Stacey's voice, after answering her |
+| **Message when they're back** | "tell Stacey the plumber called when she's back" | the next time TARS recognizes Stacey's voice, after answering her, or a minute after her phone comes home ([who's home](presence.md)) |
 
 By voice, also: "what reminders do I have?", "cancel the pasta timer", "remind me again in ten minutes" (snooze; a
 missed one can be snoozed too).
@@ -26,7 +26,12 @@ missed one can be snoozed too).
 A reminder or message can be for anyone, by name. TARS starts with the name ("Stacey, …"), so it works for people
 TARS has no voiceprint for. A message says who it's from: the voice that set it, or the name typed on the web UI.
 Without a name, it's for whoever is there. **Waiting until they're back** needs that person's voiceprint (a named
-voice); without one, TARS asks for a time instead, and the web UI won't set it.
+voice) or their phone ([who's home](presence.md)); without either, TARS asks for a time instead, and the web UI won't
+set it.
+
+With [who's home](presence.md) and [Telegram](telegram.md), a reminder or message due aloud for someone who's out is
+posted to their chat instead, once, rather than said to an empty room. Someone not known to be out hears theirs at
+home, and a timer, or one for whoever's there, rings at home as ever.
 
 ### Acknowledging
 
@@ -132,7 +137,9 @@ straight away. It turns down the past and anything over a year away, so the mode
 
 **Waiting until they're back** hooks into the conversation: after TARS answers someone whose voice matches (speaker
 ID's confident match), any message waiting for them is said ("By the way, Stacey, a message from Alon: …"), and the
-follow-up listening that comes next is its acknowledgement window.
+follow-up listening that comes next is its acknowledgement window. With [who's home](presence.md), their phone
+coming home gives the message a time too, a minute later (`Reminders.arrived`), so it's said aloud like any reminder
+if they don't speak to TARS first.
 
 ## Settings
 

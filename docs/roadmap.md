@@ -19,8 +19,8 @@ acknowledgements, nothing said over a conversation, and one set from a phone sai
 
 Built since, also alongside step 1: [the house](home.md) (Home Assistant's devices, an Android TV box and the agent
 that works it, plugins for the rest), [TARS on Telegram](telegram.md) (chats and voice messages, with reminders and
-what TARS sends on a phone), the web UI's [Status page](web-ui.md#the-status-page), and the
-[backup to S3](backup.md). The week checks them too (below). What's left for each is in its own doc: the house's
+what TARS sends on a phone), the web UI's [Status page](web-ui.md#the-status-page), the
+[backup to S3](backup.md), and [who's home](presence.md) (phones on the Wi-Fi, from the routers). The week checks them too (below). What's left for each is in its own doc: the house's
 "Not yet" under [things to know](home.md#things-to-know), [Telegram's](telegram.md#not-yet), and the web UI's
 [limitations](web-ui.md#limitations).
 

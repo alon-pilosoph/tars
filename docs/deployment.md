@@ -19,6 +19,9 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
 - **Your own S3 bucket,** with `[backup]` on: a copy of everything TARS keeps, encrypted at rest, every 15 minutes
   ([backing up to S3](backup.md)).
 
+With `[presence]` on, TARS also signs into the home network's routers every 30 seconds, on the home network, to see
+whose phone is connected ([who's home](presence.md)); that never leaves the house either.
+
 Without the backup, the event log, the audio kept for learning, voiceprints and the web UI never leave it
 ([what leaves the machine](architecture.md#what-leaves-the-machine)).
 
@@ -134,7 +137,7 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   Cartesia and Telegram (each with how long it took, Deepgram on the servers `deepgram_host` names, Telegram's bot
   token when `[telegram]` is on, and any without a key or not in use skipped), the voice (it says "TARS is ready."),
   the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant and each device in the
-  house (with `[home]` devices), the backup (the bucket, and how the last pass went) and the systemd services. Each
+  house (with `[home]` devices), each router (with `[presence]`: signed into, and whose phone it sees), the backup (the bucket, and how the last pass went) and the systemd services. Each
   problem comes with what to do about it, and it exits 1 if anything is broken. It never hangs on a device: one that
   doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same when
   it's opened or refreshed: whether each process is running, the services with their own status pages, Home
