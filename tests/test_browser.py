@@ -148,8 +148,13 @@ class FakeLocator:
     def count(self):
         return 1 if self.ref in self.page.elements else 0
 
+    def is_visible(self):
+        return not self.page.elements[self.ref].get("hidden")
+
     def click(self, timeout=None):
         self.page.done.append(("click", self.ref))
+        if opens := self.page.elements[self.ref].get("opens"):
+            self.page.shape = opens
 
     def fill(self, text, timeout=None):
         self.page.done.append(("fill", self.ref, text))
@@ -173,6 +178,10 @@ class FakePage:
     def __init__(self, elements):
         self.elements, self.done = elements, []
         self.viewport_size = {"width": 1200, "height": 700}
+        self.shape = ""
+
+    def wait_for_timeout(self, ms):
+        return None
 
     def on(self, event, handler):
         return None
@@ -184,7 +193,7 @@ class FakePage:
         return None
 
     def evaluate(self, script, arg=None):
-        return 700
+        return self.shape if "aria-expanded" in script else 700
 
     def aria_snapshot(self, **kwargs):
         return '- button "Place order" [ref=e2] [box=0,0,100,40]'
@@ -215,6 +224,15 @@ def test_enter_that_would_submit_a_commit_is_refused():
     assert ("press", "e1", "Enter") not in page.done
     session.act([{"type": "e3", "text": "athens", "submit": True}])
     assert ("press", "e3", "Enter") in page.done
+
+
+def test_a_batch_stops_when_a_step_opens_something_and_a_hidden_target_fails_fast():
+    session, page = session_on({"e1": {"opens": "listbox"}, "e2": {}, "e3": {"hidden": True}})
+    outcome = session.act([{"click": "e1"}, {"click": "e2"}])
+    assert page.done == [("click", "e1")] and not outcome.failed
+    assert "1 step(s) after it weren't done" in str(outcome)
+    outcome = session.act([{"click": "e3"}])
+    assert outcome.failed and "hidden" in str(outcome) and ("click", "e3") not in page.done
 
 
 def test_a_ref_that_isnt_on_the_page_fails_with_why():

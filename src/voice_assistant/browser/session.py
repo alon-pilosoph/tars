@@ -41,6 +41,11 @@ MARKS_JS = """(marks) => {
     document.documentElement.appendChild(m);
   }
 }"""
+# Which dialogs, suggestion lists and menus are open, as a signature.
+SHAPE_JS = """() => [...document.querySelectorAll(
+    '[role=dialog], [role=alertdialog], dialog[open], [role=listbox], [role=menu], [aria-expanded=true]')]
+  .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2; })
+  .map((e) => (e.getAttribute('role') || e.tagName) + (e.getAttribute('aria-label') || '')).join(',')"""
 UNMARK_JS = "() => document.querySelectorAll('.tars-mark').forEach((m) => m.remove())"
 
 # What Enter would send, from the field it's pressed in: its form's submit button, as the gate reads labels.
@@ -157,7 +162,8 @@ class Session:
         outcome = Outcome()
         before = (self.page.url, [ln.text for ln in self.current.lines] if self.current else [])
         url = self.page.url
-        for step in steps:
+        for i, step in enumerate(steps):
+            shape = self._shape()
             try:
                 said = self._step(step)
             except Refused as e:
@@ -176,6 +182,14 @@ class Session:
             url = self.page.url
             if self._follow_new_tab():
                 outcome.said.append(f"it opened a new tab, now in front: {self.page.url}")
+                shape = ""
+            rest = len(steps) - i - 1
+            if rest and self._shape() != shape:  # what the next steps were planned on has gone or moved
+                outcome.said.append(
+                    f"that opened or changed something (a new page, a dialog, a list of suggestions), so the "
+                    f"{rest} step(s) after it weren't done: look at the page as it is now"
+                )
+                break
         outcome.said += self.dialogs
         self.dialogs.clear()
         after = self.look()
@@ -252,13 +266,26 @@ class Session:
             return f"waited {seconds:g}s"
         raise ValueError(f"unknown step {json.dumps(step, ensure_ascii=False)}")
 
+    def _shape(self) -> str:
+        """What a batch's later steps were planned on: the address, and which dialogs, lists of suggestions and menus
+        are open. When it changes, the refs the model picked may be hidden, covered or gone."""
+        try:
+            return self.page.url + "|" + str(self.page.evaluate(SHAPE_JS))
+        except PlaywrightError:
+            return ""
+
     def _target(self, ref: str):
         if not REF.fullmatch(ref):
             raise ValueError(f"{ref!r} isn't a ref from the page")
         target = self.page.locator(f"aria-ref={ref}")
         if target.count() == 0:
             raise ValueError(f"{ref} isn't on the page any more: look at the page as it is now")
-        return target.first
+        target = target.first
+        if not target.is_visible():  # once more after a moment: it may be sliding in
+            self.page.wait_for_timeout(600)
+            if not target.is_visible():
+                raise ValueError(f"{ref} is there but hidden now (something closed or moved): look at the page")
+        return target
 
     def _label(self, ref: str, target) -> str:
         """What the element says, for the gate: its name in the view, else its own text."""

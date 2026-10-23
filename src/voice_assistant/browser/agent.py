@@ -49,6 +49,9 @@ search boxes that only suggest as you type)
 {{"scroll": "e88"}} to bring e88 into view
 - {{"hover": "e5"}}, {{"goto": "https://..."}}, {{"back": true}}, {{"wait": 2}}
 
+A step that opens something (a new page, a dialog, a list of suggestions) ends the batch, and you see what it \
+opened: in a field that suggests as you type, type, then pick the suggestion on the next turn.
+
 Work quickly:
 - Go straight to an address when you know it, including a site's search or results address with the query in it \
 (google.com/maps/dir/..., a store's search page): it's quicker than clicking your way there.
