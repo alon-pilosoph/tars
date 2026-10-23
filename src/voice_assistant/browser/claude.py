@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .agent import RULES, header_for
+from .chrome import close as close_chrome
 
 MODEL = "claude-opus-5-5"
 SERVER = "tars-browser"
@@ -102,6 +103,7 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
     except subprocess.TimeoutExpired as e:
         stream, error = (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or ""), "timed out"
     seconds = time.perf_counter() - started
+    close_chrome()  # Claude Code stops its MCP server without letting it shut the browser
     trace_to.with_suffix(".stream.jsonl").write_text(stream)  # every message and call, as Claude Code streamed them
     final = next((m for m in map(_json, reversed(stream.splitlines())) if m.get("type") == "result"), {})
     events = [_json(line) for line in trace_to.read_text().split("\n") if line] if trace_to.exists() else []

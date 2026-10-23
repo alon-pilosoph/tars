@@ -598,6 +598,7 @@ def test_claude_code_gets_only_tars_browser_and_fenced_notes(tmp_path, monkeypat
         return types.SimpleNamespace(stdout='{"type": "result", "usage": {}, "result": "ok"}', stderr="", returncode=0)
 
     monkeypatch.setattr(claude.subprocess, "run", fake_run)
+    monkeypatch.setattr(claude, "close_chrome", lambda: None)
 
     def flag(command, name):
         i = command.index(name)
