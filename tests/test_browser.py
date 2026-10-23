@@ -507,3 +507,21 @@ def test_a_run_that_may_have_filled_a_basket_is_tidied():
     assert _filled([act("ok: clicked e9 'Order again'")])
     assert _filled([act("ok: clicked e3 'הוסף לסל'")])
     assert not _filled([act("ok: clicked e2 'Search'"), {"call": "find", "said": "Add to cart"}])
+
+
+def test_a_tidying_run_is_told_what_the_run_clicked():
+    from voice_assistant.browser.run import tidy_goal
+
+    turns = [
+        {
+            "call": "act",
+            "url": "https://wolt.com/x",
+            "said": "ok: clicked e5 'Pizza Har Sinai'\nok: clicked e9 "
+            + json.dumps("Add to order ₪66.00", ensure_ascii=False),
+        },
+        {"call": "act", "url": "https://wolt.com/x", "said": "ok: clicked the text 'Tel Aviv'"},
+        {"call": "find", "url": "https://wolt.com/x", "said": "clicked e1 'not a click'"},
+    ]
+    goal = tidy_goal(turns)
+    assert "wolt.com" in goal and "'Pizza Har Sinai'; 'Add to order ₪66.00'; 'Tel Aviv'" in goal
+    assert "not a click" not in goal

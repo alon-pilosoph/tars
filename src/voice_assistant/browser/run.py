@@ -10,15 +10,16 @@ from playwright.sync_api import sync_playwright
 from ..check import env_value
 from .agent import Agent, Approver, Settings
 from .chrome import PORT, PROFILE, own_chrome
-from .notes import Notes
+from .notes import Notes, site
 from .session import Session
 
 ROOT = Path(__file__).resolve().parents[3]
 TIDY = (
-    "That was a dry run, and it's over: now undo it. What you yourself put in the basket or cart during this task "
-    "(your steps above show what you added) is yours to take out, so take it out now, and nothing else: leave "
-    "anything that was there before you started. Then call done saying what you took out."
+    "Undo a test run on {site}. It clicked these, in this order: {clicks}. Whatever those put in the basket or cart "
+    "(which items, how many), take out again, so the basket is as it was before the run; leave anything else in it. "
+    "Then say what you took out, and what's left."
 )
+CLICKED = re.compile(r"clicked (?:(?:f\d+)?e\d+ |the text )(['\"])(.+?)\1")
 
 
 FILLS = re.compile(r"\b(add|order again|reorder|cart|basket|bag)\b|הוסף|הוספה|לסל|לעגלה", re.IGNORECASE)
@@ -27,6 +28,21 @@ FILLS = re.compile(r"\b(add|order again|reorder|cart|basket|bag)\b|הוסף|הו
 def _filled(turns: list[dict[str, Any]]) -> bool:
     """Whether a run clicked something that may have put things in a basket ("Add to order", "Order again")."""
     return any(t["call"] == "act" and FILLS.search(str(t.get("said", ""))) for t in turns)
+
+
+def tidy_goal(turns: list[dict[str, Any]]) -> str:
+    """What a tidying run is asked: the run's site, and the labels of everything it clicked, for it to work out
+    what went into the basket (a fresh run, told in so many words, does it; one asked to undo itself hesitates)."""
+    clicks = [m.group(2) for t in turns if t["call"] == "act" for m in CLICKED.finditer(str(t.get("said", "")))]
+    where = site(next((t["url"] for t in reversed(turns) if t.get("url")), "")) or "the site"
+    return TIDY.format(site=where, clicks="; ".join(f"'{c}'" for c in clicks[-30:]) or "(nothing)")
+
+
+class _NoOne:
+    """The person, for a tidying run: it never commits, so any approval it asks for is a no."""
+
+    def approve(self, draft: str, picture: bytes | None = None) -> bool:
+        return False
 
 
 def client(env: Path = ROOT / ".env"):
@@ -73,8 +89,10 @@ def run_task(
                 agent._log({"event": "error", "error": f"learning: {type(e).__name__}: {e}"})
         tidied = None
         if tidy and (result.commits_asked or _filled(agent.turns_done)):
+            agent._log({"event": "follow_up", "request": "tidy"})
+            tidier = Agent(model, session, _NoOne(), Settings(model=settings.model, turns=12), trace=trace_to)
             try:
-                tidied = agent.follow_up(TIDY, turns=10)
+                tidied = tidier.run(tidy_goal(agent.turns_done))
             except Exception as e:  # noqa: BLE001 - a basket left as it is is said so, not raised
                 agent._log({"event": "error", "error": f"tidying: {type(e).__name__}: {e}"})
     return {
