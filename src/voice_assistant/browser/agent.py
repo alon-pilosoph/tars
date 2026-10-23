@@ -66,6 +66,9 @@ what's selected on a calendar, a layout), and to check before committing. You al
 changes nothing: look at it before trying again, and don't repeat what didn't work.
 - If something you need isn't on this site, or the site blocks you, say so in done rather than going round.
 
+Do only what the goal needs: a question is answered by reading, without adding to a basket, changing a setting or \
+filling a form on the way.
+
 Choosing: when the goal says what to choose by (well rated, cheapest, near, direct), compare what the page shows \
 (sort or filter when the site can) before you pick, and say in done what you chose and why.
 
