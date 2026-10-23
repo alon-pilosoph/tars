@@ -1,5 +1,6 @@
 """One task, start to end: TARS's Chrome started, the agent run in it, Chrome shut."""
 
+import re
 import traceback
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,14 @@ TIDY = (
     "That was a dry run, and it's over. Take out of the basket or cart what you put in it during this task, and "
     "nothing else (leave anything that was there before), then call done saying what you took out."
 )
+
+
+FILLS = re.compile(r"\b(add|order again|reorder|cart|basket|bag)\b|הוסף|הוספה|לסל|לעגלה", re.IGNORECASE)
+
+
+def _filled(turns: list[dict[str, Any]]) -> bool:
+    """Whether a run clicked something that may have put things in a basket ("Add to order", "Order again")."""
+    return any(t["call"] == "act" and FILLS.search(str(t.get("said", ""))) for t in turns)
 
 
 def client(env: Path = ROOT / ".env"):
@@ -62,7 +71,7 @@ def run_task(
             except Exception as e:  # noqa: BLE001 - notes not written this time is fine
                 agent._log({"event": "error", "error": f"learning: {type(e).__name__}: {e}"})
         tidied = None
-        if tidy and result.commits_asked:
+        if tidy and (result.commits_asked or _filled(agent.turns_done)):
             try:
                 tidied = agent.follow_up(TIDY, turns=10)
             except Exception as e:  # noqa: BLE001 - a basket left as it is is said so, not raised
