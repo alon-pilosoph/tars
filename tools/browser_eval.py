@@ -139,10 +139,9 @@ NOTES = "use"  # --notes: use (read and write), write (learn but don't read: fir
 
 
 def run_new(task: dict, steps: int, folder: Path) -> dict:
+    from voice_assistant.browser.agent import Settings
     from voice_assistant.browser.notes import Notes
     from voice_assistant.browser.run import run_task
-
-    from voice_assistant.browser.agent import Settings
 
     settings = Settings(turns=steps, read_notes=NOTES == "use")
     return run_task(task["goal"], DryRun(), trace_to=folder / f"{task['id']}.jsonl", tidy=True, settings=settings,
@@ -156,8 +155,8 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=25, help="at most this many model turns a task")
     parser.add_argument("--cap", type=float, default=14.0, help="no task starts once all runs have spent this")
     parser.add_argument("--label", default="", help="added to the run's folder name")
-    parser.add_argument("--notes", choices=("use", "write", "off"), default="use",
-                        help="the new agent's site notes: read and write them, only write them, or neither")  # fmt: skip
+    notes_help = "the new agent's site notes: read and write them, only write them, or neither"
+    parser.add_argument("--notes", choices=("use", "write", "off"), default="use", help=notes_help)
     args = parser.parse_args()
     global NOTES
     NOTES = args.notes
