@@ -95,6 +95,14 @@ with no key, stops a service instead of restarting it every few seconds: `journa
 missing speakerphone, and plugging it in starts TARS again
 ([`deploy/99-tars-speakerphone.rules`](../deploy/99-tars-speakerphone.rules)).
 
+On the Pi, set `[audio] input_device` and `output_device` to the speakerphone's name in `config.local.toml`: the
+system's default output is the headphone jack. A speakerphone that only works at its own rate (the Anker PowerConf
+takes 48 kHz and nothing else, and on Linux nothing converts for it) is opened at that rate, and TARS converts to and
+from it. If the Pi doesn't see the speakerphone at all, `journalctl -k | grep -i -E "usb|over-current"` says why:
+over-current on all four ports at once is a damaged cable (try another, with a data line), and nothing at all is a
+cable that only charges. A speakerphone that's heard but silent (`--check` says "very quiet") may have its own mute
+on: the PowerConf's light is red then.
+
 By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service),

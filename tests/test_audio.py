@@ -1,5 +1,7 @@
-"""The audio devices, faked: a microphone that goes quiet, and the speaker's playback, refill and dead device."""
+"""The audio devices, faked: a microphone that goes quiet, the speaker's playback, refill and dead device, and devices
+that only work at their own rate."""
 
+import itertools
 import queue
 import threading
 import time
@@ -8,7 +10,24 @@ import numpy as np
 import pytest
 
 import voice_assistant.audio as audio_module
-from voice_assistant.audio import Microphone, MicrophoneError, NoDeviceError, Speaker, SpeakerError, find_device
+from voice_assistant.audio import (
+    BLOCK_SAMPLES,
+    SAMPLE_RATE,
+    Microphone,
+    MicrophoneError,
+    NoDeviceError,
+    Resampler,
+    Speaker,
+    SpeakerError,
+    device_rate,
+    find_device,
+)
+
+
+@pytest.fixture(autouse=True)
+def devices_take_any_rate(monkeypatch):
+    """No real device is asked what it takes: each takes whatever it's opened at, unless a test says otherwise."""
+    monkeypatch.setattr(audio_module, "device_rate", lambda device, kind, wanted: wanted)
 
 
 def test_dead_microphone_raises_instead_of_hanging(monkeypatch):
@@ -25,7 +44,7 @@ class FakeOutput:
     latency = 0.0
 
     def __init__(self, callback, **kw):
-        self.callback, self.played, self.running = callback, bytearray(), False
+        self.callback, self.played, self.running, self.opened = callback, bytearray(), False, kw
 
     def start(self):
         self.running = True
@@ -105,3 +124,106 @@ def test_no_device_to_open_says_plug_it_in(monkeypatch):
     monkeypatch.setattr(audio_module.sd, "query_devices", lambda: headphones_only)
     with pytest.raises(NoDeviceError, match="No input device matching 'PowerConf'"):
         find_device("PowerConf", "input")
+
+
+# Devices that only work at their own rate (the PowerConf: 48 kHz, nothing else, on Linux).
+
+
+def tone(rate: int, seconds: float, hz: float = 440.0) -> np.ndarray:
+    t = np.arange(int(rate * seconds)) / rate
+    return (8000 * np.sin(2 * np.pi * hz * t)).astype(np.int16)
+
+
+@pytest.mark.parametrize(("rate_in", "rate_out"), [(48_000, 16_000), (24_000, 48_000), (16_000, 48_000)])
+def test_resampling_in_blocks_is_scipys_resampling_of_the_whole(rate_in, rate_out):
+    from scipy.signal import resample_poly
+
+    audio = tone(rate_in, 0.5)
+    whole = Resampler(rate_in, rate_out)
+    once = np.concatenate([whole(audio), whole.flush()])
+    pieces = Resampler(rate_in, rate_out)
+    cuts = [0, 1, 97, 3840, 5000, len(audio)]
+    blocks = np.concatenate([pieces(audio[a:b]) for a, b in itertools.pairwise(cuts)] + [pieces.flush()])
+    assert np.array_equal(blocks, once)  # no seams where the blocks meet
+    expected = resample_poly(
+        audio.astype(np.float64), rate_out // np.gcd(rate_in, rate_out), rate_in // np.gcd(rate_in, rate_out)
+    )
+    lag = 10 * max(rate_in, rate_out) // np.gcd(rate_in, rate_out) // (rate_in // np.gcd(rate_in, rate_out))
+    assert np.abs(once[lag : lag + len(expected)] - np.rint(expected)).max() <= 1
+
+
+class FakeInput:
+    """An input device: the test hands it blocks, as the device's driver would."""
+
+    def __init__(self, callback, **kw):
+        self.callback, self.opened = callback, kw
+
+    def give(self, block: np.ndarray):
+        self.callback(block.tobytes(), len(block), None, None)
+
+    def start(self):
+        pass
+
+
+@pytest.mark.parametrize("rate", [48_000, 44_100])
+def test_a_microphone_at_its_own_rate_still_gives_80_ms_at_16_khz(monkeypatch, rate):
+    monkeypatch.setattr(audio_module, "device_rate", lambda device, kind, wanted: rate)
+    monkeypatch.setattr(audio_module.sd, "RawInputStream", FakeInput)
+    mic = Microphone(None)
+    assert mic._stream.opened["samplerate"] == rate
+    heard = tone(rate, 1.0)
+    step = mic._stream.opened["blocksize"]
+    assert step == round(BLOCK_SAMPLES * rate / SAMPLE_RATE)  # 80 ms of the device's own samples
+    for at in range(0, len(heard) - step + 1, step):
+        mic._stream.give(heard[at : at + step])
+    blocks = [mic.read() for _ in range(mic._queue.qsize())]
+    assert len(blocks) >= 11 and {len(b) for b in blocks} == {BLOCK_SAMPLES}
+    middle = np.concatenate(blocks)[1600:-1600]  # 440 Hz at full level, at 16 kHz
+    assert 7800 < np.abs(middle).max() < 8200  # the same level, give or take the filter's ripple
+    spectrum = np.abs(np.fft.rfft(middle))
+    assert abs(np.argmax(spectrum) * SAMPLE_RATE / len(middle) - 440) < 5
+
+
+def test_a_speaker_at_its_own_rate_plays_the_voice_converted(monkeypatch):
+    monkeypatch.setattr(audio_module, "device_rate", lambda device, kind, wanted: 48_000)
+    monkeypatch.setattr(audio_module.sd, "RawOutputStream", FakeOutput)
+    played_for_echo = []
+
+    class Echo:
+        def played(self, pcm, rate):
+            played_for_echo.append(rate)
+
+    voice = tone(24_000, 0.3, hz=1000)
+    with Speaker(None, 24_000, prebuffer_s=10.0, echo=Echo()) as speaker:
+        speaker.play_pcm_stream([voice.tobytes()], 24_000)
+        played = np.frombuffer(bytes(speaker._stream.played), np.int16)
+    assert speaker._stream.opened["samplerate"] == 48_000
+    assert set(played_for_echo) == {48_000}  # the canceller hears it at the rate it really played
+    voiced = played[np.flatnonzero(played)[0] : np.flatnonzero(played)[-1] + 1]
+    assert abs(len(voiced) - 2 * len(voice)) < 100  # twice the samples: the same 0.3 s
+    spectrum = np.abs(np.fft.rfft(voiced))
+    assert abs(np.argmax(spectrum) * 48_000 / len(voiced) - 1000) < 10
+
+
+def test_a_device_is_opened_at_the_rate_wanted_if_it_takes_it_and_its_own_if_not(monkeypatch):
+    monkeypatch.undo()  # the real device_rate, with sounddevice faked
+    takes = {48_000}
+
+    def check(device, samplerate, channels, dtype):
+        if samplerate not in takes:
+            raise audio_module.sd.PortAudioError("Invalid sample rate")
+
+    monkeypatch.setattr(audio_module.sd, "check_input_settings", check)
+    monkeypatch.setattr(audio_module.sd, "check_output_settings", check)
+    monkeypatch.setattr(audio_module.sd, "query_devices", lambda device, kind: {"default_samplerate": 48000.0})
+    assert device_rate(3, "input", 16_000) == 48_000
+    assert device_rate(3, "output", 48_000) == 48_000
+    takes.add(16_000)
+    assert device_rate(3, "input", 16_000) == 16_000
+
+    def nothing_there(device, kind):
+        raise audio_module.sd.PortAudioError("Error querying device -1")
+
+    takes.clear()
+    monkeypatch.setattr(audio_module.sd, "query_devices", nothing_there)
+    assert device_rate(None, "input", 16_000) == 16_000  # opening it then says what's wrong
