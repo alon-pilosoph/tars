@@ -21,6 +21,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
+from browser_order import places_order, request_order
 from browser_signin import Person, sign_in, tailscale_address
 from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PageTimeout
@@ -86,7 +87,9 @@ When the goal is reached, call done with the answer for them: short, plain, what
 you to sign in, call sign_in: TARS signs in with the login it keeps for that site (you never see it), asking the \
 person for one first if it has none, and for any code the site sends (it can take minutes: just wait for it). Never \
 type a password or a code yourself. If sign_in can't, or there's a CAPTCHA, call done saying so. Never buy, send, \
-cancel or change anything: this is only looking."""
+cancel or change anything, unless the goal is to order something: then you may fill the basket and go to the \
+checkout, and there call request_order. Never press the button that places the order or pays: only TARS does, after \
+the person approves on their phone."""
 
 TOOLS = [
     {
@@ -118,6 +121,15 @@ TOOLS = [
                     }
                 },
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_order",
+            "description": "At the checkout page: show the person the order and its total on their phone, and place "
+            "it if they approve; says how it went.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
@@ -243,7 +255,12 @@ def act(page: Page, steps: list[dict], failed: set[str] | None = None) -> list[s
             if "goto" in step:
                 page.goto(str(step["goto"]), wait_until="domcontentloaded", timeout=20_000)
             elif "click" in step:
-                page.locator(f'[data-tars="{int(step["click"])}"]').first.click(timeout=5_000)
+                target = page.locator(f'[data-tars="{int(step["click"])}"]').first
+                label = target.inner_text(timeout=2_000) or target.get_attribute("aria-label") or ""
+                if places_order(label):  # by code, after the person approves: never a model's click
+                    said.append(f"refused: {label.strip()!r} places the order; call request_order instead")
+                    break
+                target.click(timeout=5_000)
             elif "type" in step:
                 field = page.locator(f'[data-tars="{int(step["type"])}"]').first
                 field.fill(str(step.get("text", "")), timeout=5_000)
@@ -350,7 +367,7 @@ def brain(which: str, goal: str, first: str):
     return ChatBrain(make_quick_client(env, groq), cfg.llm.groq_model, goal, first)
 
 
-def run(goal: str, which: str, steps: int, headless: bool, whose: str = "") -> None:
+def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", really_order: bool = False) -> None:
     with own_chrome(headless=headless), sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{PORT}")
         context = browser.contexts[0]
@@ -375,6 +392,8 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "") -> N
                 t2 = time.perf_counter()
                 if name == "sign_in" and signed_in:  # once a task: retrying sign-ins is how accounts get locked
                     outcome = ["refused: sign_in already ran for this task. Call done and say what stopped it."]
+                elif name == "request_order":  # by code, after the person approves
+                    outcome = [request_order(page, person, goal, really_order)]
                 elif name == "sign_in":  # by code: the login never reaches the model
                     signed_in = True
                     outcome = [sign_in(page, person, goal, str(args.get("email") or ""))]
@@ -411,9 +430,10 @@ def main() -> None:
     r.add_argument("--steps", type=int, default=12)
     r.add_argument("--headless", action="store_true", help="no window (Amazon takes it for a bot: see below)")
     r.add_argument("--person", default="", help="whose task: a name in [telegram] people (default: the first)")
+    r.add_argument("--really-order", action="store_true", help="place an approved order (default: stop at the button)")
     args = parser.parse_args()
     if args.command == "run":
-        run(args.goal, args.model, args.steps, args.headless, args.person)
+        run(args.goal, args.model, args.steps, args.headless, args.person, args.really_order)
         return
     signing_in = args.command == "signin"
     with own_chrome(headless=False) as process, sync_playwright() as p:

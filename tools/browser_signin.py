@@ -269,6 +269,38 @@ class Person:
     def say(self, text: str) -> None:
         httpx.post(f"{self.api}/sendMessage", json={"chat_id": self.chat, "text": text}, timeout=20)
 
+    def approve(self, draft: str, wait_s: float = 600) -> bool:
+        """Sends `draft` with [Order] [Cancel] buttons and waits for the person's tap: True only for Order, from
+        their own chat, on this very message."""
+        import secrets
+
+        nonce = secrets.token_hex(6)
+        buttons = {"inline_keyboard": [[{"text": "Order", "callback_data": f"order:{nonce}"},
+                                        {"text": "Cancel", "callback_data": f"cancel:{nonce}"}]]}  # fmt: skip
+        with httpx.Client(timeout=40) as http:
+            latest = http.get(f"{self.api}/getUpdates", params={"offset": -1, "timeout": 0}).json().get("result", [])
+            offset = latest[-1]["update_id"] + 1 if latest else 0
+            sent = http.post(f"{self.api}/sendMessage", json={"chat_id": self.chat, "text": draft[:4000],
+                             "reply_markup": buttons}).json()["result"]  # fmt: skip
+            deadline = time.monotonic() + wait_s
+            while time.monotonic() < deadline:
+                params = {"offset": offset, "timeout": 25, "allowed_updates": '["callback_query","message"]'}
+                for u in http.get(f"{self.api}/getUpdates", params=params).json().get("result", []):
+                    offset = u["update_id"] + 1
+                    tap = u.get("callback_query") or {}
+                    data = str(tap.get("data", ""))
+                    if not data.endswith(nonce) or (tap.get("from") or {}).get("id") != self.chat:
+                        continue
+                    http.post(f"{self.api}/answerCallbackQuery", json={"callback_query_id": tap["id"]})
+                    http.get(f"{self.api}/getUpdates", params={"offset": offset, "timeout": 0})  # mark it read
+                    yes = data.startswith("order:")
+                    http.post(f"{self.api}/editMessageReplyMarkup", json={"chat_id": self.chat,
+                              "message_id": sent["message_id"], "reply_markup": {"inline_keyboard": []}})  # fmt: skip
+                    self.say("Ordering." if yes else "Cancelled: nothing ordered.")
+                    return yes
+            self.say("No answer in time: nothing ordered.")
+        return False
+
     def addresses(self) -> list[str]:
         """The person's email addresses: the mailboxes TARS has their login for."""
         from browser_vault import logins_for
