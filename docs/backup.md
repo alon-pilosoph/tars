@@ -27,9 +27,12 @@ month, most recordings live only in the bucket.
    --delete-anyway` does it.
 4. **Takes a snapshot, every six hours.** The database (through SQLite's backup API, so the copy is consistent while TARS
    writes), the voiceprints, the wake models trained on the household (the self-learning pairs and
-   `models/personal/`) and `config.local.toml`, as one `.tar.gz` under `<prefix>/snapshots/`. Never `.env`: the keys
-   stay on the Pi. Snapshots older than `keep_snapshots_days` (30) are deleted then, but never the newest: a Pi that
-   was off for longer still has one to restore.
+   `models/personal/`), `config.local.toml`, and what the house has learned that only someone there could teach it
+   again: the Android TV's ADB key, the devices' found addresses (`voice_data/found.json`) and each plugin's
+   `BACKUP_FILES` (my_house's AC profile and remote codes, [your own devices](home.md#your-own-devices)), as one
+   `.tar.gz` under `<prefix>/snapshots/`. Never `.env`: the keys stay on the Pi. Snapshots older than
+   `keep_snapshots_days` (30) are deleted then, but never the newest: a Pi that was off for longer still has one to
+   restore.
 5. **Keeps the bucket's lifecycle rule in step** with `[backup]`: with `archive_after_days` set (it's 0, off, by
    default), the audio moves to Glacier Deep Archive that many days after it's made ([what it costs](#what-it-costs)).
    Only TARS's own rule is touched; any other rule on the bucket stays.
@@ -100,7 +103,8 @@ flowchart LR
 - **A new Pi.** Install TARS (`deploy/install-pi.sh`), put the key in `.env` and `[backup]` in `config.local.toml`,
   stop TARS (`systemctl --user stop voice-assistant voice-assistant-web voice-assistant-telegram
   voice-assistant-backup.timer`), then `uv run voice-assistant --restore-backup`. It puts the latest snapshot in place
-  (the database, voiceprints, wake models and `config.local.toml`), each where this Pi's config puts it, and refuses
+  (the database, voiceprints, wake models, `config.local.toml` and what the house learned), each where this Pi's config
+  puts it, and refuses
   while TARS or a backup pass is running, or over a database with a history of its own: if TARS heard anything before
   the restore, move `voice_data/events/events.db` away first. Start TARS again. The first backup pass (within 15 minutes, or
   `uv run voice-assistant --backup` now) brings back what has to be on the Pi: the wake windows training learns
@@ -122,7 +126,8 @@ deleting one sooner (a conversation deleted in the web UI) is charged as if it h
 ## What it sends AWS
 
 AWS gets everything TARS keeps: the recordings, the files it sent, and in the snapshots the database, with its
-transcripts and voice embeddings, the voiceprints, the wake models and `config.local.toml`. It's encrypted at rest,
+transcripts and voice embeddings, the voiceprints, the wake models, `config.local.toml` and what the house learned (the TV box's ADB key, the devices'
+addresses, a plugin's files). It's encrypted at rest,
 in a bucket only the backup's key may read. Nothing else goes there, and `.env` never does.
 
 ## Design

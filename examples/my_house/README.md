@@ -160,4 +160,5 @@ Before this was a plugin, all of it was part of TARS (the `house-v1` tag). To mo
   `kind = "my_house.remote"` (and the TV gains `awake_from = "fire tv"`); the Fire TV becomes `"my_house.firetv"`;
   the lock and the boiler drop `kind`, and the boiler's `remaining` becomes `details = [...]` with its `timer`.
 - `voice_data/ac/` and `voice_data/ir/` stay as they are: the AC's profile, what TARS thinks of it, and which TV codes
-  worked.
+  worked. The plugin's `BACKUP_FILES` names both, so with the [backup](../../docs/backup.md) on they're in its
+  snapshot.

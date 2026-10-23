@@ -167,6 +167,10 @@ def setup(settings: dict, context: Context) -> dict:
   `times` is 1 to 15.
 - A plugin that won't load, or a device it can't make (raise `ValueError` saying why), costs only those devices:
   TARS starts without them, and `--check` says why.
+- **`BACKUP_FILES`**, beside `setup`: its own files and folders under the project's folder, like
+  `("voice_data/ac", "voice_data/ir")`, for what it learned that someone would have to teach it again. The
+  [backup](backup.md)'s snapshot keeps them, and a restore puts them back. A plugin that won't load costs only its
+  own files there too.
 - Its tests sit beside it and run with TARS's (`pytest` collects `examples/`), and CI lints it.
 
 [`examples/my_house`](../examples/my_house/README.md) is a real one: an Electra AC with no Wi-Fi of its own, taught

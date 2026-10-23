@@ -34,7 +34,11 @@ from voice_assistant.home import Context, Device, HomeError
 from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import STREMIO_RULES, Catalog, FireTv
-from .ir import CODE_SETS, Remote, tested_path
+from .ir import CODE_SETS, TESTED, Remote, tested_path
+
+# What this house has learned, kept in the backup's snapshot: the AC's profile, its presses and what it was last sent,
+# and which power codes each remote's set answered to.
+BACKUP_FILES = (FOLDER, TESTED)
 
 
 def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device]]:
