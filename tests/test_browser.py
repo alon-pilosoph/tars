@@ -479,6 +479,7 @@ def test_a_click_by_text_or_at_a_point_is_gated_too():
         ({"action": "click", "text": "Tel Aviv"}, {"click": {"text": "Tel Aviv"}}),
         ({"action": "click", "ref": "e63", "text": "Friday, 30 October"}, {"click": {"text": "Friday, 30 October"}}),
         ({"action": "click", "ref": "e63", "text": ""}, {"click": "e63"}),
+        ({"action": "click", "text": "20:00", "near": "ESO"}, {"click": {"text": "20:00", "near": "ESO"}}),
         (
             {"action": "type", "ref": "e4", "text": "pizza", "submit": True},
             {"type": "e4", "text": "pizza", "submit": True},
@@ -540,3 +541,11 @@ def test_what_a_step_added_to_the_same_page_is_said_first():
     assert new.strip() == "Friday 30 October"
     assert after.text.index("New on the page") < after.text.index("# Search results")
     assert pages.view(CARD_PAGE, "T", "U", 700).with_new([ln.text for ln in before.lines]).text == before.text
+
+
+def test_text_is_quoted_for_xpath_whatever_its_quotes():
+    from voice_assistant.browser.session import _xpath
+
+    assert _xpath("20:00") == "'20:00'"
+    assert _xpath("Bob's") == '"Bob\'s"'
+    assert _xpath("""a'b"c""") == "concat('a', \"'\", 'b\"c')"

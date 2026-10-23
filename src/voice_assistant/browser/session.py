@@ -215,9 +215,10 @@ class Session:
         page = self.page
         if "click" in step and isinstance(step["click"], dict):  # by its text, for what has no ref
             text = str(step["click"].get("text", "")).strip()
+            near = str(step["click"].get("near", "")).strip()
             if not text:
                 raise ValueError('click by text takes {"click": {"text": "..."}}')
-            target = self._by_text(text)
+            target = self._by_text(text, near)
             if commits(text):
                 raise Refused(text, f"{text!r} would commit the person to it: call request_approval with its ref")
             target.click(timeout=6_000)
@@ -297,13 +298,20 @@ class Session:
             return f"waited {seconds:g}s"
         raise ValueError(f"unknown step {json.dumps(step, ensure_ascii=False)}")
 
-    def _by_text(self, text: str):
-        """The visible element with exactly this text, else the first that has it in it."""
+    def _by_text(self, text: str, near: str = ""):
+        """The visible element with exactly this text, else the first that has it in it. With `near`, the one in
+        the same card or row as that other text: the smallest element around `near` that has `text` in it."""
+        scope = self.page
+        if near:
+            anchors = [a for a in self.page.get_by_text(near).all()[:10] if a.is_visible()]
+            if not anchors:
+                raise ValueError(f"no visible text {near!r} on the page to look near")
+            scope = anchors[0].locator(f"xpath=ancestor-or-self::*[contains(normalize-space(.), {_xpath(text)})][1]")
         for exact in (True, False):
-            for candidate in self.page.get_by_text(text, exact=exact).all()[:20]:
+            for candidate in scope.get_by_text(text, exact=exact).all()[:20]:
                 if candidate.is_visible():
                     return candidate
-        raise ValueError(f"no visible text {text!r} on the page")
+        raise ValueError(f"no visible text {text!r} on the page" + (f" near {near!r}" if near else ""))
 
     def _shape(self) -> str:
         """What a batch's later steps were planned on: the address, and which dialogs, lists of suggestions and menus
@@ -423,7 +431,9 @@ def normal(step: dict[str, Any]) -> dict[str, Any]:
     action = "type" if action == "fill" else str(action)
     ref, rest = step.get("ref"), {k: v for k, v in step.items() if k not in ("action", "type", "ref")}
     if action == "click":  # text, when it's given, is what to click: a ref beside it is where the model saw it
-        return {"click": {"text": step["text"]}} if step.get("text") else {"click": ref}
+        if step.get("text"):
+            return {"click": {"text": step["text"], **({"near": step["near"]} if step.get("near") else {})}}
+        return {"click": ref}
     if action in ("type", "select", "hover"):
         return {action: ref, **rest}
     if action == "press":
@@ -448,6 +458,15 @@ class Refused(Exception):
     def __init__(self, label: str, message: str):
         super().__init__(message)
         self.label = label
+
+
+def _xpath(text: str) -> str:
+    """`text` as an XPath string literal, whatever quotes are in it."""
+    if "'" not in text:
+        return f"'{text}'"
+    if '"' not in text:
+        return f'"{text}"'
+    return "concat(" + ', "\'", '.join(f"'{part}'" for part in text.split("'")) + ")"
 
 
 def _why(e: Exception) -> str:

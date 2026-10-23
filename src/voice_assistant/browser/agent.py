@@ -40,8 +40,9 @@ then you see the page again. Batch steps that don't need a new look: fill a form
 one go.
 
 Each step has an action and what it acts on:
-- {{"action": "click", "ref": "e36"}}, or {{"action": "click", "text": "Tel Aviv"}} for text that has no ref but \
-is clickable on the screenshot
+- {{"action": "click", "ref": "e36"}}, or {{"action": "click", "text": "20:00"}} for text that has no ref but is \
+clickable on the screenshot, with "near": "other text in the same card or row" when that text is on the page \
+more than once. A ref with no name is an icon (a heart, a share): look at the screenshot before clicking one.
 - {{"action": "type", "ref": "e46", "text": "...", "submit": true}}   (submit presses Enter after; "slowly": true \
 types key by key, for a search box that only suggests as you type)
 - {{"action": "select", "ref": "e12", "option": "the option's label"}}   (a dropdown that is a real <select>)
@@ -100,6 +101,7 @@ STEP = {
         },
         "ref": {"type": "string"},
         "text": {"type": "string"},
+        "near": {"type": "string"},
         "submit": {"type": "boolean"},
         "slowly": {"type": "boolean"},
         "option": {"type": "string"},
