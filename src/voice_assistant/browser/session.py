@@ -209,6 +209,7 @@ class Session:
         return outcome
 
     def _step(self, step: dict[str, Any]) -> str:
+        step = normal(step)
         page = self.page
         if "click" in step and isinstance(step["click"], dict):  # by its text, for what has no ref
             text = str(step["click"].get("text", "")).strip()
@@ -403,6 +404,42 @@ def _entry(r: Response) -> dict[str, Any]:
         body = r.body()
         entry["json"] = body[:JSON_KEPT].decode(errors="replace") if len(body) <= JSON_LARGEST else f"({len(body)} B)"
     return entry
+
+
+ACTIONS = {"click", "type", "select", "press", "scroll", "hover", "goto", "back", "wait", "click_at", "fill"}
+
+
+def normal(step: dict[str, Any]) -> dict[str, Any]:
+    """A step as the model writes it ({"action": "type", "ref": "e4", "text": ...}) in the form it's done in
+    ({"type": "e4", "text": ...}). The forms models drift into are read too: the action under "type", or "fill"
+    for "type"; a step already in the done form passes as it is."""
+    action = step.get("action")
+    if action is None and step.get("type") in ACTIONS and ("ref" in step or "url" in step or "key" in step):
+        action = step["type"]  # {"type": "click", "ref": "e4"}
+    if action is None:
+        return step
+    action = "type" if action == "fill" else str(action)
+    ref, rest = step.get("ref"), {k: v for k, v in step.items() if k not in ("action", "type", "ref")}
+    if action == "click":
+        return {"click": ref} if ref else {"click": {"text": step.get("text", "")}}
+    if action in ("type", "select", "hover"):
+        return {action: ref, **rest}
+    if action == "press":
+        return {"press": step.get("key", step.get("text", ""))}
+    if action == "scroll":
+        direction = step.get("direction")
+        if direction:
+            return {"scroll": direction, **({"in": ref} if ref else {})}
+        return {"scroll": ref or "down"}
+    if action == "goto":
+        return {"goto": step.get("url", "")}
+    if action == "back":
+        return {"back": True}
+    if action == "wait":
+        return {"wait": step.get("seconds", 1)}
+    if action == "click_at":
+        return {"click_at": [step.get("x", 0), step.get("y", 0)]}
+    raise ValueError(f"no such action {action!r}")
 
 
 class Refused(Exception):

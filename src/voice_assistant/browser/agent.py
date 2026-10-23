@@ -39,17 +39,19 @@ around what's on screen, with the headings above and below. To act, call act wit
 then you see the page again. Batch steps that don't need a new look: fill a form's fields and press its button in \
 one go.
 
-Steps:
-- {{"click": "e36"}}
-- {{"type": "e46", "text": "...", "submit": true}}   (submit presses Enter; "slowly": true types key by key, for \
-search boxes that only suggest as you type)
-- {{"select": "e12", "option": "the option's label"}}   (a dropdown that is a real <select>)
-- {{"press": "Escape"}}   (Enter, Escape, Tab, ArrowDown, ArrowUp, ...)
-- {{"scroll": "down"}} or {{"scroll": "up"}}, or {{"scroll": "down", "in": "e20"}} inside a scrolling panel, or \
-{{"scroll": "e88"}} to bring e88 into view
-- {{"hover": "e5"}}, {{"goto": "https://..."}}, {{"back": true}}, {{"wait": 2}}
-- {{"click": {{"text": "Tel Aviv"}}}}   for text that has no ref but is clickable on the screenshot; and, as a last \
-resort, {{"click_at": [x, y]}}, a point on the screenshot (its pixels are the page's)
+Each step has an action and what it acts on:
+- {{"action": "click", "ref": "e36"}}, or {{"action": "click", "text": "Tel Aviv"}} for text that has no ref but \
+is clickable on the screenshot
+- {{"action": "type", "ref": "e46", "text": "...", "submit": true}}   (submit presses Enter after; "slowly": true \
+types key by key, for a search box that only suggests as you type)
+- {{"action": "select", "ref": "e12", "option": "the option's label"}}   (a dropdown that is a real <select>)
+- {{"action": "press", "key": "Escape"}}   (Enter, Escape, Tab, ArrowDown, ArrowUp, ...)
+- {{"action": "scroll", "direction": "down"}} or "up", with "ref": "e20" to scroll inside that panel; or \
+{{"action": "scroll", "ref": "e88"}} to bring e88 into view
+- {{"action": "hover", "ref": "e5"}}, {{"action": "goto", "url": "https://..."}}, {{"action": "back"}}, \
+{{"action": "wait", "seconds": 2}}
+- {{"action": "click_at", "x": 640, "y": 300}}: a point on the screenshot (its pixels are the page's), the last \
+resort for what the view can't name
 
 A step that opens something (a new page, a dialog, a list of suggestions) ends the batch, and you see what it \
 opened: in a field that suggests as you type, type, then pick the suggestion on the next turn.
@@ -86,6 +88,28 @@ When you have what the person asked for, call done with the answer for them, in 
 language: short and plain, with the facts they \
 asked for (names, times, prices). Say if something wasn't what they asked (sold out, no direct flight)."""
 
+STEP = {
+    "type": "object",
+    "properties": {
+        "action": {
+            "type": "string",
+            "enum": ["click", "type", "select", "press", "scroll", "hover", "goto", "back", "wait", "click_at"],
+        },
+        "ref": {"type": "string"},
+        "text": {"type": "string"},
+        "submit": {"type": "boolean"},
+        "slowly": {"type": "boolean"},
+        "option": {"type": "string"},
+        "key": {"type": "string"},
+        "direction": {"type": "string", "enum": ["down", "up"]},
+        "url": {"type": "string"},
+        "seconds": {"type": "number"},
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+    },
+    "required": ["action"],
+}
+
 TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -93,7 +117,7 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Steps to take in order on the page, then see the page again.",
         "parameters": {
             "type": "object",
-            "properties": {"steps": {"type": "array", "items": {"type": "object"}}},
+            "properties": {"steps": {"type": "array", "items": STEP}},
             "required": ["steps"],
         },
     },

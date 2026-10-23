@@ -470,3 +470,28 @@ def test_a_click_by_text_or_at_a_point_is_gated_too():
     page.mouse = types.SimpleNamespace(click=lambda x, y: page.done.append(("click_at", x, y)))
     assert session.act([{"click_at": [10, 20]}]).refused == "Pay now"
     assert not any(d[0] == "click_at" for d in page.done)
+
+
+@pytest.mark.parametrize(
+    ("written", "done"),
+    [
+        ({"action": "click", "ref": "e4"}, {"click": "e4"}),
+        ({"action": "click", "text": "Tel Aviv"}, {"click": {"text": "Tel Aviv"}}),
+        (
+            {"action": "type", "ref": "e4", "text": "pizza", "submit": True},
+            {"type": "e4", "text": "pizza", "submit": True},
+        ),
+        ({"type": "fill", "ref": "e10", "text": "Sony"}, {"type": "e10", "text": "Sony"}),
+        ({"action": "scroll", "direction": "down", "ref": "e20"}, {"scroll": "down", "in": "e20"}),
+        ({"action": "scroll", "ref": "e88"}, {"scroll": "e88"}),
+        ({"action": "press", "key": "Escape"}, {"press": "Escape"}),
+        ({"action": "goto", "url": "https://x.com"}, {"goto": "https://x.com"}),
+        ({"action": "click_at", "x": 5, "y": 6}, {"click_at": [5, 6]}),
+        ({"click": "e4"}, {"click": "e4"}),
+        ({"type": "e4", "text": "x"}, {"type": "e4", "text": "x"}),
+    ],
+)
+def test_a_step_as_written_is_read_into_what_is_done(written, done):
+    from voice_assistant.browser.session import normal
+
+    assert normal(written) == done
