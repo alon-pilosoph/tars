@@ -1,0 +1,112 @@
+# The browser agent's tasks: real sites, live, as a person would ask (tools/browser_eval.py runs them). Nothing is
+# ever ordered or booked: a run approves at the step that would commit and stops there, so "up to checkout" tasks
+# pass when they reach that step with the right basket.
+#
+#   kind = "answer"    passes on a right answer (`check` says what makes it right)
+#   kind = "commit"    passes when the agent asks to commit with what `check` says, and nothing else in the basket
+#   signed_in          the site needs TARS's browser signed in (by hand: browser_proto.py signin)
+#
+# Dates are absolute, so a run next week asks the same thing; move them on when they pass.
+
+[[task]]
+id = "rail-next-train"
+kind = "answer"
+goal = "On rail.co.il, when is the first train from Tel Aviv Savidor Center to Haifa Hof HaCarmel on Sunday 25 October 2026 leaving after 08:00, and how long does it take?"
+check = "a departure time after 08:00 on 25 October and a duration, as rail.co.il lists them"
+
+[[task]]
+id = "zap-cheapest"
+kind = "answer"
+goal = "On zap.co.il, what's the cheapest price right now for Sony WH-1000XM5 headphones, and which store has it?"
+check = "a price in shekels and a store name, the lowest zap.co.il shows for that model"
+
+[[task]]
+id = "flights-athens"
+kind = "answer"
+goal = "On Google Flights, find the cheapest direct flight from Tel Aviv to Athens on Friday 6 November 2026, one way: the airline, the times and the price."
+check = "a nonstop TLV-ATH flight on 6 November with airline, departure and arrival times and the price; the cheapest nonstop listed"
+
+[[task]]
+id = "museum-hours"
+kind = "answer"
+goal = "When is the Tel Aviv Museum of Art open on Saturdays, and how much is a regular adult ticket?"
+check = "the Saturday hours and the adult ticket price from the museum's own site"
+
+[[task]]
+id = "github-release"
+kind = "answer"
+goal = "What's the latest release of Microsoft's Playwright on GitHub, and what are three of its main changes?"
+check = "the newest release tag on github.com/microsoft/playwright/releases and three changes from its notes"
+
+[[task]]
+id = "ynet-headlines"
+kind = "answer"
+goal = "What are the three top headlines on ynet right now? A sentence each, in English."
+check = "the three leading stories on ynet.co.il's front page at the time of the run"
+
+[[task]]
+id = "maps-drive"
+kind = "answer"
+goal = "On Google Maps, how long is the drive from Dizengoff Center in Tel Aviv to Nemal Tel Aviv Street 40, Tel Aviv, leaving at 9:00 on Sunday 25 October 2026?"
+check = "a driving time (typically a range) for that route at that time, from Google Maps"
+
+[[task]]
+id = "wolt-last-order"
+kind = "answer"
+signed_in = true
+goal = "What was my last order on Wolt, from where, and when?"
+check = "the newest order in Wolt's order history: venue, items or total, and the date"
+
+[[task]]
+id = "wolt-reorder"
+kind = "commit"
+signed_in = true
+goal = "Order my last Wolt order again."
+check = "the checkout has the same venue and items as the newest past order"
+
+[[task]]
+id = "wolt-margherita"
+kind = "commit"
+signed_in = true
+goal = "Order one Margherita pizza on Wolt from a well-rated pizza place that delivers to me."
+check = "exactly one Margherita pizza from a pizza place rated about 8.5 or higher"
+
+[[task]]
+id = "wolt-options"
+kind = "commit"
+signed_in = true
+goal = "On Wolt, order a build-your-own salad or bowl (one that has required choices, like a base or a size) from a place near me: pick sensible choices yourself."
+check = "one salad or bowl with its required choices made, from a venue that delivers to the person's address"
+
+[[task]]
+id = "wolt-groceries"
+kind = "commit"
+signed_in = true
+goal = "Order milk, a dozen eggs and a loaf of bread from a supermarket on Wolt."
+check = "milk, eggs (12, or the nearest pack) and bread, one each, from one supermarket or Wolt Market"
+
+[[task]]
+id = "ksp-cable"
+kind = "commit"
+signed_in = true
+goal = "On ksp.co.il, order a USB-C to USB-C cable under 50 shekels."
+check = "one USB-C to USB-C cable costing under ₪50"
+
+[[task]]
+id = "ikea-lamp"
+kind = "commit"
+goal = "On IKEA Israel (ikea.co.il), order a white desk lamp under 100 shekels."
+check = "one white desk lamp under ₪100"
+
+[[task]]
+id = "booking-athens"
+kind = "commit"
+signed_in = true
+goal = "On Booking.com, book the cheapest hotel in Athens rated 8 or higher, for 2 adults, from 6 to 9 November 2026."
+check = "a hotel in Athens rated 8+ for 6-9 November and 2 adults, the cheapest such option the filters show"
+
+[[task]]
+id = "ontopo-table"
+kind = "commit"
+goal = "On Ontopo, book a table for 2 at a Tel Aviv restaurant on Friday 30 October 2026 at around 20:00."
+check = "a Tel Aviv restaurant, 2 people, 30 October, a time near 20:00"
