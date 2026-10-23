@@ -55,11 +55,11 @@ what failed and what worked instead, what the site asks for on the way to checko
 - The notes are the only files you can read or write.
 """
 NOTES = HOME / "notes"
-# For studying how it works: a note before each step, in its own words, kept in the stream. A progress note, not
-# its reasoning: a model asked to reproduce its thinking may decline that.
-NARRATE = ("For the log: before each tool call, write one or two short sentences: what you see on the page, what you "
-           "will try next and why. When a step fails or changes nothing, say what you think went wrong and what you "
-           "will do differently.")  # fmt: skip
+# For studying how it works: a progress note with each call, kept in the trace and the stream. Framed as what each
+# step is for, for the person to follow: asked to set out its reasoning, Opus 5.5 declines (reasoning_extraction).
+NARRATE = ("The person follows your progress: give every act, find and look call a note, a few words saying what the "
+           "call is for (\"Opening the cart\", \"Checking the dates took\"). After a step that didn't work, the next "
+           "note says what you're trying instead.")  # fmt: skip
 
 
 def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "medium", turns: int = 30,

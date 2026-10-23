@@ -115,7 +115,7 @@ def page() -> list[str | Image]:
 
 
 @server.tool()
-def act(steps: list[dict[str, Any]]) -> list[str | Image]:
+def act(steps: list[dict[str, Any]], note: str = "") -> list[str | Image]:
     """Steps to take in order on the page, then the page as it is after them. Each step is an object with an
     action: {"action": "click", "ref": "e36"}; {"action": "click", "text": "20:00", "near": "other text on the same
     card"} for text with no ref; {"action": "type", "ref": "e46", "text": "...", "submit": true, "slowly": false};
@@ -123,20 +123,24 @@ def act(steps: list[dict[str, Any]]) -> list[str | Image]:
     {"action": "scroll", "direction": "down"} (with "ref" to scroll inside a panel), or {"action": "scroll",
     "ref": "e88"} to bring it into view; {"action": "hover", "ref": "e5"}; {"action": "goto", "url": "https://..."};
     {"action": "back"}; {"action": "wait", "seconds": 2}; {"action": "click_at", "x": 640, "y": 300} on the
-    screenshot, the last resort. A step that opens something ends the batch."""
-    return browser.call("act", {"steps": steps})
+    screenshot, the last resort. A step that opens something ends the batch. `note`: a few words for the person's
+    progress line, saying what these steps are for ("Opening the cart"), or, after one that didn't work, what you're
+    trying instead."""
+    return browser.call("act", {"steps": steps, "note": note})
 
 
 @server.tool()
-def find(text: str) -> list[str | Image]:
-    """Lines anywhere on the page with all of these words in them (any case): quicker than scrolling."""
-    return browser.call("find", {"text": text})
+def find(text: str, note: str = "") -> list[str | Image]:
+    """Lines anywhere on the page with all of these words in them (any case): quicker than scrolling. `note`: a few
+    words for the person's progress line, saying what you're looking for and why."""
+    return browser.call("find", {"text": text, "note": note})
 
 
 @server.tool()
-def look() -> list[str | Image]:
-    """A screenshot of the screen as it is, with the refs drawn on it."""
-    return browser.call("look", {})
+def look(note: str = "") -> list[str | Image]:
+    """A screenshot of the screen as it is, with the refs drawn on it. `note`: a few words for the person's progress
+    line, saying what you want to check."""
+    return browser.call("look", {"note": note})
 
 
 @server.tool()
