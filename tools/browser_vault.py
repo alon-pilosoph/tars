@@ -86,6 +86,14 @@ def for_origin(where: str) -> Login | None:
     return None
 
 
+def logins_for(where: str) -> list[Login]:
+    """Every login stored for exactly this origin: several mailboxes share one mail server."""
+    here = origin(where)
+    return [
+        Login(n, tuple(e["origins"]), e["username"], e["password"]) for n, e in _load().items() if here in e["origins"]
+    ]
+
+
 SCHEMES = ("https://", "imaps://")  # what a login may be for: web sites, and mail over TLS
 
 

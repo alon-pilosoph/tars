@@ -222,7 +222,13 @@ class Person:
         return None
 
     def add_login(
-        self, site: str, goal: str, note: str = "", user_label: str = "Email or phone", password_label: str = "Password"
+        self,
+        site: str,
+        goal: str,
+        note: str = "",
+        user_label: str = "Email or phone",
+        password_label: str = "Password",
+        per_user: bool = False,
     ) -> bool:
         """Sends the person a one-time link to a page asking for their login for `site` (what code saw the browser at,
         never what a page or a model said), saves what they enter into the vault for that site only, and returns
@@ -269,7 +275,9 @@ class Person:
                     self.reply(403, DONE_PAGE.format(message="This link isn't valid any more."))
                     return
                 try:
-                    store(host, [site], sent.get("username", [""])[0].strip(), sent.get("password", [""])[0])
+                    username = sent.get("username", [""])[0].strip()
+                    # One login per site, or per account where one server has many (mailboxes on imap.gmail.com).
+                    store(f"{host} {username}" if per_user else host, [site], username, sent.get("password", [""])[0])
                 except ValueError as e:
                     self.reply(
                         400, DONE_PAGE.format(message=f"Not saved: {html.escape(str(e))}. Go back and try again.")
