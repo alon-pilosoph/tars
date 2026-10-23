@@ -82,8 +82,8 @@ what), not to report progress or to ask whether to go on: the goal is their go-a
 last step, and request_approval is how they're asked about that. If the basket or cart already has things in it \
 that the goal didn't ask for, don't remove them (the person may have put them there): call done and say so.
 
-When you have what the person asked for, call done with the answer for them, in the language of their goal \
-(whatever the site's): short and plain, with the facts they \
+When you have what the person asked for, call done with the answer for them, in {language} whatever the site's \
+language: short and plain, with the facts they \
 asked for (names, times, prices). Say if something wasn't what they asked (sold out, no direct flight)."""
 
 TOOLS: list[dict[str, Any]] = [
@@ -215,7 +215,10 @@ class Agent:
 
     def run(self, goal: str) -> Result:
         """Works toward `goal` until done, stuck or out of turns."""
-        self.instructions = INSTRUCTIONS.format(today=time.strftime("%A %d %B %Y"), goal=goal)
+        language = "Hebrew" if re.search(r"[\u0590-\u05ff]", goal) else "the language the goal is written in"
+        if re.fullmatch(r"[\x00-\x7f₪€£]*", goal):
+            language = "English"
+        self.instructions = INSTRUCTIONS.format(today=time.strftime("%A %d %B %Y"), goal=goal, language=language)
         self._log({"event": "start", "goal": goal, "model": self.settings.model})
         view = self.session.look()
         start = view.text if view.url != "about:blank" else "A new, empty tab: start by going to an address."

@@ -393,7 +393,7 @@ def test_the_total_is_read_off_the_page():
 def test_the_tools_say_what_they_take():
     names = {t["name"] for t in agents.TOOLS}
     assert names == {"act", "find", "look", "request_approval", "sign_in", "done"}
-    assert "{goal}" in agents.INSTRUCTIONS and "{today}" in agents.INSTRUCTIONS
+    assert "{goal}" in agents.INSTRUCTIONS and "{today}" in agents.INSTRUCTIONS and "{language}" in agents.INSTRUCTIONS
 
 
 def test_refused_carries_the_label():
