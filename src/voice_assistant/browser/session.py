@@ -19,12 +19,12 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from . import page as pages
 from .gate import commits
 
-# Resolves once the page has stopped changing for 400 ms (a pop-up finished sliding in, a list finished loading), or
-# after 3 s whatever it's doing.
-STILL_JS = """() => new Promise((done) => {
-  let timer = setTimeout(finish, 400);
-  const watch = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(finish, 400); });
-  const cap = setTimeout(finish, 3000);
+# Resolves once the page has stopped changing for `quiet` ms (a pop-up finished sliding in, a list finished loading),
+# or after `cap` ms whatever it's doing.
+STILL_JS = """([quiet, most]) => new Promise((done) => {
+  let timer = setTimeout(finish, quiet);
+  const watch = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(finish, quiet); });
+  const cap = setTimeout(finish, most);
   function finish() { watch.disconnect(); clearTimeout(cap); clearTimeout(timer); done(true); }
   watch.observe(document.documentElement, {subtree: true, childList: true, attributes: true, characterData: true});
 })"""
@@ -156,6 +156,7 @@ class Session:
         """Does each step in order, stopping at the first that fails or is refused; then lets the page settle."""
         outcome = Outcome()
         before = (self.page.url, [ln.text for ln in self.current.lines] if self.current else [])
+        url = self.page.url
         for step in steps:
             try:
                 said = self._step(step)
@@ -168,7 +169,11 @@ class Session:
                 outcome.failed = True
                 break
             outcome.said.append(f"ok: {said}")
-            self._settle()
+            if self.page.url != url or "goto" in step or "back" in step:
+                self._settle()  # a new page: until it has loaded
+            else:
+                self._still(quiet_ms=250, most_ms=1500)  # the same page: until what the step started has drawn
+            url = self.page.url
             if self._follow_new_tab():
                 outcome.said.append(f"it opened a new tab, now in front: {self.page.url}")
         outcome.said += self.dialogs
@@ -187,6 +192,8 @@ class Session:
                 raise Refused(label, f"{label!r} would commit the person to it: call request_approval with this ref")
             target.click(timeout=6_000)
             return f"clicked {ref} {label[:60]!r}"
+        if "fill" in step and "type" not in step:  # what models also call it
+            step = {**step, "type": step["fill"]}
         if "type" in step:
             ref = str(step["type"])
             field = self._target(ref)
@@ -280,9 +287,9 @@ class Session:
 
     # Waiting
 
-    def _still(self) -> None:
+    def _still(self, quiet_ms: int = 400, most_ms: int = 3000) -> None:
         try:
-            self.page.evaluate(STILL_JS)
+            self.page.evaluate(STILL_JS, [quiet_ms, most_ms])
         except PlaywrightError:  # navigating away: what loads next is waited for instead
             self._settle()
 

@@ -138,7 +138,7 @@ def run_proto(task: dict, steps: int, folder: Path) -> dict:
 def run_new(task: dict, steps: int, folder: Path) -> dict:
     from voice_assistant.browser.run import run_task
 
-    return run_task(task["goal"], steps=steps, approver=DryRun(), trace_to=folder / f"{task['id']}.jsonl")
+    return run_task(task["goal"], DryRun(), steps=steps, trace_to=folder / f"{task['id']}.jsonl", tidy=True)
 
 
 def main() -> None:
@@ -165,7 +165,9 @@ def main() -> None:
             break
         print(f"{task['id']} ...", flush=True)
         result = runner(task, args.steps, folder)
-        dollars = cost(result["model"], result["tokens_in"], result["tokens_out"]) if result["model"] else 0.0
+        tokens_in = result["tokens_in"] + result.get("tidy_tokens_in", 0)
+        tokens_out = result["tokens_out"] + result.get("tidy_tokens_out", 0)
+        dollars = cost(result["model"], tokens_in, tokens_out) if result["model"] else 0.0
         add_spend(dollars)
         record = {"id": task["id"], "kind": task["kind"], "agent": args.agent, **result, "dollars": round(dollars, 4)}
         with (folder / "results.jsonl").open("a") as out:
