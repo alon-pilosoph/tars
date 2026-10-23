@@ -472,7 +472,7 @@ def test_the_same_steps_again_and_again_are_stopped():
     session = FakeSession()
     Agent(model, session, Person()).run("Sort it")
     assert len(session.acted) == 2
-    assert "time in a row" in json.dumps(model.sent[-1]["input"])
+    assert "times in a row" in json.dumps(model.sent[-1]["input"])
 
 
 def test_a_click_by_text_or_at_a_point_is_gated_too():
