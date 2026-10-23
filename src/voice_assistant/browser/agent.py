@@ -138,6 +138,7 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+SPARSE = 8  # lines: a page with fewer is shown with its screenshot too
 MONEY = re.compile(r"(?:[₪$€£]\s?\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?\s?(?:₪|ILS|NIS|EUR|USD|€|\$))")
 # What a button that only takes the person on says ("Go to checkout", "View basket"): no approval needed for it.
 NAVIGATES = re.compile(
@@ -288,6 +289,8 @@ class Agent:
                 self.result.ended = "stuck"
                 self.result.answer = f"stopped: {quiet} turns in a row changed nothing on the page"
                 break
+            if page_changed and not picture and len(getattr(self.session.current, "lines", [])) < SPARSE:
+                picture = self._picture()  # a page of almost no text (a map, a canvas): its picture says more
             if page_changed or picture:
                 view = self.session.current or self.session.look()
                 text = view.text if page_changed else "(the page as before)"

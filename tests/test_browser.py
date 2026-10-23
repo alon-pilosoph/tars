@@ -183,6 +183,9 @@ class FakePage:
     def wait_for_timeout(self, ms):
         return None
 
+    def is_closed(self):
+        return False
+
     def on(self, event, handler):
         return None
 
@@ -274,7 +277,7 @@ class FakeSession:
 
     def look(self):
         self.current = types.SimpleNamespace(text=self.text, url=self.page.url, refs=self.refs,
-                                             find=lambda q: f"found {q}")  # fmt: skip
+                                             lines=self.text.splitlines() * 4, find=lambda q: f"found {q}")  # fmt: skip
         return self.current
 
     def act(self, steps):

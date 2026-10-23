@@ -116,6 +116,7 @@ class Session:
 
     def look(self) -> pages.View:
         """The page as it is now, as the model is shown it."""
+        self._front()
         self._still()
         page = self.page
         try:
@@ -160,6 +161,7 @@ class Session:
     def act(self, steps: list[dict[str, Any]]) -> Outcome:
         """Does each step in order, stopping at the first that fails or is refused; then lets the page settle."""
         outcome = Outcome()
+        self._front()
         before = (self.page.url, [ln.text for ln in self.current.lines] if self.current else [])
         url = self.page.url
         for i, step in enumerate(steps):
@@ -327,6 +329,12 @@ class Session:
             self.page.wait_for_load_state("networkidle", timeout=2_500)
         except PlaywrightTimeout, PlaywrightError:
             pass
+
+    def _front(self) -> None:
+        """If the tab it was on has closed (a pop-up that closes itself when done), the one still open."""
+        if self.page.is_closed() and (open_pages := [p for p in self.context.pages if not p.is_closed()]):
+            self.page = open_pages[-1]
+            self._watch(self.page)
 
     def _follow_new_tab(self) -> bool:
         opened = [p for p in self.opened if not p.is_closed()]
