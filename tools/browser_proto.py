@@ -40,9 +40,17 @@ VIEW_JS = r"""
 () => {
   const sel = 'a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [role=menuitem],'
     + ' [role=checkbox], [role=option], [onclick], summary';
+  const shown = (e) => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 2 && r.height > 2 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  // An open dialog is what a person is looking at, and all they can click: it's the view, not the page under it
+  // (sites draw them outside <main>, at the end of the page).
+  const dialogs = [...document.querySelectorAll('[aria-modal=true], dialog[open], [role=dialog]')].filter(shown);
+  const dialog = dialogs[dialogs.length - 1] || null;
+  const scope = dialog || document;
+  document.querySelectorAll('[data-tars]').forEach((e) => e.removeAttribute('data-tars'));  // last view's numbers
   const seen = [];
   let n = 0;
-  for (const el of document.querySelectorAll(sel)) {
+  for (const el of scope.querySelectorAll(sel)) {
     const r = el.getBoundingClientRect();
     const st = getComputedStyle(el);
     if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
@@ -58,8 +66,9 @@ VIEW_JS = r"""
     el.setAttribute('data-tars', String(n));
     seen.push(`[${n}] ${kind} ${JSON.stringify(text)}`);
   }
-  const main = document.querySelector('main, #a-page, [role=main]') || document.body;
-  return {title: document.title, url: location.href, elements: seen, text: main.innerText.replace(/\n{3,}/g, '\n\n')};
+  const main = dialog || document.querySelector('main, #a-page, [role=main]') || document.body;
+  return {title: document.title, url: location.href, elements: seen, dialog: !!dialog,
+          text: main.innerText.replace(/\n{3,}/g, '\n\n')};
 }
 """
 
@@ -187,11 +196,26 @@ def view(page: Page) -> str:
     if len(text) > TEXT_CHARS:
         text = text[:TEXT_CHARS] + " …"
     return "\n".join(
-        [f"Title: {seen['title']}", f"Address: {seen['url']}", "", "Things to click or type into:"]
+        [f"Title: {seen['title']}", f"Address: {seen['url']}"]
+        + (
+            ["A dialog is open over the page: this is what's in it (close it to get back to the page)."]
+            if seen["dialog"]
+            else []
+        )
+        + ["", "Things to click or type into:"]
         + seen["elements"][:ELEMENTS]
         + ([f"(and {len(seen['elements']) - ELEMENTS} more further down)"] if len(seen["elements"]) > ELEMENTS else [])
         + ["", "Text:", text]
     )
+
+
+def why(e: Exception) -> str:
+    """What went wrong with a step, briefly but with the reason: Playwright's first line is only "Timeout exceeded",
+    and the lines after it say what's in the way."""
+    lines = [line.strip() for line in str(e).splitlines() if line.strip()]
+    reasons = [line for line in lines[1:] if any(w in line for w in ("intercepts", "not visible", "not enabled",
+               "not stable", "outside of the viewport", "detached", "waiting for"))]  # fmt: skip
+    return "; ".join([lines[0][:120], *[r[:160] for r in reasons[-2:]]]) if lines else type(e).__name__
 
 
 def settle(page: Page) -> None:
@@ -203,10 +227,18 @@ def settle(page: Page) -> None:
         return  # a page still busy is looked at as it is
 
 
-def act(page: Page, steps: list[dict]) -> list[str]:
-    """Each step's outcome, stopping at the first that fails."""
-    said = []
+def act(page: Page, steps: list[dict], failed: set[str] | None = None) -> list[str]:
+    """Each step's outcome, stopping at the first that fails. `failed`: steps that already failed on this page; one
+    asked for again isn't tried again (that's how an agent goes round in circles)."""
+    said, failed = [], failed if failed is not None else set()
     for step in steps:
+        key = json.dumps(step, sort_keys=True)
+        if key in failed:
+            said.append(
+                f"not tried: {key} already failed here; do something else (look at the page, close a dialog, "
+                "go straight to an address)"
+            )
+            break
         try:
             if "goto" in step:
                 page.goto(str(step["goto"]), wait_until="domcontentloaded", timeout=20_000)
@@ -229,7 +261,8 @@ def act(page: Page, steps: list[dict]) -> list[str]:
             settle(page)
             said.append(f"ok: {json.dumps(step)}")
         except Exception as e:  # noqa: BLE001 - the model hears what went wrong and tries something else
-            said.append(f"failed: {json.dumps(step)}: {str(e).splitlines()[0][:200]}")
+            failed.add(key)
+            said.append(f"failed: {key}: {why(e)}")
             break
     return said
 
@@ -280,9 +313,14 @@ class ResponsesBrain:
 
     def ask(self) -> list[tuple[str, str, dict]]:
         reply = self.client.responses.create(
-            model=self.model, instructions=self.instructions, input=self.items, tools=self.tools,
-            tool_choice="required", store=False, reasoning={"effort": "low"},
-        )  # fmt: skip
+            model=self.model,
+            instructions=self.instructions,
+            input=self.items,
+            tools=self.tools,
+            tool_choice="required",
+            store=False,
+            reasoning={"effort": "low"},
+        )
         if reply.usage:
             self.tokens_in += reply.usage.input_tokens
             self.tokens_out += reply.usage.output_tokens
@@ -319,7 +357,7 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "") -> N
         page = context.pages[0] if context.pages else context.new_page()
         mind = brain(which, goal, view(page))
         person = Person(tailscale_address(), whose)
-        signed_in = False
+        signed_in, failed, last_url = False, set(), page.url
         started = time.perf_counter()
         for n in range(1, steps + 1):
             t = time.perf_counter()
@@ -341,7 +379,9 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "") -> N
                     signed_in = True
                     outcome = [sign_in(page, person, goal, str(args.get("email") or ""))]
                 else:
-                    outcome = act(page, list(args.get("steps", [])))
+                    if page.url != last_url:  # a new page: what failed on the last one may work here
+                        failed, last_url = set(), page.url
+                    outcome = act(page, list(args.get("steps", [])), failed)
                 looked = view(page)
                 worked = time.perf_counter() - t2
                 print(f"step {n}: model {thought:.1f}s, browser {worked:.1f}s, view {len(looked)} chars")
