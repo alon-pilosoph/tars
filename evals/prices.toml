@@ -20,6 +20,14 @@ fast = 2.0  # priority processing (--fast) costs this many times as much per tok
 input = 2.00
 output = 10.00
 
+# The browser agent's brain on Anthropic's API, in TARS's own loop (docs/browser.md). From the claude-api skill's
+# model table, cached 2026-10-06: check it at https://www.anthropic.com/pricing. Cache writes cost 1.25x input and
+# are counted at input here, so a run's cost is a little under.
+[models."claude-opus-5-5"]
+input = 4.00
+output = 20.00
+cache_read = 0.20
+
 # From the Cerebras account's billing page (not on its public page). Qwen's instructions are long (about 2,500 tokens a
 # request), so its input is a large part of a run's cost.
 [models."qwen-3.8-27b"]

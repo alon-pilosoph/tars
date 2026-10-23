@@ -220,6 +220,92 @@ class Settings:
     read_notes: bool = True  # False: it writes what it learns, but works as if on each site for the first time
 
 
+@dataclass
+class Call:
+    """One tool call a model made: its id, the tool and the arguments."""
+
+    id: str
+    name: str
+    args: dict[str, Any]
+
+
+class OpenAIBrain:
+    """The model, on OpenAI's Responses API (Luna's only way to call tools while reasoning). Each page goes in as the
+    newest message, and the pages before it shrink to a line: every turn sends them all again, and a picture each
+    would make every turn slower than the last. Its reasoning isn't carried from turn to turn (store=False)."""
+
+    def __init__(self, client, settings: Settings):
+        self.client, self.settings = client, settings
+        self.instructions = ""
+        self.items: list[dict[str, Any]] = []
+        self.pages: list[int] = []  # which of the items are the page in full (only the newest is kept so)
+        self.used = (0, 0, 0)  # tokens so far: in, of them cached, out
+
+    def start(self, instructions: str) -> None:
+        self.instructions = instructions
+
+    def ask(self, effort: str) -> Call | None:
+        reply = self.client.responses.create(
+            model=self.settings.model,
+            instructions=self.instructions,
+            input=self.items,
+            tools=TOOLS,
+            tool_choice="required",
+            parallel_tool_calls=False,
+            store=False,
+            reasoning={"effort": effort},
+        )
+        if usage := reply.usage:
+            details = getattr(usage, "input_tokens_details", None)
+            cached = getattr(details, "cached_tokens", 0) or 0
+            self.used = (self.used[0] + usage.input_tokens, self.used[1] + cached, self.used[2] + usage.output_tokens)
+        calls = [i for i in reply.output if getattr(i, "type", "") == "function_call"]
+        if not calls:
+            return None
+        call = calls[0]
+        self.items.append(
+            {"type": "function_call", "call_id": call.call_id, "name": call.name, "arguments": call.arguments}
+        )
+        try:
+            args = json.loads(call.arguments or "{}")
+        except ValueError:
+            args = {}
+        return Call(call.call_id, call.name, args if isinstance(args, dict) else {})
+
+    def answer(self, call: Call, said: str) -> None:
+        self.items.append({"type": "function_call_output", "call_id": call.id, "output": said})
+
+    def show(self, text: str, picture: bytes | None, new_page: bool = True) -> None:
+        """The page as the newest message; `new_page` False: only a picture of the page it has, kept as it is."""
+        if not new_page:
+            self.items.append({"role": "user", "content": _openai_content(text, picture)})
+            return
+        for i in self.pages:
+            head = self.items[i]["content"][0]["text"]
+            title = next((ln for ln in head.splitlines() if ln.startswith(("Title:", "Address:"))), "")
+            self.items[i]["content"] = [{"type": "input_text", "text": f"(an earlier page. {title})"}]
+        self.pages.clear()
+        self.pages.append(len(self.items))
+        self.items.append({"role": "user", "content": _openai_content(text, picture)})
+
+
+def _openai_content(text: str, picture: bytes | None) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": text}]
+    if picture:
+        data = base64.b64encode(picture).decode()
+        content.append({"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}", "detail": "auto"})
+    return content
+
+
+def brain_for(client, settings: Settings):
+    """The brain for the settings' model: a Claude model on Anthropic's API (anthropic_brain.py), else OpenAI's."""
+    if settings.model.startswith("claude-"):
+        from .anthropic_brain import AnthropicBrain
+
+        return AnthropicBrain(client, settings, TOOLS)
+    return OpenAIBrain(client, settings)
+
+
 class Agent:
     def __init__(
         self,
@@ -231,28 +317,26 @@ class Agent:
         trace: Path | None = None,
         notes: Notes | None = None,
     ):
-        self.client, self.session = client, session
+        self.session = session
         self.settings = settings or Settings()
         self.trace = trace
-        self.items: list[dict[str, Any]] = []
-        self.pages: list[int] = []  # which of the items are the page in full (only the newest is kept so)
+        self.brain = brain_for(client, self.settings)
         self.result = Result(ended="out of turns")
         self.tools = Tools(session, approver, self.settings.really_commit, sign_in, self._log)
-        self.instructions = ""
         self.notes = notes
         self.noted: set[str] = set()  # the sites whose notes it has been given
         self.turns_done: list[dict[str, Any]] = []  # what each turn did, for learning from
 
     def run(self, goal: str) -> Result:
         """Works toward `goal` until done, stuck or out of turns."""
-        self.instructions = instructions_for(goal)
+        self.brain.start(instructions_for(goal))
         self._log({"event": "start", "goal": goal, "model": self.settings.model})
         view = self.session.look()
         start = view.text if view.url != "about:blank" else "A new, empty tab: start by going to an address."
         if self.notes:
             for name in self.notes.named_in(goal):
                 start = self._noted(name) + start
-        self._show(start, picture=None)
+        self.brain.show(start, None)
         return self._loop(self.settings.turns)
 
     def _noted(self, name: str) -> str:
@@ -273,7 +357,7 @@ class Agent:
         self.tools.screenshots, self.tools.commits_asked = 0, []
         self._log({"event": "follow_up", "request": request})
         view = self.session.current or self.session.look()
-        self._show(f"The person now asks: {request}\n\n{view.text}", picture=None)
+        self.brain.show(f"The person now asks: {request}\n\n{view.text}", None)
         return self._loop(turns)
 
     def _loop(self, turns: int) -> Result:
@@ -283,32 +367,17 @@ class Agent:
         for turn in range(1, turns + 1):
             self.result.turns = turn
             t = time.perf_counter()
-            reply = self.client.responses.create(
-                model=s.model,
-                instructions=self.instructions,
-                input=self.items,
-                tools=TOOLS,
-                tool_choice="required",
-                parallel_tool_calls=False,
-                store=False,
-                reasoning={"effort": "medium" if trouble and s.effort in ("none", "minimal", "low") else s.effort},
-            )
+            effort = "medium" if trouble and s.effort in ("none", "minimal", "low") else s.effort
+            call = self.brain.ask(effort)
             thought = time.perf_counter() - t
             self.result.model_s += thought
-            self._count(reply.usage)
-            calls = [i for i in reply.output if getattr(i, "type", "") == "function_call"]
-            if not calls:
+            used = self.brain.used
+            self.result.tokens_in, self.result.tokens_cached, self.result.tokens_out = used
+            if call is None:
                 self.result.ended = "error"
                 self.result.error = "the model called no tool"
                 break
-            call = calls[0]
-            self.items.append(
-                {"type": "function_call", "call_id": call.call_id, "name": call.name, "arguments": call.arguments}
-            )
-            try:
-                args = json.loads(call.arguments or "{}")
-            except ValueError:
-                args = {}
+            args = call.args
             t = time.perf_counter()
             did = self.tools.call(call.name, args)
             said, picture, page_changed, trouble = did.said, did.picture, did.changed, did.trouble
@@ -318,7 +387,7 @@ class Agent:
             self.turns_done.append(done)
             self._log({"event": "turn", **done, "model_s": round(thought, 2), "browser_s": round(took, 2),
                        "network": self.session.take_network()})  # fmt: skip
-            self.items.append({"type": "function_call_output", "call_id": call.call_id, "output": said})
+            self.brain.answer(call, said)
             if call.name == "done":
                 self.result.ended = "done"
                 self.result.success = bool(args.get("success"))
@@ -333,35 +402,14 @@ class Agent:
                 picture = self.tools.picture()  # a page of almost no text (a map, a canvas): its picture says more
             if page_changed or picture:
                 view = self.session.current or self.session.look()
-                text = view.text if page_changed else "(the page as before)"
-                self._show(self._noted(site(view.url)) + text if page_changed else text, picture)
+                if page_changed:
+                    self.brain.show(self._noted(site(view.url)) + view.text, picture)
+                else:  # a picture of the page the model has: it keeps that page's text
+                    self.brain.show("(the page as before)", picture, new_page=False)
         self.result.seconds = round(time.perf_counter() - started, 1)
         self.result.screenshots, self.result.commits_asked = self.tools.screenshots, list(self.tools.commits_asked)
         self._log({"event": "end", **self.result.__dict__})
         return self.result
-
-    def _show(self, text: str, picture: bytes | None) -> None:
-        """The page, as the newest message: the pages before it shrink to a line, since every turn sends them all
-        again (and a picture each would make every turn slower than the last)."""
-        for i in self.pages:
-            head = self.items[i]["content"][0]["text"]
-            title = next((ln for ln in head.splitlines() if ln.startswith(("Title:", "Address:"))), "")
-            self.items[i]["content"] = [{"type": "input_text", "text": f"(an earlier page. {title})"}]
-        self.pages.clear()
-        content: list[dict[str, Any]] = [{"type": "input_text", "text": text}]
-        if picture:
-            data = base64.b64encode(picture).decode()
-            content.append({"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}", "detail": "auto"})
-        self.pages.append(len(self.items))
-        self.items.append({"role": "user", "content": content})
-
-    def _count(self, usage) -> None:
-        if not usage:
-            return
-        self.result.tokens_in += usage.input_tokens
-        self.result.tokens_out += usage.output_tokens
-        details = getattr(usage, "input_tokens_details", None)
-        self.result.tokens_cached += getattr(details, "cached_tokens", 0) or 0
 
     def _log(self, entry: dict[str, Any]) -> None:
         if self.trace is None:

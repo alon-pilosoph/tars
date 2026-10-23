@@ -608,3 +608,77 @@ def test_claude_code_gets_only_tars_browser_and_fenced_notes(tmp_path, monkeypat
         "mcp__tars-browser", "Read(./notes/**)", "Edit(./notes/**)", "Write(./notes/**)"}  # fmt: skip
     assert "Notes on sites" in (tmp_path / "home/CLAUDE.md").read_text()
     assert "notes/wolt.com.md" in command[command.index("-p") + 1]
+
+
+# Opus on Anthropic's API, in TARS's own loop
+
+
+class FakeAnthropic:
+    """Answers with the next reply of `replies` (lists of content blocks), and keeps every request."""
+
+    def __init__(self, *replies, fallback=False):
+        self.replies, self.sent, self.fallback = list(replies), [], fallback
+        self.beta = types.SimpleNamespace(messages=self)
+
+    def create(self, **request):
+        self.sent.append(json.loads(json.dumps(request, default=str)))
+        usage = types.SimpleNamespace(
+            input_tokens=10, cache_creation_input_tokens=5, cache_read_input_tokens=100, output_tokens=20,
+            iterations=[types.SimpleNamespace(type="fallback_message")] if self.fallback else None)  # fmt: skip
+        blocks = self.replies.pop(0)
+        stop = "tool_use" if any(b.type == "tool_use" for b in blocks) else "end_turn"
+        return types.SimpleNamespace(content=blocks, usage=usage, stop_reason=stop)
+
+
+def block(kind, **fields):
+    b = types.SimpleNamespace(type=kind, **fields)
+    b.model_dump = lambda exclude_none=True: {"type": kind, **fields}
+    return b
+
+
+def use(name, **args):
+    return [block("thinking", thinking="", signature="sig"), block("tool_use", id=f"t-{name}", name=name, input=args)]
+
+
+def test_opus_in_tars_loop_gets_pages_after_tool_results_and_never_its_thinking_back():
+    claude = FakeAnthropic(use("act", steps=[{"click": "e1"}]), use("look"),
+                           use("done", success=True, answer="ok"))  # fmt: skip
+    session = FakeSession()
+    result = Agent(claude, session, Person(), Settings(model="claude-opus-5-5", effort="medium")).run("Find it")
+    assert result.ended == "done" and result.answer == "ok"
+    last = claude.sent[-1]
+    assert last["model"] == "claude-opus-5-5" and last["output_config"] == {"effort": "medium"}
+    assert last["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+    assert last["fallbacks"] == "default" and "thinking" not in last
+    assert "exactly one call" in last["system"][0]["text"] and "Find it" in last["system"][0]["text"]
+    assert last["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    for m in last["messages"]:
+        if m["role"] == "assistant":
+            assert all(b["type"] in ("text", "tool_use") for b in m["content"])  # thinking stays out
+        else:
+            assert [b["type"] for b in m["content"]][:1] in (["tool_result"], ["text"])  # results come first
+    pages = [b["text"] for m in last["messages"] if m["role"] == "user" for b in m["content"] if b["type"] == "text"]
+    assert sum("Total ₪98.65" in p for p in pages) == 1  # the newest page in full, the ones before as a line
+    images = [b for m in last["messages"] for b in m["content"] if b["type"] == "image"]
+    assert images and images[0]["source"]["media_type"] == "image/jpeg"  # the screenshot look asked for
+    assert result.tokens_in == 3 * 115 and result.tokens_cached == 300 and result.tokens_out == 60
+
+
+def test_opus_is_reminded_once_to_call_a_tool_and_a_fallback_is_counted():
+    from voice_assistant.browser.agent import brain_for
+
+    claude = FakeAnthropic([block("text", text="Let me think.")], use("done", success=False, answer="x"),
+                           fallback=True)  # fmt: skip
+    brain = brain_for(claude, Settings(model="claude-opus-5-5"))
+    brain.start("rules")
+    brain.show("Title: T", None)
+    call = brain.ask("medium")
+    assert call.name == "done" and brain.fallbacks == 2
+    assert claude.sent[-1]["messages"][-1]["content"][0]["text"] == "Call one of your tools."
+
+
+def test_a_picture_of_the_same_page_keeps_that_pages_text():
+    model = FakeModel(call("look"), call("done", success=True, answer="ok"))
+    Agent(model, FakeSession(), Person()).run("Look at it")
+    pages = [json.dumps(i, ensure_ascii=False) for i in model.sent[-1]["input"] if i.get("role") == "user"]
+    assert any("Total ₪98.65" in p for p in pages) and any("input_image" in p for p in pages)

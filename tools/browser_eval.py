@@ -34,9 +34,12 @@ TURNS = re.compile(r"(?:done in|stuck after|stopped after) (\d+) steps")
 PRICES = tomllib.loads((ROOT / "evals/prices.toml").read_text())["models"]
 
 
-def cost(model: str, tokens_in: int, tokens_out: int) -> float:
+def cost(model: str, tokens_in: int, tokens_out: int, cached: int = 0) -> float:
+    """Dollars for the tokens; `cached`, of tokens_in, at the model's cache-read price when it has one."""
     price = PRICES[model]
-    return (tokens_in * price["input"] + tokens_out * price["output"]) / 1e6
+    cached = cached if "cache_read" in price else 0
+    return ((tokens_in - cached) * price["input"] + cached * price.get("cache_read", 0)
+            + tokens_out * price["output"]) / 1e6  # fmt: skip
 
 
 def spent() -> float:
@@ -226,7 +229,8 @@ def main() -> None:
         if args.agent == "claude":  # on the person's Claude plan: nothing paid by the token
             dollars = 0.0
         else:
-            dollars = cost(result["model"], tokens_in, tokens_out) if result["model"] else 0.0
+            dollars = cost(result["model"], tokens_in, tokens_out, result.get("tokens_cached", 0)) if result[
+                "model"] else 0.0  # fmt: skip
         add_spend(dollars)
         record = {"id": task["id"], "kind": task["kind"], "agent": args.agent, "effort": args.effort, **result,
                   "dollars": round(dollars, 4)}  # fmt: skip

@@ -75,7 +75,13 @@ def run_task(
     with own_chrome(profile, port) as address, sync_playwright() as p:
         context = p.chromium.connect_over_cdp(address).contexts[0]
         session = Session(context)
-        model = client()
+        claude = settings.model.startswith("claude-")  # Anthropic's API, in TARS's own loop
+        if claude:
+            from .anthropic_brain import client as anthropic_client
+
+            model = anthropic_client(ROOT / ".env")
+        else:
+            model = client()
         agent = Agent(model, session, approver, settings, trace=trace_to, notes=notes)
         try:
             result = agent.run(goal)
@@ -84,7 +90,7 @@ def run_task(
             result.ended, result.error = "error", f"{type(e).__name__}: {e}"
             agent._log({"event": "error", "error": result.error, "where": traceback.format_exc()[-3000:]})
         learned, learn_in, learn_out = "", 0, 0
-        if notes is not None and result.ended != "error":
+        if notes is not None and result.ended != "error" and not claude:  # notes.py writes them with OpenAI
             try:
                 learned, learn_in, learn_out = notes.learn(model, settings.model, goal, result.ended, agent.turns_done)
             except Exception as e:  # noqa: BLE001 - notes not written this time is fine
@@ -116,6 +122,7 @@ def run_task(
         "tidy_tokens_in": tidied.tokens_in if tidied else 0,
         "tidy_tokens_out": tidied.tokens_out if tidied else 0,
         "notes_used": sorted(agent.noted),
+        "fallbacks": getattr(agent.brain, "fallbacks", 0),
         "learned": learned,
         "learn_tokens_in": learn_in,
         "learn_tokens_out": learn_out,
