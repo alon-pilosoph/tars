@@ -71,10 +71,26 @@ VIEW_JS = r"""
     if (!text && !tag.match(/input|select|textarea/)) continue;
     n += 1;
     el.setAttribute('data-tars', String(n));
-    seen.push(`[${n}] ${kind} ${JSON.stringify(text)}`);
+    seen.push({n, el, kind, text});
   }
+  // Same label more than once ("Order again" on every order): say what each belongs to, from the nearest
+  // container whose first line is something else (the order's restaurant, say).
+  const count = {};
+  for (const s of seen) count[s.text] = (count[s.text] || 0) + 1;
+  const labels = new Set(seen.map((s) => s.text));  // a button's context is text that isn't another button
+  const context = (el, text) => {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      const first = (p.innerText || '').split('\n').map((l) => l.trim()).find((l) => l && !labels.has(l));
+      if (first) return first.slice(0, 50);
+    }
+    return '';
+  };
+  const lines = seen.map((s) => {
+    const of = count[s.text] > 1 ? context(s.el, s.text) : '';
+    return `[${s.n}] ${s.kind} ${JSON.stringify(s.text)}` + (of ? ` (${of})` : '');
+  });
   const main = dialog || document.querySelector('main, #a-page, [role=main]') || document.body;
-  return {title: document.title, url: location.href, elements: seen, dialog: !!dialog,
+  return {title: document.title, url: location.href, elements: lines, dialog: !!dialog,
           text: main.innerText.replace(/\n{3,}/g, '\n\n')};
 }
 """
@@ -406,7 +422,12 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", real
                 else:
                     if page.url != last_url:  # a new page: what failed on the last one may work here
                         failed, last_url = set(), page.url
+                    before = view(page)
                     outcome = act(page, list(args.get("steps", [])), failed)
+                    if outcome and all(o.startswith("ok") for o in outcome) and view(page) == before:
+                        # it "worked" and nothing changed: as good as failed, so it isn't asked for again
+                        failed.update(json.dumps(step, sort_keys=True) for step in args.get("steps", []))
+                        outcome.append("nothing changed on the page: that wasn't it; try something else")
                 looked = view(page)
                 worked = time.perf_counter() - t2
                 print(f"step {n}: model {thought:.1f}s, browser {worked:.1f}s, view {len(looked)} chars")
