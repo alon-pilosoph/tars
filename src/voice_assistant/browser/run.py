@@ -22,7 +22,7 @@ TIDY = (
 CLICKED = re.compile(r"clicked (?:(?:f\d+)?e\d+ |the text )(['\"])(.+?)\1")
 
 
-FILLS = re.compile(r"\b(add|order again|reorder|cart|basket|bag)\b|הוסף|הוספה|לסל|לעגלה", re.IGNORECASE)
+FILLS = re.compile(r"\b(add|order again|reorder|cart|basket|bag)\b|הוסף|הוספ|להוסיף|לסל|עגלה|לעגלת", re.IGNORECASE)
 
 
 def _filled(turns: list[dict[str, Any]]) -> bool:
@@ -92,7 +92,7 @@ def run_task(
         tidied = None
         if tidy and (result.commits_asked or _filled(agent.turns_done)):
             agent._log({"event": "follow_up", "request": "tidy"})
-            tidier = Agent(model, session, _NoOne(), Settings(model=settings.model, turns=12), trace=trace_to)
+            tidier = Agent(model, session, _NoOne(), Settings(model=settings.model, turns=20), trace=trace_to)
             try:
                 tidied = tidier.run(tidy_goal(agent.turns_done))
             except Exception as e:  # noqa: BLE001 - a basket left as it is is said so, not raised

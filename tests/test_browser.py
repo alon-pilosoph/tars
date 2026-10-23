@@ -524,6 +524,7 @@ def test_a_run_that_may_have_filled_a_basket_is_tidied():
     assert _filled([act("ok: clicked e1 'Add to order ₪66.00'")])
     assert _filled([act("ok: clicked e9 'Order again'")])
     assert _filled([act("ok: clicked e3 'הוסף לסל'")])
+    assert _filled([act("ok: clicked e5570 'להוסיף לעגלת כבל USB-C ל-USB-C'")])
     assert not _filled([act("ok: clicked e2 'Search'"), {"call": "find", "said": "Add to cart"}])
 
 
