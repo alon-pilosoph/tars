@@ -14,6 +14,7 @@ port, and Playwright attaches to it. The profile is ~/.cache/tars-browser/profil
 signed in, so keep it to this machine."""
 
 import argparse
+import base64
 import json
 import subprocess
 import time
@@ -110,9 +111,10 @@ VIEW_JS = r"""
 RULES = """You work a web browser for the person, toward their goal: {goal}
 
 Each turn you get the page: its title and address, the things on it you can click or type into, numbered, and its \
-text. Answer with the act tool: a list of steps, run in order, then you see the page again. Batch steps that don't \
-need a new look (fill two fields and press the button). Prefer going straight to an address you know when it's \
-quicker than clicking there.
+text, and a screenshot of the screen with those same numbers drawn on it in yellow. Trust the screenshot for what \
+is open, on top, covered, closed or sold out. Answer with the act tool: a list of steps, run in order, then you \
+see the page again. Batch steps that don't need a new look (fill two fields and press the button). Prefer going \
+straight to an address you know when it's quicker than clicking there.
 
 Steps: {{"click": N}}, {{"type": N, "text": "...", "enter": true|false}}, {{"goto": "https://..."}}, \
 {{"scroll": "down"|"up"}}, {{"back": true}}, {{"wait": seconds}}.
@@ -279,6 +281,51 @@ def settle(page: Page) -> None:
         return  # a page still busy is looked at as it is
 
 
+# Resolves once the page has stopped changing for 400 ms (a pop-up finished sliding in, a list finished loading), or
+# after 3 s whatever it's doing: what's read before then may be gone, or covered, by the time it's clicked.
+STILL_JS = """() => new Promise((done) => {
+  let timer = setTimeout(finish, 400);
+  const watch = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(finish, 400); });
+  const cap = setTimeout(finish, 3000);
+  function finish() { watch.disconnect(); clearTimeout(cap); clearTimeout(timer); done(true); }
+  watch.observe(document.body, {subtree: true, childList: true, attributes: true, characterData: true});
+})"""
+
+# Every numbered thing on screen gets its number drawn on it, the same as in the list ("set of marks"): the picture
+# says what's on top, open, closed or covered, and the number says what to click.
+MARKS_JS = """(on) => {
+  document.querySelectorAll('.tars-mark').forEach((m) => m.remove());
+  if (!on) return;
+  for (const el of document.querySelectorAll('[data-tars]')) {
+    const r = el.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
+    const m = document.createElement('div');
+    m.className = 'tars-mark';
+    m.textContent = el.getAttribute('data-tars');
+    m.style.cssText = `position:fixed;left:${Math.max(0, r.left)}px;top:${Math.max(0, r.top)}px;z-index:2147483647;`
+      + 'background:#ffd400;color:#000;font:bold 12px/14px monospace;padding:0 3px;border:1px solid #000;'
+      + 'pointer-events:none';
+    document.body.appendChild(m);
+  }
+}"""
+
+
+def still(page: Page) -> None:
+    try:
+        page.evaluate(STILL_JS)
+    except Exception:  # noqa: BLE001 - a page navigating away is still enough
+        return
+
+
+def marked_screenshot(page: Page) -> bytes:
+    """What's on screen now, the numbers from the last view drawn on it; small enough to cost about a cent a task."""
+    page.evaluate(MARKS_JS, True)
+    try:
+        return page.screenshot(type="jpeg", quality=60, scale="css")
+    finally:
+        page.evaluate(MARKS_JS, False)
+
+
 def act(page: Page, steps: list[dict], failed: set[str] | None = None) -> list[str]:
     """Each step's outcome, stopping at the first that fails. `failed`: steps that already failed on this page; one
     asked for again isn't tried again (that's how an agent goes round in circles)."""
@@ -352,7 +399,7 @@ class ChatBrain:
     def answer(self, call_id: str, output: str) -> None:
         self.messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
 
-    def page(self, looked: str) -> None:
+    def page(self, looked: str, image: bytes | None = None) -> None:  # Qwen reads text only
         for m in self.messages:
             if m["role"] == "user" and m["content"].startswith(PAGE):
                 m["content"] = "(an earlier page)"
@@ -364,7 +411,7 @@ class ResponsesBrain:
 
     def __init__(self, client, model: str, goal: str, first: str):
         self.client, self.model, self.instructions = client, model, RULES.format(goal=goal)
-        self.items: list[dict] = [{"role": "user", "content": first}]
+        self.items: list[dict] = [{"role": "user", "content": first}] if first else []
         self.tools = [{"type": "function", **t["function"]} for t in TOOLS]
         self.tokens_in = self.tokens_out = 0
 
@@ -390,11 +437,19 @@ class ResponsesBrain:
     def answer(self, call_id: str, output: str) -> None:
         self.items.append({"type": "function_call_output", "call_id": call_id, "output": output})
 
-    def page(self, looked: str) -> None:
+    def page(self, looked: str, image: bytes | None = None) -> None:
+        """The newest page in full, with its marked screenshot; the ones before it as a line each (sent again every
+        step, a picture each would make every step dearer and slower than the last)."""
         for i in self.items:
-            if i.get("role") == "user" and str(i.get("content", "")).startswith(PAGE):
+            content = i.get("content")
+            text = content[0].get("text", "") if isinstance(content, list) and content else str(content or "")
+            if i.get("role") == "user" and text.startswith(PAGE):
                 i["content"] = "(an earlier page)"
-        self.items.append({"role": "user", "content": looked})
+        content: list[dict] = [{"type": "input_text", "text": looked}]
+        if image:
+            picture = f"data:image/jpeg;base64,{base64.b64encode(image).decode()}"
+            content.append({"type": "input_image", "image_url": picture, "detail": "high"})
+        self.items.append({"role": "user", "content": content})
 
 
 def brain(which: str, goal: str, first: str):
@@ -412,7 +467,11 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", real
         browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{PORT}")
         context = browser.contexts[0]
         page = context.pages[0] if context.pages else context.new_page()
-        mind = brain(which, goal, view(page))
+        mind = brain(which, goal, "")
+        pictures = which == "luna"
+        still(page)
+        first = view(page)
+        mind.page(first, marked_screenshot(page) if pictures else None)
         person = Person(tailscale_address(), whose)
         signed_in, failed, last_url, stuck = False, set(), page.url, 0
         started = time.perf_counter()
@@ -446,7 +505,9 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", real
                         # it "worked" and nothing changed: as good as failed, so it isn't asked for again
                         failed.update(json.dumps(step, sort_keys=True) for step in args.get("steps", []))
                         outcome.append("nothing changed on the page: that wasn't it; try something else")
+                still(page)
                 looked = view(page)
+                shot = marked_screenshot(page) if pictures else None
                 worked = time.perf_counter() - t2
                 print(f"step {n}: model {thought:.1f}s, browser {worked:.1f}s, view {len(looked)} chars")
                 for line in outcome:
@@ -459,7 +520,7 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", real
                     )
                     return
                 mind.answer(call_id, "\n".join(outcome))
-                mind.page(looked)
+                mind.page(looked, shot)
             if finished is not None:
                 took = time.perf_counter() - started
                 used = f"{mind.tokens_in} tokens in / {mind.tokens_out} out"
