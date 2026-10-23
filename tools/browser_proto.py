@@ -308,6 +308,7 @@ def run(goal: str, which: str, steps: int, headless: bool) -> None:
         page = context.pages[0] if context.pages else context.new_page()
         mind = brain(which, goal, view(page))
         person = Person(tailscale_address())
+        signed_in = False
         started = time.perf_counter()
         for n in range(1, steps + 1):
             t = time.perf_counter()
@@ -323,7 +324,10 @@ def run(goal: str, which: str, steps: int, headless: bool) -> None:
                     mind.answer(call_id, "ok")
                     continue
                 t2 = time.perf_counter()
-                if name == "sign_in":  # by code: the login never reaches the model
+                if name == "sign_in" and signed_in:  # once a task: retrying sign-ins is how accounts get locked
+                    outcome = ["refused: sign_in already ran for this task. Call done and say what stopped it."]
+                elif name == "sign_in":  # by code: the login never reaches the model
+                    signed_in = True
                     outcome = [sign_in(page, person, goal)]
                 else:
                     outcome = act(page, list(args.get("steps", [])))

@@ -41,6 +41,12 @@ FIELDS_JS = """() => {
 }"""
 
 
+# What the page itself says went wrong: its alerts and error boxes, briefly.
+ALERTS_JS = """() => [...document.querySelectorAll('[role=alert], .a-alert-content, .error, [class*=error-message]')]
+  .filter((e) => e.offsetWidth > 0).map((e) => e.innerText.replace(/\\s+/g, ' ').trim()).filter(Boolean)
+  .slice(0, 3).join(' | ').slice(0, 300)"""
+
+
 class Refused(Exception):
     """The page isn't the login's site, or its form would send elsewhere."""
 
@@ -89,12 +95,23 @@ def sign_in(page: Page, person: Person, goal: str = "") -> str:
             return f"stopped: no login for {here} was added in time"
         if origin(page.url) != here or (login := for_page(page.url)) is None:
             return f"stopped: the page moved on from {here} while the login was being added"
-    done = []
+    done, sent = [], set()  # each kind of field is filled once: a site that asks again is told no, not retried
     for _ in range(STEPS):
         _settle(page)
         if for_page(page.url) is None or for_page(page.url).name != login.name:
             break  # off the site (signed in and sent on, or somewhere else): nothing more to type here
         fields = page.evaluate(FIELDS_JS)
+        wanted = (
+            "code" if fields["code"] else "password" if fields["password"] else "username" if fields["username"] else ""
+        )
+        if wanted in sent:  # asked again for what was just given: wrong, refused, or a check only a person can pass
+            said = page.evaluate(ALERTS_JS)
+            return (
+                f"stopped after {', '.join(done)}: {origin(page.url)} asked for the {wanted} again"
+                + (f" and says: {said}" if said else "")
+                + ". Not retrying: tell the person."
+            )
+        sent.add(wanted)
         try:
             if fields["code"]:
                 _check(page, login, fields["code"])
@@ -126,7 +143,8 @@ def sign_in(page: Page, person: Person, goal: str = "") -> str:
             return f"refused to type the login: {e}"
     title = page.title()
     steps = ", ".join(done) or "nothing to fill"
-    return f"{steps}; now at {origin(page.url)}, titled {title!r}"
+    said = page.evaluate(ALERTS_JS)
+    return f"{steps}; now at {origin(page.url)}, titled {title!r}" + (f"; the page says: {said}" if said else "")
 
 
 LOGIN_PAGE = """<!doctype html>
