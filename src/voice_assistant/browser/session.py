@@ -41,6 +41,12 @@ MARKS_JS = """(marks) => {
     document.documentElement.appendChild(m);
   }
 }"""
+# Whether the page shows something still loading: a busy region, a skeleton or a spinner on screen.
+BUSY_JS = """() => [...document.querySelectorAll(
+    '[aria-busy=true], [class*=skeleton i], [class*=spinner i], [class*=shimmer i], [class*=placeholder-glow i]')]
+  .some((e) => { const r = e.getBoundingClientRect();
+    return r.width > 8 && r.height > 8 && r.bottom > 0 && r.top < innerHeight
+      && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none'; })"""
 # Which dialogs, suggestion lists and menus are open, as a signature.
 SHAPE_JS = """() => [...document.querySelectorAll(
     '[role=dialog], [role=alertdialog], dialog[open], [role=listbox], [role=menu], [aria-expanded=true]')]
@@ -127,6 +133,7 @@ class Session:
         """The page as it is now, as the model is shown it."""
         self._front()
         self._still()
+        self._loaded()
         page = self.page
         try:
             snapshot = page.aria_snapshot(mode="ai", boxes=True, timeout=10_000)
@@ -255,7 +262,12 @@ class Session:
             return f"typed into {ref}" + (" and pressed Enter" if step.get("submit") else "")
         if "select" in step:
             ref = str(step["select"])
-            chosen = self._target(ref).select_option(label=str(step.get("option", "")), timeout=6_000)
+            target = self._target(ref)
+            try:
+                chosen = target.select_option(label=str(step.get("option", "")), timeout=6_000)
+            except PlaywrightError as e:  # most often a label not quite as written: say what the labels are
+                options = target.evaluate("(e) => [...(e.options || [])].map((o) => o.label.trim()).slice(0, 30)")
+                raise ValueError(f"{_why(e)}; its options are {options}") from e
             return f"chose {chosen} in {ref}"
         if "press" in step:
             key = str(step["press"])
@@ -366,6 +378,17 @@ class Session:
             self.page.evaluate(STILL_JS, [quiet_ms, most_ms])
         except PlaywrightError:  # navigating away: what loads next is waited for instead
             self._settle()
+
+    def _loaded(self, most_s: float = 3.0) -> None:
+        """Until what the page says is still loading has loaded, briefly (a results list being fetched, skeleton
+        cards): a list read half-drawn looks empty, and a model takes empty at its word."""
+        try:
+            for _ in range(int(most_s / 0.3)):
+                if not self.page.evaluate(BUSY_JS):
+                    return
+                self.page.wait_for_timeout(300)
+        except PlaywrightError:
+            return
 
     def _settle(self) -> None:
         """Until the page has loaded what it's going to, briefly: a page that keeps polling isn't waited out."""

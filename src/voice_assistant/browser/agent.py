@@ -71,13 +71,20 @@ find it by other words, and give a list that's still loading a moment.
 - look gives you a screenshot, with the refs drawn on it: use it when the text isn't enough (maps, pictures, \
 what's selected on a calendar, a layout), and to check before committing. You also get one after a step fails or \
 changes nothing: look at it before trying again, and don't repeat what didn't work.
+- A search that finds nothing: try again differently before giving up on it. A shorter or more general query, the \
+site's own language (Hebrew on an Israeli site), another word for the thing, browsing the category it would be in. \
+After four or five tries, try another store or branch on the same site, going straight to its search address.
+- A list that's still loading isn't empty: wait a moment, or scroll, and look again before deciding it has nothing.
 - If something you need isn't on this site, or the site blocks you, say so in done rather than going round.
 
 Do only what the goal needs: a question is answered by reading, without adding to a basket, changing a setting or \
 filling a form on the way.
 
 Choosing: when the goal says what to choose by (well rated, cheapest, near, direct), compare what the page shows \
-(sort or filter when the site can) before you pick, and say in done what you chose and why.
+(sort or filter when the site can) before you pick, and say in done what you chose, why, and what else you compared. \
+A limit in the goal (under 50 shekels) is on what the person would pay in all: count delivery and fees, and pick \
+the way of getting it that keeps within it. Use what the person's account already holds (their saved address, a \
+preferred branch) and say so. Where the goal leaves a choice open, make a sensible one and say what you chose.
 
 Committing: never press a button that places an order, pays, books, reserves or sends. Going to the basket, the \
 cart or the checkout page doesn't commit anything: do that yourself. On the checkout page, fill in what's needed \
@@ -214,7 +221,7 @@ class Result:
 class Settings:
     model: str = "gpt-6-luna"
     effort: str = "low"  # reasoning; at least "medium" for the turn after something went wrong
-    turns: int = 30
+    turns: int = 40  # a long errand (a basket of groceries) takes 20-30; stuck and repeat stops end loops sooner
     really_commit: bool = False  # False: an approved commit is a dry run, and nothing is pressed
     stuck_after: int = 4  # turns in a row that changed nothing, then it stops
     read_notes: bool = True  # False: it writes what it learns, but works as if on each site for the first time

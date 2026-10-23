@@ -6,6 +6,7 @@ import json
 import types
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 
 from voice_assistant.browser import agent as agents
 from voice_assistant.browser import page as pages
@@ -152,6 +153,12 @@ class FakeLocator:
     def is_visible(self):
         return not self.page.elements[self.ref].get("hidden")
 
+    def select_option(self, label, timeout=None):
+        if label not in self.page.elements[self.ref].get("options", []):
+            raise PlaywrightError(f"Timeout {timeout}ms exceeded.")
+        self.page.done.append(("select", self.ref, label))
+        return [label]
+
     def click(self, timeout=None):
         self.page.done.append(("click", self.ref))
         if opens := self.page.elements[self.ref].get("opens"):
@@ -164,6 +171,8 @@ class FakeLocator:
         self.page.done.append(("press", self.ref, key))
 
     def evaluate(self, script):
+        if "options" in script:
+            return self.page.elements[self.ref].get("options", [])
         return self.page.elements[self.ref].get("submits", "")
 
     def inner_text(self, timeout=None):
@@ -179,10 +188,10 @@ class FakePage:
     def __init__(self, elements):
         self.elements, self.done = elements, []
         self.viewport_size = {"width": 1200, "height": 700}
-        self.shape = ""
+        self.shape, self.busy, self.waited = "", 0, 0
 
     def wait_for_timeout(self, ms):
-        return None
+        self.waited += ms
 
     def is_closed(self):
         return False
@@ -197,6 +206,9 @@ class FakePage:
         return None
 
     def evaluate(self, script, arg=None):
+        if "aria-busy" in script:  # still loading, for as many looks as `busy` says
+            self.busy -= 1
+            return self.busy >= 0
         return self.shape if "aria-expanded" in script else 700
 
     def aria_snapshot(self, **kwargs):
@@ -682,3 +694,21 @@ def test_a_picture_of_the_same_page_keeps_that_pages_text():
     Agent(model, FakeSession(), Person()).run("Look at it")
     pages = [json.dumps(i, ensure_ascii=False) for i in model.sent[-1]["input"] if i.get("role") == "user"]
     assert any("Total ₪98.65" in p for p in pages) and any("input_image" in p for p in pages)
+
+
+def test_a_choice_not_in_a_dropdown_says_what_its_options_are():
+    session, page = session_on({"e5": {"options": ["1    (₪ 553)", "2    (₪ 1,106)"]}})
+    outcome = session.act([{"select": "e5", "option": "1"}])
+    assert outcome.failed and "1    (₪ 553)" in str(outcome)
+    assert not session.act([{"select": "e5", "option": "1    (₪ 553)"}]).failed
+    assert ("select", "e5", "1    (₪ 553)") in page.done
+
+
+def test_a_page_still_loading_is_waited_for_and_not_for_ever():
+    session, page = session_on({})
+    page.busy = 2
+    session.look()
+    assert page.waited == 600  # two looks still loading, then it had loaded
+    page.busy, page.waited = 1000, 0
+    session.look()
+    assert 0 < page.waited <= 3300  # a page that never stops says "loading" is read after about 3 s

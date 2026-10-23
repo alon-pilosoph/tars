@@ -190,7 +190,7 @@ def main() -> None:
     parser.add_argument("--agent", choices=("new", "proto", "claude"), default="new",
                         help="TARS's agent, the first prototype, or Claude Code working TARS's browser")  # fmt: skip
     parser.add_argument("--task", action="append", help="a task's id (default: all)")
-    parser.add_argument("--steps", type=int, default=25, help="at most this many model turns a task")
+    parser.add_argument("--steps", type=int, default=40, help="at most this many model turns a task")
     parser.add_argument("--cap", type=float, default=14.0, help="no task starts once all runs have spent this")
     parser.add_argument("--label", default="", help="added to the run's folder name")
     notes_help = "the new agent's site notes: read and write them, only write them, or neither"
