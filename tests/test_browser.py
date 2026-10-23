@@ -477,6 +477,8 @@ def test_a_click_by_text_or_at_a_point_is_gated_too():
     [
         ({"action": "click", "ref": "e4"}, {"click": "e4"}),
         ({"action": "click", "text": "Tel Aviv"}, {"click": {"text": "Tel Aviv"}}),
+        ({"action": "click", "ref": "e63", "text": "Friday, 30 October"}, {"click": {"text": "Friday, 30 October"}}),
+        ({"action": "click", "ref": "e63", "text": ""}, {"click": "e63"}),
         (
             {"action": "type", "ref": "e4", "text": "pizza", "submit": True},
             {"type": "e4", "text": "pizza", "submit": True},

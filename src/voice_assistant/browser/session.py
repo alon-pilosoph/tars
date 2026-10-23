@@ -422,8 +422,8 @@ def normal(step: dict[str, Any]) -> dict[str, Any]:
         return step
     action = "type" if action == "fill" else str(action)
     ref, rest = step.get("ref"), {k: v for k, v in step.items() if k not in ("action", "type", "ref")}
-    if action == "click":
-        return {"click": ref} if ref else {"click": {"text": step.get("text", "")}}
+    if action == "click":  # text, when it's given, is what to click: a ref beside it is where the model saw it
+        return {"click": {"text": step["text"]}} if step.get("text") else {"click": ref}
     if action in ("type", "select", "hover"):
         return {action: ref, **rest}
     if action == "press":
