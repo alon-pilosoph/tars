@@ -4,6 +4,9 @@ approval as TARS's agent; only the brain is different, so the two can be compare
 
 Claude Code is started with no built-in tools (`--tools ""`), only TARS's browser allowed, anything else refused
 (`--permission-mode dontAsk`), its own system prompt replaced by TARS's browser instructions, and no session kept.
+It runs in an empty folder with no settings, plugins or hooks and auto-memory off, so it brings none of the
+person's CLAUDE.md files or project memory to the task. It's still Claude Code's loop: tool calls, the whole
+history kept (TARS's own loop shrinks old pages to a line), prompt caching, and compacting when it's long.
 What it did comes back two ways: Claude Code's stream (time, turns, tokens, what the same use would cost on the API)
 and the MCP server's trace (each call and what it did, the answer, the approvals asked)."""
 
@@ -20,6 +23,9 @@ from .agent import instructions_for
 MODEL = "claude-opus-5-5"
 SERVER = "tars-browser"
 ROOT = Path(__file__).resolve().parents[3]
+# Where Claude Code runs: an empty folder, so no project's CLAUDE.md or memory comes along (only the account's
+# email and the machine's environment, which a plan sign-in brings anyway).
+HOME = ROOT / "voice_data/browser/claude-home"
 PREFACE = ("Your tools are TARS's browser (page, act, find, look, request_approval, done) and nothing else. Start "
            "with page, and finish with done.\n\n")  # fmt: skip
 
@@ -38,12 +44,14 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
         "--mcp-config", str(config), "--strict-mcp-config", "--tools", "", "--allowedTools", f"mcp__{SERVER}",
         "--permission-mode", "dontAsk", "--system-prompt", PREFACE + instructions_for(goal),
         "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+        "--setting-sources", "", "--settings", json.dumps({"autoMemoryEnabled": False}),
     ]  # fmt: skip
     _log(trace_to, {"event": "start", "goal": goal, "model": model, "effort": effort})
     started = time.perf_counter()
     error = ""
     try:
-        ran = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=timeout_s,
+        HOME.mkdir(parents=True, exist_ok=True)
+        ran = subprocess.run(command, cwd=HOME, capture_output=True, text=True, timeout=timeout_s,
                              env={**os.environ, **env}, check=False)  # fmt: skip
         stream, error = ran.stdout, ran.stderr.strip()[-500:] if ran.returncode else ""
     except subprocess.TimeoutExpired as e:
