@@ -356,13 +356,14 @@ class Agent:
             self.repeats = self.repeats + 1 if key == self.last_act else 1
             self.last_act = key
             if self.repeats >= REPEATS:
-                said = (f"not done: that's the {self.repeats}th time in a row. It didn't get you closer (it may "
-                        "open and close something). Look at the screenshot and do something else.")  # fmt: skip
+                said = (f"not done: that's {self.repeats} times in a row, and it didn't get you closer (it may open "
+                        "and close something). Look at the screenshot and do something else.")  # fmt: skip
                 return said, self._picture(), False, True
             outcome = session.act(steps)
             said = str(outcome)
             if outcome.failed and not outcome.refused:
-                failed_step = steps[min(len(outcome.said) - 1, len(steps) - 1)]
+                done = sum(1 for line in outcome.said if line.startswith("ok:"))  # the steps before it went
+                failed_step = steps[min(done, len(steps) - 1)]
                 self.failed_steps.add(_key(failed_step, session.page.url))
             if not outcome.changed and not outcome.failed:
                 said += "\nnothing changed on the page: that wasn't it. Look at the screenshot before the next step."
