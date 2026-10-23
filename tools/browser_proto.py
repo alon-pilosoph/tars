@@ -56,6 +56,12 @@ VIEW_JS = r"""
     const st = getComputedStyle(el);
     if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
     if (r.bottom < -200 || r.top > innerHeight * 3) continue;  // near the screen: what a person could reach soon
+    // On screen, it must be what a click there would hit, not something under a pop-up or a backdrop.
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    if (x >= 0 && y >= 0 && x < innerWidth && y < innerHeight) {
+      const hit = document.elementFromPoint(x, y);
+      if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) continue;
+    }
     const secret = el.tagName === 'INPUT' && el.type === 'password';  // never its value: a model reads this
     const text = secret ? `(password field, ${el.value ? 'filled' : 'empty'})`
       : (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title')
@@ -374,7 +380,7 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", real
         page = context.pages[0] if context.pages else context.new_page()
         mind = brain(which, goal, view(page))
         person = Person(tailscale_address(), whose)
-        signed_in, failed, last_url = False, set(), page.url
+        signed_in, failed, last_url, stuck = False, set(), page.url, 0
         started = time.perf_counter()
         for n in range(1, steps + 1):
             t = time.perf_counter()
@@ -406,6 +412,13 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", real
                 print(f"step {n}: model {thought:.1f}s, browser {worked:.1f}s, view {len(looked)} chars")
                 for line in outcome:
                     print(f"    {line}")
+                stuck = stuck + 1 if outcome and outcome[-1].startswith("not tried") else 0
+                if stuck >= 2:  # asked twice for what already failed: it's going round in circles, so stop
+                    print(
+                        f"\nstuck after {n} steps, {time.perf_counter() - started:.1f}s: it kept asking for a step "
+                        "that already failed"
+                    )
+                    return
                 mind.answer(call_id, "\n".join(outcome))
                 mind.page(looked)
             if finished is not None:
