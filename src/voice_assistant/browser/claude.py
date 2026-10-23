@@ -55,13 +55,20 @@ what failed and what worked instead, what the site asks for on the way to checko
 - The notes are the only files you can read or write.
 """
 NOTES = HOME / "notes"
+# For studying how it works: a note before each step, in its own words, kept in the stream. A progress note, not
+# its reasoning: a model asked to reproduce its thinking may decline that.
+NARRATE = ("For the log: before each tool call, write one or two short sentences: what you see on the page, what you "
+           "will try next and why. When a step fails or changes nothing, say what you think went wrong and what you "
+           "will do differently.")  # fmt: skip
 
 
 def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "medium", turns: int = 30,
-               timeout_s: float = 900, tidy: bool = False, notes: bool = False) -> dict[str, Any]:  # fmt: skip
+               timeout_s: float = 900, tidy: bool = False, notes: bool = False,
+               narrate: bool = False) -> dict[str, Any]:  # fmt: skip
     """Runs Claude Code on `goal` with TARS's browser; what it did, in run_task's shape. `tidy`: then empties a
     basket the run may have filled (as run_task does for evals). `notes`: it reads the notes on the sites it goes to,
-    and writes what the run taught it (in notes/, the only files it can touch)."""
+    and writes what the run taught it (in notes/, the only files it can touch). `narrate`: it writes a short note
+    before each step, for studying how it works (kept with the rest of its stream, beside the trace)."""
     trace_to.parent.mkdir(parents=True, exist_ok=True)
     config = trace_to.with_suffix(".mcp.json")
     env = {"TARS_BROWSER_TRACE": str(trace_to), "TARS_BROWSER_TURNS": str(turns)}
@@ -76,6 +83,8 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
         known = sorted(p.stem for p in NOTES.glob("*.md"))
         prompt += f"Notes so far: {', '.join(f'notes/{k}.md' for k in known)}." if known else "No notes yet."
         files, allowed = "Read,Edit,Write", [*allowed, *(f"{t}(./notes/**)" for t in ("Read", "Edit", "Write"))]
+    if narrate:
+        prompt += "\n\n" + NARRATE
     command = [
         "claude", "-p", prompt, "--model", model, "--effort", effort,
         "--mcp-config", str(config), "--strict-mcp-config", "--tools", files, "--allowedTools", *allowed,
@@ -93,6 +102,7 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
     except subprocess.TimeoutExpired as e:
         stream, error = (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or ""), "timed out"
     seconds = time.perf_counter() - started
+    trace_to.with_suffix(".stream.jsonl").write_text(stream)  # every message and call, as Claude Code streamed them
     final = next((m for m in map(_json, reversed(stream.splitlines())) if m.get("type") == "result"), {})
     events = [_json(line) for line in trace_to.read_text().split("\n") if line] if trace_to.exists() else []
     calls = [e for e in events if e.get("event") == "turn"]

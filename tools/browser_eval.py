@@ -159,7 +159,7 @@ def run_claude(task: dict, steps: int, folder: Path, options: argparse.Namespace
     from voice_assistant.browser.claude import run_claude as run
 
     return run(task["goal"], folder / f"{task['id']}.jsonl", model=options.model, effort=options.effort,
-               turns=steps, tidy=True, notes=options.notes != "off")  # fmt: skip
+               turns=steps, tidy=True, notes=options.notes != "off", narrate=options.narrate)  # fmt: skip
 
 
 def relearn(folder: Path) -> None:
@@ -199,6 +199,7 @@ def main() -> None:
     parser.add_argument("--model", default="gpt-6-luna", help="the new agent's model (priced in evals/prices.toml)")
     parser.add_argument("--effort", default="low", choices=("none", "low", "medium", "high"), help="its reasoning")
     parser.add_argument("--runs", type=int, default=1, help="each task this many times")
+    parser.add_argument("--narrate", action="store_true", help="Claude Code notes each step, to study how it works")
     args = parser.parse_args()
     if args.agent == "claude" and args.model == "gpt-6-luna":
         args.model, args.effort = "claude-opus-5-5", "medium" if args.effort == "low" else args.effort
