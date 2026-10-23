@@ -9,9 +9,10 @@ import pytest
 
 from voice_assistant.browser import agent as agents
 from voice_assistant.browser import page as pages
-from voice_assistant.browser.agent import Agent, Settings, _total
+from voice_assistant.browser.agent import Agent, Settings
 from voice_assistant.browser.gate import commits
 from voice_assistant.browser.session import Outcome, Refused, Session
+from voice_assistant.browser.tools import _total
 
 CARD_PAGE = """- generic [ref=e1] [box=0,0,1200,700]:
   - banner [ref=e2] [box=0,0,1200,70]:

@@ -21,13 +21,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
-from urllib.parse import urlsplit
+from typing import Any
 
-from . import page as pages
-from .gate import commits
 from .notes import Notes, site
 from .session import Session
+from .tools import Approver, Tools
 
 INSTRUCTIONS = """You work a web browser for the person, toward their goal. Today is {today}.
 
@@ -173,22 +171,7 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
-REPEATS = 3  # the same steps this many times in a row on one page: not done again
 SPARSE = 8  # lines: a page with fewer is shown with its screenshot too
-MONEY = re.compile(r"(?:[₪$€£]\s?\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?\s?(?:₪|ILS|NIS|EUR|USD|€|\$))")
-# What a button that only takes the person on says ("Go to checkout", "View basket"): no approval needed for it.
-NAVIGATES = re.compile(
-    r"\b(go to|view|open|show|continue to)\s+(the\s+)?(checkout|cart|basket|bag)\b"
-    r"|^\s*\d*\s*(checkout|cart|basket)\b|show items|לסל|לקופה|מעבר לקופה|לסל הקניות|לעגלת|לעגלה",
-    re.IGNORECASE,
-)
-TOTAL_WORDS = re.compile(r"total|סה\"?״?כ|סך הכל|לתשלום|to pay|price for", re.IGNORECASE)
-
-
-class Approver(Protocol):
-    """The person, asked to approve a commit: True only for a yes."""
-
-    def approve(self, draft: str, picture: bytes | None = None) -> bool: ...
 
 
 @dataclass
@@ -229,17 +212,13 @@ class Agent:
         trace: Path | None = None,
         notes: Notes | None = None,
     ):
-        self.client, self.session, self.approver = client, session, approver
+        self.client, self.session = client, session
         self.settings = settings or Settings()
-        self.sign_in = sign_in
         self.trace = trace
         self.items: list[dict[str, Any]] = []
         self.pages: list[int] = []  # which of the items are the page in full (only the newest is kept so)
         self.result = Result(ended="out of turns")
-        self.signed_in = False
-        self.failed_steps: set[str] = set()
-        self.last_act, self.repeats = "", 0  # the same steps asked for again and again
-        self.committed = False
+        self.tools = Tools(session, approver, self.settings.really_commit, sign_in, self._log)
         self.instructions = ""
         self.notes = notes
         self.noted: set[str] = set()  # the sites whose notes it has been given
@@ -274,7 +253,8 @@ class Agent:
 
     def follow_up(self, request: str, turns: int = 10) -> Result:
         """Carries on in the same browser and conversation with something more (after `run`): its own result."""
-        self.result, self.committed = Result(ended="out of turns"), False
+        self.result, self.tools.committed = Result(ended="out of turns"), False
+        self.tools.screenshots, self.tools.commits_asked = 0, []
         self._log({"event": "follow_up", "request": request})
         view = self.session.current or self.session.look()
         self._show(f"The person now asks: {request}\n\n{view.text}", picture=None)
@@ -314,7 +294,8 @@ class Agent:
             except ValueError:
                 args = {}
             t = time.perf_counter()
-            said, picture, page_changed, trouble = self._do(call.name, args)
+            did = self.tools.call(call.name, args)
+            said, picture, page_changed, trouble = did.said, did.picture, did.changed, did.trouble
             took = time.perf_counter() - t
             self.result.browser_s += took
             done = {"turn": turn, "call": call.name, "args": args, "said": said, "url": self.session.page.url}
@@ -333,110 +314,15 @@ class Agent:
                 self.result.answer = f"stopped: {quiet} turns in a row changed nothing on the page"
                 break
             if page_changed and not picture and len(getattr(self.session.current, "lines", [])) < SPARSE:
-                picture = self._picture()  # a page of almost no text (a map, a canvas): its picture says more
+                picture = self.tools.picture()  # a page of almost no text (a map, a canvas): its picture says more
             if page_changed or picture:
                 view = self.session.current or self.session.look()
                 text = view.text if page_changed else "(the page as before)"
                 self._show(self._noted(site(view.url)) + text if page_changed else text, picture)
         self.result.seconds = round(time.perf_counter() - started, 1)
+        self.result.screenshots, self.result.commits_asked = self.tools.screenshots, list(self.tools.commits_asked)
         self._log({"event": "end", **self.result.__dict__})
         return self.result
-
-    def _do(self, name: str, args: dict[str, Any]) -> tuple[str, bytes | None, bool, bool]:
-        """Carries out one call: (what to tell the model, a screenshot to show it, whether the page is new to it,
-        whether something went wrong)."""
-        session = self.session
-        if name == "act":
-            steps = [s for s in args.get("steps", []) if isinstance(s, dict)]
-            if not steps:
-                return "no steps given", None, False, True
-            repeat = next((s for s in steps if _key(s, session.page.url) in self.failed_steps), None)
-            if repeat is not None:
-                said = (f"not done: {json.dumps(repeat, ensure_ascii=False)} already failed on this page. Look at the "
-                        "screenshot and do something else.")  # fmt: skip
-                return said, self._picture(), False, True
-            key = _key({"steps": steps}, session.page.url)
-            self.repeats = self.repeats + 1 if key == self.last_act else 1
-            self.last_act = key
-            if self.repeats >= REPEATS:
-                said = (f"not done: that's {self.repeats} times in a row, and it didn't get you closer (it may open "
-                        "and close something). Look at the screenshot and do something else.")  # fmt: skip
-                return said, self._picture(), False, True
-            outcome = session.act(steps)
-            said = str(outcome)
-            if outcome.failed and not outcome.refused:
-                done = sum(1 for line in outcome.said if line.startswith("ok:"))  # the steps before it went
-                failed_step = steps[min(done, len(steps) - 1)]
-                self.failed_steps.add(_key(failed_step, session.page.url))
-            if not outcome.changed and not outcome.failed:
-                said += "\nnothing changed on the page: that wasn't it. Look at the screenshot before the next step."
-                for s in steps:
-                    self.failed_steps.add(_key(s, session.page.url))
-            trouble = outcome.failed or not outcome.changed
-            return said, self._picture() if trouble and not outcome.refused else None, outcome.changed, trouble
-        if name == "find":
-            view = session.current or session.look()
-            return view.find(str(args.get("text", ""))), None, False, False
-        if name == "look":
-            return "here is the screen", self._picture(), False, False
-        if name == "request_approval":
-            return self._approval(str(args.get("ref", "")), str(args.get("summary", ""))), None, True, False
-        if name == "sign_in":
-            if self.signed_in:
-                return "sign_in already ran for this task: call done and say what stopped it", None, False, True
-            self.signed_in = True
-            if self.sign_in is None:
-                return "TARS has no login for this site: call done and say it needs one", None, False, True
-            said = self.sign_in(session)
-            session.look()
-            return said, None, True, False
-        if name == "done":
-            return "ok", None, False, False
-        return f"no tool called {name}", None, False, True
-
-    def _approval(self, ref: str, summary: str) -> str:
-        session = self.session
-        view = session.current or session.look()
-        node = view.refs.get(ref)
-        if node is None:
-            return f"{ref} isn't on the page: look again and give the ref of the button that commits"
-        if self.committed:
-            return "this task already committed once: call done"
-        label = " ".join((node.name or pages.text_of(node)).split())
-        if NAVIGATES.search(label) and not commits(label):
-            return (f"{label!r} only takes you on (to the basket or the checkout): press it yourself, and call "
-                    "request_approval at the last button, the one that places the order")  # fmt: skip
-        total, prices = _total(view.text), MONEY.findall(view.text)
-        host = urlsplit(session.page.url).hostname or session.page.url
-        picture = session.screenshot()
-        draft = (f"TARS wants to press {label!r} on {host}.\n\n{summary}\n\n"
-                 f"The page says the total is {total or '(not shown)'}.")  # fmt: skip
-        self.result.commits_asked.append(draft)
-        self.result.screenshots += 1
-        self._log({"event": "approval", "ref": ref, "label": label, "summary": summary, "total": total})
-        if not self.approver.approve(draft, picture):
-            return "the person said no: nothing was done. Call done and say so."
-        if not self.settings.really_commit:
-            self.committed = True
-            return f"approved, as a dry run: {label!r} was not pressed and nothing was committed. Call done."
-        again = session.look().text
-        now = _total(again)
-        if now != total:
-            return f"the total changed from {total} to {now} while waiting: nothing was done. Call done and say so."
-        if MONEY.findall(again) != prices:  # a page that doesn't say "total" still says its prices
-            return "the prices on the page changed while waiting: nothing was done. Call done and say so."
-        session.click_approved(ref)
-        self.committed = True
-        session.look()
-        return f"pressed {label!r}. The page now shows what happened: read it and call done."
-
-    def _picture(self) -> bytes | None:
-        try:
-            shot = self.session.screenshot()
-        except Exception:  # noqa: BLE001 - no picture this turn is fine
-            return None
-        self.result.screenshots += 1
-        return shot
 
     def _show(self, text: str, picture: bytes | None) -> None:
         """The page, as the newest message: the pages before it shrink to a line, since every turn sends them all
@@ -467,20 +353,3 @@ class Agent:
         self.trace.parent.mkdir(parents=True, exist_ok=True)
         with self.trace.open("a") as out:
             out.write(json.dumps({"t": round(time.time(), 2), **entry}, ensure_ascii=False, default=str) + "\n")
-
-
-def _key(step: dict[str, Any], url: str) -> str:
-    return url + " " + json.dumps(step, sort_keys=True, ensure_ascii=False)
-
-
-def _total(text: str) -> str | None:
-    """The total the page shows: the last amount on or just after a line that says total."""
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    found = None
-    for i, line in enumerate(lines):
-        if TOTAL_WORDS.search(line):
-            for candidate in (line, *lines[i + 1 : i + 3]):
-                if amounts := MONEY.findall(candidate):
-                    found = amounts[-1].strip()
-                    break
-    return found
