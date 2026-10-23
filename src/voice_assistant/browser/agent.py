@@ -402,7 +402,7 @@ class Agent:
         if NAVIGATES.search(label) and not commits(label):
             return (f"{label!r} only takes you on (to the basket or the checkout): press it yourself, and call "
                     "request_approval at the last button, the one that places the order")  # fmt: skip
-        total = _total(view.text)
+        total, prices = _total(view.text), MONEY.findall(view.text)
         host = urlsplit(session.page.url).hostname or session.page.url
         picture = session.screenshot()
         draft = (f"TARS wants to press {label!r} on {host}.\n\n{summary}\n\n"
@@ -415,9 +415,12 @@ class Agent:
         if not self.settings.really_commit:
             self.committed = True
             return f"approved, as a dry run: {label!r} was not pressed and nothing was committed. Call done."
-        now = _total((session.look()).text)
+        again = session.look().text
+        now = _total(again)
         if now != total:
             return f"the total changed from {total} to {now} while waiting: nothing was done. Call done and say so."
+        if MONEY.findall(again) != prices:  # a page that doesn't say "total" still says its prices
+            return "the prices on the page changed while waiting: nothing was done. Call done and say so."
         session.click_approved(ref)
         self.committed = True
         session.look()

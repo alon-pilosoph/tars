@@ -354,6 +354,21 @@ def test_a_total_that_changed_while_asking_is_not_pressed():
     assert "changed" in model.sent[-1]["input"][-2]["output"]
 
 
+def test_prices_that_changed_while_asking_are_not_pressed_even_without_a_total():
+    model = FakeModel(call("request_approval", ref="e2", summary="a room"), call("done", success=True, answer=""))
+    page = "Title: Hotel\nAddress: https://booking.example\n\nDouble room ₪311"
+    session = FakeSession(text=page, refs=place_order_button())
+
+    class Slow(Person):
+        def approve(self, draft, picture=None):
+            session.text = session.text.replace("311", "390")
+            return True
+
+    Agent(model, session, Slow(), Settings(really_commit=True)).run("Book it")
+    assert session.pressed == []
+    assert "prices on the page changed" in model.sent[-1]["input"][-2]["output"]
+
+
 def test_going_to_the_checkout_needs_no_approval():
     refs = {"e5": pages.Node("button", name="1 Go to checkout ₪73.00", ref="e5", box=(0, 0, 100, 40))}
     model = FakeModel(call("request_approval", ref="e5", summary="checkout"), call("done", success=False, answer=""))
