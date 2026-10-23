@@ -255,6 +255,12 @@ def view(page: Page) -> str:
     )
 
 
+def state(page: Page) -> str:
+    """What the page shows, to tell whether a step changed anything: its address and its text, dialogs included.
+    Reads only: the numbers the model clicks by stay as they are."""
+    return page.url + "\n" + page.evaluate("() => document.body.innerText")
+
+
 def why(e: Exception) -> str:
     """What went wrong with a step, briefly but with the reason: Playwright's first line is only "Timeout exceeded",
     and the lines after it say what's in the way."""
@@ -434,9 +440,9 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "", real
                 else:
                     if page.url != last_url:  # a new page: what failed on the last one may work here
                         failed, last_url = set(), page.url
-                    before = view(page)
+                    before = state(page)  # not view(): that renumbers what the model is about to click
                     outcome = act(page, list(args.get("steps", [])), failed)
-                    if outcome and all(o.startswith("ok") for o in outcome) and view(page) == before:
+                    if outcome and all(o.startswith("ok") for o in outcome) and state(page) == before:
                         # it "worked" and nothing changed: as good as failed, so it isn't asked for again
                         failed.update(json.dumps(step, sort_keys=True) for step in args.get("steps", []))
                         outcome.append("nothing changed on the page: that wasn't it; try something else")
