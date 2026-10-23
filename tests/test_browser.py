@@ -458,3 +458,15 @@ def test_the_same_steps_again_and_again_are_stopped():
     Agent(model, session, Person()).run("Sort it")
     assert len(session.acted) == 2
     assert "time in a row" in json.dumps(model.sent[-1]["input"])
+
+
+def test_a_click_by_text_or_at_a_point_is_gated_too():
+    session, page = session_on({"e1": {}})
+    page.get_by_text = lambda text, exact: types.SimpleNamespace(all=lambda: [FakeLocator(page, "e1")])
+    assert not session.act([{"click": {"text": "Tel Aviv"}}]).failed and ("click", "e1") in page.done
+    outcome = session.act([{"click": {"text": "Place order"}}])
+    assert outcome.refused == "Place order"
+    page.evaluate = lambda script, arg=None: "Pay now" if "elementFromPoint" in script else 700
+    page.mouse = types.SimpleNamespace(click=lambda x, y: page.done.append(("click_at", x, y)))
+    assert session.act([{"click_at": [10, 20]}]).refused == "Pay now"
+    assert not any(d[0] == "click_at" for d in page.done)

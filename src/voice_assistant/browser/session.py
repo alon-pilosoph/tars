@@ -46,6 +46,13 @@ SHAPE_JS = """() => [...document.querySelectorAll(
     '[role=dialog], [role=alertdialog], dialog[open], [role=listbox], [role=menu], [aria-expanded=true]')]
   .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2; })
   .map((e) => (e.getAttribute('role') || e.tagName) + (e.getAttribute('aria-label') || '')).join(',')"""
+# What's at a point on the screen, as the gate reads it: the button or link it's in, or its own text.
+POINT_JS = """([x, y]) => {
+  const e = document.elementFromPoint(x, y);
+  if (!e) return '';
+  const owner = e.closest('button, a, [role=button], [role=link], input, [onclick]') || e;
+  return (owner.innerText || owner.value || owner.getAttribute('aria-label') || '').slice(0, 200);
+}"""
 UNMARK_JS = "() => document.querySelectorAll('.tars-mark').forEach((m) => m.remove())"
 
 # What Enter would send, from the field it's pressed in: its form's submit button, as the gate reads labels.
@@ -163,7 +170,7 @@ class Session:
         """Does each step in order, stopping at the first that fails or is refused; then lets the page settle."""
         outcome = Outcome()
         self._front()
-        before = (self.page.url, [ln.text for ln in self.current.lines] if self.current else [])
+        before = (self.page.url, [(ln.text, ln.top) for ln in self.current.lines] if self.current else [])
         url = self.page.url
         for i, step in enumerate(steps):
             shape = self._shape()
@@ -196,11 +203,20 @@ class Session:
         outcome.said += self.dialogs
         self.dialogs.clear()
         after = self.look()
-        outcome.changed = (after.url, [ln.text for ln in after.lines]) != before
+        outcome.changed = (after.url, [(ln.text, ln.top) for ln in after.lines]) != before  # scrolled counts
         return outcome
 
     def _step(self, step: dict[str, Any]) -> str:
         page = self.page
+        if "click" in step and isinstance(step["click"], dict):  # by its text, for what has no ref
+            text = str(step["click"].get("text", "")).strip()
+            if not text:
+                raise ValueError('click by text takes {"click": {"text": "..."}}')
+            target = self._by_text(text)
+            if commits(text):
+                raise Refused(text, f"{text!r} would commit the person to it: call request_approval with its ref")
+            target.click(timeout=6_000)
+            return f"clicked the text {text[:60]!r}"
         if "click" in step:
             ref = str(step["click"])
             target = self._target(ref)
@@ -209,6 +225,13 @@ class Session:
                 raise Refused(label, f"{label!r} would commit the person to it: call request_approval with this ref")
             target.click(timeout=6_000)
             return f"clicked {ref} {label[:60]!r}"
+        if "click_at" in step:  # a point on the screenshot: the last resort, for what the view can't name
+            x, y = (float(v) for v in step["click_at"])
+            label = " ".join(str(self.page.evaluate(POINT_JS, [x, y]) or "").split())
+            if commits(label):
+                raise Refused(label, f"what's there ({label!r}) would commit the person: call request_approval")
+            page.mouse.click(x, y)
+            return f"clicked at {x:g},{y:g} ({label[:60]!r})"
         if "fill" in step and "type" not in step:  # what models also call it
             step = {**step, "type": step["fill"]}
         if "type" in step:
@@ -268,6 +291,14 @@ class Session:
             page.wait_for_timeout(seconds * 1000)
             return f"waited {seconds:g}s"
         raise ValueError(f"unknown step {json.dumps(step, ensure_ascii=False)}")
+
+    def _by_text(self, text: str):
+        """The visible element with exactly this text, else the first that has it in it."""
+        for exact in (True, False):
+            for candidate in self.page.get_by_text(text, exact=exact).all()[:20]:
+                if candidate.is_visible():
+                    return candidate
+        raise ValueError(f"no visible text {text!r} on the page")
 
     def _shape(self) -> str:
         """What a batch's later steps were planned on: the address, and which dialogs, lists of suggestions and menus

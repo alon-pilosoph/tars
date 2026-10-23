@@ -48,6 +48,8 @@ search boxes that only suggest as you type)
 - {{"scroll": "down"}} or {{"scroll": "up"}}, or {{"scroll": "down", "in": "e20"}} inside a scrolling panel, or \
 {{"scroll": "e88"}} to bring e88 into view
 - {{"hover": "e5"}}, {{"goto": "https://..."}}, {{"back": true}}, {{"wait": 2}}
+- {{"click": {{"text": "Tel Aviv"}}}}   for text that has no ref but is clickable on the screenshot; and, as a last \
+resort, {{"click_at": [x, y]}}, a point on the screenshot (its pixels are the page's)
 
 A step that opens something (a new page, a dialog, a list of suggestions) ends the batch, and you see what it \
 opened: in a field that suggests as you type, type, then pick the suggestion on the next turn.
