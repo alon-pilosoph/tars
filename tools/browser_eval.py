@@ -149,7 +149,8 @@ def run_new(task: dict, steps: int, folder: Path, options: argparse.Namespace) -
     from voice_assistant.browser.notes import Notes
     from voice_assistant.browser.run import run_task
 
-    settings = Settings(model=options.model, effort=options.effort, turns=steps, read_notes=options.notes == "use")
+    settings = Settings(model=options.model, effort=options.effort, turns=steps, read_notes=options.notes == "use",
+                        history=options.history)  # fmt: skip
     return run_task(task["goal"], DryRun(), trace_to=folder / f"{task['id']}.jsonl", tidy=True, settings=settings,
                     notes=None if options.notes == "off" else Notes())  # fmt: skip
 
@@ -199,6 +200,8 @@ def main() -> None:
     parser.add_argument("--model", default="gpt-6-luna", help="the new agent's model (priced in evals/prices.toml)")
     parser.add_argument("--effort", default="low", choices=("none", "low", "medium", "high"), help="its reasoning")
     parser.add_argument("--runs", type=int, default=1, help="each task this many times")
+    history_help = "TARS's agent: every page and its reasoning kept (full), or the newest page only (short)"
+    parser.add_argument("--history", choices=("full", "short"), default="full", help=history_help)
     parser.add_argument("--narrate", action="store_true", help="Claude Code notes each step, to study how it works")
     args = parser.parse_args()
     if args.agent == "claude" and args.model == "gpt-6-luna":

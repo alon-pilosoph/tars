@@ -326,7 +326,8 @@ def test_the_goal_stays_in_the_instructions_and_old_pages_shrink_to_a_line(tmp_p
     model = FakeModel(call("act", steps=[{"click": "e1"}]), call("act", steps=[{"click": "e2"}]),
                       call("done", success=True, answer="Done."))  # fmt: skip
     session = FakeSession()
-    result = Agent(model, session, Person(), trace=tmp_path / "t.jsonl").run("Find the price")
+    short = Settings(history="short")
+    result = Agent(model, session, Person(), short, trace=tmp_path / "t.jsonl").run("Find the price")
     assert result.ended == "done" and result.answer == "Done." and result.turns == 3
     last = model.sent[-1]
     assert "Find the price" in last["instructions"]
@@ -652,11 +653,12 @@ def use(name, **args):
     return [block("thinking", thinking="", signature="sig"), block("tool_use", id=f"t-{name}", name=name, input=args)]
 
 
-def test_opus_in_tars_loop_gets_pages_after_tool_results_and_never_its_thinking_back():
+def test_opus_with_short_history_gets_pages_after_tool_results_and_never_its_thinking_back():
     claude = FakeAnthropic(use("act", steps=[{"click": "e1"}]), use("look"),
                            use("done", success=True, answer="ok"))  # fmt: skip
     session = FakeSession()
-    result = Agent(claude, session, Person(), Settings(model="claude-opus-5-5", effort="medium")).run("Find it")
+    short = Settings(model="claude-opus-5-5", effort="medium", history="short")
+    result = Agent(claude, session, Person(), short).run("Find it")
     assert result.ended == "done" and result.answer == "ok"
     last = claude.sent[-1]
     assert last["model"] == "claude-opus-5-5" and last["output_config"] == {"effort": "medium"}
@@ -712,3 +714,59 @@ def test_a_page_still_loading_is_waited_for_and_not_for_ever():
     page.busy, page.waited = 1000, 0
     session.look()
     assert 0 < page.waited <= 3300  # a page that never stops says "loading" is read after about 3 s
+
+
+def test_full_history_keeps_every_page_and_carries_the_reasoning_back():
+    from voice_assistant.browser import agent as agent_module
+
+    def reasoned(c):
+        thought = types.SimpleNamespace(type="reasoning", model_dump=lambda exclude_none=True: {
+            "type": "reasoning", "id": "r1", "summary": [], "encrypted_content": "opaque"})  # fmt: skip
+        return [thought, c]
+
+    class Model(FakeModel):
+        def create(self, **request):
+            reply = super().create(**request)
+            reply.output = reasoned(reply.output[0])
+            return reply
+
+    model = Model(call("act", steps=[{"click": "e1"}]), call("act", steps=[{"click": "e2"}]),
+                  call("done", success=True, answer="ok"))  # fmt: skip
+    Agent(model, FakeSession(), Person()).run("Find the price")
+    last = model.sent[-1]
+    assert last["include"] == ["reasoning.encrypted_content"] and last["store"] is False
+    pages = [json.dumps(i, ensure_ascii=False) for i in last["input"] if i.get("role") == "user"]
+    assert sum("Total ₪98.65" in p for p in pages) == 3  # nothing shrank
+    kinds = [i.get("type") for i in last["input"] if i.get("type")]
+    assert kinds.count("reasoning") == 2 and kinds.index("reasoning") < kinds.index("function_call")
+
+    brain = agent_module.OpenAIBrain(model, Settings())
+    for n in range(3):
+        brain.show(f"Title: page {n}\nAddress: https://x/{n}\n\nbody", None)
+    brain._squeeze()  # too long now: the newest page stays whole, the others shrink, and it stays short after
+    texts = [i["content"][0]["text"] for i in brain.items]
+    assert texts[0].startswith("(an earlier page") and texts[1].startswith("(an earlier page") and "body" in texts[2]
+    brain.show("Title: page 3\nAddress: https://x/3\n\nbody", None)
+    assert [i["content"][0]["text"].startswith("(an earlier page") for i in brain.items] == [True, True, True, False]
+
+
+def test_opus_with_full_history_gets_its_thinking_back_until_the_history_is_squeezed():
+    claude = FakeAnthropic(use("act", steps=[{"click": "e1"}]), use("done", success=True, answer="ok"))
+    Agent(claude, FakeSession(), Person(), Settings(model="claude-opus-5-5")).run("Find it")
+    assistant = [m for m in claude.sent[-1]["messages"] if m["role"] == "assistant"]
+    assert assistant and assistant[0]["content"][0] == {"type": "thinking", "thinking": "", "signature": "sig"}
+    pages = [b["text"] for m in claude.sent[-1]["messages"] if m["role"] == "user" for b in m["content"]
+             if b["type"] == "text"]  # fmt: skip
+    assert sum("Total ₪98.65" in p for p in pages) == 2  # nothing shrank
+
+    from voice_assistant.browser.agent import brain_for
+
+    brain = brain_for(claude, Settings(model="claude-opus-5-5"))
+    page = {"type": "text", "text": "Title: A\nAddress: a\n\nbody"}
+    tool = {"type": "tool_use", "id": "t", "name": "act", "input": {}}
+    thought = {"type": "thinking", "thinking": "", "signature": "s"}
+    brain.messages = [{"role": "user", "content": [page]}, {"role": "assistant", "content": [thought, tool]}]
+    brain.pages = [(0, 0)]
+    brain._squeeze()
+    assert brain.messages[1]["content"] == [tool]
+    assert not brain.full

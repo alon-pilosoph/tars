@@ -53,9 +53,13 @@ say all there is in words. It asks for one (`look`) for a map, a picture or a la
 when a step failed or changed nothing, which is when a model reading text goes wrong, and with a page of almost no
 text. The refs are drawn on the picture, so what it sees is what the view names.
 
-**The model** (`agent.py`) is Luna, through the Responses API at low reasoning, medium for the turn after something
-went wrong. Each turn it gets the newest page in full and the ones before it as a line each, and answers with one
-call: `act`, `find`, `look`, `request_approval`, `sign_in` or `done`.
+**The model** (`agent.py`) is any capable one: on OpenAI's Responses API (Luna, Sol) or Anthropic's Messages API
+(Opus, `anthropic_brain.py`), at the reasoning effort the settings say, raised for the turn after something went
+wrong. It answers each turn with one call: `act`, `find`, `look`, `request_approval`, `sign_in` or `done`. It keeps
+the whole errand in view: every page as it saw it, and its own reasoning carried from turn to turn (OpenAI's
+encrypted reasoning items, Anthropic's thinking blocks, sent back unchanged), so a long errand builds on what it
+already worked out. Repeated input is cached, so that costs little; a run past 150,000 tokens a request keeps only
+the newest page in full from then on.
 
 ## Never committing the person
 
