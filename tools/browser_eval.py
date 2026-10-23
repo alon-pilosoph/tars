@@ -1,6 +1,7 @@
 """Runs the browser agent's tasks (evals/browser/tasks.toml) on the real sites, one at a time, and keeps what each
 did: its answer, its steps, how long it took and what it cost. Nothing is ordered or booked: whatever the agent
-asks to commit is approved as a dry run, which stops it there.
+asks to commit is approved as a dry run, which stops it there. A round starts with TARS's baskets empty (on Wolt and
+KSP here), and each task that filled one has it emptied after it, so each starts where the first did.
 
     uv run --all-extras python tools/browser_eval.py [--agent new|proto] [--task ID ...] [--steps N] [--cap DOLLARS]
     uv run --all-extras python tools/browser_eval.py --relearn voice_data/browser/evals/<run>   # notes again

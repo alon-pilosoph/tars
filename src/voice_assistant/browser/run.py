@@ -15,9 +15,9 @@ from .session import Session
 
 ROOT = Path(__file__).resolve().parents[3]
 TIDY = (
-    "Undo a test run on {site}. It clicked these, in this order: {clicks}. Whatever those put in the basket or cart "
-    "(which items, how many), take out again, so the basket is as it was before the run; leave anything else in it. "
-    "Then say what you took out, and what's left."
+    "Empty the basket or cart on {site}: everything in it was put there by test runs (it was empty before them). "
+    "Open it, remove every item, and check it's empty; if the site keeps a basket for each store or restaurant, "
+    "empty each one the last run used ({clicks} were its clicks). Then say what you took out."
 )
 CLICKED = re.compile(r"clicked (?:(?:f\d+)?e\d+ |the text )(['\"])(.+?)\1")
 
@@ -31,8 +31,9 @@ def _filled(turns: list[dict[str, Any]]) -> bool:
 
 
 def tidy_goal(turns: list[dict[str, Any]]) -> str:
-    """What a tidying run is asked: the run's site, and the labels of everything it clicked, for it to work out
-    what went into the basket (a fresh run, told in so many words, does it; one asked to undo itself hesitates)."""
+    """What a tidying run is asked: to empty the basket on the run's site. That's for evals, whose rounds start
+    with empty baskets (anything in one is a test run's); taking out only what the run added was tried, and missed
+    what a click like "Order again" puts in without naming it. The run's clicks say which baskets it used."""
     clicks = [m.group(2) for t in turns if t["call"] == "act" for m in CLICKED.finditer(str(t.get("said", "")))]
     where = site(next((t["url"] for t in reversed(turns) if t.get("url")), "")) or "the site"
     return TIDY.format(site=where, clicks="; ".join(f"'{c}'" for c in clicks[-30:]) or "(nothing)")
@@ -65,10 +66,11 @@ def run_task(
     tidy: bool = False,
     notes: Notes | None = None,
 ) -> dict[str, Any]:
-    """Runs the agent on `goal` in a fresh TARS Chrome; what it did, as a dict. `tidy`: after a dry-run commit, it's
-    asked to take out of the basket what it put in, so the next run starts where this one did (its tokens are counted
-    in the cost, and nothing else of it is). `notes`: the agent reads what it noted on the sites before, and writes
-    what this run taught it."""
+    """Runs the agent on `goal` in a fresh TARS Chrome; what it did, as a dict.
+
+    `tidy` (for evals): after a run that asked to commit or may have filled a basket, a fresh run empties the basket
+    on that site, so the next starts as this one did; its tokens are counted in the cost, and nothing else of it is.
+    `notes`: the agent reads what it noted on the sites before, and writes what this run taught it."""
     settings = settings or Settings(turns=steps)
     with own_chrome(profile, port) as address, sync_playwright() as p:
         context = p.chromium.connect_over_cdp(address).contexts[0]

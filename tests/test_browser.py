@@ -541,7 +541,8 @@ def test_a_tidying_run_is_told_what_the_run_clicked():
         {"call": "find", "url": "https://wolt.com/x", "said": "clicked e1 'not a click'"},
     ]
     goal = tidy_goal(turns)
-    assert "wolt.com" in goal and "'Pizza Har Sinai'; 'Add to order ₪66.00'; 'Tel Aviv'" in goal
+    assert "Empty the basket or cart on wolt.com" in goal
+    assert "'Pizza Har Sinai'; 'Add to order ₪66.00'; 'Tel Aviv'" in goal
     assert "not a click" not in goal
 
 
