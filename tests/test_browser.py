@@ -495,3 +495,15 @@ def test_a_step_as_written_is_read_into_what_is_done(written, done):
     from voice_assistant.browser.session import normal
 
     assert normal(written) == done
+
+
+def test_a_run_that_may_have_filled_a_basket_is_tidied():
+    from voice_assistant.browser.run import _filled
+
+    def act(said):
+        return {"call": "act", "said": said}
+
+    assert _filled([act("ok: clicked e1 'Add to order ₪66.00'")])
+    assert _filled([act("ok: clicked e9 'Order again'")])
+    assert _filled([act("ok: clicked e3 'הוסף לסל'")])
+    assert not _filled([act("ok: clicked e2 'Search'"), {"call": "find", "said": "Add to cart"}])
