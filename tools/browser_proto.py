@@ -51,7 +51,18 @@ VIEW_JS = r"""
   document.querySelectorAll('[data-tars]').forEach((e) => e.removeAttribute('data-tars'));  // last view's numbers
   const seen = [];
   let n = 0;
-  for (const el of scope.querySelectorAll(sel)) {
+  // Real buttons and links, and anything else the site made clickable in code (React cards, rows): the pointer turns
+  // into a hand over it. Those only when nothing inside or around them is already a button or a link.
+  const candidates = [...scope.querySelectorAll(sel)];
+  const real = new Set(candidates);
+  for (const el of scope.querySelectorAll('div, li, span, article, section, img')) {
+    if (getComputedStyle(el).cursor !== 'pointer') continue;
+    if (el.parentElement && getComputedStyle(el.parentElement).cursor === 'pointer') continue;  // its outermost only
+    if (el.querySelector(sel) || el.closest(sel)) continue;
+    if (!real.has(el)) candidates.push(el);
+  }
+  candidates.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  for (const el of candidates) {
     const r = el.getBoundingClientRect();
     const st = getComputedStyle(el);
     if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
@@ -67,7 +78,8 @@ VIEW_JS = r"""
       : (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title')
          || el.getAttribute('placeholder') || el.getAttribute('alt') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     const tag = el.tagName.toLowerCase();
-    const kind = tag === 'a' ? 'link' : tag === 'input' ? `input:${el.type}` : el.getAttribute('role') || tag;
+    const kind = tag === 'a' ? 'link' : tag === 'input' ? `input:${el.type}`
+      : el.getAttribute('role') || (real.has(el) ? tag : 'clickable');
     if (!text && !tag.match(/input|select|textarea/)) continue;
     n += 1;
     el.setAttribute('data-tars', String(n));
