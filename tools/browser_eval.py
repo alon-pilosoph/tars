@@ -167,7 +167,7 @@ def relearn(folder: Path) -> None:
 
     notes, model = Notes(), client()
     spent_in = spent_out = 0
-    traces = [p for p in folder.glob("*.jsonl") if p.name != "results.jsonl"]
+    traces = [p for p in folder.glob("*.jsonl") if p.name != "results.jsonl" and not p.name.endswith(".tidy.jsonl")]
     for trace in sorted(traces, key=lambda p: p.stat().st_mtime):
         events = [json.loads(line) for line in trace.read_text().split("\n") if line]  # not splitlines: a page's U+2028
         start = next((e for e in events if e["event"] == "start"), None)
@@ -223,8 +223,8 @@ def main() -> None:
         result = runner(task, args.steps, folder)
         tokens_in = result["tokens_in"] + result.get("tidy_tokens_in", 0) + result.get("learn_tokens_in", 0)
         tokens_out = result["tokens_out"] + result.get("tidy_tokens_out", 0) + result.get("learn_tokens_out", 0)
-        if args.agent == "claude":  # on the person's Claude plan: only the tidying (TARS's agent, on Luna) is paid
-            dollars = cost("gpt-6-luna", result.get("tidy_tokens_in", 0), result.get("tidy_tokens_out", 0))
+        if args.agent == "claude":  # on the person's Claude plan: nothing paid by the token
+            dollars = 0.0
         else:
             dollars = cost(result["model"], tokens_in, tokens_out) if result["model"] else 0.0
         add_spend(dollars)

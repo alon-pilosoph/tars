@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .agent import Settings, instructions_for
+from .agent import instructions_for
 
 MODEL = "claude-opus-5-5"
 SERVER = "tars-browser"
@@ -26,8 +26,8 @@ PREFACE = ("Your tools are TARS's browser (page, act, find, look, request_approv
 
 def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "medium", turns: int = 30,
                timeout_s: float = 900, tidy: bool = False) -> dict[str, Any]:  # fmt: skip
-    """Runs Claude Code on `goal` with TARS's browser; what it did, in run_task's shape. `tidy`: then empties, with
-    TARS's own agent, a basket the run may have filled (as run_task does for evals)."""
+    """Runs Claude Code on `goal` with TARS's browser; what it did, in run_task's shape. `tidy`: then empties a
+    basket the run may have filled (as run_task does for evals)."""
     trace_to.parent.mkdir(parents=True, exist_ok=True)
     config = trace_to.with_suffix(".mcp.json")
     env = {"TARS_BROWSER_TRACE": str(trace_to), "TARS_BROWSER_TURNS": str(turns)}
@@ -75,18 +75,20 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
         "error": error or (final.get("result", "") if final.get("is_error") else ""),
     }
     if tidy:
-        result |= _tidy(calls, result["commits_asked"], trace_to)
+        result |= _tidy(calls, result["commits_asked"], trace_to, model, effort)
     return result
 
 
-def _tidy(calls: list[dict[str, Any]], commits_asked: list[str], trace_to: Path) -> dict[str, Any]:
-    from .run import _filled, _NoOne, run_task, tidy_goal
+def _tidy(calls: list[dict[str, Any]], commits_asked: list[str], trace_to: Path, model: str,
+          effort: str) -> dict[str, Any]:  # fmt: skip
+    """Empties the basket the run may have filled, by Claude too (TARS's own agent took twice as long to find it)."""
+    from .run import _filled, tidy_goal
 
     if not (commits_asked or _filled(calls)):
         return {}
     _log(trace_to, {"event": "follow_up", "request": "tidy"})
-    tidied = run_task(tidy_goal(calls), _NoOne(), trace_to=trace_to, settings=Settings(turns=20))
-    return {"tidied": tidied["answer"], "tidy_tokens_in": tidied["tokens_in"], "tidy_tokens_out": tidied["tokens_out"]}
+    tidied = run_claude(tidy_goal(calls), trace_to.with_suffix(".tidy.jsonl"), model=model, effort=effort, turns=25)
+    return {"tidied": tidied["answer"], "tidy_api_usd": tidied["api_usd"]}
 
 
 def _json(line: str) -> dict[str, Any]:
