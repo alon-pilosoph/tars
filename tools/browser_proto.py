@@ -21,7 +21,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
-from browser_signin import sign_in, telegram_asker
+from browser_signin import Person, sign_in, tailscale_address
 from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PageTimeout
 
@@ -74,9 +74,10 @@ Steps: {{"click": N}}, {{"type": N, "text": "...", "enter": true|false}}, {{"got
 {{"scroll": "down"|"up"}}, {{"back": true}}, {{"wait": seconds}}.
 
 When the goal is reached, call done with the answer for them: short, plain, what they asked for. If the site asks \
-you to sign in, call sign_in: TARS signs in with the login it keeps for that site (you never see it), and asks the \
-person for any code the site sends. Never type a password or a code yourself. If sign_in can't, or there's a \
-CAPTCHA, call done saying so. Never buy, send, cancel or change anything: this is only looking."""
+you to sign in, call sign_in: TARS signs in with the login it keeps for that site (you never see it), asking the \
+person for one first if it has none, and for any code the site sends (it can take minutes: just wait for it). Never \
+type a password or a code yourself. If sign_in can't, or there's a CAPTCHA, call done saying so. Never buy, send, \
+cancel or change anything: this is only looking."""
 
 TOOLS = [
     {
@@ -306,7 +307,7 @@ def run(goal: str, which: str, steps: int, headless: bool) -> None:
         context = browser.contexts[0]
         page = context.pages[0] if context.pages else context.new_page()
         mind = brain(which, goal, view(page))
-        asker = telegram_asker()
+        person = Person(tailscale_address())
         started = time.perf_counter()
         for n in range(1, steps + 1):
             t = time.perf_counter()
@@ -323,7 +324,7 @@ def run(goal: str, which: str, steps: int, headless: bool) -> None:
                     continue
                 t2 = time.perf_counter()
                 if name == "sign_in":  # by code: the login never reaches the model
-                    outcome = [sign_in(page, asker)]
+                    outcome = [sign_in(page, person, goal)]
                 else:
                     outcome = act(page, list(args.get("steps", [])))
                 looked = view(page)

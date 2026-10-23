@@ -77,6 +77,18 @@ def for_page(url: str) -> Login | None:
     return None
 
 
+def store(name: str, origins: list[str], username: str, password: str) -> None:
+    """Adds or replaces a login, for exactly these origins (https only)."""
+    origins = sorted({origin(o) for o in origins})
+    if not origins or not all(o.startswith("https://") and "." in o for o in origins):
+        raise ValueError(f"origins must be https://host addresses, got {origins}")
+    if not username or not password:
+        raise ValueError("both a username and a password are needed")
+    entries = _load()
+    entries[name] = {"origins": origins, "username": username, "password": password}
+    _save(entries)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -89,16 +101,14 @@ def main() -> None:
     args = parser.parse_args()
     entries = _load()
     if args.command == "add":
-        origins = sorted({origin(o) for o in args.origin})
-        if not all(o.startswith("https://") and "." in o for o in origins):
-            raise SystemExit(f"origins must be https://host addresses, got {origins}")
         username = input("Username (email or phone): ").strip()
         password = getpass.getpass("Password (not shown): ")
-        if not username or not password:
-            raise SystemExit("nothing saved: both are needed")
-        entries[args.name] = {"origins": origins, "username": username, "password": password}
-        _save(entries)
-        print(f"Saved {args.name} for {', '.join(origins)}.")
+        try:
+            store(args.name, args.origin, username, password)
+        except ValueError as e:
+            raise SystemExit(f"nothing saved: {e}") from None
+        print(f"Saved {args.name} for {', '.join(sorted({origin(o) for o in args.origin}))}.")
+        return
     elif args.command == "list":
         for name, e in sorted(entries.items()):
             print(f"{name}: {e['username']} on {', '.join(e['origins'])}")
