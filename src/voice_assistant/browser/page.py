@@ -200,9 +200,69 @@ def text_of(node: Node) -> str:
 
 def lines(root: Node) -> list[Line]:
     """The page as lines: a block a line, what's in it written on it."""
-    out: list[Line] = []
+    writer = _Writer()
+    for c in root.children:
+        if c.role in BLOCKS:
+            writer.block(c, 0)
+        else:
+            writer.loose(c)
+    return writer.out
 
-    def inline(node: Node, parts: list[str]) -> None:
+
+class _Writer:
+    """Writes a tree out as lines. A block starts a line of its own at one level deeper than the block it's in;
+    everything else inside it is written into the line being made (`parts`), which ends at the next block."""
+
+    def __init__(self) -> None:
+        self.out: list[Line] = []
+        self.depth = 0
+        self.top: int | None = None  # where the block being written starts on screen
+
+    def block(self, node: Node, depth: int) -> None:
+        if not node.shown:
+            return
+        saved = self.depth, self.top
+        self.depth, self.top = depth, node.top if node.top is not None else self.top
+        if node.role == "heading":
+            if said := " ".join((node.name or text_of(node)).split()):
+                heading = ("#" * int(node.level or 2) + " " + said)[:LINE]
+                self.out.append(Line(depth, heading, self.top, heading=True))
+            for c in node.children:  # a link or a button in a heading: its text is the heading's, said already
+                if _has_act(c):
+                    parts: list[str] = []
+                    self.inline(c, parts)
+                    self.flush(parts)
+        elif node.role in CONTAINERS and not node.name:  # a wrapper that says nothing: its blocks at its level
+            for c in node.children:
+                if c.role in BLOCKS:
+                    self.block(c, depth)
+                else:
+                    self.loose(c)
+        else:
+            parts = [_opening(node)]
+            if node.name and node.role not in PLAIN and node.role not in CONTAINERS:
+                parts.append(node.name)
+            if node.value:
+                parts.append(node.value)
+            for c in node.children:
+                if c.role in BLOCKS:
+                    self.flush(parts)
+                    self.block(c, depth + 1)
+                else:
+                    self.inline(c, parts)
+            self.flush(parts)
+        self.depth, self.top = saved
+
+    def loose(self, node: Node) -> None:
+        """Something not in a block of its own (most of a page, in wrappers): a line of whatever it holds."""
+        saved = self.top
+        self.top = node.top if node.top is not None else saved
+        parts: list[str] = []
+        self.inline(node, parts)
+        self.flush(parts)
+        self.top = saved
+
+    def inline(self, node: Node, parts: list[str]) -> None:
         """Writes `node` into the line being made, and any blocks inside it as lines of their own."""
         if not node.shown:
             return
@@ -210,7 +270,7 @@ def lines(root: Node) -> list[Line]:
             parts.append(_label(node))
             for c in node.children:  # an element inside it that acts on its own: a button in a clickable card
                 if _has_act(c):
-                    inline(c, parts)
+                    self.inline(c, parts)
             return
         if node.role in ("img", "image") and node.name:
             parts.append(f"(image: {node.name[:60]})" if len(node.name) > 3 else node.name)
@@ -220,15 +280,12 @@ def lines(root: Node) -> list[Line]:
             parts.append(node.value)
         for c in node.children:
             if c.role in BLOCKS:
-                flush(parts, node)
-                block(c, depth[0] + 1)
+                self.flush(parts)
+                self.block(c, self.depth + 1)
             else:
-                inline(c, parts)
+                self.inline(c, parts)
 
-    depth = [0]
-    pending_top: list[int | None] = [None]
-
-    def flush(parts: list[str], node: Node) -> None:
+    def flush(self, parts: list[str]) -> None:
         """Ends the line being made: in pieces of at most LINE characters, broken between parts, so nothing is lost."""
         piece, last = "", ""
         for part in (p.strip() for p in parts):
@@ -236,68 +293,28 @@ def lines(root: Node) -> list[Line]:
                 continue
             last = part
             if piece and len(piece) + 1 + len(part) > LINE:
-                out.append(Line(depth[0], piece, pending_top[0]))
+                self.out.append(Line(self.depth, piece, self.top))
                 piece = ""
             piece = f"{piece} {part}" if piece else part[: LINE * 2]
         if piece:
-            out.append(Line(depth[0], piece, pending_top[0]))
+            self.out.append(Line(self.depth, piece, self.top))
         parts.clear()
 
-    def block(node: Node, d: int) -> None:
-        if not node.shown:
-            return
-        saved, saved_top = depth[0], pending_top[0]
-        depth[0], pending_top[0] = d, node.top if node.top is not None else saved_top
-        parts: list[str] = []
-        if node.role == "heading":
-            if said := " ".join((node.name or text_of(node)).split()):
-                out.append(Line(d, ("#" * int(node.level or 2) + " " + said)[:LINE], pending_top[0], heading=True))
-            for c in node.children:
-                if _has_act(c):
-                    inline(c, parts := [])
-                    flush(parts, node)
-        elif node.role in CONTAINERS and not node.name:
-            for c in node.children:
-                if c.role in BLOCKS:
-                    block(c, d)
-                else:
-                    _loose(c)
-        else:
-            if node.role in ("dialog", "alertdialog"):
-                parts.append(f"{node.role} {json.dumps(node.name, ensure_ascii=False)}:" if node.name else "dialog:")
-            elif node.role in CONTAINERS or node.role in ("alert", "status"):
-                parts.append(f"{node.role} {json.dumps(node.name, ensure_ascii=False)}:")
-            elif node.role in ("listitem", "row", "option"):
-                parts.append("-")
-            plain = ("paragraph", "listitem", "row", "dialog", "alertdialog", "alert", "status")
-            if node.name and node.role not in plain and node.role not in CONTAINERS:
-                parts.append(node.name)
-            if node.value:
-                parts.append(node.value)
-            for c in node.children:
-                if c.role in BLOCKS:
-                    flush(parts, node)
-                    block(c, d + 1)
-                else:
-                    inline(c, parts)
-            flush(parts, node)
-        depth[0], pending_top[0] = saved, saved_top
 
-    def _loose(node: Node) -> None:
-        """Something not in any block of its own (most of a page, in wrappers): a line of whatever it holds."""
-        parts: list[str] = []
-        pending = pending_top[0]
-        pending_top[0] = node.top if node.top is not None else pending
-        inline(node, parts)
-        flush(parts, node)
-        pending_top[0] = pending
+# Blocks whose name isn't said on their line: it's the text in them, written out anyway, or said in the opening.
+PLAIN = ("paragraph", "listitem", "row", "dialog", "alertdialog", "alert", "status")
 
-    for c in root.children:
-        if c.role in BLOCKS:
-            block(c, 0)
-        else:
-            _loose(c)
-    return out
+
+def _opening(node: Node) -> str:
+    """How a block's line starts: what it is, when that's worth saying."""
+    name = json.dumps(node.name, ensure_ascii=False)
+    if node.role in ("dialog", "alertdialog"):
+        return f"{node.role} {name}:" if node.name else "dialog:"
+    if node.role in CONTAINERS or node.role in ("alert", "status"):
+        return f"{node.role} {name}:"
+    if node.role in ("listitem", "row", "option"):
+        return "-"
+    return ""
 
 
 def _has_real_act(node: Node) -> bool:
