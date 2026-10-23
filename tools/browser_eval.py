@@ -135,16 +135,18 @@ def run_proto(task: dict, steps: int, folder: Path) -> dict:
     }
 
 
-NO_NOTES = False  # --no-notes: every run starts as if on the site for the first time
+NOTES = "use"  # --notes: use (read and write), write (learn but don't read: first contact), or off
 
 
 def run_new(task: dict, steps: int, folder: Path) -> dict:
     from voice_assistant.browser.notes import Notes
     from voice_assistant.browser.run import run_task
 
-    notes = None if NO_NOTES else Notes()
-    return run_task(task["goal"], DryRun(), steps=steps, trace_to=folder / f"{task['id']}.jsonl", tidy=True,
-                    notes=notes)  # fmt: skip
+    from voice_assistant.browser.agent import Settings
+
+    settings = Settings(turns=steps, read_notes=NOTES == "use")
+    return run_task(task["goal"], DryRun(), trace_to=folder / f"{task['id']}.jsonl", tidy=True, settings=settings,
+                    notes=None if NOTES == "off" else Notes())  # fmt: skip
 
 
 def main() -> None:
@@ -154,10 +156,11 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=25, help="at most this many model turns a task")
     parser.add_argument("--cap", type=float, default=14.0, help="no task starts once all runs have spent this")
     parser.add_argument("--label", default="", help="added to the run's folder name")
-    parser.add_argument("--no-notes", action="store_true", help="the new agent neither reads nor writes site notes")
+    parser.add_argument("--notes", choices=("use", "write", "off"), default="use",
+                        help="the new agent's site notes: read and write them, only write them, or neither")  # fmt: skip
     args = parser.parse_args()
-    global NO_NOTES
-    NO_NOTES = args.no_notes
+    global NOTES
+    NOTES = args.notes
     tasks = tomllib.loads(TASKS.read_text())["task"]
     if args.task:
         unknown = set(args.task) - {t["id"] for t in tasks}

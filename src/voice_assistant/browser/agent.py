@@ -184,6 +184,7 @@ class Settings:
     turns: int = 30
     really_commit: bool = False  # False: an approved commit is a dry run, and nothing is pressed
     stuck_after: int = 4  # turns in a row that changed nothing, then it stops
+    read_notes: bool = True  # False: it writes what it learns, but works as if on each site for the first time
 
 
 class Agent:
@@ -230,7 +231,8 @@ class Agent:
 
     def _noted(self, name: str) -> str:
         """The notes from earlier runs on a site, once a run, as a preface to the page."""
-        notes = self.notes.read(name) if self.notes and name not in self.noted else ""
+        readable = self.notes and self.settings.read_notes and name not in self.noted
+        notes = self.notes.read(name) if readable else ""
         if not notes:
             return ""
         self.noted.add(name)
