@@ -211,7 +211,7 @@ class Result:
 @dataclass
 class Settings:
     model: str = "gpt-6-luna"
-    effort: str = "low"  # reasoning; "medium" for the turn after something went wrong
+    effort: str = "low"  # reasoning; at least "medium" for the turn after something went wrong
     turns: int = 30
     really_commit: bool = False  # False: an approved commit is a dry run, and nothing is pressed
     stuck_after: int = 4  # turns in a row that changed nothing, then it stops
@@ -295,7 +295,7 @@ class Agent:
                 tool_choice="required",
                 parallel_tool_calls=False,
                 store=False,
-                reasoning={"effort": "medium" if trouble else s.effort},
+                reasoning={"effort": "medium" if trouble and s.effort in ("none", "minimal", "low") else s.effort},
             )
             thought = time.perf_counter() - t
             self.result.model_s += thought

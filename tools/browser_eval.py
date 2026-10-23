@@ -13,6 +13,7 @@ reaches --cap. Grading is by reading: a task's `check` says what a right answer 
 
 import argparse
 import contextlib
+import functools
 import io
 import json
 import re
@@ -137,17 +138,15 @@ def run_proto(task: dict, steps: int, folder: Path) -> dict:
     }
 
 
-NOTES = "use"  # --notes: use (read and write), write (learn but don't read: first contact), or off
-
-
-def run_new(task: dict, steps: int, folder: Path) -> dict:
+def run_new(task: dict, steps: int, folder: Path, options: argparse.Namespace) -> dict:
+    """The agent on one task, with the brain and the notes `options` says (--model, --effort, --notes)."""
     from voice_assistant.browser.agent import Settings
     from voice_assistant.browser.notes import Notes
     from voice_assistant.browser.run import run_task
 
-    settings = Settings(turns=steps, read_notes=NOTES == "use")
+    settings = Settings(model=options.model, effort=options.effort, turns=steps, read_notes=options.notes == "use")
     return run_task(task["goal"], DryRun(), trace_to=folder / f"{task['id']}.jsonl", tidy=True, settings=settings,
-                    notes=None if NOTES == "off" else Notes())  # fmt: skip
+                    notes=None if options.notes == "off" else Notes())  # fmt: skip
 
 
 def relearn(folder: Path) -> None:
@@ -183,12 +182,15 @@ def main() -> None:
     notes_help = "the new agent's site notes: read and write them, only write them, or neither"
     parser.add_argument("--notes", choices=("use", "write", "off"), default="use", help=notes_help)
     parser.add_argument("--relearn", type=Path, help="write the site notes again from this run's traces, and stop")
+    parser.add_argument("--model", default="gpt-6-luna", help="the new agent's model (priced in evals/prices.toml)")
+    parser.add_argument("--effort", default="low", choices=("none", "low", "medium", "high"), help="its reasoning")
+    parser.add_argument("--runs", type=int, default=1, help="each task this many times")
     args = parser.parse_args()
+    if args.model not in PRICES:
+        raise SystemExit(f"no price for {args.model} in evals/prices.toml")
     if args.relearn:
         relearn(args.relearn)
         return
-    global NOTES
-    NOTES = args.notes
     tasks = tomllib.loads(TASKS.read_text())["task"]
     if args.task:
         unknown = set(args.task) - {t["id"] for t in tasks}
@@ -198,8 +200,8 @@ def main() -> None:
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     folder = OUT / f"{stamp}-{args.agent}{'-' + args.label if args.label else ''}"
     folder.mkdir(parents=True)
-    runner = run_proto if args.agent == "proto" else run_new
-    for task in tasks:
+    runner = run_proto if args.agent == "proto" else functools.partial(run_new, options=args)
+    for task in [t for t in tasks for _ in range(args.runs)]:
         if spent() >= args.cap:
             print(f"stopping: ${spent():.2f} spent, the cap is ${args.cap:.2f}")
             break
@@ -209,7 +211,8 @@ def main() -> None:
         tokens_out = result["tokens_out"] + result.get("tidy_tokens_out", 0) + result.get("learn_tokens_out", 0)
         dollars = cost(result["model"], tokens_in, tokens_out) if result["model"] else 0.0
         add_spend(dollars)
-        record = {"id": task["id"], "kind": task["kind"], "agent": args.agent, **result, "dollars": round(dollars, 4)}
+        record = {"id": task["id"], "kind": task["kind"], "agent": args.agent, "effort": args.effort, **result,
+                  "dollars": round(dollars, 4)}  # fmt: skip
         with (folder / "results.jsonl").open("a") as out:
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
         print(
