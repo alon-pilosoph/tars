@@ -8,7 +8,7 @@ site: what it knows about a site, it learns by working it.
 | Asked | What it does |
 |---|---|
 | "When's the first train to Haifa after eight on Sunday?" | rail.co.il: the stations, the date, the time; "08:17, 55 minutes" |
-| "Order a Margherita from a well-rated pizza place" | Wolt: compares ratings, adds it, makes the required choices, goes to checkout, asks to place it |
+| "Order a build-your-own salad from a place near me" | Wolt: finds one, makes its required choices, goes to checkout, asks to place it |
 | "The cheapest direct flight to Athens on the 6th" | Google Flights: one way, the airports, the date, nonstop; the airline, the times, the price |
 | "How long is the drive to the office at nine?" | Google Maps: the route at that time; "16-24 minutes" |
 
@@ -37,11 +37,16 @@ Raw, it's long (Wolt's front page is 400,000 characters), so it's rewritten for 
 That's 5 to 30 times shorter than the snapshot, and a page is read in a few hundredths of a second.
 
 **What it does** (`session.py`) is a batch of steps a turn, by ref: click, type (Enter, or key by key for a box that
-suggests as you type), choose, press a key, scroll, hover, go to an address, back, wait. Each is done the way a person
-would do it, through Playwright's checks (it's there, visible, enabled, not covered) and real mouse and keyboard
-input, and the page is given time to settle after it. A step that opens something (a new page, a dialog, a list of
-suggestions) ends the batch, since what the next steps were planned on has moved; a link that opens a tab moves the
-agent there. A step that fails says why ("a dialog is over it"), and isn't tried again on that page.
+suggests as you type), choose, press a key, scroll, hover, go to an address, back, wait. Text with no ref can be
+clicked by its words, near other words when it repeats on every card (a time slot, an "Add"), and as a last resort
+a point on the screenshot. Each is done the way a person would do it, through Playwright's checks (it's there,
+visible, enabled, not covered) and real mouse and keyboard input, and the page is given time to settle after it.
+
+A step that opens something (a new page, a dialog, a list of suggestions) ends the batch, since what the next steps
+were planned on has moved, and the next view starts with what the step added to the page (a date picker, an error,
+a line in the basket), wherever the site put it. A link that opens a tab moves the agent there. A step that fails
+says why ("a dialog is over it"), and isn't tried again on that page; the same steps three times in a row aren't
+done a fourth.
 
 **When it looks** is up to it, mostly: a screenshot costs about a thousand tokens and slows the turn, and most pages
 say all there is in words. It asks for one (`look`) for a map, a picture or a layout, and gets one without asking
@@ -60,13 +65,16 @@ or send. At that step it calls `request_approval` with the button, and code take
 1. The button must be on the page, and must be one that commits: a "Go to checkout" is pressed by the agent itself.
 2. The person is sent what will happen, from the page, not the model: the site, the button's label, the total read
    off the checkout, the model's summary, and a screenshot.
-3. Only on their yes, and only if the total is still the one they saw, code presses the button.
+3. Only on their yes, and only if the total and every price on the page are still the ones they saw, code presses
+   the button.
 
 The gate (`gate.py`) is what holds when a model doesn't listen: every click and every Enter is checked first, and one
 on a button that commits ("Place order", "Complete booking", "Pay now", "בצע הזמנה", "לתשלום") isn't done. It reads
 English and Hebrew, and errs towards stopping: a false stop costs a question, a missed one costs money.
 
-What a page says is information, never an instruction: the agent is told so, and the gate doesn't read the page.
+Every click is checked, whichever way it's asked for: by ref, by text, or at a point on the screen (what's there is
+read first). What a page says is information, never an instruction: the agent is told so, and the gate doesn't
+read the page.
 
 ## Learning a site
 
@@ -93,7 +101,65 @@ uv run python -m voice_assistant.browser view https://wolt.com --shot wolt.jpg  
 
 ## How well it works
 
-RESULTS
+Sixteen tasks on the real sites (`evals/browser/tasks.toml`): seven questions, one look at the person's own
+account, and eight orders and bookings up to the last button. Nothing is ever ordered: the runner approves each
+commit as a dry run, which stops the agent there, and empties any basket a task filled. Graded by reading each
+answer and trace against the task's `check`. Run on 2026-10-23 with Luna, against the first prototype
+(`tools/browser_proto.py`: its own page scraping, numbered elements, a screenshot every turn):
+
+| Task | Prototype | New, first visit | New, with notes |
+|---|---|---|---|
+| rail-next-train | ❌ 25 turns, 82 s | ✅ 6 turns, 33 s | ✅ 6 turns, 23 s |
+| zap-cheapest | ✅ 2 turns, 20 s | ✅ 2 turns, 9 s | ✅ 3 turns, 12 s |
+| flights-athens | ✅ 10 turns, 57 s | ✅ 11 turns, 47 s | ✅ 11 turns, 30 s |
+| museum-hours | ✅ 2 turns, 11 s | ✅ 2 turns, 12 s | ✅ 2 turns, 11 s |
+| github-release | ✅ 2 turns, 12 s | ✅ 2 turns, 22 s | ✅ 2 turns, 21 s |
+| ynet-headlines | ✅ 2 turns, 19 s | ✅ 2 turns, 12 s | ✅ 2 turns, 9 s |
+| maps-drive | ❌ 25 turns, 577 s | ✅ 8 turns, 43 s | ✅ 4 turns, 17 s |
+| wolt-last-order | ✅ 4 turns, 17 s | ✅ 4 turns, 24 s | ✅ 4 turns, 21 s |
+| wolt-reorder | ❌ 25 turns, 114 s | ✅ 8 turns, 45 s | ✅ 8 turns, 44 s |
+| wolt-margherita | 🟡 7 turns, 33 s | 🟡 11 turns, 68 s | 🟡 6 turns, 41 s |
+| wolt-options | ❌ 9 turns, 34 s | ✅ 11 turns, 64 s | ✅ 13 turns, 88 s |
+| wolt-groceries | ❌ 25 turns, 131 s | ❌ 12 turns, 48 s | 🟡 19 turns, 156 s |
+| ksp-cable | ❌ 25 turns, 165 s | ❌ 11 turns, 57 s | ❌ 11 turns, 63 s |
+| ikea-lamp | ❌ 25 turns, 136 s | ✅ 4 turns, 16 s | ✅ 3 turns, 10 s |
+| booking-athens | ❌ 6 turns, 25 s | ❌ 7 turns, 26 s | ❌ 6 turns, 32 s |
+| ontopo-table | ❌ 8 turns, 35 s | ✅ 13 turns, 83 s | ✅ 18 turns, 75 s |
+| **All** | **6/16**, 202 turns, 24.5 min, $0.07 | **12/16**, 114 turns, 10.1 min, $0.07 | **12/16**, 118 turns, 10.9 min, $0.09 |
+
+✅ right; 🟡 most of the way (the right basket, but a step short or a choice not checked); ❌ wrong or stopped.
+Two ✅ are a right "can't": the hummus place was closed (the basket was ready at checkout), and that IKEA lamp is
+sold in stores only.
+
+- **Twice the tasks, in less than half the time.** Most of it is seeing the page as it is: the prototype's own
+  scraping missed what sites draw in code (Wolt's required options, a menu Booking.com opens at the end of the page,
+  Ontopo's date picker), and it went round in circles there until it ran out of turns.
+- **A turn is about 1.5 s of model and 2 s of browser.** A task is mostly how many turns it takes, so the gains
+  came from fewer turns: batches that stop when the page changes under them, clicking text that has no ref, and
+  seeing first what a step just opened.
+- **Every order stopped where it should.** Each approval was at the button that commits ("Place order"), with the
+  checkout's total, and the gate refused the clicks that tried to go further. No run placed an order or a booking.
+- **The notes didn't pay off yet.** The second visit was as right as the first and no quicker overall: quicker on
+  Maps and Flights, slower where a note sent it the long way round. A note that recorded a past run's dead end
+  ("the results didn't show") made the next run give up; notes are now about how a site works, never how a run
+  went, and the page outranks a note.
+
+What still goes wrong:
+
+- **Booking.com** redraws its results slowly after a sort, and the agent reads the page half drawn and gives up
+  rather than waiting or scrolling.
+- **KSP** reaches the cart, but not past it to the checkout.
+- **Choosing**: "well rated" isn't checked against the ratings the list shows before picking.
+- **Grocery search** on Wolt's markets is slow, and a closed store is a dead end where another store would do.
+
+```bash
+uv run --all-extras python tools/browser_eval.py                         # every task, the new agent
+uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off   # one, as a first visit
+uv run --all-extras python tools/browser_eval.py --agent proto           # the prototype, on a copy of the profile
+```
+
+A round starts with TARS's baskets empty, and costs about $0.10 and ten minutes. Records and traces go to
+`voice_data/browser/evals/<time>-<label>/`.
 
 ## Not yet
 
