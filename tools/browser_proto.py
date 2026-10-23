@@ -96,8 +96,19 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "sign_in",
-            "description": "Sign in to the site this page is on, with TARS's stored login; says how it went.",
-            "parameters": {"type": "object", "properties": {}},
+            "description": "Sign in to the site this page is on: with TARS's stored login, or, on a site that signs "
+            "in by email, with one of the person's own addresses (their mailbox gets the code or link); says how it "
+            "went.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "description": "which of the person's addresses, for a site that signs in by email "
+                        "(default: their first)",
+                    }
+                },
+            },
         },
     },
     {
@@ -328,7 +339,7 @@ def run(goal: str, which: str, steps: int, headless: bool, whose: str = "") -> N
                     outcome = ["refused: sign_in already ran for this task. Call done and say what stopped it."]
                 elif name == "sign_in":  # by code: the login never reaches the model
                     signed_in = True
-                    outcome = [sign_in(page, person, goal)]
+                    outcome = [sign_in(page, person, goal, str(args.get("email") or ""))]
                 else:
                     outcome = act(page, list(args.get("steps", [])))
                 looked = view(page)

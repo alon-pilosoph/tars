@@ -11,7 +11,7 @@ import re
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from browser_vault import Login, for_page, origin
@@ -36,7 +36,8 @@ FIELDS_JS = """() => {
     code: pick((e) => text(e) && (e.autocomplete === 'one-time-code' ||
                      /otp|one.?time|verif|cvf|mfa|totp|(^|[^a-z])code([^a-z]|$)/.test(label(e)))),
     password: pick((e) => e.type === 'password'),
-    username: pick((e) => (e.type === 'email' || text(e)) && /email|user|login|phone|account/.test(label(e))),
+    username: pick((e) => e.type === 'email' || (text(e) && /email|user|login|phone|account/.test(label(e)))),
+    signup: all.some((e) => /first.?name|last.?name|full.?name|given.?name|family.?name/.test(label(e))),
   };
 }"""
 
@@ -81,7 +82,66 @@ def _settle(page: Page) -> None:
         return
 
 
-def sign_in(page: Page, person: Person, goal: str = "") -> str:
+def site_domain(here: str) -> str:
+    """The site's own domain, which its emails and links come from: wolt.com for https://wolt.com or
+    https://www.wolt.com. (Two labels: good enough for .com sites in a prototype, not for .co.uk.)"""
+    host = urlsplit(here).hostname or ""
+    return ".".join(host.split(".")[-2:])
+
+
+def _ours(link: str, domain: str) -> bool:
+    host = (urlsplit(link).hostname or "").lower()
+    return link.startswith("https://") and (host == domain or host.endswith("." + domain))
+
+
+SIGN_IN_WORDS = re.compile(r"log.?in|sign.?in|magic|verify|auth|confirm|token", re.IGNORECASE)
+MAIL_WAIT_S = 180
+
+
+def email_sign_in(page: Page, person: Person, here: str, address: str) -> str:
+    """Signs in by email, as sites without passwords do (Wolt): the person's own address goes in, and the code or
+    link the site then emails them is taken from their mailbox and used here, by code. Only mail from the site's own
+    domain that came after asking counts, a link is only opened on that domain, and nothing that looks like signing
+    up (a name to fill in) goes ahead: TARS signs in to accounts, it doesn't make them."""
+    domain = site_domain(here)
+    fields = page.evaluate(FIELDS_JS)
+    if not fields["username"]:
+        return f"no email field to sign in with on {here}"
+    if origin(page.url) != here:
+        return f"the page moved on from {here}"
+    asked = time.time()
+    field = _locate(page, fields["username"])
+    field.fill(address)
+    field.press("Enter")
+    _settle(page)
+    page.wait_for_timeout(1500)
+    fields = page.evaluate(FIELDS_JS)
+    if fields["password"]:
+        return f"{here} wants a password for {address}, and TARS has none: the person adds one (call done)"
+    code, link = person.mail_from(domain, asked)
+    if not code and not link:
+        return f"no sign-in email from {domain} came to {address} within {MAIL_WAIT_S // 60} minutes"
+    fields = page.evaluate(FIELDS_JS)
+    if code and fields["code"] and origin(page.url) == here:
+        box = _locate(page, fields["code"])
+        box.fill(code)
+        box.press("Enter")
+        used = "the code from their email"
+    elif link:
+        page.goto(link, wait_until="domcontentloaded", timeout=20_000)
+        used = "the sign-in link from their email"
+    else:
+        return f"{domain}'s email had a code, but the page has nowhere to put it"
+    _settle(page)
+    page.wait_for_timeout(1500)
+    if page.evaluate(FIELDS_JS)["signup"]:
+        return f"{address} has no account on {domain}: it's asking to sign up, which TARS doesn't do (call done)"
+    said = page.evaluate(ALERTS_JS)
+    return (f"signed in by email as {address} with {used}; now at {origin(page.url)}, titled {page.title()!r}"
+            + (f"; the page says: {said}" if said else ""))  # fmt: skip
+
+
+def sign_in(page: Page, person: Person, goal: str = "", email: str = "") -> str:
     """Signs in on the page as it is, step by step; how it went, for the model. With no login stored for this site,
     the person is asked for one on a TARS page (Person.add_login), and it goes into the vault before anything is typed.
     A one-time code is asked for on Telegram."""
@@ -91,6 +151,11 @@ def sign_in(page: Page, person: Person, goal: str = "") -> str:
         fields = page.evaluate(FIELDS_JS)
         if not here.startswith("https://") or not (fields["username"] or fields["password"]):
             return f"no sign-in form here ({here}), and no login stored for it"
+        addresses = person.addresses()
+        if fields["username"] and not fields["password"] and addresses:  # maybe a site that signs in by email
+            if email and email not in addresses:
+                return f"refused: {email} isn't one of {person.name}'s addresses ({', '.join(addresses)})"
+            return email_sign_in(page, person, here, email or addresses[0])
         if not person.add_login(here, goal):
             return f"stopped: no login for {here} was added in time"
         if origin(page.url) != here or (login := for_page(page.url, person.name)) is None:
@@ -203,6 +268,47 @@ class Person:
 
     def say(self, text: str) -> None:
         httpx.post(f"{self.api}/sendMessage", json={"chat_id": self.chat, "text": text}, timeout=20)
+
+    def addresses(self) -> list[str]:
+        """The person's email addresses: the mailboxes TARS has their login for."""
+        from browser_vault import logins_for
+        from mail_proto import MAIL
+
+        return [login.username for login in logins_for(MAIL, self.name)]
+
+    def mail_from(self, domain: str, since: float) -> tuple[str | None, str | None]:
+        """(code, link) from the newest sign-in email from `domain` that reached any of the person's mailboxes after
+        `since` (epoch seconds), waiting up to MAIL_WAIT_S for it: a 4-8 digit code near the word code, and a link
+        on `domain` that looks like signing in. Either may be None."""
+        from email.utils import parsedate_to_datetime
+
+        from browser_vault import logins_for
+        from mail_proto import MAIL, Mailbox
+
+        boxes = [Mailbox(login.username, login.password.replace(" ", "")) for login in logins_for(MAIL, self.name)]
+        try:
+            deadline = time.monotonic() + MAIL_WAIT_S
+            while time.monotonic() < deadline:
+                for box in boxes:
+                    box.imap.noop()  # see what arrived since the last look
+                    for mail in box.search(f"from:{domain} newer_than:1d", 3):
+                        try:
+                            sent = parsedate_to_datetime(mail["date"]).timestamp()
+                        except TypeError, ValueError:
+                            continue
+                        if sent < since - 60:
+                            continue
+                        text, links = box.sign_in_mail(mail["id"])
+                        found = re.search(r"(?i)code\D{0,40}?\b(\d{4,8})\b|\b(\d{4,8})\b\D{0,40}?code", text)
+                        code = (found.group(1) or found.group(2)) if found else None
+                        link = next((x for x in links if _ours(x, domain) and SIGN_IN_WORDS.search(x)), None)
+                        if code or link:
+                            return code, link
+                time.sleep(4)
+            return None, None
+        finally:
+            for box in boxes:
+                box.close()
 
     def code(self, site: str) -> str | None:
         """A one-time code the person sends in the chat, or None after CODE_WAIT_S."""

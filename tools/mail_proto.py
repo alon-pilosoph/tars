@@ -97,6 +97,20 @@ class Mailbox:
         text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
         return f"From: {message['from']}\nDate: {message['date']}\nSubject: {message['subject']}\n\n{text[:BODY_CHARS]}"
 
+    def sign_in_mail(self, uid: str) -> tuple[str, list[str]]:
+        """An email's text and every link in it (from its HTML too): for finding a sign-in code or link."""
+        _, parts = self.imap.uid("FETCH", uid.encode(), f"(BODY.PEEK[]<0.{READ_BYTES}>)")
+        if not parts or parts[0] is None:
+            return "", []
+        message = email.message_from_bytes(parts[0][1], policy=default)
+        texts, links = [], []
+        for part in message.walk():
+            if part.get_content_type() in ("text/plain", "text/html"):
+                content = part.get_content()
+                links += re.findall(r"""https://[^\s"'<>)]+""", content)
+                texts.append(_text_of(content) if part.get_content_type() == "text/html" else content)
+        return "\n".join(texts), [unescape(link) for link in links]
+
     def close(self) -> None:
         try:
             self.imap.logout()
