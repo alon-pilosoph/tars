@@ -1,8 +1,10 @@
 """Audio devices: one microphone stream read in 80 ms blocks, one speaker stream that stays open, and the 16 kHz WAV
-format every recording is kept in. A device that stops working raises AudioDeviceError, which ends the process so a
-supervisor can restart it."""
+format every recording is kept in. A device that only works at its own rate (the Anker PowerConf takes 48 kHz and
+nothing else on Linux, where nothing converts for it) is opened at that rate, and TARS converts. A device that stops
+working raises AudioDeviceError, which ends the process so a supervisor can restart it."""
 
 import io
+import math
 import queue
 import threading
 import time
@@ -97,6 +99,61 @@ def device_names() -> tuple[list[str], int, int]:
     return [d["name"] for d in sd.query_devices()], default_in, default_out
 
 
+def device_rate(device: int | None, kind: str, wanted: int) -> int:
+    """The rate to open `device` (None: the system's default) at for `kind` ("input" or "output") audio: `wanted` if
+    it takes it, its own default rate if not. One that can't be asked about at all gets `wanted`, so opening it says
+    what's wrong."""
+    check = sd.check_input_settings if kind == "input" else sd.check_output_settings
+    try:
+        check(device=device, samplerate=wanted, channels=1, dtype="int16")
+        return wanted
+    except sd.PortAudioError, ValueError:
+        pass
+    try:
+        return int(sd.query_devices(device, kind)["default_samplerate"])
+    except sd.PortAudioError, ValueError, KeyError:
+        return wanted
+
+
+class Resampler:
+    """Converts a stream of audio from one rate to another a block at a time, with no seams between the blocks: the
+    polyphase filter scipy's resample_poly designs (a Kaiser window over 10 zero crossings), keeping the input it still
+    needs from one block to the next. Its output lags its input by about 10 zero crossings: under a millisecond."""
+
+    def __init__(self, rate_in: int, rate_out: int):
+        from scipy.signal import firwin
+
+        divisor = math.gcd(rate_in, rate_out)
+        self.up, self.down = rate_out // divisor, rate_in // divisor
+        half = 10 * max(self.up, self.down)
+        taps = firwin(2 * half + 1, 1 / max(self.up, self.down), window=("kaiser", 5.0)) * self.up
+        self._per_phase = math.ceil(len(taps) / self.up)
+        taps = np.pad(taps, (0, self._per_phase * self.up - len(taps)))
+        # Row p holds the taps an output at phase p uses: taps[p], taps[p + up], ..., one per input sample back.
+        self._phases = taps.reshape(self._per_phase, self.up).T
+        self._kept = np.zeros(self._per_phase - 1)  # the input before this block that the next outputs still reach
+        self._fed = 0  # input samples so far
+        self._next = 0  # where the next output falls, in samples at up times the input's rate
+
+    def __call__(self, block: np.ndarray) -> np.ndarray:
+        """`block` (16-bit samples) at the input's rate, as 16-bit samples at the output's."""
+        signal = np.concatenate([self._kept, block.astype(np.float64)])
+        self._fed += len(block)
+        last = self._fed - 1  # the newest input sample there is
+        count = max(0, (last * self.up + self.up - 1 - self._next) // self.down + 1)
+        at = self._next + self.down * np.arange(count)
+        newest = at // self.up - (self._fed - len(signal))  # each output's newest input sample, in `signal`
+        back = newest[:, None] - np.arange(self._per_phase)[None, :]
+        out = np.einsum("ij,ij->i", signal[back], self._phases[at % self.up])
+        self._next += self.down * count
+        self._kept = signal[len(signal) - (self._per_phase - 1) :]
+        return np.clip(np.rint(out), -32768, 32767).astype(np.int16)
+
+    def flush(self) -> np.ndarray:
+        """What's still in the filter once the input has ended."""
+        return self(np.zeros(self._per_phase, np.int16))
+
+
 def list_devices() -> None:
     default_in, default_out = sd.default.device
     for index, device in enumerate(sd.query_devices()):
@@ -150,10 +207,14 @@ class Microphone:
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self._muted = False
         self.echo = echo
+        rate = device_rate(device, "input", SAMPLE_RATE)
+        # A device at its own rate is read in 80 ms of its samples, and what they make at 16 kHz handed out in blocks.
+        self._resample = Resampler(rate, SAMPLE_RATE) if rate != SAMPLE_RATE else None
+        self._pending = np.zeros(0, np.int16)
         try:
             self._stream = sd.RawInputStream(
-                samplerate=SAMPLE_RATE,
-                blocksize=BLOCK_SAMPLES,
+                samplerate=rate,
+                blocksize=round(BLOCK_SAMPLES * rate / SAMPLE_RATE),
                 device=device,
                 channels=1,
                 dtype="int16",
@@ -164,6 +225,16 @@ class Microphone:
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
         block = np.frombuffer(indata, dtype=np.int16).copy()
+        if self._resample is None:
+            self._take(block)
+            return
+        self._pending = np.concatenate([self._pending, self._resample(block)])
+        while len(self._pending) >= BLOCK_SAMPLES:
+            self._take(self._pending[:BLOCK_SAMPLES])
+            self._pending = self._pending[BLOCK_SAMPLES:]
+
+    def _take(self, block: np.ndarray) -> None:
+        """One 80 ms block at 16 kHz."""
         if self.echo:  # even while muted, so it keeps learning the room
             block = self.echo.heard(block)
         if self._muted:
@@ -214,14 +285,16 @@ class Speaker:
 
     Opening and closing a stream per reply makes the speakers pop. Network audio arrives in bursts, so playback waits
     for `prebuffer_s` of audio before starting, and if it runs dry mid-reply it pauses once to refill instead of
-    stuttering.
+    stuttering. `sample_rate` is the audio's; a device that won't play it is opened at its own, and the audio converted
+    as it arrives.
     """
 
     def __init__(self, device: int | None, sample_rate: int, prebuffer_s: float, echo: EchoCanceller | None = None):
         """`echo`: told everything played, silence too, so it can take it back out of what the mic hears."""
         self.sample_rate = sample_rate
+        self._rate = device_rate(device, "output", sample_rate)  # the device's: what the buffer holds
         self._echo = echo
-        self._prebuffer_bytes = int(prebuffer_s * sample_rate) * 2
+        self._prebuffer_bytes = int(prebuffer_s * self._rate) * 2
         self._lock = threading.Lock()
         self._buffer = bytearray()
         self._buffering = True
@@ -230,7 +303,7 @@ class Speaker:
         self._drained = threading.Event()
         try:
             self._stream = sd.RawOutputStream(
-                samplerate=sample_rate, device=device, channels=1, dtype="int16", callback=self._fill
+                samplerate=self._rate, device=device, channels=1, dtype="int16", callback=self._fill
             )
         except sd.PortAudioError as e:
             raise NoDeviceError(f"No speaker to open ({e}). {PLUG_IN}") from None
@@ -246,7 +319,7 @@ class Speaker:
     def _fill(self, outdata, frames, time_info, status) -> None:
         self._fill_from_buffer(outdata)
         if self._echo:  # every frame, silence too: the canceller needs them all, in time
-            self._echo.played(bytes(outdata), self.sample_rate)
+            self._echo.played(bytes(outdata), self._rate)
 
     def _fill_from_buffer(self, outdata) -> None:
         wanted = len(outdata)
@@ -288,6 +361,7 @@ class Speaker:
             self._input_done = False
             self._on_start = on_first_audio
             self._drained.clear()
+        resample = Resampler(sample_rate, self._rate) if sample_rate != self._rate else None
         pending, heard = b"", False
         try:
             for chunk in chunks:
@@ -297,9 +371,15 @@ class Speaker:
                     skip = silent_bytes(pending[:usable])
                     heard = skip < usable
                     pending, usable = pending[skip:], usable - skip
+                ready = pending[:usable]
+                if resample is not None:
+                    ready = resample(np.frombuffer(ready, np.int16)).tobytes()
                 with self._lock:
-                    self._buffer += pending[:usable]
+                    self._buffer += ready
                 pending = pending[usable:]
+            if resample is not None:
+                with self._lock:
+                    self._buffer += resample.flush().tobytes()
         except BaseException:
             # The reply failed partway: cut the audio now, so nothing is still playing once the mic reopens.
             with self._lock:
@@ -311,7 +391,7 @@ class Speaker:
                 self._input_done = True
                 # Voices end with silence; dropping it frees the mic as soon as TARS stops making a sound.
                 del self._buffer[audible_bytes(self._buffer) :]
-                left_s = len(self._buffer) / 2 / self.sample_rate
+                left_s = len(self._buffer) / 2 / self._rate
         if not self._drained.wait(left_s + SPEAKER_STALL_S):
             with self._lock:
                 self._buffer.clear()

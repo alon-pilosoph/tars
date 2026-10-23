@@ -1,6 +1,5 @@
 """Echo cancellation: TARS's own sound taken out of what the mic hears, and a leftover trace taken off a transcript."""
 
-import queue
 import types
 
 import numpy as np
@@ -10,7 +9,7 @@ import voice_assistant.audio as audio_module
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE, Microphone, Speaker
 from voice_assistant.echo import EchoCanceller, without_echo
 
-from .test_audio import FakeOutput
+from .test_audio import FakeInput, FakeOutput, devices_take_any_rate  # noqa: F401 - the fixture applies here too
 
 
 @pytest.mark.parametrize(
@@ -82,14 +81,14 @@ def test_the_speaker_tells_the_canceller_everything_it_plays_silence_included(mo
     assert reported[:n] == device[:n] and voice in reported  # the same frames, the silence around them too
 
 
-def test_the_mic_keeps_cleaning_while_closed_so_the_canceller_keeps_learning():
-    mic = Microphone.__new__(Microphone)  # skip opening a real device
-    mic._queue, mic._muted, mic.echo = queue.Queue(), True, RecordingEcho()
-    mic._on_audio(np.zeros(BLOCK_SAMPLES, np.int16).tobytes(), BLOCK_SAMPLES, None, None)
-    assert mic.echo.heard_blocks == 1 and mic._queue.empty()
-    mic._muted = False
-    mic._on_audio(np.ones(BLOCK_SAMPLES, np.int16).tobytes(), BLOCK_SAMPLES, None, None)
-    assert mic.echo.heard_blocks == 2 and mic._queue.get_nowait().sum() == BLOCK_SAMPLES
+def test_the_mic_keeps_cleaning_while_closed_so_the_canceller_keeps_learning(monkeypatch):
+    monkeypatch.setattr(audio_module.sd, "RawInputStream", FakeInput)
+    mic = Microphone(None, RecordingEcho())
+    with mic.paused(tail_s=0):
+        mic._stream.give(np.zeros(BLOCK_SAMPLES, np.int16))
+        assert mic.echo.heard_blocks == 1 and mic._queue.empty()
+    mic._stream.give(np.ones(BLOCK_SAMPLES, np.int16))
+    assert mic.echo.heard_blocks == 2 and mic.read().sum() == BLOCK_SAMPLES
 
 
 def test_a_delay_longer_than_the_canceller_takes_is_capped_instead_of_failing():
