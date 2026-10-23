@@ -31,7 +31,6 @@ blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.5"
 [[home.devices]]
 name = "front door"
 entity = "lock.front_door"
-door = "binary_sensor.front_door_door"
 battery = "sensor.front_door_battery"
 
 [[home.devices]]
