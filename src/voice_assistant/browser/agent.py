@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 
 from . import page as pages
 from .gate import commits
+from .notes import Notes, site
 from .session import Session
 
 INSTRUCTIONS = """You work a web browser for the person, toward their goal. Today is {today}.
@@ -185,6 +186,7 @@ class Agent:
         settings: Settings | None = None,
         sign_in: Callable[[Session], str] | None = None,
         trace: Path | None = None,
+        notes: Notes | None = None,
     ):
         self.client, self.session, self.approver = client, session, approver
         self.settings = settings or Settings()
@@ -197,6 +199,9 @@ class Agent:
         self.failed_steps: set[str] = set()
         self.committed = False
         self.instructions = ""
+        self.notes = notes
+        self.noted: set[str] = set()  # the sites whose notes it has been given
+        self.turns_done: list[dict[str, Any]] = []  # what each turn did, for learning from
 
     def run(self, goal: str) -> Result:
         """Works toward `goal` until done, stuck or out of turns."""
@@ -204,8 +209,21 @@ class Agent:
         self._log({"event": "start", "goal": goal, "model": self.settings.model})
         view = self.session.look()
         start = view.text if view.url != "about:blank" else "A new, empty tab: start by going to an address."
+        if self.notes:
+            for name in self.notes.named_in(goal):
+                start = self._noted(name) + start
         self._show(start, picture=None)
         return self._loop(self.settings.turns)
+
+    def _noted(self, name: str) -> str:
+        """The notes from earlier runs on a site, once a run, as a preface to the page."""
+        notes = self.notes.read(name) if self.notes and name not in self.noted else ""
+        if not notes:
+            return ""
+        self.noted.add(name)
+        self._log({"event": "notes", "site": name})
+        return (f"What TARS noted on {name} in earlier runs (hints from its own experience there, which may be out "
+                f"of date; the person's goal decides):\n{notes}\n\n")  # fmt: skip
 
     def follow_up(self, request: str, turns: int = 10) -> Result:
         """Carries on in the same browser and conversation with something more (after `run`): its own result."""
@@ -252,8 +270,9 @@ class Agent:
             said, picture, page_changed, trouble = self._do(call.name, args)
             took = time.perf_counter() - t
             self.result.browser_s += took
-            self._log({"event": "turn", "turn": turn, "call": call.name, "args": args, "said": said,
-                       "url": self.session.page.url, "model_s": round(thought, 2), "browser_s": round(took, 2),
+            done = {"turn": turn, "call": call.name, "args": args, "said": said, "url": self.session.page.url}
+            self.turns_done.append(done)
+            self._log({"event": "turn", **done, "model_s": round(thought, 2), "browser_s": round(took, 2),
                        "network": self.session.take_network()})  # fmt: skip
             self.items.append({"type": "function_call_output", "call_id": call.call_id, "output": said})
             if call.name == "done":
@@ -268,7 +287,8 @@ class Agent:
                 break
             if page_changed or picture:
                 view = self.session.current or self.session.look()
-                self._show(view.text if page_changed else "(the page as before)", picture)
+                text = view.text if page_changed else "(the page as before)"
+                self._show(self._noted(site(view.url)) + text if page_changed else text, picture)
         self.result.seconds = round(time.perf_counter() - started, 1)
         self._log({"event": "end", **self.result.__dict__})
         return self.result

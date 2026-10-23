@@ -377,3 +377,42 @@ def test_the_tools_say_what_they_take():
 
 def test_refused_carries_the_label():
     assert Refused("Pay now", "no").label == "Pay now"
+
+
+# What it learns about a site
+
+
+def test_a_site_is_its_domain_under_a_country_too():
+    from voice_assistant.browser.notes import site
+
+    assert site("https://wolt.com/en/isr/tel-aviv") == "wolt.com"
+    assert site("https://www.ksp.co.il/web/cart") == "ksp.co.il"
+    assert site("https://secure.booking.com/book.html") == "booking.com"
+    assert site("about:blank") == ""
+
+
+def test_notes_are_written_from_a_run_and_read_on_the_next_one(tmp_path):
+    from voice_assistant.browser.notes import Notes
+
+    notes = Notes(tmp_path)
+    urls = ["https://wolt.com/a", "https://wolt.com/b", "https://other.com/", "https://wolt.com/c"]
+    turns = [{"turn": i, "call": "act", "args": {}, "said": "ok", "url": url} for i, url in enumerate(urls)]
+    learner = types.SimpleNamespace(
+        responses=types.SimpleNamespace(
+            create=lambda **request: types.SimpleNamespace(
+                output_text="- search: https://wolt.com/en/search?q=<words>", usage=None
+            )
+        )
+    )
+    written, _, _ = notes.learn(learner, "m", "Order a pizza", "done", turns)
+    assert notes.read("wolt.com") == written.strip() and "search?q=" in written
+    assert notes.learn(learner, "m", "x", "done", turns[:2])[0] == ""  # too short to learn from
+    assert notes.named_in("Order a pizza on Wolt") == ["wolt.com"] and notes.named_in("Order a pizza") == []
+    with pytest.raises(ValueError):
+        notes.read("../secrets")
+
+    model = FakeModel(call("done", success=True, answer="ok"))
+    agent = Agent(model, FakeSession(), Person(), notes=notes)
+    agent.run("Order a pizza on Wolt")
+    first = json.dumps(model.sent[0]["input"][0], ensure_ascii=False)
+    assert "What TARS noted on wolt.com" in first and "search?q=" in first

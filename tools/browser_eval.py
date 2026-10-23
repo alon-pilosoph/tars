@@ -135,10 +135,16 @@ def run_proto(task: dict, steps: int, folder: Path) -> dict:
     }
 
 
+NO_NOTES = False  # --no-notes: every run starts as if on the site for the first time
+
+
 def run_new(task: dict, steps: int, folder: Path) -> dict:
+    from voice_assistant.browser.notes import Notes
     from voice_assistant.browser.run import run_task
 
-    return run_task(task["goal"], DryRun(), steps=steps, trace_to=folder / f"{task['id']}.jsonl", tidy=True)
+    notes = None if NO_NOTES else Notes()
+    return run_task(task["goal"], DryRun(), steps=steps, trace_to=folder / f"{task['id']}.jsonl", tidy=True,
+                    notes=notes)  # fmt: skip
 
 
 def main() -> None:
@@ -148,7 +154,10 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=25, help="at most this many model turns a task")
     parser.add_argument("--cap", type=float, default=14.0, help="no task starts once all runs have spent this")
     parser.add_argument("--label", default="", help="added to the run's folder name")
+    parser.add_argument("--no-notes", action="store_true", help="the new agent neither reads nor writes site notes")
     args = parser.parse_args()
+    global NO_NOTES
+    NO_NOTES = args.no_notes
     tasks = tomllib.loads(TASKS.read_text())["task"]
     if args.task:
         unknown = set(args.task) - {t["id"] for t in tasks}
@@ -165,8 +174,8 @@ def main() -> None:
             break
         print(f"{task['id']} ...", flush=True)
         result = runner(task, args.steps, folder)
-        tokens_in = result["tokens_in"] + result.get("tidy_tokens_in", 0)
-        tokens_out = result["tokens_out"] + result.get("tidy_tokens_out", 0)
+        tokens_in = result["tokens_in"] + result.get("tidy_tokens_in", 0) + result.get("learn_tokens_in", 0)
+        tokens_out = result["tokens_out"] + result.get("tidy_tokens_out", 0) + result.get("learn_tokens_out", 0)
         dollars = cost(result["model"], tokens_in, tokens_out) if result["model"] else 0.0
         add_spend(dollars)
         record = {"id": task["id"], "kind": task["kind"], "agent": args.agent, **result, "dollars": round(dollars, 4)}

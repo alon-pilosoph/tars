@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright
 from ..check import env_value
 from .agent import Agent, Approver, Settings
 from .chrome import PORT, PROFILE, own_chrome
+from .notes import Notes
 from .session import Session
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -36,21 +37,30 @@ def run_task(
     profile: Path = PROFILE,
     port: int = PORT,
     tidy: bool = False,
+    notes: Notes | None = None,
 ) -> dict[str, Any]:
     """Runs the agent on `goal` in a fresh TARS Chrome; what it did, as a dict. `tidy`: after a dry-run commit, it's
     asked to take out of the basket what it put in, so the next run starts where this one did (its tokens are counted
-    in the cost, and nothing else of it is)."""
+    in the cost, and nothing else of it is). `notes`: the agent reads what it noted on the sites before, and writes
+    what this run taught it."""
     settings = settings or Settings(turns=steps)
     with own_chrome(profile, port) as address, sync_playwright() as p:
         context = p.chromium.connect_over_cdp(address).contexts[0]
         session = Session(context)
-        agent = Agent(client(), session, approver, settings, trace=trace_to)
+        model = client()
+        agent = Agent(model, session, approver, settings, trace=trace_to, notes=notes)
         try:
             result = agent.run(goal)
         except Exception as e:  # noqa: BLE001 - a crash is a result like any other, and the trace says where
             result = agent.result
             result.ended, result.error = "error", f"{type(e).__name__}: {e}"
             agent._log({"event": "error", "error": result.error, "where": traceback.format_exc()[-3000:]})
+        learned, learn_in, learn_out = "", 0, 0
+        if notes is not None and result.ended != "error":
+            try:
+                learned, learn_in, learn_out = notes.learn(model, settings.model, goal, result.ended, agent.turns_done)
+            except Exception as e:  # noqa: BLE001 - notes not written this time is fine
+                agent._log({"event": "error", "error": f"learning: {type(e).__name__}: {e}"})
         tidied = None
         if tidy and result.commits_asked:
             try:
@@ -75,4 +85,8 @@ def run_task(
         "tidied": tidied.answer if tidied else "",
         "tidy_tokens_in": tidied.tokens_in if tidied else 0,
         "tidy_tokens_out": tidied.tokens_out if tidied else 0,
+        "notes_used": sorted(agent.noted),
+        "learned": learned,
+        "learn_tokens_in": learn_in,
+        "learn_tokens_out": learn_out,
     }
