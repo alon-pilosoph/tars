@@ -55,6 +55,7 @@ my-house = [
     "tinytuya>=1.17",
 ]
 browser = [
+    "cryptography>=50.0.2",
     "playwright>=1.64.1",
 ]
 

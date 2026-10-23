@@ -1521,6 +1521,7 @@ backup = [
     { name = "boto3" },
 ]
 browser = [
+    { name = "cryptography" },
     { name = "playwright" },
 ]
 claude = [
@@ -1555,6 +1556,7 @@ requires-dist = [
     { name = "ai-edge-litert", specifier = ">=2.2.0" },
     { name = "anthropic", marker = "extra == 'claude'", specifier = ">=1" },
     { name = "boto3", marker = "extra == 'backup'", specifier = ">=1.40" },
+    { name = "cryptography", marker = "extra == 'browser'", specifier = ">=50.0.2" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "kaldi-native-fbank", specifier = ">=1.20" },

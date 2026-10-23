@@ -21,6 +21,7 @@ import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
+from browser_signin import sign_in, telegram_asker
 from playwright.sync_api import Page, sync_playwright
 from playwright.sync_api import TimeoutError as PageTimeout
 
@@ -46,8 +47,10 @@ VIEW_JS = r"""
     const st = getComputedStyle(el);
     if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
     if (r.bottom < -200 || r.top > innerHeight * 3) continue;  // near the screen: what a person could reach soon
-    const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title')
-      || el.getAttribute('placeholder') || el.getAttribute('alt') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const secret = el.tagName === 'INPUT' && el.type === 'password';  // never its value: a model reads this
+    const text = secret ? `(password field, ${el.value ? 'filled' : 'empty'})`
+      : (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title')
+         || el.getAttribute('placeholder') || el.getAttribute('alt') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     const tag = el.tagName.toLowerCase();
     const kind = tag === 'a' ? 'link' : tag === 'input' ? `input:${el.type}` : el.getAttribute('role') || tag;
     if (!text && !tag.match(/input|select|textarea/)) continue;
@@ -70,9 +73,10 @@ quicker than clicking there.
 Steps: {{"click": N}}, {{"type": N, "text": "...", "enter": true|false}}, {{"goto": "https://..."}}, \
 {{"scroll": "down"|"up"}}, {{"back": true}}, {{"wait": seconds}}.
 
-When the goal is reached, call done with the answer for them: short, plain, what they asked for. If you hit a \
-sign-in page, a code or a CAPTCHA, call done saying so: the person signs in by hand. Never buy, send, cancel or \
-change anything: this is only looking."""
+When the goal is reached, call done with the answer for them: short, plain, what they asked for. If the site asks \
+you to sign in, call sign_in: TARS signs in with the login it keeps for that site (you never see it), and asks the \
+person for any code the site sends. Never type a password or a code yourself. If sign_in can't, or there's a \
+CAPTCHA, call done saying so. Never buy, send, cancel or change anything: this is only looking."""
 
 TOOLS = [
     {
@@ -85,6 +89,14 @@ TOOLS = [
                 "properties": {"steps": {"type": "array", "items": {"type": "object"}}},
                 "required": ["steps"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sign_in",
+            "description": "Sign in to the site this page is on, with TARS's stored login; says how it went.",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
@@ -294,6 +306,7 @@ def run(goal: str, which: str, steps: int, headless: bool) -> None:
         context = browser.contexts[0]
         page = context.pages[0] if context.pages else context.new_page()
         mind = brain(which, goal, view(page))
+        asker = telegram_asker()
         started = time.perf_counter()
         for n in range(1, steps + 1):
             t = time.perf_counter()
@@ -309,7 +322,10 @@ def run(goal: str, which: str, steps: int, headless: bool) -> None:
                     mind.answer(call_id, "ok")
                     continue
                 t2 = time.perf_counter()
-                outcome = act(page, list(args.get("steps", [])))
+                if name == "sign_in":  # by code: the login never reaches the model
+                    outcome = [sign_in(page, asker)]
+                else:
+                    outcome = act(page, list(args.get("steps", [])))
                 looked = view(page)
                 worked = time.perf_counter() - t2
                 print(f"step {n}: model {thought:.1f}s, browser {worked:.1f}s, view {len(looked)} chars")
