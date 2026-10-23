@@ -184,6 +184,17 @@ def mic_level(read: Callable[[], np.ndarray], blocks: int) -> Result:
     return Result("Microphone", OK, f"hears the room (peak {dbfs:.0f} dBFS)")
 
 
+def assistant_has_it(name: str, state: Callable[[str], str | None]) -> Result | None:
+    """For a device that wouldn't open, or isn't even listed: whether the assistant's service is running, and so has
+    it. On Linux, a device opened directly is one program's at a time (and others can't list it), and the service only
+    stays up with its devices open, so then it's working. None if the service isn't running: the failure stands."""
+    from .health import PROCESSES
+
+    if state(PROCESSES["assistant"][1]) != "active":
+        return None
+    return Result(name, OK, "in use by the running assistant, which only runs with it open")
+
+
 def within(
     seconds: float, name: str, check: Callable[[], Result | list[Result]], why: str, fix: str
 ) -> Result | list[Result]:
@@ -664,7 +675,7 @@ def check_all(cfg: Config, root: Path) -> int:
     import sounddevice as sd
 
     from . import __main__ as cli
-    from .audio import BLOCK_SECONDS, Microphone, Speaker, device_names, find_device
+    from .audio import BLOCK_SECONDS, Microphone, NoDeviceError, Speaker, device_names, find_device
     from .health import PROCESSES, expected
 
     env = root / ".env"
@@ -674,13 +685,21 @@ def check_all(cfg: Config, root: Path) -> int:
     def audio_device(kind: str):
         names, default_in, default_out = device_names()
         wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
-        return device(kind, wanted, find_device, names, default_in if kind == "input" else default_out)
+        found = device(kind, wanted, find_device, names, default_in if kind == "input" else default_out)
+        # A device the running assistant has isn't even listed: nothing else can ask it about itself.
+        return (found.status == FAIL and assistant_has_it(found.name, systemd_state)) or found
 
     def listen():
         print(f"(listening {LISTEN_S:.0f} s: say something)", flush=True)
 
         def measure():
-            with Microphone(find_device(cfg.audio.input_device, "input")) as mic:
+            try:
+                mic = Microphone(find_device(cfg.audio.input_device, "input"))
+            except NoDeviceError:
+                if held := assistant_has_it("Microphone", systemd_state):
+                    return held
+                raise
+            with mic:
                 return mic_level(mic.read, round(LISTEN_S / BLOCK_SECONDS))
 
         return within(
@@ -696,10 +715,17 @@ def check_all(cfg: Config, root: Path) -> int:
         if not have_keys:
             return Result("Voice", SKIP, "needs the API keys")
         _, _, tts = cli.make_pipeline(cfg, root, typed=True)
-        out = find_device(cfg.audio.output_device, "output")
 
         def say():
-            with Speaker(out, tts.sample_rate, cfg.audio.playback_prebuffer_s) as speaker:
+            try:
+                speaker = Speaker(
+                    find_device(cfg.audio.output_device, "output"), tts.sample_rate, cfg.audio.playback_prebuffer_s
+                )
+            except NoDeviceError:
+                if held := assistant_has_it("Speaker", systemd_state):
+                    return held  # the voice service's own check says whether it answers
+                raise
+            with speaker:
                 return voice(tts.stream, lambda audio: speaker.play_pcm_stream(iter(audio), tts.sample_rate))
 
         return within(30, "Voice", say, "no voice in time", "check the network, and [audio] output_device")

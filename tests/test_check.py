@@ -372,3 +372,19 @@ def test_the_status_page_goes_by_how_the_routers_last_answered_the_assistant(tmp
     later = check.routers_last(cfg, folder, now + 3 * 3600)
     assert [r.status for r in later] == [WARN, WARN, OK] and later[-1].detail == "Alon: not known yet"
     assert check.routers_last(cfg_(), folder).status == SKIP
+
+
+@pytest.mark.parametrize(("state", "held"), [("active", True), ("failed", False), ("inactive", False), (None, False)])
+def test_a_device_that_wont_open_is_the_running_assistants_not_broken(state, held):
+    asked = []
+
+    def state_of(unit):
+        asked.append(unit)
+        return state
+
+    result = check.assistant_has_it("Microphone", state_of)
+    assert asked == ["voice-assistant"]
+    if held:  # on Linux one program at a time has it, and the service only runs with it open
+        assert result.status == OK and "running assistant" in result.detail
+    else:  # nothing has it: the device's own failure stands
+        assert result is None
