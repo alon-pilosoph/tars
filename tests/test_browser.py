@@ -437,3 +437,24 @@ def test_notes_are_written_from_a_run_and_read_on_the_next_one(tmp_path):
     agent.run("Order a pizza on Wolt")
     first = json.dumps(model.sent[0]["input"][0], ensure_ascii=False)
     assert "What TARS noted on wolt.com" in first and "search?q=" in first
+
+
+def test_a_menu_that_just_opened_is_shown_first_once():
+    menu = (
+        "  - menu [ref=e90] [box=900,40,200,100]:\n"
+        '    - menuitem "Price (lowest first)" [ref=e91] [box=900,40,200,20]\n'
+    )
+    snapshot = long_page(300) + "\n" + menu.replace("  - menu", "- menu", 1).replace("    - menuitem", "  - menuitem")
+    first = pages.view(snapshot, "T", "U", 700)
+    assert first.text.index("Just opened") < first.text.index("[e1000 button")
+    assert '[e91 menuitem "Price (lowest first)"]' in first.text and first.popups == {"e90"}
+    again = pages.view(snapshot, "T", "U", 700, first.popups)
+    assert "Just opened" not in again.text
+
+
+def test_the_same_steps_again_and_again_are_stopped():
+    model = FakeModel(*[call("act", steps=[{"click": "e7"}])] * 3, call("done", success=False, answer=""))
+    session = FakeSession()
+    Agent(model, session, Person()).run("Sort it")
+    assert len(session.acted) == 2
+    assert "time in a row" in json.dumps(model.sent[-1]["input"])

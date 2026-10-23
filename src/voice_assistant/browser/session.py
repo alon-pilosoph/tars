@@ -132,7 +132,8 @@ class Session:
             title = page.title()
         except PlaywrightError:
             title = ""
-        self.current = pages.view(snapshot, title, page.url, int(height))
+        before = self.current.popups if self.current else frozenset()
+        self.current = pages.view(snapshot, title, page.url, int(height), before)
         return self.current
 
     def screenshot(self) -> bytes:

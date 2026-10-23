@@ -36,6 +36,8 @@ CONTAINERS = {
     "search", "menu", "menubar", "tablist", "tree", "grid", "toolbar", "iframe", "tabpanel",
 }  # fmt: skip
 STATES = ("checked", "selected", "expanded", "pressed", "disabled", "active", "required", "invalid")
+POPUPS = {"menu", "listbox"}  # what opens over a page from a button or a search box
+POPUP_LINES = 40
 LIMIT = 14_000  # characters of a view; a page longer than this is shown around the screen
 LINE = 400  # characters of one line at most
 
@@ -329,6 +331,7 @@ class View:
     refs: dict[str, Node]  # the elements to act on, by ref
     dialog: bool
     whole: bool  # whether `text` is the whole page
+    popups: frozenset[str] = frozenset()  # the menus and lists of options open on it, by ref
 
     def find(self, query: str, limit: int = 30) -> str:
         """Lines anywhere on the page with all of the query's words in them (any case)."""
@@ -347,22 +350,32 @@ def _where(line: Line) -> str:
     return "" if line.top is None else ("(above) " if line.top < 0 else "")
 
 
-def view(snapshot: str, title: str, url: str, height: int) -> View:
+def view(snapshot: str, title: str, url: str, height: int, popups_before: frozenset[str] = frozenset()) -> View:
     """The page from Playwright's snapshot, as the agent sees it: all of it if it's short; else around the screen
     (from a quarter of a screen above it to a screen and a half below), with the headings outside that, so the agent
-    knows what's there to scroll to or find. An open dialog first, and the page behind it only in outline."""
+    knows what's there to scroll to or find. An open dialog first, and the page behind it only in outline. A menu or
+    a list of options that wasn't open before (not in `popups_before`) first of all: sites draw them at the end of the
+    page, far from the button that opened them, and they're what the person is looking at."""
     root = parse(snapshot)
     refs: dict[str, Node] = {}
+    popups: list[Node] = []
 
     def collect(n: Node) -> None:
         if n.acts:
             refs[n.ref] = n
+        if n.role in POPUPS and n.ref and n.shown and _has_act(n):
+            popups.append(n)
         for c in n.children:
             collect(c)
 
     collect(root)
     every = lines(root)
     head = [f"Title: {title}", f"Address: {url}"]
+    opened = [p for p in popups if p.ref not in popups_before]
+    if opened:
+        shown = [_indent(ln) for p in opened for ln in lines(Node("document", children=[p]))][:POPUP_LINES]
+        head += ["", "Just opened, in front of the page:", *shown]
+    open_now = frozenset(p.ref for p in popups)
     dialog = _find_dialog(root)
     if dialog:
         inside = lines(Node("document", children=[dialog]))
@@ -376,10 +389,10 @@ def view(snapshot: str, title: str, url: str, height: int) -> View:
         text, whole = "\n".join(head + [""] + body), False
         if len(text) > LIMIT:
             text = text[:LIMIT] + "\n(the dialog goes on: scroll in it, or find)"
-        return View(title, url, text, every, refs, True, whole)
+        return View(title, url, text, every, refs, True, whole, open_now)
     full = "\n".join(head + [""] + [_indent(ln) for ln in every])
     if len(full) <= LIMIT:
-        return View(title, url, full, every, refs, False, True)
+        return View(title, url, full, every, refs, False, True, open_now)
     top, bottom = -height // 4, height + height * 3 // 2
     near = [i for i, ln in enumerate(every) if ln.top is not None and top <= ln.top <= bottom]
     if not near:  # nothing placed on screen (a page without boxes): its beginning
@@ -400,7 +413,7 @@ def view(snapshot: str, title: str, url: str, height: int) -> View:
     text = "\n".join(head + [""] + body)
     if len(text) > LIMIT:
         text = text[:LIMIT] + "\n(cut short: scroll or find for the rest)"
-    return View(title, url, text, every, refs, False, False)
+    return View(title, url, text, every, refs, False, False, open_now)
 
 
 def _indent(line: Line) -> str:
