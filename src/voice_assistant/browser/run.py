@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[3]
 TIDY = (
     "Empty the basket or cart on {site}: everything in it was put there by test runs (it was empty before them). "
     "Open it, remove every item, and check it's empty; if the site keeps a basket for each store or restaurant, "
-    "empty each one the last run used ({clicks} were its clicks). Then say what you took out."
+    "empty each one the last run used ({clicks} were its clicks). Then say what you took out. Only a basket or a "
+    "cart: if the site has none, change nothing (not saved lists, favourites or anything else) and say so."
 )
 CLICKED = re.compile(r"clicked (?:(?:f\d+)?e\d+ |the text )(['\"])(.+?)\1")
 
