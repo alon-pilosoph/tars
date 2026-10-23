@@ -206,6 +206,8 @@ class Session:
         self.dialogs.clear()
         after = self.look()
         outcome.changed = (after.url, [(ln.text, ln.top) for ln in after.lines]) != before  # scrolled counts
+        if after.url == before[0]:
+            self.current = after.with_new([text for text, _ in before[1]])
         return outcome
 
     def _step(self, step: dict[str, Any]) -> str:

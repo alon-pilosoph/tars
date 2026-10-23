@@ -525,3 +525,16 @@ def test_a_tidying_run_is_told_what_the_run_clicked():
     goal = tidy_goal(turns)
     assert "wolt.com" in goal and "'Pizza Har Sinai'; 'Add to order ₪66.00'; 'Tel Aviv'" in goal
     assert "not a click" not in goal
+
+
+def test_what_a_step_added_to_the_same_page_is_said_first():
+    before = pages.view(CARD_PAGE, "T", "U", 700)
+    picker = (
+        CARD_PAGE
+        + "  - generic [ref=e50] [box=0,600,300,40]:\n    - generic [ref=e51] [box=0,600,300,20]: Friday 30 October\n"
+    )
+    after = pages.view(picker, "T", "U", 700).with_new([ln.text for ln in before.lines])
+    new = after.text.split("New on the page since your last step:\n", 1)[1].split("\n\n", 1)[0]
+    assert new.strip() == "Friday 30 October"
+    assert after.text.index("New on the page") < after.text.index("# Search results")
+    assert pages.view(CARD_PAGE, "T", "U", 700).with_new([ln.text for ln in before.lines]).text == before.text

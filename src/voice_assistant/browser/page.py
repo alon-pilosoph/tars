@@ -16,7 +16,7 @@ searches all of it. An open dialog is what's in front of the person, so it's sho
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # Roles a person acts on; anything with a pointer cursor counts too (sites make cards clickable in code).
 ACTS = {
@@ -38,6 +38,7 @@ CONTAINERS = {
 STATES = ("checked", "selected", "expanded", "pressed", "disabled", "active", "required", "invalid")
 POPUPS = {"menu", "listbox"}  # what opens over a page from a button or a search box
 POPUP_LINES = 40
+NEW_LINES = 40  # lines new since the last step, at most, to be said first
 LIMIT = 14_000  # characters of a view; a page longer than this is shown around the screen
 LINE = 400  # characters of one line at most
 
@@ -349,6 +350,18 @@ class View:
     dialog: bool
     whole: bool  # whether `text` is the whole page
     popups: frozenset[str] = frozenset()  # the menus and lists of options open on it, by ref
+
+    def with_new(self, before: list[str]) -> View:
+        """The view with what has appeared since `before` (the lines of the page a step ago) said first: a step
+        that opens a date picker, shows an error or adds a line to a basket on the same page is seen by what it
+        added, wherever on the page the site put it. Not for a new page, where everything is new."""
+        seen = set(before)
+        new = [ln for ln in self.lines if ln.text not in seen]
+        if not new or len(new) > NEW_LINES or len(new) == len(self.lines):
+            return self
+        head, _, body = self.text.partition("\n\n")
+        shown = "\n".join(_indent(ln) for ln in new)
+        return replace(self, text=f"{head}\n\nNew on the page since your last step:\n{shown}\n\n{body}")
 
     def find(self, query: str, limit: int = 30) -> str:
         """Lines anywhere on the page with all of the query's words in them (any case)."""
