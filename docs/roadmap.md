@@ -11,7 +11,8 @@ model can make answers run long. Memory is the largest step, built as a tool the
 | 3 | [Handing hard questions to a larger model](#3-handing-hard-questions-to-a-larger-model) | built; measuring is left | small |
 | 4 | [Long-term memory and personalization](#4-long-term-memory-and-personalization) | the biggest one, and it leans on speaker ID being right | large |
 
-Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go).
+Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go). Later:
+[security hardening](#later-security-hardening).
 
 [Reminders, timers and messages](reminders.md) were built alongside step 1, because people will ask for a timer
 during the week of real use and TARS couldn't set one. The week checks them too: "got it" and its variants taken as
@@ -167,3 +168,42 @@ people corrected, "not meant for TARS", the same question asked again right afte
 (after step 2). It groups them and suggests prompt changes, tested by replaying past conversations through the old
 and the new prompt, the way new wake models are tested before they're installed. That's more telling than sentiment
 scores on transcripts. **Benched** until there are a few hundred real conversations to learn from.
+
+## Later: security hardening
+
+**Goal:** a written threat model for an always-on mic wired to an LLM that works the house, each threat with its
+defense and a test that shows the defense holds. Not "impenetrable": what's covered, how it's checked, and what's
+accepted as a risk.
+
+**Where it stands.** Nothing at home is opened to the internet (Telegram is polled, and only `[telegram] people` get
+answers). The mic's audio stays on the machine until a wake is double-checked. The web UI only answers to
+home-network names and only takes changes from its own page ([web UI](web-ui.md)), which stops a page elsewhere
+reaching it through someone's browser. Unlocking takes a trusted voice saying "unlock", never typed text. But the web
+UI has no accounts: anyone on the home network (a guest, a compromised device) can play every recording and read
+every conversation.
+
+**Plan, most worth it first:**
+
+1. **The threat model.** `docs/security.md`: who might attack (a guest or device on the Wi-Fi, a malicious web page,
+   poisoned web content or a message, a stolen Pi, a recorded or cloned voice), and for each, the defense and its
+   test. A `SECURITY.md` for reporting a vulnerability.
+2. **The web UI.** Passkey sign-in per household member, with HttpOnly, SameSite=Strict session cookies; HTTPS from
+   `tailscale cert`; served on the tailnet only, not the LAN, with Tailscale's access rules as the outer wall. A test
+   that walks every route and fails if one answers without a session, so a new endpoint can't forget it.
+3. **The AI's own risks.** No text from outside (web search results, Telegram, a sent file) can lead to an unlock,
+   turning off an alarm or sending data out; an eval set of injection attempts that must all fail (it calls the
+   models: cost estimate first). No tool lets a model read the recordings, `.env` or someone else's conversations.
+   Against a replayed or cloned voice: a spoken challenge (a code word or a random number) before unlocking.
+4. **The Pi.** SSH only over Tailscale, keys only; a firewall that drops anything incoming by default; automatic
+   security updates. systemd sandboxing for each service (NoNewPrivileges, ProtectSystem=strict, PrivateTmp,
+   RestrictAddressFamilies, IPAddressDeny for the web UI), the web UI as its own user that can't read `.env` or reach
+   the internet. `.env` mode 600; each key as narrow as its service allows, with spending caps; a Home Assistant user
+   limited to the listed devices.
+5. **Data.** A shorter `keep_audio_days`; backups encrypted before they leave, to a bucket the Pi's key can write to
+   but not read or delete. Disk encryption on a Pi with no secure key store is weak (the key has to be on it to boot
+   unattended): written down as an accepted risk.
+6. **Supply chain.** pip-audit (or Dependabot), bandit or semgrep, and an SBOM in CI, alongside `uv.lock`'s hashes.
+7. **The mic itself.** A hardware mute switch, and a light while audio is leaving the house.
+
+**Done when** each threat in `docs/security.md` has a defense and a passing test (or is written down as accepted),
+and a self-run pentest of the web UI and the Pi finds nothing new.
