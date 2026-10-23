@@ -1,0 +1,362 @@
+"""A prototype of TARS working a browser for someone: real Chrome with TARS's own profile (signed in once, by hand),
+a compact view of each page, and a model that answers with a batch of actions at a time. Not part of TARS yet.
+
+    uv run --all-extras python tools/browser_proto.py signin [URL]     # a visible Chrome: sign in by hand, quit it
+    uv run --all-extras python tools/browser_proto.py run "GOAL" [--model qwen|luna] [--steps N] [--headless]
+    uv run --all-extras python tools/browser_proto.py view [URL]       # print the view a model gets, no model
+
+Every command starts its own Chrome and shuts it at the end: nothing is borrowed from a window left open, only what
+TARS's profile keeps on disk. It's a real window, not headless: headless Chrome gives itself away (it says
+HeadlessChrome, and its screen is smaller than its window), and Amazon answers it with an "I am human" check. On the
+Pi it would draw to a virtual screen (Xvfb) instead, which is also what a "take over" view would show. Chrome is
+started without automation flags (sites refuse sign-in to browsers that say they're automated) and with a debugging
+port, and Playwright attaches to it. The profile is ~/.cache/tars-browser/profile: everything signed into there stays
+signed in, so keep it to this machine."""
+
+import argparse
+import json
+import subprocess
+import time
+import urllib.request
+from contextlib import contextmanager
+from pathlib import Path
+
+from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import TimeoutError as PageTimeout
+
+from voice_assistant.__main__ import make_openai_client, make_quick_client
+from voice_assistant.config import QUICK_PROVIDERS, load_config
+
+ROOT = Path(__file__).resolve().parents[1]
+PROFILE = Path.home() / ".cache/tars-browser/profile"
+PORT = 9333
+CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+TEXT_CHARS = 3000  # of the page's own text, after the list of things to click
+ELEMENTS = 120  # at most, of the things to click or type into, in page order
+
+# Marks every visible thing that can be clicked or typed into with data-tars, and returns them with the page's text.
+VIEW_JS = r"""
+() => {
+  const sel = 'a[href], button, input, select, textarea, [role=button], [role=link], [role=tab], [role=menuitem],'
+    + ' [role=checkbox], [role=option], [onclick], summary';
+  const seen = [];
+  let n = 0;
+  for (const el of document.querySelectorAll(sel)) {
+    const r = el.getBoundingClientRect();
+    const st = getComputedStyle(el);
+    if (r.width < 2 || r.height < 2 || st.visibility === 'hidden' || st.display === 'none') continue;
+    if (r.bottom < -200 || r.top > innerHeight * 3) continue;  // near the screen: what a person could reach soon
+    const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title')
+      || el.getAttribute('placeholder') || el.getAttribute('alt') || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const tag = el.tagName.toLowerCase();
+    const kind = tag === 'a' ? 'link' : tag === 'input' ? `input:${el.type}` : el.getAttribute('role') || tag;
+    if (!text && !tag.match(/input|select|textarea/)) continue;
+    n += 1;
+    el.setAttribute('data-tars', String(n));
+    seen.push(`[${n}] ${kind} ${JSON.stringify(text)}`);
+  }
+  const main = document.querySelector('main, #a-page, [role=main]') || document.body;
+  return {title: document.title, url: location.href, elements: seen, text: main.innerText.replace(/\n{3,}/g, '\n\n')};
+}
+"""
+
+RULES = """You work a web browser for the person, toward their goal: {goal}
+
+Each turn you get the page: its title and address, the things on it you can click or type into, numbered, and its \
+text. Answer with the act tool: a list of steps, run in order, then you see the page again. Batch steps that don't \
+need a new look (fill two fields and press the button). Prefer going straight to an address you know when it's \
+quicker than clicking there.
+
+Steps: {{"click": N}}, {{"type": N, "text": "...", "enter": true|false}}, {{"goto": "https://..."}}, \
+{{"scroll": "down"|"up"}}, {{"back": true}}, {{"wait": seconds}}.
+
+When the goal is reached, call done with the answer for them: short, plain, what they asked for. If you hit a \
+sign-in page, a code or a CAPTCHA, call done saying so: the person signs in by hand. Never buy, send, cancel or \
+change anything: this is only looking."""
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "act",
+            "description": "Steps to take in order, then look at the page again.",
+            "parameters": {
+                "type": "object",
+                "properties": {"steps": {"type": "array", "items": {"type": "object"}}},
+                "required": ["steps"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "done",
+            "description": "Finish, with the answer for the person.",
+            "parameters": {
+                "type": "object",
+                "properties": {"success": {"type": "boolean"}, "answer": {"type": "string"}},
+                "required": ["success", "answer"],
+            },
+        },
+    },
+]
+
+
+@contextmanager
+def own_chrome(headless: bool):
+    """A fresh TARS Chrome for as long as it's needed, then shut: real Chrome, its own profile, a debugging port, no
+    automation flags. One already running is closed first, so nothing carries over but what the profile keeps on disk
+    (a profile can only be open in one Chrome at a time anyway)."""
+    close_chrome()
+    PROFILE.mkdir(parents=True, exist_ok=True)
+    flags = [f"--user-data-dir={PROFILE}", f"--remote-debugging-port={PORT}", "--no-first-run",
+             "--no-default-browser-check"]  # fmt: skip
+    if headless:
+        flags += ["--headless=new", "--window-size=1280,1000"]
+    process = subprocess.Popen([CHROME, *flags, "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(75):
+            if _answers():
+                break
+            time.sleep(0.2)
+        else:
+            raise SystemExit("TARS's Chrome didn't start")
+        yield process
+    finally:
+        close_chrome()
+        try:
+            process.wait(10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def close_chrome() -> None:
+    """Closes TARS's Chrome if it's running, the way quitting it would, so the profile is saved. Straight through its
+    debugging socket: Playwright won't attach to a Chrome with no windows left (on a Mac, closing the last window
+    leaves Chrome running)."""
+    from websockets.sync.client import connect
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json/version", timeout=1) as answer:
+            socket_url = json.load(answer)["webSocketDebuggerUrl"]
+    except OSError:
+        return
+    with connect(socket_url, max_size=None) as socket:
+        socket.send(json.dumps({"id": 1, "method": "Browser.close"}))
+    for _ in range(50):
+        if not _answers():
+            return
+        time.sleep(0.2)
+
+
+def _answers() -> bool:
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json/version", timeout=1)
+        return True
+    except OSError:
+        return False
+
+
+def view(page: Page) -> str:
+    seen = page.evaluate(VIEW_JS)
+    text = seen["text"].strip()
+    if len(text) > TEXT_CHARS:
+        text = text[:TEXT_CHARS] + " …"
+    return "\n".join(
+        [f"Title: {seen['title']}", f"Address: {seen['url']}", "", "Things to click or type into:"]
+        + seen["elements"][:ELEMENTS]
+        + ([f"(and {len(seen['elements']) - ELEMENTS} more further down)"] if len(seen["elements"]) > ELEMENTS else [])
+        + ["", "Text:", text]
+    )
+
+
+def settle(page: Page) -> None:
+    """Until the page has loaded what it's going to, briefly: a page that keeps polling isn't waited out."""
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=10_000)
+        page.wait_for_load_state("networkidle", timeout=2_500)
+    except PageTimeout:
+        return  # a page still busy is looked at as it is
+
+
+def act(page: Page, steps: list[dict]) -> list[str]:
+    """Each step's outcome, stopping at the first that fails."""
+    said = []
+    for step in steps:
+        try:
+            if "goto" in step:
+                page.goto(str(step["goto"]), wait_until="domcontentloaded", timeout=20_000)
+            elif "click" in step:
+                page.locator(f'[data-tars="{int(step["click"])}"]').first.click(timeout=5_000)
+            elif "type" in step:
+                field = page.locator(f'[data-tars="{int(step["type"])}"]').first
+                field.fill(str(step.get("text", "")), timeout=5_000)
+                if step.get("enter"):
+                    field.press("Enter")
+            elif "scroll" in step:
+                page.mouse.wheel(0, 900 if step["scroll"] != "up" else -900)
+            elif "back" in step:
+                page.go_back(wait_until="domcontentloaded", timeout=15_000)
+            elif "wait" in step:
+                page.wait_for_timeout(min(float(step["wait"]), 5) * 1000)
+            else:
+                said.append(f"unknown step {step}")
+                break
+            settle(page)
+            said.append(f"ok: {json.dumps(step)}")
+        except Exception as e:  # noqa: BLE001 - the model hears what went wrong and tries something else
+            said.append(f"failed: {json.dumps(step)}: {str(e).splitlines()[0][:200]}")
+            break
+    return said
+
+
+PAGE = "Title:"  # how a page view starts: only the newest is sent in full
+
+
+class ChatBrain:
+    """Qwen on Groq, through chat completions."""
+
+    def __init__(self, client, model: str, goal: str, first: str):
+        self.client, self.model = client, model
+        self.messages: list[dict] = [
+            {"role": "system", "content": RULES.format(goal=goal)},
+            {"role": "user", "content": first},
+        ]
+        self.tokens_in = self.tokens_out = 0
+
+    def ask(self) -> list[tuple[str, str, dict]]:
+        reply = self.client.chat.completions.create(
+            model=self.model, messages=self.messages, tools=TOOLS, tool_choice="required", max_completion_tokens=1500
+        )
+        if reply.usage:
+            self.tokens_in += reply.usage.prompt_tokens
+            self.tokens_out += reply.usage.completion_tokens
+        calls = reply.choices[0].message.tool_calls or []
+        self.messages.append({"role": "assistant", "tool_calls": [c.model_dump() for c in calls], "content": ""})
+        return [(c.id, c.function.name, json.loads(c.function.arguments or "{}")) for c in calls]
+
+    def answer(self, call_id: str, output: str) -> None:
+        self.messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+
+    def page(self, looked: str) -> None:
+        for m in self.messages:
+            if m["role"] == "user" and m["content"].startswith(PAGE):
+                m["content"] = "(an earlier page)"
+        self.messages.append({"role": "user", "content": looked})
+
+
+class ResponsesBrain:
+    """Luna on OpenAI, through the Responses API (its only way to call tools while reasoning), as the TV agent does."""
+
+    def __init__(self, client, model: str, goal: str, first: str):
+        self.client, self.model, self.instructions = client, model, RULES.format(goal=goal)
+        self.items: list[dict] = [{"role": "user", "content": first}]
+        self.tools = [{"type": "function", **t["function"]} for t in TOOLS]
+        self.tokens_in = self.tokens_out = 0
+
+    def ask(self) -> list[tuple[str, str, dict]]:
+        reply = self.client.responses.create(
+            model=self.model, instructions=self.instructions, input=self.items, tools=self.tools,
+            tool_choice="required", store=False, reasoning={"effort": "low"},
+        )  # fmt: skip
+        if reply.usage:
+            self.tokens_in += reply.usage.input_tokens
+            self.tokens_out += reply.usage.output_tokens
+        calls = [i for i in reply.output if getattr(i, "type", "") == "function_call"]
+        self.items += [
+            {"type": "function_call", "call_id": c.call_id, "name": c.name, "arguments": c.arguments} for c in calls
+        ]
+        return [(c.call_id, c.name, json.loads(c.arguments or "{}")) for c in calls]
+
+    def answer(self, call_id: str, output: str) -> None:
+        self.items.append({"type": "function_call_output", "call_id": call_id, "output": output})
+
+    def page(self, looked: str) -> None:
+        for i in self.items:
+            if i.get("role") == "user" and str(i.get("content", "")).startswith(PAGE):
+                i["content"] = "(an earlier page)"
+        self.items.append({"role": "user", "content": looked})
+
+
+def brain(which: str, goal: str, first: str):
+    """qwen (Groq, the quick brain) or luna (OpenAI)."""
+    cfg = load_config(ROOT / "config.toml")
+    env = ROOT / ".env"
+    if which == "luna":
+        return ResponsesBrain(make_openai_client(env), cfg.llm.model, goal, first)
+    groq = next(p for p in QUICK_PROVIDERS if p.name == "Groq")
+    return ChatBrain(make_quick_client(env, groq), cfg.llm.groq_model, goal, first)
+
+
+def run(goal: str, which: str, steps: int, headless: bool) -> None:
+    with own_chrome(headless=headless), sync_playwright() as p:
+        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{PORT}")
+        context = browser.contexts[0]
+        page = context.pages[0] if context.pages else context.new_page()
+        mind = brain(which, goal, view(page))
+        started = time.perf_counter()
+        for n in range(1, steps + 1):
+            t = time.perf_counter()
+            calls = mind.ask()
+            thought = time.perf_counter() - t
+            if not calls:
+                print(f"step {n}: no tool call")
+                break
+            finished = None
+            for call_id, name, args in calls:
+                if name == "done":
+                    finished = args
+                    mind.answer(call_id, "ok")
+                    continue
+                t2 = time.perf_counter()
+                outcome = act(page, list(args.get("steps", [])))
+                looked = view(page)
+                worked = time.perf_counter() - t2
+                print(f"step {n}: model {thought:.1f}s, browser {worked:.1f}s, view {len(looked)} chars")
+                for line in outcome:
+                    print(f"    {line}")
+                mind.answer(call_id, "\n".join(outcome))
+                mind.page(looked)
+            if finished is not None:
+                took = time.perf_counter() - started
+                used = f"{mind.tokens_in} tokens in / {mind.tokens_out} out"
+                print(f"\ndone in {n} steps, {took:.1f}s, {used} ({mind.model})")
+                print(f"success: {finished.get('success')}\n{finished.get('answer')}")
+                return
+        print(f"\nstopped after {steps} steps, {time.perf_counter() - started:.1f}s")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("signin")
+    s.add_argument("url", nargs="?", default="https://www.amazon.com/gp/css/order-history")
+    v = sub.add_parser("view")
+    v.add_argument("url", nargs="?")
+    r = sub.add_parser("run")
+    r.add_argument("goal")
+    r.add_argument("--model", choices=("qwen", "luna"), default="qwen")
+    r.add_argument("--steps", type=int, default=12)
+    r.add_argument("--headless", action="store_true", help="no window (Amazon takes it for a bot: see below)")
+    args = parser.parse_args()
+    if args.command == "run":
+        run(args.goal, args.model, args.steps, args.headless)
+        return
+    signing_in = args.command == "signin"
+    with own_chrome(headless=False) as process, sync_playwright() as p:
+        context = p.chromium.connect_over_cdp(f"http://127.0.0.1:{PORT}").contexts[0]
+        page = context.pages[0] if context.pages else context.new_page()
+        if signing_in:
+            page.goto(args.url)
+            print("Sign in by hand in the Chrome window that opened (tick 'Keep me signed in'), then quit that Chrome")
+            print("(Cmd-Q in its window): what you signed into is kept in its profile, and this ends.")
+            process.wait()
+            return
+        if args.url:
+            page.goto(args.url)
+            settle(page)
+        print(view(page))
+
+
+if __name__ == "__main__":
+    main()
