@@ -106,9 +106,11 @@ class Session:
     def _on_dialog(self, dialog: Dialog) -> None:
         """A page's own alert or confirm: an alert is read and closed; a confirm ("Are you sure?") is answered no,
         since saying yes is the person's to do. What it said goes to the model."""
-        self.dialogs.append(f"the page showed a {dialog.type} saying {dialog.message!r}: answered no")
+        alert = dialog.type == "alert"
+        self.dialogs.append(f"the page showed a {dialog.type} saying {dialog.message!r}: "
+                            + ("closed it" if alert else "answered no"))  # fmt: skip
         try:
-            if dialog.type == "alert":
+            if alert:
                 dialog.accept()
             else:
                 dialog.dismiss()
