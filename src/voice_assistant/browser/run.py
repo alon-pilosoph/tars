@@ -15,8 +15,9 @@ from .session import Session
 
 ROOT = Path(__file__).resolve().parents[3]
 TIDY = (
-    "That was a dry run, and it's over. Take out of the basket or cart what you put in it during this task, and "
-    "nothing else (leave anything that was there before), then call done saying what you took out."
+    "That was a dry run, and it's over: now undo it. What you yourself put in the basket or cart during this task "
+    "(your steps above show what you added) is yours to take out, so take it out now, and nothing else: leave "
+    "anything that was there before you started. Then call done saying what you took out."
 )
 
 
