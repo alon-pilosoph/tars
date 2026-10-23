@@ -167,9 +167,10 @@ LOGIN_PAGE = """<!doctype html>
   <div class="why">{why}</div>
   <form method="post" action="/login">
     <input type="hidden" name="token" value="{token}">
-    <label for="u">Email or phone</label>
+    {note}
+    <label for="u">{user_label}</label>
     <input id="u" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
-    <label for="p">Password</label>
+    <label for="p">{password_label}</label>
     <input id="p" name="password" type="password" autocomplete="current-password" required>
     <button>Save for {host} and sign in</button>
   </form>
@@ -220,7 +221,9 @@ class Person:
         self.say("No code came in time: I stopped.")
         return None
 
-    def add_login(self, site: str, goal: str) -> bool:
+    def add_login(
+        self, site: str, goal: str, note: str = "", user_label: str = "Email or phone", password_label: str = "Password"
+    ) -> bool:
         """Sends the person a one-time link to a page asking for their login for `site` (what code saw the browser at,
         never what a page or a model said), saves what they enter into the vault for that site only, and returns
         whether they did within LOGIN_WAIT_S."""
@@ -234,7 +237,9 @@ class Person:
         token, saved = secrets.token_urlsafe(18), threading.Event()
         host = urlsplit(site).hostname or site
         why = f"to finish: {goal}" if goal else "to carry on with what you asked"
-        form = LOGIN_PAGE.format(site=html.escape(site), host=html.escape(host), why=html.escape(why), token=token)
+        form = LOGIN_PAGE.format(site=html.escape(site), host=html.escape(host), why=html.escape(why), token=token,
+                                 note=note, user_label=html.escape(user_label),
+                                 password_label=html.escape(password_label))  # fmt: skip
 
         class Page(BaseHTTPRequestHandler):
             def log_message(self, *args) -> None:  # nothing about it in the logs

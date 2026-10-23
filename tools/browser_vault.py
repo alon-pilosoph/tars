@@ -77,11 +77,23 @@ def for_page(url: str) -> Login | None:
     return None
 
 
+def for_origin(where: str) -> Login | None:
+    """The login stored for exactly this origin, of any scheme TARS uses (https for sites, imaps for mail)."""
+    here = origin(where)
+    for name, e in _load().items():
+        if here in e["origins"]:
+            return Login(name, tuple(e["origins"]), e["username"], e["password"])
+    return None
+
+
+SCHEMES = ("https://", "imaps://")  # what a login may be for: web sites, and mail over TLS
+
+
 def store(name: str, origins: list[str], username: str, password: str) -> None:
-    """Adds or replaces a login, for exactly these origins (https only)."""
+    """Adds or replaces a login, for exactly these origins (https or imaps only)."""
     origins = sorted({origin(o) for o in origins})
-    if not origins or not all(o.startswith("https://") and "." in o for o in origins):
-        raise ValueError(f"origins must be https://host addresses, got {origins}")
+    if not origins or not all(o.startswith(SCHEMES) and "." in o for o in origins):
+        raise ValueError(f"origins must be https:// or imaps:// host addresses, got {origins}")
     if not username or not password:
         raise ValueError("both a username and a password are needed")
     entries = _load()
