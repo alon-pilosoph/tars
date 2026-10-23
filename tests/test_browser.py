@@ -410,7 +410,7 @@ def test_the_total_is_read_off_the_page():
 def test_the_tools_say_what_they_take():
     names = {t["name"] for t in agents.TOOLS}
     assert names == {"act", "find", "look", "request_approval", "sign_in", "done"}
-    assert "{goal}" in agents.INSTRUCTIONS and "{today}" in agents.INSTRUCTIONS and "{language}" in agents.INSTRUCTIONS
+    assert "{goal}" in agents.HEADER and "{language}" in agents.HEADER and "{{" not in agents.RULES
 
 
 def test_refused_carries_the_label():
@@ -568,3 +568,43 @@ def test_text_is_quoted_for_xpath_whatever_its_quotes():
     assert _xpath("20:00") == "'20:00'"
     assert _xpath("Bob's") == '"Bob\'s"'
     assert _xpath("""a'b"c""") == "concat('a', \"'\", 'b\"c')"
+
+
+# Claude Code as the brain
+
+
+def test_claude_code_gets_only_tars_browser_and_fenced_notes(tmp_path, monkeypatch):
+    from voice_assistant.browser import claude
+
+    monkeypatch.setattr(claude, "HOME", tmp_path / "home")
+    monkeypatch.setattr(claude, "NOTES", tmp_path / "home/notes")
+    ran = []
+
+    def fake_run(command, **kwargs):
+        ran.append((command, kwargs))
+        return types.SimpleNamespace(stdout='{"type": "result", "usage": {}, "result": "ok"}', stderr="", returncode=0)
+
+    monkeypatch.setattr(claude.subprocess, "run", fake_run)
+
+    def flag(command, name):
+        i = command.index(name)
+        return command[i + 1 : next((j for j in range(i + 1, len(command)) if command[j].startswith("--")), None)]
+
+    claude.run_claude("Order a pizza on Wolt", tmp_path / "t.jsonl")
+    command, kwargs = ran[-1]
+    assert flag(command, "--tools") == [""] and flag(command, "--allowedTools") == ["mcp__tars-browser"]
+    assert flag(command, "--permission-mode") == ["dontAsk"] and "--strict-mcp-config" in command
+    assert flag(command, "--setting-sources") == ["project"] and kwargs["cwd"] == tmp_path / "home"
+    written = (tmp_path / "home/CLAUDE.md").read_text()
+    assert agents.RULES in written and "Notes on sites" not in written
+    assert "Order a pizza on Wolt" in command[command.index("-p") + 1]
+
+    (tmp_path / "home/notes").mkdir(parents=True)
+    (tmp_path / "home/notes/wolt.com.md").write_text("- search: /en/search?q=<words>")
+    claude.run_claude("Order a pizza on Wolt", tmp_path / "t2.jsonl", notes=True)
+    command, _ = ran[-1]
+    assert flag(command, "--tools") == ["Read,Edit,Write"]
+    assert set(flag(command, "--allowedTools")) == {
+        "mcp__tars-browser", "Read(./notes/**)", "Edit(./notes/**)", "Write(./notes/**)"}  # fmt: skip
+    assert "Notes on sites" in (tmp_path / "home/CLAUDE.md").read_text()
+    assert "notes/wolt.com.md" in command[command.index("-p") + 1]

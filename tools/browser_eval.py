@@ -156,7 +156,7 @@ def run_claude(task: dict, steps: int, folder: Path, options: argparse.Namespace
     from voice_assistant.browser.claude import run_claude as run
 
     return run(task["goal"], folder / f"{task['id']}.jsonl", model=options.model, effort=options.effort,
-               turns=steps, tidy=True)  # fmt: skip
+               turns=steps, tidy=True, notes=options.notes != "off")  # fmt: skip
 
 
 def relearn(folder: Path) -> None:

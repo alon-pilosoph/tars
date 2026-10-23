@@ -4,8 +4,9 @@ approval as TARS's agent; only the brain is different, so the two can be compare
 
 Claude Code is started with no built-in tools (`--tools ""`), only TARS's browser allowed, anything else refused
 (`--permission-mode dontAsk`), its own system prompt replaced by TARS's browser instructions, and no session kept.
-It runs in an empty folder with no settings, plugins or hooks and auto-memory off, so it brings none of the
-person's CLAUDE.md files or project memory to the task. It's still Claude Code's loop: tool calls, the whole
+It runs in a folder of its own with only that folder's settings (no plugins or hooks of the person's) and
+auto-memory off: its CLAUDE.md there holds TARS's browsing rules (agent.RULES) and, with notes, how to keep notes on
+sites in notes/, the only files it may read or write. It's still Claude Code's loop: tool calls, the whole
 history kept (TARS's own loop shrinks old pages to a line), prompt caching, and compacting when it's long.
 What it did comes back two ways: Claude Code's stream (time, turns, tokens, what the same use would cost on the API)
 and the MCP server's trace (each call and what it did, the answer, the approvals asked)."""
@@ -18,39 +19,74 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .agent import instructions_for
+from .agent import RULES, header_for
 
 MODEL = "claude-opus-5-5"
 SERVER = "tars-browser"
 ROOT = Path(__file__).resolve().parents[3]
-# Where Claude Code runs: an empty folder, so no project's CLAUDE.md or memory comes along (only the account's
-# email and the machine's environment, which a plan sign-in brings anyway).
+# Where Claude Code runs: a folder of its own, so only its own CLAUDE.md and notes come along, no other project's
+# CLAUDE.md or memory (just the account's email and the machine's environment, which a plan sign-in brings anyway).
 HOME = ROOT / "voice_data/browser/claude-home"
-PREFACE = ("Your tools are TARS's browser (page, act, find, look, request_approval, done) and nothing else. Start "
-           "with page, and finish with done.\n\n")  # fmt: skip
+SYSTEM = "You are TARS's browser agent. How to work is in CLAUDE.md; the person's goal is in their message."
+# Claude Code's CLAUDE.md in its folder: the same rules TARS's own agent follows, and how to keep notes on sites.
+CLAUDE_MD = """# TARS's browser
+
+You work a real web browser for the person through TARS's browser tools (page, act, find, look, request_approval,
+done). Start with page, and finish with done. There's no sign_in tool here: if a site wants a sign-in, call done
+saying so.
+
+## Working the browser
+
+{rules}
+"""
+NOTES_MD = """
+## Notes on sites
+
+TARS keeps notes on the sites it works, one file a site in notes/ (notes/wolt.com.md): what earlier runs learned
+about how the site works. The addresses that go straight to something, what things are called and where they are,
+what failed and what worked instead, what the site asks for on the way to checkout.
+
+- When the task takes you to a site that has a notes file, Read it before you start there. It's a hint: where the
+  page shows otherwise, the page is right.
+- Before you call done, write what this run taught you into the notes file of the site you worked most (Edit it,
+  or Write it if there's none yet): at most 12 short bullets in all, keeping what still holds. Only how the site
+  works, never how this run went (not what you found, couldn't find or gave up on), and nothing about the person
+  (no names, addresses, orders, accounts).
+- The notes are the only files you can read or write.
+"""
+NOTES = HOME / "notes"
 
 
 def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "medium", turns: int = 30,
-               timeout_s: float = 900, tidy: bool = False) -> dict[str, Any]:  # fmt: skip
+               timeout_s: float = 900, tidy: bool = False, notes: bool = False) -> dict[str, Any]:  # fmt: skip
     """Runs Claude Code on `goal` with TARS's browser; what it did, in run_task's shape. `tidy`: then empties a
-    basket the run may have filled (as run_task does for evals)."""
+    basket the run may have filled (as run_task does for evals). `notes`: it reads the notes on the sites it goes to,
+    and writes what the run taught it (in notes/, the only files it can touch)."""
     trace_to.parent.mkdir(parents=True, exist_ok=True)
     config = trace_to.with_suffix(".mcp.json")
     env = {"TARS_BROWSER_TRACE": str(trace_to), "TARS_BROWSER_TURNS": str(turns)}
     config.write_text(json.dumps({"mcpServers": {SERVER: {
         "command": sys.executable, "args": ["-m", "voice_assistant.browser.mcp_server"], "env": env}}}))  # fmt: skip
+    HOME.mkdir(parents=True, exist_ok=True)
+    (HOME / "CLAUDE.md").write_text(CLAUDE_MD.format(rules=RULES) + (NOTES_MD if notes else ""))
+    prompt = header_for(goal)
+    files, allowed = "", [f"mcp__{SERVER}"]
+    if notes:
+        NOTES.mkdir(exist_ok=True)
+        known = sorted(p.stem for p in NOTES.glob("*.md"))
+        prompt += f"Notes so far: {', '.join(f'notes/{k}.md' for k in known)}." if known else "No notes yet."
+        files, allowed = "Read,Edit,Write", [*allowed, *(f"{t}(./notes/**)" for t in ("Read", "Edit", "Write"))]
     command = [
-        "claude", "-p", f"The person's goal: {goal}", "--model", model, "--effort", effort,
-        "--mcp-config", str(config), "--strict-mcp-config", "--tools", "", "--allowedTools", f"mcp__{SERVER}",
-        "--permission-mode", "dontAsk", "--system-prompt", PREFACE + instructions_for(goal),
+        "claude", "-p", prompt, "--model", model, "--effort", effort,
+        "--mcp-config", str(config), "--strict-mcp-config", "--tools", files, "--allowedTools", *allowed,
+        "--permission-mode", "dontAsk", "--system-prompt", SYSTEM,
         "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-        "--setting-sources", "", "--settings", json.dumps({"autoMemoryEnabled": False}),
+        "--setting-sources", "project", "--settings", json.dumps({"autoMemoryEnabled": False}),
     ]  # fmt: skip
     _log(trace_to, {"event": "start", "goal": goal, "model": model, "effort": effort})
     started = time.perf_counter()
     error = ""
     try:
-        HOME.mkdir(parents=True, exist_ok=True)
         ran = subprocess.run(command, cwd=HOME, capture_output=True, text=True, timeout=timeout_s,
                              env={**os.environ, **env}, check=False)  # fmt: skip
         stream, error = ran.stdout, ran.stderr.strip()[-500:] if ran.returncode else ""

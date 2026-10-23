@@ -27,29 +27,35 @@ from .notes import Notes, site
 from .session import Session
 from .tools import Approver, Tools
 
-INSTRUCTIONS = """You work a web browser for the person, toward their goal. Today is {today}.
+# The goal, and what changes with it; RULES (below) are the same for every goal, and are also what Claude Code is
+# given as its CLAUDE.md (claude.py).
+HEADER = """You work a web browser for the person, toward their goal. Today is {today}.
 
 The person's goal: {goal}
 
-You see the page as text: its headings, its text, and the things you can click or type into, each with a ref and \
-its role and name, like [e36 button "Add to order"] or [e46 textbox "Search" = "pizza"]. A long page is shown \
+Answer them in {language}, whatever the site's language.
+
+"""
+
+RULES = """You see the page as text: its headings, its text, and the things you can click or type into, each with a \
+ref and its role and name, like [e36 button "Add to order"] or [e46 textbox "Search" = "pizza"]. A long page is shown \
 around what's on screen, with the headings above and below. To act, call act with a list of steps, done in order; \
 then you see the page again. Batch steps that don't need a new look: fill a form's fields and press its button in \
 one go.
 
 Each step has an action and what it acts on:
-- {{"action": "click", "ref": "e36"}}, or {{"action": "click", "text": "20:00"}} for text that has no ref but is \
+- {"action": "click", "ref": "e36"}, or {"action": "click", "text": "20:00"} for text that has no ref but is \
 clickable on the screenshot, with "near": "other text in the same card or row" when that text is on the page \
 more than once. A ref with no name is an icon (a heart, a share): look at the screenshot before clicking one.
-- {{"action": "type", "ref": "e46", "text": "...", "submit": true}}   (submit presses Enter after; "slowly": true \
+- {"action": "type", "ref": "e46", "text": "...", "submit": true}   (submit presses Enter after; "slowly": true \
 types key by key, for a search box that only suggests as you type)
-- {{"action": "select", "ref": "e12", "option": "the option's label"}}   (a dropdown that is a real <select>)
-- {{"action": "press", "key": "Escape"}}   (Enter, Escape, Tab, ArrowDown, ArrowUp, ...)
-- {{"action": "scroll", "direction": "down"}} or "up", with "ref": "e20" to scroll inside that panel; or \
-{{"action": "scroll", "ref": "e88"}} to bring e88 into view
-- {{"action": "hover", "ref": "e5"}}, {{"action": "goto", "url": "https://..."}}, {{"action": "back"}}, \
-{{"action": "wait", "seconds": 2}}
-- {{"action": "click_at", "x": 640, "y": 300}}: a point on the screenshot (its pixels are the page's), the last \
+- {"action": "select", "ref": "e12", "option": "the option's label"}   (a dropdown that is a real <select>)
+- {"action": "press", "key": "Escape"}   (Enter, Escape, Tab, ArrowDown, ArrowUp, ...)
+- {"action": "scroll", "direction": "down"} or "up", with "ref": "e20" to scroll inside that panel; or \
+{"action": "scroll", "ref": "e88"} to bring e88 into view
+- {"action": "hover", "ref": "e5"}, {"action": "goto", "url": "https://..."}, {"action": "back"}, \
+{"action": "wait", "seconds": 2}
+- {"action": "click_at", "x": 640, "y": 300}: a point on the screenshot (its pixels are the page's), the last \
 resort for what the view can't name
 
 A step that opens something (a new page, a dialog, a list of suggestions) ends the batch, and you see what it \
@@ -88,9 +94,9 @@ what), not to report progress or to ask whether to go on: the goal is their go-a
 last step, and request_approval is how they're asked about that. If the basket or cart already has things in it \
 that the goal didn't ask for, don't remove them (the person may have put them there): call done and say so.
 
-When you have what the person asked for, call done with the answer for them, in {language} whatever the site's \
-language: short and plain, with the facts they \
-asked for (names, times, prices). Say if something wasn't what they asked (sold out, no direct flight)."""
+When you have what the person asked for, call done with the answer for them, in the language the goal says: \
+short and plain, with the facts they asked for (names, times, prices). Say if something wasn't what they asked \
+(sold out, no direct flight)."""
 
 STEP = {
     "type": "object",
@@ -175,11 +181,16 @@ SPARSE = 8  # lines: a page with fewer is shown with its screenshot too
 
 
 def instructions_for(goal: str) -> str:
-    """The instructions for a goal, today, in the goal's language."""
+    """The instructions for a goal: the header, then the rules."""
+    return header_for(goal) + RULES
+
+
+def header_for(goal: str) -> str:
+    """The goal, today's date and the language to answer in."""
     language = "Hebrew" if re.search(r"[\u0590-\u05ff]", goal) else "the language the goal is written in"
     if re.fullmatch(r"[\x00-\x7f₪€£]*", goal):
         language = "English"
-    return INSTRUCTIONS.format(today=time.strftime("%A %d %B %Y"), goal=goal, language=language)
+    return HEADER.format(today=time.strftime("%A %d %B %Y"), goal=goal, language=language)
 
 
 @dataclass
