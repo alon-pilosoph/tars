@@ -179,7 +179,7 @@ MONEY = re.compile(r"(?:[₪$€£]\s?\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2
 # What a button that only takes the person on says ("Go to checkout", "View basket"): no approval needed for it.
 NAVIGATES = re.compile(
     r"\b(go to|view|open|show|continue to)\s+(the\s+)?(checkout|cart|basket|bag)\b"
-    r"|^\s*\d*\s*(checkout|cart|basket)\b|show items|לסל|לקופה|מעבר לקופה|לסל הקניות",
+    r"|^\s*\d*\s*(checkout|cart|basket)\b|show items|לסל|לקופה|מעבר לקופה|לסל הקניות|לעגלת|לעגלה",
     re.IGNORECASE,
 )
 TOTAL_WORDS = re.compile(r"total|סה\"?״?כ|סך הכל|לתשלום|to pay|price for", re.IGNORECASE)

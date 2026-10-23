@@ -369,8 +369,9 @@ def test_prices_that_changed_while_asking_are_not_pressed_even_without_a_total()
     assert "prices on the page changed" in model.sent[-1]["input"][-2]["output"]
 
 
-def test_going_to_the_checkout_needs_no_approval():
-    refs = {"e5": pages.Node("button", name="1 Go to checkout ₪73.00", ref="e5", box=(0, 0, 100, 40))}
+@pytest.mark.parametrize("label", ["1 Go to checkout ₪73.00", "מעבר לעגלת הקניות", "View basket"])
+def test_going_to_the_checkout_needs_no_approval(label):
+    refs = {"e5": pages.Node("button", name=label, ref="e5", box=(0, 0, 100, 40))}
     model = FakeModel(call("request_approval", ref="e5", summary="checkout"), call("done", success=False, answer=""))
     person = Person()
     Agent(model, FakeSession(refs=refs), person).run("Order a pizza")
