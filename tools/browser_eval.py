@@ -157,8 +157,9 @@ def relearn(folder: Path) -> None:
 
     notes, model = Notes(), client()
     spent_in = spent_out = 0
-    for trace in sorted(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime):
-        events = [json.loads(line) for line in trace.read_text().splitlines()]
+    traces = [p for p in folder.glob("*.jsonl") if p.name != "results.jsonl"]
+    for trace in sorted(traces, key=lambda p: p.stat().st_mtime):
+        events = [json.loads(line) for line in trace.read_text().split("\n") if line]  # not splitlines: a page's U+2028
         start = next((e for e in events if e["event"] == "start"), None)
         end = next((e for e in events if e["event"] == "end"), None)
         if start is None or end is None:
