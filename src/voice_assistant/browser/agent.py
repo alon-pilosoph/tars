@@ -174,6 +174,14 @@ TOOLS: list[dict[str, Any]] = [
 SPARSE = 8  # lines: a page with fewer is shown with its screenshot too
 
 
+def instructions_for(goal: str) -> str:
+    """The instructions for a goal, today, in the goal's language."""
+    language = "Hebrew" if re.search(r"[\u0590-\u05ff]", goal) else "the language the goal is written in"
+    if re.fullmatch(r"[\x00-\x7f₪€£]*", goal):
+        language = "English"
+    return INSTRUCTIONS.format(today=time.strftime("%A %d %B %Y"), goal=goal, language=language)
+
+
 @dataclass
 class Result:
     ended: str  # done, out of turns, stuck, error
@@ -226,10 +234,7 @@ class Agent:
 
     def run(self, goal: str) -> Result:
         """Works toward `goal` until done, stuck or out of turns."""
-        language = "Hebrew" if re.search(r"[\u0590-\u05ff]", goal) else "the language the goal is written in"
-        if re.fullmatch(r"[\x00-\x7f₪€£]*", goal):
-            language = "English"
-        self.instructions = INSTRUCTIONS.format(today=time.strftime("%A %d %B %Y"), goal=goal, language=language)
+        self.instructions = instructions_for(goal)
         self._log({"event": "start", "goal": goal, "model": self.settings.model})
         view = self.session.look()
         start = view.text if view.url != "about:blank" else "A new, empty tab: start by going to an address."

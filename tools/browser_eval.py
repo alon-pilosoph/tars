@@ -3,13 +3,15 @@ did: its answer, its steps, how long it took and what it cost. Nothing is ordere
 asks to commit is approved as a dry run, which stops it there. A round starts with TARS's baskets empty (on Wolt and
 KSP here), and each task that filled one has it emptied after it, so each starts where the first did.
 
-    uv run --all-extras python tools/browser_eval.py [--agent new|proto] [--task ID ...] [--steps N] [--cap DOLLARS]
+    uv run --all-extras python tools/browser_eval.py [--agent new|claude|proto] [--task ID ...] [--runs N]
     uv run --all-extras python tools/browser_eval.py --relearn voice_data/browser/evals/<run>   # notes again
 
---agent proto runs the first prototype (tools/browser_proto.py), on a copy of TARS's browser profile, as the
-baseline. Every task's record goes to voice_data/browser/evals/<time>-<agent>/results.jsonl, with its transcript
-beside it; what all runs have spent is kept in voice_data/browser/evals/spend.json, and no task starts once it
-reaches --cap. Grading is by reading: a task's `check` says what a right answer is."""
+--agent claude has Claude Code (Opus 5.5 at medium effort, on this machine's Claude plan) work TARS's browser
+through its MCP server instead of TARS's own loop. --agent proto runs the first prototype (tools/browser_proto.py),
+on a copy of TARS's browser profile, as the baseline. Every task's record goes to
+voice_data/browser/evals/<time>-<agent>/results.jsonl, with its trace beside it; what all runs have spent is kept in
+voice_data/browser/evals/spend.json, and no task starts once it reaches --cap. Grading is by reading: a task's
+`check` says what a right answer is."""
 
 import argparse
 import contextlib
@@ -149,6 +151,14 @@ def run_new(task: dict, steps: int, folder: Path, options: argparse.Namespace) -
                     notes=None if options.notes == "off" else Notes())  # fmt: skip
 
 
+def run_claude(task: dict, steps: int, folder: Path, options: argparse.Namespace) -> dict:
+    """Claude Code on one task, on the person's Claude plan, working TARS's browser (--model, --effort)."""
+    from voice_assistant.browser.claude import run_claude as run
+
+    return run(task["goal"], folder / f"{task['id']}.jsonl", model=options.model, effort=options.effort,
+               turns=steps, tidy=True)  # fmt: skip
+
+
 def relearn(folder: Path) -> None:
     """Writes the site notes again from a run's traces, in the order its tasks ran (each from the notes so far): for
     when how notes are written has changed, without running the tasks again."""
@@ -174,7 +184,8 @@ def relearn(folder: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--agent", choices=("new", "proto"), default="new")
+    parser.add_argument("--agent", choices=("new", "proto", "claude"), default="new",
+                        help="TARS's agent, the first prototype, or Claude Code working TARS's browser")  # fmt: skip
     parser.add_argument("--task", action="append", help="a task's id (default: all)")
     parser.add_argument("--steps", type=int, default=25, help="at most this many model turns a task")
     parser.add_argument("--cap", type=float, default=14.0, help="no task starts once all runs have spent this")
@@ -186,7 +197,9 @@ def main() -> None:
     parser.add_argument("--effort", default="low", choices=("none", "low", "medium", "high"), help="its reasoning")
     parser.add_argument("--runs", type=int, default=1, help="each task this many times")
     args = parser.parse_args()
-    if args.model not in PRICES:
+    if args.agent == "claude" and args.model == "gpt-6-luna":
+        args.model, args.effort = "claude-opus-5-5", "medium" if args.effort == "low" else args.effort
+    if args.agent != "claude" and args.model not in PRICES:
         raise SystemExit(f"no price for {args.model} in evals/prices.toml")
     if args.relearn:
         relearn(args.relearn)
@@ -200,7 +213,8 @@ def main() -> None:
     stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     folder = OUT / f"{stamp}-{args.agent}{'-' + args.label if args.label else ''}"
     folder.mkdir(parents=True)
-    runner = run_proto if args.agent == "proto" else functools.partial(run_new, options=args)
+    runners = {"proto": run_proto, "new": run_new, "claude": run_claude}
+    runner = functools.partial(runners[args.agent], options=args) if args.agent != "proto" else run_proto
     for task in [t for t in tasks for _ in range(args.runs)]:
         if spent() >= args.cap:
             print(f"stopping: ${spent():.2f} spent, the cap is ${args.cap:.2f}")
@@ -209,7 +223,10 @@ def main() -> None:
         result = runner(task, args.steps, folder)
         tokens_in = result["tokens_in"] + result.get("tidy_tokens_in", 0) + result.get("learn_tokens_in", 0)
         tokens_out = result["tokens_out"] + result.get("tidy_tokens_out", 0) + result.get("learn_tokens_out", 0)
-        dollars = cost(result["model"], tokens_in, tokens_out) if result["model"] else 0.0
+        if args.agent == "claude":  # on the person's Claude plan: only the tidying (TARS's agent, on Luna) is paid
+            dollars = cost("gpt-6-luna", result.get("tidy_tokens_in", 0), result.get("tidy_tokens_out", 0))
+        else:
+            dollars = cost(result["model"], tokens_in, tokens_out) if result["model"] else 0.0
         add_spend(dollars)
         record = {"id": task["id"], "kind": task["kind"], "agent": args.agent, "effort": args.effort, **result,
                   "dollars": round(dollars, 4)}  # fmt: skip
