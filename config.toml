@@ -249,6 +249,38 @@ tv_model = ""
 # kind = "androidtv"                                # over ADB: python -m voice_assistant.androidtv pair
 # address = "192.168.1.60"
 
+[presence]
+# Who's home (docs/presence.md): whose phone the home network's routers see, asked every every_s seconds by the
+# assistant. "Who's home?" is answered from it, by voice and in a chat; a reminder due aloud for someone who's out goes
+# to their Telegram chat instead; and a message waiting until someone's back is said soon after their phone comes
+# home. Kept in the event log, so it needs [learning] log_events. Put this machine's own [presence] in
+# config.local.toml: whose phone is whose and the routers are the household's, not the repo's.
+enabled = false
+# Each person, by the name TARS knows them by, and their phone as the routers list it: its Wi-Fi address (on an
+# iPhone: Settings > Wi-Fi > (i) > Wi-Fi Address, with Private Wi-Fi Address turned off for each home network, so
+# it's the same on every band and router) or the name a router shows it under ("Alons-iPhone").
+people = {}
+# people = { Alon = ["ca:fe:00:00:00:01"], Stacey = ["staceys-iphone", "ca:fe:00:00:00:02"] }
+# How often the routers are asked, from 5 to 120 seconds.
+every_s = 30
+# Someone whose phone no router has seen for this long, while every router answered, has gone out. A phone asleep on a
+# table drops off the Wi-Fi now and then for a few minutes, so this is longer than that.
+away_after_min = 10
+
+# One [[presence.routers]] for each router phones connect to: a Technicolor (Vantiva) Homeware gateway, as ISPs hand
+# out, or a Xiaomi router or access point. secret is the name of its admin password in .env.
+#
+# [[presence.routers]]
+# kind = "technicolor"
+# address = "192.168.1.1"
+# user = "admin"
+# secret = "ROUTER_PASSWORD"
+#
+# [[presence.routers]]
+# kind = "xiaomi"
+# address = "192.168.1.160"
+# secret = "XIAOMI_PASSWORD"
+
 [backup]
 # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and every six hours
 # the database, voiceprints, trained wake models and config.local.toml. voice-assistant --backup does it, every 15

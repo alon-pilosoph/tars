@@ -224,7 +224,7 @@ def no_tts(monkeypatch):
     monkeypatch.setattr(assistant_module, "StreamedReply", SilentReply)
 
 
-def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, clock=time.monotonic):
+def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, clock=time.monotonic, elsewhere=None):
     speaker.play_pcm_stream = lambda chunks, *a, **kw: list(chunks)
     voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
@@ -240,6 +240,7 @@ def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, c
         voice,
         journal=journal,
         clock=clock,
+        elsewhere=elsewhere,
     )
     return assistant, brain
 

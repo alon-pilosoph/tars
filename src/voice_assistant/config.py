@@ -224,6 +224,32 @@ class HomeConfig:
     devices: list[dict] = field(default_factory=list)
 
 
+# The routers presence.py can ask ([[presence.routers]] kind); routers.py has one class for each.
+TECHNICOLOR, XIAOMI = "technicolor", "xiaomi"
+ROUTER_KINDS = (TECHNICOLOR, XIAOMI)
+_MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
+_DASHED = re.compile(r"[0-9a-f]{1,2}(-[0-9a-f]{1,2}){3,}")
+_SECRET = re.compile(r"[A-Z][A-Z0-9_]*")
+
+
+@dataclass
+class PresenceConfig:
+    # Who's home, from whose phone is on the home Wi-Fi, as the routers see it (docs/presence.md). Runs in the
+    # assistant; needs [learning] log_events, where it's kept for the other processes.
+    enabled: bool = False
+    # Each person, and their phone as the routers know it: hardware addresses, or names a router lists it under.
+    people: dict[str, list[str]] = field(default_factory=dict)
+    # [[presence.routers]]: each router to ask, { kind = "technicolor" | "xiaomi", address, user, secret }, secret
+    # being the name of its password in .env.
+    routers: list[dict] = field(default_factory=list)
+    # How often the routers are asked: well within presence.STALE_AFTER_S, after which what was last written isn't
+    # trusted.
+    every_s: float = 30.0
+    # Someone whose phone no router has seen for this long has gone out. A phone asleep on a table drops off Wi-Fi
+    # now and then, for a few minutes, so this is longer than that.
+    away_after_min: float = 10.0
+
+
 @dataclass
 class BackupConfig:
     # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): voice-assistant --backup, every 15 minutes by
@@ -259,6 +285,7 @@ class Config:
     reminders: RemindersConfig
     telegram: TelegramConfig
     home: HomeConfig
+    presence: PresenceConfig
     backup: BackupConfig
 
 
@@ -471,7 +498,50 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
-    return problems + _home_problems(cfg.home)
+    return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence)
+
+
+def _presence_problems(p: PresenceConfig) -> list[str]:
+    """What's wrong with [presence]: whose phone is whose, and each router's kind, address and password's name."""
+    problems: list[str] = []
+    if p.enabled and not p.people:
+        problems.append('[presence] people must say whose phone is whose, like { Alon = ["aa:bb:cc:dd:ee:ff"] }')
+    if p.enabled and not p.routers:
+        problems.append("[presence] needs a [[presence.routers]] to ask")
+    keys: set[str] = set()
+    for name, ids in p.people.items():
+        if not name.strip():
+            problems.append("[presence] people needs a name for each list")
+        elif name.strip().lower() in keys:
+            problems.append(f"[presence] people has {name!r} twice")
+        keys.add(name.strip().lower())
+        if not ids or any(not i.strip() for i in ids):
+            problems.append(f"[presence] people {name!r} needs their phone's address or name, none empty")
+        for i in ids:
+            meant = ":" in i or _DASHED.fullmatch(i.strip().lower())  # an address, not a name like Alons-iPhone
+            if meant and not _MAC.fullmatch(i.strip().lower().replace("-", ":")):
+                problems.append(f"[presence] people {name!r}: {i!r} isn't a hardware address like aa:bb:cc:dd:ee:ff")
+    addresses: set[str] = set()
+    for i, r in enumerate(p.routers, 1):
+        where = f"[[presence.routers]] #{i}"
+        if r.get("kind") not in ROUTER_KINDS:
+            problems.append(f"{where}: kind must be {' or '.join(ROUTER_KINDS)}, not {r.get('kind')!r}")
+        if not (isinstance(r.get("address"), str) and re.fullmatch(r"[A-Za-z0-9.-]+", r["address"])):
+            problems.append(f"{where} needs address, its IP address on the home network, like 192.168.1.1")
+        elif r["address"] in addresses:
+            problems.append(f"{where}: two routers have the address {r['address']}")
+        else:
+            addresses.add(r["address"])
+        if not (isinstance(r.get("secret"), str) and _SECRET.fullmatch(r["secret"])):
+            problems.append(f'{where} needs secret, the name of its password in .env, like "ROUTER_PASSWORD"')
+        if "user" in r and not (isinstance(r["user"], str) and r["user"].strip()):
+            problems.append(f"{where}: user must be the admin's name, like admin")
+        problems += [f"{where} has no setting {k}" for k in r if k not in ("kind", "address", "user", "secret")]
+    if not 5 <= p.every_s <= 120:
+        problems.append("[presence] every_s must be between 5 and 120")
+    if not 1 <= p.away_after_min <= 240:
+        problems.append("[presence] away_after_min must be between 1 and 240")
+    return problems
 
 
 def _home_problems(home: HomeConfig) -> list[str]:

@@ -14,10 +14,10 @@ palette).
 | **Home** | What TARS sent since the last Refresh, then conversations by day, newest first: who spoke (by voice, or in a [Telegram](telegram.md) chat, marked as one), what they said, what TARS answered and the things it sent, and where an answer failed. Rate an answer with the thumbs, play what was said, name an unknown voice. Tap a conversation to open it: the recordings with a player, Fix text for a misheard transcript, Good and Bad, what TARS sent, how long each answer took and which model wrote it, what TARS heard, and Copy, "Not meant for TARS", Who was talking and Delete. With two or more named people, a filter by person. |
 | **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. Opening, copying or ticking something marks it seen; it stays under New until the next Refresh. |
 | **Review** | Wakes no conversation explained (a near-miss, a "Did you call me?" nobody answered, a wake followed by silence). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted. |
-| **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set (by voice, on this page or on Telegram), whether it's posted to a Telegram chat rather than said aloud, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice is back. The tab counts what's waiting for a got it. |
+| **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set (by voice, on this page or on Telegram), whether it's posted to a Telegram chat rather than said aloud, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice (or by phone, with [who's home](presence.md)) is back. The tab counts what's waiting for a got it. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
-| **Status** | Whether each part of TARS is running (the assistant, the web UI, Telegram), since when and which version; the day's wakes, answers and failed answers; each cloud service TARS uses, asked with TARS's own key, beside what the service's own status page says, and Home Assistant when `[home]` uses it; how the backup's last pass went, and its timer, when `[backup]` is on; and the machine: CPU, load, memory, temperature, the Pi's power and heat warnings, storage and uptime. |
+| **Status** | Whether each part of TARS is running (the assistant, the web UI, Telegram), since when and which version; the day's wakes, answers and failed answers; each cloud service TARS uses, asked with TARS's own key, beside what the service's own status page says, and Home Assistant when `[home]` uses it; with `[presence]`, how each router last answered and who's home; how the backup's last pass went, and its timer, when `[backup]` is on; and the machine: CPU, load, memory, temperature, the Pi's power and heat warnings, storage and uptime. |
 
 On a phone the pages are tabs along the bottom, Voices, Models and Status sit under the ⋯ at the top, and menus and
 dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
@@ -72,7 +72,9 @@ mic stops, which is how it has hung before).
 
 **Each service is asked, and asked about.** The services are asked with the same checks as `--check`
 (`check.service_checks`), each reading something small with TARS's key (a model, the voices, the key's or the bot's own
-details; Home Assistant, when `[home]` uses it, is pinged with its token and has no status page), and each one's own
+details; Home Assistant, when `[home]` uses it, is pinged with its token and has no status page; the routers, with
+`[presence]`, aren't asked at all: the page shows how they last answered the assistant, which asks them every 30
+seconds, so the web UI never signs into them as well ([who's home](presence.md))), and each one's own
 status page is read (they all publish Statuspage's `/api/v2/status.json`). Both, because each answers a different
 question: the key works, and the service says it's fine. They're all asked at once and given 10 seconds together: one
 that hasn't answered by then is shown failing, so a service that hangs can't hold the page up. The answers are kept for
@@ -121,7 +123,7 @@ fails is shown as it last loaded, saying so, and only when none answers is TARS 
 | `POST /api/recluster` | Regroup the requests by voice and rebuild the voiceprints |
 | `GET /api/models` | The pair in use and its test results, the version history, and the labeled wakes since it was installed |
 | `POST /api/models/use` | `{"version": ...}` puts a version in use (`"installed"` is config.toml's) |
-| `GET /api/reminders` | Whether reminders are on; up to 200 reminders, active ones first (soonest first), then the rest (newest first), each with what TARS will say; the names TARS knows by voice; and the defaults |
+| `GET /api/reminders` | Whether reminders are on; up to 200 reminders, active ones first (soonest first), then the rest (newest first), each with what TARS will say; the names TARS knows by voice, and by phone with `[presence]`; and the defaults |
 | `POST /api/reminders` | `{"kind", "text", "for_name", "from_name", "due" (Unix time) or "when_back": true, "needs_ack", "repeat_every_min", "max_tries"}`; 400 says what's wrong |
 | `POST /api/reminders/{id}/ack` | Acknowledged on the page |
 | `POST /api/reminders/{id}/snooze` | `{"minutes": n}` said again then, with all its tries |

@@ -168,9 +168,11 @@ class Assistant:
         ack_window_s: float = RemindersConfig.ack_window_s,
         announcements: Announcements | None = None,
         clock: Callable[[], float] = time.monotonic,
+        elsewhere: Callable[[dict], bool] | None = None,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
-        `clock`: seconds, for when a line that failed to make is tried again."""
+        `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
+        reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out)."""
         self.mic = mic
         self.speaker = speaker
         self.trigger = trigger
@@ -191,6 +193,7 @@ class Assistant:
         self.phrases = Phrases(voice, phrase_folder, clock)
         self.ack_window_s = ack_window_s
         self.announcements = announcements
+        self._elsewhere = elsewhere
         self.reminder_tools: ReminderTools | None = None
         self._reminder_clock: Clock | None = None
         self.use_reminders(reminders)
@@ -287,7 +290,10 @@ class Assistant:
 
     def _prepare_reminders(self, active: list[dict]) -> None:
         """Makes each active reminder's line ahead, so it plays at once when it's due."""
-        self.phrases.keep_only({reminder_line(r) if r["due"] is not None else held_line(r) for r in active})
+        # A message waiting for someone is said in a conversation with them (held_line), or, once their phone is home
+        # and it has a time, like any reminder.
+        lines = {reminder_line(r) for r in active if r["due"] is not None or r["next_at"] is not None}
+        self.phrases.keep_only(lines | {held_line(r) for r in active if r["due"] is None})
 
     def _due(self) -> bool:
         clock = self._reminder_clock
@@ -327,6 +333,9 @@ class Assistant:
             if clock:
                 clock.pause(REMINDERS_REST_S)
             return
+        if self._elsewhere and len(kept := [r for r in due if not self._elsewhere(r)]) < len(due):
+            due = kept
+            self._reread_reminders()
         lines = {r["id"]: [t for t in [reminder_line(r), late(r)] if t] if says_line(r) else [] for r in due}
         audio = self._made_now([t for texts in lines.values() for t in texts])
         said = []

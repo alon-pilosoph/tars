@@ -233,6 +233,8 @@ IMDb.
   `voice_data/androidtv/`. The TV's "Allow USB debugging?" is what lets a new one in.
 - **A device that doesn't answer costs a sentence, not the reply.** Home Assistant down, a box off the Wi-Fi: TARS
   says what didn't work, and everything else goes on.
+- **Who's home** is a device too, `who's home`, with only a status, when [presence](presence.md) is on: "who's home?"
+  is answered from whose phone is on the home Wi-Fi. It's the one device a Telegram chat has.
 - **Not yet:** working the house from Telegram (a chat can't unlock, but could check and change the rest), scenes
   ("going to bed"), evals of the TV's agent on a real TV, and a saved run of the house's scenario evals
   ([evals](evals.md#method)).

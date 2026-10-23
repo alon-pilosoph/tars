@@ -27,6 +27,7 @@ from .config import (
     WEB_PORT,
     Config,
     ConfigError,
+    HomeConfig,
     LLMConfig,
     QuickProvider,
     load_config,
@@ -219,6 +220,10 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .reminders import Reminders
 
     reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
+    names = speaker_id.names if speaker_id else list
+    presence = make_presence(cfg, root, log)
+    # Someone known by their phone can be left a message for when they're back, here too.
+    voices = (lambda: [*names(), *presence.phones]) if presence else names
     start_heartbeat(log, "web", root)
     bucket = None
     if cfg.backup.enabled:
@@ -234,7 +239,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         pairs=pairs,
         allowed_hosts=frozenset(cfg.web.allowed_hosts),
         reminders=reminders,
-        voice_names=speaker_id.names if speaker_id else list,
+        voice_names=voices,
         health=make_health(cfg, root, log),
         bucket=bucket,
     )
@@ -386,22 +391,67 @@ def main() -> None:
         raise SystemExit(str(e)) from None
 
 
-def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None):
+def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None, presence=None):
     """Reminders need the event log to keep them in, and the wake loop to say them: not with push-to-talk, which
-    waits on Enter instead. Waiting until someone's back needs speaker ID's voiceprints."""
+    waits on Enter instead. Waiting until someone's back needs their voiceprint, or their phone (`presence`)."""
     if not (cfg.reminders.enabled and events) or push_to_talk or cfg.wake.mode == "push-to-talk":
         return None
-    from .reminders import Reminders, ReminderTools
+    from .reminders import Reminders
 
-    reminders = Reminders.from_config(events.store, cfg.reminders)
-    return ReminderTools(reminders, voices=speaker_id.names if speaker_id else list)
+    voices = speaker_id.names if speaker_id else list
+    return reminder_tools(Reminders.from_config(events.store, cfg.reminders), voices, presence)
 
 
-def make_home(cfg: Config, root: Path, announce=None):
-    """The devices in the house, as [home] lists them (a HomeTools), or None. Like every service, optional: one that
-    can't be made (no token, a missing extra, a plugin's own problem) is left out with a line saying why.
-    `announce(line)`: how TARS says something on its own, later (how a task on the TV went)."""
-    if not cfg.home.devices:
+def reminder_tools(reminders, voices, presence=None):
+    """The brain's reminder tools, knowing people by `voices` (a callable) and, with `presence`, by their phone."""
+    from .reminders import ReminderTools
+
+    if presence is None:
+        return ReminderTools(reminders, voices=voices)
+    return ReminderTools(reminders, voices=voices, phones=lambda: presence.phones, is_home=presence.board.is_home)
+
+
+def make_presence(cfg: Config, root: Path, events):
+    """[presence] (presence.Presence), when it's on and there's an event log to keep who's home in; None otherwise.
+    It only reads the board until the assistant's watch() asks the routers."""
+    if not cfg.presence.enabled:
+        return None
+    if events is None:
+        print("(presence: off: who's home is kept in the event log, so it needs [learning] log_events)")
+        return None
+    from .presence import make_presence as presence_from
+
+    env = root / ".env"
+    return presence_from(cfg.presence, events.store, lambda name: dotenv_values(env).get(name) or None)
+
+
+def start_presence(presence, reminders=None) -> None:
+    """The assistant's: asks the routers from now on, and says waiting messages once their person is home."""
+    if presence is None:
+        return
+    from .reminders import on_arrival
+
+    for line in presence.left_out:
+        print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
+    if presence.watch(on_arrival(reminders.reminders) if reminders else None):
+        print(f"(presence: asking {len(presence.routers)} router(s) every {presence.every_s:.0f} s)")
+
+
+def make_chat_when_out(cfg: Config, presence, reminders):
+    """With [presence] and [telegram]: a reminder due aloud for someone who's out goes to their chat instead."""
+    if not (presence and reminders and cfg.telegram.enabled and cfg.telegram.people):
+        return None
+    from .reminders import ChatWhenOut
+
+    return ChatWhenOut(reminders.reminders, presence.board.is_out, cfg.telegram.people)
+
+
+def make_home(cfg: Config, root: Path, announce=None, presence=None):
+    """The devices in the house, as [home] lists them, with "who's home" given `presence` (a HomeTools), or None.
+    Like every service, optional: one that can't be made (no token, a missing extra, a plugin's own problem) is left
+    out with a line saying why. `announce(line)`: how TARS says something on its own, later (how a task on the TV
+    went)."""
+    if not (cfg.home.devices or presence):
         return None
     from .androidtv import make_tv_agent
     from .home import Context, build
@@ -409,7 +459,12 @@ def make_home(cfg: Config, root: Path, announce=None):
     env = root / ".env"
     context = Context(root, lambda name: dotenv_values(env).get(name) or None, announce=announce)
     context.tv_agent = functools.partial(make_tv_agent, cfg, env, announce) if announce else None
-    built = build(cfg.home, context)
+    extra = {}
+    if presence:
+        from .presence import DEVICE, WhoIsHome
+
+        extra[DEVICE] = WhoIsHome(presence.board, presence.away_after_min)
+    built = build(cfg.home, context, extra)
     for name, why in built.unavailable.items():
         print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
     if built.tools:
@@ -500,7 +555,7 @@ def chat_brain_config(cfg: Config, has_openai: bool) -> LLMConfig:
 def telegram(cfg: Config, root: Path) -> None:
     """--telegram: TARS in the household's Telegram chats, a process of its own, like the web UI."""
     from .conversations import ConversationLog
-    from .reminders import Reminders, ReminderTools
+    from .reminders import Reminders
     from .speaker import voiceprint_names
     from .telegram import CHAT_REMIND_TOOLS, Bot, TelegramError, TelegramTars, channel_rules, refused_token_error
 
@@ -518,11 +573,14 @@ def telegram(cfg: Config, root: Path) -> None:
         raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
     events = make_event_log(cfg, root)
     start_heartbeat(events, "telegram", root)
+    presence = make_presence(cfg, root, events)
     tools = None
     if cfg.reminders.enabled and events:
         voiceprints = root / cfg.speaker.voiceprints
         names = (lambda: voiceprint_names(voiceprints)) if cfg.speaker.enabled else list
-        tools = ReminderTools(Reminders.from_config(events.store, cfg.reminders), voices=names)
+        tools = reminder_tools(Reminders.from_config(events.store, cfg.reminders), names, presence)
+    # A chat works nothing in the house, but can ask who's home.
+    home = make_home(dataclasses.replace(cfg, home=HomeConfig()), root, presence=presence)
     client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
@@ -530,7 +588,7 @@ def telegram(cfg: Config, root: Path) -> None:
     TelegramTars(
         bot,
         cfg.telegram.people,
-        lambda: make_brain(client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS),
+        lambda: make_brain(client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS, home=home),
         ConversationLog(events) if events else None,
         tools,
         memory_s=llm.memory_minutes * 60,
@@ -664,7 +722,8 @@ def typed(cfg: Config, root: Path) -> None:
                 if made[0].say(line, keep=False, wait_s=UNPROMPTED_WAIT_S):
                     made[0].brain.remember_said(line)
 
-    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce))
+    presence = make_presence(cfg, root, make_event_log(cfg, root)) if cfg.presence.enabled else None
+    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce, presence))
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
@@ -694,9 +753,11 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     events = make_event_log(cfg, root)
     start_heartbeat(events, "assistant", root)
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
-    reminders = make_reminders(cfg, events, push_to_talk, speaker_id)
+    presence = make_presence(cfg, root, events)
+    reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
+    start_presence(presence, reminders)
     announcements = Announcements()
-    home = make_home(cfg, root, announcements.add)
+    home = make_home(cfg, root, announcements.add, presence)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home)
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
@@ -725,6 +786,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             reminders=reminders,
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
+            elsewhere=make_chat_when_out(cfg, presence, reminders),
         )
         assistant.run_forever(
             idle_message,

@@ -2015,6 +2015,58 @@
         </div>
       </section>
 
+      <section id="presence" class="part">
+        <div class="part-head">
+          <div class="kicker">Who's home</div>
+          <h2>The routers already know</h2>
+          <p class="lead">
+            TARS knows who's home from whose phone is on the home Wi-Fi. It signs into the routers and asks them every
+            30 seconds, the way their own web pages do: no app on anyone's phone, and nothing leaves the house.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Home at once, gone only when it's sure</h3>
+              <p>
+                A phone that joins the Wi-Fi is someone home. Someone is out only once no router has seen their phone
+                for ten minutes, while every router answered: a phone asleep on a table drops off for a few.<span
+                  class="d"
+                >
+                  A router that doesn't answer says nothing about anyone, and just after TARS starts nobody is known
+                  yet, never “out”.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Reminders follow people</h3>
+              <p>
+                A reminder due for someone who's out goes to their Telegram chat instead of an empty room. A message
+                left “for when she's back” is said a minute after her phone comes home.
+              </p>
+            </div>
+            <div>
+              <h3>Two routers, no official API</h3>
+              <p>
+                An ISP's Technicolor gateway and a Xiaomi access point, each signed into as its own sign-in page does
+                it.<span class="d">
+                  The Technicolor's sign-in is SRP, matched byte for byte against its own script run in a browser, and a
+                  refused password is left alone for 15 minutes, since the gateway locks out after a few.</span
+                >
+              </p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">Two requests</span>
+            <p class="said"><b>Alon</b> Hey TARS, who's home?</p>
+            <p class="said tars"><b>TARS</b> Just you. Stacey's phone left about two.</p>
+            <p class="said"><b>Alon</b> Tell her dinner's at eight when she's back.</p>
+            <p class="said tars"><b>TARS</b> I'll tell her when she's home.</p>
+            <span class="foot">At 7:12 her phone joins the Wi-Fi; a minute later: “Stacey, a message from Alon…”</span>
+          </div>
+        </div>
+      </section>
+
       <section id="telegram" class="part">
         <div class="part-head">
           <div class="kicker">On Telegram</div>
