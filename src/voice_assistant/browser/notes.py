@@ -32,7 +32,9 @@ Write the notes again, at most 12 short bullets, keeping what still holds and ad
 - steps that failed or changed nothing, and what worked instead
 - what the site asks for on the way to checkout or booking (options to pick, a delivery address, a sign-in)
 
-Only what this trace shows, never what you know or guess about the site: an address goes in only if the run went \
+Only how the site works, never how this run went: not what it found, couldn't find or gave up on (the next run's \
+goal is another, and a note that something "wasn't there" makes it give up). Only what this trace shows, never \
+what you know or guess about the site: an address goes in only if the run went \
 to it and it worked (with this run's query made a <placeholder>). Only what holds for other tasks on this site \
 too: not this run's items, and nothing about the person (no names, addresses, orders, accounts). Write only the \
 bullets.

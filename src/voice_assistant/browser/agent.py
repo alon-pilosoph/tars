@@ -267,7 +267,8 @@ class Agent:
         self.noted.add(name)
         self._log({"event": "notes", "site": name})
         return (f"What TARS noted on {name} in earlier runs (hints from its own experience there, which may be out "
-                f"of date; the person's goal decides):\n{notes}\n\n")  # fmt: skip
+                "of date: where the page shows otherwise, the page is right; the person's goal decides):\n"
+                f"{notes}\n\n")  # fmt: skip
 
     def follow_up(self, request: str, turns: int = 10) -> Result:
         """Carries on in the same browser and conversation with something more (after `run`): its own result."""
