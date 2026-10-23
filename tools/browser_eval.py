@@ -3,6 +3,7 @@ did: its answer, its steps, how long it took and what it cost. Nothing is ordere
 asks to commit is approved as a dry run, which stops it there.
 
     uv run --all-extras python tools/browser_eval.py [--agent new|proto] [--task ID ...] [--steps N] [--cap DOLLARS]
+    uv run --all-extras python tools/browser_eval.py --relearn voice_data/browser/evals/<run>   # notes again
 
 --agent proto runs the first prototype (tools/browser_proto.py), on a copy of TARS's browser profile, as the
 baseline. Every task's record goes to voice_data/browser/evals/<time>-<agent>/results.jsonl, with its transcript
@@ -148,6 +149,28 @@ def run_new(task: dict, steps: int, folder: Path) -> dict:
                     notes=None if NOTES == "off" else Notes())  # fmt: skip
 
 
+def relearn(folder: Path) -> None:
+    """Writes the site notes again from a run's traces, in the order its tasks ran (each from the notes so far): for
+    when how notes are written has changed, without running the tasks again."""
+    from voice_assistant.browser.notes import Notes
+    from voice_assistant.browser.run import client
+
+    notes, model = Notes(), client()
+    spent_in = spent_out = 0
+    for trace in sorted(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime):
+        events = [json.loads(line) for line in trace.read_text().splitlines()]
+        start = next((e for e in events if e["event"] == "start"), None)
+        end = next((e for e in events if e["event"] == "end"), None)
+        if start is None or end is None:
+            continue
+        follow = next((i for i, e in enumerate(events) if e["event"] == "follow_up"), len(events))
+        turns = [e for e in events[:follow] if e["event"] == "turn"]
+        written, tokens_in, tokens_out = notes.learn(model, start["model"], start["goal"], end["ended"], turns)
+        spent_in, spent_out = spent_in + tokens_in, spent_out + tokens_out
+        print(f"{trace.stem}: {'wrote notes' if written else 'nothing to learn'}")
+    add_spend(cost("gpt-6-luna", spent_in, spent_out))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--agent", choices=("new", "proto"), default="new")
@@ -157,7 +180,11 @@ def main() -> None:
     parser.add_argument("--label", default="", help="added to the run's folder name")
     notes_help = "the new agent's site notes: read and write them, only write them, or neither"
     parser.add_argument("--notes", choices=("use", "write", "off"), default="use", help=notes_help)
+    parser.add_argument("--relearn", type=Path, help="write the site notes again from this run's traces, and stop")
     args = parser.parse_args()
+    if args.relearn:
+        relearn(args.relearn)
+        return
     global NOTES
     NOTES = args.notes
     tasks = tomllib.loads(TASKS.read_text())["task"]
