@@ -86,19 +86,20 @@ def sign_in(page: Page, person: Person, goal: str = "") -> str:
     the person is asked for one on a TARS page (Person.add_login), and it goes into the vault before anything is typed.
     A one-time code is asked for on Telegram."""
     here = origin(page.url)
-    login = for_page(page.url)
+    login = for_page(page.url, person.name)
     if login is None:
         fields = page.evaluate(FIELDS_JS)
         if not here.startswith("https://") or not (fields["username"] or fields["password"]):
             return f"no sign-in form here ({here}), and no login stored for it"
         if not person.add_login(here, goal):
             return f"stopped: no login for {here} was added in time"
-        if origin(page.url) != here or (login := for_page(page.url)) is None:
+        if origin(page.url) != here or (login := for_page(page.url, person.name)) is None:
             return f"stopped: the page moved on from {here} while the login was being added"
     done, sent = [], set()  # each kind of field is filled once: a site that asks again is told no, not retried
     for _ in range(STEPS):
         _settle(page)
-        if for_page(page.url) is None or for_page(page.url).name != login.name:
+        current = for_page(page.url, person.name)
+        if current is None or current.name != login.name:
             break  # off the site (signed in and sent on, or somewhere else): nothing more to type here
         fields = page.evaluate(FIELDS_JS)
         wanted = (
@@ -193,7 +194,10 @@ class Person:
         from voice_assistant.config import load_config
 
         people = load_config(ROOT / "config.toml").telegram.people
-        self.chat = int(people[person or next(iter(people))])
+        self.name = person or next(iter(people))  # whose logins, and whose chat: theirs only
+        if self.name not in people:
+            raise SystemExit(f"{self.name} isn't in [telegram] people")
+        self.chat = int(people[self.name])
         self.api = f"https://api.telegram.org/bot{env_value(ROOT / '.env', 'TELEGRAM_BOT_TOKEN')}"
         self.host, self.port = host, port
 
@@ -240,7 +244,7 @@ class Person:
 
         from browser_vault import store
 
-        token, saved = secrets.token_urlsafe(18), threading.Event()
+        token, saved, name_of_person = secrets.token_urlsafe(18), threading.Event(), self.name
         host = urlsplit(site).hostname or site
         why = f"to finish: {goal}" if goal else "to carry on with what you asked"
         form = LOGIN_PAGE.format(site=html.escape(site), host=html.escape(host), why=html.escape(why), token=token,
@@ -277,7 +281,8 @@ class Person:
                 try:
                     username = sent.get("username", [""])[0].strip()
                     # One login per site, or per account where one server has many (mailboxes on imap.gmail.com).
-                    store(f"{host} {username}" if per_user else host, [site], username, sent.get("password", [""])[0])
+                    store(name_of_person, f"{host} {username}" if per_user else host, [site], username,
+                          sent.get("password", [""])[0])  # fmt: skip
                 except ValueError as e:
                     self.reply(
                         400, DONE_PAGE.format(message=f"Not saved: {html.escape(str(e))}. Go back and try again.")

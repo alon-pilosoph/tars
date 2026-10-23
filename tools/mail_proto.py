@@ -12,6 +12,7 @@ import imaplib
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from email.policy import default
 from html import unescape
 
@@ -25,6 +26,7 @@ from voice_assistant.config import load_config
 MAIL = "imaps://imap.gmail.com"
 ALL_MAIL = '"[Gmail]/All Mail"'
 BODY_CHARS = 4000
+READ_BYTES = 400_000
 APP_PASSWORD_NOTE = (
     "<p>Use a Google <b>app password</b>, not your Google password: make one at "
     '<a href="https://myaccount.google.com/apppasswords" style="color:#8fb4ff">myaccount.google.com/apppasswords</a> '
@@ -68,16 +70,23 @@ class Mailbox:
         if status != "OK":
             raise RuntimeError(f"search failed: {data}")
         uids = data[0].split()[-max(1, min(most, 25)) :][::-1]  # the newest, newest first
-        found = []
-        for uid in uids:
-            _, parts = self.imap.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (DATE FROM SUBJECT)])")
-            head = email.message_from_bytes(parts[0][1], policy=default)
-            found.append({"id": uid.decode(), "date": str(head["date"] or ""), "from": str(head["from"] or ""),
-                          "subject": str(head["subject"] or "")})  # fmt: skip
-        return found
+        if not uids:
+            return []
+        # Every header in one request: one round trip to Gmail, not one per email.
+        _, parts = self.imap.uid("FETCH", b",".join(uids), "(BODY.PEEK[HEADER.FIELDS (DATE FROM SUBJECT)])")
+        heads = {}
+        for part in parts:
+            if isinstance(part, tuple) and (uid := re.search(rb"UID (\d+)", part[0])):
+                heads[uid.group(1)] = email.message_from_bytes(part[1], policy=default)
+        return [
+            {"id": uid.decode(), "date": str(head["date"] or ""), "from": str(head["from"] or ""),
+             "subject": str(head["subject"] or "")}
+            for uid in uids if (head := heads.get(uid)) is not None
+        ]  # fmt: skip
 
     def read(self, uid: str) -> str:
-        _, parts = self.imap.uid("FETCH", uid.encode(), "(BODY.PEEK[])")
+        # The start of it only: the text comes before the attachments, and an email can be megabytes of them.
+        _, parts = self.imap.uid("FETCH", uid.encode(), f"(BODY.PEEK[]<0.{READ_BYTES}>)")
         if not parts or parts[0] is None:
             return "no email with that id"
         message = email.message_from_bytes(parts[0][1], policy=default)
@@ -105,25 +114,27 @@ def _text_of(html_text: str) -> str:
     return unescape(re.sub(r"<[^>]+>", " ", html_text)).replace("\xa0", " ")
 
 
-def add_mailbox(goal: str) -> None:
-    """Asks the person for another Gmail login on a TARS page, saved per address."""
-    person = Person(tailscale_address())
+def add_mailbox(goal: str, person: Person) -> None:
+    """Asks the person for another Gmail login on a TARS page, saved as theirs, per address."""
     if not person.add_login(MAIL, goal, note=APP_PASSWORD_NOTE, user_label="Gmail address",
                             password_label="App password (16 letters)", per_user=True):  # fmt: skip
         raise SystemExit("no Gmail login was added")
 
 
-def mailboxes(goal: str) -> dict[str, Mailbox]:
-    """Every Gmail TARS has a login for, by address; asked for one first if there are none."""
-    if not logins_for(MAIL):
-        add_mailbox(goal)
-    return {login.username: Mailbox(login.username, login.password.replace(" ", "")) for login in logins_for(MAIL)}
+def mailboxes(goal: str, person: Person) -> dict[str, Mailbox]:
+    """Every Gmail of the person's TARS has a login for, by address, opened at once; asked for one first if none."""
+    if not logins_for(MAIL, person.name):
+        add_mailbox(goal, person)
+    logins = logins_for(MAIL, person.name)
+    with ThreadPoolExecutor(len(logins)) as pool:
+        opened = pool.map(lambda login: Mailbox(login.username, login.password.replace(" ", "")), logins)
+        return {login.username: box for login, box in zip(logins, opened, strict=True)}
 
 
-def run(goal: str, steps: int) -> None:
+def run(goal: str, steps: int, person: Person) -> None:
     cfg = load_config(ROOT / "config.toml")
     mind = ResponsesBrain(make_openai_client(ROOT / ".env"), cfg.llm.model, goal, "")
-    boxes = mailboxes(goal)
+    boxes = mailboxes(goal, person)
     names = list(boxes)
     mind.instructions = RULES.format(goal=goal, boxes=f"{len(names)} mailbox(es): " + ", ".join(names))
     mind.tools = [{"type": "function", **t["function"]} for t in TOOLS]
@@ -144,11 +155,15 @@ def run(goal: str, steps: int) -> None:
                     print(f"success: {args.get('success')}\n{args.get('answer')}")
                     return
                 t2 = time.perf_counter()
-                if name == "search_mail":  # ids say which mailbox: "2:64530"
-                    found = []
-                    for i, address in enumerate(names, 1):
-                        for mail in boxes[address].search(str(args.get("query", "")), int(args.get("max") or 10)):
-                            found.append(mail | {"id": f"{i}:{mail['id']}", "mailbox": address})
+                if name == "search_mail":  # every mailbox at once; ids say which mailbox: "2:64530"
+                    query, most = str(args.get("query", "")), int(args.get("max") or 10)
+                    with ThreadPoolExecutor(len(names)) as pool:
+                        results = list(pool.map(lambda address, q=query, n=most: boxes[address].search(q, n), names))
+                    found = [
+                        mail | {"id": f"{i}:{mail['id']}", "mailbox": address}
+                        for i, (address, mails) in enumerate(zip(names, results, strict=True), 1)
+                        for mail in mails
+                    ]
                     output = json.dumps(found, ensure_ascii=False)
                     shown = f"search {args.get('query')!r}: {len(found)} found in {len(names)} mailbox(es)"
                 else:
@@ -171,10 +186,12 @@ def main() -> None:
     parser.add_argument("question")
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--add-mailbox", action="store_true", help="first ask for another Gmail login")
+    parser.add_argument("--person", default="", help="whose mail: a name in [telegram] people (default: the first)")
     args = parser.parse_args()
+    person = Person(tailscale_address(), args.person)
     if args.add_mailbox:
-        add_mailbox(args.question)
-    run(args.question, args.steps)
+        add_mailbox(args.question, person)
+    run(args.question, args.steps, person)
 
 
 if __name__ == "__main__":

@@ -301,13 +301,13 @@ def brain(which: str, goal: str, first: str):
     return ChatBrain(make_quick_client(env, groq), cfg.llm.groq_model, goal, first)
 
 
-def run(goal: str, which: str, steps: int, headless: bool) -> None:
+def run(goal: str, which: str, steps: int, headless: bool, whose: str = "") -> None:
     with own_chrome(headless=headless), sync_playwright() as p:
         browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{PORT}")
         context = browser.contexts[0]
         page = context.pages[0] if context.pages else context.new_page()
         mind = brain(which, goal, view(page))
-        person = Person(tailscale_address())
+        person = Person(tailscale_address(), whose)
         signed_in = False
         started = time.perf_counter()
         for n in range(1, steps + 1):
@@ -359,9 +359,10 @@ def main() -> None:
     r.add_argument("--model", choices=("qwen", "luna"), default="qwen")
     r.add_argument("--steps", type=int, default=12)
     r.add_argument("--headless", action="store_true", help="no window (Amazon takes it for a bot: see below)")
+    r.add_argument("--person", default="", help="whose task: a name in [telegram] people (default: the first)")
     args = parser.parse_args()
     if args.command == "run":
-        run(args.goal, args.model, args.steps, args.headless)
+        run(args.goal, args.model, args.steps, args.headless, args.person)
         return
     signing_in = args.command == "signin"
     with own_chrome(headless=False) as process, sync_playwright() as p:
