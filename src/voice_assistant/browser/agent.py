@@ -61,6 +61,8 @@ Work quickly:
 - Go straight to an address when you know it, including a site's search or results address with the query in it \
 (google.com/maps/dir/..., a store's search page): it's quicker than clicking your way there.
 - find searches the whole page for words, when what you want isn't in view: it's quicker than scrolling.
+- A long page is shown around the screen. Before deciding something isn't there (results, a button), scroll, or \
+find it by other words, and give a list that's still loading a moment.
 - Close cookie banners and pop-ups that are in the way (accept or close, whichever is quicker).
 - look gives you a screenshot, with the refs drawn on it: use it when the text isn't enough (maps, pictures, \
 what's selected on a calendar, a layout), and to check before committing. You also get one after a step fails or \
