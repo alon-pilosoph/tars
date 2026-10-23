@@ -30,7 +30,7 @@ from voice_assistant.backup import (
     make_s3,
     restore_snapshot,
 )
-from voice_assistant.config import BackupConfig, ConfigError, load_config
+from voice_assistant.config import BackupConfig, Config, ConfigError, load_config
 from voice_assistant.conversations import SentItem
 from voice_assistant.events import DAY_S, NOT_PERSON, PERSON, VOICEPRINT_REQUESTS, EventLog
 
@@ -460,6 +460,64 @@ def test_tars_snapshot_holds_the_database_voiceprints_its_wake_models_and_local_
     names = set(snapshot_of(cli.make_backup(cfg, tmp_path)))
     assert {SNAPSHOT_DB, "voiceprints.npz", "models/personal/hey_tars.tflite", "config.local.toml"} <= names
     assert ".env" not in names  # the keys never leave the machine
+
+
+def house(root: Path, module: str, source: str) -> Config:
+    """The repo's config with the backup on and one plugin, `module`, written into the project at `root`."""
+    (root / f"{module}.py").write_text(source + "\n\ndef setup(settings, context):\n    return {}\n")
+    cfg = load_config(REPO_CONFIG, local=False)
+    return dataclasses.replace(
+        cfg, backup=config(), home=dataclasses.replace(cfg.home, plugins={"mine": {"module": module}})
+    )
+
+
+def test_the_snapshot_keeps_what_the_house_learned_and_a_restore_puts_it_back(tmp_path, monkeypatch):
+    pretend = S3(PretendS3(), "tars-home")
+    monkeypatch.setattr(cli, "make_s3", lambda cfg, root: pretend)
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    cfg = house(old, "learned_house", 'BACKUP_FILES = ("voice_data/ac", "voice_data/ir/tv.json")\n')
+    (old / "voice_data/ac").mkdir(parents=True)
+    (old / "voice_data/ac/profile.json").write_text('{"modes": ["cool"]}')
+    (old / "voice_data/ir").mkdir()
+    (old / "voice_data/ir/tv.json").write_text('{"power": 2}')
+    (old / "voice_data/ir/scratch.json").write_text("not listed")
+    (old / "voice_data/androidtv").mkdir()
+    (old / "voice_data/androidtv/adbkey").write_text("key")
+    (old / "voice_data/found.json").write_text('{"aa:bb": "192.168.1.9"}')
+    cli.make_backup(cfg, old).run()
+
+    new.mkdir()
+    restore_snapshot(
+        pretend, cfg.backup, {SNAPSHOT_DB: new / "voice_data/events/events.db", **cli.snapshot_files(cfg, new)}
+    )
+    assert (new / "voice_data/ac/profile.json").read_text() == '{"modes": ["cool"]}'
+    assert (new / "voice_data/ir/tv.json").read_text() == '{"power": 2}'
+    assert not (new / "voice_data/ir/scratch.json").exists()  # only what the plugin lists
+    assert (new / "voice_data/androidtv/adbkey").read_text() == "key"  # the TV box needn't be approved again
+    assert (new / "voice_data/found.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("source", "said"),
+    [("raise ImportError('no tinytuya')\n", "didn't load"), ('BACKUP_FILES = ("../elsewhere", "/etc")\n', "outside")],
+)
+def test_a_plugin_that_wont_load_or_reaches_outside_costs_only_its_own_files(
+    tmp_path, monkeypatch, capsys, source, said
+):
+    monkeypatch.setattr(cli, "make_s3", lambda cfg, root: S3(PretendS3(), "tars-home"))
+    cfg = house(tmp_path, f"odd_house_{len(said)}", source)
+    (tmp_path / "config.local.toml").write_text("")
+    names = set(snapshot_of(cli.make_backup(cfg, tmp_path)))
+    assert {SNAPSHOT_DB, "config.local.toml"} <= names
+    assert not any("elsewhere" in n or n.startswith("etc") for n in names)
+    assert said in capsys.readouterr().out
+
+
+def test_my_house_lists_what_it_learned():
+    from examples import my_house
+
+    assert {Path(p).as_posix() for p in my_house.BACKUP_FILES} == {"voice_data/ac", "voice_data/ir"}
 
 
 @pytest.mark.parametrize(

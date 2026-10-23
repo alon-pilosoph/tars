@@ -614,14 +614,43 @@ def make_s3(cfg: Config, root: Path) -> S3:
 def snapshot_files(cfg: Config, root: Path) -> dict[str, Path]:
     """What a snapshot holds besides the database, by its name there, and where each is on this machine: the
     voiceprints, the wake models trained on the household (the self-learning pairs, and models/personal/) and this
-    machine's own settings (config.local.toml; never .env, which holds the keys). A restore puts each back where this
-    machine's config says, so the two machines' folders needn't match."""
-    return {
+    machine's own settings (config.local.toml; never .env, which holds the keys). And what the house has learned that
+    can't be had again without someone there: the Android TV's ADB key (or every box asks again), the devices' found
+    addresses, and each [home.plugins] module's BACKUP_FILES. A restore puts each back where this machine's config
+    says, so the two machines' folders needn't match."""
+    from .androidtv import KEY_FILE
+    from .found import FOUND_FILE
+
+    files = {
         "voiceprints.npz": root / cfg.speaker.voiceprints,
         "wake_models": root / cfg.learning.folder / "wake_models",
         "models/personal": root / "models/personal",
         LOCAL_CONFIG: root / LOCAL_CONFIG,
+        Path(KEY_FILE).parent.as_posix(): root / Path(KEY_FILE).parent,
+        FOUND_FILE: root / FOUND_FILE,
     }
+    return files | plugin_files(cfg, root)
+
+
+def plugin_files(cfg: Config, root: Path) -> dict[str, Path]:
+    """Each [home.plugins] module's BACKUP_FILES: its own files and folders under the project's folder, by that path
+    (examples.my_house keeps what it learned of the AC and the remotes). A plugin that won't load, or names a path
+    outside the project's folder, is left out with a line saying so: the backup goes on without it."""
+    from .home import load_plugin
+
+    files: dict[str, Path] = {}
+    for name, plugin in cfg.home.plugins.items():
+        try:
+            listed = getattr(load_plugin(plugin["module"], root), "BACKUP_FILES", ())
+        except Exception as e:  # noqa: BLE001 - a plugin that won't load costs its files, not the backup
+            print(f"(backup: the plugin {name} didn't load, so its files aren't in the snapshot: {e})")
+            continue
+        for path in map(Path, listed):
+            if path.is_absolute() or ".." in path.parts:
+                print(f"(backup: the plugin {name}'s {path} is outside the project's folder, so it's left out)")
+                continue
+            files[path.as_posix()] = root / path
+    return files
 
 
 def make_backup(cfg: Config, root: Path, log: EventLog | None = None) -> Backup:
