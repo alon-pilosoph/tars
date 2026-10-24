@@ -73,63 +73,41 @@ NEEDS_BROWSING = "an errand on a website: ordering or booking something, or find
 
 
 class Queue:
-    """The errands asked for and not yet done: in the event database when there is one (shared by the processes),
-    else in memory (the Telegram service's own, then)."""
+    """The errands asked for and not yet done, in the event database's errands table: shared by the voice's process,
+    which asks for them, and the Telegram service's, which runs them."""
 
-    def __init__(self, store: Store | None = None, clock: Callable[[], float] = time.time):
+    def __init__(self, store: Store, clock: Callable[[], float] = time.time):
         self.store, self._clock = store, clock
-        self._rows: list[dict] = []  # with no store
-        self._lock = threading.Lock()
 
     def add(self, person: str, goal: str, via: str) -> int:
-        now = self._clock()
-        if self.store:
-            return self.store.write("INSERT INTO errands (created, person, goal, asked_via, status) VALUES "
-                                    "(?, ?, ?, ?, ?)", (now, person, goal, via, QUEUED))  # fmt: skip
-        with self._lock:
-            row = {"id": len(self._rows) + 1, "created": now, "person": person, "goal": goal, "asked_via": via,
-                   "status": QUEUED, "started": None, "ended": None, "answer": None}  # fmt: skip
-            self._rows.append(row)
-            return row["id"]
+        return self.store.write("INSERT INTO errands (created, person, goal, asked_via, status) VALUES (?, ?, ?, ?, ?)",
+                                (self._clock(), person, goal, via, QUEUED))  # fmt: skip
 
     def ahead(self) -> list[dict]:
         """The errands running or waiting their turn, oldest first."""
-        if self.store:
-            return self.store.rows("SELECT * FROM errands WHERE status IN (?, ?) ORDER BY id", (RUNNING, QUEUED))
-        with self._lock:
-            return [dict(r) for r in self._rows if r["status"] in (RUNNING, QUEUED)]
+        return self.store.rows("SELECT * FROM errands WHERE status IN (?, ?) ORDER BY id", (RUNNING, QUEUED))
+
+    def waiting(self, before: float) -> list[dict]:
+        """The errands asked for before `before` (epoch seconds) that nothing has taken yet."""
+        return self.store.rows("SELECT * FROM errands WHERE status=? AND created < ? ORDER BY id", (QUEUED, before))
 
     def claim(self) -> dict | None:
-        """The oldest errand waiting its turn, now running; None if there's none."""
+        """The oldest errand waiting its turn, now running; None if there's none. Read and marked at once, so two
+        services never take the same one."""
         now = self._clock()
-        if self.store:
-            with self.store.transaction() as db:  # read and marked at once: two services never take the same one
-                row = db.execute("SELECT * FROM errands WHERE status=? ORDER BY id LIMIT 1", (QUEUED,)).fetchone()
-                if row is None:
-                    return None
-                db.execute("UPDATE errands SET status=?, started=? WHERE id=?", (RUNNING, now, row["id"]))
-                return {**dict(row), "status": RUNNING, "started": now}
-        with self._lock:
-            found = next((r for r in self._rows if r["status"] == QUEUED), None)
-            if found:
-                found.update(status=RUNNING, started=now)
-            return dict(found) if found else None
+        with self.store.transaction() as db:
+            row = db.execute("SELECT * FROM errands WHERE status=? ORDER BY id LIMIT 1", (QUEUED,)).fetchone()
+            if row is None:
+                return None
+            db.execute("UPDATE errands SET status=?, started=? WHERE id=?", (RUNNING, now, row["id"]))
+            return {**dict(row), "status": RUNNING, "started": now}
 
     def finish(self, errand_id: int, status: str, answer: str) -> None:
-        now = self._clock()
-        if self.store:
-            self.store.write("UPDATE errands SET status=?, ended=?, answer=? WHERE id=?",
-                             (status, now, answer, errand_id))  # fmt: skip
-            return
-        with self._lock:
-            for r in self._rows:
-                if r["id"] == errand_id:
-                    r.update(status=status, ended=now, answer=answer)
+        self.store.write("UPDATE errands SET status=?, ended=?, answer=? WHERE id=?",
+                         (status, self._clock(), answer, errand_id))  # fmt: skip
 
     def left_running(self) -> int:
         """Errands a stopped service left running: failed, since nobody is working on them any more."""
-        if not self.store:
-            return 0
         with self.store.transaction() as db:
             gone = "TARS stopped while it was on this errand"
             return db.execute("UPDATE errands SET status=?, ended=?, answer=? WHERE status=?",
@@ -226,7 +204,7 @@ class Errands:
         cfg: BrowserConfig,
         chats: Chats | None,
         people: list[str],
-        queue: Queue | None = None,
+        queue: Queue,
         say_aloud: Callable[[str, str], None] | None = None,
         run: Callable[..., dict[str, Any]] | None = None,
         folder: Path = Path(ERRANDS),
@@ -238,7 +216,7 @@ class Errands:
         asked aloud. `run`: run.run_task (the tests pass their own). `openai`: TARS's OpenAI client, for the browser's
         model."""
         self._cfg, self.chats, self._people, self._folder = cfg, chats, people, folder
-        self.queue = queue or Queue()
+        self.queue = queue
         self._say_aloud, self._run, self._openai, self._home = say_aloud, run, openai, home
         self.current: dict | None = None  # the errand running
         self.thread: threading.Thread | None = None

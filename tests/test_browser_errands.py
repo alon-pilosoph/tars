@@ -102,6 +102,9 @@ class Chats:
 
 def errands(tmp_path, run, people=("Alon", "Stacey"), store=None, say_aloud=None):
     chats = Chats()
+    from voice_assistant.store import Store
+
+    store = store or Store(tmp_path / "db")
     e = Errands(BrowserConfig(enabled=True), chats, list(people), queue=Queue(store), say_aloud=say_aloud, run=run,
                 folder=tmp_path)  # fmt: skip
     return e, chats.told
@@ -497,8 +500,12 @@ def test_the_telegram_service_makes_errands_only_with_browser_on(tmp_path):
     on = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
     with pytest.raises(ConfigError):
         make_errands(on, tmp_path, client=None)
-    made = make_errands(on, tmp_path, client=object())
-    assert isinstance(made, Errands) and made.chats is None and made.queue.store is None
+    with pytest.raises(ConfigError):  # the queue is in the event database
+        make_errands(on, tmp_path, client=object())
+    from voice_assistant.events import EventLog
+
+    made = make_errands(on, tmp_path, client=object(), events=EventLog(tmp_path / "events"))
+    assert isinstance(made, Errands) and made.chats is None
 
 
 @pytest.mark.parametrize(

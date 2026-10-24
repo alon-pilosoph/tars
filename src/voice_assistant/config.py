@@ -512,7 +512,7 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[browser] effort must be one of {', '.join(EFFORTS)}, not {w.effort!r}")
     if not 5 <= w.turns <= 100:
         problems.append("[browser] turns must be between 5 and 100")
-    if w.model.startswith("claude-"):  # the evals try Claude in TARS's loop; errands read email and keep notes by OpenAI
+    if w.model.startswith("claude-"):  # evals try Claude in the loop; errands read email and write notes by OpenAI
         problems.append("[browser] model must be an OpenAI model: errands read sign-in emails and site notes with it")
     if not 1024 <= w.login_port <= 65535:
         problems.append("[browser] login_port must be between 1024 and 65535")

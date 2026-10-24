@@ -399,8 +399,9 @@ def errands_waiting(cfg: Config, folder: Path, now: float | None = None) -> Resu
     from .health import processes
 
     now = time.time() if now is None else now
-    rows = EventLog(folder).store.rows("SELECT created FROM errands WHERE status = 'queued'")
-    waiting = [r for r in rows if r["created"] < now - OVERDUE_S]
+    from .browser.errands import Queue
+
+    waiting = Queue(EventLog(folder).store).waiting(now - OVERDUE_S)
     if not waiting:
         return Result(name, SKIP, "none waiting")
     said = f"{len(waiting)} waiting to be run"
