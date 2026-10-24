@@ -1,5 +1,6 @@
-"""TARS's logins for the sites its browser signs in to: each one a household member's, tied to the exact sites
-(origins) it may be typed into, kept encrypted, and typed by code (login.py), never shown to a model.
+"""TARS's logins for the sites its browser signs in to, and for the mailboxes it reads sign-in emails from: each one
+a household member's, tied to the exact sites (origins) it may be used on, kept encrypted, and used by code
+(login.py, mail.py), never shown to a model.
 
     uv run --extra browser python -m voice_assistant.browser vault add https://www.ksp.co.il [--person NAME]
     uv run --extra browser python -m voice_assistant.browser vault list
@@ -18,6 +19,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 FOLDER = Path.home() / ".cache/tars-browser"
+SCHEMES = ("https://", "imaps://")  # what a login may be for: sites, and mail over TLS
+GMAIL = "imaps://imap.gmail.com"
 
 
 @dataclass(frozen=True)
@@ -83,20 +86,34 @@ class Vault:
             return None
         return next((login for login in self.logins(person) if here in login.origins), None)
 
-    def store(self, person: str, origins: list[str], username: str, password: str = "") -> Login:
-        """Adds or replaces `person`'s login for exactly these https origins, named by the first one's host."""
+    def mailboxes(self, person: str) -> list[Login]:
+        """`person`'s mailboxes TARS may read (imaps:// logins): never typed into a page, since none is https."""
+        return [login for login in self.logins(person) if all(o.startswith("imaps://") for o in login.origins)]
+
+    def store(self, person: str, origins: list[str], username: str, password: str = "", name: str = "") -> Login:
+        """Adds or replaces `person`'s login for exactly these origins (https sites, or an imaps mail server), named
+        `name`, or by the first one's host."""
         found = sorted({origin(o) for o in origins})
         if not person:
             raise ValueError("a login belongs to someone")
-        if not found or not all(o.startswith("https://") and "." in o for o in found):
-            raise ValueError(f"a login is for https:// sites, not {', '.join(origins) or 'nothing'}")
+        if not found or not all(o.startswith(SCHEMES) and "." in o for o in found):
+            raise ValueError(f"a login is for https:// sites or an imaps:// mail server, not {', '.join(origins)}")
         if not username:
             raise ValueError("a login needs a username (an email or a phone number)")
-        name = urlsplit(found[0]).hostname or found[0]
+        if found[0].startswith("imaps://") and not password:
+            raise ValueError("a mailbox needs its password (for Gmail, an app password)")
+        name = name or urlsplit(found[0]).hostname or found[0]
         people = self._load()
         people.setdefault(person, {})[name] = {"origins": found, "username": username, "password": password}
         self._save(people)
         return Login(name, tuple(found), username, password)
+
+    def store_mailbox(self, person: str, address: str, password: str, server: str = GMAIL) -> Login:
+        """Adds or replaces one of `person`'s mailboxes: one login per address, as several share a server."""
+        host = urlsplit(origin(server)).hostname or server
+        return self.store(
+            person, [server], address.strip(), password.replace(" ", ""), name=f"{host} {address.strip()}"
+        )
 
     def remove(self, person: str, name: str) -> bool:
         people = self._load()

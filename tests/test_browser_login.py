@@ -73,9 +73,9 @@ class Asked:
         self.asked.append(("login", site))
         return self.given
 
-    def code(self, site):
+    def code(self, site, answer):
         self.asked.append(("code", site))
-        return self.sent
+        return self.sent or answer.wait(2)
 
 
 def test_a_login_is_for_its_exact_site_and_person_only(tmp_path):

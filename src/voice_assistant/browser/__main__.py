@@ -1,7 +1,7 @@
 """TARS's browser from a terminal.
 
     uv run --extra browser python -m voice_assistant.browser run "GOAL" [--turns N] [--trace FILE] [--person NAME]
-    uv run --extra browser python -m voice_assistant.browser vault add|list|remove ...   # TARS's logins (vault.py)
+    uv run --extra browser python -m voice_assistant.browser vault add|mail|list|remove ...   # TARS's logins
     uv run --extra browser python -m voice_assistant.browser view URL [--shot FILE]   # what the agent sees there
     uv run --extra browser python -m voice_assistant.browser signin [URL]   # sign in by hand, on a desktop
 
@@ -18,9 +18,10 @@ from playwright.sync_api import sync_playwright
 
 from .agent import Settings
 from .chrome import PROFILE, own_chrome
+from .login import MAIL_WAIT_S, Answer
 from .run import ROOT, run_task
 from .session import Session
-from .vault import Vault, household_person, origin
+from .vault import GMAIL, Vault, household_person, origin
 
 
 class Terminal:
@@ -41,7 +42,10 @@ class Terminal:
             return None
         return username, getpass.getpass("Password (not shown; Enter if it signs in by a code alone): ")
 
-    def code(self, site: str) -> str | None:
+    def code(self, site: str, answer: Answer) -> str | None:
+        if answer.mail and answer.wait(MAIL_WAIT_S):  # input() can't be raced: the email gets its chance first
+            print(f"(the code {site} sent came by email)")
+            return answer.code
         return input(f"\n{site} has sent {self.name} a sign-in code. The code: ").strip() or None
 
 
@@ -56,6 +60,16 @@ def vault_command(args: argparse.Namespace) -> None:
         return
     if args.action == "remove":
         print("removed" if vault.remove(args.person, args.site) else f"{args.person} has no login {args.site}")
+        return
+    if args.action == "mail":
+        print("A Gmail app password, not the Google password: myaccount.google.com/apppasswords (it can be revoked "
+              "there any time).")  # fmt: skip
+        password = getpass.getpass(f"{args.site}'s app password (not shown): ")
+        try:
+            login = vault.store_mailbox(args.person, args.site, password, args.server)
+        except ValueError as e:
+            raise SystemExit(f"nothing kept: {e}") from None
+        print(f"Kept {args.person}'s mailbox {login.username}: TARS reads sign-in emails from it.")
         return
     sites = [args.site, *args.also]
     username = input(f"{args.person}'s email or phone on {origin(args.site)}: ").strip()
@@ -74,9 +88,11 @@ def main() -> None:
     person = household_person(ROOT / "config.toml")
     s = sub.add_parser("signin", help="a TARS Chrome to sign in to a site by hand (on a desktop)")
     s.add_argument("url", nargs="?", default="about:blank")
-    k = sub.add_parser("vault", help="TARS's logins: add (asks for the password), list, remove")
-    k.add_argument("action", choices=("add", "list", "remove"))
-    k.add_argument("site", nargs="?", help="add: the site's address (https://www.ksp.co.il); remove: its name")
+    k = sub.add_parser("vault", help="TARS's logins: add a site's, mail (a mailbox to read codes from), list, remove")
+    k.add_argument("action", choices=("add", "mail", "list", "remove"))
+    k.add_argument("site", nargs="?", help="add: the site's address (https://www.ksp.co.il); mail: the email "
+                   "address; remove: the login's name, as list shows it")  # fmt: skip
+    k.add_argument("--server", default=GMAIL, help=f"mail: its IMAP server (default {GMAIL})")
     k.add_argument("--also", action="append", default=[], help="add: another address the same login is for")
     k.add_argument("--person", default=person, help=f"whose login (default {person}: [telegram] people's first)")
     v = sub.add_parser("view", help="print what the agent is shown of a page")

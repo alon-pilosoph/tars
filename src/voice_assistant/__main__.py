@@ -585,17 +585,39 @@ def telegram(cfg: Config, root: Path) -> None:
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
     print(f"(chats are answered by {who})")
-    TelegramTars(
+    errands = make_errands(cfg, client is not None)
+    tars = TelegramTars(
         bot,
         cfg.telegram.people,
-        lambda: make_brain(client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS, home=home),
+        lambda: make_brain(
+            client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS, home=home, browser=errands
+        ),
         ConversationLog(events) if events else None,
         tools,
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
         transcriber=make_recording_transcriber(cfg, env, client),
         env=env,
-    ).run_forever(me)
+        login_at=(cfg.browser.login_host, cfg.browser.login_port),
+    )
+    if errands:
+        errands.chats = tars  # what an errand needs of the person comes to their chat
+    tars.run_forever(me)
+
+
+def make_errands(cfg: Config, has_openai: bool):
+    """[browser]'s errands for the chats (browser/errands.py), or None with it off. ConfigError if it can't run."""
+    if not cfg.browser.enabled:
+        return None
+    if not has_openai:
+        raise ConfigError(f"[browser] needs {OPENAI_KEY} in .env: an OpenAI model works the browser.")
+    try:
+        from .browser.errands import Errands
+    except ImportError:
+        raise ConfigError("[browser] needs the browser extra: uv sync --extra browser") from None
+    orders = "orders placed once approved" if cfg.browser.really_order else "approved orders a dry run"
+    print(f"(errands in the browser, by {cfg.browser.model} at {cfg.browser.effort} effort; {orders})")
+    return Errands(cfg.browser, None, list(cfg.telegram.people))
 
 
 def make_s3(cfg: Config, root: Path) -> S3:

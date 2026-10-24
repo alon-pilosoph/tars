@@ -11,6 +11,10 @@ brain, tools and reminders as at home, told it's writing rather than speaking; a
 the same speech to text as at home (stt.py), and answered as if written. What it sends goes into the chat as
 well as onto the TARS page. A reminder set here for someone with a chat comes to that chat when it's due, and
 whatever TARS sends at home for someone with a chat comes to it too. See docs/telegram.md.
+
+With [browser] on, a chat can send TARS on an errand in its browser (browser/errands.py), and the errand reaches the
+person here: an order to approve (Order and Cancel buttons), a link to a one-time page for a login TARS lacks, a
+sign-in code to send back, and its answer when it's done.
 """
 
 import json
@@ -23,6 +27,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 import numpy as np
@@ -31,6 +36,7 @@ from .audio import SAMPLE_RATE, decode_recording
 from .config import TELEGRAM_KEY, ConfigError
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
+from .home import Request
 from .llm import REMIND_TOOLS, SEARCHING, THINKING, Brain, split_ack
 from .reminders import (
     ACKNOWLEDGED,
@@ -49,6 +55,9 @@ from .reminders import (
     twelve_hour,
 )
 from .stt import Transcriber, transcribe_recording
+
+if TYPE_CHECKING:
+    from .browser.login import Answer
 
 API = "https://api.telegram.org"
 POLL_S = 50  # how long a request for new messages waits for one to come; Telegram's longest
@@ -83,6 +92,9 @@ HELLO = (
     "Send /new to start a new conversation."
 )
 FRESH = "Starting fresh. What's up?"
+APPROVE_WAIT_S = 10 * 60.0  # how long an order waits for a tap on Order or Cancel
+CODE_WAIT_S = 5 * 60.0  # how long a sign-in waits for the code a site sent
+CODE = re.compile(r"^\s*(\d[\d -]{2,10}\d)\s*$")  # a code sent back on its own: 1234, 123 456, 12-34-56
 # The bot's menu of commands in Telegram's app.
 COMMANDS = [{"command": "new", "description": "Start a new conversation"}]
 WRITTEN = (
@@ -188,13 +200,32 @@ class Bot:
         self.call("setMyCommands", commands=commands)
 
     def updates(self, offset: int | None) -> list[dict]:
-        """New messages, waiting up to POLL_S for one. Asking with `offset` confirms everything before it."""
-        params = {"timeout": POLL_S, "allowed_updates": ["message"]}
+        """New messages and taps on TARS's buttons, waiting up to POLL_S for one. Asking with `offset` confirms
+        everything before it."""
+        params = {"timeout": POLL_S, "allowed_updates": ["message", "callback_query"]}
         return self.call("getUpdates", **params, **({"offset": offset} if offset is not None else {}))
 
     def send(self, chat_id: int, text: str) -> None:
         for part in split_text(text):
             self.call("sendMessage", chat_id=chat_id, text=part)
+
+    def send_buttons(self, chat_id: int, text: str, buttons: list[tuple[str, str]]) -> int:
+        """`text` with a row of buttons under it, each (label, what a tap sends back); the message's id."""
+        markup = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in buttons]]}
+        return self.call("sendMessage", chat_id=chat_id, text=text[:MAX_TEXT], reply_markup=markup)["message_id"]
+
+    def drop_buttons(self, chat_id: int, message_id: int) -> None:
+        self.call(
+            "editMessageReplyMarkup", chat_id=chat_id, message_id=message_id, reply_markup={"inline_keyboard": []}
+        )
+
+    def answer_tap(self, tap_id: str) -> None:
+        """Tells Telegram a tap was seen, so the button stops spinning."""
+        self.call("answerCallbackQuery", callback_query_id=tap_id)
+
+    def send_photo(self, chat_id: int, data: bytes, caption: str = "") -> None:
+        params = {"chat_id": str(chat_id), "caption": caption[:MAX_CAPTION]}
+        self.call("sendPhoto", files={"photo": ("page.jpg", data, "image/jpeg")}, **params)
 
     def send_file(self, chat_id: int, name: str, data: bytes, mime: str, caption: str = "") -> None:
         params = {"chat_id": str(chat_id), "caption": caption[:MAX_CAPTION]}
@@ -345,12 +376,14 @@ class TelegramTars:
         sleep: Callable[[float], None] = time.sleep,
         transcriber: Transcriber | None = None,
         env: Path | str = ".env",
+        login_at: tuple[str, int] = ("", 8091),
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
         each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
         `send_items`: also post what TARS sends at home for someone with a chat. `transcriber`: speech to text for
         voice messages (None: they're turned down). `env`: where the token is, for saying so when Telegram refuses it.
-        `clock`, `typing` and `sleep` are for the tests."""
+        `login_at`: where an errand's one-time login page is served ("": this machine's reachable address), and its
+        port. `clock`, `typing` and `sleep` are for the tests."""
         self._bot, self._make_brain = bot, make_brain
         self._chats = {chat_id: Chat(name, chat_id, make_brain()) for name, chat_id in people.items()}
         self._by_person = {person_key(name): chat_id for name, chat_id in people.items()}
@@ -360,6 +393,9 @@ class TelegramTars:
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
+        self._login_at = login_at
+        self._codes: dict[int, Answer] = {}  # a chat whose errand waits for a sign-in code, and where it goes
+        self._taps: dict[str, tuple[int, threading.Event, list[str]]] = {}  # a button's nonce: its chat, its answer
 
     def run_forever(self, me: dict | None = None) -> None:
         """`me`: the bot, as Telegram's getMe said, if it's been asked already."""
@@ -394,6 +430,9 @@ class TelegramTars:
                     traceback.print_exc()
 
     def handle(self, update: dict) -> None:
+        if tap := update.get("callback_query"):
+            self._tapped(tap)
+            return
         message = update.get("message") or {}
         if (message.get("chat") or {}).get("type") != "private":
             return
@@ -416,6 +455,10 @@ class TelegramTars:
             return
         if voice:
             self.listen(chat, voice)
+            return
+        if (waiting := self._codes.get(chat_id)) and (code := CODE.match(text)):
+            if waiting.give(re.sub(r"[ -]", "", code.group(1)), "chat"):
+                self._send(chat_id, "Got it. Signing in.")
             return
         command = text.split()[0].split("@")[0]
         if command == "/start":
@@ -478,7 +521,7 @@ class TelegramTars:
         asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                pieces = brain.stream_reply(asked)
+                pieces = brain.stream_reply(asked, Request(speaker=chat.person))
                 if self._tools:
                     acks, pieces = split_ack(pieces)
                 reply = tidy("".join(pieces))
@@ -536,6 +579,110 @@ class TelegramTars:
                 with _free(chat) as free:
                     if free:
                         self._post_sent_at_home(chat, row, now)
+
+    # What an errand in TARS's browser needs of the person (browser/errands.py's Chats)
+
+    def tell(self, person: str, text: str, picture: bytes | None = None) -> None:
+        """Posts an errand's answer to `person`'s chat, as part of its conversation."""
+        chat = self._chat_for(person)
+        if chat is None:
+            return
+        with chat.busy:
+            if picture:
+                self._bot.send_photo(chat.chat_id, picture)
+            self._send(chat.chat_id, text, tries=SEND_TRIES)
+            print(f"TARS (Telegram, to {chat.person}):  {text}  (errand)", flush=True)
+            self._said(chat, text, self._clock())
+
+    def approve(self, person: str, draft: str, picture: bytes | None) -> bool:
+        """Asks `person` to approve what an errand is about to commit them to: True only for a tap on Order, on
+        this very message, from their own chat, within APPROVE_WAIT_S."""
+        import secrets
+
+        chat = self._chat_for(person)
+        if chat is None:
+            return False
+        nonce, tapped, answer = secrets.token_hex(8), threading.Event(), []
+        self._taps[nonce] = (chat.chat_id, tapped, answer)
+        try:
+            with chat.busy:
+                if picture:
+                    self._bot.send_photo(chat.chat_id, picture)
+                message = self._bot.send_buttons(chat.chat_id, draft, [("Order", f"order:{nonce}"),
+                                                                       ("Cancel", f"cancel:{nonce}")])  # fmt: skip
+                self._said(chat, draft, self._clock())
+            yes = tapped.wait(APPROVE_WAIT_S) and answer == ["order"]
+            try:
+                self._bot.drop_buttons(chat.chat_id, message)
+            except TelegramError:
+                pass  # only tidying: a late tap finds no one waiting
+            said = "Ordering." if yes else "Cancelled: nothing ordered." if tapped.is_set() else (
+                "No answer in time, so nothing was ordered.")  # fmt: skip
+            self._send(chat.chat_id, said)
+            return yes
+        except TelegramError as e:
+            print(f"(Telegram: couldn't ask {person} to approve an order: {e}; nothing ordered)")
+            return False
+        finally:
+            self._taps.pop(nonce, None)
+
+    def _tapped(self, tap: dict) -> None:
+        """A tap on Order or Cancel: counted only on the message it was sent with, from the chat it was sent to."""
+        kind, _, nonce = str(tap.get("data", "")).partition(":")
+        waiting = self._taps.get(nonce)
+        try:
+            self._bot.answer_tap(tap["id"])
+        except TelegramError, KeyError:
+            pass  # only the button's spinner
+        if waiting is None or (tap.get("from") or {}).get("id") != waiting[0] or kind not in ("order", "cancel"):
+            return
+        _, tapped, answer = waiting
+        if not tapped.is_set():
+            answer.append(kind)
+            tapped.set()
+
+    def login(self, person: str, site: str, goal: str) -> tuple[str, str] | None:
+        """`person`'s login for `site`, from a one-time page whose link goes to their chat."""
+        from .browser.login_page import Asking, ask, reachable_address
+
+        chat = self._chat_for(person)
+        if chat is None:
+            return None
+        host, port = self._login_at
+        host = host or reachable_address()
+        why = f"to finish what you asked: {goal}" if goal else "to carry on with what you asked"
+
+        def send_link(url: str) -> None:
+            self._send(chat.chat_id, f"To go on I need to sign in to {site}, and I don't have a login for it. Add "
+                       f"it here (the link works once, for 10 minutes):\n{url}", tries=SEND_TRIES)  # fmt: skip
+
+        try:
+            given = ask(Asking(site, why), send_link, host, port)
+        except OSError as e:  # the port taken, or the address gone: said in the chat, and the errand told no
+            print(f"(Telegram: couldn't serve the login page on {host}:{port}: {e})")
+            self._send(chat.chat_id, f"I couldn't open the page to add a login for {site}, so I stopped there.")
+            return None
+        self._send(chat.chat_id, "Saved. Signing in." if given else f"No login for {site} came in time, so I stopped.")
+        return given
+
+    def code(self, person: str, site: str, answer: Answer) -> str | None:
+        """The code `site` sent `person`: what they send back here, or what their email has first."""
+        chat = self._chat_for(person)
+        if chat is None:
+            return answer.wait(CODE_WAIT_S) if answer.mail else None
+        also = " I'm looking for it in your email too." if answer.mail else ""
+        self._codes[chat.chat_id] = answer
+        try:
+            self._send(chat.chat_id, f"{site} has sent you a sign-in code. Send it here.{also}", tries=SEND_TRIES)
+            code = answer.wait(CODE_WAIT_S)
+        finally:
+            self._codes.pop(chat.chat_id, None)
+            answer.done.set()
+        if answer.came_from == "email":
+            self._send(chat.chat_id, "Found it in your email. Signing in.")
+        elif code is None:
+            self._send(chat.chat_id, "No code came in time, so I stopped signing in.")
+        return code
 
     def _chat_for(self, person: str | None) -> Chat | None:
         chat_id = self._by_person.get(person_key(person))
