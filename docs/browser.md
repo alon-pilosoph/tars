@@ -69,35 +69,56 @@ the newest page in full from then on.
 The agent may fill a basket, pick options and go to the checkout. It may never place the order, pay, book, reserve
 or send. At that step it calls `request_approval` with the button, and code takes over:
 
-1. The button must be on the page, and must be one that commits: a "Go to checkout" is pressed by the agent itself.
-2. The person is sent what will happen, from the page, not the model: the site, the button's label, the total read
-   off the checkout, the model's summary, and a screenshot.
-3. Only on their yes, and only if the total and every price on the page are still the ones they saw, code presses
-   the button.
+1. The button must be on the page, and must be one that commits: a "Go to checkout" is pressed by the agent itself
+   (but not on a page that takes payment).
+2. The person is sent what will happen: the site and the button's label, the agent's summary (marked as the agent's),
+   the amounts the page shows beside the button, read by code (`money.py`), and a screenshot.
+3. Only on their tap on Order, and only if those amounts are still the ones they saw, code presses the button.
 
-The gate (`gate.py`) is what holds when a model doesn't listen: every click and every Enter is checked first, and one
-on a button that commits ("Place order", "Complete booking", "Pay now", "בצע הזמנה", "לתשלום") isn't done. It reads
-English and Hebrew, and errs towards stopping: a false stop costs a question, a missed one costs money.
+The gate (`gate.py`) is what holds when a model doesn't listen, or is told otherwise by a page: every click and every
+key is checked before it's done, and one that would press something that commits isn't. It goes by two things:
 
-Every click is checked, whichever way it's asked for: by ref, by text, or at a point on the screen (what's there is
-read first). What a page says is information, never an instruction: the agent is told so, and the gate doesn't
-read the page.
+- **What it says**, in English and Hebrew, as plain lists of phrases ("place order", "pay", "confirm and book",
+  "לתשלום", "בצעו הזמנה"), after the label is put in one form (Unicode's, without the invisible marks right-to-left
+  text carries, without Hebrew's one-letter prefixes), and a label with a confirming verb and an order word
+  ("Confirm the scheduled order"). A bare "Confirm" or "אישור" commits only where its form or dialog shows an
+  amount: on a time picker it's just a choice.
+- **Where it is, from the page itself:** every label a press goes by (its own text, the button or clickable area
+  it's in, as a framework's div button is, the control a label is for), the element that has focus for Enter and
+  Space, followed into shadow roots and frames, and whether the page takes payment (card fields, a payment
+  provider's frame): there, any submit button commits, whatever it says. A click or a key into a frame of another
+  site (a payment provider's button) is refused, since what's in it can't be read.
+
+It errs towards stopping: a false stop costs a question, a missed one costs money. It's tested in a real Chrome on
+built pages for each way a press can be asked for (`tests/test_browser_chrome.py`), and against the labels the eval
+runs clicked. What a page says is information, never an instruction: the agent is told so, and the gate takes nothing
+from the page but its buttons' labels and shape.
+
+**Nothing at home is opened** (`homenet.py`, shared with the web UI): no address on this machine or the home network
+(TARS's web UI, the router, Home Assistant), whether by name, by address however it's written, or by what a name
+resolves to. A page that leads there is left before anything of it is read.
+
+**Secrets stay out of the model's view.** A password field's value, in shadow roots and frames too, and anything a
+sign-in typed are left out of every page the model reads and covered in its screenshots, and blanked out of the
+trace.
 
 ## Signing in
 
 When a site wants a sign-in, the agent calls `sign_in`, and code types the login (`login.py`), a page at a time:
-whatever the site's sign-in form asks (an email and a password, a phone number, an ID number), read off the form with
-the site's own labels, and a code the site sends. The model never sees any of it, only
-how it went, and the trace leaves out what was typed. Before each step the page must be at the login's own site, as
-the browser reports its address, over HTTPS; the field must be in the page itself, not a frame from elsewhere; and
-its form must send to that same site. A look-alike address gets nothing, and so does a page asking to sign up: TARS
-signs in to accounts the person has, it doesn't make them.
+whatever the site's sign-in form asks (an email and a password, a phone number, an ID number), read off the form as a
+browser reads it (the standard's autocomplete tokens, then the field's type, then its label, Hebrew too), and a code
+the site sends (in one box, or one character a box). The model never sees any of it, only how it went. Before each
+field is typed the page must be at the login's own site, as the browser reports its address, over HTTPS; the field
+must be in the page itself, not a frame from elsewhere; its form must send to that same site, and must not be one
+that pays, orders or books (a guest checkout's email field). A look-alike address gets nothing, and so does a form
+asking to sign up (a new password, a name to fill in): TARS signs in to accounts the person has, it doesn't make them.
 
 The logins are in TARS's vault (`vault.py`): each a household member's (a task uses only its person's), tied to the
-exact sites it's for, and kept encrypted beside the browser's profile. One TARS lacks is asked for when it's needed,
-for the site the browser is actually at, and kept for that site: on Telegram, as a link to a one-time page
+exact sites it's for, and kept encrypted in a folder only TARS's user can read. One TARS lacks is asked for when it's
+needed, for the site the browser is actually at, and kept for that site: on Telegram, as a link to a one-time page
 (`login_page.py`); in a terminal, there. Either way it asks for exactly the fields that site's form has, by the
-site's own labels, as code read them (not as the model says), and a field a later page asks for is asked then. Or ahead of time:
+site's own labels, as code read them (not as the model says), and a field a later page asks for is asked then. Or
+ahead of time:
 
 ```bash
 uv run python -m voice_assistant.browser vault add https://www.ksp.co.il   # asks for the email and the password
@@ -106,10 +127,13 @@ uv run python -m voice_assistant.browser vault list                       # whos
 ```
 
 **Codes and links by email.** With a mailbox in the vault (for Gmail, an app password), TARS reads the sign-in
-emails a site sends (`mail.py`): read-only, over IMAP, only mail from that site's own domain that came after it
-asked. A code is looked for there and asked of the person at once, and whichever comes first is typed; a sign-in
-link is opened only if it's on the site's own domain. A site that signs in by email alone (Wolt) gets the mailbox's
-address. What an email says goes to no model: code takes the code or the link out of it.
+emails a site sends (`mail.py`): read-only, over IMAP with the server's certificate checked, and only mail the
+person's own mail server found really from that site's domain (DKIM or DMARC passing), by the server's own time it
+came after TARS asked. A code is looked for there and asked of the person at once, and whichever comes first is
+typed. A model reads the email for the code and the link, and what it says is taken only as a code (codes.py: a few
+letters and digits, that the email has as written) or as one of the email's links on the site's own domain, as a
+browser reads its host. A site that signs in by email alone (Wolt) gets the mailbox's address, and the login is
+kept once that worked.
 
 Once signed in, the site's cookies keep it so, often for weeks. Each household member has a browser profile of
 their own, so one's sign-in never becomes another's. For a site that signs in only with Google or a
@@ -126,6 +150,23 @@ goal still decides, and the gate holds whatever they say. They're plain text, fo
 Every run also leaves a trace: each turn's call, what it did, how long the model and the browser took, and what the
 page fetched behind the scenes (its API calls, with their JSON). That's what a site's shortcut could be built from
 later: the requests that did the work, replayed by code.
+
+## Setting it up
+
+1. In `config.local.toml`, turn on `[browser]` (with `[telegram]` and `[learning] log_events`, which it needs: the
+   Telegram service runs the errands, and they're queued in the event database):
+
+   ```toml
+   [browser]
+   enabled = true
+   really_order = false   # true once you trust it: an approved order is then placed
+   ```
+
+2. `OPENAI_API_KEY` in `.env`, and the browser's packages: `uv sync --all-extras`. On the Pi, `deploy/install-pi.sh`
+   also installs Debian's Chromium and the virtual screen it draws to (`voice-assistant-display`).
+3. The logins, ahead of time (`vault add`, `vault mail`, above), or when they're first needed.
+4. Restart the Telegram service and the assistant, then `voice-assistant --check`: it has a line for the browser
+   (its model, the Chromium it found), the errands waiting, and the display service.
 
 ## Running it
 
