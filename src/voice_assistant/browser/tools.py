@@ -9,7 +9,6 @@ circles. TARS's own agent (agent.py) calls them in its loop; another agent (Clau
   model says), and code presses the button only on a yes, with the total and every price as they were."""
 
 import json
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -19,11 +18,11 @@ from playwright.sync_api import Error as PlaywrightError
 
 from . import page as pages
 from .gate import moves_on
+from .money import amounts
 from .session import Session, normal
 
 REPEATS = 3  # the same steps this many times in a row on one page: not done again
 WAITS = {"wait", "scroll", "press", "hover", "back"}  # steps that change nothing the first time and may later
-MONEY = re.compile(r"(?:[₪$€£]\s?\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?\s?(?:₪|ILS|NIS|EUR|USD|€|\$))")
 
 
 class Approver(Protocol):
@@ -132,10 +131,11 @@ class Tools:
         if moves_on(label, paying=session.paying()):
             return (f"{label!r} only takes you on (to the basket or the checkout): press it yourself, and call "
                     "request_approval at the last button, the one that places the order")  # fmt: skip
-        prices = MONEY.findall(session.look().text)  # as it is, with nothing a step just added shown twice
+        prices = self._beside(ref)
         host = urlsplit(session.page.url).hostname or session.page.url
         picture = session.screenshot()
-        draft = f"TARS wants to press {label!r} on {host}.\n\n{summary}"
+        shown = f"\n\nOn the page beside it: {', '.join(prices[:8])}." if prices else ""
+        draft = f"TARS wants to press {label!r} on {host}.\n\nTARS says: {summary}{shown}"
         self.commits_asked.append(draft)
         self.screenshots += 1
         self.log({"event": "approval", "ref": ref, "label": label, "summary": summary, "prices": prices})
@@ -144,8 +144,8 @@ class Tools:
         if not self.really_commit:
             self.committed = True
             return f"approved, as a dry run: {label!r} was not pressed and nothing was committed. Call done."
-        if MONEY.findall(session.look().text) != prices:  # the total among them: what they said yes to has changed
-            return "the prices on the page changed while waiting: nothing was done. Call done and say so."
+        if self._beside(ref) != prices:  # the total among them: what they said yes to has changed
+            return "the amounts beside it changed while waiting: nothing was done. Call done and say so."
         try:
             session.click_approved(ref)
         except (PlaywrightError, ValueError) as e:
@@ -153,6 +153,13 @@ class Tools:
         self.committed = True
         session.look()
         return f"pressed {label!r}. The page now shows what happened: read it and call done."
+
+    def _beside(self, ref: str) -> list[str]:
+        """The amounts beside what `ref` is (its form, dialog or part of the page), else on the whole page."""
+        try:
+            return amounts(self.session.around(ref)) or amounts(self.session.look().text)
+        except (PlaywrightError, ValueError):
+            return amounts(self.session.look().text)
 
     def picture(self) -> bytes | None:
         try:

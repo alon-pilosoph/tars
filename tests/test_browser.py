@@ -301,6 +301,9 @@ class FakeSession:
     def paying(self):
         return False
 
+    def around(self, ref):
+        return self.text  # the whole page is the order's summary here
+
     def click_approved(self, ref):
         self.pressed.append(ref)
 
@@ -376,7 +379,7 @@ def test_prices_that_changed_while_asking_are_not_pressed_even_without_a_total()
 
     Agent(model, session, Slow(), Settings(really_commit=True)).run("Book it")
     assert session.pressed == []
-    assert "prices on the page changed" in model.sent[-1]["input"][-2]["output"]
+    assert "amounts beside it changed" in model.sent[-1]["input"][-2]["output"]
 
 
 @pytest.mark.parametrize("label", ["1 Go to checkout ₪73.00", "מעבר לעגלת הקניות", "View basket"])
@@ -767,3 +770,17 @@ def test_a_bare_confirm_commits_only_where_an_amount_is_shown_and_any_submit_whe
     assert commits(Press(("Confirm",), priced=True)) and not commits(Press(("Confirm",)))
     assert commits(Press(("Apply",), paying=True, submits=True)) and not commits(Press(("Apply",), submits=True))
     assert moves_on("Go to checkout") and not moves_on("Go to checkout", paying=True)
+
+
+@pytest.mark.parametrize(
+    ("text", "found"),
+    [('סה"כ 112.40 ש"ח', ["₪112.40"]), ("112.40 ש״ח", ["₪112.40"]),
+     ("\u200f56.00 \u200f₪ + \u200f29.00 \u200f₪", ["₪56.00", "₪29.00"]),
+     ("1.234,56 €", ["€1234.56"]), ("€1.234,56", ["€1234.56"]), ("USD 12.00", ["$12.00"]), ("₪ 1,234.50", ["₪1234.50"]),
+     ("1\u00a0234,50 €", ["€1234.50"]), ("2 items for 40₪", ["₪40.00"]), ("2 ₪10", ["₪10.00"]), ("Room 1,200", []),
+     ("CHF 1'250.00", ["CHF1250.00"]), ("12,50 €", ["€12.50"])],
+)  # fmt: skip
+def test_amounts_are_read_however_a_page_writes_them(text, found):
+    from voice_assistant.browser.money import amounts
+
+    assert amounts(text) == found

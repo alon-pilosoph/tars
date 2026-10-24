@@ -109,6 +109,11 @@ POINT_JS = f"""([x, y]) => {{
   if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') return frame;
   return ({_PRESS})(e);
 }}"""
+# The text around an element: the form, dialog or part of the page it's in (an order's summary beside its button).
+AROUND_JS = """(e) => {
+  const scope = e.closest('form, dialog, [role=dialog], [aria-modal=true], aside, section, main') || document.body;
+  return String(scope.innerText || '').slice(0, 6000);
+}"""
 # Whether the page takes payment: a card field (autocomplete cc-*, the standard's) or a frame given the payment
 # permission (how Stripe's, PayPal's and Apple Pay's are put on a page). Asked of each frame.
 PAYING_JS = '() => !!document.querySelector(\'input[autocomplete^="cc-"], iframe[allow*="payment"]\')'
@@ -488,6 +493,10 @@ class Session:
             except PlaywrightError:
                 continue
         return False
+
+    def around(self, ref: str) -> str:
+        """The text around what `ref` is (AROUND_JS): an order's summary, beside its button."""
+        return str(self._target(ref).evaluate(AROUND_JS) or "")
 
     def click_approved(self, ref: str) -> None:
         """Clicks what the person approved: only ever called by code, after they said yes."""
