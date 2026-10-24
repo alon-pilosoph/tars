@@ -14,12 +14,17 @@ pytest.importorskip("cryptography")
 KSP = "https://www.ksp.co.il"
 
 
-def field(ident, action=None, empty=True):
-    return {"id": ident, "name": ident, "empty": empty, "action": action}
+def field(ident, action=None, empty=True, label=""):
+    return {"id": ident, "name": ident, "empty": empty, "action": action, "kind": "other", "key": ident, "label": label}
 
 
-def screen(url=KSP + "/login", username=None, password=None, code=None, signup=False):
-    return {"url": url, "fields": {"username": username, "password": password, "code": code, "signup": signup}}
+def screen(url=KSP + "/login", username=None, password=None, code=None, signup=False, others=()):
+    """A page of a sign-in, as FIELDS_JS reads it: its code box, or its form's fields, in order."""
+    fields = [{**username, "kind": "username", "key": "username"}] if username else []
+    fields += list(others)
+    fields += [{**password, "kind": "password", "key": "password"}] if password else []
+    return {"url": url, "found": {"code": {**code, "kind": "code"} if code else None, "fields": fields,
+                                  "signup": signup}}  # fmt: skip
 
 
 class SignInPage:
@@ -34,7 +39,7 @@ class SignInPage:
 
     def evaluate(self, script):
         if "signup" in script:
-            return self.screens[self.at]["fields"]
+            return self.screens[self.at]["found"]
         return ""  # the page's alerts: none
 
     def locator(self, selector):
@@ -69,8 +74,8 @@ class Asked:
     def __init__(self, name="Alon", login=None, code=None):
         self.name, self.given, self.sent, self.asked = name, login, code, []
 
-    def login(self, site, goal):
-        self.asked.append(("login", site))
+    def login(self, site, goal, fields):
+        self.asked.append(("login", site, [f.key for f in fields]))
         return self.given
 
     def code(self, site, answer):
@@ -80,7 +85,7 @@ class Asked:
 
 def test_a_login_is_for_its_exact_site_and_person_only(tmp_path):
     vault = Vault(tmp_path)
-    vault.store("Alon", [KSP + "/web/"], "alon@example.com", "hunter2-secret")
+    vault.store("Alon", [KSP + "/web/"], {"username": "alon@example.com", "password": "hunter2-secret"})
     assert vault.for_page(KSP + "/login?next=/cart", "Alon").username == "alon@example.com"
     for elsewhere in ("http://www.ksp.co.il/login", "https://ksp.co.il/login", "https://www.ksp.co.il.evil.example/",
                       "https://www.ksp.co.il:8443/login"):  # fmt: skip
@@ -89,13 +94,13 @@ def test_a_login_is_for_its_exact_site_and_person_only(tmp_path):
     assert "hunter2" not in repr(vault.logins("Alon")) and b"hunter2" not in (tmp_path / "vault.enc").read_bytes()
     assert (tmp_path / "vault.key").stat().st_mode & 0o077 == 0
     with pytest.raises(ValueError):
-        vault.store("Alon", ["http://www.ksp.co.il"], "alon@example.com", "x")
+        vault.store("Alon", ["http://www.ksp.co.il"], {"username": "alon@example.com", "password": "x"})
     assert vault.remove("Alon", "www.ksp.co.il") and vault.logins("Alon") == []
 
 
 def test_it_types_the_username_the_password_and_the_code_and_hides_the_secrets(tmp_path):
     vault = Vault(tmp_path)
-    vault.store("Alon", [KSP], "alon@example.com", "hunter2-secret")
+    vault.store("Alon", [KSP], {"username": "alon@example.com", "password": "hunter2-secret"})
     page = SignInPage(screen(username=field("email")), screen(password=field("pw")), screen(code=field("otp")),
                       screen(url=KSP + "/account"))  # fmt: skip
     person, hidden = Asked(code="123456"), []
@@ -109,16 +114,16 @@ def test_it_types_the_username_the_password_and_the_code_and_hides_the_secrets(t
 def test_a_login_it_lacks_is_asked_for_the_site_the_browser_is_at_and_kept(tmp_path):
     vault = Vault(tmp_path)
     page = SignInPage(screen(username=field("email"), password=field("pw")), screen(url=KSP + "/account"))
-    person = Asked(login=("alon@example.com", "hunter2-secret"))
+    person = Asked(login={"username": "alon@example.com", "password": "hunter2-secret"})
     sign_in(page, vault, person, goal="order a cable")
-    assert person.asked == [("login", KSP)]
+    assert person.asked == [("login", KSP, ["username", "password"])]
     assert page.typed == [("#email", "alon@example.com"), ("#pw", "hunter2-secret")]
     assert vault.for_page(KSP, "Alon").origins == (KSP,)
 
 
 def test_nothing_is_typed_into_a_form_that_sends_elsewhere_or_a_sign_up(tmp_path):
     vault = Vault(tmp_path)
-    vault.store("Alon", [KSP], "alon@example.com", "hunter2-secret")
+    vault.store("Alon", [KSP], {"username": "alon@example.com", "password": "hunter2-secret"})
     page = SignInPage(screen(password=field("pw", action="https://collect.evil.example/steal")))
     assert "refused" in sign_in(page, vault, Asked()) and page.typed == []
     page = SignInPage(screen(username=field("email"), signup=True))
@@ -127,7 +132,7 @@ def test_nothing_is_typed_into_a_form_that_sends_elsewhere_or_a_sign_up(tmp_path
 
 def test_a_site_asking_again_is_not_retried(tmp_path):
     vault = Vault(tmp_path)
-    vault.store("Alon", [KSP], "alon@example.com", "wrong")
+    vault.store("Alon", [KSP], {"username": "alon@example.com", "password": "wrong"})
     page = SignInPage(screen(password=field("pw")), screen(password=field("pw")))
     said = sign_in(page, vault, Asked())
     assert "asked for the password again" in said and len(page.typed) == 1
@@ -156,3 +161,20 @@ def test_the_sign_in_call_keeps_its_requests_out_of_the_trace():
 def test_origin_is_what_pages_are_compared_by():
     assert origin("HTTPS://WWW.KSP.CO.IL:443/web/cart?x=1") == KSP
     assert origin("https://www.ksp.co.il:8443/") == "https://www.ksp.co.il:8443"
+
+
+def test_a_field_the_site_asks_later_is_asked_for_by_its_own_label_and_kept(tmp_path):
+    vault = Vault(tmp_path)
+    vault.store("Alon", [KSP], {"username": "alon@example.com", "password": "hunter2-secret"})
+    page = SignInPage(screen(username=field("email"), password=field("pw")),
+                      screen(others=[field("tz", label="מספר תעודת זהות")]), screen(url=KSP + "/account"))  # fmt: skip
+    person, hidden = Asked(login={"tz": "012345678"}), []
+    sign_in(page, vault, person, hide=hidden.append)
+    assert person.asked == [("login", KSP, ["tz"])]
+    assert page.typed == [("#email", "alon@example.com"), ("#pw", "hunter2-secret"), ("#tz", "012345678")]
+    assert hidden == ["hunter2-secret", "012345678"]
+    assert vault.for_page(KSP, "Alon").value("tz") == "012345678"
+    page = SignInPage(screen(username=field("email"), password=field("pw")), screen(others=[field("tz")]),
+                      screen(url=KSP + "/account"))  # fmt: skip
+    sign_in(page, vault, Asked())  # next time, nothing's asked
+    assert page.typed[-1] == ("#tz", "012345678")

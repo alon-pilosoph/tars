@@ -12,7 +12,8 @@ site: what it knows about a site, it learns by working it.
 | "The cheapest direct flight to Athens on the 6th" | Google Flights: one way, the airports, the date, nonstop; the airline, the times, the price |
 | "How long is the drive to the office at nine?" | Google Maps: the route at that time; "16-24 minutes" |
 
-It isn't part of the voice assistant yet: it runs from a terminal (below) and from its evals, while it's measured.
+It's asked for in a Telegram chat ([telegram.md](telegram.md#errands-in-the-browser)), with `[browser]` on, and
+answers there; it also runs from a terminal (below) and from its evals.
 
 ## How it works
 
@@ -82,8 +83,9 @@ read the page.
 
 ## Signing in
 
-When a site wants a sign-in, the agent calls `sign_in`, and code types the login (`login.py`): the person's
-username, their password, and a code the site sends them, a page at a time. The model never sees any of it, only
+When a site wants a sign-in, the agent calls `sign_in`, and code types the login (`login.py`), a page at a time:
+whatever the site's sign-in form asks (an email and a password, a phone number, an ID number), read off the form with
+the site's own labels, and a code the site sends. The model never sees any of it, only
 how it went, and the trace leaves out what was typed. Before each step the page must be at the login's own site, as
 the browser reports its address, over HTTPS; the field must be in the page itself, not a frame from elsewhere; and
 its form must send to that same site. A look-alike address gets nothing, and so does a page asking to sign up: TARS
@@ -91,14 +93,24 @@ signs in to accounts the person has, it doesn't make them.
 
 The logins are in TARS's vault (`vault.py`): each a household member's (a task uses only its person's), tied to the
 exact sites it's for, and kept encrypted beside the browser's profile. One TARS lacks is asked for when it's needed,
-for the site the browser is actually at, and kept for that site; so is a code the site sends. Or ahead of time:
+for the site the browser is actually at, and kept for that site: on Telegram, as a link to a one-time page
+(`login_page.py`); in a terminal, there. Either way it asks for exactly the fields that site's form has, by the
+site's own labels, as code read them (not as the model says), and a field a later page asks for is asked then. Or ahead of time:
 
 ```bash
 uv run python -m voice_assistant.browser vault add https://www.ksp.co.il   # asks for the email and the password
+uv run python -m voice_assistant.browser vault mail alon@gmail.com         # a mailbox to read sign-in emails from
 uv run python -m voice_assistant.browser vault list                       # whose, for which sites (no passwords)
 ```
 
-Once signed in, the site's cookies keep it so, often for weeks. For a site that signs in only with Google or a
+**Codes and links by email.** With a mailbox in the vault (for Gmail, an app password), TARS reads the sign-in
+emails a site sends (`mail.py`): read-only, over IMAP, only mail from that site's own domain that came after it
+asked. A code is looked for there and asked of the person at once, and whichever comes first is typed; a sign-in
+link is opened only if it's on the site's own domain. A site that signs in by email alone (Wolt) gets the mailbox's
+address. What an email says goes to no model: code takes the code or the link out of it.
+
+Once signed in, the site's cookies keep it so, often for weeks. Each household member has a browser profile of
+their own, so one's sign-in never becomes another's. For a site that signs in only with Google or a
 passkey, `signin` opens TARS's Chrome on a desktop to sign in by hand.
 
 ## Learning a site
@@ -208,9 +220,7 @@ A round starts with TARS's baskets empty, and costs about $0.10 and ten minutes.
 
 ## Not yet
 
-- **Part of TARS.** Asked aloud or on Telegram, with the approval on Telegram (the prototype did it: an Order button
-  and a screenshot), and a long-lived browser per person on the Pi.
-- **Signing in from a phone.** A login or a code TARS lacks is asked for in the terminal it runs in. As part of TARS
-  it's asked on Telegram: a one-time page for the login, the code in the chat, and a sign-in link or code read
-  from the person's email (the prototype did all three, `tools/browser_signin.py`).
+- **Asked aloud.** Errands are asked for in a chat; by voice, the approval and anything else it needs would still
+  come to the asker's chat, from the voice's process, which doesn't run the browser.
+- **Errands at once.** One runs at a time: there's one browser. A browser per person could run theirs side by side.
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.

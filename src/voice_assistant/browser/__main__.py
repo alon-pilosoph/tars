@@ -19,6 +19,7 @@ from playwright.sync_api import sync_playwright
 from .agent import Settings
 from .chrome import PROFILE, own_chrome
 from .login import MAIL_WAIT_S, Answer
+from .login_page import Field
 from .run import ROOT, run_task
 from .session import Session
 from .vault import GMAIL, Vault, household_person, origin
@@ -34,13 +35,16 @@ class Terminal:
         print(f"\n{draft}\n")
         return input("Approve? [y/N] ").strip().lower() in ("y", "yes")
 
-    def login(self, site: str, goal: str) -> tuple[str, str] | None:
+    def login(self, site: str, goal: str, fields: list[Field]) -> dict[str, str] | None:
         print(f"\nTARS needs {self.name}'s login for {site}. It's kept encrypted, typed only into {site}, and never "
               "shown to the model. (Enter on its own: none.)")  # fmt: skip
-        username = input("Email or phone: ").strip()
-        if not username:
-            return None
-        return username, getpass.getpass("Password (not shown; Enter if it signs in by a code alone): ")
+        values = {}
+        for f in fields:
+            value = getpass.getpass(f"{f.label} (not shown): ") if f.secret else input(f"{f.label}: ").strip()
+            if f.required and not value:
+                return None
+            values[f.key] = value
+        return values
 
     def code(self, site: str, answer: Answer) -> str | None:
         if answer.mail and answer.wait(MAIL_WAIT_S):  # input() can't be raced: the email gets its chance first
@@ -74,8 +78,8 @@ def vault_command(args: argparse.Namespace) -> None:
     sites = [args.site, *args.also]
     username = input(f"{args.person}'s email or phone on {origin(args.site)}: ").strip()
     password = getpass.getpass("Password (not shown; Enter if it signs in by a code alone): ")
-    try:
-        login = vault.store(args.person, sites, username, password)
+    try:  # anything else the site asks for is asked when it first does
+        login = vault.store(args.person, sites, {"username": username, "password": password})
     except ValueError as e:
         raise SystemExit(f"nothing kept: {e}") from None
     print(f"Kept {args.person}'s login {login.name}, for {', '.join(login.origins)}.")

@@ -1,5 +1,7 @@
 """The one-time page TARS sends a link to when it needs a login it doesn't have, for the site its browser is at (as
-code saw it, never as a page or a model said). What's entered goes
+code saw it, never as a page or a model said). It asks for what that site's sign-in form asks, by the site's own
+labels, as code read them off the form (login.py): an email and a password, a phone number, an ID number. What's
+entered goes
 into the vault (vault.py) for that site only, and the page stops working: once it's used, or after LOGIN_WAIT_S.
 
 It's served while it's waiting and no longer, from this machine, at the address the person's phone reaches it at (at
@@ -48,10 +50,7 @@ PAGE = """<!doctype html>
   <p class="why">{why}</p>
   <form method="post" action="/login" autocomplete="on">
     <input type="hidden" name="token" value="{token}">
-    <label for="u">{user_label}</label>
-    <input id="u" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
-    <label for="p">{password_label}</label>
-    <input id="p" name="password" type="password" autocomplete="current-password"{password_required}>
+{inputs}
     <button>Save and sign in</button>
   </form>
   <p class="safe">It's kept encrypted on TARS's own machine and typed only into {site}, never shown to TARS's model.
@@ -64,23 +63,36 @@ main {{ max-width: 440px; margin: 0 auto; padding: 40px 20px; }}</style></head>
 
 
 @dataclass(frozen=True)
+class Field:
+    """One of the site's sign-in fields: its key in the vault (login.py), its label as the site shows it, whether it's
+    secret (shown as dots), and whether the page can't go on without it."""
+
+    key: str
+    label: str
+    secret: bool = False
+    required: bool = True
+
+
+@dataclass(frozen=True)
 class Asking:
     """What the page asks for."""
 
     site: str  # the site it's for, as the browser is at it: https://www.ksp.co.il
     why: str
-    user_label: str = "Email or phone"
-    password_label: str = "Password (empty if it signs in with a code)"
-    password_needed: bool = False  # a site may sign in by a code alone
+    fields: tuple[Field, ...]
 
 
 def page(asking: Asking, token: str) -> str:
     host = urlsplit(asking.site).hostname or asking.site
-    return PAGE.format(
-        site=html.escape(asking.site), host=html.escape(host), why=html.escape(asking.why), token=token,
-        user_label=html.escape(asking.user_label), password_label=html.escape(asking.password_label),
-        password_required=" required" if asking.password_needed else "",
-    )  # fmt: skip
+    inputs = []
+    for n, f in enumerate(asking.fields):
+        kind = ' type="password" autocomplete="current-password"' if f.secret else (
+            ' autocomplete="username"' if f.key == "username" else ' autocomplete="off"')  # fmt: skip
+        inputs.append(f'    <label for="f{n}">{html.escape(f.label)}</label>\n'
+                      f'    <input id="f{n}" name="{html.escape(f.key)}"{kind} autocapitalize="off" spellcheck="false"'
+                      f'{" required" if f.required else ""}>')  # fmt: skip
+    return PAGE.format(site=html.escape(asking.site), host=html.escape(host), why=html.escape(asking.why),
+                       token=token, inputs="\n".join(inputs))  # fmt: skip
 
 
 def ask(
@@ -89,9 +101,9 @@ def ask(
     host: str,
     port: int,
     wait_s: float = LOGIN_WAIT_S,
-) -> tuple[str, str] | None:
-    """Serves the page on `host:port`, sends its link with `send_link`, and waits up to `wait_s` for the login:
-    (username, password), or None if none came. The page stops working as this returns."""
+) -> dict[str, str] | None:
+    """Serves the page on `host:port`, sends its link with `send_link`, and waits up to `wait_s` for the login: each
+    field's value by its key, or None if none came. The page stops working as this returns."""
     token, given, got = secrets.token_urlsafe(24), [], threading.Event()
     form = page(asking, token)
 
@@ -130,11 +142,11 @@ def ask(
             if urlsplit(self.path).path != "/login" or not self._ours(_one(sent, "token")):
                 self.reply(404, DONE.format(message="This link isn't valid any more."))
                 return
-            username, password = _one(sent, "username").strip(), _one(sent, "password")
-            if not username or (asking.password_needed and not password):
-                self.reply(400, DONE.format(message="Both are needed. Go back and fill them in."))
+            values = {f.key: _one(sent, f.key) if f.secret else _one(sent, f.key).strip() for f in asking.fields}
+            if any(f.required and not values[f.key] for f in asking.fields):
+                self.reply(400, DONE.format(message="Something needed is missing. Go back and fill it in."))
                 return
-            given.append((username, password))
+            given.append(values)
             got.set()
             self.reply(200, DONE.format(message="Saved. TARS is signing in; you can close this page."))
 

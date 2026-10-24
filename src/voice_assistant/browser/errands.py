@@ -20,6 +20,7 @@ from ..events import person_key
 
 if TYPE_CHECKING:
     from .login import Answer
+    from .login_page import Field
 
 ERRANDS = Path(__file__).resolve().parents[3] / "voice_data/browser/errands"
 
@@ -66,7 +67,7 @@ class Chats(Protocol):
 
     def approve(self, person: str, draft: str, picture: bytes | None) -> bool: ...
 
-    def login(self, person: str, site: str, goal: str) -> tuple[str, str] | None: ...
+    def login(self, person: str, site: str, goal: str, fields: list[Field]) -> dict[str, str] | None: ...
 
     def code(self, person: str, site: str, answer: Answer) -> str | None: ...
 
@@ -81,8 +82,8 @@ class ByChat:
     def approve(self, draft: str, picture: bytes | None = None) -> bool:
         return self.chats.approve(self.name, draft, picture)
 
-    def login(self, site: str, goal: str) -> tuple[str, str] | None:
-        return self.chats.login(self.name, site, goal)
+    def login(self, site: str, goal: str, fields: list[Field]) -> dict[str, str] | None:
+        return self.chats.login(self.name, site, goal, fields)
 
     def code(self, site: str, answer: Answer) -> str | None:
         return self.chats.code(self.name, site, answer)

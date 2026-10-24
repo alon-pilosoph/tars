@@ -25,12 +25,28 @@ GMAIL = "imaps://imap.gmail.com"
 
 @dataclass(frozen=True)
 class Login:
+    """What a site's sign-in fields take, by field (login.py's keys): "username" and "password" for most sites, and
+    whatever else one asks (an ID number, a customer number), under the field's own key."""
+
     name: str
     origins: tuple[str, ...]
-    username: str
-    password: str  # empty for a site that signs in by a code alone
+    values: tuple[tuple[str, str], ...]
 
-    def __repr__(self) -> str:  # never the password, whatever prints it
+    def value(self, key: str) -> str | None:
+        return dict(self.values).get(key)
+
+    def values_dict(self) -> dict[str, str]:
+        return dict(self.values)
+
+    @property
+    def username(self) -> str:
+        return self.value("username") or ""
+
+    @property
+    def password(self) -> str:
+        return self.value("password") or ""
+
+    def __repr__(self) -> str:  # never a password or the rest, whatever prints it
         return f"Login({self.name!r}, {self.origins}, {self.username!r})"
 
 
@@ -44,7 +60,8 @@ def origin(url: str) -> str:
 
 
 class Vault:
-    """The logins, as {person: {login name: {origins, username, password}}}, read and written whole."""
+    """The logins, as {person: {login name: {origins, username, password, fields: {key: value}}}}, read and written
+    whole."""
 
     def __init__(self, folder: Path = FOLDER):
         self.folder = folder
@@ -72,8 +89,7 @@ class Vault:
         os.replace(tmp, self.file)
 
     def logins(self, person: str) -> list[Login]:
-        return [Login(n, tuple(e["origins"]), e["username"], e["password"])
-                for n, e in self._load().get(person, {}).items()]  # fmt: skip
+        return [_login(n, e) for n, e in self._load().get(person, {}).items()]
 
     def everyone(self) -> dict[str, list[Login]]:
         return {person: self.logins(person) for person in sorted(self._load())}
@@ -90,30 +106,39 @@ class Vault:
         """`person`'s mailboxes TARS may read (imaps:// logins): never typed into a page, since none is https."""
         return [login for login in self.logins(person) if all(o.startswith("imaps://") for o in login.origins)]
 
-    def store(self, person: str, origins: list[str], username: str, password: str = "", name: str = "") -> Login:
+    def store(self, person: str, origins: list[str], values: dict[str, str], name: str = "") -> Login:
         """Adds or replaces `person`'s login for exactly these origins (https sites, or an imaps mail server), named
-        `name`, or by the first one's host."""
+        `name`, or by the first one's host, with the values its fields take (empty ones left out)."""
         found = sorted({origin(o) for o in origins})
+        values = {k: v for k, v in values.items() if k and v}
         if not person:
             raise ValueError("a login belongs to someone")
         if not found or not all(o.startswith(SCHEMES) and "." in o for o in found):
             raise ValueError(f"a login is for https:// sites or an imaps:// mail server, not {', '.join(origins)}")
-        if not username:
-            raise ValueError("a login needs a username (an email or a phone number)")
-        if found[0].startswith("imaps://") and not password:
-            raise ValueError("a mailbox needs its password (for Gmail, an app password)")
+        if not values:
+            raise ValueError("a login needs something to sign in with")
+        if found[0].startswith("imaps://") and not (values.get("username") and values.get("password")):
+            raise ValueError("a mailbox needs its address and its password (for Gmail, an app password)")
         name = name or urlsplit(found[0]).hostname or found[0]
         people = self._load()
-        people.setdefault(person, {})[name] = {"origins": found, "username": username, "password": password}
+        people.setdefault(person, {})[name] = _entry(found, values)
         self._save(people)
-        return Login(name, tuple(found), username, password)
+        return _login(name, people[person][name])
+
+    def add(self, person: str, name: str, values: dict[str, str]) -> Login:
+        """`person`'s login `name`, with more fields' values: what a later page of the sign-in asked for."""
+        people = self._load()
+        entry = people[person][name]
+        both = {**_login(name, entry).values_dict(), **{k: v for k, v in values.items() if k and v}}
+        people[person][name] = _entry(entry["origins"], both)
+        self._save(people)
+        return _login(name, people[person][name])
 
     def store_mailbox(self, person: str, address: str, password: str, server: str = GMAIL) -> Login:
         """Adds or replaces one of `person`'s mailboxes: one login per address, as several share a server."""
         host = urlsplit(origin(server)).hostname or server
-        return self.store(
-            person, [server], address.strip(), password.replace(" ", ""), name=f"{host} {address.strip()}"
-        )
+        values = {"username": address.strip(), "password": password.replace(" ", "")}
+        return self.store(person, [server], values, name=f"{host} {address.strip()}")
 
     def remove(self, person: str, name: str) -> bool:
         people = self._load()
@@ -121,6 +146,18 @@ class Vault:
             return False
         self._save(people)
         return True
+
+
+def _entry(origins: list[str], values: dict[str, str]) -> dict:
+    """A login as the vault keeps it: username and password where the prototype's vault had them, the rest apart."""
+    rest = {k: v for k, v in values.items() if k not in ("username", "password")}
+    return {"origins": list(origins), "username": values.get("username", ""), "password": values.get("password", ""),
+            "fields": rest}  # fmt: skip
+
+
+def _login(name: str, entry: dict) -> Login:
+    values = {"username": entry.get("username", ""), "password": entry.get("password", ""), **entry.get("fields", {})}
+    return Login(name, tuple(entry["origins"]), tuple((k, v) for k, v in values.items() if v))
 
 
 def household_person(config: Path) -> str:

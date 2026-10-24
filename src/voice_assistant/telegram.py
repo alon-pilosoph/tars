@@ -58,6 +58,7 @@ from .stt import Transcriber, transcribe_recording
 
 if TYPE_CHECKING:
     from .browser.login import Answer
+    from .browser.login_page import Field
 
 API = "https://api.telegram.org"
 POLL_S = 50  # how long a request for new messages waits for one to come; Telegram's longest
@@ -641,8 +642,8 @@ class TelegramTars:
             answer.append(kind)
             tapped.set()
 
-    def login(self, person: str, site: str, goal: str) -> tuple[str, str] | None:
-        """`person`'s login for `site`, from a one-time page whose link goes to their chat."""
+    def login(self, person: str, site: str, goal: str, fields: list[Field]) -> dict[str, str] | None:
+        """`person`'s login for `site`, for each of `fields`, from a one-time page whose link goes to their chat."""
         from .browser.login_page import Asking, ask, reachable_address
 
         chat = self._chat_for(person)
@@ -657,7 +658,7 @@ class TelegramTars:
                        f"it here (the link works once, for 10 minutes):\n{url}", tries=SEND_TRIES)  # fmt: skip
 
         try:
-            given = ask(Asking(site, why), send_link, host, port)
+            given = ask(Asking(site, why, tuple(fields)), send_link, host, port)
         except OSError as e:  # the port taken, or the address gone: said in the chat, and the errand told no
             print(f"(Telegram: couldn't serve the login page on {host}:{port}: {e})")
             self._send(chat.chat_id, f"I couldn't open the page to add a login for {site}, so I stopped there.")

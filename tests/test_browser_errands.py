@@ -205,8 +205,10 @@ def test_an_errands_answer_is_posted_and_remembered():
 
 def test_the_login_page_takes_one_login_with_its_token_only(unused_port):
     links, got = [], []
-    asking = threading.Thread(target=lambda: got.append(login_page.ask(
-        login_page.Asking(KSP, "to order a cable"), links.append, "127.0.0.1", unused_port, wait_s=3)))  # fmt: skip
+    asking_for = login_page.Asking(KSP, "to order a cable", FIELDS)
+    asking = threading.Thread(
+        target=lambda: got.append(login_page.ask(asking_for, links.append, "127.0.0.1", unused_port, wait_s=3))
+    )
     asking.start()
     until(lambda: links)
     link = links[0]
@@ -214,17 +216,30 @@ def test_the_login_page_takes_one_login_with_its_token_only(unused_port):
     token = link.split("token=")[1]
     page = httpx.get(link)
     assert page.status_code == 200 and "www.ksp.co.il" in page.text and page.headers["cache-control"] == "no-store"
+    assert "מספר תעודת זהות" in page.text and 'name="teudat_zehut"' in page.text and 'type="password"' in page.text
     assert httpx.get(link.replace(token, "wrong")).status_code == 404
-    form = {"token": token, "username": "alon@example.com", "password": "hunter2"}
+    form = {"token": token, "username": " alon@example.com ", "teudat_zehut": "012345678", "password": "hunter2"}
+    missing = {**form, "teudat_zehut": ""}
+    assert httpx.post(f"http://127.0.0.1:{unused_port}/login", data=missing).status_code == 400
     assert httpx.post(f"http://127.0.0.1:{unused_port}/login", data={**form, "token": "x"}).status_code == 404
     assert httpx.post(f"http://127.0.0.1:{unused_port}/login", data=form).status_code == 200
     asking.join(3)
-    assert got == [("alon@example.com", "hunter2")]
+    assert got == [{"username": "alon@example.com", "teudat_zehut": "012345678", "password": "hunter2"}]
 
 
 def test_a_site_shown_on_the_page_is_escaped():
-    html_page = login_page.page(login_page.Asking("https://x.example/<script>", "why <b>"), "tok")
+    html_page = login_page.page(
+        login_page.Asking("https://x.example/<script>", "why <b>", (login_page.Field('a"b', "<i>"),)), "tok"
+    )
     assert "<script>" not in html_page and "&lt;script&gt;" in html_page and "&lt;b&gt;" in html_page
+    assert "<i>" not in html_page and 'name="a&quot;b"' in html_page
+
+
+FIELDS = (
+    login_page.Field("username", "Email or phone"),
+    login_page.Field("teudat_zehut", "מספר תעודת זהות"),
+    login_page.Field("password", "Password", secret=True),
+)
 
 
 @pytest.fixture
@@ -277,7 +292,11 @@ class FakeImap:
         pass
 
 
-GMAIL_LOGIN = Login("imap.gmail.com alon@gmail.com", ("imaps://imap.gmail.com",), "alon@gmail.com", "abcd efgh")
+GMAIL_LOGIN = Login(
+    "imap.gmail.com alon@gmail.com",
+    ("imaps://imap.gmail.com",),
+    (("username", "alon@gmail.com"), ("password", "abcd efgh")),
+)
 
 
 def test_a_sites_own_domain_is_its_last_labels_with_a_country_suffix():
@@ -340,7 +359,7 @@ def test_a_site_that_signs_in_by_email_gets_the_mailboxs_address_and_the_link_fr
 
 def test_a_code_from_the_email_is_typed_when_it_comes_first(tmp_path):
     vault = Vault(tmp_path)
-    vault.store("Alon", [KSP], "alon@example.com")
+    vault.store("Alon", [KSP], {"username": "alon@example.com"})
     vault.store_mailbox("Alon", "alon@gmail.com", "abcd efgh")
     page = SignInPage(screen(username=field("email")), screen(code=field("otp")), screen(url=KSP + "/account"))
 

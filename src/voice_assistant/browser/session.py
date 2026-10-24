@@ -451,7 +451,7 @@ def _blank(text: str, secrets: set[str]) -> str:
     """`text` with each of `secrets` blanked out, as typed and as a form or a URL encodes it."""
     from urllib.parse import quote, quote_plus
 
-    for secret in secrets:
+    for secret in filter(None, secrets):  # an empty one would blank between every character
         for form in {secret, quote(secret, safe=""), quote_plus(secret), json.dumps(secret)[1:-1]}:
             text = text.replace(form, "•••")
     return text

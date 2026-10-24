@@ -49,12 +49,35 @@ client, which its terms forbid.
 | "send me a packing list for Rome" | the list is posted in the chat, and kept on the TARS page |
 | /new | starts a new conversation: TARS forgets this one |
 | "I took the pills" | acknowledges a reminder that was said aloud at home and is waiting for a "got it" |
+| "order the usual margherita from Wolt" | with [browser] on, an errand in TARS's browser ([browser.md](browser.md)): "On it.", then the order to approve here, and how it went |
 
 And from home: "hey TARS, send me the recipe" puts it on the TARS page and in the asker's chat. Things sent for the
 household (a shared shopping list) stay on the TARS page only.
 
 Chats are on the web UI's Home page like any conversation, marked "A chat on Telegram", and the Reminders page says
 which reminders were sent on Telegram.
+
+### Errands in the browser
+
+With `[browser]` on, TARS can be sent on an errand on a website from a chat: ordering, booking, or finding something
+in an account there. The errand runs on its own, for a few minutes, while the chat goes on; one runs at a time.
+What it needs on the way comes to the chat of whoever asked:
+
+- **An order to approve.** A screenshot of the checkout, what it commits them to (what, how many, the total, read
+  off the page), and **Order** and **Cancel** buttons. Only a tap on Order, on that message, from their own chat,
+  within ten minutes, is a yes; then code presses the site's button (with `really_order` on; off, it's a dry run).
+- **A login TARS doesn't have.** A link to a one-time page served by TARS's own machine (below), for the site the
+  browser is actually at, asking for exactly what that site's sign-in form asks, by its own labels. What's entered
+  goes into TARS's vault for that site only.
+- **A sign-in code.** "KSP has sent you a sign-in code. Send it here." The next message that's only a code goes to
+  the sign-in, not to the conversation. If TARS reads their email, it looks for the code there at the same time, and
+  takes whichever comes first.
+- **The answer**, when it's done, as part of the conversation: "is that the one from last week?" afterwards knows
+  what "that" is.
+
+The login page is served on `[browser] login_host` and `login_port` (8091) only while it waits, and answers only the
+link's token, once. It's plain HTTP, so it's better reached over Tailscale (encrypted) than over the home Wi-Fi;
+with `login_host` empty, it's this machine's Tailscale address if it has one.
 
 ## Design
 
@@ -156,7 +179,8 @@ part of every request's address, so no error message includes the address.
 ## What it sends Telegram
 
 Telegram gets what's written in the chats, the voice messages sent there, TARS's replies, the reminders posted
-there, and what TARS sends to them. Nothing from home goes to Telegram except the things sent for someone with a
+there, and what TARS sends to them; with `[browser]`, an errand's checkout screenshot and what it asks to approve,
+and the sign-in codes sent back. A login is never sent through Telegram: only a link to TARS's own page for it. Nothing from home goes to Telegram except the things sent for someone with a
 chat. A voice message's recording also goes to speech to text, as a request at home does: Deepgram, or OpenAI if
 Deepgram fails. Telegram bot chats aren't end-to-end encrypted: Telegram's servers can read them, as they can any
 chat that isn't a secret chat.
