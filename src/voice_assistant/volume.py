@@ -4,8 +4,8 @@ Linux's sound mixer (ALSA's amixer); on a Mac, the system's output volume, which
 output. It's TARS's process that speaks through it, so only the voice has it: a chat works nothing in the house.
 
 What it reports is the level the computer has set. A speakerphone's own buttons may change its volume without
-telling the computer (the PowerConf's do on Linux), so after those the level said may be off until it's next set
-here."""
+telling the computer (not yet checked on the PowerConf), so after those the level said may be off until it's next
+set here."""
 
 import platform
 import shutil

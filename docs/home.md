@@ -121,8 +121,9 @@ through Linux's sound mixer (`amixer`, in `alsa-utils`); on a Mac, the system's 
 speakerphone's when it's the output. It's never set below 10% unless asked to mute: below that TARS couldn't be
 heard saying it's done. A chat doesn't have it: it's the voice's process that speaks through it.
 
-The level it says is the one the computer set. The PowerConf's own volume buttons change it without telling the
-computer, so after those, what TARS says may be off until it's next set by asking.
+The level it says is the one the computer set. A speakerphone's own volume buttons may change its volume without
+telling the computer (not yet checked on the PowerConf), so after those, what TARS says may be off until it's next
+set by asking.
 
 ### Your own devices
 
