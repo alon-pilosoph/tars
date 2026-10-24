@@ -460,8 +460,9 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None):
     """The devices in the house, as [home] lists them, with "who's home" given `presence` (a HomeTools), or None.
     Like every service, optional: one that can't be made (no token, a missing extra, a plugin's own problem) is left
     out with a line saying why. `announce(line)`: how TARS says something on its own, later (how a task on the TV
-    went)."""
-    if not (cfg.home.devices or presence):
+    went); given it (the voice's process), TARS's own speaker is one of the devices too."""
+    speaker = own_volume(cfg) if announce else None  # only the voice speaks through it
+    if not (cfg.home.devices or presence or speaker):
         return None
     from .androidtv import make_tv_agent
     from .home import Context, build
@@ -474,12 +475,22 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None):
         from .presence import DEVICE, WhoIsHome
 
         extra[DEVICE] = WhoIsHome(presence.board, presence.away_after_min)
+    if speaker:
+        extra[speaker.name] = speaker
     built = build(cfg.home, context, extra)
     for name, why in built.unavailable.items():
         print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
     if built.tools:
         print(f"(home: the house has {', '.join(built.tools.devices)})")
     return built.tools
+
+
+def own_volume(cfg: Config):
+    """TARS's own speaker as a device (volume.py), or None where its volume can't be read."""
+    from .volume import OwnVolume, mixer_for
+
+    mixer = mixer_for(cfg.audio.output_device)
+    return OwnVolume(mixer) if mixer else None
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):

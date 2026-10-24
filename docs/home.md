@@ -18,6 +18,7 @@ household's IR-only AC and TV remotes.
 | "Turn the AC on at 22" | the mode and temperature set; "sent" if Home Assistant can't see the AC (an IR one) |
 | "Close the blinds" | "They're closing.": a cover takes a while, so on its way is enough |
 | "Turn it up a bit" | the soundbar's volume up, three presses |
+| "You're too loud" / "Set your volume to 40" | TARS's own speaker turned down a step, or set to 40%; "how loud are you?" says its level |
 | "How warm is it in the living room?" | a sensor, read |
 | "Play Toy Story on Stremio" | "On it.", and the TV's agent works it out on screen; "Toy Story is playing." after a chime |
 | "Is everything off?" | every device's status at once |
@@ -110,6 +111,18 @@ for the step it's on (an app opening, a wait) to end first, so the two never fig
 sent twice: one the box may have had before it stopped answering isn't tried again. A task costs a few cents of OpenAI:
 each step is one request, with a screenshot when the app's text isn't enough, and only the latest screenshot is sent
 again.
+
+### TARS's own speaker
+
+TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which "you", "yourself" and "your volume"
+are about (`volume.py`). Its status is the volume; `set` takes a level, a percent; `press` takes volume up or down
+(10% a press), mute or unmute. On the Pi it's the speakerphone's own volume (`[audio] output_device`, the PowerConf),
+through Linux's sound mixer (`amixer`, in `alsa-utils`); on a Mac, the system's output volume, which is the
+speakerphone's when it's the output. It's never set below 10% unless asked to mute: below that TARS couldn't be
+heard saying it's done. A chat doesn't have it: it's the voice's process that speaks through it.
+
+The level it says is the one the computer set. The PowerConf's own volume buttons change it without telling the
+computer, so after those, what TARS says may be off until it's next set by asking.
 
 ### Your own devices
 

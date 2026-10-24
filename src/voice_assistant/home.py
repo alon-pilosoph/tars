@@ -34,7 +34,7 @@ PLAY, DO = "play", "do"
 # The actions every device kind together can take, in the order the tool lists them; a plugin may add its own.
 ACTIONS = (STATUS, ON, OFF, SET, PRESS, LOCK, UNLOCK, OPEN, CLOSE, PLAY, DO)
 # The settings an action may take, as the tool's arguments; each device uses the ones it needs.
-SETTINGS = ("minutes", "temperature", "mode", "fan", "button", "times", "app", "title", "goal")
+SETTINGS = ("minutes", "temperature", "mode", "fan", "level", "button", "times", "app", "title", "goal")
 # How long a change waits for the turn to be over before it gives up: longer than anyone pauses mid-sentence.
 GO_AHEAD_TIMEOUT_S = 60.0
 # The words heard have to ask to unlock: the model can't unlock on its own reading of something else.
@@ -236,6 +236,7 @@ def home_tool(devices: dict[str, Device]) -> dict:
         "temperature": ("number", "degrees Celsius; null: as it is."),
         "mode": ("string", "a heating or cooling mode the device lists; null: as it is."),
         "fan": ("string", "a fan speed the device lists; null: as it is."),
+        "level": ("number", "set: a level from 0 to 100 percent, where the device has one (a volume); null: as it is."),
         "button": ("string", "press: the button, as the device lists them."),
         "times": ("integer", "press: how many times; null: once."),
         "app": ("string", "open or play: the app, by name."),
