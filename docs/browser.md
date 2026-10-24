@@ -158,65 +158,23 @@ moving), so an errand takes longer than on a Mac, mostly in the browser: the mod
 
 ## How well it works
 
-Sixteen tasks on the real sites (`evals/browser/tasks.toml`): eight questions, one look at the person's own
-account, and seven orders and bookings up to the last button. Nothing is ever ordered: the runner approves each
-commit as a dry run, which stops the agent there, and empties any basket a task filled. Graded by reading each
-answer and trace against the task's `check`. Run on 2026-10-23 with Luna, against the first prototype
-(`tools/browser_proto.py`: its own page scraping, numbered elements, a screenshot every turn):
+Measured on sixteen tasks on the real sites, every order stopped at the last button
+([browser-evals.md](browser-evals.md), with every run). The short of it:
 
-| Task | Prototype | New, first visit | New, with notes |
-|---|---|---|---|
-| rail-next-train | ❌ 25 turns, 82 s | ✅ 6 turns, 33 s | ✅ 6 turns, 23 s |
-| zap-cheapest | ✅ 2 turns, 20 s | ✅ 2 turns, 9 s | ✅ 3 turns, 12 s |
-| flights-athens | ✅ 10 turns, 57 s | ✅ 11 turns, 47 s | ✅ 11 turns, 30 s |
-| museum-hours | ✅ 2 turns, 11 s | ✅ 2 turns, 12 s | ✅ 2 turns, 11 s |
-| github-release | ✅ 2 turns, 12 s | ✅ 2 turns, 22 s | ✅ 2 turns, 21 s |
-| ynet-headlines | ✅ 2 turns, 19 s | ✅ 2 turns, 12 s | ✅ 2 turns, 9 s |
-| maps-drive | ❌ 25 turns, 577 s | ✅ 8 turns, 43 s | ✅ 4 turns, 17 s |
-| wolt-last-order | ✅ 4 turns, 17 s | ✅ 4 turns, 24 s | ✅ 4 turns, 21 s |
-| wolt-reorder | ❌ 25 turns, 114 s | ✅ 8 turns, 45 s | ✅ 8 turns, 44 s |
-| wolt-margherita | 🟡 7 turns, 33 s | 🟡 11 turns, 68 s | 🟡 6 turns, 41 s |
-| wolt-options | ❌ 9 turns, 34 s | ✅ 11 turns, 64 s | ✅ 13 turns, 88 s |
-| wolt-groceries | ❌ 25 turns, 131 s | ❌ 12 turns, 48 s | 🟡 19 turns, 156 s |
-| ksp-cable | ❌ 25 turns, 165 s | ❌ 11 turns, 57 s | ❌ 11 turns, 63 s |
-| ikea-lamp | ❌ 25 turns, 136 s | ✅ 4 turns, 16 s | ✅ 3 turns, 10 s |
-| booking-athens | ❌ 6 turns, 25 s | ❌ 7 turns, 26 s | ❌ 6 turns, 32 s |
-| ontopo-table | ❌ 8 turns, 35 s | ✅ 13 turns, 83 s | ✅ 18 turns, 75 s |
-| **All** | **6/16**, 202 turns, 24.5 min, $0.07 | **12/16**, 114 turns, 10.1 min, $0.07 | **12/16**, 118 turns, 10.9 min, $0.09 |
-
-✅ right; 🟡 most of the way (the right basket, but a step short or a choice not checked); ❌ wrong or stopped.
-Two ✅ are a right "can't": the hummus place was closed (the basket was ready at checkout), and IKEA Israel sells in
-stores only (ikea-lamp was an order then; it's a question now).
-
-- **Twice the tasks, in less than half the time.** Most of it is seeing the page as it is: the prototype's own
-  scraping missed what sites draw in code (Wolt's required options, a menu Booking.com opens at the end of the page,
-  Ontopo's date picker), and it went round in circles there until it ran out of turns.
-- **A turn is about 1.5 s of model and 2 s of browser.** A task is mostly how many turns it takes, so the gains
-  came from fewer turns: batches that stop when the page changes under them, clicking text that has no ref, and
-  seeing first what a step just opened.
-- **Every order stopped where it should.** Each approval was at the button that commits ("Place order"), with the
-  checkout's total, and the gate refused the clicks that tried to go further. No run placed an order or a booking.
-- **The notes didn't pay off yet.** The second visit was as right as the first and no quicker overall: quicker on
-  Maps and Flights, slower where a note sent it the long way round. A note that recorded a past run's dead end
-  ("the results didn't show") made the next run give up; notes are now about how a site works, never how a run
-  went, and the page outranks a note.
-
-What still goes wrong:
-
-- **Booking.com** redraws its results slowly after a sort, and the agent reads the page half drawn and gives up
-  rather than waiting or scrolling.
-- **KSP** reaches the cart, but not past it to the checkout.
-- **Choosing**: "well rated" isn't checked against the ratings the list shows before picking.
-- **Grocery search** on Wolt's markets is slow, and a closed store is a dead end where another store would do.
+- **The rebuild did 12 of 16 where the first prototype did 6**, in less than half the time, mostly from seeing the
+  page as it is (the accessibility tree) rather than scraping it.
+- **On the five hardest** (a Wolt margherita, a salad built to a spec, groceries, a cable at KSP under ₪50 all in,
+  the cheapest well-rated hotel on Booking.com), TARS's loop with the whole errand in view and the model's reasoning
+  carried did all five with Luna, at about seven cents a task, and with Sol at ten times that. With only the newest
+  page in full, Opus and Sol each managed 3-4. Claude Code with Opus did all five too, a little faster.
+- **On a simulated Pi 4**, the nine tasks that need no account all came out right, about twice as slowly as on a
+  Mac.
+- **Every order stopped at the button that commits**, with the checkout's total, in every run of every loop.
 
 ```bash
 uv run --all-extras python tools/browser_eval.py                         # every task, the new agent
 uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off   # one, as a first visit
-uv run --all-extras python tools/browser_eval.py --agent proto           # the prototype, on a copy of the profile
 ```
-
-A round starts with TARS's baskets empty, and costs about $0.10 and ten minutes. Records and traces go to
-`voice_data/browser/evals/<time>-<label>/`.
 
 ## Not yet
 
