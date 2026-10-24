@@ -18,7 +18,7 @@ household's IR-only AC and TV remotes.
 | "Turn the AC on at 22" | the mode and temperature set; "sent" if Home Assistant can't see the AC (an IR one) |
 | "Close the blinds" | "They're closing.": a cover takes a while, so on its way is enough |
 | "Turn it up a bit" | the soundbar's volume up, three presses |
-| "You're too loud" / "Set your volume to 40" | TARS's own speaker turned down a step, or set to 40%; "how loud are you?" says its level |
+| "You're too loud" / "Set your volume to 40" | with `[home] own_speaker`: TARS's own speaker a step down, or at 40%, read back; "how loud are you?" says its level |
 | "How warm is it in the living room?" | a sensor, read |
 | "Play Toy Story on Stremio" | "On it.", and the TV's agent works it out on screen; "Toy Story is playing." after a chime |
 | "Is everything off?" | every device's status at once |
@@ -114,16 +114,24 @@ again.
 
 ### TARS's own speaker
 
-TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which "you", "yourself" and "your volume"
-are about (`volume.py`). Its status is the volume; `set` takes a level, a percent; `press` takes volume up or down
-(10% a press), mute or unmute. On the Pi it's the speakerphone's own volume (`[audio] output_device`, the PowerConf),
-through Linux's sound mixer (`amixer`, in `alsa-utils`); on a Mac, the system's output volume, which is the
-speakerphone's when it's the output. It's never set below 10% unless asked to mute: below that TARS couldn't be
-heard saying it's done. A chat doesn't have it: it's the voice's process that speaks through it.
+With `[home] own_speaker = true`, TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which
+"you", "yourself" and "your volume" are about (`volume.py`). Its status is the volume; `set` takes a level, a percent;
+`press` takes volume up or down (10% a press) or unmute. Only the voice's processes have it: a chat has no speaker of
+TARS's to turn.
 
-The level it says is the one the computer set. A speakerphone's own volume buttons may change its volume without
-telling the computer (not yet checked on the PowerConf), so after those, what TARS says may be off until it's next
-set by asking.
+- **On the Pi** it's the playback volume of the sound card TARS plays to, through Linux's sound mixer (`amixer`, in
+  `alsa-utils`). The card is the one in the device's name as `--list-devices` shows it ("Anker PowerConf: USB Audio
+  (hw:2,0)" is card 2), so `[audio] output_device` must name the speakerphone: the system's "default" doesn't say
+  which card it is, and TARS leaves its speaker out rather than guess. The control is one with a playback volume,
+  never the microphone's, set as the percent alsamixer shows.
+- **On a Mac** it's the system's output volume, so only when TARS plays to the default output.
+
+It's never muted or set below 10%: a TARS that can't be heard can't say a timer is up, or that it's turned itself
+back up. Asked to mute or be quiet, it goes down to 10% and says that's as low as it goes; anything it sets unmutes it.
+It reads the level back after setting it and says "done" only when that's what it set. A speakerphone's own volume
+buttons may change its volume without telling the computer (not yet checked on the PowerConf), so after those, the
+level TARS says may be off until it's next set by asking. At startup, and in `--check`, a speaker it can't turn is
+said with why.
 
 ### Your own devices
 

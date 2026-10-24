@@ -152,7 +152,7 @@ def test_the_rules_list_each_device_and_each_kinds_rules_once():
     rules = house().tools.rules()
     assert "- front door: a lock: status, lock, unlock" in rules and "Call unlock at once" in rules
     assert "call the tool even if its status says it's already that way" in rules
-    assert rules.count("press volume_up or volume_down 3 times") == 1
+    assert rules.count("volume_up or volume_down pressed 3 times") == 1
     assert "An Android TV box wakes and sleeps the TV" in rules
 
 

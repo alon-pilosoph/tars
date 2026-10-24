@@ -67,7 +67,7 @@ flowchart LR
 
 ## Quick start
 
-Needs [uv](https://docs.astral.sh/uv/). On Linux (a Pi included), first `sudo apt install libportaudio2 libatomic1`.
+Needs [uv](https://docs.astral.sh/uv/). On Linux (a Pi included), first `sudo apt install libportaudio2 libatomic1 alsa-utils`.
 
 ```bash
 git clone https://github.com/alon-pilosoph/tars.git && cd tars

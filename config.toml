@@ -221,6 +221,10 @@ unlock_voices = []
 unlock_threshold = 0.6
 # The model that works an Android TV step by step, reading its screen. Empty = [llm] model.
 tv_model = ""
+# TARS's own speaker as a device, for the voice: "how loud are you?", "turn yourself down a bit", "set your volume to
+# 40" (docs/home.md#tarss-own-speaker). On the Pi it's [audio] output_device's own volume, so name the speakerphone
+# there; on a Mac, the system's output volume, only when TARS plays to the default output.
+own_speaker = false
 # Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
 # [home.plugins.my_house]
 # module = "examples.my_house"

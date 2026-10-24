@@ -456,12 +456,11 @@ def make_chat_when_out(cfg: Config, presence, reminders):
     return ChatWhenOut(reminders.reminders, presence.board.is_out, cfg.telegram.people)
 
 
-def make_home(cfg: Config, root: Path, announce=None, presence=None):
-    """The devices in the house, as [home] lists them, with "who's home" given `presence` (a HomeTools), or None.
-    Like every service, optional: one that can't be made (no token, a missing extra, a plugin's own problem) is left
-    out with a line saying why. `announce(line)`: how TARS says something on its own, later (how a task on the TV
-    went); given it (the voice's process), TARS's own speaker is one of the devices too."""
-    speaker = own_volume(cfg) if announce else None  # only the voice speaks through it
+def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=None):
+    """The devices in the house, as [home] lists them, with "who's home" given `presence` and TARS's own speaker given
+    `speaker` (own_speaker's), as a HomeTools, or None. Like every service, optional: one that can't be made (no
+    token, a missing extra, a plugin's own problem) is left out with a line saying why. `announce(line)`: how TARS
+    says something on its own, later (how a task on the TV went)."""
     if not (cfg.home.devices or presence or speaker):
         return None
     from .androidtv import make_tv_agent
@@ -485,12 +484,19 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None):
     return built.tools
 
 
-def own_volume(cfg: Config):
-    """TARS's own speaker as a device (volume.py), or None where its volume can't be read."""
-    from .volume import OwnVolume, mixer_for
+def own_speaker(cfg: Config):
+    """With [home] own_speaker, TARS's own speaker as a device of the voice's (volume.py), or None, saying why, when
+    its volume can't be read or set."""
+    if not cfg.home.own_speaker:
+        return None
+    from .home import HomeError
+    from .volume import DEVICE, OwnVolume, speaker_mixer
 
-    mixer = mixer_for(cfg.audio.output_device)
-    return OwnVolume(mixer) if mixer else None
+    try:
+        return OwnVolume(speaker_mixer(cfg.audio.output_device))
+    except HomeError as e:
+        print(f"(home: {DEVICE} isn't connected: {e}; see docs/home.md)")
+        return None
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):
@@ -857,7 +863,8 @@ def typed(cfg: Config, root: Path) -> None:
                     made[0].brain.remember_said(line)
 
     presence = make_presence(cfg, root, make_event_log(cfg, root)) if cfg.presence.enabled else None
-    _, brain, voice = make_pipeline(cfg, root, typed=True, home=make_home(cfg, root, announce, presence))
+    home = make_home(cfg, root, announce, presence, own_speaker(cfg))
+    _, brain, voice = make_pipeline(cfg, root, typed=True, home=home)
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
@@ -891,7 +898,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
     start_presence(presence, reminders)
     announcements = Announcements()
-    home = make_home(cfg, root, announcements.add, presence)
+    home = make_home(cfg, root, announcements.add, presence, own_speaker(cfg))
     browser = voice_errands(cfg, events)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home, browser=browser)
     recorder = make_recorder(cfg, root)

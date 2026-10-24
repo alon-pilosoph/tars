@@ -407,7 +407,7 @@ class MediaPlayer(Entity):
         return f"a media player: status, on, off, press ({', '.join(BUTTONS)})"
 
     def rules(self) -> str:
-        return "For a little louder or quieter, press volume_up or volume_down 3 times; for a lot, 8."
+        return "A media player a little louder or quieter is volume_up or volume_down pressed 3 times; a lot, 8."
 
     def _extra(self, found: dict) -> list[str]:
         a = found.get("attributes") or {}
