@@ -66,24 +66,62 @@
       <section class="intro front" aria-label="Introduction">
         <div>
           <h1>A voice assistant for one household</h1>
-          <p class="lead">
-            TARS runs on a Raspberry Pi at home and uses a few cloud services for the hard parts. It answers in about
-            1.2 seconds, and nothing leaves the house until a second, stricter check is sure it heard “hey TARS”.
-          </p>
+          <p class="lead">TARS runs on a Raspberry Pi at home and uses a few cloud services for the hard parts.</p>
+          <div class="facts">
+            <a class="fact" href="how-it-works.html#timeline"
+              ><span class="k">Time</span><b>About 1.2 s</b><span>from your last word to its first sound.</span></a
+            >
+            <a class="fact" href="how-it-works.html#wake"
+              ><span class="k">Boundary</span><b>Nothing leaves the house</b
+              ><span>until a second, stricter check is sure it heard “hey TARS”.</span></a
+            >
+          </div>
         </div>
         <div class="request">
           <span class="k">Things the household says to it</span>
-          <p class="said"><b>Alon</b> Hey TARS, how long do I boil an egg?</p>
-          <p class="said"><b>Alon</b> Lock the front door.</p>
-          <p class="said"><b>Alon</b> Tell Stacey dinner's ready when she's back.</p>
-          <p class="said"><b>Alon</b> Order the usual margherita from Wolt.</p>
-          <span class="foot">Aloud at home, or in a Telegram chat from anywhere.</span>
+          <ul class="asks">
+            <li>
+              <a href="how-it-works.html#timeline"
+                ><span class="said"><b>Alon</b> Hey TARS, how long do I boil an egg?</span
+                ><span class="tag">How it works</span></a
+              >
+            </li>
+            <li>
+              <a href="features.html#house"
+                ><span class="said"><b>Alon</b> Lock the front door.</span><span class="tag">The house</span></a
+              >
+            </li>
+            <li>
+              <a href="features.html#reminders"
+                ><span class="said"><b>Alon</b> Tell Stacey dinner's ready when she's back.</span
+                ><span class="tag">Reminders</span></a
+              >
+            </li>
+            <li>
+              <a href="features.html#browser"
+                ><span class="said"><b>Alon</b> Order the usual margherita from Wolt.</span
+                ><span class="tag">Errands on the web</span></a
+              >
+            </li>
+          </ul>
+          <span class="foot"
+            >Aloud at home, or in a <a href="features.html#telegram">Telegram chat</a> from anywhere.</span
+          >
         </div>
       </section>
 
       <nav class="doors" aria-label="The site">
         <a class="door" href="how-it-works.html"
           ><span class="k">How it works</span><b>One request, second by second</b>
+          <span class="peek lanes" aria-hidden="true"
+            ><span
+              ><i style="left: 0; width: 10%"></i><i style="left: 16%; width: 34%"></i
+              ><i class="soft" style="left: 88%; width: 12%"></i></span
+            ><span><i class="soft" style="left: 14%; width: 40%"></i><i style="left: 66%; width: 14%"></i></span
+            ><span
+              ><i class="shut" style="left: 0; width: 14%"></i><i class="soft" style="left: 16%; width: 34%"></i
+              ><i style="left: 50%; width: 10%"></i><i style="left: 60%; width: 8%"></i></span
+          ></span>
           <p>
             What happens between “hey TARS” and the answer: the wake word checked twice on the Pi, the cloud opened only
             then, the answer started before you finish, and a second option for every part.
@@ -92,10 +130,14 @@
         >
         <a class="door" href="features.html"
           ><span class="k">Features</span><b>Everything else it does</b>
-          <p>
-            Reminders said until someone says “got it”, the house, who's home, Telegram, errands on any website, and
-            wake models that learn the household's voices.
-          </p>
+          <ol class="peek six">
+            <li><span class="no">1</span>Reminders and timers</li>
+            <li><span class="no">2</span>The house</li>
+            <li><span class="no">3</span>Who's home</li>
+            <li><span class="no">4</span>Telegram</li>
+            <li><span class="no">5</span>Errands on the web</li>
+            <li><span class="no">6</span>It learns the household</li>
+          </ol>
           <span class="go">See the features →</span></a
         >
       </nav>
@@ -103,12 +145,16 @@
 
     <footer>
       <div class="wrap">
-        <b>TARS</b><span>A voice assistant for one household.</span>
-        <span class="links"
-          ><a href="how-it-works.html">How it works</a><a href="features.html">Features</a
+        <div class="about"><b>TARS</b><span>A voice assistant for one household.</span></div>
+        <nav aria-label="The site">
+          <span class="k">The site</span><a href="./" aria-current="page">Front page</a
+          ><a href="how-it-works.html">How it works</a><a href="features.html">Features</a>
+        </nav>
+        <nav aria-label="Elsewhere">
+          <span class="k">Elsewhere</span
           ><a href="https://huggingface.co/datasets/alon-p/hey-tars-training">Training data ↗</a
-          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a></span
-        >
+          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a>
+        </nav>
       </div>
     </footer>
   </body>

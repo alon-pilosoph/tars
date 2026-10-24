@@ -69,44 +69,53 @@
           Answering a question is the main flow, and <a href="how-it-works.html">How it works</a> follows one. This page
           is everything else: what each part does, and what it promises.
         </p>
-        <ul class="index" aria-label="The features">
+        <div class="seg level" role="group" aria-label="How much detail">
+          <span class="k">Detail</span><button type="button" data-level-pick="basic">Basic</button
+          ><button type="button" data-level-pick="detailed">Detailed</button>
+        </div>
+        <ol class="index" aria-label="The features">
           <li>
-            <a href="#reminders"><b>Reminders and timers</b><span>Said again until someone says “got it”.</span></a>
+            <a href="#reminders"
+              ><span class="no">1</span><b>Reminders and timers</b
+              ><small>Said again until someone says “got it”.</small></a
+            >
           </li>
           <li>
             <a href="#house"
-              ><b>The house</b
-              ><span>The lock, the boiler, the AC and the TV, done only when the device says so.</span></a
+              ><span class="no">2</span><b>The house</b
+              ><small>The lock, the boiler, the AC and the TV, done only when the device says so.</small></a
             >
           </li>
           <li>
             <a href="#presence"
-              ><b>Who's home</b><span>From whose phone is on the Wi-Fi, asked of the routers themselves.</span></a
+              ><span class="no">3</span><b>Who's home</b
+              ><small>From whose phone is on the Wi-Fi, asked of the routers themselves.</small></a
             >
           </li>
           <li>
             <a href="#telegram"
-              ><b>Telegram</b><span>The same TARS in a chat, written or spoken, from anywhere.</span></a
+              ><span class="no">4</span><b>Telegram</b
+              ><small>The same TARS in a chat, written or spoken, from anywhere.</small></a
             >
           </li>
           <li>
             <a href="#browser"
-              ><b>Errands on the web</b
-              ><span>Any site, signed in from its own vault, and nothing ordered without a tap.</span></a
+              ><span class="no">5</span><b>Errands on the web</b
+              ><small>Any site, signed in from its own vault, and nothing ordered without a tap.</small></a
             >
           </li>
           <li>
             <a href="#learn"
-              ><b>It learns the household</b
-              ><span>Every wake teaches the next wake models, and voices get names.</span></a
+              ><span class="no">6</span><b>It learns the household</b
+              ><small>Every wake teaches the next wake models, and voices get names.</small></a
             >
           </li>
-        </ul>
+        </ol>
       </section>
 
       <section id="reminders" class="part">
         <div class="part-head">
-          <div class="kicker">Reminders, timers and messages</div>
+          <div class="kicker"><span class="no">1</span>Reminders, timers and messages</div>
           <h2>It says it again until someone says “got it”</h2>
           <p class="lead">
             The same voice that answers can also speak first. You set it by voice or from the web UI, and TARS says it
@@ -160,7 +169,7 @@
 
       <section id="house" class="part">
         <div class="part-head">
-          <div class="kicker">The house</div>
+          <div class="kicker"><span class="no">2</span>The house</div>
           <h2>Done means the device says so</h2>
           <p class="lead">
             TARS locks the door, runs the boiler, sets the AC and plays things on the TV, through Home Assistant on the
@@ -216,7 +225,7 @@
 
       <section id="presence" class="part">
         <div class="part-head">
-          <div class="kicker">Who's home</div>
+          <div class="kicker"><span class="no">3</span>Who's home</div>
           <h2>The routers already know</h2>
           <p class="lead">
             TARS knows who's home from whose phone is on the home Wi-Fi. It signs into the routers and asks them every
@@ -268,7 +277,7 @@
 
       <section id="telegram" class="part">
         <div class="part-head">
-          <div class="kicker">On Telegram</div>
+          <div class="kicker"><span class="no">4</span>On Telegram</div>
           <h2>The same TARS, in writing, from anywhere</h2>
           <p class="lead">
             Each person can chat with TARS on Telegram, in writing or with a voice message: ask it something, set a
@@ -319,7 +328,7 @@
 
       <section id="browser" class="part">
         <div class="part-head">
-          <div class="kicker">Errands on the web</div>
+          <div class="kicker"><span class="no">5</span>Errands on the web</div>
           <h2>Any site, and nothing ordered without a tap</h2>
           <p class="lead">
             Asked aloud or in a chat, TARS does an errand on a website in its own browser: orders on Wolt, books a
@@ -369,7 +378,7 @@
 
       <section id="learn" class="part">
         <div class="part-head">
-          <div class="kicker">It learns from the household</div>
+          <div class="kicker"><span class="no">6</span>It learns from the household</div>
           <h2>Every wake teaches the next pair of models</h2>
           <p class="lead">
             TARS hears its name in two stages on the Pi (<a href="how-it-works.html#wake">How it works</a>). The generic
@@ -507,25 +516,29 @@
         </ol>
       </section>
       <section class="part next" aria-label="The other page">
-        <a class="door" href="how-it-works.html"
-          ><span class="k">Next</span><b>How one request goes through TARS</b>
+        <a class="next-link" href="how-it-works.html"
+          ><span class="k">Next</span><b>How one request goes through TARS</b
+          ><span class="arrow" aria-hidden="true">→</span>
           <p>
             From “hey TARS” on the Pi to the first word of the answer, second by second, and what happens when a part of
             it fails.
-          </p>
-          <span class="go">How it works →</span></a
+          </p></a
         >
       </section>
     </main>
 
     <footer>
       <div class="wrap">
-        <b>TARS</b><span>A voice assistant for one household.</span>
-        <span class="links"
-          ><a href="how-it-works.html">How it works</a><a href="features.html">Features</a
+        <div class="about"><b>TARS</b><span>A voice assistant for one household.</span></div>
+        <nav aria-label="The site">
+          <span class="k">The site</span><a href="./">Front page</a><a href="how-it-works.html">How it works</a
+          ><a href="features.html" aria-current="page">Features</a>
+        </nav>
+        <nav aria-label="Elsewhere">
+          <span class="k">Elsewhere</span
           ><a href="https://huggingface.co/datasets/alon-p/hey-tars-training">Training data ↗</a
-          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a></span
-        >
+          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a>
+        </nav>
       </div>
     </footer>
 

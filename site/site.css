@@ -244,10 +244,6 @@ h1 {
 }
 
 /* Parts */
-.part {
-  padding: 112px 0 0;
-  scroll-margin-top: 60px;
-}
 .kicker {
   font-size: 15px;
   color: var(--muted);
@@ -1284,33 +1280,6 @@ table.cmp {
   font-size: 13px;
 }
 
-footer {
-  margin-top: 128px;
-  padding: 32px 0 48px;
-}
-footer .wrap {
-  display: flex;
-  gap: 20px;
-  align-items: center;
-  flex-wrap: wrap;
-  font-size: 14px;
-  color: var(--muted);
-}
-footer b {
-  font: 500 18px var(--serif);
-  color: var(--ink);
-  letter-spacing: 0.02em;
-}
-footer .links {
-  margin-left: auto;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 20px;
-}
-footer .links a {
-  white-space: nowrap;
-}
-
 @media (max-width: 1000px) {
   .intro,
   .two,
@@ -1335,7 +1304,8 @@ footer .links a {
     gap: 8px;
   }
   .brand span,
-  .top .ext {
+  .top .ext,
+  .top .side > .seg {
     display: none;
   }
   .top .side {
@@ -1372,7 +1342,8 @@ footer .links a {
     padding: 20px;
   }
   .part {
-    padding-top: 80px;
+    margin-top: 72px;
+    padding-top: 28px;
   }
   .clock {
     font-size: 26px;
@@ -1434,55 +1405,115 @@ footer .links a {
   .say-list li {
     font-size: 20px;
   }
-  footer .links {
-    margin-left: 0;
-  }
 }
-/* Between the pages: the header's links, the doors on the front page, the index of features, and the page next */
+/* Sections: each opens on a hairline, so the parts of a page read apart without boxes */
+.part {
+  margin-top: 112px;
+  padding-top: 40px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 76px;
+}
+.kicker {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+.no {
+  font: 400 22px/1 var(--serif);
+  color: var(--ink);
+  font-variant-numeric: lining-nums tabular-nums;
+  min-width: 14px;
+}
+
+/* Between the pages: the header's links, the level switch on a phone, the front page's doors,
+   the index of features, the page next, and the footer */
 .top .pages {
   display: flex;
-  gap: 16px;
+  gap: 2px;
   font-size: 14px;
 }
 .top .pages a {
   color: var(--muted);
   text-decoration: none;
   min-height: 44px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
 }
-.top .pages a:hover,
-.top .pages a[aria-current="page"] {
+.top .pages a:hover {
   color: var(--ink);
 }
 .top .pages a[aria-current="page"] {
+  color: var(--ink);
   font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
 }
+.top .side > .seg {
+  padding-left: 14px;
+  box-shadow: inset 1px 0 0 var(--line);
+}
+.level {
+  display: none;
+}
+
+/* The front page */
 .intro.front {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
   padding-bottom: 0;
+}
+.intro.front .lead {
+  max-width: 520px;
 }
 .intro.single {
   display: block;
+}
+.asks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.asks a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 44px;
+  padding: 11px 0;
+  text-decoration: none;
+}
+.asks li + li a {
+  box-shadow: inset 0 1px 0 var(--tint-2);
+}
+.asks .tag {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.asks a:hover .tag {
+  color: var(--ink);
+}
+.request .foot a {
+  color: inherit;
 }
 .doors {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
-  padding-top: 56px;
+  padding-top: 88px;
 }
 .door {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 28px 30px 30px;
+  padding: 30px 32px 28px;
   background: var(--tint);
   border-radius: 18px;
   text-decoration: none;
-  box-shadow: 0 0 0 1px transparent;
-  transition: box-shadow 0.15s;
 }
 .door:hover {
-  box-shadow: 0 0 0 1px var(--line-strong);
+  background: var(--tint-2);
 }
 .door .k {
   font-size: 14px;
@@ -1490,70 +1521,292 @@ footer .links a {
 }
 .door b {
   font: 400 34px/1.15 var(--serif);
+  text-wrap: balance;
 }
 .door p {
   color: var(--tars);
   text-wrap: pretty;
+  max-width: 460px;
 }
 .door .go {
   margin-top: auto;
-  padding-top: 8px;
+  padding-top: 10px;
   font-size: 15px;
-  color: var(--accent);
+  font-weight: 500;
+  color: var(--ink);
 }
+.door:hover .go {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 4px;
+}
+/* A glimpse of each page: the timeline's lanes, and the six features */
+.peek {
+  margin: 10px 0 4px;
+}
+.peek.lanes {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0;
+}
+.peek.lanes span {
+  position: relative;
+  height: 8px;
+}
+.peek.lanes i {
+  position: absolute;
+  top: 0;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--work);
+}
+.peek.lanes i.soft {
+  background: var(--work-soft);
+}
+.peek.lanes i.shut {
+  background: repeating-linear-gradient(135deg, var(--line-strong) 0 2px, transparent 2px 6px);
+}
+.peek.lanes::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 54%;
+  border-left: 2px solid var(--accent);
+}
+.peek.six {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 24px;
+  font: 400 19px/1.3 var(--serif);
+  color: var(--ink);
+}
+.peek.six li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.peek.six .no {
+  font-size: 19px;
+  color: var(--muted);
+  min-width: 12px;
+}
+
+/* The index of features */
 .index {
   list-style: none;
-  margin: 40px 0 0;
+  margin: 48px 0 0;
   padding: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 0 40px;
+}
+.index li {
+  border-top: 1px solid var(--line);
 }
 .index a {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-content: start;
   height: 100%;
-  padding: 16px 18px;
-  border-radius: 14px;
-  background: var(--tint);
+  min-height: 44px;
+  padding: 18px 0 24px;
   text-decoration: none;
 }
-.index a:hover {
-  background: var(--tint-2);
+.index .no {
+  grid-row: span 2;
+  padding-top: 1px;
 }
 .index b {
-  font: 400 20px/1.25 var(--serif);
+  font: 400 21px/1.25 var(--serif);
 }
-.index span {
+.index small {
   font-size: 14px;
+  line-height: 1.5;
   color: var(--muted);
   text-wrap: pretty;
 }
-.next .door {
-  max-width: var(--col);
+.index a:hover b {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 4px;
 }
+
+/* The page next */
+.next-link {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 32px;
+  max-width: 880px;
+  text-decoration: none;
+}
+.next-link .k {
+  grid-column: 1 / -1;
+  font-size: 15px;
+  color: var(--muted);
+}
+.next-link b {
+  grid-column: 1;
+  font: 400 42px/1.1 var(--serif);
+  text-wrap: balance;
+}
+.next-link p {
+  grid-column: 1;
+  color: var(--tars);
+  max-width: var(--col);
+  text-wrap: pretty;
+}
+.next-link .arrow {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+  align-self: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--tint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+.next-link:hover .arrow {
+  background: var(--ink);
+  color: var(--on-ink);
+}
+.next-link:hover b {
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 6px;
+}
+
+/* Footer: the site's map, since a phone has no room for it at the top */
+footer {
+  margin-top: 112px;
+  padding: 40px 0 56px;
+  border-top: 1px solid var(--line);
+}
+footer .wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 28px 72px;
+  align-items: start;
+}
+footer .about {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--muted);
+}
+footer b {
+  font: 500 20px/1 var(--serif);
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+footer nav {
+  display: flex;
+  flex-direction: column;
+}
+footer nav .k {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+footer nav a {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 15px;
+  color: var(--tars);
+  text-decoration: none;
+  white-space: nowrap;
+}
+footer nav a:hover {
+  color: var(--ink);
+}
+footer nav a[aria-current="page"] {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 @media (max-width: 1000px) {
+  .intro.front {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .index {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 759px) {
   .top .pages {
-    display: none;
+    margin-right: -8px;
   }
-  .doors,
-  .index {
-    grid-template-columns: minmax(0, 1fr);
+  .level {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 18px;
+  }
+  .level .k {
+    font-size: 14px;
+    color: var(--muted);
+    margin-right: 4px;
+  }
+  .no {
+    font-size: 20px;
   }
   .doors {
-    padding-top: 36px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding-top: 48px;
   }
   .door {
     padding: 22px 22px 24px;
+    margin: 0 -8px;
   }
   .door b {
     font-size: 28px;
+  }
+  .peek.six {
+    font-size: 17px;
+    gap: 10px 16px;
+  }
+  .index {
+    grid-template-columns: minmax(0, 1fr);
+    margin-top: 32px;
+  }
+  .index a {
+    padding: 14px 0 16px;
+  }
+  .index b {
+    font-size: 20px;
+  }
+  .next-link b {
+    font-size: 30px;
+  }
+  .next-link .arrow {
+    width: 48px;
+    height: 48px;
+  }
+  footer {
+    margin-top: 72px;
+    padding: 32px 0 40px;
+  }
+  footer .wrap {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 24px;
+  }
+  footer .about {
+    grid-column: 1 / -1;
+  }
+  footer nav a {
+    min-height: 44px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

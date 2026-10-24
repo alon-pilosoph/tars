@@ -70,6 +70,10 @@
             TARS is a voice assistant for one household. It runs on a Raspberry Pi at home and uses a few cloud services
             for the hard parts. This page follows one real request from the first word to the follow-up.
           </p>
+          <div class="seg level" role="group" aria-label="How much detail">
+            <span class="k">Detail</span><button type="button" data-level-pick="basic">Basic</button
+            ><button type="button" data-level-pick="detailed">Detailed</button>
+          </div>
           <div class="facts">
             <a class="fact" href="#timeline"
               ><span class="k">Time</span><b>About 1.2 s</b
@@ -456,25 +460,28 @@
         </div>
       </section>
       <section class="part next" aria-label="The other page">
-        <a class="door" href="features.html"
-          ><span class="k">Next</span><b>What TARS does</b>
+        <a class="next-link" href="features.html"
+          ><span class="k">Next</span><b>What TARS does</b><span class="arrow" aria-hidden="true">→</span>
           <p>
             Reminders that wait for “got it”, the house, who's home, Telegram, errands on any website, and wake models
             that learn the household's voices.
-          </p>
-          <span class="go">Features →</span></a
+          </p></a
         >
       </section>
     </main>
 
     <footer>
       <div class="wrap">
-        <b>TARS</b><span>A voice assistant for one household.</span>
-        <span class="links"
-          ><a href="how-it-works.html">How it works</a><a href="features.html">Features</a
+        <div class="about"><b>TARS</b><span>A voice assistant for one household.</span></div>
+        <nav aria-label="The site">
+          <span class="k">The site</span><a href="./">Front page</a
+          ><a href="how-it-works.html" aria-current="page">How it works</a><a href="features.html">Features</a>
+        </nav>
+        <nav aria-label="Elsewhere">
+          <span class="k">Elsewhere</span
           ><a href="https://huggingface.co/datasets/alon-p/hey-tars-training">Training data ↗</a
-          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a></span
-        >
+          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a>
+        </nav>
       </div>
     </footer>
 
