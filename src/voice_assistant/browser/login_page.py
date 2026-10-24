@@ -47,7 +47,7 @@ PAGE = """<!doctype html>
 <body><main>
   <div class="who">TARS needs a login for</div>
   <h1>{host}</h1>
-  <p class="why">{why}</p>
+  <p class="why" dir="auto">{why}</p>
   <form method="post" action="/login" autocomplete="on">
     <input type="hidden" name="token" value="{token}">
 {inputs}
@@ -88,9 +88,9 @@ def page(asking: Asking, token: str) -> str:
     for n, f in enumerate(asking.fields):
         kind = ' type="password" autocomplete="current-password"' if f.secret else (
             ' autocomplete="username"' if f.key == "username" else ' autocomplete="off"')  # fmt: skip
-        inputs.append(f'    <label for="f{n}">{html.escape(f.label)}</label>\n'
-                      f'    <input id="f{n}" name="{html.escape(f.key)}"{kind} autocapitalize="off" spellcheck="false"'
-                      f'{" required" if f.required else ""}>')  # fmt: skip
+        inputs.append(f'    <label for="f{n}" dir="auto">{html.escape(f.label)}</label>\n'
+                      f'    <input id="f{n}" name="{html.escape(f.key)}"{kind} dir="auto" autocapitalize="off"'
+                      f' spellcheck="false"{" required" if f.required else ""}>')  # fmt: skip
     return PAGE.format(site=html.escape(asking.site), host=html.escape(host), why=html.escape(asking.why),
                        token=token, inputs="\n".join(inputs))  # fmt: skip
 

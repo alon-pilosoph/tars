@@ -39,6 +39,9 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
   every part running, the services, the backup, the Pi ([web UI](docs/web-ui.md)).
 - **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
   sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
+- **Errands on any website**, sent from a chat: TARS's own browser orders on Wolt or books a table, with nothing
+  built for any one site. It signs in from its own vault (a code by email or in the chat), and nothing is ordered
+  until you tap Order on the checkout it shows you ([the browser](docs/browser.md)).
 - **Backed up to S3** every 15 minutes, with a snapshot of the database every six hours; old audio leaves the Pi for
   the bucket ([backup](docs/backup.md)).
 
@@ -106,7 +109,7 @@ assistant, edit the system prompt.
 | [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
 | [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
 | [Who's home](docs/presence.md) | phones on the Wi-Fi, asking the routers, the rules, where it's used |
-| [TARS's browser](docs/browser.md) | an agent that works any site, never commits without the person, learns sites; how well it does |
+| [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person; how well it does |
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
 | [Backing up to S3](docs/backup.md) | what goes to the bucket, making room on the Pi, archiving, bringing it back |
 | [What's next](docs/roadmap.md) | real use, interrupting, the hard-question hand-off, memory |
