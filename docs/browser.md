@@ -12,9 +12,10 @@ site: what it knows about a site, it learns by working it.
 | "The cheapest direct flight to Athens on the 6th" | Google Flights: one way, the airports, the date, nonstop; the airline, the times, the price |
 | "How long is the drive to the office at nine?" | Google Maps: the route at that time; "16-24 minutes" |
 
-It's asked for aloud at home or in a Telegram chat, with `[browser]` on ([telegram.md](telegram.md#errands-in-the-browser)):
-what it needs on the way (a yes before ordering, a login, a code) comes to the asker's phone, and the answer comes
-there, and is said aloud too when it was asked aloud. It also runs from a terminal (below) and from its evals.
+It's asked for aloud at home or in a Telegram chat, with `[browser]` on
+([telegram.md](telegram.md#errands-in-the-browser)): what it needs on the way (a yes before ordering, a login, a
+code) comes to the asker's phone, and the answer comes there, and is said aloud too when it was asked aloud. It also
+runs from a terminal (below) and from its evals.
 
 ## How it works
 
