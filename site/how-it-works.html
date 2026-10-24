@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>How TARS works</title>
+    <meta
+      name="description"
+      content="What happens when you say “hey TARS”: one request, second by second, from the wake word on a Raspberry Pi to the answer, what happens when a part fails, and what it's built from."
+    />
+    <link rel="canonical" href="https://tars.alonp.dev/how-it-works.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://tars.alonp.dev/how-it-works.html" />
+    <meta property="og:title" content="How TARS works" />
+    <meta
+      property="og:description"
+      content="A household voice assistant that answers in about 1.2 seconds, and nothing leaves the house until it's sure it heard “hey TARS”."
+    />
+    <meta property="og:image" content="https://tars.alonp.dev/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href="../webui/src/favicon.svg" />
+    <link rel="apple-touch-icon" href="../webui/src/apple-touch-icon.png" />
+    <script>
+      try {
+        var lv = localStorage.getItem("tars-about-level");
+        document.documentElement.dataset.level = lv === "detailed" ? "detailed" : "basic";
+      } catch (e) {
+        document.documentElement.dataset.level = "basic";
+      }
+    </script>
+    <!-- The only external request. To self-host, swap for @font-face rules pointing at the woff2 files the web UI uses. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap"
+    />
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="./" aria-label="TARS, the front page"><b>TARS</b></a>
+        <div class="side">
+          <nav class="pages" aria-label="Pages">
+            <a href="how-it-works.html" aria-current="page">How it works</a><a href="features.html">Features</a>
+          </nav>
+          <div class="seg" role="group" aria-label="How much detail">
+            <button type="button" data-level-pick="basic">Basic</button>
+            <button type="button" data-level-pick="detailed">Detailed</button>
+          </div>
+          <div class="ext">
+            <a href="https://github.com/alon-pilosoph/tars">Repo ↗</a
+            ><a
+              href="https://huggingface.co/datasets/alon-p/hey-tars-training"
+              title="The wake-word training clips on Hugging Face"
+              >Data ↗</a
+            >
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="top" class="wrap">
+      <section class="intro" aria-label="Introduction">
+        <div>
+          <h1>What happens when you say “hey TARS”</h1>
+          <p class="lead">
+            TARS is a voice assistant for one household. It runs on a Raspberry Pi at home and uses a few cloud services
+            for the hard parts. This page follows one real request from the first word to the follow-up.
+          </p>
+          <div class="facts">
+            <a class="fact" href="#timeline"
+              ><span class="k">Time</span><b>About 1.2 s</b
+              ><span
+                >from your last word to its first sound. It starts answering before you finish, so the work
+                overlaps.</span
+              ></a
+            >
+            <a class="fact" href="#timeline"
+              ><span class="k">Boundary</span><b>Nothing leaves the house</b
+              ><span
+                >until a second, stricter check is sure it heard “hey TARS”. Until then the cloud lanes stay
+                closed.</span
+              ></a
+            >
+          </div>
+        </div>
+        <div class="request">
+          <span class="k">The request we follow</span>
+          <p class="said"><b>Alon</b> Hey TARS, how long do I boil an egg?</p>
+          <p class="said tars"><b>TARS</b> Nine minutes for hard, six for soft.</p>
+          <p class="said"><b>Alon</b> And for a runny one?</p>
+          <span class="foot">The second question needs no wake word.</span>
+        </div>
+      </section>
+
+      <section id="timeline" class="part">
+        <div class="part-head" style="margin-bottom: 20px">
+          <div class="kicker">One request, second by second</div>
+          <h2>0 is the moment you stop talking</h2>
+          <p class="lead">
+            Everything before 0 happens while you are still speaking. That is why the answer comes so fast: by the time
+            you finish, the connections are open, the speaker is known and the reply is already being drafted.
+          </p>
+        </div>
+
+        <div class="controls" id="controls">
+          <div class="row">
+            <button type="button" class="ctl" data-act="prev" aria-label="Previous step">
+              <svg width="12" height="11" viewBox="0 0 12 11">
+                <rect width="2" height="11" />
+                <path d="M12 0v11L3 5.5z" />
+              </svg>
+            </button>
+            <button type="button" class="ctl play" data-act="play" aria-label="Play" aria-pressed="false">
+              <svg class="i-play" width="12" height="14" viewBox="0 0 11 13"><path d="M0 0l11 6.5L0 13z" /></svg
+              ><svg class="i-pause" width="12" height="13" viewBox="0 0 11 12">
+                <rect width="3.5" height="12" rx=".5" />
+                <rect x="7.5" width="3.5" height="12" rx=".5" />
+              </svg>
+            </button>
+            <button type="button" class="ctl" data-act="next" aria-label="Next step">
+              <svg width="12" height="11" viewBox="0 0 12 11">
+                <path d="M0 0v11l9-5.5z" />
+                <rect x="10" width="2" height="11" />
+              </svg>
+            </button>
+            <span class="clock" id="clock" aria-live="off"></span>
+            <div class="dots" id="dots"></div>
+            <button type="button" class="reset" data-act="reset" hidden>Reset</button>
+          </div>
+          <div class="now" id="now" aria-live="polite">
+            <span class="n" id="now-n"></span
+            ><span class="line" id="now-line">The whole run at once. Press play, or pick any step.</span>
+          </div>
+        </div>
+
+        <div class="wide-only">
+          <div class="chart" id="chart"></div>
+          <p class="note b">
+            A typical run, built from measured medians. Real answers take 1.2 to 1.5 s to the first sound. Detailed
+            shows every lane.
+          </p>
+          <p class="note d">
+            A typical run, built from measured medians; measured 1.2 to 1.5 s to the first sound. After 0 the axis is 3
+            times wider per second, so the dense part is readable; the follow-up at the far right is not to scale. Drag
+            the playhead along the seconds row to scrub, or tap anything to jump to it. Play moves the playhead at an
+            even, slow pace, and Space plays or pauses.
+          </p>
+          <p class="note d measured">
+            Every real answer is measured the same way. Each one is kept with how long each stage took and which model
+            wrote it, so the 1.2 to 1.5 s range can be checked against real use, not only a benchmark.
+          </p>
+        </div>
+
+        <ol class="steps wide-only" id="steps">
+          <li class="step" data-step="1">
+            <span class="n">1</span><span class="t">−3.4 s</span>
+            <div>
+              <p>You say “hey TARS”.</p>
+              <span class="w d">You</span>
+            </div>
+          </li>
+          <li class="step" data-step="2">
+            <span class="n">2</span><span class="t">−2.8 s</span>
+            <div>
+              <p>Stage 1 fires: the small wake model scores 0.2 or more.</p>
+              <span class="w d">Pi</span>
+            </div>
+          </li>
+          <li class="step" data-step="3">
+            <span class="n">3</span><span class="t">−2.7 s</span>
+            <div>
+              <p>
+                Stage 2 says answer. Only now can anything leave the house, and TARS opens its connections while you are
+                still talking.
+              </p>
+              <span class="w d">Pi to cloud</span>
+            </div>
+          </li>
+          <li class="step" data-step="4">
+            <span class="n">4</span><span class="t">−2.5 to 0 s</span>
+            <div>
+              <p>You ask “how long do I boil an egg?” and the audio streams to Flux as you talk.</p>
+              <span class="w d">You, Pi, Flux</span>
+            </div>
+          </li>
+          <li class="step" data-step="5">
+            <span class="n">5</span><span class="t">0.25 s</span>
+            <div>
+              <p>Flux says “maybe done”. TARS starts the answer early, in the background, while still recording.</p>
+              <span class="w d">Flux, Pi</span>
+            </div>
+          </li>
+          <li class="step" data-step="6">
+            <span class="n">6</span><span class="t">0.5 s</span>
+            <div>
+              <p>Flux says “done”. Now the draft may be played, logged and allowed to send anything.</p>
+              <span class="w d">Flux</span>
+            </div>
+          </li>
+          <li class="step" data-step="7">
+            <span class="n">7</span><span class="t">0.65 s</span>
+            <div>
+              <p>Qwen on Groq has the first sentence, about 0.4 s after “maybe done”, streamed.</p>
+              <span class="w d">Groq</span>
+            </div>
+          </li>
+          <li class="step" data-step="8">
+            <span class="n">8</span><span class="t">0.9 s</span>
+            <div>
+              <p>James, the Cartesia voice, has the first sentence's audio.</p>
+              <span class="w d">Cartesia</span>
+            </div>
+          </li>
+          <li class="step" data-step="9">
+            <span class="n">9</span><span class="t">1.2 s</span>
+            <div>
+              <p>First sound: “Nine minutes for hard, six for soft.”</p>
+              <span class="w d">Pi</span>
+            </div>
+          </li>
+          <li class="step" data-step="10">
+            <span class="n">10</span><span class="t">after</span>
+            <div>
+              <p>It listens a few seconds for a follow-up. “And for a runny one?” goes straight in, no wake word.</p>
+              <span class="w d">Everyone</span>
+            </div>
+          </li>
+        </ol>
+
+        <div class="narrow-only">
+          <p class="small" style="margin: 4px 0 16px">
+            Time runs down. Of the two strips beside each step, the left is at home and the right is the cloud. The
+            cloud stays hatched, closed, until stage 2 says yes, and the blue line marks the moment it opens.
+          </p>
+          <ol class="runs" id="runs"></ol>
+          <p class="note">A typical run, built from measured medians; measured 1.2 to 1.5 s to the first sound.</p>
+          <p class="note d measured">
+            Every real answer is kept with how long each stage took and which model wrote it, so that range can be
+            checked against real use, not only a benchmark.
+          </p>
+        </div>
+      </section>
+
+      <section id="wake" class="part">
+        <div class="part-head">
+          <div class="kicker">How it decides it was called</div>
+          <h2>A fast guess, then a careful check</h2>
+          <p class="lead">
+            Stage 1 is cheap enough to run on every 80 ms of sound, so it is allowed to be a little eager. Stage 2 only
+            runs when stage 1 fires, and it is the one that opens the door.
+          </p>
+        </div>
+        <div class="two">
+          <div class="flow">
+            <div class="node">
+              <span class="m"></span>
+              <div><span class="k">Every 80 ms</span><b>A block of sound from the mic</b></div>
+            </div>
+            <div class="node strong">
+              <span class="m"></span>
+              <div>
+                <span class="k">Stage 1</span><b>The wake model scores it</b>
+                <p class="small">microWakeWord, local, 69 KB. A score of 0.2 or more goes on.</p>
+                <div class="branch">
+                  <span class="k">Close, below 0.2: a near-miss</span>
+                  <p class="small">Logged, never answered. It may be a missed “hey TARS”.</p>
+                </div>
+              </div>
+            </div>
+            <div class="gate-line">score 0.2 or more</div>
+            <div class="node strong">
+              <span class="m"></span>
+              <div>
+                <span class="k">Stage 2, the double-check</span
+                ><b>Vosk listens for a small grammar, and a learned layer decides</b>
+                <p class="small">Still on the Pi. Nothing has left the house yet.</p>
+              </div>
+            </div>
+            <div class="node last" style="padding-bottom: 0">
+              <span></span>
+              <div></div>
+            </div>
+            <div class="outcomes">
+              <div class="outcome yes">
+                <b>Answer</b><span class="small">The cloud opens. Step 3 on the timeline.</span>
+              </div>
+              <div class="outcome"><b>Ask</b><span class="small">“Did you call me?” The reply decides.</span></div>
+              <div class="outcome"><b>Ignore</b><span class="small">Stays quiet. Kept for Review.</span></div>
+            </div>
+          </div>
+
+          <div class="results">
+            <h3>How well the generic models do</h3>
+            <p class="small">
+              Trained on synthetic and converted voices, never on a household member. These are the models every new
+              install starts with. The clips are
+              <a href="https://huggingface.co/datasets/alon-p/hey-tars-training">on Hugging Face</a>.
+            </p>
+            <div class="result">
+              <span>Held-out synthetic voices, quiet</span><span class="v">97%</span>
+              <div class="meter"><i style="width: 97%"></i></div>
+            </div>
+            <div class="result">
+              <span>Same voices with TV or people talking, 10 to 15 dB</span><span class="v">92 to 97%</span>
+              <div class="meter"><i style="width: 92%"></i><i class="range" style="left: 92%; width: 5%"></i></div>
+            </div>
+            <div class="result">
+              <span>The owner, whom it never heard, 30 takes</span><span class="v">97%</span>
+              <div class="meter"><i style="width: 97%"></i></div>
+            </div>
+            <div class="result">
+              <span>Lookalikes let through, like “hey cars” and “hey stars”</span><span class="v">0 to 10%</span>
+              <div class="meter"><i class="range" style="width: 10%"></i></div>
+            </div>
+            <div class="result">
+              <span>False answers per hour, an hour of TV and an hour of audiobooks</span><span class="v">1 and 0</span>
+              <span class="small d"
+                >One on the TV hour, when it heard “hey darts”. Stage 1 alone fires about 30 times an hour on TV and 14
+                on audiobooks; stage 2 turns down all the others.</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="fallbacks" class="part">
+        <div class="part-head">
+          <div class="kicker">When something breaks</div>
+          <h2>Every stage has a second option</h2>
+          <p class="lead">TARS fails soft, and when it can't recover it tells you in its own voice.</p>
+        </div>
+        <table class="ladder">
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>Normally</th>
+              <th>If that fails</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>End of turn</td>
+              <td>Deepgram Flux</td>
+              <td>Local rules</td>
+            </tr>
+            <tr>
+              <td>Speech to text</td>
+              <td>Flux</td>
+              <td>
+                OpenAI transcribes the same recording<span class="small"
+                  >A stream that stalls costs one wait, and the backup writes down the rest of that request.</span
+                >
+              </td>
+            </tr>
+            <tr>
+              <td>Brain</td>
+              <td>Qwen on Groq</td>
+              <td>
+                Qwen on Cerebras, then OpenAI<span class="small"
+                  >If Groq hasn't started answering within half a second, Cerebras is asked too and the first to answer
+                  is kept. A service that fails is skipped for the next two minutes, so an outage doesn't cost every
+                  turn its timeout; with both out, OpenAI answers. A reply too long for Groq's cap, like a long note, is
+                  written on Cerebras.</span
+                >
+              </td>
+            </tr>
+            <tr>
+              <td>Voice</td>
+              <td>Cartesia Sonic</td>
+              <td>
+                A spoken error line, made at startup<span class="small"
+                  >A reminder, or how a task on the TV went, waits without its chime and is tried again a minute
+                  later.</span
+                >
+              </td>
+            </tr>
+            <tr>
+              <td>Speaker ID</td>
+              <td>WeSpeaker, on the Pi</td>
+              <td>Answered as from an unknown voice</td>
+            </tr>
+            <tr>
+              <td>Wake models</td>
+              <td>The newest trained pair</td>
+              <td>The pair it was installed with</td>
+            </tr>
+            <tr>
+              <td>Mic or speaker</td>
+              <td>The USB speakerphone</td>
+              <td>TARS exits and the system restarts it</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="ladder-note">
+          A failed answer is kept in its conversation, with where it failed, and the web UI shows it.
+        </p>
+      </section>
+
+      <section id="hood" class="part">
+        <div class="part-head">
+          <div class="kicker">Under the hood</div>
+          <h2>Small on purpose</h2>
+        </div>
+        <div class="hood">
+          <div>
+            <h3>A process for each job, one folder</h3>
+            <div class="procs">
+              <div>The assistant</div>
+              <div>The web UI, FastAPI and React</div>
+              <div>Telegram, if it's on</div>
+              <div>A backup to S3 every 15 minutes, if it's on</div>
+              <div class="db">One SQLite database, WAL mode</div>
+            </div>
+            <p>
+              They share the database on the same machine, and a crash in one never takes another down.<span class="d">
+                The backup copies everything to an S3 bucket, and makes room on the card after a month.</span
+              >
+            </p>
+          </div>
+          <div>
+            <h3>Every stage is an interface</h3>
+            <div class="chips"><code>Trigger</code><code>Transcriber</code><code>Brain</code><code>Voice</code></div>
+            <p>Swapping a cloud service for a local model is one new class and a config change.</p>
+          </div>
+          <div>
+            <h3>Every answer is measured, every change evaluated</h3>
+            <p>
+              Each answer is kept with how long each stage took, which model wrote it and, if it failed, where and why.
+              47 whole conversations, hand-offs followed through, check the brain: 143 of 145 runs right on the 29
+              measured so far.
+            </p>
+          </div>
+          <div>
+            <h3>One command checks it all</h3>
+            <p>
+              <code>voice-assistant --check</code> checks the keys, devices, models, services, the voice and the mic,
+              and says what's wrong and what to do. Once it runs, the web UI's Status page shows much of the same at a
+              glance (as of when it's opened; Refresh brings it up to date): each process by its heartbeat, each service
+              with its key and its own status page, Home Assistant, the backup's last pass, and the Pi's CPU, memory,
+              temperature and disk.
+            </p>
+          </div>
+          <div>
+            <h3>Hardware</h3>
+            <p>A Raspberry Pi 4 with 8 GB and a USB speakerphone, an Anker PowerConf.</p>
+          </div>
+          <div>
+            <h3>Licenses</h3>
+            <p>The code is MIT. The trained models are CC BY-NC-SA 4.0.</p>
+            <p><a href="https://github.com/alon-pilosoph/tars">The repo on GitHub ↗</a></p>
+          </div>
+        </div>
+      </section>
+      <section class="part next" aria-label="The other page">
+        <a class="door" href="features.html"
+          ><span class="k">Next</span><b>What TARS does</b>
+          <p>
+            Reminders that wait for “got it”, the house, who's home, Telegram, errands on any website, and wake models
+            that learn the household's voices.
+          </p>
+          <span class="go">Features →</span></a
+        >
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <b>TARS</b><span>A voice assistant for one household.</span>
+        <span class="links"
+          ><a href="how-it-works.html">How it works</a><a href="features.html">Features</a
+          ><a href="https://huggingface.co/datasets/alon-p/hey-tars-training">Training data ↗</a
+          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a></span
+        >
+      </div>
+    </footer>
+
+    <script src="site.js"></script>
+    <script>
+      "use strict";
+      /* The timeline */
+      {
+        const T0 = -3.6,
+          T_END = 3.0,
+          PACE = 100 / 30,
+          CROSS = 3;
+        const AT = [-3.4, -2.8, -2.7, -2.5, 0.25, 0.5, 0.65, 1.05, 1.4, 1.9];
+        const X = t =>
+          t <= 0
+            ? Math.max(0, ((t + 3.6) / 3.6) * 36)
+            : t <= 1.6
+              ? 36 + (t / 1.6) * 48
+              : Math.min(100, 84 + ((t - 1.6) / 1.4) * 16);
+        const inv = p =>
+          p <= 36 ? (p / 36) * 3.6 - 3.6 : p <= 84 ? ((p - 36) / 48) * 1.6 : 1.6 + ((p - 84) / 16) * 1.4;
+
+        const LANES = [
+          {
+            g: "you",
+            basic: 1,
+            name: "You",
+            sub: "speech",
+            items: [
+              { k: "wave", t0: -3.4, t1: -2.9, s: [1], seed: 1, label: "“hey TARS”" },
+              {
+                k: "wave",
+                t0: -2.5,
+                t1: 0,
+                s: [4],
+                seed: 2,
+                label: "“how long do I boil an egg?”",
+                lt: -2.2,
+              },
+              { k: "wave", t0: 2.05, t1: 2.75, s: [10], seed: 3, label: "“And for a runny one?”", la: "end" },
+            ],
+          },
+          {
+            g: "home",
+            basic: 1,
+            name: "Wake check",
+            sub: "stage 1 and 2",
+            items: [
+              { k: "point", t0: -2.8, s: [2] },
+              { k: "point", t0: -2.7, s: [3], label: "stage 1, then stage 2: answer", lt: -2.64 },
+            ],
+          },
+          {
+            g: "home",
+            name: "Recorder",
+            sub: "Silero VAD",
+            items: [
+              {
+                k: "bar",
+                t0: -2.7,
+                t1: 0.5,
+                s: [4, 5, 6],
+                soft: 1,
+                label: "recording; VAD hears you start",
+                lt: -2.64,
+              },
+              { k: "point", t0: -2.5, s: [4] },
+              { k: "muted", t0: 1.2, t1: 1.4, s: [9], label: "mic muted" },
+              { k: "bar", t0: 1.9, t1: 2.95, s: [10], soft: 1, label: "listening" },
+            ],
+          },
+          {
+            g: "home",
+            name: "Speaker ID",
+            sub: "voiceprints",
+            items: [{ k: "bar", t0: -2.5, t1: -1.2, s: [4], label: "Alon, in parallel" }],
+          },
+          {
+            g: "home",
+            basic: 1,
+            name: "Speaker",
+            sub: "playback",
+            items: [{ k: "bar", t0: 1.2, t1: 1.65, s: [9], label: "first sound" }],
+          },
+          {
+            g: "home",
+            name: "Journal",
+            sub: "SQLite",
+            items: [
+              { k: "point", t0: -2.7, s: [3], label: "wake" },
+              { k: "point", t0: 0.5, s: [6], label: "turn" },
+              { k: "point", t0: 1.2, s: [9], label: "reply" },
+            ],
+          },
+          {
+            g: "cloud",
+            basic: 1,
+            name: "Deepgram Flux",
+            sub: "speech to text",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7, label: "closed" },
+              { k: "point", t0: -2.7, s: [3] },
+              { k: "bar", t0: -2.5, t1: 0.5, s: [4], soft: 1, label: "your audio, streamed", lt: -2.45 },
+              { k: "point", t0: 0.25, s: [5], label: "maybe done" },
+              { k: "point", t0: 0.5, s: [6], label: "done", lt: 0.58 },
+            ],
+          },
+          {
+            g: "cloud",
+            basic: 1,
+            name: "Groq",
+            sub: "Qwen, fast brain",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7 },
+              { k: "idle", t0: -2.7, t1: 0.25 },
+              { k: "point", t0: -2.7, s: [3], label: "open" },
+              { k: "bar", t0: 0.25, t1: 0.65, s: [5, 7], label: "first sentence" },
+              { k: "bar", t0: 0.66, t1: 0.92, s: [7], soft: 1 },
+            ],
+          },
+          {
+            g: "cloud",
+            name: "OpenAI",
+            sub: "web search, send",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7 },
+              { k: "idle", t0: -2.7, t1: 1.6 },
+              { k: "point", t0: -2.7, s: [3], label: "open, standing by for a hand-off" },
+            ],
+          },
+          {
+            g: "cloud",
+            basic: 1,
+            name: "Cartesia",
+            sub: "the voice, “James”",
+            items: [
+              { k: "closed", t0: -3.6, t1: -2.7 },
+              { k: "idle", t0: -2.7, t1: 0.65 },
+              { k: "point", t0: -2.7, s: [3], label: "two connections open" },
+              { k: "bar", t0: 0.65, t1: 0.92, s: [8], label: "sentence 1" },
+              { k: "bar", t0: 0.94, t1: 1.21, soft: 1, label: "sentence 2" },
+              { k: "bar", t0: 1.23, t1: 1.5, soft: 1 },
+            ],
+          },
+        ];
+        const TICKS = [
+          [-3, "−3 s"],
+          [-2, "−2 s"],
+          [-1, "−1 s"],
+          [0, "0, you stop talking"],
+          [1, "+1 s"],
+          [1.62, "then"],
+        ];
+        const GRID = [-3, -2, -1, 0, 0.5, 1, 1.5, 1.6];
+
+        const $ = (s, e = document) => e.querySelector(s);
+        const el = (tag, cls, parent) => {
+          const e = document.createElement(tag);
+          if (cls) e.className = cls;
+          if (parent) parent.append(e);
+          return e;
+        };
+        const pct = v => v + "%";
+
+        let t = null,
+          playing = false,
+          raf = 0,
+          dragging = false;
+        const section = $("#timeline"),
+          chart = $("#chart"),
+          controls = $("#controls");
+        const playBtn = $("[data-act=play]"),
+          clock = $("#clock"),
+          now = $("#now"),
+          resetBtn = $("[data-act=reset]");
+        const cards = [...document.querySelectorAll("#steps .step")];
+        const stepTime = n => cards[n - 1].querySelector(".t").textContent;
+        const stepWhere = n => cards[n - 1].querySelector(".w").textContent;
+        const stepLine = n => cards[n - 1].querySelector("p").textContent;
+
+        const items = [],
+          slabs = [];
+        const row = (cls, name) => {
+          const r = el("div", "row " + cls, chart);
+          const n = el("div", "lname", r);
+          n.textContent = name;
+          el("div", "track", r);
+          return r;
+        };
+        const axis = row("axis", "Seconds");
+        const track = $(".track", axis),
+          knob = el("div", "knob", track);
+        for (const [v, label] of TICKS) {
+          const s = el("span", "tick" + (v === 0 ? " zero" : ""), track);
+          s.style.left = pct(X(v));
+          s.textContent = label;
+        }
+
+        function lane(L) {
+          const r = el("div", "row lane" + (L.basic ? " basic" : ""), chart);
+          const name = el("div", "lname", r);
+          slabs.push({ el: el("span", "dot", name), items: [] });
+          const tx = el("div", "", name);
+          el("b", "", tx).textContent = L.name;
+          el("small", "d", tx).textContent = L.sub;
+          const tr = el("div", "track", r);
+          for (const it of L.items) {
+            const t1 = it.t1 ?? it.t0,
+              l = X(it.t0),
+              w = Math.max(X(t1) - l, 0.5);
+            const box = el("div", "it " + it.k + (it.soft ? " soft" : ""), tr);
+            box.style.left = pct(l);
+            if (it.k !== "point") box.style.width = pct(w);
+            const bars = [];
+            if (it.k === "wave") {
+              const n = Math.max(8, Math.round(w * 2));
+              for (let i = 0; i < n; i++) {
+                const b = el("i", "", box);
+                b.style.height =
+                  (18 + 78 * Math.abs(Math.sin(i * 1.37 + it.seed * 2.1) * Math.cos(i * 0.29 + it.seed))).toFixed(0) +
+                  "%";
+                bars.push({ el: b, x: l + ((i + 0.5) / n) * w });
+              }
+            }
+            let lab = null;
+            if (it.label) {
+              lab = el("div", "lab" + (it.k === "closed" ? " closed" : ""), tr);
+              lab.textContent = it.label;
+              if (it.la === "end") lab.style.right = pct(100 - X(t1));
+              else {
+                lab.style.left = pct(X(it.lt ?? it.t0));
+                if (it.k === "point" || it.k === "closed") lab.classList.add("after-mark");
+              }
+            }
+            if (it.s) for (const e of lab ? [box, lab] : [box]) e.dataset.go = it.s[0];
+            const item = Object.assign({}, it, {
+              t1,
+              l,
+              w,
+              box,
+              lab,
+              bars,
+              passive: it.k === "closed" || it.k === "idle",
+            });
+            items.push(item);
+            slabs[slabs.length - 1].items.push(item);
+          }
+        }
+        LANES.filter(L => L.g === "you").forEach(lane);
+        row("head", "At home, on the Pi");
+        LANES.filter(L => L.g === "home").forEach(lane);
+        const boundary = row("boundary", "The house boundary");
+        const crossMark = el("div", "cross-mark", $(".track", boundary)),
+          crossLabel = el("div", "cross-label", $(".track", boundary));
+        crossMark.style.left = crossLabel.style.left = pct(X(-2.7));
+        crossLabel.textContent = "−2.7 s, stage 2 said yes, so the first bytes leave the house";
+        crossMark.dataset.go = crossLabel.dataset.go = CROSS;
+        row("head", "In the cloud");
+        LANES.filter(L => L.g === "cloud").forEach(lane);
+        const grid = el("div", "layer", chart);
+        for (const v of GRID)
+          el("div", "gridline" + (v === 0 ? " zero" : v === 1.6 ? " break" : ""), grid).style.left = pct(X(v));
+        el("div", "cross-line", grid).style.left = pct(X(-2.7));
+        const headLayer = el("div", "layer", chart);
+        const playhead = el("div", "playhead", headLayer),
+          hit = el("div", "playhead-hit", headLayer);
+
+        const dots = cards.map((c, i) => {
+          const b = el("button", "", $("#dots"));
+          b.type = "button";
+          b.dataset.go = i + 1;
+          b.setAttribute("aria-label", "Step " + (i + 1));
+          return b;
+        });
+        const runs = cards.map((c, i) => {
+          const n = i + 1,
+            r = el("li", "run", $("#runs"));
+          r.dataset.go = n;
+          el("span", "t", r).textContent = stepTime(n);
+          const lanes = el("div", "lanes", r);
+          const home = LANES.some(L => L.g !== "cloud" && L.items.some(it => it.s && it.s.includes(n)));
+          const cloud = LANES.some(
+            L => L.g === "cloud" && L.items.some(it => it.s && it.s.includes(n) && it.k !== "closed"),
+          );
+          el("i", home ? "used" : "", lanes);
+          el("i", n < CROSS ? "shut" : cloud ? "used" : "", lanes);
+          if (n === CROSS) el("b", "", lanes);
+          const body = el("div", "body", r);
+          el("p", "", body).textContent = stepLine(n);
+          el("span", "w d", body).textContent = stepWhere(n);
+          return r;
+        });
+
+        const stepAt = v => (v == null ? 0 : AT.filter(a => v >= a - 1e-6).length);
+
+        function render() {
+          const step = stepAt(t),
+            live = t != null,
+            xt = live ? X(t) : 0;
+          for (const it of items) {
+            const later = live && !it.passive && t < it.t0 - 1e-6;
+            const on = live && !it.passive && !later && (it.k === "point" ? it.s.includes(step) : t <= it.t1);
+            for (const e of it.lab ? [it.box, it.lab] : [it.box]) {
+              e.classList.toggle("on", on);
+              e.classList.toggle("later", later);
+            }
+            if (on && it.k === "bar")
+              it.box.style.setProperty("--p", pct(Math.max(0, Math.min(100, ((xt - it.l) / it.w) * 100))));
+            for (const b of it.bars) b.el.classList.toggle("played", on && b.x <= xt);
+            it.on = on;
+          }
+          for (const s of slabs)
+            s.el.classList.toggle(
+              "on",
+              s.items.some(it => it.on),
+            );
+          chart.classList.toggle("playing-or-set", live);
+          knob.style.left = playhead.style.left = hit.style.left = pct(xt);
+          playBtn.setAttribute("aria-pressed", String(playing));
+          playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+          clock.textContent = !live ? "" : t > 1.6 ? "then" : (t < -0.004 ? "−" : "") + Math.abs(t).toFixed(2) + " s";
+          dots.forEach((d, i) => {
+            d.classList.toggle("on", i + 1 === step);
+            d.classList.toggle("past", i + 1 < step);
+          });
+          cards.forEach((c, i) => c.classList.toggle("on", i + 1 === step));
+          runs.forEach((r, i) => r.classList.toggle("on", i + 1 === step));
+          now.classList.toggle("has-step", step > 0);
+          resetBtn.hidden = t == null;
+          $("#now-n").textContent = step ? `Step ${step}, ${stepTime(step)}` : "";
+          $("#now-line").textContent = step
+            ? stepLine(step)
+            : live
+              ? "Silence. TARS is listening, on the Pi only."
+              : "The whole run at once. Press play, or pick any step.";
+        }
+        function pause() {
+          cancelAnimationFrame(raf);
+          playing = false;
+        }
+        function go(n) {
+          pause();
+          n = Math.max(0, Math.min(AT.length, n));
+          t = n ? AT[n - 1] : null;
+          render();
+        }
+        function prev() {
+          const n = stepAt(t);
+          go(n > 0 && t > AT[n - 1] + 0.01 ? n : n - 1);
+        }
+        function next() {
+          go(stepAt(t) + 1);
+        }
+        function togglePlay() {
+          if (playing) {
+            pause();
+            render();
+            return;
+          }
+          if (t == null || t >= T_END - 0.01) t = T0;
+          playing = true;
+          let last = performance.now();
+          const frame = time => {
+            const dt = Math.min(0.1, (time - last) / 1000);
+            last = time;
+            t = inv(Math.min(100, X(t) + dt * PACE));
+            if (t >= T_END - 1e-6) {
+              t = T_END;
+              playing = false;
+              render();
+              return;
+            }
+            render();
+            raf = requestAnimationFrame(frame);
+          };
+          raf = requestAnimationFrame(frame);
+          render();
+        }
+        function scrubTo(x) {
+          const r = track.getBoundingClientRect();
+          t = Math.min(T_END, inv(Math.max(0, Math.min(100, ((x - r.left) / r.width) * 100))));
+          render();
+        }
+        function startDrag(e) {
+          e.preventDefault();
+          pause();
+          dragging = true;
+          scrubTo(e.clientX);
+          const move = ev => scrubTo(ev.clientX);
+          const up = () => {
+            dragging = false;
+            removeEventListener("pointermove", move);
+            removeEventListener("pointerup", up);
+            render();
+          };
+          addEventListener("pointermove", move);
+          addEventListener("pointerup", up);
+        }
+        track.addEventListener("pointerdown", startDrag);
+        hit.addEventListener("pointerdown", startDrag);
+        section.addEventListener("click", e => {
+          const target = e.target.closest("[data-go], [data-act], .step");
+          if (!target) return;
+          const act = target.dataset.act;
+          if (act === "play") togglePlay();
+          else if (act === "prev") prev();
+          else if (act === "next") next();
+          else if (act === "reset") go(0);
+          else go(Number(target.dataset.go || target.dataset.step));
+        });
+        const onScreen = () => {
+          const r = section.getBoundingClientRect();
+          return r.top < innerHeight && r.bottom > 0;
+        };
+        addEventListener("keydown", e => {
+          if (e.target.closest("input, textarea, select, button, a") || e.metaKey || e.ctrlKey || e.altKey) return;
+          if (e.key === " " && onScreen()) {
+            e.preventDefault();
+            if (!e.repeat) togglePlay();
+          } else if (e.key === "ArrowRight" && onScreen()) next();
+          else if (e.key === "ArrowLeft" && onScreen()) prev();
+        });
+        function fitNow() {
+          const n = $("#now-n"),
+            line = $("#now-line"),
+            keep = [n.textContent, line.textContent, now.className];
+          now.style.minHeight = "";
+          now.classList.add("has-step");
+          let tallest = 0;
+          for (let i = 1; i <= cards.length; i++) {
+            n.textContent = `Step ${i}, ${stepTime(i)}`;
+            line.textContent = stepLine(i);
+            tallest = Math.max(tallest, now.offsetHeight);
+          }
+          [n.textContent, line.textContent, now.className] = keep;
+          now.style.minHeight = Math.max(tallest, now.offsetHeight) + "px";
+        }
+        render();
+        fitNow();
+        document.fonts.ready.then(fitNow);
+        addEventListener("resize", fitNow);
+      }
+    </script>
+  </body>
+</html>

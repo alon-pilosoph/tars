@@ -5,7 +5,7 @@
 A household voice assistant you can take apart: say "hey TARS", ask something, and it answers in TARS's voice.
 It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while you work on it.
 
-**[See how it works, from wake word to answer →](https://tars.alonp.dev)**
+**[See how it works, from wake word to answer, and everything it does →](https://tars.alonp.dev)**
 
 ## At a glance
 
@@ -126,11 +126,11 @@ cd webui && npm install
 npm test && npm run lint && npm run format   # the web UI's unit tests, lint and formatting
 npm run build                                # rebuilds the committed page in src/voice_assistant/webui_static/
 npm run e2e && npm run visual                # against a real backend, and the screenshot baselines (macOS)
-npm run site                                 # the How TARS works page, from site/ into site/dist/
+npm run site                                 # the site (How it works, Features), from site/ into site/dist/
 ```
 
 CI runs the tests with every extra installed, lint and format checks, a check that the committed web build is
-current, and an end-to-end run; the How TARS works site deploys only after CI passes on `main`.
+current, and an end-to-end run; the site deploys only after CI passes on `main`.
 
 ## License
 

@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>What TARS does</title>
+    <meta
+      name="description"
+      content="What TARS, a household voice assistant, does besides answering: reminders and timers, the house, who's home, Telegram, errands on any website, and wake models that learn the household."
+    />
+    <link rel="canonical" href="https://tars.alonp.dev/features.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://tars.alonp.dev/features.html" />
+    <meta property="og:title" content="What TARS does" />
+    <meta
+      property="og:description"
+      content="Reminders said until someone says “got it”, the house, who's home, Telegram, errands on any website, and wake models that learn the household's voices."
+    />
+    <meta property="og:image" content="https://tars.alonp.dev/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href="../webui/src/favicon.svg" />
+    <link rel="apple-touch-icon" href="../webui/src/apple-touch-icon.png" />
+    <script>
+      try {
+        var lv = localStorage.getItem("tars-about-level");
+        document.documentElement.dataset.level = lv === "detailed" ? "detailed" : "basic";
+      } catch (e) {
+        document.documentElement.dataset.level = "basic";
+      }
+    </script>
+    <!-- The only external request. To self-host, swap for @font-face rules pointing at the woff2 files the web UI uses. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap"
+    />
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="./" aria-label="TARS, the front page"><b>TARS</b></a>
+        <div class="side">
+          <nav class="pages" aria-label="Pages">
+            <a href="how-it-works.html">How it works</a><a href="features.html" aria-current="page">Features</a>
+          </nav>
+          <div class="seg" role="group" aria-label="How much detail">
+            <button type="button" data-level-pick="basic">Basic</button>
+            <button type="button" data-level-pick="detailed">Detailed</button>
+          </div>
+          <div class="ext">
+            <a href="https://github.com/alon-pilosoph/tars">Repo ↗</a
+            ><a
+              href="https://huggingface.co/datasets/alon-p/hey-tars-training"
+              title="The wake-word training clips on Hugging Face"
+              >Data ↗</a
+            >
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="top" class="wrap">
+      <section class="intro single" aria-label="Introduction">
+        <h1>What TARS does</h1>
+        <p class="lead">
+          Answering a question is the main flow, and <a href="how-it-works.html">How it works</a> follows one. This page
+          is everything else: what each part does, and what it promises.
+        </p>
+        <ul class="index" aria-label="The features">
+          <li>
+            <a href="#reminders"><b>Reminders and timers</b><span>Said again until someone says “got it”.</span></a>
+          </li>
+          <li>
+            <a href="#house"
+              ><b>The house</b
+              ><span>The lock, the boiler, the AC and the TV, done only when the device says so.</span></a
+            >
+          </li>
+          <li>
+            <a href="#presence"
+              ><b>Who's home</b><span>From whose phone is on the Wi-Fi, asked of the routers themselves.</span></a
+            >
+          </li>
+          <li>
+            <a href="#telegram"
+              ><b>Telegram</b><span>The same TARS in a chat, written or spoken, from anywhere.</span></a
+            >
+          </li>
+          <li>
+            <a href="#browser"
+              ><b>Errands on the web</b
+              ><span>Any site, signed in from its own vault, and nothing ordered without a tap.</span></a
+            >
+          </li>
+          <li>
+            <a href="#learn"
+              ><b>It learns the household</b
+              ><span>Every wake teaches the next wake models, and voices get names.</span></a
+            >
+          </li>
+        </ul>
+      </section>
+
+      <section id="reminders" class="part">
+        <div class="part-head">
+          <div class="kicker">Reminders, timers and messages</div>
+          <h2>It says it again until someone says “got it”</h2>
+          <p class="lead">
+            The same voice that answers can also speak first. You set it by voice or from the web UI, and TARS says it
+            when it's due.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div>
+            <ul class="say-list" aria-label="Things you can say">
+              <li>“Remind me to call the bank at nine.”</li>
+              <li>“Set a pasta timer for twelve minutes.”</li>
+              <li>“Tell Stacey dinner's ready when she's back.”</li>
+            </ul>
+            <div class="rules">
+              <div>
+                <h3>Said until it's heard</h3>
+                <p>
+                  TARS says it when it's due, then again every 5 minutes, at most 4 times, until someone says “got it”.
+                  After that it's marked Missed.
+                </p>
+                <div class="tries" aria-hidden="true">
+                  <span>due</span><span>5 min</span><span>10 min</span><span>15 min</span><em>then Missed</em>
+                </div>
+              </div>
+              <div>
+                <h3>Timers ring like a kitchen timer</h3>
+                <p>
+                  Until someone turns them off, for at most 15 minutes.<span class="d">
+                    TARS can't hear while it makes a sound, so it rings in bursts and listens in between: “stop” works
+                    without the wake word.</span
+                  >
+                </p>
+              </div>
+              <div>
+                <h3>“When she's back”</h3>
+                <p>Waits until TARS next recognises that voice, then says it.</p>
+              </div>
+            </div>
+          </div>
+          <div class="text" style="max-width: none; padding-top: 0">
+            <figure class="shot">
+              <div class="frame" data-app-panel="reminders"></div>
+              <figcaption>Reminders, with sample data</figcaption>
+            </figure>
+            <p class="small" style="margin-top: 14px">
+              The Reminders page shows each one and who acknowledged it and how, and sets new ones from a phone.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="house" class="part">
+        <div class="part-head">
+          <div class="kicker">The house</div>
+          <h2>Done means the device says so</h2>
+          <p class="lead">
+            TARS locks the door, runs the boiler, sets the AC and plays things on the TV, through Home Assistant on the
+            home network. It says something's done only once the device reports it.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Checked, not assumed</h3>
+              <p>
+                After locking, TARS reads the lock back until it says locked. An AC worked by infrared can't report
+                back, so TARS says it sent the command, never that it's on.<span class="d">
+                  A lock that jams is said to have jammed, and an open door is never locked.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Nothing is done by a draft</h3>
+              <p>
+                TARS starts answering before you finish, but a change waits until you have. “Turn off the boiler… no,
+                leave it” leaves it.
+              </p>
+            </div>
+            <div>
+              <h3>Unlocking is for voices it trusts</h3>
+              <p>
+                The door unlocks only for a voice TARS knows and trusts with it, recognised from the request itself, and
+                only when it heard “unlock”. Anyone can lock.
+              </p>
+            </div>
+            <div>
+              <h3>An agent works the TV</h3>
+              <p>
+                For anything that takes several steps, a model works an Android TV box like a person with its remote,
+                reading the screen after every step.<span class="d">
+                  It runs in the background, and TARS says how it went after a chime. Devices Home Assistant doesn't
+                  work are plugins: a little code of the household's own.</span
+                >
+              </p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">Two requests</span>
+            <p class="said"><b>Alon</b> Hey TARS, lock the front door.</p>
+            <p class="said tars"><b>TARS</b> One moment. Locked.</p>
+            <p class="said"><b>Alon</b> And play Toy Story on Stremio.</p>
+            <p class="said tars"><b>TARS</b> On it.</p>
+            <span class="foot">A minute later, after a chime: “Toy Story is playing.”</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="presence" class="part">
+        <div class="part-head">
+          <div class="kicker">Who's home</div>
+          <h2>The routers already know</h2>
+          <p class="lead">
+            TARS knows who's home from whose phone is on the home Wi-Fi. It signs into the routers and asks them every
+            30 seconds, the way their own web pages do: no app on anyone's phone, and nothing leaves the house.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Home at once, gone only when it's sure</h3>
+              <p>
+                A phone that joins the Wi-Fi is someone home. Someone is out only once no router has seen their phone
+                for ten minutes, while every router answered: a phone asleep on a table drops off for a few.<span
+                  class="d"
+                >
+                  A router that doesn't answer says nothing about anyone, and just after TARS starts nobody is known
+                  yet, never “out”.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Reminders follow people</h3>
+              <p>
+                A reminder due for someone who's out goes to their Telegram chat instead of an empty room. A message
+                left “for when she's back” is said a minute after her phone comes home.
+              </p>
+            </div>
+            <div>
+              <h3>Two routers, no official API</h3>
+              <p>
+                An ISP's Technicolor gateway and a Xiaomi access point, each signed into as its own sign-in page does
+                it.<span class="d">
+                  The Technicolor's sign-in is SRP, matched byte for byte against its own script run in a browser, and a
+                  refused password is left alone for 15 minutes, since the gateway locks out after a few.</span
+                >
+              </p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">Two requests</span>
+            <p class="said"><b>Alon</b> Hey TARS, who's home?</p>
+            <p class="said tars"><b>TARS</b> Just you. Stacey's phone left about two.</p>
+            <p class="said"><b>Alon</b> Tell her dinner's at eight when she's back.</p>
+            <p class="said tars"><b>TARS</b> I'll tell her when she's home.</p>
+            <span class="foot">At 7:12 her phone joins the Wi-Fi; a minute later: “Stacey, a message from Alon…”</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="telegram" class="part">
+        <div class="part-head">
+          <div class="kicker">On Telegram</div>
+          <h2>The same TARS, in writing, from anywhere</h2>
+          <p class="lead">
+            Each person can chat with TARS on Telegram, in writing or with a voice message: ask it something, set a
+            reminder, have it send something, or have a message said aloud at home. TARS asks Telegram for new messages,
+            so nothing at home is opened to the internet.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Only the people it's told about</h3>
+              <p>
+                It answers the chats named in its settings, each as that person. Anyone else gets no answer at all, so a
+                stranger can't even tell it's there.
+              </p>
+            </div>
+            <div>
+              <h3>Reminders come to where you are</h3>
+              <p>
+                One set in a chat is posted to that chat when it's due. “Tell the house dinner's ready” is said aloud at
+                home instead, and the chat hears when it was said and who said “got it”.<span class="d">
+                  Whatever TARS sends at home for someone with a chat comes to their phone as well.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Written back, even to a voice message</h3>
+              <p>
+                A voice message is written down by the same speech to text as at home, and the reply comes in writing.
+                Chats go straight to OpenAI's model: a chat is read whole, so Qwen's faster first word buys nothing
+                there.<span class="d">
+                  Each person has their own conversation, kept until the chat has been quiet for an hour, or until they
+                  send /new.</span
+                >
+              </p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">A chat, away from home</span>
+            <p class="said"><b>Alon</b> Remind me to call the bank at nine.</p>
+            <p class="said tars"><b>TARS</b> Set for 9 AM. It'll come here.</p>
+            <p class="said"><b>Alon</b> And tell the house dinner's at eight.</p>
+            <p class="said tars"><b>TARS</b> Saying it at home now.</p>
+            <span class="foot">A minute later the chat reads: “Stacey said they got it at 7:42 PM.”</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="browser" class="part">
+        <div class="part-head">
+          <div class="kicker">Errands on the web</div>
+          <h2>Any site, and nothing ordered without a tap</h2>
+          <p class="lead">
+            Asked aloud or in a chat, TARS does an errand on a website in its own browser: orders on Wolt, books a
+            table, finds something in an account. Nothing in it is written for any one site. It reads the page the way a
+            screen reader does, clicks and types its way there, and comes back with the answer.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Code presses the last button</h3>
+              <p>
+                The agent may fill a basket and go to the checkout, never place the order. Code checks every click and
+                key first, by what the button says and where it is: a total beside it, a page that takes payment. The
+                person gets the checkout on their phone and taps Order; only then, and only if the amounts are
+                unchanged, is it pressed.
+              </p>
+            </div>
+            <div>
+              <h3>It signs in, and never shows a password</h3>
+              <p>
+                Logins are in TARS's own vault, typed by code only into their own site. One it lacks is asked for on a
+                one-time page; a code the site sends is taken from the reply or the person's email, whichever is
+                first.<span class="d">
+                  The model sees none of it, and nothing at home is ever opened, whatever a page asks.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Measured on sixteen live tasks</h3>
+              <p>
+                With the whole errand in view, Luna did every hard task (Wolt, KSP, Booking.com) at about seven cents
+                each; the first prototype did six of sixteen.
+              </p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">Asked aloud, approved on the phone</span>
+            <p class="said"><b>Alon</b> Order the usual margherita from Wolt.</p>
+            <p class="said tars"><b>TARS</b> On it. Approving it comes to your phone.</p>
+            <span class="foot"
+              >The checkout comes to the chat with Order and Cancel; once it's placed, TARS says so at home.</span
+            >
+          </div>
+        </div>
+      </section>
+
+      <section id="learn" class="part">
+        <div class="part-head">
+          <div class="kicker">It learns from the household</div>
+          <h2>Every wake teaches the next pair of models</h2>
+          <p class="lead">
+            TARS hears its name in two stages on the Pi (<a href="how-it-works.html#wake">How it works</a>). The generic
+            models start out good on voices they have never heard; the loop makes them good on yours. People only take
+            part in three places, all in the web UI.
+          </p>
+        </div>
+        <ol class="loop">
+          <li>
+            <span class="num">1</span>
+            <div class="text">
+              <h3>Every wake is kept</h3>
+              <p>
+                Its 3 seconds of audio, the scores and what followed. Close calls, the near-misses, too. All of it stays
+                on the Pi, and in the household's own bucket if the backup is on: none of it is sent anywhere to learn
+                from.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="num">2</span>
+            <div class="text">
+              <h3>Most label themselves</h3>
+              <p>What happened next says whether a wake was real.</p>
+            </div>
+          </li>
+          <li>
+            <span class="num people">3</span>
+            <div class="split">
+              <div class="text">
+                <div class="k">People, in the web UI</div>
+                <h3>People answer the rest in Review</h3>
+                <p>
+                  A few taps a day. Each unsure wake has its audio, what TARS heard, what happened, and TARS's guess
+                  shaded.
+                </p>
+              </div>
+              <figure class="shot">
+                <div class="frame" data-app-panel="review"></div>
+                <figcaption>Review, with sample data</figcaption>
+              </figure>
+            </div>
+          </li>
+          <li>
+            <span class="num people">4</span>
+            <div class="split">
+              <div class="text">
+                <div class="k">People, in the web UI</div>
+                <h3>Voices are grouped automatically</h3>
+                <p>Naming one lets TARS greet that person by name.</p>
+              </div>
+              <figure class="shot">
+                <div class="frame" data-app-panel="voices"></div>
+                <figcaption>Voices, with sample data</figcaption>
+              </figure>
+            </div>
+          </li>
+          <li>
+            <span class="num">5</span>
+            <div class="text">
+              <h3>A bigger machine trains a new pair</h3>
+              <p>
+                A new stage 1 and stage 2, trained on those wakes in about 20 to 25 minutes. Every fifth wake is kept
+                aside for testing, and the new pair is tested end to end against the one in use.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="num people">6</span>
+            <div class="split">
+              <div>
+                <div class="text">
+                  <div class="k">The gate</div>
+                  <h3>It installs only if it is better for this house and no worse anywhere else</h3>
+                  <p>
+                    Better means it answers more of the household's real wakes, or lets fewer through that weren't for
+                    TARS. If not, it asks. Once installed, the Pi switches within seconds, and the Models page can
+                    switch back.
+                  </p>
+                </div>
+                <div class="gate d">
+                  <div class="k">The first real run said no</div>
+                  <table class="cmp">
+                    <thead>
+                      <tr>
+                        <th>Test</th>
+                        <th>In use</th>
+                        <th>New</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>Other voices, quiet</td>
+                        <td>94.4%</td>
+                        <td>97.8%</td>
+                        <td class="better">better</td>
+                      </tr>
+                      <tr>
+                        <td>Other voices, noise</td>
+                        <td>83.5%</td>
+                        <td>88.3%</td>
+                        <td class="better">better</td>
+                      </tr>
+                      <tr>
+                        <td>Lookalikes let through</td>
+                        <td>3.0%</td>
+                        <td>4.8%</td>
+                        <td class="worse">worse</td>
+                      </tr>
+                      <tr>
+                        <td>False answers per hour, audiobooks</td>
+                        <td>0</td>
+                        <td>1</td>
+                        <td class="worse">worse</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <p>
+                    <strong>Not installed.</strong> Better on other voices, but worse on two things that matter. That is
+                    the rule doing its job.
+                  </p>
+                </div>
+                <p class="small b" style="margin-top: 14px">
+                  The first real run said no: better on other voices, worse on two things that matter. Detailed shows
+                  the numbers.
+                </p>
+              </div>
+              <figure class="shot">
+                <div class="frame" data-app-panel="models"></div>
+                <figcaption>Models, with sample data</figcaption>
+              </figure>
+            </div>
+          </li>
+        </ol>
+      </section>
+      <section class="part next" aria-label="The other page">
+        <a class="door" href="how-it-works.html"
+          ><span class="k">Next</span><b>How one request goes through TARS</b>
+          <p>
+            From “hey TARS” on the Pi to the first word of the answer, second by second, and what happens when a part of
+            it fails.
+          </p>
+          <span class="go">How it works →</span></a
+        >
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <b>TARS</b><span>A voice assistant for one household.</span>
+        <span class="links"
+          ><a href="how-it-works.html">How it works</a><a href="features.html">Features</a
+          ><a href="https://huggingface.co/datasets/alon-p/hey-tars-training">Training data ↗</a
+          ><a href="https://github.com/alon-pilosoph/tars">Source ↗</a></span
+        >
+      </div>
+    </footer>
+
+    <script src="site.js"></script>
+  </body>
+</html>

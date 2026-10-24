@@ -3,8 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { ORIGIN, REPO, fontsReady, serveFromDisk } from "./serve";
 
-const SOURCE = path.join(REPO, "site/index.html");
-const OUT = path.join(REPO, "site/dist");
+const SITE = path.join(REPO, "site");
+const OUT = path.join(SITE, "dist");
+const PAGES = ["index.html", "how-it-works.html", "features.html"]; // each built into one file, nothing else to load
 const WIDTH = 480;
 
 const PANELS: Record<string, { label: string; keep: string[] }> = {
@@ -86,9 +87,9 @@ function panel(page: Page, keep: string[]) {
   }, keep);
 }
 
-function swap(text: string, find: string, put: string) {
+function swap(text: string, find: string, put: string, file: string) {
   const at = text.indexOf(find);
-  if (at < 0 || text.indexOf(find, at + 1) >= 0) throw new Error(`expected one ${find} in site/index.html`);
+  if (at < 0 || text.indexOf(find, at + 1) >= 0) throw new Error(`expected one ${find} in site/${file}`);
   return text.slice(0, at) + put + text.slice(at + find.length);
 }
 
@@ -99,8 +100,8 @@ const font = (family: string, style: string, weight: string, file: string) =>
 
 test.describe.configure({ mode: "serial" });
 
-test("page", async ({ page }) => {
-  let text = fs.readFileSync(SOURCE, "utf8");
+test("pages", async ({ page }) => {
+  const hosts: Record<string, string> = {};
   const tokens = new Set<string>();
   for (const [name, { label, keep }] of Object.entries(PANELS)) {
     await serveFromDisk(page);
@@ -111,29 +112,50 @@ test("page", async ({ page }) => {
     p.tokens.forEach(r => tokens.add(r));
     const app = `<div class="app" inert>${p.html}</div>`;
     const shadow = `<template shadowrootmode="open"><style>${p.rules.join("\n")}</style>${app}</template>`;
-    const host = `data-app-panel="${name}" role="img" aria-label="${label.replace(/"/g, "&quot;")}">`;
-    text = swap(text, `data-app-panel="${name}"></div>`, `${host}${shadow}</div>`);
+    hosts[name] = `data-app-panel="${name}" role="img" aria-label="${label.replace(/"/g, "&quot;")}">${shadow}</div>`;
   }
-  text = swap(text, "</head>", `<style>\n${[...tokens].join("\n")}\n</style>\n</head>`);
   const fonts = [
     font("Newsreader", "normal", "400 500", "webui/src/fonts/newsreader-latin.woff2"),
     font("Newsreader", "italic", "400", "webui/src/fonts/newsreader-italic-latin.woff2"),
     font("Instrument Sans", "normal", "400 600", "webui/src/fonts/instrument-sans-latin.woff2"),
   ];
-  const google = text.slice(text.indexOf("<!-- The only external request."), text.indexOf("<style>"));
-  text = swap(text, google, `<style>\n${fonts.join("\n")}\n</style>\n`);
-  text = swap(
-    text,
-    `href="../webui/src/favicon.svg"`,
-    `href="data:image/svg+xml;base64,${b64("webui/src/favicon.svg")}"`,
-  );
-  text = swap(
-    text,
-    `href="../webui/src/apple-touch-icon.png"`,
-    `href="data:image/png;base64,${b64("webui/src/apple-touch-icon.png")}"`,
-  );
+  const css = fs.readFileSync(path.join(SITE, "site.css"), "utf8");
+  const js = fs.readFileSync(path.join(SITE, "site.js"), "utf8");
+  const placed = new Set<string>();
   fs.mkdirSync(OUT, { recursive: true });
-  fs.writeFileSync(path.join(OUT, "index.html"), text);
+  for (const file of PAGES) {
+    let text = fs.readFileSync(path.join(SITE, file), "utf8");
+    const here = Object.keys(hosts).filter(name => text.includes(`data-app-panel="${name}"></div>`));
+    for (const name of here) {
+      if (placed.has(name)) throw new Error(`the ${name} panel is on more than one page`);
+      placed.add(name);
+      text = swap(text, `data-app-panel="${name}"></div>`, hosts[name], file);
+    }
+    if (here.length) text = swap(text, "</head>", `<style>\n${[...tokens].join("\n")}\n</style>\n</head>`, file);
+    const stylesheet = `<link rel="stylesheet" href="site.css" />`;
+    const google = text.slice(
+      text.indexOf("<!-- The only external request."),
+      text.indexOf(stylesheet) + stylesheet.length,
+    );
+    text = swap(text, google, `<style>\n${fonts.join("\n")}\n${css}</style>`, file);
+    if (text.includes(`<script src="site.js"></script>`))
+      text = swap(text, `<script src="site.js"></script>`, `<script>\n${js}</script>`, file);
+    text = swap(
+      text,
+      `href="../webui/src/favicon.svg"`,
+      `href="data:image/svg+xml;base64,${b64("webui/src/favicon.svg")}"`,
+      file,
+    );
+    text = swap(
+      text,
+      `href="../webui/src/apple-touch-icon.png"`,
+      `href="data:image/png;base64,${b64("webui/src/apple-touch-icon.png")}"`,
+      file,
+    );
+    fs.writeFileSync(path.join(OUT, file), text);
+  }
+  const missing = Object.keys(PANELS).filter(name => !placed.has(name));
+  if (missing.length) throw new Error(`no page has the ${missing.join(", ")} panel`);
 });
 
 test("link preview", async ({ page }) => {
