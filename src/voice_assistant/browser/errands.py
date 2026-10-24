@@ -10,6 +10,7 @@ another's (the household's first keeps the profile TARS had before).
 
 This module imports nothing of the browser itself, so the voice's process can queue an errand without it."""
 
+import hashlib
 import re
 import threading
 import time
@@ -208,7 +209,13 @@ def profile_for(person: str, first: str) -> Path:
 
     if person_key(person) == person_key(first):
         return PROFILE
-    return PROFILE.with_name("profile-" + re.sub(r"[^a-z0-9]+", "-", person_key(person)).strip("-"))
+    return PROFILE.with_name(f"profile-{_slug(person)}")
+
+
+def _slug(person: str) -> str:
+    """A folder or file name for `person`, the same for every spelling TARS takes for theirs, and unlike anyone
+    else's whatever the alphabet: דנה and יעל aren't one person."""
+    return hashlib.sha256(person_key(person).encode()).hexdigest()[:12]
 
 
 class Errands:
@@ -270,7 +277,7 @@ class Errands:
         person, goal, started = row["person"], row["goal"], time.time()
         if row["asked_via"] == VOICE:  # the phone hears of it first, since that's where it'll be asked things
             self._tell(person, f"On it, as you asked at home: {goal}")
-        trace = self._folder / f"{time.strftime('%Y%m%d-%H%M%S')}-{re.sub(r'[^a-z0-9]+', '-', person.lower())}.jsonl"
+        trace = self._folder / f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(person)}.jsonl"
         settings = Settings(model=self._cfg.model, effort=self._cfg.effort, turns=self._cfg.turns,
                             really_commit=self._cfg.really_order)  # fmt: skip
         you, result = ByChat(person, self.chats), {}

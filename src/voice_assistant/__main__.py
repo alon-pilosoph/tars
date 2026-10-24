@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from .stt import Transcriber
 
 OPENAI_TIMEOUT_S = 15.0
+BROWSER_TIMEOUT_S = 120.0  # a browser turn at high effort over a long errand's pages
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
@@ -85,6 +86,14 @@ def make_openai_client(env_path: Path):
     # The SDK default is 10 minutes per request plus 2 retries. A voice assistant should give up quickly, so a dropped
     # connection costs one "that didn't work" rather than a frozen assistant.
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
+
+
+def make_browser_client(env_path: Path):
+    """OpenAI's client for TARS's browser: a turn of an errand reasons over a long page history, which takes longer
+    than a reply aloud may, and a passing failure is tried again rather than ending the errand."""
+    from openai import OpenAI
+
+    return OpenAI(api_key=api_key(env_path, OPENAI_KEY), timeout=BROWSER_TIMEOUT_S, max_retries=3)
 
 
 def make_quick_client(env_path: Path, provider: QuickProvider):
@@ -586,7 +595,7 @@ def telegram(cfg: Config, root: Path) -> None:
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
     print(f"(chats are answered by {who})")
-    errands = make_errands(cfg, root, client, events, tools, presence)
+    errands = make_errands(cfg, root, make_browser_client(env) if client else None, events, tools, presence)
     tars = TelegramTars(
         bot,
         cfg.telegram.people,

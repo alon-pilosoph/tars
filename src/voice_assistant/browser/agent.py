@@ -377,7 +377,7 @@ class Agent:
 
     def _noted(self, name: str) -> str:
         """The notes from earlier runs on a site, once a run, as a preface to the page."""
-        readable = self.notes and self.settings.read_notes and name not in self.noted
+        readable = name and self.notes and self.settings.read_notes and name not in self.noted  # about:blank has none
         notes = self.notes.read(name) if readable else ""
         if not notes:
             return ""

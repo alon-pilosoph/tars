@@ -22,9 +22,9 @@ from urllib.parse import urljoin
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from .gate import commits
+from .gate import says_commit
 from .login_page import Field
-from .session import SUBMITS_JS
+from .session import PAYING_JS, SUBMITS_JS
 from .vault import Login, Vault, origin
 
 STEPS = 6  # a sign-in is a few pages at most: the name, the password, a code, a link
@@ -152,16 +152,25 @@ def _check(page: Page, login: Login, field: dict) -> None:
             raise WrongSite(f"its form sends to {sends_to}, not {', '.join(login.origins)}")
 
 
-def _submit(field) -> None:
-    """Enter in a sign-in field, unless its form's button commits (a guest checkout's email field is in the
-    checkout's form): what the gate refuses the agent, the sign-in doesn't do either."""
+def _submit(page: Page, field) -> None:
+    """Enter in a sign-in field, unless its form is one that commits: a guest checkout's email field is in the
+    checkout's form. A sign-in form's own button ("Confirm", "אישור", "Submit") is fine; one that pays, orders or
+    books isn't, and nor is any on a page that takes payment."""
     try:
-        sends = field.evaluate(SUBMITS_JS)
+        sends = field.evaluate(SUBMITS_JS) or {}
     except PlaywrightError:
-        sends = ""
-    if sends and commits(sends):
-        raise WrongSite(f"Enter there would press {sends!r}, which commits: that's not a sign-in form")
+        sends = {}
+    paying = any(_asks(frame, PAYING_JS) for frame in page.frames)
+    if paying or any(says_commit(label) for label in sends.get("labels", [])):
+        raise WrongSite("Enter there would submit a form that pays, orders or books: that's not a sign-in form")
     field.press("Enter")
+
+
+def _asks(frame, script: str) -> bool:
+    try:
+        return bool(frame.evaluate(script))
+    except PlaywrightError:
+        return False
 
 
 def _settle(page: Page) -> None:
@@ -284,7 +293,7 @@ def _sign_in(page: Page, vault: Vault, person: Person, goal: str, hide, wait_for
                         + (", and no sign-in email came" if not code else " that its email's code has nowhere to go")
                         + _said(page))  # fmt: skip
             asked = time.time()
-            _submit(field)
+            _submit(page, field)
         except WrongSite as e:
             return f"refused to type the login: {e}"
     _settle(page)

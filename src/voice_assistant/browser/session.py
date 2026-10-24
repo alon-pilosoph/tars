@@ -19,7 +19,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from . import page as pages
-from .gate import commits
+from .gate import Press, commits, says_commit
 
 # Resolves once the page has stopped changing for `quiet` ms (a pop-up finished sliding in, a list finished loading),
 # or after `cap` ms whatever it's doing.
@@ -58,33 +58,72 @@ SHAPE_JS = """() => [...document.querySelectorAll(
     '[role=dialog], [role=alertdialog], dialog[open], [role=listbox], [role=menu], [aria-expanded=true]')]
   .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2; })
   .map((e) => (e.getAttribute('role') || e.tagName) + (e.getAttribute('aria-label') || '')).join(',')"""
-# What a click on an element would press, as the gate reads it: the button or link it's in, or its own text. A click
-# on "₪112.40" inside the "Place order ₪112.40" button presses that button.
-OWNER_JS = """(e) => {
-  const owner = e.closest('button, a, [role=button], [role=link], input, [onclick]') || e;
-  return (owner.innerText || owner.value || owner.getAttribute('aria-label') || '').slice(0, 200);
+# What pressing an element would press, for the gate (gate.Press): every label it goes by (its own; the button, link
+# or field it's in; the clickable area around it, as a pointer cursor marks one, for a framework's div that's a
+# button; the control a label is for), whether the form or dialog it's in shows an amount, and whether it submits a
+# form. A click on "₪112.40" inside the "Place order ₪112.40" button presses that button.
+_PRESS = r"""(e) => {
+  const name = (x) => String(x.innerText || x.value || x.getAttribute('aria-label') || x.title || '')
+    .split(/\s+/).join(' ').trim().slice(0, 200);
+  const labels = [name(e)];
+  const owner = e.closest('button, a, [role=button], [role=link], [role=menuitem], input, [onclick], summary');
+  if (owner) labels.push(name(owner));
+  const label = e.closest('label');
+  if (label && label.control) labels.push(name(label.control));
+  let area = null;
+  for (let a = e; a && a !== document.body; a = a.parentElement) {
+    if (getComputedStyle(a).cursor === 'pointer') area = a; else if (area) break;
+  }
+  if (area && name(area).length <= 160) labels.push(name(area));
+  const target = (label && label.control) || owner || e;
+  const scope = target.closest('form, dialog, [role=dialog], [aria-modal=true], aside, section');
+  const text = scope ? String(scope.innerText || '').slice(0, 4000) : '';
+  const priced = /[₪$€£¥₹]|\b(ILS|NIS|USD|EUR|GBP|CHF)\b|ש["״]ח/.test(text);
+  const form = target.form || target.closest('form');
+  const submits = target.type === 'submit' || (!!form && target.tagName === 'BUTTON' && !target.getAttribute('type'));
+  return {labels: [...new Set(labels.filter(Boolean))], priced, submits, frame: false};
 }"""
-# What's at a point on the screen, as the gate reads it: [the label of what a click there would press, whether it's a
-# frame]. A frame's insides (a payment provider's Pay button) can't be read from here.
-POINT_JS = """([x, y]) => {
+PRESS_JS = _PRESS
+# What a key would press: the element that has focus, followed into shadow roots and frames of the same site. One in
+# a frame of another site (a payment provider's) can't be read, and is said to be a frame.
+FOCUSED_JS = f"""() => {{
+  let e = document.activeElement;
+  while (e) {{
+    if (e.shadowRoot && e.shadowRoot.activeElement) {{ e = e.shadowRoot.activeElement; continue; }}
+    if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {{
+      let inner = null;
+      try {{ inner = e.contentDocument; }} catch (x) {{ inner = null; }}
+      if (!inner) return {{labels: [], priced: false, submits: false, frame: true}};
+      e = inner.activeElement;
+      continue;
+    }}
+    break;
+  }}
+  if (!e || e === document.body || e === document.documentElement) return null;
+  return ({_PRESS})(e);
+}}"""
+# What's at a point on the screen, as a click there would press it; a frame's insides can't be read from here.
+POINT_JS = f"""([x, y]) => {{
   const e = document.elementFromPoint(x, y);
-  if (!e) return ['', false];
-  if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') return ['', true];
-  const owner = e.closest('button, a, [role=button], [role=link], input, [onclick]') || e;
-  return [(owner.innerText || owner.value || owner.getAttribute('aria-label') || '').slice(0, 200), false];
-}"""
+  if (!e) return null;
+  const frame = {{labels: [], priced: false, submits: false, frame: true}};
+  if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') return frame;
+  return ({_PRESS})(e);
+}}"""
+# Whether the page takes payment: a card field (autocomplete cc-*, the standard's) or a frame given the payment
+# permission (how Stripe's, PayPal's and Apple Pay's are put on a page). Asked of each frame.
+PAYING_JS = '() => !!document.querySelector(\'input[autocomplete^="cc-"], iframe[allow*="payment"]\')'
 # The values in the page's password fields, in its own document and its frames' (each is asked on its own): left out
 # of what the model is shown, whoever typed them.
 PASSWORDS_JS = "() => [...document.querySelectorAll('input[type=password]')].map((e) => e.value).filter(Boolean)"
 UNMARK_JS = "() => document.querySelectorAll('.tars-mark').forEach((m) => m.remove())"
 
-# What Enter would send, from the field it's pressed in: its form's submit button, as the gate reads labels.
-SUBMITS_JS = """(e) => {
+# What Enter would send, from the field it's pressed in: its form's submit button, as the gate reads it.
+SUBMITS_JS = f"""(e) => {{
   const form = e.form || e.closest('form');
-  if (!form) return '';
-  const b = form.querySelector('[type=submit], button:not([type])');
-  return b ? (b.innerText || b.value || b.getAttribute('aria-label') || '').trim() : '';
-}"""
+  const b = form && form.querySelector('[type=submit], button:not([type])');
+  return b ? ({_PRESS})(b) : null;
+}}"""
 
 REF = re.compile(r"(f\d+)?e\d+")
 KEYS = {"Enter", "Escape", "Tab", "Backspace", "Delete", "ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home",
@@ -263,31 +302,22 @@ class Session:
             if not text:
                 raise ValueError('click by text takes {"click": {"text": "..."}}')
             target = self._by_text(text, near)
-            for said in (text, self._presses(target)):
-                if commits(said):
-                    raise Refused(said, f"{said!r} would commit the person to it: call request_approval with its ref")
+            self._gate(self._press(target, text), "call request_approval with its ref")
             target.click(timeout=6_000)
             return f"clicked the text {text[:60]!r}"
         if "click" in step:
             ref = str(step["click"])
             target = self._target(ref)
             label = self._label(ref, target)
-            for said in (label, self._presses(target)):
-                if commits(said):
-                    raise Refused(said, f"{said!r} would commit the person to it: call request_approval with this ref")
+            self._gate(self._press(target, label), "call request_approval with this ref")
             target.click(timeout=6_000)
             return f"clicked {ref} {label[:60]!r}"
         if "click_at" in step:  # a point on the screenshot: the last resort, for what the view can't name
             x, y = (float(v) for v in step["click_at"])
-            label, frame = self.page.evaluate(POINT_JS, [x, y])
-            if frame:
-                raise Refused("a frame", "that point is inside a frame (a payment provider's button, say), which "
-                              "can't be checked from here: click by its ref, or call request_approval")  # fmt: skip
-            label = " ".join(str(label or "").split())
-            if commits(label):
-                raise Refused(label, f"what's there ({label!r}) would commit the person: call request_approval")
+            found = self.page.evaluate(POINT_JS, [x, y])
+            press = self._gate(found, "call request_approval with its ref", "that point")
             page.mouse.click(x, y)
-            return f"clicked at {x:g},{y:g} ({label[:60]!r})"
+            return f"clicked at {x:g},{y:g} ({(press.labels or ('',))[0][:60]!r})"
         if "fill" in step and "type" not in step:  # what models also call it
             step = {**step, "type": step["fill"]}
         if "type" in step:
@@ -316,13 +346,13 @@ class Session:
             key = str(step["press"])
             if key not in KEYS:
                 raise ValueError(f"no such key {key!r} (one of {', '.join(sorted(KEYS))})")
-            focused = page.locator(":focus")
-            if key == "Enter" and focused.count():
-                self._enter(focused.first)
-            else:
-                if key == "Space" and focused.count():  # Space presses a focused button
-                    self._gate_focused(focused.first)
-                page.keyboard.press(key)
+            if key in ("Enter", "Space"):  # either presses a focused button; Enter also submits a field's form
+                focused = page.evaluate(FOCUSED_JS)
+                if focused is not None:
+                    self._gate(focused, "call request_approval with its ref", "that key")
+                if key == "Enter":
+                    self._gate(self._form_submit(page.locator(":focus")), "call request_approval instead", "Enter")
+            page.keyboard.press(key)
             return f"pressed {key}"
         if "scroll" in step:
             where = str(step["scroll"])
@@ -405,27 +435,58 @@ class Session:
             return ""
 
     def _enter(self, field) -> None:
-        """Enter in a field, or on a focused button: refused when what it would submit or press commits."""
-        self._gate_focused(field)
-        try:
-            sends = field.evaluate(SUBMITS_JS)
-        except PlaywrightError:
-            sends = ""
-        if sends and commits(sends):
-            raise Refused(sends, f"Enter here would press {sends!r}, which commits: call request_approval instead")
+        """Enter in a field: refused when it, or what it would submit, commits."""
+        self._gate(self._press(field), "call request_approval instead", "Enter there")
+        self._gate(self._form_submit(field), "call request_approval instead", "Enter there")
         field.press("Enter")
 
-    def _gate_focused(self, element) -> None:
-        """Refused when a key on `element` would press a button that commits (Enter or Space on a focused one)."""
-        if commits(label := self._presses(element)):
-            raise Refused(label, f"that key would press {label!r}, which commits: call request_approval instead")
-
-    def _presses(self, element) -> str:
-        """The label of what a click or a key on `element` would press: the button or link it's in."""
+    def _form_submit(self, field) -> dict | None:
+        """What Enter in `field` would submit: its form's submit button, as a press; None without one."""
         try:
-            return " ".join(str(element.evaluate(OWNER_JS) or "").split())
+            return field.first.evaluate(SUBMITS_JS) if hasattr(field, "first") else field.evaluate(SUBMITS_JS)
         except PlaywrightError:
-            return ""
+            return None
+
+    def _press(self, element, *said: str) -> dict:
+        """What pressing `element` would press (PRESS_JS), with `said` (what the view or the model calls it) among
+        its labels."""
+        try:
+            found = element.evaluate(PRESS_JS) or {}
+        except PlaywrightError:
+            found = {}
+        return {**found, "labels": [*said, *found.get("labels", [])]}
+
+    def _gate(self, found: dict | None, instead: str, what: str = "that") -> Press:
+        """Raises Refused when `found` (a press, from the page's scripts) commits, or is in a frame that can't be
+        read; else the press, for saying what was done."""
+        if found is None:
+            return Press(())
+        if found.get("frame"):
+            raise Refused("a frame", f"{what} is inside a frame (a payment provider's, say), which can't be checked "
+                          f"from here: {instead}")  # fmt: skip
+        press = Press(tuple(" ".join(str(x).split()) for x in found.get("labels", []) if str(x).strip()),
+                      bool(found.get("priced")), self.paying(), bool(found.get("submits")))  # fmt: skip
+        if commits(press):
+            label = next(
+                (x for x in press.labels if says_commit(x, press.priced)), press.labels[0] if press.labels else ""
+            )
+            why = (
+                f"{label!r} would commit the person to it"
+                if label
+                else "it submits a form on a page that takes payment"
+            )
+            raise Refused(label or "a submit button", f"{why}: {instead}")
+        return press
+
+    def paying(self) -> bool:
+        """Whether the page takes payment, in any of its frames (PAYING_JS)."""
+        for frame in self.page.frames:
+            try:
+                if frame.evaluate(PAYING_JS):
+                    return True
+            except PlaywrightError:
+                continue
+        return False
 
     def click_approved(self, ref: str) -> None:
         """Clicks what the person approved: only ever called by code, after they said yes."""

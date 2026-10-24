@@ -12,7 +12,7 @@ from voice_assistant.browser import agent as agents
 from voice_assistant.browser import page as pages
 from voice_assistant.browser.agent import Agent, Settings
 from voice_assistant.browser.gate import commits
-from voice_assistant.browser.session import OWNER_JS, PASSWORDS_JS, POINT_JS, Outcome, Refused, Session
+from voice_assistant.browser.session import PASSWORDS_JS, PAYING_JS, PRESS_JS, Outcome, Refused, Session
 
 CARD_PAGE = """- generic [ref=e1] [box=0,0,1200,700]:
   - banner [ref=e2] [box=0,0,1200,70]:
@@ -172,9 +172,8 @@ class FakeLocator:
     def evaluate(self, script):
         if "options" in script:
             return self.page.elements[self.ref].get("options", [])
-        if script is OWNER_JS:  # what a click on it presses: the button it's in, else its own text
-            element = self.page.elements[self.ref]
-            return element.get("in", element.get("text", ""))
+        if script is PRESS_JS:  # what a click on it presses (the gate's tests are in Chrome: test_browser_chrome.py)
+            return {"labels": [self.page.elements[self.ref].get("text", "")], "priced": False, "submits": False}
         return self.page.elements[self.ref].get("submits", "")
 
     def inner_text(self, timeout=None):
@@ -215,6 +214,8 @@ class FakePage:
     def evaluate(self, script, arg=None):
         if script is PASSWORDS_JS:
             return self.passwords
+        if script is PAYING_JS:
+            return False
         if "aria-busy" in script:  # still loading, for as many looks as `busy` says
             self.busy -= 1
             return self.busy >= 0
@@ -231,24 +232,6 @@ def session_on(elements) -> tuple[Session, FakePage]:
     page = FakePage(elements)
     context = types.SimpleNamespace(pages=[page], on=lambda event, handler: None)
     return Session(context), page
-
-
-def test_a_click_on_what_commits_is_refused_and_not_done():
-    session, page = session_on({"e1": {"text": "Add to cart"}, "e2": {"text": "Place order"}})
-    session.look()
-    outcome = session.act([{"click": "e2"}])
-    assert outcome.refused == "Place order" and outcome.failed
-    assert ("click", "e2") not in page.done
-    assert "request_approval" in str(outcome)
-
-
-def test_enter_that_would_submit_a_commit_is_refused():
-    session, page = session_on({"e1": {"submits": "Complete booking"}, "e3": {"submits": "Search"}})
-    outcome = session.act([{"type": "e1", "text": "Alon", "submit": True}])
-    assert outcome.refused == "Complete booking"
-    assert ("press", "e1", "Enter") not in page.done
-    session.act([{"type": "e3", "text": "athens", "submit": True}])
-    assert ("press", "e3", "Enter") in page.done
 
 
 def test_a_batch_stops_when_a_step_opens_something_and_a_hidden_target_fails_fast():
@@ -314,6 +297,9 @@ class FakeSession:
 
     def take_network(self):
         return []
+
+    def paying(self):
+        return False
 
     def click_approved(self, ref):
         self.pressed.append(ref)
@@ -492,44 +478,6 @@ def test_the_same_steps_again_and_again_are_stopped():
     Agent(model, session, Person()).run("Sort it")
     assert len(session.acted) == 2
     assert "times in a row" in json.dumps(model.sent[-1]["input"])
-
-
-def test_a_click_by_text_or_at_a_point_is_gated_too():
-    session, page = session_on({"e1": {}})
-    page.get_by_text = lambda text, exact: types.SimpleNamespace(all=lambda: [FakeLocator(page, "e1")])
-    assert not session.act([{"click": {"text": "Tel Aviv"}}]).failed and ("click", "e1") in page.done
-    outcome = session.act([{"click": {"text": "Place order"}}])
-    assert outcome.refused == "Place order"
-    plain = page.evaluate
-    page.evaluate = lambda script, arg=None: ["Pay now", False] if script is POINT_JS else plain(script, arg)
-    page.mouse = types.SimpleNamespace(click=lambda x, y: page.done.append(("click_at", x, y)))
-    assert session.act([{"click_at": [10, 20]}]).refused == "Pay now"
-    page.evaluate = lambda script, arg=None: ["", True] if script is POINT_JS else plain(script, arg)
-    assert session.act([{"click_at": [10, 20]}]).refused == "a frame"  # a payment provider's button, unreadable
-    assert not any(d[0] == "click_at" for d in page.done)
-
-
-def test_a_click_on_text_inside_a_button_that_commits_is_refused():
-    session, page = session_on({"e1": {"text": "₪112.40", "in": "Place order ₪112.40"}})
-    page.get_by_text = lambda text, exact: types.SimpleNamespace(all=lambda: [FakeLocator(page, "e1")])
-    assert session.act([{"click": {"text": "₪112.40"}}]).refused == "Place order ₪112.40"
-    assert ("click", "e1") not in page.done
-
-
-def test_enter_or_space_on_a_focused_button_that_commits_is_refused():
-    session, page = session_on({"e2": {"text": "Place order"}})
-    page.keyboard = types.SimpleNamespace(press=lambda key: page.done.append(("key", key)))
-    page.focused = "e2"
-    assert session.act([{"press": "Enter"}]).refused == "Place order"
-    assert session.act([{"press": "Space"}]).refused == "Place order"
-    assert page.done == []
-
-
-def test_a_password_on_the_page_is_never_shown_to_the_model():
-    session, page = session_on({})
-    page.aria_snapshot = lambda **kw: '- textbox "Password" [ref=e6] [box=0,0,100,20]: hunter2-secret'
-    page.passwords = ["hunter2-secret"]
-    assert "hunter2" not in session.look().text
 
 
 def test_an_address_at_home_is_never_opened():
@@ -791,3 +739,31 @@ def test_opus_with_full_history_gets_its_thinking_back_until_the_history_is_sque
     brain._squeeze()
     assert brain.messages[1]["content"] == [tool]
     assert not brain.full
+
+
+GATE = {  # real labels from the eval runs' traces, and the cases the reviews found
+    True: ["Place order", "Confirm the scheduled order", "Reserve", "למעבר לתשלום", "Place order ₪112.40",
+           "Pay with saved payment method", "Place order and track delivery", "Confirm order details and pay",
+           "Order for ₪112.40", "Order (2 items)", "Book for €240", "Reserve for 2", "Book this flight", "Subscribe",
+           "Start free trial", "שלמו", "בצעו הזמנה", "רכשו עכשיו", "הזמן ב-₪45", "ולתשלום", "Pur\u00adchase",
+           "𝐏𝐥𝐚𝐜𝐞 𝐨𝐫𝐝𝐞𝐫", "Complete checkout", "השלם את ההזמנה"],
+    False: ["1 Go to checkout ₪73.00", "מעבר לעגלת הקניות", "Add to order ₪65.00", "Order again", "Your orders",
+            "ההזמנות שלך", "Schedule order", "Confirm", "אישור", "Remove from order", "Order history", "Book a table",
+            "Reserve a table", "Payment methods", "אמצעי תשלום", "Show items", "1 הצגת פריטים \u200f56.00 \u200f₪",
+            "Search", "Next", "Apply", "Done", "Got it", "Send me a code", "Confirm your address below"],
+}  # fmt: skip
+
+
+@pytest.mark.parametrize(("commits_", "label"), [(c, label) for c, labels in GATE.items() for label in labels])
+def test_the_gate_by_words_alone(commits_, label):
+    from voice_assistant.browser.gate import says_commit
+
+    assert says_commit(label) == commits_
+
+
+def test_a_bare_confirm_commits_only_where_an_amount_is_shown_and_any_submit_where_it_pays():
+    from voice_assistant.browser.gate import Press, commits, moves_on
+
+    assert commits(Press(("Confirm",), priced=True)) and not commits(Press(("Confirm",)))
+    assert commits(Press(("Apply",), paying=True, submits=True)) and not commits(Press(("Apply",), submits=True))
+    assert moves_on("Go to checkout") and not moves_on("Go to checkout", paying=True)

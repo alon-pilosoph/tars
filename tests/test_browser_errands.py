@@ -130,7 +130,7 @@ def test_an_errand_asked_in_a_chat_runs_on_its_own_and_its_answer_goes_to_the_ch
     assert ran == [("order a margherita on Wolt", "Alon", "profile", "gpt-6-luna")]
     assert e.next()  # Stacey's, next
     e.thread.join(2)
-    assert ran[1][:3] == ("book a table on Ontopo", "Stacey", "profile-stacey")
+    assert ran[1][:2] == ("book a table on Ontopo", "Stacey") and ran[1][2] not in ("profile", ran[0][2])
 
 
 def test_an_errand_needs_someone_known_asking_a_goal_and_a_turn_that_goes_ahead(tmp_path):
@@ -201,7 +201,8 @@ def test_an_errand_that_breaks_is_said_so_and_one_left_running_is_failed(tmp_pat
 def test_each_person_has_a_browser_profile_of_their_own():
     first = profile_for("Alon", "Alon")
     assert profile_for("alon", "Alon") == first
-    assert profile_for("Stacey Ann", "Alon") == first.with_name("profile-stacey-ann")
+    assert profile_for("Stacey Ann", "Alon") == profile_for(" stacey ann", "Alon") != first
+    assert profile_for("דנה", "Alon") != profile_for("יעל", "Alon")  # not one folder for every Hebrew name
 
 
 # The chat: approving, a code, the answer

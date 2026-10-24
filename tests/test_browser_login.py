@@ -32,6 +32,7 @@ class SignInPage:
 
     def __init__(self, *screens):
         self.screens, self.at, self.typed = list(screens), 0, []
+        self.frames = []  # none that takes payment
 
     @property
     def url(self):
@@ -49,7 +50,7 @@ class SignInPage:
             first = None
 
             def evaluate(self, script):
-                return ""  # its form's submit button: none that commits
+                return {"labels": ["Sign in"]}  # its form's submit button
 
             def fill(self, text):
                 page.typed.append((tag, text))
@@ -191,12 +192,12 @@ def test_enter_in_a_form_whose_button_commits_is_never_pressed(tmp_path):
 
     def checkout_form(selector):
         found = original(selector)
-        found.evaluate = lambda script: "Place order"  # a guest checkout: its email field submits the order
+        found.evaluate = lambda script: {"labels": ["Place order"]}  # a guest checkout: the field submits the order
         found.press = lambda key: pytest.fail("Enter pressed in a checkout form")
         return found
 
     page.locator = checkout_form
-    assert "commits" in sign_in(page, vault, Asked())
+    assert "not a sign-in form" in sign_in(page, vault, Asked())
 
 
 def test_a_code_is_not_typed_if_the_page_moved_on_while_it_came(tmp_path):

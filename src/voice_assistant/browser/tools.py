@@ -129,7 +129,7 @@ class Tools:
         if self.committed:
             return "this task already committed once: call done"
         label = " ".join((node.name or pages.text_of(node)).split())
-        if moves_on(label):
+        if moves_on(label, paying=session.paying()):
             return (f"{label!r} only takes you on (to the basket or the checkout): press it yourself, and call "
                     "request_approval at the last button, the one that places the order")  # fmt: skip
         prices = MONEY.findall(session.look().text)  # as it is, with nothing a step just added shown twice

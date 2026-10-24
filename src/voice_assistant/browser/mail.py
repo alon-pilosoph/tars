@@ -10,6 +10,7 @@ an email is the sender's, and could say anything to a model."""
 import email
 import imaplib
 import json
+import ssl
 import threading
 import time
 from collections.abc import Callable
@@ -133,6 +134,12 @@ def _taken(code: str | None, link: int | None, links: list[str]) -> tuple[str | 
     return (code if ok else None), chosen
 
 
+def _connect(host: str, port: int) -> imaplib.IMAP4:
+    """The mail server over TLS, its certificate checked: imaplib's own default doesn't, and the app password goes
+    over it."""
+    return imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context(), timeout=30)
+
+
 class Mailbox:
     """One mailbox, read-only: Gmail's All Mail (searched with Gmail's own syntax), or another server's inbox."""
 
@@ -140,7 +147,7 @@ class Mailbox:
         host = urlsplit(login.origins[0]).hostname or ""
         self.address = login.username
         self.gmail = host == "imap.gmail.com"
-        self.imap = (connect or (lambda h, p: imaplib.IMAP4_SSL(h, p, timeout=30)))(host, PORT)
+        self.imap = (connect or _connect)(host, PORT)
         self.imap.login(login.username, login.password.replace(" ", ""))  # Gmail shows app passwords in fours
         self.imap.select('"[Gmail]/All Mail"' if self.gmail else "INBOX", readonly=True)  # never marks anything read
 
