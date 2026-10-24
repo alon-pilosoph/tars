@@ -12,8 +12,7 @@ from voice_assistant.browser import agent as agents
 from voice_assistant.browser import page as pages
 from voice_assistant.browser.agent import Agent, Settings
 from voice_assistant.browser.gate import commits
-from voice_assistant.browser.session import Outcome, Refused, Session
-from voice_assistant.browser.tools import _total
+from voice_assistant.browser.session import OWNER_JS, PASSWORDS_JS, POINT_JS, Outcome, Refused, Session
 
 CARD_PAGE = """- generic [ref=e1] [box=0,0,1200,700]:
   - banner [ref=e2] [box=0,0,1200,70]:
@@ -173,6 +172,9 @@ class FakeLocator:
     def evaluate(self, script):
         if "options" in script:
             return self.page.elements[self.ref].get("options", [])
+        if script is OWNER_JS:  # what a click on it presses: the button it's in, else its own text
+            element = self.page.elements[self.ref]
+            return element.get("in", element.get("text", ""))
         return self.page.elements[self.ref].get("submits", "")
 
     def inner_text(self, timeout=None):
@@ -187,6 +189,7 @@ class FakePage:
 
     def __init__(self, elements):
         self.elements, self.done = elements, []
+        self.frames, self.passwords, self.focused = [self], [], None
         self.viewport_size = {"width": 1200, "height": 700}
         self.shape, self.busy, self.waited = "", 0, 0
 
@@ -200,12 +203,18 @@ class FakePage:
         return None
 
     def locator(self, selector):
+        if selector == ":focus":
+            focused = types.SimpleNamespace(count=lambda: int(self.focused is not None))
+            focused.first = FakeLocator(self, self.focused)
+            return focused
         return FakeLocator(self, selector.removeprefix("aria-ref="))
 
     def wait_for_load_state(self, *args, **kwargs):
         return None
 
     def evaluate(self, script, arg=None):
+        if script is PASSWORDS_JS:
+            return self.passwords
         if "aria-busy" in script:  # still loading, for as many looks as `busy` says
             self.busy -= 1
             return self.busy >= 0
@@ -342,7 +351,7 @@ def test_a_dry_run_approval_presses_nothing():
     session, person = FakeSession(refs=place_order_button()), Person()
     result = Agent(model, session, person).run("Order a pizza")
     assert session.pressed == [] and len(person.asked) == 1
-    assert "₪98.65" in person.asked[0] and "Place order" in person.asked[0]
+    assert "1 pizza" in person.asked[0] and "Place order" in person.asked[0]  # what the model says, and the picture
     assert "dry run" in model.sent[-1]["input"][-2]["output"]
     assert result.commits_asked == person.asked
 
@@ -415,12 +424,6 @@ def test_a_follow_up_carries_on_in_the_same_conversation():
     assert "Take out what you put in" in json.dumps(model.sent[-1]["input"])
 
 
-def test_the_total_is_read_off_the_page():
-    assert _total("Subtotal ₪73.00\nDelivery ₪12.00\nTotal\n₪85.00") == "₪85.00"
-    assert _total('סה"כ לתשלום 113.40 ₪') == "113.40 ₪"
-    assert _total("Nothing to pay here") is None
-
-
 def test_the_tools_say_what_they_take():
     names = {t["name"] for t in agents.TOOLS}
     assert names == {"act", "find", "look", "request_approval", "sign_in", "done"}
@@ -435,7 +438,7 @@ def test_refused_carries_the_label():
 
 
 def test_a_site_is_its_domain_under_a_country_too():
-    from voice_assistant.browser.notes import site
+    from voice_assistant.browser.vault import site
 
     assert site("https://wolt.com/en/isr/tel-aviv") == "wolt.com"
     assert site("https://www.ksp.co.il/web/cart") == "ksp.co.il"
@@ -497,10 +500,49 @@ def test_a_click_by_text_or_at_a_point_is_gated_too():
     assert not session.act([{"click": {"text": "Tel Aviv"}}]).failed and ("click", "e1") in page.done
     outcome = session.act([{"click": {"text": "Place order"}}])
     assert outcome.refused == "Place order"
-    page.evaluate = lambda script, arg=None: "Pay now" if "elementFromPoint" in script else 700
+    plain = page.evaluate
+    page.evaluate = lambda script, arg=None: ["Pay now", False] if script is POINT_JS else plain(script, arg)
     page.mouse = types.SimpleNamespace(click=lambda x, y: page.done.append(("click_at", x, y)))
     assert session.act([{"click_at": [10, 20]}]).refused == "Pay now"
+    page.evaluate = lambda script, arg=None: ["", True] if script is POINT_JS else plain(script, arg)
+    assert session.act([{"click_at": [10, 20]}]).refused == "a frame"  # a payment provider's button, unreadable
     assert not any(d[0] == "click_at" for d in page.done)
+
+
+def test_a_click_on_text_inside_a_button_that_commits_is_refused():
+    session, page = session_on({"e1": {"text": "₪112.40", "in": "Place order ₪112.40"}})
+    page.get_by_text = lambda text, exact: types.SimpleNamespace(all=lambda: [FakeLocator(page, "e1")])
+    assert session.act([{"click": {"text": "₪112.40"}}]).refused == "Place order ₪112.40"
+    assert ("click", "e1") not in page.done
+
+
+def test_enter_or_space_on_a_focused_button_that_commits_is_refused():
+    session, page = session_on({"e2": {"text": "Place order"}})
+    page.keyboard = types.SimpleNamespace(press=lambda key: page.done.append(("key", key)))
+    page.focused = "e2"
+    assert session.act([{"press": "Enter"}]).refused == "Place order"
+    assert session.act([{"press": "Space"}]).refused == "Place order"
+    assert page.done == []
+
+
+def test_a_password_on_the_page_is_never_shown_to_the_model():
+    session, page = session_on({})
+    page.aria_snapshot = lambda **kw: '- textbox "Password" [ref=e6] [box=0,0,100,20]: hunter2-secret'
+    page.passwords = ["hunter2-secret"]
+    assert "hunter2" not in session.look().text
+
+
+def test_an_address_at_home_is_never_opened():
+    from voice_assistant.browser.session import at_home
+
+    for url in ("http://localhost:8080/", "http://127.0.0.1:9222/json", "http://192.168.1.1/", "http://tars:8080/",
+                "https://pi.local/", "https://box.tail1.ts.net/", "http://[::1]/", "http://100.64.0.7/"):  # fmt: skip
+        assert at_home(url), url
+    for url in ("https://wolt.com/he", "https://www.ksp.co.il/web/", "https://localhostess.com/", "about:blank"):
+        assert not at_home(url), url
+    session, page = session_on({})
+    page.goto = lambda url, **kw: page.done.append(("goto", url))
+    assert session.act([{"goto": "http://192.168.1.1/admin"}]).failed and page.done == []
 
 
 @pytest.mark.parametrize(
@@ -531,36 +573,12 @@ def test_a_step_as_written_is_read_into_what_is_done(written, done):
     assert normal(written) == done
 
 
-def test_a_run_that_may_have_filled_a_basket_is_tidied():
-    from voice_assistant.browser.run import _filled
-
-    def act(said):
-        return {"call": "act", "said": said}
-
-    assert _filled([act("ok: clicked e1 'Add to order ₪66.00'")])
-    assert _filled([act("ok: clicked e9 'Order again'")])
-    assert _filled([act("ok: clicked e3 'הוסף לסל'")])
-    assert _filled([act("ok: clicked e5570 'להוסיף לעגלת כבל USB-C ל-USB-C'")])
-    assert not _filled([act("ok: clicked e2 'Search'"), {"call": "find", "said": "Add to cart"}])
-
-
-def test_a_tidying_run_is_told_what_the_run_clicked():
+def test_a_tidying_run_is_told_the_site_and_what_the_run_said():
     from voice_assistant.browser.run import tidy_goal
 
-    turns = [
-        {
-            "call": "act",
-            "url": "https://wolt.com/x",
-            "said": "ok: clicked e5 'Pizza Har Sinai'\nok: clicked e9 "
-            + json.dumps("Add to order ₪66.00", ensure_ascii=False),
-        },
-        {"call": "act", "url": "https://wolt.com/x", "said": "ok: clicked the text 'Tel Aviv'"},
-        {"call": "find", "url": "https://wolt.com/x", "said": "clicked e1 'not a click'"},
-    ]
-    goal = tidy_goal(turns)
-    assert "Empty the basket or cart on wolt.com" in goal
-    assert "'Pizza Har Sinai'; 'Add to order ₪66.00'; 'Tel Aviv'" in goal
-    assert "not a click" not in goal
+    turns = [{"call": "act", "url": "https://wolt.com/x", "said": "ok"}, {"call": "done", "url": "", "said": "ok"}]
+    goal = tidy_goal(turns, "Your margherita from Pizza Har Sinai is at checkout, ₪66.")
+    assert "Empty the basket or cart on wolt.com" in goal and "Pizza Har Sinai" in goal
 
 
 def test_what_a_step_added_to_the_same_page_is_said_first():

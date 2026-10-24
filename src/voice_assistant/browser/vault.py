@@ -2,9 +2,9 @@
 a household member's, tied to the exact sites (origins) it may be used on, kept encrypted, and used by code
 (login.py, mail.py), never shown to a model.
 
-    uv run --extra browser python -m voice_assistant.browser vault add https://www.ksp.co.il [--person NAME]
-    uv run --extra browser python -m voice_assistant.browser vault list
-    uv run --extra browser python -m voice_assistant.browser vault remove www.ksp.co.il [--person NAME]
+    uv run python -m voice_assistant.browser vault add https://www.ksp.co.il [--person NAME]
+    uv run python -m voice_assistant.browser vault list
+    uv run python -m voice_assistant.browser vault remove www.ksp.co.il [--person NAME]
 
 A login TARS doesn't have yet is also asked for while it works (login.py), in the terminal it runs in.
 
@@ -57,6 +57,20 @@ def origin(url: str) -> str:
     port = parts.port
     default = {"https": 443, "http": 80}.get(parts.scheme)
     return f"{parts.scheme}://{host}" + (f":{port}" if port and port != default else "")
+
+
+# Second-level labels under a country's: wolt.com, but ksp.co.il, ikea.co.il and bbc.co.uk.
+UNDER_COUNTRY = {"co", "com", "org", "net", "gov", "ac", "edu", "muni", "ltd", "plc"}
+
+
+def site(url: str) -> str:
+    """The site an address is on, as its notes are kept and its email comes from: wolt.com for
+    https://wolt.com/en/..., ksp.co.il for https://www.ksp.co.il/web/."""
+    host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+    labels = host.split(".")
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in UNDER_COUNTRY:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:]) if len(labels) >= 2 else host
 
 
 class Vault:
@@ -162,10 +176,10 @@ def _login(name: str, entry: dict) -> Login:
 
 def household_person(config: Path) -> str:
     """Whose logins a task uses when nobody says: the first of [telegram] people, as TARS knows the household."""
-    from ..config import load_config
+    from ..config import ConfigError, load_config
 
     try:
         people = load_config(config).telegram.people
-    except Exception:  # noqa: BLE001 - no config here (a test, a fresh clone): one person, unnamed
+    except ConfigError:  # a config.toml that can't be read: one person, unnamed, rather than no browser at all
         return "me"
     return next(iter(people), "me")

@@ -271,6 +271,9 @@ class BackupConfig:
     keep_snapshots_days: int = 30
 
 
+EFFORTS = ("minimal", "low", "medium", "high", "xhigh")  # how hard an OpenAI model may be asked to think
+
+
 @dataclass
 class BrowserConfig:
     # TARS's own web browser, for errands asked in a Telegram chat or aloud: ordering, booking, looking something up
@@ -505,8 +508,8 @@ def _problems(cfg: Config) -> list[str]:
     w = cfg.browser
     if w.enabled and not cfg.telegram.enabled:
         problems.append("[browser] needs [telegram]: errands are asked for, approved and answered in a chat")
-    if w.effort not in ("minimal", "low", "medium", "high", "xhigh"):
-        problems.append(f"[browser] effort must be minimal, low, medium, high or xhigh, not {w.effort!r}")
+    if w.effort not in EFFORTS:
+        problems.append(f"[browser] effort must be one of {', '.join(EFFORTS)}, not {w.effort!r}")
     if not 5 <= w.turns <= 100:
         problems.append("[browser] turns must be between 5 and 100")
     if not 1024 <= w.login_port <= 65535:

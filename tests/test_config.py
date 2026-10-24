@@ -62,6 +62,10 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ('[backup]\nregion = "europe"', "must be an AWS region"),
         ('[backup]\nprefix = "/tars/"', "no slash at either end"),
         ("[backup]\nkeep_snapshots_days = 0", "keep_snapshots_days must be at least 1"),
+        ("[browser]\nenabled = true", "[browser] needs [telegram]"),
+        ('[browser]\neffort = "max"', "[browser] effort must be one of"),
+        ("[browser]\nturns = 2", "[browser] turns must be between 5 and 100"),
+        ("[browser]\nlogin_port = 80", "[browser] login_port must be between 1024 and 65535"),
     ],
 )
 def test_a_setting_that_cannot_work_stops_at_startup_with_one_line(tmp_path, setting, says):

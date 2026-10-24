@@ -130,7 +130,7 @@ later: the requests that did the work, replayed by code.
 ## Running it
 
 ```bash
-uv sync --extra browser
+uv sync --all-extras
 uv run python -m voice_assistant.browser run "What was my last order on Wolt?"
 uv run python -m voice_assistant.browser view https://wolt.com --shot wolt.jpg   # what the model is shown
 ```
@@ -157,6 +157,23 @@ The same code, with three differences that come from the Pi having no screen
 [`deploy/sim`](simulator.md) tries all of it on a simulated Pi first. At about a
 Pi 4's speed there, a page takes 1-4 s to load and 1.5-5 s to read (most of it waiting for a busy page to stop
 moving), so an errand takes longer than on a Mac, mostly in the browser: the model is in the cloud either way.
+
+## What leaves the machine
+
+- **To OpenAI,** for each errand: the goal, and the pages the browser works as the model reads them (their text, and
+  now and then a screenshot), which can be the person's own accounts on those sites (an order history, a saved
+  address), with what TARS noted about each site before. A site's sign-in email, when one comes, for its code or
+  link. Never a password, a code TARS types or anything from the vault: those are typed by code, kept out of what
+  the model reads and out of the traces.
+- **To the sites,** what any visitor's browser sends them, and the logins TARS keeps for them, each only to its own.
+- **From the mailbox,** over IMAP, read-only: the sign-in emails from the site being signed in to, while it signs in.
+- **On the home network,** the one-time page for a login TARS lacks, served on this machine while it waits
+  (`[browser] login_port`), plain HTTP: better reached over Tailscale.
+- **To Telegram,** the checkout's screenshot and what an order commits to, to approve, and the codes sent back
+  ([TARS on Telegram](telegram.md#what-it-sends-telegram)).
+
+The browser never opens an address on this machine or the home network (TARS's web UI, the router), whatever a
+page asks: a page can say anything to a model, and those don't ask for a password.
 
 ## How well it works
 

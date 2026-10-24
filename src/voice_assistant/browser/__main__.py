@@ -1,9 +1,9 @@
 """TARS's browser from a terminal.
 
-    uv run --extra browser python -m voice_assistant.browser run "GOAL" [--turns N] [--trace FILE] [--person NAME]
-    uv run --extra browser python -m voice_assistant.browser vault add|mail|list|remove ...   # TARS's logins
-    uv run --extra browser python -m voice_assistant.browser view URL [--shot FILE]   # what the agent sees there
-    uv run --extra browser python -m voice_assistant.browser signin [URL]   # sign in by hand, on a desktop
+    uv run python -m voice_assistant.browser run "GOAL" [--turns N] [--trace FILE] [--person NAME]
+    uv run python -m voice_assistant.browser vault add|mail|list|remove ...   # TARS's logins
+    uv run python -m voice_assistant.browser view URL [--shot FILE]   # what the agent sees there
+    uv run python -m voice_assistant.browser signin [URL]   # sign in by hand, on a desktop
 
 `run` asks in the terminal for approval (y/n) before anything is committed, and presses the button only with
 --really-commit; without it, an approved commit is a dry run. A login TARS lacks, or a code a site sends, is asked
@@ -16,6 +16,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from ..config import load_config
 from .agent import Settings
 from .chrome import PROFILE, own_chrome
 from .login import MAIL_WAIT_S, Answer
@@ -105,13 +106,15 @@ def main() -> None:
     v.add_argument("--wait", type=float, default=2.0, help="seconds to let the page load first")
     r = sub.add_parser("run", help="the agent, on one goal")
     r.add_argument("goal")
-    r.add_argument("--turns", type=int, default=30)
+    browser = load_config(ROOT / "config.toml").browser
+    r.add_argument("--turns", type=int, default=browser.turns)
     r.add_argument("--trace", type=Path)
     r.add_argument("--really-commit", action="store_true", help="press an approved commit (default: a dry run)")
     r.add_argument("--person", default=person, help=f"whose logins it signs in with (default {person})")
     args = parser.parse_args()
     if args.command == "run":
-        settings = Settings(turns=args.turns, really_commit=args.really_commit)
+        settings = Settings(model=browser.model, effort=browser.effort, turns=args.turns,
+                            really_commit=args.really_commit)  # fmt: skip
         you = Terminal(args.person)
         result = run_task(args.goal, you, trace_to=args.trace, settings=settings, person=you)
         print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -51,6 +51,7 @@ MODELS_S = 300.0  # long enough to download every local model on a slow line, th
 READY = "TARS is ready."
 STALE_BACKUP_S = 3600.0  # the timer runs a pass every 15 minutes: an hour without a good one is worth a look
 BACKUP_CHECK_S = 20.0  # S3's client retries a bucket that doesn't answer; --check never waits longer than this
+DISPLAY_UNIT = "voice-assistant-display"  # the browser's virtual screen, on a machine with none (the Pi)
 OVERDUE_S = 3 * 60.0  # a reminder Telegram should have posted this long ago is waiting for it
 PRESENCE = "Who's home"
 ROUTER_FIX = "check its address, user, and its password in .env (the name under secret); docs/presence.md"
@@ -368,6 +369,49 @@ def telegram_waiting(cfg: Config, folder: Path, now: float | None = None) -> Res
     if not processes(folder, ["telegram"], lambda unit: None, now)[0]["running"]:
         return Result(name, FAIL, f"{said}: Telegram isn't running", "systemctl --user status voice-assistant-telegram")
     return Result(name, SKIP, f"{said}; Telegram is running")
+
+
+def browser(cfg: Config) -> Result:
+    """TARS's browser can start: its extra is installed, and there's a Chrome or Chromium to run."""
+    if not cfg.browser.enabled:
+        return Result("Browser", SKIP, "off ([browser] enabled)")
+    try:
+        from .browser.chrome import executable
+    except ImportError:
+        return Result("Browser", FAIL, 'no optional extra "browser"', "uv sync --all-extras")
+    try:
+        found = executable()
+    except RuntimeError:
+        return Result("Browser", FAIL, "no Chrome or Chromium", "sudo apt install chromium (install-pi.sh does)")
+    orders = "orders once approved" if cfg.browser.really_order else "approved orders are a dry run"
+    return Result("Browser", OK, f"{cfg.browser.model} at {cfg.browser.effort} effort, in {found}; {orders}")
+
+
+def errands_waiting(cfg: Config, folder: Path, now: float | None = None) -> Result:
+    """Errands asked aloud that wait in the queue while nothing runs them: the Telegram service does. `folder`: the
+    event log's."""
+    from .store import DB_FILE
+
+    name = "Errands"
+    if not (cfg.browser.enabled and (folder / DB_FILE).exists()):
+        return Result(name, SKIP, "none")
+    from .events import EventLog
+    from .health import processes
+
+    now = time.time() if now is None else now
+    rows = EventLog(folder).store.rows("SELECT created FROM errands WHERE status = 'queued'")
+    waiting = [r for r in rows if r["created"] < now - OVERDUE_S]
+    if not waiting:
+        return Result(name, SKIP, "none waiting")
+    said = f"{len(waiting)} waiting to be run"
+    if not processes(folder, ["telegram"], lambda unit: None, now)[0]["running"]:
+        return Result(name, FAIL, f"{said}: Telegram isn't running", "systemctl --user status voice-assistant-telegram")
+    return Result(
+        name,
+        WARN,
+        f"{said}, with Telegram running",
+        "is an errand stuck? (journalctl --user -u voice-assistant-telegram)",
+    )
 
 
 def backup(cfg: Config, make: Callable[[], Backup], now: float | None = None) -> list[Result]:
@@ -803,8 +847,11 @@ def check_all(cfg: Config, root: Path) -> int:
         ("The house", devices),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
+        ("Browser", lambda: browser(cfg)),
+        ("Errands", lambda: errands_waiting(cfg, root / cfg.learning.folder)),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),
+        *([(DISPLAY_UNIT, lambda: systemd(DISPLAY_UNIT, systemd_state))] if cfg.browser.enabled else []),
     ]
     print("Checking TARS...\n", flush=True)
     results = run(checks)

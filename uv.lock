@@ -1745,7 +1745,9 @@ tv = [
 [package.dev-dependencies]
 dev = [
     { name = "anthropic" },
+    { name = "cryptography" },
     { name = "livekit" },
+    { name = "playwright" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -1789,7 +1791,9 @@ provides-extras = ["claude", "echo", "backup", "tv", "my-house", "browser"]
 [package.metadata.requires-dev]
 dev = [
     { name = "anthropic", specifier = ">=1" },
+    { name = "cryptography", specifier = ">=50.0.2" },
     { name = "livekit", specifier = ">=1.1" },
+    { name = "playwright", specifier = ">=1.64.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = "==0.16.10" },
 ]

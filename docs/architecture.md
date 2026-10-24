@@ -1,9 +1,11 @@
 # How TARS fits together
 
-TARS is a few processes on one machine (a Mac while developing, a Raspberry Pi 5 at home) sharing one folder of
+TARS is a few processes on one machine (a Mac while developing, a Raspberry Pi 4 at home) sharing one folder of
 data: the assistant, which listens and answers; the web UI, which shows and edits what the assistant kept; and,
-optionally, TARS on Telegram, which answers the household's chats ([TARS on Telegram](telegram.md)), and the backup,
-which copies what TARS keeps to an S3 bucket every 15 minutes ([backing up to S3](backup.md)). Five principles shape
+optionally, TARS on Telegram, which answers the household's chats ([TARS on Telegram](telegram.md)) and runs the
+errands TARS's browser does on websites, with a virtual screen for that browser on a machine without one
+([TARS's browser](browser.md)), and the backup, which copies what TARS keeps to an S3 bucket every 15 minutes
+([backing up to S3](backup.md)). Five principles shape
 the design:
 
 - **Local until it's sure.** The wake word, the double-check, the speech detector and speaker ID run on the machine.
@@ -136,6 +138,9 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   reports it, waits until the turn is over (a draft thrown away changes nothing), and unlocking has rules in code: by
   voice, a trusted voice recognised surely on the request itself, and the word "unlock" heard. See
   [the house](home.md).
+- **Errands** (`browse`, with `[browser]`): an errand on a website, in TARS's own browser. It's queued, run by the
+  Telegram service, and answered in the asker's chat, and aloud too if it was asked aloud; nothing is ordered until
+  they tap Order on their phone ([TARS's browser](browser.md)).
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.
@@ -208,6 +213,12 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
   models see only what the home tool answered, as part of the conversation; the TV's agent (OpenAI) also sees the
   TV's screen while it works a task. A plugin says what it sends: `examples/my_house` looks titles up on IMDb
   ([the house](home.md#what-leaves-the-house)).
+- **With `[browser]` on,** for an errand: OpenAI gets the pages the browser works (their text, and now and then a
+  screenshot), which can be the person's own accounts on those sites (an order history, a saved address), and reads
+  a site's sign-in email for its code or link. The sites get what any visitor's browser sends them, and the logins
+  TARS keeps for them, each only to its own site. The person's mailbox is read over IMAP, read-only, for sign-in
+  emails from the site being signed in to. A one-time page for a missing login is served on this machine
+  (`[browser] login_port`) while it waits, on the home network or Tailscale ([TARS's browser](browser.md#what-leaves-the-machine)).
 - **When the web UI's Status page is opened,** each service TARS uses is asked for something small with its key (a
   model, the voices, the key's or the bot's own details: no conversation, no tokens), and each one's public status
   page is read (nothing is sent to it).
@@ -255,7 +266,8 @@ The assistant is `src/voice_assistant/`:
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
-| Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API) |
+| Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API, an errand's approvals, login links and codes) |
+| The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` and `anthropic_brain.py` (the loop and its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `tools.py`, `login.py`, `login_page.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `chrome.py` (TARS's own Chrome), `mcp_server.py` and `claude.py` (Claude Code as its brain) |
 | The house | `home.py` (the `home` tool, its rules, the `Device` interface, plugins), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
 | Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |

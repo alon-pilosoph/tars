@@ -222,7 +222,7 @@ The shipped pairs, measured as [above](#how-it-was-measured).
 | False answers per hour (TV, audiobooks) | 0 |
 
 **Cost** on the development Mac (Apple Silicon): stage 1 takes 0.09 ms per 80 ms block; the check takes about 21 ms
-and only runs on a wake. Even a few times slower on a Raspberry Pi 5, that's comfortable.
+and only runs on a wake. Even a few times slower on a Raspberry Pi, that's comfortable.
 
 ## Design decisions
 

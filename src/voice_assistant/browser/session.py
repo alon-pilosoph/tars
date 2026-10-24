@@ -7,10 +7,12 @@ again. A link that opens a new tab moves the agent there, as it would a person. 
 checked against the gate (gate.py) first: what would commit the person to something isn't done, whatever the model
 says. What the page loaded behind the scenes (its JSON) is kept with the step, for the trace."""
 
+import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.sync_api import BrowserContext, Dialog, Page, Response
 from playwright.sync_api import Error as PlaywrightError
@@ -56,13 +58,24 @@ SHAPE_JS = """() => [...document.querySelectorAll(
     '[role=dialog], [role=alertdialog], dialog[open], [role=listbox], [role=menu], [aria-expanded=true]')]
   .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2; })
   .map((e) => (e.getAttribute('role') || e.tagName) + (e.getAttribute('aria-label') || '')).join(',')"""
-# What's at a point on the screen, as the gate reads it: the button or link it's in, or its own text.
-POINT_JS = """([x, y]) => {
-  const e = document.elementFromPoint(x, y);
-  if (!e) return '';
+# What a click on an element would press, as the gate reads it: the button or link it's in, or its own text. A click
+# on "₪112.40" inside the "Place order ₪112.40" button presses that button.
+OWNER_JS = """(e) => {
   const owner = e.closest('button, a, [role=button], [role=link], input, [onclick]') || e;
   return (owner.innerText || owner.value || owner.getAttribute('aria-label') || '').slice(0, 200);
 }"""
+# What's at a point on the screen, as the gate reads it: [the label of what a click there would press, whether it's a
+# frame]. A frame's insides (a payment provider's Pay button) can't be read from here.
+POINT_JS = """([x, y]) => {
+  const e = document.elementFromPoint(x, y);
+  if (!e) return ['', false];
+  if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') return ['', true];
+  const owner = e.closest('button, a, [role=button], [role=link], input, [onclick]') || e;
+  return [(owner.innerText || owner.value || owner.getAttribute('aria-label') || '').slice(0, 200), false];
+}"""
+# The values in the page's password fields, in its own document and its frames' (each is asked on its own): left out
+# of what the model is shown, whoever typed them.
+PASSWORDS_JS = "() => [...document.querySelectorAll('input[type=password]')].map((e) => e.value).filter(Boolean)"
 UNMARK_JS = "() => document.querySelectorAll('.tars-mark').forEach((m) => m.remove())"
 
 # What Enter would send, from the field it's pressed in: its form's submit button, as the gate reads labels.
@@ -148,7 +161,11 @@ class Session:
                 snapshot = page.aria_snapshot(mode="ai", boxes=True, timeout=10_000)
             except PlaywrightError:
                 snapshot = f"- text: (the page couldn't be read: {str(e).splitlines()[0][:120]})"
-        height = (page.viewport_size or {}).get("height") or page.evaluate("innerHeight")
+        snapshot = _blank(snapshot, self.secrets | self._passwords())
+        try:
+            height = (page.viewport_size or {}).get("height") or page.evaluate("innerHeight")
+        except PlaywrightError:  # navigating meanwhile
+            height = 800
         try:
             title = page.title()
         except PlaywrightError:
@@ -157,13 +174,22 @@ class Session:
         self.current = pages.view(snapshot, title, page.url, int(height), before)
         return self.current
 
+    def _passwords(self) -> set[str]:
+        found: set[str] = set()
+        for frame in self.page.frames:
+            try:
+                found.update(frame.evaluate(PASSWORDS_JS))
+            except PlaywrightError:  # a frame gone, or not ready: what it held isn't shown either way
+                continue
+        return found
+
     def screenshot(self) -> bytes:
         """What's on screen, with the refs of what's on it drawn on: about 1,000 tokens at this size."""
         view = self.current or self.look()
         height = self.page.evaluate("innerHeight")
         width = self.page.evaluate("innerWidth")
         # Only what the view names: not what is behind an open dialog.
-        named = set(re.findall(r"\[((?:f\d+)?e\d+) ", view.text))
+        named = {ref for ref in view.refs if f"[{ref} " in view.text}
         marks = [
             [ref, max(0, n.box[0]), max(0, n.box[1])]
             for ref, n in view.refs.items()
@@ -198,6 +224,12 @@ class Session:
                 outcome.said.append(f"failed: {json.dumps(step, ensure_ascii=False)}: {_why(e)}")
                 outcome.failed = True
                 break
+            if at_home(self.page.url):  # a link there: left before the model sees any of it
+                self.page.goto("about:blank")
+                outcome.said.append("refused: that went to an address on this machine or the home network, which "
+                                    "TARS doesn't open; the tab is empty now")  # fmt: skip
+                outcome.refused, outcome.failed = "home network", True
+                break
             outcome.said.append(f"ok: {said}")
             if self.page.url != url or "goto" in step or "back" in step:
                 self._settle()  # a new page: until it has loaded
@@ -231,21 +263,27 @@ class Session:
             if not text:
                 raise ValueError('click by text takes {"click": {"text": "..."}}')
             target = self._by_text(text, near)
-            if commits(text):
-                raise Refused(text, f"{text!r} would commit the person to it: call request_approval with its ref")
+            for said in (text, self._presses(target)):
+                if commits(said):
+                    raise Refused(said, f"{said!r} would commit the person to it: call request_approval with its ref")
             target.click(timeout=6_000)
             return f"clicked the text {text[:60]!r}"
         if "click" in step:
             ref = str(step["click"])
             target = self._target(ref)
             label = self._label(ref, target)
-            if commits(label):
-                raise Refused(label, f"{label!r} would commit the person to it: call request_approval with this ref")
+            for said in (label, self._presses(target)):
+                if commits(said):
+                    raise Refused(said, f"{said!r} would commit the person to it: call request_approval with this ref")
             target.click(timeout=6_000)
             return f"clicked {ref} {label[:60]!r}"
         if "click_at" in step:  # a point on the screenshot: the last resort, for what the view can't name
             x, y = (float(v) for v in step["click_at"])
-            label = " ".join(str(self.page.evaluate(POINT_JS, [x, y]) or "").split())
+            label, frame = self.page.evaluate(POINT_JS, [x, y])
+            if frame:
+                raise Refused("a frame", "that point is inside a frame (a payment provider's button, say), which "
+                              "can't be checked from here: click by its ref, or call request_approval")  # fmt: skip
+            label = " ".join(str(label or "").split())
             if commits(label):
                 raise Refused(label, f"what's there ({label!r}) would commit the person: call request_approval")
             page.mouse.click(x, y)
@@ -278,9 +316,12 @@ class Session:
             key = str(step["press"])
             if key not in KEYS:
                 raise ValueError(f"no such key {key!r} (one of {', '.join(sorted(KEYS))})")
-            if key == "Enter":
-                self._enter(page.locator(":focus").first)
+            focused = page.locator(":focus")
+            if key == "Enter" and focused.count():
+                self._enter(focused.first)
             else:
+                if key == "Space" and focused.count():  # Space presses a focused button
+                    self._gate_focused(focused.first)
                 page.keyboard.press(key)
             return f"pressed {key}"
         if "scroll" in step:
@@ -304,6 +345,8 @@ class Session:
             url = str(step["goto"])
             if not url.startswith(("https://", "http://")):
                 raise ValueError("goto takes an http(s) address")
+            if at_home(url):
+                raise ValueError("that's an address on this machine or the home network, which TARS doesn't open")
             page.goto(url, wait_until="domcontentloaded", timeout=30_000)
             return f"went to {url}"
         if "back" in step:
@@ -362,7 +405,8 @@ class Session:
             return ""
 
     def _enter(self, field) -> None:
-        """Enter in a field: refused when what it would submit commits."""
+        """Enter in a field, or on a focused button: refused when what it would submit or press commits."""
+        self._gate_focused(field)
         try:
             sends = field.evaluate(SUBMITS_JS)
         except PlaywrightError:
@@ -370,6 +414,18 @@ class Session:
         if sends and commits(sends):
             raise Refused(sends, f"Enter here would press {sends!r}, which commits: call request_approval instead")
         field.press("Enter")
+
+    def _gate_focused(self, element) -> None:
+        """Refused when a key on `element` would press a button that commits (Enter or Space on a focused one)."""
+        if commits(label := self._presses(element)):
+            raise Refused(label, f"that key would press {label!r}, which commits: call request_approval instead")
+
+    def _presses(self, element) -> str:
+        """The label of what a click or a key on `element` would press: the button or link it's in."""
+        try:
+            return " ".join(str(element.evaluate(OWNER_JS) or "").split())
+        except PlaywrightError:
+            return ""
 
     def click_approved(self, ref: str) -> None:
         """Clicks what the person approved: only ever called by code, after they said yes."""
@@ -432,6 +488,23 @@ class Session:
             except PlaywrightError, ValueError:  # gone with its page, or not text: the trace does without it
                 continue
         return out
+
+
+# Names that are on the home network, not the internet: mDNS, Tailscale, and what routers call their own.
+HOME_NAMES = (".local", ".ts.net", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", "localhost")
+
+
+def at_home(url: str) -> bool:
+    """Whether `url` is on this machine or the home network (TARS's web UI, its login page, Chrome's debugging port,
+    the router, Home Assistant), which the agent never opens, whatever a page asks: an address that isn't public, or
+    a name that isn't one on the internet (a single word, like tars, or one of HOME_NAMES)."""
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    if not host or urlsplit(url).scheme not in ("http", "https"):
+        return False
+    try:
+        return not ipaddress.ip_address(host).is_global
+    except ValueError:
+        return "." not in host or host.endswith(HOME_NAMES) or host == "localhost"
 
 
 def _entry(r: Response, secrets: set[str] = frozenset()) -> dict[str, Any]:

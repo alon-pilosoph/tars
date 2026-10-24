@@ -13,7 +13,6 @@ A code the site sends is looked for in that mail (mail.py) and asked of the pers
 is typed; a sign-in link it emails is opened, if it's on the site's own domain. TARS signs in to accounts the person
 has: a page that wants a name to sign up gets nothing."""
 
-import re
 import threading
 import time
 from collections.abc import Callable
@@ -23,13 +22,13 @@ from urllib.parse import urljoin
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
-from . import mail
+from .gate import commits
 from .login_page import Field
+from .session import SUBMITS_JS
 from .vault import Login, Vault, origin
 
 STEPS = 6  # a sign-in is a few pages at most: the name, the password, a code, a link
 MAIL_WAIT_S = 180  # how long a sign-in email may take to come
-CODE_WAIT_S = 300  # how long the person has to send a code
 
 # What the page is asking for: the fields of its sign-in form a person could see and reach, each with its label as
 # the site shows it. In the page's own document only (not frames); not a field kept from people (aria-hidden, out of
@@ -53,8 +52,12 @@ FIELDS_JS = """() => {
     /search|query|חיפוש|(^|[^a-z])q([^a-z]|$)/.test(words(e));
   const own = (e) => (e.autocomplete && !['on', 'off'].includes(e.autocomplete)) ? e.autocomplete :
     (e.name || e.id || labelOf(e));
-  const describe = (e, kind) => ({id: e.id, name: e.name, kind, label: labelOf(e), empty: !e.value,
-    key: kind === 'other' ? own(e).toLowerCase() : kind, action: e.form ? e.form.getAttribute('action') : null});
+  // Each field is tagged, so code finds it again by the tag (many have neither an id nor a name).
+  document.querySelectorAll('[data-tars-field]').forEach((e) => e.removeAttribute('data-tars-field'));
+  let tags = 0;
+  const describe = (e, kind) => { e.setAttribute('data-tars-field', String(++tags));
+    return {tag: String(tags), kind, label: labelOf(e), empty: !e.value,
+      key: kind === 'other' ? own(e).toLowerCase() : kind, action: e.form ? e.form.getAttribute('action') : null}; };
   const code = all.find(isCode);
   let inputs = all.filter((e) => e !== code && (e.type === 'password' || text(e)) && !isSearch(e));
   const anchor = inputs.find((e) => e.type === 'password') || inputs.find(isUser);
@@ -129,30 +132,36 @@ class Unattended:
         return answer.wait(MAIL_WAIT_S) if answer.mail else None
 
 
-class Refused(Exception):
-    """The page isn't the login's site, or its form would send elsewhere."""
+class WrongSite(Exception):
+    """The page isn't the login's site, or its form would send elsewhere, or press something that commits."""
 
 
 def _locate(page: Page, field: dict):
-    if field["id"]:
-        return page.locator(f"#{_css(field['id'])}").first
-    return page.locator(f'input[name="{field["name"]}"]').first
-
-
-def _css(ident: str) -> str:
-    return re.sub(r"([^a-zA-Z0-9_-])", r"\\\1", ident)
+    return page.locator(f'[data-tars-field="{field["tag"]}"]').first
 
 
 def _check(page: Page, login: Login, field: dict) -> None:
-    """Raises Refused unless typing into `field` on `page` sends it to `login`'s site and nowhere else."""
+    """Raises WrongSite unless typing into `field` on `page` sends it to `login`'s site and nowhere else."""
     here = origin(page.url)
     if here not in login.origins or not here.startswith("https://"):
-        raise Refused(f"the page is at {here}, not {', '.join(login.origins)}")
+        raise WrongSite(f"the page is at {here}, not {', '.join(login.origins)}")
     action = field.get("action")
     if action and not action.startswith("javascript:"):
         sends_to = origin(urljoin(page.url, action))
         if sends_to not in login.origins:
-            raise Refused(f"its form sends to {sends_to}, not {', '.join(login.origins)}")
+            raise WrongSite(f"its form sends to {sends_to}, not {', '.join(login.origins)}")
+
+
+def _submit(field) -> None:
+    """Enter in a sign-in field, unless its form's button commits (a guest checkout's email field is in the
+    checkout's form): what the gate refuses the agent, the sign-in doesn't do either."""
+    try:
+        sends = field.evaluate(SUBMITS_JS)
+    except PlaywrightError:
+        sends = ""
+    if sends and commits(sends):
+        raise WrongSite(f"Enter there would press {sends!r}, which commits: that's not a sign-in form")
+    field.press("Enter")
 
 
 def _settle(page: Page) -> None:
@@ -177,12 +186,21 @@ def sign_in(
     person: Person,
     goal: str = "",
     hide: Callable[[str], None] = lambda s: None,
-    wait_for_mail: Callable[..., tuple[str | None, str | None]] = mail.wait_for_sign_in,
+    wait_for_mail: Callable[..., tuple[str | None, str | None]] | None = None,
 ) -> str:
     """Signs `person` in on the page as it is; how it went, for the model. `hide` is told each secret before it's
-    typed (a password, a code), for whatever keeps what the page sends to leave it out."""
+    typed (a password, a code), for whatever keeps what the page sends to leave it out. `wait_for_mail`:
+    mail.wait_for_sign_in with a reader, to take codes and links from the person's email; None, the person alone."""
+    try:
+        return _sign_in(page, vault, person, goal, hide, wait_for_mail)
+    except PlaywrightError as e:  # the page went away under it, or a field it found isn't there now
+        return f"the sign-in stopped: {str(e).splitlines()[0][:160]}; look at the page as it is now"
+
+
+def _sign_in(page: Page, vault: Vault, person: Person, goal: str, hide, wait_for_mail) -> str:
     here = origin(page.url)
-    login, boxes = vault.for_page(page.url, person.name), vault.mailboxes(person.name)
+    login = vault.for_page(page.url, person.name)
+    boxes = vault.mailboxes(person.name) if wait_for_mail else []
     if login is None:
         fields = page.evaluate(FIELDS_JS)["fields"]
         if not here.startswith("https://") or not fields:
@@ -221,8 +239,12 @@ def sign_in(
                 code = _code(page, person, boxes, asked, wait_for_mail)
                 if not code:
                     return f"{origin(page.url)} wants the code it sent the person, and none came"
+                again = page.evaluate(FIELDS_JS)["code"]  # minutes may have passed: the page as it is now
+                if again is None or vault.for_page(page.url, person.name) != login:
+                    return f"the page moved on while the code was coming (now at {origin(page.url)}): not typed"
+                _check(page, login, again)
                 hide(code)
-                field = _locate(page, found["code"])
+                field = _locate(page, again)
                 field.fill(code)
                 done.append("entered the code they were sent")
                 last = ("code",)
@@ -262,8 +284,8 @@ def sign_in(
                         + (", and no sign-in email came" if not code else " that its email's code has nowhere to go")
                         + _said(page))  # fmt: skip
             asked = time.time()
-            field.press("Enter")
-        except Refused as e:
+            _submit(field)
+        except WrongSite as e:
             return f"refused to type the login: {e}"
     _settle(page)
     steps = ", ".join(done) or "nothing to fill"
@@ -290,7 +312,7 @@ def _again(page: Page, done: list[str], what: str) -> str:
 def _code(page: Page, person: Person, boxes: list[Login], asked: float, wait_for_mail) -> str | None:
     """The code the site sent: from the person, or meanwhile from their email, whichever is first."""
     answer = Answer(mail=bool(boxes))
-    if boxes:
+    if boxes and wait_for_mail:
         url = page.url
 
         def look() -> None:

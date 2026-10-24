@@ -54,6 +54,7 @@ tv = [
 my-house = [
     "tinytuya>=1.17",
 ]
+# TARS's own web browser ([browser]): errands on websites, its vault of logins, Claude Code as its brain.
 browser = [
     "cryptography>=50.0.2",
     "mcp>=1.20",  # TARS's browser served to another agent (Claude Code) as tools
@@ -70,7 +71,9 @@ packages = ["src/voice_assistant"]
 [dependency-groups]
 dev = [
     "anthropic>=1",
+    "cryptography>=50.0.2",
     "livekit>=1.1",
+    "playwright>=1.64.1",
     "pytest>=9.1.1",
     "ruff==0.16.10",
 ]

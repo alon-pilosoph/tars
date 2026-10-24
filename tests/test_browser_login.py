@@ -15,7 +15,7 @@ KSP = "https://www.ksp.co.il"
 
 
 def field(ident, action=None, empty=True, label=""):
-    return {"id": ident, "name": ident, "empty": empty, "action": action, "kind": "other", "key": ident, "label": label}
+    return {"tag": ident, "empty": empty, "action": action, "kind": "other", "key": ident, "label": label}
 
 
 def screen(url=KSP + "/login", username=None, password=None, code=None, signup=False, others=()):
@@ -43,13 +43,16 @@ class SignInPage:
         return ""  # the page's alerts: none
 
     def locator(self, selector):
-        page = self
+        page, tag = self, "#" + selector.split('"')[1]  # the field by its tag: written as #tag here, for reading
 
         class Field:
             first = None
 
+            def evaluate(self, script):
+                return ""  # its form's submit button: none that commits
+
             def fill(self, text):
-                page.typed.append((selector, text))
+                page.typed.append((tag, text))
 
             def press(self, key):
                 page.at = min(page.at + 1, len(page.screens) - 1)
@@ -178,3 +181,32 @@ def test_a_field_the_site_asks_later_is_asked_for_by_its_own_label_and_kept(tmp_
                       screen(url=KSP + "/account"))  # fmt: skip
     sign_in(page, vault, Asked())  # next time, nothing's asked
     assert page.typed[-1] == ("#tz", "012345678")
+
+
+def test_enter_in_a_form_whose_button_commits_is_never_pressed(tmp_path):
+    vault = Vault(tmp_path)
+    vault.store("Alon", [KSP], {"username": "alon@example.com"})
+    page = SignInPage(screen(username=field("email")))
+    original = page.locator
+
+    def checkout_form(selector):
+        found = original(selector)
+        found.evaluate = lambda script: "Place order"  # a guest checkout: its email field submits the order
+        found.press = lambda key: pytest.fail("Enter pressed in a checkout form")
+        return found
+
+    page.locator = checkout_form
+    assert "commits" in sign_in(page, vault, Asked())
+
+
+def test_a_code_is_not_typed_if_the_page_moved_on_while_it_came(tmp_path):
+    vault = Vault(tmp_path)
+    vault.store("Alon", [KSP], {"username": "alon@example.com"})
+    page = SignInPage(screen(code=field("otp")), screen(url="https://elsewhere.example/login", code=field("otp")))
+
+    def code(site, answer):
+        page.at = 1  # the site sent the browser elsewhere meanwhile
+        return "123456"
+
+    said = sign_in(page, vault, types.SimpleNamespace(name="Alon", code=code))
+    assert "moved on" in said and page.typed == []

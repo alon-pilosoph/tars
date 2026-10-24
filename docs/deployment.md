@@ -1,6 +1,6 @@
 # Running TARS at home
 
-How to run TARS on a Mac while working on it, and on a Raspberry Pi 5 as the household's assistant: install,
+How to run TARS on a Mac while working on it, and on a Raspberry Pi 4 (or 5) as the household's assistant: install,
 operation, storage and backup, and a first test run.
 
 TARS is local-first: the Pi listens, records, serves the web UI and learns voiceprints. Nothing leaves the house
@@ -27,7 +27,7 @@ Without the backup, the event log, the audio kept for learning, voiceprints and 
 
 ```
                  home network (Wi-Fi)                               internet
-┌──────────────── Raspberry Pi 5 ────────────────┐
+┌──────────────── Raspberry Pi 4 ────────────────┐
 │ voice-assistant.service                        │── request audio / text ──► Deepgram, Groq, Cerebras, OpenAI, Cartesia
 │   wake → double-check → answer                 │     (only after "hey TARS")
 │   writes voice_data/events/ (SQLite + WAVs)    │
@@ -111,8 +111,8 @@ By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service) (the browser's screen),
 [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
 [`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
-[`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]` or
-`[backup]` off stops and disables that unit.
+[`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]`,
+`[backup]` or `[browser]` off stops and disables that unit.
 
 ### Trying it on a simulated Pi first
 

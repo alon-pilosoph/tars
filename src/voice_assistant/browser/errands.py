@@ -27,11 +27,10 @@ if TYPE_CHECKING:
     from .login import Answer
     from .login_page import Field
 
-ERRANDS = Path(__file__).resolve().parents[3] / "voice_data/browser/errands"
+ERRANDS = "voice_data/browser/errands"  # under TARS's folder: each errand's trace; its site notes beside it
 VOICE, TELEGRAM = "voice", "telegram"  # how an errand was asked for
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 LOOK_EVERY_S = 2.0
-MAX_ALOUD = 300  # a reminder's longest text (reminders.MAX_TEXT): what's said aloud is short
 
 ERRAND = {
     "type": "string",
@@ -137,7 +136,7 @@ class Queue:
                               (FAILED, self._clock(), gone, RUNNING)).rowcount  # fmt: skip
 
 
-class Asking:
+class BrowseTool:
     """The browse tool in a brain: queues an errand for whoever is asking. `via`: VOICE or TELEGRAM, which says how
     the brain is told about it, and whether the answer is said aloud as well."""
 
@@ -188,9 +187,12 @@ class ByChat:
 
     name: str
     chats: Chats
+    approved: bool = False  # they said yes to a commit: what the errand did can't then be said to be nothing
 
     def approve(self, draft: str, picture: bytes | None = None) -> bool:
-        return self.chats.approve(self.name, draft, picture)
+        yes = self.chats.approve(self.name, draft, picture)
+        self.approved = self.approved or yes
+        return yes
 
     def login(self, site: str, goal: str, fields: list[Field]) -> dict[str, str] | None:
         return self.chats.login(self.name, site, goal, fields)
@@ -221,20 +223,22 @@ class Errands:
         queue: Queue | None = None,
         say_aloud: Callable[[str, str], None] | None = None,
         run: Callable[..., dict[str, Any]] | None = None,
-        folder: Path = ERRANDS,
+        folder: Path = Path(ERRANDS),
+        openai=None,
     ):
         """`chats`: where an errand reaches the person (set once the chats are made, if not yet). `people`: who may
         ask, the household's first first. `say_aloud(person, text)`: has TARS say an errand's answer at home, for one
-        asked aloud. `run`: run.run_task (the tests pass their own)."""
+        asked aloud. `run`: run.run_task (the tests pass their own). `openai`: TARS's OpenAI client, for the browser's
+        model."""
         self._cfg, self.chats, self._people, self._folder = cfg, chats, people, folder
         self.queue = queue or Queue()
-        self._say_aloud, self._run = say_aloud, run
+        self._say_aloud, self._run, self._openai = say_aloud, run, openai
         self.current: dict | None = None  # the errand running
         self.thread: threading.Thread | None = None
 
-    def asking(self, via: str = TELEGRAM) -> Asking:
+    def tool(self, via: str = TELEGRAM) -> BrowseTool:
         """The browse tool for a brain that asks for errands this way."""
-        return Asking(self.queue, self._people, via)
+        return BrowseTool(self.queue, self._people, via)
 
     def serve(self, every_s: float = LOOK_EVERY_S) -> None:
         """Takes the queue's errands in turn, for as long as the service runs (a thread of its own)."""
@@ -272,13 +276,16 @@ class Errands:
         you, result = ByChat(person, self.chats), {}
         try:
             run = self._run or _run_task()
-            result = run(goal, you, trace_to=trace, settings=settings, person=you,
-                         profile=profile_for(person, self._people[0]), notes=_notes())  # fmt: skip
+            result = run(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai,
+                         profile=profile_for(person, self._people[0]), notes=_notes(self._folder.parent))  # fmt: skip
             text, status = _told(result), DONE if result.get("ended") == "done" else FAILED
         except Exception as e:  # noqa: BLE001 - an errand that broke is said so, never left hanging
             traceback.print_exc()
             text, status = f"The errand broke before it was done ({type(e).__name__}), so I stopped.", FAILED
-            text += "" if result.get("commits_asked") else " Nothing was ordered."
+            if you.approved and self._cfg.really_order:
+                text += " You'd approved the order, so check on the site whether it went through."
+            else:
+                text += " Nothing was ordered."
         finally:
             self.current = None
         print(f"(browser: {person}'s errand took {time.time() - started:.0f} s: {status})", flush=True)
@@ -290,7 +297,7 @@ class Errands:
         if row["asked_via"] == VOICE and self._say_aloud:
             aloud = (result.get("aloud") or "").strip() or _first_sentences(text)
             try:
-                self._say_aloud(person, aloud[:MAX_ALOUD])
+                self._say_aloud(person, aloud)  # cut to a reminder's length there
             except Exception as e:  # noqa: BLE001 - it's in their chat all the same
                 print(f"(browser: couldn't have {person}'s errand said aloud: {e!r})")
 
@@ -307,10 +314,10 @@ def _run_task():
     return run_task
 
 
-def _notes():
+def _notes(folder: Path):
     from .notes import Notes
 
-    return Notes()
+    return Notes(folder / "notes")
 
 
 def _told(result: dict[str, Any]) -> str:

@@ -59,11 +59,20 @@ echo "== Audio devices (put part of the speakerphone's name in config.toml [audi
 
 echo "== Services"
 mkdir -p "$HOME/.config/systemd/user"
-cp deploy/voice-assistant.service deploy/voice-assistant-web.service deploy/voice-assistant-display.service \
-  "$HOME/.config/systemd/user/"
+cp deploy/voice-assistant.service deploy/voice-assistant-web.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
-systemctl --user enable voice-assistant voice-assistant-web voice-assistant-display
-systemctl --user restart voice-assistant voice-assistant-web voice-assistant-display  # new code on a rerun
+systemctl --user enable voice-assistant voice-assistant-web
+systemctl --user restart voice-assistant voice-assistant-web  # new code on a rerun
+# The browser's virtual screen, if [browser] is on (docs/browser.md).
+if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \
+raise SystemExit(0 if load_config(Path('config.toml')).browser.enabled else 1)"; then
+  cp deploy/voice-assistant-display.service "$HOME/.config/systemd/user/"
+  systemctl --user daemon-reload
+  systemctl --user enable voice-assistant-display
+  systemctl --user restart voice-assistant-display
+elif [ -e "$HOME/.config/systemd/user/voice-assistant-display.service" ]; then
+  systemctl --user disable --now voice-assistant-display || true
+fi
 # TARS on Telegram, if [telegram] is on in config.toml (docs/telegram.md).
 if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \
 raise SystemExit(0 if load_config(Path('config.toml')).telegram.enabled else 1)"; then

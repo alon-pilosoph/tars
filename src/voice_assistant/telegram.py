@@ -19,6 +19,7 @@ sign-in code to send back, and its answer when it's done.
 
 import json
 import re
+import secrets
 import threading
 import time
 import traceback
@@ -33,7 +34,7 @@ import httpx
 import numpy as np
 
 from .audio import SAMPLE_RATE, decode_recording
-from .config import TELEGRAM_KEY, ConfigError
+from .config import TELEGRAM_KEY, BrowserConfig, ConfigError
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .home import Request
@@ -377,7 +378,7 @@ class TelegramTars:
         sleep: Callable[[float], None] = time.sleep,
         transcriber: Transcriber | None = None,
         env: Path | str = ".env",
-        login_at: tuple[str, int] = ("", 8091),
+        login_at: tuple[str, int] = ("", BrowserConfig.login_port),
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
         each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
@@ -598,8 +599,6 @@ class TelegramTars:
     def approve(self, person: str, draft: str, picture: bytes | None) -> bool:
         """Asks `person` to approve what an errand is about to commit them to: True only for a tap on Order, on
         this very message, from their own chat, within APPROVE_WAIT_S."""
-        import secrets
-
         chat = self._chat_for(person)
         if chat is None:
             return False
@@ -617,7 +616,7 @@ class TelegramTars:
                 self._bot.drop_buttons(chat.chat_id, message)
             except TelegramError:
                 pass  # only tidying: a late tap finds no one waiting
-            said = "Ordering." if yes else "Cancelled: nothing ordered." if tapped.is_set() else (
+            said = "Approved." if yes else "Cancelled: nothing ordered." if tapped.is_set() else (
                 "No answer in time, so nothing was ordered.")  # fmt: skip
             self._send(chat.chat_id, said)
             return yes
@@ -644,7 +643,7 @@ class TelegramTars:
 
     def login(self, person: str, site: str, goal: str, fields: list[Field]) -> dict[str, str] | None:
         """`person`'s login for `site`, for each of `fields`, from a one-time page whose link goes to their chat."""
-        from .browser.login_page import Asking, ask, reachable_address
+        from .browser.login_page import LOGIN_WAIT_S, Asking, ask, reachable_address
 
         chat = self._chat_for(person)
         if chat is None:
@@ -654,8 +653,9 @@ class TelegramTars:
         why = f"to finish what you asked: {goal}" if goal else "to carry on with what you asked"
 
         def send_link(url: str) -> None:
+            minutes = f"{LOGIN_WAIT_S // 60:.0f} minutes"
             self._send(chat.chat_id, f"To go on I need to sign in to {site}, and I don't have a login for it. Add "
-                       f"it here (the link works once, for 10 minutes):\n{url}", tries=SEND_TRIES)  # fmt: skip
+                       f"it here (the link works once, for {minutes}):\n{url}", tries=SEND_TRIES)  # fmt: skip
 
         try:
             given = ask(Asking(site, why, tuple(fields)), send_link, host, port)

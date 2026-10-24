@@ -16,13 +16,13 @@ shortcut can later be learned from."""
 
 import base64
 import json
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..config import BrowserConfig
 from .notes import Notes, site
 from .session import Session
 from .tools import Approver, Tools
@@ -202,8 +202,8 @@ def instructions_for(goal: str) -> str:
 
 def header_for(goal: str) -> str:
     """The goal, today's date and the language to answer in."""
-    language = "Hebrew" if re.search(r"[\u0590-\u05ff]", goal) else "the language the goal is written in"
-    if re.fullmatch(r"[\x00-\x7f₪€£]*", goal):
+    language = "Hebrew" if any("\u0590" <= c <= "\u05ff" for c in goal) else "the language the goal is written in"
+    if all(c.isascii() or c in "₪€£" for c in goal):
         language = "English"
     return HEADER.format(today=time.strftime("%A %d %B %Y"), goal=goal, language=language)
 
@@ -228,9 +228,9 @@ class Result:
 
 @dataclass
 class Settings:
-    model: str = "gpt-6-luna"
-    effort: str = "low"  # reasoning; at least "medium" for the turn after something went wrong
-    turns: int = 40  # a long errand (a basket of groceries) takes 20-30; stuck and repeat stops end loops sooner
+    model: str = BrowserConfig.model
+    effort: str = BrowserConfig.effort  # reasoning; at least "medium" for the turn after something went wrong
+    turns: int = BrowserConfig.turns  # a long errand (groceries) takes 20-30; stuck and repeat stops end loops sooner
     really_commit: bool = False  # False: an approved commit is a dry run, and nothing is pressed
     stuck_after: int = 4  # turns in a row that changed nothing, then it stops
     read_notes: bool = True  # False: it writes what it learns, but works as if on each site for the first time

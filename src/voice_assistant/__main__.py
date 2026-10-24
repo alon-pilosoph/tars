@@ -476,7 +476,7 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None):
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
-    can work the devices in the house; with `browser` (browser/errands.py's Asking), it can send TARS on errands."""
+    can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -586,7 +586,7 @@ def telegram(cfg: Config, root: Path) -> None:
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
     print(f"(chats are answered by {who})")
-    errands = make_errands(cfg, client is not None, events, tools, presence)
+    errands = make_errands(cfg, root, client, events, tools, presence)
     tars = TelegramTars(
         bot,
         cfg.telegram.people,
@@ -598,7 +598,7 @@ def telegram(cfg: Config, root: Path) -> None:
             channel_rules=rules,
             remind_tools=CHAT_REMIND_TOOLS,
             home=home,
-            browser=errands.asking() if errands else None,
+            browser=errands.tool() if errands else None,
         ),
         ConversationLog(events) if events else None,
         tools,
@@ -614,25 +614,27 @@ def telegram(cfg: Config, root: Path) -> None:
     tars.run_forever(me)
 
 
-def make_errands(cfg: Config, has_openai: bool, events=None, reminders=None, presence=None):
-    """[browser]'s errands, run by the Telegram service (browser/errands.py), or None with it off: from the queue in
-    the event database (`events`), where the voice can put them too, and with `reminders` (a ReminderTools) the answer
-    to one asked aloud is said aloud. ConfigError if it can't run."""
+def make_errands(cfg: Config, root: Path, client, events=None, reminders=None, presence=None):
+    """[browser]'s errands, run by the Telegram service (browser/errands.py) with OpenAI's `client`, or None with it
+    off: from the queue in the event database (`events`), where the voice can put them too, and with `reminders` (a
+    ReminderTools) the answer to one asked aloud is said aloud. ConfigError if it can't run."""
     if not cfg.browser.enabled:
         return None
-    if not has_openai:
+    if client is None:
         raise ConfigError(f"[browser] needs {OPENAI_KEY} in .env: an OpenAI model works the browser.")
     try:
         import playwright  # noqa: F401 - only whether it's there
 
-        from .browser.errands import Errands, Queue
+        from .browser.errands import ERRANDS, Errands, Queue
     except ImportError:
-        raise ConfigError("[browser] needs the browser extra: uv sync --extra browser") from None
+        raise ConfigError('[browser] needs the optional extra "browser": run uv sync --all-extras') from None
     orders = "orders placed once approved" if cfg.browser.really_order else "approved orders a dry run"
     print(f"(errands in the browser, by {cfg.browser.model} at {cfg.browser.effort} effort; {orders})")
     say = errand_said_aloud(reminders.reminders, presence) if reminders else None
     queue = Queue(events.store if events else None)
-    return Errands(cfg.browser, None, list(cfg.telegram.people), queue=queue, say_aloud=say)
+    return Errands(
+        cfg.browser, None, list(cfg.telegram.people), queue=queue, say_aloud=say, folder=root / ERRANDS, openai=client
+    )
 
 
 def errand_said_aloud(reminders, presence=None):
@@ -657,9 +659,9 @@ def voice_errands(cfg: Config, events):
     if events is None:
         print("(browser: errands asked aloud need [learning] log_events, where they're queued: chats only)")
         return None
-    from .browser.errands import VOICE, Asking, Queue
+    from .browser.errands import VOICE, BrowseTool, Queue
 
-    return Asking(Queue(events.store), list(cfg.telegram.people), VOICE)
+    return BrowseTool(Queue(events.store), list(cfg.telegram.people), VOICE)
 
 
 def make_s3(cfg: Config, root: Path) -> S3:

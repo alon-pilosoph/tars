@@ -14,13 +14,12 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+
+from .vault import site
 
 FOLDER = Path(__file__).resolve().parents[3] / "voice_data/browser/notes"
 MOST = 2_000  # characters of notes a site
 TRACE = 12_000  # characters of a run's trace sent to write them
-# Second-level domains under a country's: wolt.com, but ksp.co.il and ikea.co.il.
-UNDER_COUNTRY = {"co", "com", "org", "net", "gov", "ac", "edu"}
 
 LEARN = """You keep short notes about a website, so that a browser agent working it next time gets there in fewer \
 steps. Below are the notes so far (maybe none) and the trace of a run on {site}: each step the agent took and what \
@@ -44,16 +43,6 @@ Notes so far:
 
 The run (goal: {goal}; it ended {ended}):
 {trace}"""
-
-
-def site(url: str) -> str:
-    """The site an address is on, as notes are kept: wolt.com for https://wolt.com/en/..., ksp.co.il for
-    https://ksp.co.il/web/."""
-    host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
-    labels = host.split(".")
-    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in UNDER_COUNTRY:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:]) if len(labels) >= 2 else host
 
 
 class Notes:

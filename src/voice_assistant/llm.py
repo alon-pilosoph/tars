@@ -766,33 +766,30 @@ class OpenAIChat:
                 self.changes.append(change)
             return result
         if self._home and call.name == "home":
-            # A device can take seconds (a bolt turning), and a change first waits for the turn to be over: the
-            # conversation isn't held meanwhile, so nothing else the brain does waits on the house.
-            writing = writing or self._writing
-            self._lock.release()
-            try:
-                result = self._home.call(args, writing.request)
-            except Exception as e:  # noqa: BLE001 - a device that fails never costs the reply: the model says so
-                result = f"error: couldn't reach the device ({e!r}); nothing is known to have changed"
-            finally:
-                self._lock.acquire()
-            # Stopped meanwhile, its other calls aren't made: what they sent or set would land on the next reply.
-            _check(writing)
-            return result
+            # A device can take seconds (a bolt turning), and a change first waits for the turn to be over.
+            failed = "error: couldn't reach the device ({e!r}); nothing is known to have changed"
+            return self._outside_lock(self._home.call, args, writing, failed)
         if self._browser and call.name == "browse":
-            # Queued only once the turn goes ahead (a draft thrown away queues nothing), which may wait for the turn
-            # to be over: the conversation isn't held meanwhile, as for the home tool.
-            writing = writing or self._writing
-            self._lock.release()
-            try:
-                result = self._browser.call(args, writing.request)
-            except Exception as e:  # noqa: BLE001 - the queue unreachable: the model says it didn't start
-                result = f"error: couldn't start the errand ({e!r}); nothing was started"
-            finally:
-                self._lock.acquire()
-            _check(writing)
-            return result
+            # Queued only once the turn goes ahead (a draft thrown away queues nothing), as a change to the house is.
+            failed = "error: couldn't start the errand ({e!r}); nothing was started"
+            return self._outside_lock(self._browser.call, args, writing, failed)
         return f"error: no tool called {call.name}"
+
+    def _outside_lock(self, call, args: dict, writing: _Writing | None, failed: str) -> str:
+        """`call(args, request)`, for a tool that may wait for the turn to be over: the conversation isn't held
+        meanwhile, so nothing else the brain does waits on it. Its failing is `failed` (with {e!r}), for the model to
+        say. Raises ReplyFailed if the reply was stopped meanwhile: its other calls aren't made, since what they sent
+        or set would land on the next reply."""
+        writing = writing or self._writing
+        self._lock.release()
+        try:
+            result = call(args, writing.request)
+        except Exception as e:  # noqa: BLE001 - a tool that fails never costs the reply: the model says so
+            result = failed.format(e=e)
+        finally:
+            self._lock.acquire()
+        _check(writing)
+        return result
 
     def forget_last(self) -> None:
         with self._lock:

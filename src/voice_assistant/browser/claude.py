@@ -130,19 +130,17 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
         "error": error or (final.get("result", "") if final.get("is_error") else ""),
     }
     if tidy:
-        result |= _tidy(calls, result["commits_asked"], trace_to, model, effort)
+        result |= _tidy(calls, result["answer"], trace_to, model, effort)
     return result
 
 
-def _tidy(calls: list[dict[str, Any]], commits_asked: list[str], trace_to: Path, model: str,
-          effort: str) -> dict[str, Any]:  # fmt: skip
+def _tidy(calls: list[dict[str, Any]], said: str, trace_to: Path, model: str, effort: str) -> dict[str, Any]:
     """Empties the basket the run may have filled, by Claude too (TARS's own agent took twice as long to find it)."""
-    from .run import _filled, tidy_goal
+    from .run import tidy_goal
 
-    if not (commits_asked or _filled(calls)):
-        return {}
     _log(trace_to, {"event": "follow_up", "request": "tidy"})
-    tidied = run_claude(tidy_goal(calls), trace_to.with_suffix(".tidy.jsonl"), model=model, effort=effort, turns=25)
+    tidied = run_claude(tidy_goal(calls, said), trace_to.with_suffix(".tidy.jsonl"), model=model, effort=effort,
+                        turns=25)  # fmt: skip
     return {"tidied": tidied["answer"], "tidy_api_usd": tidied["api_usd"]}
 
 

@@ -15,19 +15,15 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
+from playwright.sync_api import Error as PlaywrightError
+
 from . import page as pages
-from .gate import commits
-from .session import Session
+from .gate import moves_on
+from .session import Session, normal
 
 REPEATS = 3  # the same steps this many times in a row on one page: not done again
+WAITS = {"wait", "scroll", "press", "hover", "back"}  # steps that change nothing the first time and may later
 MONEY = re.compile(r"(?:[₪$€£]\s?\d[\d,]*(?:\.\d{1,2})?|\d[\d,]*(?:\.\d{1,2})?\s?(?:₪|ILS|NIS|EUR|USD|€|\$))")
-# What a button that only takes the person on says ("Go to checkout", "View basket"): no approval needed for it.
-NAVIGATES = re.compile(
-    r"\b(go to|view|open|show|continue to)\s+(the\s+)?(checkout|cart|basket|bag)\b"
-    r"|^\s*\d*\s*(checkout|cart|basket)\b|show items|לסל|לקופה|מעבר לקופה|לסל הקניות|לעגלת|לעגלה",
-    re.IGNORECASE,
-)
-TOTAL_WORDS = re.compile(r"total|סה\"?״?כ|סך הכל|לתשלום|to pay|price for", re.IGNORECASE)
 
 
 class Approver(Protocol):
@@ -63,7 +59,14 @@ class Tools:
     repeats: int = 0
 
     def call(self, name: str, args: dict[str, Any]) -> Did:
-        """Carries out one of the model's calls."""
+        """Carries out one of the model's calls. The browser failing under it (a page navigating away, a ref gone
+        after a long wait) is said so, for the model to carry on from, not raised."""
+        try:
+            return self._call(name, args)
+        except (PlaywrightError, ValueError) as e:
+            return Did(f"failed: {str(e).splitlines()[0][:200]}: look at the page as it is now", trouble=True)
+
+    def _call(self, name: str, args: dict[str, Any]) -> Did:
         session = self.session
         if name == "act":
             return self.act([s for s in args.get("steps", []) if isinstance(s, dict)])
@@ -111,8 +114,9 @@ class Tools:
             self.failed_steps.add(_key(steps[min(done, len(steps) - 1)], session.page.url))
         if not outcome.changed and not outcome.failed:
             said += "\nnothing changed on the page: that wasn't it. Look at the screenshot before the next step."
-            for s in steps:
-                self.failed_steps.add(_key(s, session.page.url))
+            for s in steps:  # a click or what was typed isn't tried again here; waiting, scrolling and keys may be
+                if not WAITS.intersection(normal(s)):
+                    self.failed_steps.add(_key(s, session.page.url))
         trouble = outcome.failed or not outcome.changed
         return Did(said, self.picture() if trouble and not outcome.refused else None, outcome.changed, trouble)
 
@@ -125,29 +129,27 @@ class Tools:
         if self.committed:
             return "this task already committed once: call done"
         label = " ".join((node.name or pages.text_of(node)).split())
-        if NAVIGATES.search(label) and not commits(label):
+        if moves_on(label):
             return (f"{label!r} only takes you on (to the basket or the checkout): press it yourself, and call "
                     "request_approval at the last button, the one that places the order")  # fmt: skip
-        total, prices = _total(view.text), MONEY.findall(view.text)
+        prices = MONEY.findall(session.look().text)  # as it is, with nothing a step just added shown twice
         host = urlsplit(session.page.url).hostname or session.page.url
         picture = session.screenshot()
-        draft = (f"TARS wants to press {label!r} on {host}.\n\n{summary}\n\n"
-                 f"The page says the total is {total or '(not shown)'}.")  # fmt: skip
+        draft = f"TARS wants to press {label!r} on {host}.\n\n{summary}"
         self.commits_asked.append(draft)
         self.screenshots += 1
-        self.log({"event": "approval", "ref": ref, "label": label, "summary": summary, "total": total})
+        self.log({"event": "approval", "ref": ref, "label": label, "summary": summary, "prices": prices})
         if not self.approver.approve(draft, picture):
             return "the person said no: nothing was done. Call done and say so."
         if not self.really_commit:
             self.committed = True
             return f"approved, as a dry run: {label!r} was not pressed and nothing was committed. Call done."
-        again = session.look().text
-        now = _total(again)
-        if now != total:
-            return f"the total changed from {total} to {now} while waiting: nothing was done. Call done and say so."
-        if MONEY.findall(again) != prices:  # a page that doesn't say "total" still says its prices
+        if MONEY.findall(session.look().text) != prices:  # the total among them: what they said yes to has changed
             return "the prices on the page changed while waiting: nothing was done. Call done and say so."
-        session.click_approved(ref)
+        try:
+            session.click_approved(ref)
+        except (PlaywrightError, ValueError) as e:
+            return f"{label!r} couldn't be pressed ({str(e).splitlines()[0][:120]}): nothing was done. Call done."
         self.committed = True
         session.look()
         return f"pressed {label!r}. The page now shows what happened: read it and call done."
@@ -163,16 +165,3 @@ class Tools:
 
 def _key(step: dict[str, Any], url: str) -> str:
     return url + " " + json.dumps(step, sort_keys=True, ensure_ascii=False)
-
-
-def _total(text: str) -> str | None:
-    """The total the page shows: the last amount on or just after a line that says total."""
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    found = None
-    for i, line in enumerate(lines):
-        if TOTAL_WORDS.search(line):
-            for candidate in (line, *lines[i + 1 : i + 3]):
-                if amounts := MONEY.findall(candidate):
-                    found = amounts[-1].strip()
-                    break
-    return found

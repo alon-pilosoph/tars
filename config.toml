@@ -307,7 +307,7 @@ keep_snapshots_days = 30
 # types its way there, signs in from its vault, and asks on Telegram before anything is ordered, booked or paid; the
 # answer comes to the chat, and is said aloud too if it was asked aloud. The Telegram service runs the errands, so it
 # needs [telegram]; asking aloud also needs [learning] log_events, where they're queued. And the browser extra (uv
-# sync --extra browser) and OPENAI_API_KEY; each errand is a few cents of the model.
+# sync --all-extras) and OPENAI_API_KEY; each errand is a few cents of the model.
 enabled = false
 # The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
 model = "gpt-6-luna"

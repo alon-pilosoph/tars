@@ -4,7 +4,7 @@
 #
 #   kind = "answer"    passes on a right answer (`check` says what makes it right)
 #   kind = "commit"    passes when the agent asks to commit with what `check` says, and nothing else in the basket
-#   signed_in          the site needs TARS's browser signed in (by hand: browser_proto.py signin)
+#   signed_in          the site needs TARS's browser signed in (from its vault, or by hand: python -m voice_assistant.browser signin)
 #
 # Dates are absolute, so a run next week asks the same thing; move them on when they pass.
 

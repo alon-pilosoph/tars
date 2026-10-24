@@ -26,6 +26,8 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
+from voice_assistant.config import EFFORTS, BrowserConfig
+
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = ROOT / "evals/browser/tasks.toml"
 OUT = ROOT / "voice_data/browser/evals"
@@ -151,7 +153,8 @@ def run_new(task: dict, steps: int, folder: Path, options: argparse.Namespace) -
 
     settings = Settings(model=options.model, effort=options.effort, turns=steps, read_notes=options.notes == "use",
                         history=options.history)  # fmt: skip
-    return run_task(task["goal"], DryRun(), trace_to=folder / f"{task['id']}.jsonl", tidy=True, settings=settings,
+    return run_task(task["goal"], DryRun(), trace_to=folder / f"{task['id']}.jsonl", tidy=task["kind"] == "commit",
+                    settings=settings,
                     notes=None if options.notes == "off" else Notes())  # fmt: skip
 
 
@@ -160,7 +163,8 @@ def run_claude(task: dict, steps: int, folder: Path, options: argparse.Namespace
     from voice_assistant.browser.claude import run_claude as run
 
     return run(task["goal"], folder / f"{task['id']}.jsonl", model=options.model, effort=options.effort,
-               turns=steps, tidy=True, notes=options.notes != "off", narrate=options.narrate)  # fmt: skip
+               turns=steps, tidy=task["kind"] == "commit", notes=options.notes != "off",
+               narrate=options.narrate)  # fmt: skip
 
 
 def relearn(folder: Path) -> None:
@@ -191,14 +195,15 @@ def main() -> None:
     parser.add_argument("--agent", choices=("new", "proto", "claude"), default="new",
                         help="TARS's agent, the first prototype, or Claude Code working TARS's browser")  # fmt: skip
     parser.add_argument("--task", action="append", help="a task's id (default: all)")
-    parser.add_argument("--steps", type=int, default=40, help="at most this many model turns a task")
+    parser.add_argument("--steps", type=int, default=BrowserConfig.turns, help="at most this many model turns a task")
     parser.add_argument("--cap", type=float, default=14.0, help="no task starts once all runs have spent this")
     parser.add_argument("--label", default="", help="added to the run's folder name")
     notes_help = "the new agent's site notes: read and write them, only write them, or neither"
     parser.add_argument("--notes", choices=("use", "write", "off"), default="use", help=notes_help)
     parser.add_argument("--relearn", type=Path, help="write the site notes again from this run's traces, and stop")
-    parser.add_argument("--model", default="gpt-6-luna", help="the new agent's model (priced in evals/prices.toml)")
-    parser.add_argument("--effort", default="low", choices=("none", "low", "medium", "high"), help="its reasoning")
+    browser = BrowserConfig()  # TARS's own defaults, as config.toml ships them
+    parser.add_argument("--model", default=browser.model, help="the new agent's model (priced in evals/prices.toml)")
+    parser.add_argument("--effort", default=browser.effort, choices=EFFORTS, help="its reasoning")
     parser.add_argument("--runs", type=int, default=1, help="each task this many times")
     history_help = "TARS's agent: every page and its reasoning kept (full), or the newest page only (short)"
     parser.add_argument("--history", choices=("full", "short"), default="full", help=history_help)
