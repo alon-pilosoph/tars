@@ -25,7 +25,7 @@ pytest.importorskip("playwright")
 pytest.importorskip("cryptography")
 
 from voice_assistant.browser import login_page, mail
-from voice_assistant.browser.errands import Errands, profile_for
+from voice_assistant.browser.errands import TELEGRAM, VOICE, Asking, Errands, Queue, profile_for
 from voice_assistant.browser.login import Answer, sign_in
 from voice_assistant.browser.vault import Login, Vault
 
@@ -89,13 +89,28 @@ def test_the_brain_has_the_browse_tool_and_it_starts_an_errand_for_whoever_asked
     assert any(t.get("name") == "browse" for t in client.requests[0]["tools"])
 
 
-def errands(tmp_path, run, people=("Alon", "Stacey")):
-    told = []
-    chats = types.SimpleNamespace(tell=lambda person, text, picture=None: told.append((person, text)))
-    return Errands(BrowserConfig(enabled=True), chats, list(people), run=run, folder=tmp_path), told
+class Chats:
+    """The person's chat, as an errand reaches it: what it was told."""
+
+    def __init__(self):
+        self.told = []
+
+    def tell(self, person, text, picture=None):
+        self.told.append((person, text))
 
 
-def test_an_errand_runs_on_its_own_and_its_answer_goes_to_the_chat(tmp_path):
+def errands(tmp_path, run, people=("Alon", "Stacey"), store=None, say_aloud=None):
+    chats = Chats()
+    e = Errands(BrowserConfig(enabled=True), chats, list(people), queue=Queue(store), say_aloud=say_aloud, run=run,
+                folder=tmp_path)  # fmt: skip
+    return e, chats.told
+
+
+def done(answer, aloud="", **more):
+    return lambda goal, approver, **kw: {"ended": "done", "answer": answer, "aloud": aloud, "commits_asked": [], **more}
+
+
+def test_an_errand_asked_in_a_chat_runs_on_its_own_and_its_answer_goes_to_the_chat(tmp_path):
     gate, ran = threading.Event(), []
 
     def run(goal, approver, **kw):
@@ -104,31 +119,83 @@ def test_an_errand_runs_on_its_own_and_its_answer_goes_to_the_chat(tmp_path):
         return {"ended": "done", "answer": "Your margherita is in the basket.", "commits_asked": []}
 
     e, told = errands(tmp_path, run)
-    assert e.call({"errand": "order a margherita on Wolt"}, Request(speaker="alon")).startswith("started")
-    busy = e.call({"errand": "book a table on Ontopo"}, Request(speaker="Stacey"))
-    assert busy.startswith("busy") and "Alon" in busy
+    asking = e.asking(TELEGRAM)
+    assert asking.call({"errand": "order a margherita on Wolt"}, Request(speaker="alon")).startswith("started")
+    assert e.next() and not e.next()  # one at a time
+    queued = asking.call({"errand": "book a table on Ontopo"}, Request(speaker="Stacey"))
+    assert queued.startswith("queued") and "Alon" in queued
     gate.set()
     e.thread.join(2)
     assert told == [("Alon", "Your margherita is in the basket.")]
     assert ran == [("order a margherita on Wolt", "Alon", "profile", "gpt-6-luna")]
-    assert e.current is None
+    assert e.next()  # Stacey's, next
+    e.thread.join(2)
+    assert ran[1][:3] == ("book a table on Ontopo", "Stacey", "profile-stacey")
 
 
-def test_an_errand_needs_someone_known_asking_and_a_goal(tmp_path):
-    e, _ = errands(tmp_path, run=lambda *a, **k: {})
-    assert e.call({"errand": "order a pizza on Wolt"}, Request()).startswith("error")
-    assert e.call({"errand": "order a pizza on Wolt"}, Request(speaker="Mallory")).startswith("error")
-    assert e.call({"errand": "pizza"}, Request(speaker="Alon")).startswith("error")
+def test_an_errand_needs_someone_known_asking_a_goal_and_a_turn_that_goes_ahead(tmp_path):
+    e, _ = errands(tmp_path, run=done("x"))
+    asking = e.asking(VOICE)
+    assert asking.call({"errand": "order a pizza on Wolt"}, Request(by_voice=True)).startswith("error")
+    assert asking.call({"errand": "order a pizza on Wolt"}, Request(speaker="Mallory")).startswith("error")
+    assert asking.call({"errand": "pizza"}, Request(speaker="Alon")).startswith("error")
+    withdrawn = Request(speaker="Alon", by_voice=True, may_act=lambda timeout: False)
+    assert asking.call({"errand": "order a pizza on Wolt"}, withdrawn).startswith("error")
+    assert e.queue.ahead() == []
 
 
-def test_an_errand_that_breaks_is_said_so(tmp_path):
+def test_an_errand_asked_aloud_is_queued_for_the_telegram_service_and_its_answer_said_at_home(tmp_path):
+    from voice_assistant.reminders import Reminders, line
+    from voice_assistant.store import Store
+
+    store = Store(tmp_path / "db")
+    voice = Asking(Queue(store), ["Alon"], VOICE)  # in the voice's process
+    said = voice.call({"errand": "On Wolt, order a margherita"}, Request(speaker="Alon", by_voice=True))
+    assert said.startswith("started") and "phone" in said and "phone" in voice.rules
+    reminders = Reminders(store)
+    from voice_assistant.__main__ import errand_said_aloud
+
+    e, told = errands(tmp_path, done("The checkout is ready: ₪62, approve it on your phone.", "It's ready: ₪62."),
+                      store=store, say_aloud=errand_said_aloud(reminders))  # fmt: skip
+    assert e.next()  # in the Telegram service's
+    e.thread.join(2)
+    assert told == [("Alon", "On it, as you asked at home: On Wolt, order a margherita"),
+                    ("Alon", "The checkout is ready: ₪62, approve it on your phone.")]  # fmt: skip
+    due = reminders.due(time.time() + 1)
+    assert [line(r) for r in due] == ["Alon, a message: It's ready: ₪62."] and due[0]["max_tries"] == 1
+    assert store.row("SELECT status, answer FROM errands")["status"] == "done"
+
+
+def test_the_answer_isnt_said_at_home_to_someone_out(tmp_path):
+    from voice_assistant.__main__ import errand_said_aloud
+    from voice_assistant.reminders import Reminders
+    from voice_assistant.store import Store
+
+    store = Store(tmp_path / "db")
+    reminders = Reminders(store)
+    out = types.SimpleNamespace(board=types.SimpleNamespace(is_out=lambda person: True))
+    e, told = errands(tmp_path, done("Booked."), store=store, say_aloud=errand_said_aloud(reminders, out))
+    Asking(e.queue, ["Alon"], VOICE).call({"errand": "book a table on Ontopo"}, Request(speaker="Alon"))
+    e.next()
+    e.thread.join(2)
+    assert told[-1] == ("Alon", "Booked.") and reminders.due(time.time() + 1) == []
+
+
+def test_an_errand_that_breaks_is_said_so_and_one_left_running_is_failed(tmp_path):
+    from voice_assistant.store import Store
+
     def run(*args, **kwargs):
         raise RuntimeError("Chrome went away")
 
-    e, told = errands(tmp_path, run)
-    e.call({"errand": "order a margherita on Wolt"}, Request(speaker="Alon"))
+    store = Store(tmp_path / "db")
+    e, told = errands(tmp_path, run, store=store)
+    e.asking().call({"errand": "order a margherita on Wolt"}, Request(speaker="Alon"))
+    e.next()
     e.thread.join(2)
     assert told[0][0] == "Alon" and "broke" in told[0][1] and "Nothing was ordered" in told[0][1]
+    e.queue.add("Alon", "a stranded errand", TELEGRAM)
+    e.queue.claim()  # running when the service stopped
+    assert e.queue.left_running() == 1 and e.queue.ahead() == []
 
 
 def test_each_person_has_a_browser_profile_of_their_own():
@@ -390,4 +457,4 @@ def test_the_telegram_service_makes_errands_only_with_browser_on():
     with pytest.raises(ConfigError):
         make_errands(on, has_openai=False)
     made = make_errands(on, has_openai=True)
-    assert isinstance(made, Errands) and made.chats is None
+    assert isinstance(made, Errands) and made.chats is None and made.queue.store is None

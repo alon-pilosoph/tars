@@ -780,7 +780,18 @@ class OpenAIChat:
             _check(writing)
             return result
         if self._browser and call.name == "browse":
-            return self._browser.call(args, (writing or self._writing).request)  # it starts the errand, and returns
+            # Queued only once the turn goes ahead (a draft thrown away queues nothing), which may wait for the turn
+            # to be over: the conversation isn't held meanwhile, as for the home tool.
+            writing = writing or self._writing
+            self._lock.release()
+            try:
+                result = self._browser.call(args, writing.request)
+            except Exception as e:  # noqa: BLE001 - the queue unreachable: the model says it didn't start
+                result = f"error: couldn't start the errand ({e!r}); nothing was started"
+            finally:
+                self._lock.acquire()
+            _check(writing)
+            return result
         return f"error: no tool called {call.name}"
 
     def forget_last(self) -> None:

@@ -59,9 +59,12 @@ which reminders were sent on Telegram.
 
 ### Errands in the browser
 
-With `[browser]` on, TARS can be sent on an errand on a website from a chat: ordering, booking, or finding something
-in an account there. The errand runs on its own, for a few minutes, while the chat goes on; one runs at a time.
-What it needs on the way comes to the chat of whoever asked:
+With `[browser]` on, TARS can be sent on an errand on a website from a chat, or aloud at home ("hey TARS, order the
+usual margherita from Wolt"): ordering, booking, or finding something in an account there. The Telegram service runs
+it, for a few minutes, while the chat goes on; one runs at a time, and the next waits its turn. Asked aloud, it's
+only for someone TARS knows by voice and who has a chat here (an errand is done in their own accounts): it goes
+into a queue in the event database (the errands table), and the Telegram service picks it up, telling the chat
+"On it, as you asked at home". What it needs on the way comes to the chat of whoever asked:
 
 - **An order to approve.** A screenshot of the checkout, what it commits them to (what, how many, the total, read
   off the page), and **Order** and **Cancel** buttons. Only a tap on Order, on that message, from their own chat,
@@ -73,7 +76,8 @@ What it needs on the way comes to the chat of whoever asked:
   the sign-in, not to the conversation. If TARS reads their email, it looks for the code there at the same time, and
   takes whichever comes first.
 - **The answer**, when it's done, as part of the conversation: "is that the one from last week?" afterwards knows
-  what "that" is.
+  what "that" is. Asked aloud, it's also said aloud at home, short ("Alon, a message: your margherita is ordered,
+  about 40 minutes."), once, as a message is; not if [presence] knows they're out, since it's on their phone.
 
 The login page is served on `[browser] login_host` and `login_port` (8091) only while it waits, and answers only the
 link's token, once. It's plain HTTP, so it's better reached over Tailscale (encrypted) than over the home Wi-Fi;

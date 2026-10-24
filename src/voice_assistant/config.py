@@ -273,8 +273,9 @@ class BackupConfig:
 
 @dataclass
 class BrowserConfig:
-    # TARS's own web browser, for errands asked in a Telegram chat: ordering, booking, looking something up on a site
-    # (docs/browser.md). Needs [telegram], the browser extra (uv sync --extra browser) and OPENAI_API_KEY.
+    # TARS's own web browser, for errands asked in a Telegram chat or aloud: ordering, booking, looking something up
+    # on a site (docs/browser.md). The Telegram service runs them, so it needs [telegram]; asked aloud, they're queued
+    # in the event database ([learning] log_events). And the browser extra and OPENAI_API_KEY.
     enabled: bool = False
     # The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
     model: str = "gpt-6-luna"

@@ -302,10 +302,12 @@ archive_after_days = 0
 keep_snapshots_days = 30
 
 [browser]
-# TARS's own web browser, for errands asked in a Telegram chat: "order the usual from Wolt", "is there a table at
-# Ontopo on Friday", "what did I order last time" (docs/browser.md). It reads the page, clicks and types its way
-# there, signs in from its vault, and asks on Telegram before anything is ordered, booked or paid. Needs [telegram],
-# the browser extra (uv sync --extra browser) and OPENAI_API_KEY; each errand is a few cents of the model.
+# TARS's own web browser, for errands asked in a Telegram chat or aloud at home: "order the usual from Wolt", "is
+# there a table at Ontopo on Friday", "what did I order last time" (docs/browser.md). It reads the page, clicks and
+# types its way there, signs in from its vault, and asks on Telegram before anything is ordered, booked or paid; the
+# answer comes to the chat, and is said aloud too if it was asked aloud. The Telegram service runs the errands, so it
+# needs [telegram]; asking aloud also needs [learning] log_events, where they're queued. And the browser extra (uv
+# sync --extra browser) and OPENAI_API_KEY; each errand is a few cents of the model.
 enabled = false
 # The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
 model = "gpt-6-luna"

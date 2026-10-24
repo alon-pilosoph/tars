@@ -126,6 +126,7 @@ def run_task(
         "ended": result.ended,
         "claimed": result.success,
         "answer": result.answer,
+        "aloud": result.aloud,
         "commits_asked": result.commits_asked,
         "error": result.error,
         "tidied": tidied.answer if tidied else "",

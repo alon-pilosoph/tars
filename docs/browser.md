@@ -12,8 +12,9 @@ site: what it knows about a site, it learns by working it.
 | "The cheapest direct flight to Athens on the 6th" | Google Flights: one way, the airports, the date, nonstop; the airline, the times, the price |
 | "How long is the drive to the office at nine?" | Google Maps: the route at that time; "16-24 minutes" |
 
-It's asked for in a Telegram chat ([telegram.md](telegram.md#errands-in-the-browser)), with `[browser]` on, and
-answers there; it also runs from a terminal (below) and from its evals.
+It's asked for aloud at home or in a Telegram chat, with `[browser]` on ([telegram.md](telegram.md#errands-in-the-browser)):
+what it needs on the way (a yes before ordering, a login, a code) comes to the asker's phone, and the answer comes
+there, and is said aloud too when it was asked aloud. It also runs from a terminal (below) and from its evals.
 
 ## How it works
 
@@ -178,7 +179,7 @@ uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off
 
 ## Not yet
 
-- **Asked aloud.** Errands are asked for in a chat; by voice, the approval and anything else it needs would still
-  come to the asker's chat, from the voice's process, which doesn't run the browser.
+- **Approving aloud.** An order asked for aloud is still approved on the phone: a spoken yes is anyone's in the room,
+  and the checkout is a picture worth seeing.
 - **Errands at once.** One runs at a time: there's one browser. A browser per person could run theirs side by side.
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.

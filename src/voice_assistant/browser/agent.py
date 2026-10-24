@@ -178,7 +178,14 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Finish, with the answer for the person.",
         "parameters": {
             "type": "object",
-            "properties": {"success": {"type": "boolean"}, "answer": {"type": "string"}},
+            "properties": {
+                "success": {"type": "boolean"},
+                "answer": {"type": "string"},
+                "aloud": {
+                    "type": "string",
+                    "description": "the answer as said aloud: one or two short sentences, no lists, links or markdown",
+                },
+            },
             "required": ["success", "answer"],
         },
     },
@@ -206,6 +213,7 @@ class Result:
     ended: str  # done, out of turns, stuck, error
     success: bool = False
     answer: str = ""
+    aloud: str = ""  # the answer as said aloud, short
     turns: int = 0
     seconds: float = 0.0
     model_s: float = 0.0
@@ -420,6 +428,7 @@ class Agent:
                 self.result.ended = "done"
                 self.result.success = bool(args.get("success"))
                 self.result.answer = str(args.get("answer", ""))
+                self.result.aloud = str(args.get("aloud", ""))
                 break
             quiet = 0 if page_changed or call.name in ("find", "look") else quiet + 1
             if quiet >= s.stuck_after:

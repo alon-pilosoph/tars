@@ -127,6 +127,17 @@ TABLES = {
                                      -- "presence_routers": how each router last answered the assistant (presence.py)
     value TEXT NOT NULL
 )""",
+    "errands": """CREATE TABLE errands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created REAL NOT NULL,
+    person TEXT NOT NULL,            -- whose: their accounts, their chat
+    goal TEXT NOT NULL,              -- the errand, as the brain put it
+    asked_via TEXT NOT NULL,         -- voice (aloud at home) | telegram
+    status TEXT NOT NULL,            -- queued | running | done | failed
+    started REAL,
+    ended REAL,
+    answer TEXT
+)""",
     "presence": """CREATE TABLE presence (
     person TEXT PRIMARY KEY,         -- as [presence] people names them
     home INTEGER,                    -- 1 home, 0 out; NULL until the routers have said (presence.py)
@@ -192,6 +203,12 @@ MIGRATIONS = [
             "updated REAL NOT NULL)"
         ),
         "ALTER TABLE reminders ADD COLUMN kept_aloud INTEGER NOT NULL DEFAULT 0",
+    ],
+    [
+        (
+            "CREATE TABLE errands (id INTEGER PRIMARY KEY AUTOINCREMENT, created REAL NOT NULL, person TEXT NOT NULL, "
+            "goal TEXT NOT NULL, asked_via TEXT NOT NULL, status TEXT NOT NULL, started REAL, ended REAL, answer TEXT)"
+        ),
     ],
 ]
 
