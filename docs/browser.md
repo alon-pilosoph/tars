@@ -114,10 +114,11 @@ that pays, orders or books (a guest checkout's email field). A look-alike addres
 asking to sign up (a new password, a name to fill in): TARS signs in to accounts the person has, it doesn't make them.
 
 The logins are in TARS's vault (`vault.py`): each a household member's (a task uses only its person's), tied to the
-exact sites it's for, and kept encrypted in a folder only TARS's user can read. One TARS lacks is asked for when it's
-needed, for the site the browser is actually at, and kept for that site: on Telegram, as a link to a one-time page
-(`login_page.py`); in a terminal, there. Either way it asks for exactly the fields that site's form has, by the
-site's own labels, as code read them (not as the model says), and a field a later page asks for is asked then. Or
+exact sites it's for, and kept encrypted in a folder only TARS's user can read. One TARS lacks is asked for when
+it's needed, for the site the browser is actually at, and kept for that site: on Telegram, as a link to a one-time
+page (`login_page.py`, which looks like the web UI: `login_page.html` and `login_done.html`); in a terminal, there.
+Either way it asks for exactly the fields that site's form has, by the site's own labels, as code read them (not as
+the model says), and a field a later page asks for is asked then. Or
 ahead of time:
 
 ```bash

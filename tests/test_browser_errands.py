@@ -322,6 +322,16 @@ def test_a_site_shown_on_the_page_is_escaped():
     assert "<i>" not in html_page and 'name="a&quot;b"' in html_page
 
 
+def test_the_login_page_fills_every_slot_once():
+    asking = login_page.Asking("https://www.ksp.co.il", "to order {token}", FIELDS)
+    html_page = login_page.page(asking, "tok")
+    assert "to order {token}" in html_page  # a value is never filled in itself
+    assert html_page.count('value="tok"') == 1 and html_page.count("www.ksp.co.il") >= 2
+    assert not login_page.SLOTS.search(html_page.replace("to order {token}", ""))
+    assert not login_page.SLOTS.search(login_page._done("Saved."))
+    assert "<script" not in login_page.PAGE + login_page.DONE and "url(" not in login_page.PAGE + login_page.DONE
+
+
 FIELDS = (
     login_page.Field("username", "Email or phone"),
     login_page.Field("teudat_zehut", "מספר תעודת זהות"),
