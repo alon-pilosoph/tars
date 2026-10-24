@@ -11,7 +11,6 @@ another's (the household's first keeps the profile TARS had before).
 This module imports nothing of the browser itself, so the voice's process can queue an errand without it."""
 
 import hashlib
-import re
 import threading
 import time
 import traceback
@@ -344,6 +343,8 @@ def _told(result: dict[str, Any]) -> str:
 
 
 def _first_sentences(text: str, most: int = 2) -> str:
-    """The start of a written answer, for saying aloud when the agent gave no spoken one."""
-    plain = re.sub(r"[*_`#]|\s+", " ", text).strip()
-    return " ".join(re.split(r"(?<=[.!?])\s+", plain)[:most])
+    """The start of a written answer, as TARS says text aloud (speech.py: no markdown or links), for when the
+    agent gave no spoken one."""
+    from ..speech import split_sentences
+
+    return " ".join(list(split_sentences([text]))[:most])

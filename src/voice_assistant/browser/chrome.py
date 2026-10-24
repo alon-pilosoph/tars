@@ -23,6 +23,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from .vault import private_folder
+
 PROFILE = Path.home() / ".cache/tars-browser/profile"
 PORT = 9333
 WINDOW = (1280, 1000)  # the window, for every run alike: the page then lays out the same way each time
@@ -43,6 +45,7 @@ def executable() -> str:
 def own_chrome(profile: Path = PROFILE, port: int = PORT, headless: bool = False) -> Iterator[str]:
     """TARS's Chrome for as long as it's needed, then shut; yields the address Playwright attaches to."""
     close(port)
+    private_folder(profile.parent)  # the vault is beside the profiles: private before Chrome makes anything
     profile.mkdir(parents=True, exist_ok=True)
     flags = [
         f"--user-data-dir={profile}", f"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1",

@@ -66,6 +66,7 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ('[browser]\neffort = "max"', "[browser] effort must be one of"),
         ("[browser]\nturns = 2", "[browser] turns must be between 5 and 100"),
         ("[browser]\nlogin_port = 80", "[browser] login_port must be between 1024 and 65535"),
+        ('[browser]\nmodel = "claude-opus-5-5"', "[browser] model must be an OpenAI model"),
     ],
 )
 def test_a_setting_that_cannot_work_stops_at_startup_with_one_line(tmp_path, setting, says):

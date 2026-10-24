@@ -14,10 +14,11 @@ vault on its own (a backup, a file sent somewhere), not the machine itself."""
 
 import functools
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from ..files import atomic_write
 
 FOLDER = Path.home() / ".cache/tars-browser"
 SCHEMES = ("https://", "imaps://")  # what a login may be for: sites, and mail over TLS
@@ -89,10 +90,9 @@ class Vault:
     def _fernet(self):
         from cryptography.fernet import Fernet
 
-        self.folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        private_folder(self.folder)
         if not self.key.exists():
-            self.key.write_bytes(Fernet.generate_key())
-            self.key.chmod(0o600)
+            atomic_write(self.key, Fernet.generate_key())  # made 0600 from the start (mkstemp), and on the disk
         return Fernet(self.key.read_bytes())
 
     def _load(self) -> dict[str, dict]:
@@ -101,14 +101,12 @@ class Vault:
         return json.loads(self._fernet().decrypt(self.file.read_bytes()))["people"]
 
     def _save(self, people: dict[str, dict]) -> None:
-        data = self._fernet().encrypt(json.dumps({"people": people}).encode())
-        tmp = self.file.with_suffix(".tmp")
-        tmp.write_bytes(data)
-        tmp.chmod(0o600)
-        os.replace(tmp, self.file)
+        atomic_write(self.file, self._fernet().encrypt(json.dumps({"people": people}).encode()))
 
     def logins(self, person: str) -> list[Login]:
-        return [_login(n, e) for n, e in self._load().get(person, {}).items()]
+        """`person`'s, whatever the case or the stray spaces of the name they were kept under ("alon" is Alon)."""
+        people = self._load()
+        return [_login(n, e) for n, e in people.get(_kept_as(people, person), {}).items()]
 
     def everyone(self) -> dict[str, list[Login]]:
         return {person: self.logins(person) for person in sorted(self._load())}
@@ -140,6 +138,7 @@ class Vault:
             raise ValueError("a mailbox needs its address and its password (for Gmail, an app password)")
         name = name or urlsplit(found[0]).hostname or found[0]
         people = self._load()
+        person = _kept_as(people, person)
         people.setdefault(person, {})[name] = _entry(found, values)
         self._save(people)
         return _login(name, people[person][name])
@@ -147,6 +146,7 @@ class Vault:
     def add(self, person: str, name: str, values: dict[str, str]) -> Login:
         """`person`'s login `name`, with more fields' values: what a later page of the sign-in asked for."""
         people = self._load()
+        person = _kept_as(people, person)
         entry = people[person][name]
         both = {**_login(name, entry).values_dict(), **{k: v for k, v in values.items() if k and v}}
         people[person][name] = _entry(entry["origins"], both)
@@ -161,7 +161,7 @@ class Vault:
 
     def remove(self, person: str, name: str) -> bool:
         people = self._load()
-        if people.get(person, {}).pop(name, None) is None:
+        if people.get(_kept_as(people, person), {}).pop(name, None) is None:
             return False
         self._save(people)
         return True
@@ -177,6 +177,18 @@ def _entry(origins: list[str], values: dict[str, str]) -> dict:
 def _login(name: str, entry: dict) -> Login:
     values = {"username": entry.get("username", ""), "password": entry.get("password", ""), **entry.get("fields", {})}
     return Login(name, tuple(entry["origins"]), tuple((k, v) for k, v in values.items() if v))
+
+
+def _kept_as(people: dict, person: str) -> str:
+    """The name `person`'s logins are kept under: theirs as it's spelled there, or as given for a new one."""
+    key = " ".join(person.split()).lower()
+    return next((kept for kept in people if " ".join(kept.split()).lower() == key), person.strip())
+
+
+def private_folder(folder: Path) -> None:
+    """`folder`, made if it isn't there, readable by this user only: the vault and the browser's profiles are in it."""
+    folder.mkdir(parents=True, exist_ok=True)
+    folder.chmod(0o700)
 
 
 def household_person(config: Path) -> str:

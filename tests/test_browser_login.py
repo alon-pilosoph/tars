@@ -228,3 +228,11 @@ def test_a_code_is_not_typed_if_the_page_moved_on_while_it_came(tmp_path):
 def test_a_number_secret_is_blanked_however_its_grouped():
     assert _blank("phone 054-123-4567 and 0541234567", {"0541234567"}) == "phone ••• and •••"
     assert _blank("code 482 913", {"482913"}) == "code •••"
+
+
+def test_a_persons_logins_are_theirs_whatever_the_case_of_their_name(tmp_path):
+    vault = Vault(tmp_path)
+    vault.store("Alon", [KSP], {"username": "alon@example.com"})
+    assert vault.for_page(KSP, " alon ").username == "alon@example.com"
+    vault.store("alon", [KSP], {"username": "other@example.com"})  # the same person: replaced, not a second
+    assert [p for p in vault.everyone()] == ["Alon"] and vault.for_page(KSP, "ALON").username == "other@example.com"

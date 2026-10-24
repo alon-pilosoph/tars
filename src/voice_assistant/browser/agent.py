@@ -202,10 +202,7 @@ def instructions_for(goal: str) -> str:
 
 def header_for(goal: str) -> str:
     """The goal, today's date and the language to answer in."""
-    language = "Hebrew" if any("\u0590" <= c <= "\u05ff" for c in goal) else "the language the goal is written in"
-    if all(c.isascii() or c in "₪€£" for c in goal):
-        language = "English"
-    return HEADER.format(today=time.strftime("%A %d %B %Y"), goal=goal, language=language)
+    return HEADER.format(today=time.strftime("%A %d %B %Y"), goal=goal, language="the language the goal is written in")
 
 
 @dataclass

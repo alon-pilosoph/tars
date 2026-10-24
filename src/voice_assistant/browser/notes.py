@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ..files import atomic_write
 from .vault import site
 
 FOLDER = Path(__file__).resolve().parents[3] / "voice_data/browser/notes"
@@ -59,8 +60,7 @@ class Notes:
         return path.read_text().strip() if path.exists() else ""
 
     def write(self, name: str, notes: str) -> None:
-        self.folder.mkdir(parents=True, exist_ok=True)
-        self._file(name).write_text(notes.strip()[:MOST] + "\n")
+        atomic_write(self._file(name), notes.strip()[:MOST] + "\n")
 
     def known(self) -> list[str]:
         return sorted(p.stem for p in self.folder.glob("*.md")) if self.folder.exists() else []
