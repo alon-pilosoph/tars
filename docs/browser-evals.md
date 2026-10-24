@@ -22,7 +22,6 @@ uv run --all-extras python tools/browser_eval.py                                
 uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off  # one, as a first visit
 uv run --all-extras python tools/browser_eval.py --model gpt-5.6-sol --history short   # another model, another loop
 uv run --all-extras python tools/browser_eval.py --agent claude                   # Claude Code as the brain
-uv run --all-extras python tools/browser_eval.py --agent proto                    # the first prototype
 ```
 
 Each run's records and traces go to `voice_data/browser/evals/<time>-<label>/`, and what it cost to
@@ -30,8 +29,9 @@ Each run's records and traces go to `voice_data/browser/evals/<time>-<label>/`, 
 
 ## The rebuild against the prototype (2026-10-23)
 
-Luna at low effort, all sixteen. The prototype (`tools/browser_proto.py`) scraped pages its own way, numbered their
-elements and sent a screenshot every turn; the new agent reads the page's accessibility tree (browser.md).
+Luna at low effort, all sixteen. The prototype (`tools/browser_proto.py`, since removed: it's in this branch's history)
+scraped pages its own way, numbered their elements and sent a screenshot every turn; the new agent reads the page's
+accessibility tree (browser.md).
 
 | Task | Prototype | New, first visit | New, with notes |
 |---|---|---|---|
