@@ -138,7 +138,7 @@ answer in words, needs a start address, and sends telemetry unless told not to.
 
 ## On a simulated Pi 4 (2026-10-24)
 
-The same agent (Luna high, full history), on [`deploy/sim`](deployment.md#trying-it-on-a-simulated-pi-first)'s Pi 4:
+The same agent (Luna high, full history), on [`deploy/sim`](simulator.md)'s Pi 4:
 Raspberry Pi OS's Debian on arm64, Debian's Chromium on a virtual screen, capped to about a Pi 4's speed. Nothing was
 signed in there, so the nine tasks that need no account:
 

@@ -116,21 +116,14 @@ By hand, the steps are at the top of each unit:
 
 ### Trying it on a simulated Pi first
 
-[`deploy/sim/run.sh`](../deploy/sim/run.sh) runs TARS on a simulated device in a container, from this clone: the
-device's OS and architecture (Debian bookworm on arm64, as Raspberry Pi OS is), the packages `install-pi.sh` installs
-there (the same list), a normal user, its cores and memory, as far as the Docker engine here allows. Any Docker
-engine does; on a Mac with Apple Silicon the arm64 device runs natively, and on an x86 machine emulated.
+[`deploy/sim/run.sh`](../deploy/sim/run.sh) runs TARS on a simulated Pi 4 in a container, from this clone: the Pi's
+OS and architecture, the packages `install-pi.sh` installs (the same list), its user, cores and memory. Any Docker
+engine does. See [the simulator](simulator.md) for what it is and isn't, and its devices.
 
 ```bash
-deploy/sim/run.sh                                   # build and start a Pi 4 (--device pi5 for a Pi 5)
+deploy/sim/run.sh test                              # TARS's tests, on the simulated Pi
 deploy/sim/run.sh uv run python -m voice_assistant.browser view https://wolt.com   # anything, run on it
-deploy/sim/run.sh --speed shell                     # capped to about the device's speed: a rough idea of it
-deploy/sim/run.sh stop                              # stop it (remove: it, its environment and browser profile)
 ```
-
-The devices are profiles in [`deploy/sim/devices/`](../deploy/sim/devices/). It's the Pi's software, not its
-hardware: not its speed (`--speed` comes closer, roughly), its audio or its GPU, and not systemd: the container's
-entry script does what the services would.
 
 ## Recognizing people from the start
 

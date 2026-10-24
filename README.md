@@ -112,6 +112,7 @@ assistant, edit the system prompt.
 | [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person |
 | [Evaluating the browser](docs/browser-evals.md) | sixteen live tasks; the prototype, Luna, Sol, Opus and Claude Code compared; on a simulated Pi |
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
+| [Trying it on a simulated device](docs/simulator.md) | the Pi's software in a container: tests, the browser, a service; device profiles |
 | [Backing up to S3](docs/backup.md) | what goes to the bucket, making room on the Pi, archiving, bringing it back |
 | [What's next](docs/roadmap.md) | real use, interrupting, the hard-question hand-off, memory |
 

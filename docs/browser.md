@@ -152,7 +152,7 @@ The same code, with three differences that come from the Pi having no screen
   time. A site that asks whether you're a robot (rail.co.il's Cloudflare check, on Linux Chromium) can't be
   answered, and TARS says so rather than trying to get past it.
 
-[`deploy/sim`](deployment.md#trying-it-on-a-simulated-pi-first) tries all of it on a simulated Pi first. At about a
+[`deploy/sim`](simulator.md) tries all of it on a simulated Pi first. At about a
 Pi 4's speed there, a page takes 1-4 s to load and 1.5-5 s to read (most of it waiting for a busy page to stop
 moving), so an errand takes longer than on a Mac, mostly in the browser: the model is in the cloud either way.
 
