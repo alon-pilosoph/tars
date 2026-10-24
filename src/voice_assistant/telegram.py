@@ -34,6 +34,7 @@ import httpx
 import numpy as np
 
 from .audio import SAMPLE_RATE, decode_recording
+from .browser.codes import one_time_code
 from .config import TELEGRAM_KEY, BrowserConfig, ConfigError
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
@@ -96,7 +97,6 @@ HELLO = (
 FRESH = "Starting fresh. What's up?"
 APPROVE_WAIT_S = 10 * 60.0  # how long an order waits for a tap on Order or Cancel
 CODE_WAIT_S = 5 * 60.0  # how long a sign-in waits for the code a site sent
-CODE = re.compile(r"^\s*(\d[\d -]{2,10}\d)\s*$")  # a code sent back on its own: 1234, 123 456, 12-34-56
 # The bot's menu of commands in Telegram's app.
 COMMANDS = [{"command": "new", "description": "Start a new conversation"}]
 WRITTEN = (
@@ -458,8 +458,8 @@ class TelegramTars:
         if voice:
             self.listen(chat, voice)
             return
-        if (waiting := self._codes.get(chat_id)) and (code := CODE.match(text)):
-            if waiting.give(re.sub(r"[ -]", "", code.group(1)), "chat"):
+        if (waiting := self._codes.get(chat_id)) and (code := one_time_code(text)):
+            if waiting.give(code, "chat"):  # to the sign-in only: never the conversation, the brain or the log
                 self._send(chat_id, "Got it. Signing in.")
             return
         command = text.split()[0].split("@")[0]

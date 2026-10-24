@@ -12,6 +12,7 @@ The vault is ~/.cache/tars-browser/vault.enc, encrypted (Fernet) with the key be
 only by TARS's user, and like the browser's profile kept out of the backup. On one disk that guards a copy of the
 vault on its own (a backup, a file sent somewhere), not the machine itself."""
 
+import functools
 import json
 import os
 from dataclasses import dataclass
@@ -59,18 +60,22 @@ def origin(url: str) -> str:
     return f"{parts.scheme}://{host}" + (f":{port}" if port and port != default else "")
 
 
-# Second-level labels under a country's: wolt.com, but ksp.co.il, ikea.co.il and bbc.co.uk.
-UNDER_COUNTRY = {"co", "com", "org", "net", "gov", "ac", "edu", "muni", "ltd", "plc"}
-
-
 def site(url: str) -> str:
-    """The site an address is on, as its notes are kept and its email comes from: wolt.com for
-    https://wolt.com/en/..., ksp.co.il for https://www.ksp.co.il/web/."""
-    host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
-    labels = host.split(".")
-    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in UNDER_COUNTRY:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:]) if len(labels) >= 2 else host
+    """The site an address is on, as its notes are kept and its email comes from: its registrable domain, by the
+    Public Suffix List (private suffixes too): wolt.com for https://wolt.com/en/..., ksp.co.il for
+    https://www.ksp.co.il/web/, store1.myshopify.com for a store on Shopify, not myshopify.com, which is every
+    store's. "" for an address on no site (about:blank)."""
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    if not host:
+        return ""
+    return _suffixes().privatesuffix(host) or host
+
+
+@functools.cache
+def _suffixes():
+    from publicsuffixlist import PublicSuffixList
+
+    return PublicSuffixList()
 
 
 class Vault:

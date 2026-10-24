@@ -3,6 +3,7 @@ the one-time login page, and the sign-in codes and links read from the person's 
 
 import dataclasses
 import email
+import imaplib
 import threading
 import time
 import types
@@ -322,14 +323,18 @@ def unused_port():
 # Mail
 
 
-def sign_in_email(sender, text, sent=None, html=None):
+def sign_in_email(sender, text, sent=None, html=None, dkim=None):
+    """An email as the person's server keeps it: when it came (FakeImap says so as the server's own time), and what
+    the server found of who sent it (`dkim`: the domain DKIM passed for; by default the From address's)."""
     m = EmailMessage()
+    domain = sender.rpartition("@")[2].strip(">")
+    m["Authentication-Results"] = f"mx.google.com; dkim=pass header.i=@{dkim or domain}; spf=pass"
     m["From"], m["Subject"] = sender, "Your sign-in"
     m["Date"] = format_datetime(datetime.fromtimestamp(sent or time.time(), UTC))
     m.set_content(text)
     if html:
         m.add_alternative(html, subtype="html")
-    return m.as_bytes()
+    return (sent or time.time(), m.as_bytes())
 
 
 class FakeImap:
@@ -351,10 +356,11 @@ class FakeImap:
     def uid(self, command, *args):
         if command == "SEARCH":
             domain = args[1].strip('"').split()[0].removeprefix("from:")
-            found = [str(i).encode() for i, raw in enumerate(self.mails, 1) if domain.encode() in raw.split(b"\n")[0]]
+            found = [str(i).encode() for i, (_, raw) in enumerate(self.mails, 1) if domain.encode() in raw]
             return "OK", [b" ".join(found)]
-        raw = self.mails[int(args[0]) - 1]
-        return "OK", [(b"1 (UID " + args[0] + b" BODY[]", raw)]
+        came, raw = self.mails[int(args[0]) - 1]
+        return "OK", [(b"1 (UID " + args[0] + b' INTERNALDATE "' + imaplib.Time2Internaldate(came).strip('"').encode()
+                       + b'" BODY[]', raw)]  # fmt: skip
 
     def logout(self):
         pass
@@ -415,6 +421,21 @@ def test_what_the_reader_says_is_taken_only_as_a_code_or_an_offered_link():
                 clock=iter(range(100)).__next__, wait_s=3) == (None, None)  # fmt: skip
     assert wait([raw], reader(link=7), url="https://www.ksp.co.il/web/", clock=iter(range(100)).__next__,
                 wait_s=3) == (None, None)  # fmt: skip
+
+
+def test_an_email_whose_from_is_forged_is_not_read():
+    seen = []
+    forged = sign_in_email("Wolt <no-reply@wolt.com>", "Your code is 482913", dkim="evil.example")
+    clock = iter(range(100)).__next__
+    assert wait([forged], reader(code="482913", seen=seen), wait_s=3, clock=clock) == (None, None) and seen == []
+
+
+def test_a_code_the_email_doesnt_have_isnt_taken():
+    raw = sign_in_email("Wolt <no-reply@wolt.com>", "Your code is 482913")
+    clock = iter(range(100)).__next__
+    assert wait([raw], reader(code="Welcome"), wait_s=3, clock=clock) == (None, None)
+    assert wait([raw], reader(code="111111"), wait_s=3, clock=iter(range(100)).__next__) == (None, None)
+    assert wait([raw], reader(code="482-913")) == ("482913", None)
 
 
 def test_no_mail_in_time_is_none():
@@ -478,3 +499,26 @@ def test_the_telegram_service_makes_errands_only_with_browser_on(tmp_path):
         make_errands(on, tmp_path, client=None)
     made = make_errands(on, tmp_path, client=object())
     assert isinstance(made, Errands) and made.chats is None and made.queue.store is None
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [("482913", "482913"), ("482 913", "482913"), ("G-482913", "G482913"), ("AB12CD", "AB12CD"), ("٤٨٢٩١٣", "482913"),
+     ("1500 shekels", None), ("hello", None), ("12", None), ("Welcome", None), ("שלום", None)],
+)  # fmt: skip
+def test_what_a_one_time_code_is(text, code):
+    from voice_assistant.browser.codes import one_time_code
+
+    assert one_time_code(text) == code
+
+
+def test_a_code_with_letters_sent_back_goes_to_the_sign_in_too():
+    bot, brain = ButtonBot(), ScriptedBrain(["Hi!"])
+    t = tars(bot, [brain])
+    answer, got = Answer(), []
+    asking = threading.Thread(target=lambda: got.append(t.code("Alon", KSP, answer)))
+    asking.start()
+    until(lambda: any("sign-in code" in m for m in bot.said()))
+    t.handle(message("G-482913"))
+    asking.join(2)
+    assert got == ["G482913"] and brain.asked == []

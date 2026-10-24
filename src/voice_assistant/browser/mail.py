@@ -13,15 +13,17 @@ import json
 import ssl
 import threading
 import time
+import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from email.message import Message
 from email.policy import default
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import parseaddr
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 from ..homenet import host_of
+from .codes import one_time_code
 from .vault import Login, site
 
 PORT = 993
@@ -58,6 +60,26 @@ def on_domain(link: str, domain: str) -> bool:
     https://evil.example\\@wolt.com, which is wolt.com to it and evil.example to Chrome."""
     host = host_of(link)
     return link.startswith("https://") and (host == domain or host.endswith("." + domain))
+
+
+def authenticated(message: Message, domain: str, required: bool) -> bool:
+    """Whether the mail server that took it in found it really from `domain`: its topmost Authentication-Results (the
+    one the person's own server added; a sender can put any below it) says DKIM passed for the domain, or DMARC
+    passed with the domain in From. `required`: a server that always says (Gmail) must; else an email without one is
+    taken on its From alone."""
+    said = message.get_all("Authentication-Results") or []
+    if not said:
+        return not required
+    for clause in str(said[0]).lower().split(";"):
+        parts = clause.split()
+        result = next((p for p in parts if p.startswith(("dkim=", "dmarc="))), "")
+        if result not in ("dkim=pass", "dmarc=pass"):
+            continue
+        for p in parts:
+            name, _, value = p.partition("=")
+            if name in ("header.d", "header.i", "header.from") and on_domain("https://" + value.lstrip("@"), domain):
+                return True
+    return False
 
 
 def sent_by(message: Message, domain: str) -> bool:
@@ -128,13 +150,19 @@ def model_reader(client, model: str) -> Reader:
     return read
 
 
-def _taken(code: str | None, link: int | None, links: list[str]) -> tuple[str | None, str | None]:
-    """What a reader said, as far as it can be taken: a code that's only letters and digits, a link that's one of
-    those offered."""
-    code = "".join(str(code or "").split()).replace("-", "")
-    ok = code.isalnum() and 4 <= len(code) <= 10
+def _taken(code: str | None, link: int | None, links: list[str], text: str) -> tuple[str | None, str | None]:
+    """What a reader said, as far as it can be taken: a code that is one (codes.py) and is in the email as written,
+    a link that's one of those offered."""
+    code = one_time_code(str(code or ""))
+    if code and code not in one_time_code_spaced(text):
+        code = None  # the model's word for it, not the email's
     chosen = links[link - 1] if isinstance(link, int) and 1 <= link <= len(links) else None
-    return (code if ok else None), chosen
+    return code, chosen
+
+
+def one_time_code_spaced(text: str) -> str:
+    """`text` as a code in it would be written once read (codes.py): without spaces or dashes, in ASCII digits."""
+    return "".join(str(unicodedata.digit(c)) if c.isdigit() else c for c in text if c not in " -\u00a0")
 
 
 def _connect(host: str, port: int) -> imaplib.IMAP4:
@@ -168,16 +196,15 @@ class Mailbox:
             return []
         found = []
         for uid in data[0].split()[-NEWEST:][::-1]:
-            _, parts = self.imap.uid("FETCH", uid, f"(BODY.PEEK[]<0.{READ_BYTES}>)")
-            raw = next((p[1] for p in parts or [] if isinstance(p, tuple)), None)
-            if raw is None:
+            _, parts = self.imap.uid("FETCH", uid, f"(INTERNALDATE BODY.PEEK[]<0.{READ_BYTES}>)")
+            part = next((p for p in parts or [] if isinstance(p, tuple)), None)
+            if part is None:
                 continue
-            message = email.message_from_bytes(raw, policy=default)
-            try:
-                sent = parsedate_to_datetime(str(message["date"])).timestamp()
-            except TypeError, ValueError:
+            arrived = imaplib.Internaldate2tuple(part[0])  # the server's own time it came, not what the sender says
+            message = email.message_from_bytes(part[1], policy=default)
+            if arrived is None or time.mktime(arrived) < since - 60:  # a minute's grace for the two clocks
                 continue
-            if sent >= since - 60 and sent_by(message, domain):  # a minute's grace for the two clocks
+            if sent_by(message, domain) and authenticated(message, domain, required=self.gmail):
                 found.append(message)
         return found
 
@@ -222,7 +249,7 @@ def wait_for_sign_in(
                     text, links = text_and_links(message)
                     ours = [link for link in links if on_domain(link, domain)]
                     try:
-                        code, link = _taken(*read(domain, text, ours), ours)
+                        code, link = _taken(*read(domain, text, ours), ours, text)
                     except Exception as e:  # noqa: BLE001 - the model unreachable: the person is asked meanwhile
                         print(f"(mail: couldn't read {domain}'s email: {type(e).__name__})")
                         continue
