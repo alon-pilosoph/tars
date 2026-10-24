@@ -1,6 +1,6 @@
 """TARS's browser from a terminal.
 
-    uv run --extra browser python -m voice_assistant.browser signin [URL]   # sign in by hand, then quit that Chrome
+    uv run --extra browser python -m voice_assistant.browser signin [URL] [--vnc]   # sign in by hand (--vnc: on the Pi)
     uv run --extra browser python -m voice_assistant.browser view URL [--shot FILE]   # what the agent sees there
     uv run --extra browser python -m voice_assistant.browser run "GOAL" [--turns N] [--trace FILE]
 
@@ -33,6 +33,8 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     s = sub.add_parser("signin", help="a TARS Chrome to sign in to sites by hand")
     s.add_argument("url", nargs="?", default="about:blank")
+    s.add_argument("--vnc", action="store_true", help="no screen here (the Pi): show it as a web page to sign in on")
+    s.add_argument("--vnc-host", default="127.0.0.1", help="where that page listens (default: this machine only)")
     v = sub.add_parser("view", help="print what the agent is shown of a page")
     v.add_argument("url")
     v.add_argument("--shot", type=Path, help="also save the screenshot it would get, refs drawn on")
@@ -53,8 +55,16 @@ def main() -> None:
         session = Session(context)
         if args.command == "signin":
             session.page.goto(args.url)
-            print("Sign in by hand in that Chrome window (tick 'Keep me signed in'), then press Enter here.")
-            input()
+            if not args.vnc:
+                print("Sign in by hand in that Chrome window (tick 'Keep me signed in'), then press Enter here.")
+                input()
+                return
+            from .vnc import vnc_view
+
+            with vnc_view(args.vnc_host) as (url, password):
+                print(f"Open {url} (password {password}), sign in there (tick 'Keep me signed in'), then press "
+                      "Enter here. The page and its password stop working when this ends.")  # fmt: skip
+                input()
             return
         session.page.goto(args.url, wait_until="domcontentloaded")
         session.page.wait_for_timeout(args.wait * 1000)

@@ -1,0 +1,16 @@
+# The apt packages TARS needs on the Pi: install-pi.sh installs them, and the simulated Pi (deploy/sim, device pi5)
+# is built with them, so the two can't drift apart. One a line; # starts a comment.
+
+# Audio: PortAudio for the mic and the speaker; libatomic for Vosk, the wake double-check.
+libportaudio2
+libatomic1
+
+# The browser (docs/browser.md): Debian's Chromium (Google Chrome has no build for the Pi), a virtual screen to draw
+# to, a way to see it from a laptop when signing in, and fonts for the pages it reads (Hebrew among them).
+chromium
+xvfb
+x11vnc
+novnc
+websockify
+fonts-noto-core
+fonts-noto-color-emoji

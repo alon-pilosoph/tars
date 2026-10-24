@@ -41,12 +41,16 @@ MARKS_JS = """(marks) => {
     document.documentElement.appendChild(m);
   }
 }"""
-# Whether the page shows something still loading: a busy region, a skeleton or a spinner on screen.
+# Whether the page shows something still loading: a region it says is busy, or a skeleton or spinner on screen that's
+# animating (a site keeps empty spinner containers in its buttons for good; a loader that's running moves).
 BUSY_JS = """() => [...document.querySelectorAll(
     '[aria-busy=true], [class*=skeleton i], [class*=spinner i], [class*=shimmer i], [class*=placeholder-glow i]')]
   .some((e) => { const r = e.getBoundingClientRect();
-    return r.width > 8 && r.height > 8 && r.bottom > 0 && r.top < innerHeight
-      && getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none'; })"""
+    if (r.width <= 8 || r.height <= 8 || r.bottom <= 0 || r.top >= innerHeight) return false;
+    const s = getComputedStyle(e);
+    if (s.visibility === 'hidden' || s.display === 'none') return false;
+    return e.getAttribute('aria-busy') === 'true'
+      || e.getAnimations({subtree: true}).some((a) => a.playState === 'running'); })"""
 # Which dialogs, suggestion lists and menus are open, as a signature.
 SHAPE_JS = """() => [...document.querySelectorAll(
     '[role=dialog], [role=alertdialog], dialog[open], [role=listbox], [role=menu], [aria-expanded=true]')]

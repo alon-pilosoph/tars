@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Sets TARS up on a Raspberry Pi (Raspberry Pi OS 64-bit, Bookworm or later), from a clone at ~/voice-assistant:
+# Sets TARS up on a Raspberry Pi (Raspberry Pi OS 64-bit, Bookworm or later), from a clone at ~/voice-assistant
+# (deploy/sim/run.sh tries the same setup in a container first):
 #
 #   git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant && ~/voice-assistant/deploy/install-pi.sh
 #
 # Safe to run again: it adds what's missing and restarts the services (after a `git pull`, say). It asks for sudo
-# for three things: PortAudio (audio I/O), letting the services start at boot without anyone logged in, and starting
-# TARS when the speakerphone is plugged in.
+# for three things: the system packages (deploy/pi-packages.txt), letting the services start at boot without anyone
+# logged in, and starting TARS when the speakerphone is plugged in.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -15,13 +16,15 @@ if [ "$REPO" != "$HOME/voice-assistant" ]; then
 fi
 cd "$REPO"
 
-echo "== PortAudio"
-# PortAudio for the mic and speaker; libatomic for Vosk, the wake double-check.
-missing=$(for pkg in libportaudio2 libatomic1; do dpkg -s "$pkg" >/dev/null 2>&1 || echo "$pkg"; done)
+echo "== System packages (deploy/pi-packages.txt: audio, and the browser on a virtual screen)"
+missing=$(grep -v '^\s*#' deploy/pi-packages.txt | grep -v '^\s*$' | while read -r pkg; do
+  dpkg -s "$pkg" >/dev/null 2>&1 || echo "$pkg"; done)
 if [ -n "$missing" ]; then
   sudo apt-get update
-  sudo apt-get install -y $missing
+  sudo apt-get install -y --no-install-recommends $missing
 fi
+# The browser's profile keeps the sites' logins with a fixed key (no desktop keyring): only TARS's user may read it.
+mkdir -p "$HOME/.cache/tars-browser" && chmod 700 "$HOME/.cache/tars-browser"
 
 echo "== uv (the services run it from ~/.local/bin)"
 UV="$HOME/.local/bin/uv"
@@ -56,10 +59,11 @@ echo "== Audio devices (put part of the speakerphone's name in config.toml [audi
 
 echo "== Services"
 mkdir -p "$HOME/.config/systemd/user"
-cp deploy/voice-assistant.service deploy/voice-assistant-web.service "$HOME/.config/systemd/user/"
+cp deploy/voice-assistant.service deploy/voice-assistant-web.service deploy/voice-assistant-display.service \
+  "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
-systemctl --user enable voice-assistant voice-assistant-web
-systemctl --user restart voice-assistant voice-assistant-web  # picks up new code on a rerun
+systemctl --user enable voice-assistant voice-assistant-web voice-assistant-display
+systemctl --user restart voice-assistant voice-assistant-web voice-assistant-display  # new code on a rerun
 # TARS on Telegram, if [telegram] is on in config.toml (docs/telegram.md).
 if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \
 raise SystemExit(0 if load_config(Path('config.toml')).telegram.enabled else 1)"; then
