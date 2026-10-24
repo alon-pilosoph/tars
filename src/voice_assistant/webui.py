@@ -8,7 +8,6 @@ machine by a home-network name are answered (see allowed_host), so a page elsewh
 through the browser of someone at home.
 """
 
-import ipaddress
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -24,11 +23,11 @@ from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, UNKNOWN, EventLog
 from .health import Report
+from .homenet import address, home_name
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .versions import INSTALLED, FixedPair, ModelVersions
 
 STATIC = Path(__file__).with_name("webui_static")  # the React app in webui/, built with `npm run build`
-LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 # What the browser gets for a reminder (types.ts Reminder): not `reported`, what a chat was last told.
 REMINDER_FIELDS = (
     "id",
@@ -118,12 +117,7 @@ def allowed_host(host: str, extra: frozenset[str] = frozenset()) -> bool:
     name = (urlsplit(f"//{host}").hostname or "").lower()
     if not name:
         return False
-    try:
-        ipaddress.ip_address(name)
-        return True
-    except ValueError:
-        pass
-    return name in extra or name in LOOPBACK or "." not in name or name.endswith((".local", ".ts.net"))
+    return address(name) is not None or home_name(name, extra)
 
 
 def same_site(origin: str, host: str, extra: frozenset[str] = frozenset()) -> bool:

@@ -11,6 +11,10 @@ brain, tools and reminders as at home, told it's writing rather than speaking; a
 the same speech to text as at home (stt.py), and answered as if written. What it sends goes into the chat as
 well as onto the TARS page. A reminder set here for someone with a chat comes to that chat when it's due, and
 whatever TARS sends at home for someone with a chat comes to it too. See docs/telegram.md.
+
+With [browser] on, a chat can send TARS on an errand in its browser (browser/errands.py), and the errand reaches the
+person here (telegram_errands.py): an order to approve, a link for a login TARS lacks, a code to send back, and its
+answer when it's done.
 """
 
 import json
@@ -31,6 +35,7 @@ from .audio import SAMPLE_RATE, decode_recording
 from .config import TELEGRAM_KEY, ConfigError
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
+from .home import Request
 from .llm import REMIND_TOOLS, SEARCHING, THINKING, Brain, split_ack
 from .reminders import (
     ACKNOWLEDGED,
@@ -188,13 +193,32 @@ class Bot:
         self.call("setMyCommands", commands=commands)
 
     def updates(self, offset: int | None) -> list[dict]:
-        """New messages, waiting up to POLL_S for one. Asking with `offset` confirms everything before it."""
-        params = {"timeout": POLL_S, "allowed_updates": ["message"]}
+        """New messages and taps on TARS's buttons, waiting up to POLL_S for one. Asking with `offset` confirms
+        everything before it."""
+        params = {"timeout": POLL_S, "allowed_updates": ["message", "callback_query"]}
         return self.call("getUpdates", **params, **({"offset": offset} if offset is not None else {}))
 
     def send(self, chat_id: int, text: str) -> None:
         for part in split_text(text):
             self.call("sendMessage", chat_id=chat_id, text=part)
+
+    def send_buttons(self, chat_id: int, text: str, buttons: list[tuple[str, str]]) -> int:
+        """`text` with a row of buttons under it, each (label, what a tap sends back); the message's id."""
+        markup = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in buttons]]}
+        return self.call("sendMessage", chat_id=chat_id, text=text[:MAX_TEXT], reply_markup=markup)["message_id"]
+
+    def drop_buttons(self, chat_id: int, message_id: int) -> None:
+        self.call(
+            "editMessageReplyMarkup", chat_id=chat_id, message_id=message_id, reply_markup={"inline_keyboard": []}
+        )
+
+    def answer_tap(self, tap_id: str) -> None:
+        """Tells Telegram a tap was seen, so the button stops spinning."""
+        self.call("answerCallbackQuery", callback_query_id=tap_id)
+
+    def send_photo(self, chat_id: int, data: bytes, caption: str = "") -> None:
+        params = {"chat_id": str(chat_id), "caption": caption[:MAX_CAPTION]}
+        self.call("sendPhoto", files={"photo": ("page.jpg", data, "image/jpeg")}, **params)
 
     def send_file(self, chat_id: int, name: str, data: bytes, mime: str, caption: str = "") -> None:
         params = {"chat_id": str(chat_id), "caption": caption[:MAX_CAPTION]}
@@ -360,6 +384,7 @@ class TelegramTars:
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
+        self._listeners: list[Callable[[dict], bool]] = []  # what sees each update first (listen_first)
 
     def run_forever(self, me: dict | None = None) -> None:
         """`me`: the bot, as Telegram's getMe said, if it's been asked already."""
@@ -394,6 +419,8 @@ class TelegramTars:
                     traceback.print_exc()
 
     def handle(self, update: dict) -> None:
+        if any(listener(update) for listener in self._listeners):
+            return
         message = update.get("message") or {}
         if (message.get("chat") or {}).get("type") != "private":
             return
@@ -478,7 +505,7 @@ class TelegramTars:
         asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                pieces = brain.stream_reply(asked)
+                pieces = brain.stream_reply(asked, Request(speaker=chat.person))
                 if self._tools:
                     acks, pieces = split_ack(pieces)
                 reply = tidy("".join(pieces))
@@ -536,6 +563,30 @@ class TelegramTars:
                 with _free(chat) as free:
                     if free:
                         self._post_sent_at_home(chat, row, now)
+
+    # For what posts to a chat besides its conversation (telegram_errands.py)
+
+    def listen_first(self, listener: Callable[[dict], bool]) -> None:
+        """Has `listener` see each update before the chats do: one it says it took (True) goes no further."""
+        self._listeners.append(listener)
+
+    @property
+    def bot(self) -> Bot:
+        return self._bot
+
+    def chat_for(self, person: str | None) -> Chat | None:
+        return self._chat_for(person)
+
+    def chat_for_id(self, chat_id: int | None) -> Chat | None:
+        return self._chats.get(chat_id)
+
+    def post(self, chat: Chat, text: str, tries: int = SEND_TRIES) -> None:
+        """Posts `text` to `chat`, outside its conversation (a question an errand asks, a notice)."""
+        self._send(chat.chat_id, text, tries=tries)
+
+    def remember(self, chat: Chat, text: str) -> None:
+        """`text`, posted by TARS by itself, as part of the chat's conversation from now on."""
+        self._said(chat, text, self._clock())
 
     def _chat_for(self, person: str | None) -> Chat | None:
         chat_id = self._by_person.get(person_key(person))

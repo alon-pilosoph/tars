@@ -3,7 +3,7 @@
 [![CI](https://github.com/alon-pilosoph/tars/actions/workflows/ci.yml/badge.svg)](https://github.com/alon-pilosoph/tars/actions/workflows/ci.yml)
 
 A household voice assistant you can take apart: say "hey TARS", ask something, and it answers in TARS's voice.
-It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work on it.
+It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while you work on it.
 
 **[See how it works, from wake word to answer →](https://tars.alonp.dev)**
 
@@ -16,7 +16,7 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
 | [Quick model](docs/models.md) | Qwen on Groq, then Cerebras, hedged at 0.5 s; 149/156 on the capability benchmark at low reasoning |
 | [Whole conversations](docs/evals.md) | 47 scenarios played through the real brain, hand-offs followed through: 143/145 runs right on the 29 measured so far (from 76/87); run on request from a pull request comment |
 | [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |
-| [Runs on](docs/deployment.md) | Raspberry Pi 5 with a USB speakerphone (an Anker PowerConf here), or a Mac |
+| [Runs on](docs/deployment.md) | Raspberry Pi 4 or 5 with a USB speakerphone (a Pi 4 with 8 GB and an Anker PowerConf here), or a Mac |
 
 ## Highlights
 
@@ -39,6 +39,9 @@ It runs on a Raspberry Pi 5 with a USB speakerphone, or on a Mac while you work 
   every part running, the services, the backup, the Pi ([web UI](docs/web-ui.md)).
 - **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
   sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
+- **Errands on any website**, asked aloud or in a chat: TARS's own browser orders on Wolt or books a table, with
+  nothing built for any one site. It signs in from its own vault (a code by email or in the chat), and nothing is
+  ordered until you tap Order on the checkout it shows you ([the browser](docs/browser.md)).
 - **Backed up to S3** every 15 minutes, with a snapshot of the database every six hours; old audio leaves the Pi for
   the bucket ([backup](docs/backup.md)).
 
@@ -106,7 +109,10 @@ assistant, edit the system prompt.
 | [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
 | [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
 | [Who's home](docs/presence.md) | phones on the Wi-Fi, asking the routers, the rules, where it's used |
+| [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person |
+| [Evaluating the browser](docs/browser-evals.md) | sixteen live tasks; the prototype, Luna, Sol, Opus and Claude Code compared; on a simulated Pi |
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
+| [Trying it on a simulated device](docs/simulator.md) | the Pi's software in a container: tests, the browser, a service; device profiles |
 | [Backing up to S3](docs/backup.md) | what goes to the bucket, making room on the Pi, archiving, bringing it back |
 | [What's next](docs/roadmap.md) | real use, interrupting, the hard-question hand-off, memory |
 

@@ -103,8 +103,9 @@ class ScriptedBrain:
         self.sent, self.changes = [], []
         self.next_sent, self.next_changes = [], []
 
-    def stream_reply(self, text):
+    def stream_reply(self, text, request=None):
         self.asked.append(text)
+        self.request = request
         self.sent, self.changes = self.next_sent, self.next_changes
         self.next_sent, self.next_changes = [], []
         reply = self.replies.pop(0)
@@ -399,9 +400,9 @@ def test_a_reminder_due_while_tars_is_answering_is_posted_after_the_answer(convo
     t = tars(bot, [brain], convos, tools)
     answering = brain.stream_reply
 
-    def stream_reply(text):
+    def stream_reply(text, request=None):
         t.deliver()  # as the posting thread would, mid-reply
-        return answering(text)
+        return answering(text, request)
 
     brain.stream_reply = stream_reply
     t.handle(message("what time is it?"))

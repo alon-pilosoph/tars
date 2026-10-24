@@ -1,0 +1,219 @@
+"""Runs the browser agent's tasks (evals/browser/tasks.toml) on the real sites, one at a time, and keeps what each
+did: its answer, its steps, how long it took and what it cost. Nothing is ordered or booked: whatever the agent
+asks to commit is approved as a dry run, which stops it there. A round starts with TARS's baskets empty (on Wolt and
+KSP here), and each task that filled one has it emptied after it, so each starts where the first did.
+
+    uv run --all-extras python tools/browser_eval.py [--agent new|claude] [--task ID ...] [--runs N]
+    uv run --all-extras python tools/browser_eval.py --relearn voice_data/browser/evals/<run>   # notes again
+
+--agent claude has Claude Code (Opus 5.5 at medium effort, on this machine's Claude plan) work TARS's browser
+through its MCP server instead of TARS's own loop. Every task's record goes to
+voice_data/browser/evals/<time>-<agent>/results.jsonl, with its trace beside it; what all runs have spent is kept in
+voice_data/browser/evals/spend.json, and no task starts once it reaches --cap. Grading is by reading: a task's
+`check` says what a right answer is."""
+
+import argparse
+import functools
+import json
+import re
+import tomllib
+from datetime import datetime
+from pathlib import Path
+
+from voice_assistant.browser.trace import read
+from voice_assistant.config import EFFORTS, BrowserConfig
+
+ROOT = Path(__file__).resolve().parents[1]
+TASKS = ROOT / "evals/browser/tasks.toml"
+OUT = ROOT / "voice_data/browser/evals"
+SPEND = OUT / "spend.json"
+TURNS = re.compile(r"(?:done in|stuck after|stopped after) (\d+) steps")
+PRICES = tomllib.loads((ROOT / "evals/prices.toml").read_text())["models"]
+
+
+def cost(model: str, tokens_in: int, tokens_out: int, cached: int = 0) -> float:
+    """Dollars for the tokens; `cached`, of tokens_in, at the model's cache-read price when it has one."""
+    price = PRICES[model]
+    cached = cached if "cache_read" in price else 0
+    return ((tokens_in - cached) * price["input"] + cached * price.get("cache_read", 0)
+            + tokens_out * price["output"]) / 1e6  # fmt: skip
+
+
+def spent() -> float:
+    return json.loads(SPEND.read_text())["dollars"] if SPEND.exists() else 0.0
+
+
+def add_spend(dollars: float) -> None:
+    SPEND.parent.mkdir(parents=True, exist_ok=True)
+    SPEND.write_text(json.dumps({"dollars": round(spent() + dollars, 6)}))
+
+
+class DryRun:
+    """The person, for a run nobody is watching: every commit is approved, and none is carried out."""
+
+    name = "eval"
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def approve(self, draft: str, *args, **kwargs) -> bool:
+        self.asked.append(draft)
+        return True
+
+
+TIDY = (
+    "Empty the basket or cart on {site}: everything in it was put there by test runs (it was empty before them). "
+    "Open it, remove every item, and check it's empty; if the site keeps a basket for each store or restaurant, "
+    "empty the one the last run used (it said: {said}). Then say what you took out. Only a basket or a cart: if the "
+    "site has none, change nothing (not saved lists, favourites or anything else) and say so."
+)
+
+
+def tidy_goal(turns: list[dict], said: str) -> str:
+    """What a tidying run is asked, after a task that fills a basket: to empty the basket on the run's site, which
+    the run's answer (`said`) says more about. A round starts with empty baskets, so anything in one is a run's."""
+    from voice_assistant.browser.vault import site
+
+    where = site(next((t["url"] for t in reversed(turns) if t.get("url")), "")) or "the site"
+    return TIDY.format(site=where, said=" ".join(said.split())[:400] or "nothing")
+
+
+class NoOne:
+    """The person, for a tidying run: it never commits, so any approval it asks for is a no."""
+
+    def approve(self, draft: str, picture: bytes | None = None) -> bool:
+        return False
+
+
+def run_new(task: dict, steps: int, folder: Path, options: argparse.Namespace) -> dict:
+    """The agent on one task, with the brain and the notes `options` says (--model, --effort, --notes), and on a
+    task that fills a basket, a tidying run after it in the same browser."""
+    from voice_assistant.browser.agent import Agent, Settings
+    from voice_assistant.browser.chrome import browser_session
+    from voice_assistant.browser.notes import Notes
+    from voice_assistant.browser.run import model_client, run_in
+
+    settings = Settings(model=options.model, effort=options.effort, turns=steps, read_notes=options.notes == "use",
+                        history=options.history)  # fmt: skip
+    trace = folder / f"{task['id']}.jsonl"
+    model = model_client(settings)
+    with browser_session() as session:
+        run = run_in(session, task["goal"], DryRun(), model, settings, trace,
+                     notes=None if options.notes == "off" else Notes())  # fmt: skip
+        record, tidied = run.record(), None
+        if task["kind"] == "commit":
+            tidier = Agent(model, session, NoOne(), Settings(model=settings.model, turns=20), trace=trace)
+            tidier.log({"event": "follow_up", "request": "tidy"})
+            try:
+                tidied = tidier.run(tidy_goal(run.turns, run.result.answer))
+            except Exception as e:  # noqa: BLE001 - a basket left as it is is said so, not raised
+                tidier.log({"event": "error", "error": f"tidying: {type(e).__name__}: {e}"})
+    return {**record, "tidied": tidied.answer if tidied else "", "tidy_tokens_in": tidied.tokens_in if tidied else 0,
+            "tidy_tokens_out": tidied.tokens_out if tidied else 0}  # fmt: skip
+
+
+def run_claude(task: dict, steps: int, folder: Path, options: argparse.Namespace) -> dict:
+    """Claude Code on one task, on the person's Claude plan, working TARS's browser (--model, --effort), and on a
+    task that fills a basket, Claude again to empty it (TARS's own agent took twice as long to find it)."""
+    from voice_assistant.browser.claude import run_claude as run
+    from voice_assistant.browser.trace import read
+
+    trace = folder / f"{task['id']}.jsonl"
+    record = run(task["goal"], trace, model=options.model, effort=options.effort, turns=steps,
+                 notes=options.notes != "off", narrate=options.narrate)  # fmt: skip
+    if task["kind"] == "commit":
+        turns = [e for e in read(trace) if e.get("event") == "turn"] if trace.exists() else []
+        tidied = run(tidy_goal(turns, record["answer"]), trace.with_suffix(".tidy.jsonl"), model=options.model,
+                     effort=options.effort, turns=25)  # fmt: skip
+        record |= {"tidied": tidied["answer"], "tidy_api_usd": tidied["api_usd"]}
+    return record
+
+
+def relearn(folder: Path) -> None:
+    """Writes the site notes again from a run's traces, in the order its tasks ran (each from the notes so far): for
+    when how notes are written has changed, without running the tasks again."""
+    from voice_assistant.browser.notes import Notes
+    from voice_assistant.browser.run import client
+
+    notes, model = Notes(), client()
+    spent_in = spent_out = 0
+    traces = [p for p in folder.glob("*.jsonl") if p.name != "results.jsonl" and not p.name.endswith(".tidy.jsonl")]
+    for trace in sorted(traces, key=lambda p: p.stat().st_mtime):
+        events = read(trace)
+        start = next((e for e in events if e["event"] == "start"), None)
+        end = next((e for e in events if e["event"] == "end"), None)
+        if start is None or end is None:
+            continue
+        follow = next((i for i, e in enumerate(events) if e["event"] == "follow_up"), len(events))
+        turns = [e for e in events[:follow] if e["event"] == "turn"]
+        written, tokens_in, tokens_out = notes.learn(model, start["model"], start["goal"], end["ended"], turns)
+        spent_in, spent_out = spent_in + tokens_in, spent_out + tokens_out
+        print(f"{trace.stem}: {'wrote notes' if written else 'nothing to learn'}")
+    add_spend(cost("gpt-6-luna", spent_in, spent_out))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--agent", choices=("new", "claude"), default="new",
+                        help="TARS's agent, or Claude Code working TARS's browser")  # fmt: skip
+    parser.add_argument("--task", action="append", help="a task's id (default: all)")
+    parser.add_argument("--steps", type=int, default=BrowserConfig.turns, help="at most this many model turns a task")
+    parser.add_argument("--cap", type=float, default=14.0, help="no task starts once all runs have spent this")
+    parser.add_argument("--label", default="", help="added to the run's folder name")
+    notes_help = "the new agent's site notes: read and write them, only write them, or neither"
+    parser.add_argument("--notes", choices=("use", "write", "off"), default="use", help=notes_help)
+    parser.add_argument("--relearn", type=Path, help="write the site notes again from this run's traces, and stop")
+    browser = BrowserConfig()  # TARS's own defaults, as config.toml ships them
+    parser.add_argument("--model", default=browser.model, help="the new agent's model (priced in evals/prices.toml)")
+    parser.add_argument("--effort", default=browser.effort, choices=EFFORTS, help="its reasoning")
+    parser.add_argument("--runs", type=int, default=1, help="each task this many times")
+    history_help = "TARS's agent: every page and its reasoning kept (full), or the newest page only (short)"
+    parser.add_argument("--history", choices=("full", "short"), default="full", help=history_help)
+    parser.add_argument("--narrate", action="store_true", help="Claude Code notes each step, to study how it works")
+    args = parser.parse_args()
+    if args.agent == "claude" and args.model == "gpt-6-luna":
+        args.model, args.effort = "claude-opus-5-5", "medium" if args.effort == "low" else args.effort
+    if args.agent != "claude" and args.model not in PRICES:
+        raise SystemExit(f"no price for {args.model} in evals/prices.toml")
+    if args.relearn:
+        relearn(args.relearn)
+        return
+    tasks = tomllib.loads(TASKS.read_text())["task"]
+    if args.task:
+        unknown = set(args.task) - {t["id"] for t in tasks}
+        if unknown:
+            raise SystemExit(f"no such task: {', '.join(sorted(unknown))}")
+        tasks = [t for t in tasks if t["id"] in args.task]
+    stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+    folder = OUT / f"{stamp}-{args.agent}{'-' + args.label if args.label else ''}"
+    folder.mkdir(parents=True)
+    runners = {"new": run_new, "claude": run_claude}
+    runner = functools.partial(runners[args.agent], options=args)
+    for task in [t for t in tasks for _ in range(args.runs)]:
+        if spent() >= args.cap:
+            print(f"stopping: ${spent():.2f} spent, the cap is ${args.cap:.2f}")
+            break
+        print(f"{task['id']} ...", flush=True)
+        result = runner(task, args.steps, folder)
+        tokens_in = result["tokens_in"] + result.get("tidy_tokens_in", 0) + result.get("learn_tokens_in", 0)
+        tokens_out = result["tokens_out"] + result.get("tidy_tokens_out", 0) + result.get("learn_tokens_out", 0)
+        if args.agent == "claude":  # on the person's Claude plan: nothing paid by the token
+            dollars = 0.0
+        else:
+            dollars = cost(result["model"], tokens_in, tokens_out, result.get("tokens_cached", 0)) if result[
+                "model"] else 0.0  # fmt: skip
+        add_spend(dollars)
+        record = {"id": task["id"], "kind": task["kind"], "agent": args.agent, "effort": args.effort, **result,
+                  "dollars": round(dollars, 4)}  # fmt: skip
+        with (folder / "results.jsonl").open("a") as out:
+            out.write(json.dumps(record, ensure_ascii=False) + "\n")
+        print(
+            f"  {record['ended']}, {record['turns']} turns, {record['seconds']}s, ${dollars:.4f}"
+            f" (all runs: ${spent():.2f})\n  {record['answer'][:300]}",
+            flush=True,
+        )
+    print(f"\n{folder}")
+
+
+if __name__ == "__main__":
+    main()

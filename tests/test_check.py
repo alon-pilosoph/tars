@@ -1,5 +1,6 @@
 """voice-assistant --check: each check's verdict and what it says to do, and that the run never stops or hangs."""
 
+import dataclasses
 import time
 from pathlib import Path
 
@@ -388,3 +389,34 @@ def test_a_device_that_wont_open_is_the_running_assistants_not_broken(state, hel
         assert result.status == OK and "running assistant" in result.detail
     else:  # nothing has it: the device's own failure stands
         assert result is None
+
+
+def test_the_browser_is_checked_only_when_it_is_on(tmp_path, cfg):
+    from voice_assistant.check import browser, errands_waiting
+    from voice_assistant.config import BrowserConfig
+
+    assert browser(cfg).status == SKIP and errands_waiting(cfg, tmp_path).status == SKIP
+    on = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
+    from voice_assistant.browser import chrome
+
+    found = browser(on)
+    assert found.status == (OK if _has_chrome(chrome) else FAIL)
+
+
+def _has_chrome(chrome) -> bool:
+    try:
+        return bool(chrome.executable())
+    except RuntimeError:
+        return False
+
+
+def test_errands_asked_aloud_waiting_while_telegram_is_off_fail(tmp_path, cfg):
+    from voice_assistant.browser.errands import VOICE, Queue
+    from voice_assistant.check import errands_waiting
+    from voice_assistant.config import BrowserConfig
+    from voice_assistant.events import EventLog
+
+    cfg = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
+    Queue(EventLog(tmp_path).store, clock=lambda: 0.0).add("Alon", "order a pizza on Wolt", VOICE)
+    found = errands_waiting(cfg, tmp_path, now=1_000.0)
+    assert found.status == FAIL and "Telegram isn't running" in found.detail

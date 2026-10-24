@@ -300,3 +300,25 @@ archive_after_days = 0
 # The copy of the database, voiceprints, trained wake models and config.local.toml, kept this long; the newest always
 # stays.
 keep_snapshots_days = 30
+
+[browser]
+# TARS's own web browser, for errands asked in a Telegram chat or aloud at home: "order the usual from Wolt", "is
+# there a table at Ontopo on Friday", "what did I order last time" (docs/browser.md). It reads the page, clicks and
+# types its way there, signs in from its vault, and asks on Telegram before anything is ordered, booked or paid; the
+# answer comes to the chat, and is said aloud too if it was asked aloud. The Telegram service runs the errands, so it
+# needs [telegram]; asking aloud also needs [learning] log_events, where they're queued. And the browser extra (uv
+# sync --all-extras) and OPENAI_API_KEY; each errand is a few cents of the model.
+enabled = false
+# The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
+model = "gpt-6-luna"
+effort = "high"
+# The most turns an errand takes before it stops and says where it got to.
+turns = 40
+# Press the button that places an order once you approve it on Telegram. Off: an approved order is a dry run, and
+# nothing is ordered.
+really_order = false
+# Where the one-time page for a login TARS lacks is served, for your phone: this machine's address at home or on
+# Tailscale ("": its Tailscale address if it has one, else its address at home). The page is plain HTTP, so over
+# Tailscale (encrypted) is better than the home Wi-Fi.
+login_host = ""
+login_port = 8091

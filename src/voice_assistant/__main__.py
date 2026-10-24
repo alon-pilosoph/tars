@@ -8,6 +8,7 @@ import hashlib
 import json
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from .stt import Transcriber
 
 OPENAI_TIMEOUT_S = 15.0
+BROWSER_TIMEOUT_S = 120.0  # a browser turn at high effort over a long errand's pages
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
@@ -84,6 +86,14 @@ def make_openai_client(env_path: Path):
     # The SDK default is 10 minutes per request plus 2 retries. A voice assistant should give up quickly, so a dropped
     # connection costs one "that didn't work" rather than a frozen assistant.
     return OpenAI(api_key=key, timeout=OPENAI_TIMEOUT_S, max_retries=1)
+
+
+def make_browser_client(env_path: Path):
+    """OpenAI's client for TARS's browser: a turn of an errand reasons over a long page history, which takes longer
+    than a reply aloud may, and a passing failure is tried again rather than ending the errand."""
+    from openai import OpenAI
+
+    return OpenAI(api_key=api_key(env_path, OPENAI_KEY), timeout=BROWSER_TIMEOUT_S, max_retries=3)
 
 
 def make_quick_client(env_path: Path, provider: QuickProvider):
@@ -472,10 +482,10 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None):
     return built.tools
 
 
-def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None):
+def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
-    can work the devices in the house."""
+    can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -489,7 +499,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
-    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders, home=home)
+    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders, home=home, browser=browser)
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
     elif cfg.tts.provider == "cartesia":
@@ -585,17 +595,101 @@ def telegram(cfg: Config, root: Path) -> None:
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
     print(f"(chats are answered by {who})")
-    TelegramTars(
+    queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
+    tars = TelegramTars(
         bot,
         cfg.telegram.people,
-        lambda: make_brain(client, llm, env, tools, channel_rules=rules, remind_tools=CHAT_REMIND_TOOLS, home=home),
+        lambda: make_brain(
+            client,
+            llm,
+            env,
+            tools,
+            channel_rules=rules,
+            remind_tools=CHAT_REMIND_TOOLS,
+            home=home,
+            browser=browse_tool(cfg, queue, "telegram"),
+        ),
         ConversationLog(events) if events else None,
         tools,
         memory_s=llm.memory_minutes * 60,
         send_items=cfg.telegram.send_items,
         transcriber=make_recording_transcriber(cfg, env, client),
         env=env,
-    ).run_forever(me)
+    )
+    if queue:
+        make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
+    tars.run_forever(me)
+
+
+def errand_queue(cfg: Config, events, has_openai: bool):
+    """[browser]'s queue of errands (browser/errands.py), in the event database, or None with it off. ConfigError
+    if the browser can't run here."""
+    if not cfg.browser.enabled:
+        return None
+    if not has_openai:
+        raise ConfigError(f"[browser] needs {OPENAI_KEY} in .env: an OpenAI model works the browser.")
+    if events is None:
+        raise ConfigError("[browser] needs [learning] log_events: errands are queued in the event database.")
+    try:
+        import cryptography  # noqa: F401 - only whether they're there
+        import playwright  # noqa: F401
+
+        from .browser.errands import Queue
+    except ImportError:
+        raise ConfigError('[browser] needs the optional extra "browser": run uv sync --all-extras') from None
+    return Queue(events.store)
+
+
+def browse_tool(cfg: Config, queue, via: str):
+    """The brain's browse tool, for errands asked for this way ("telegram" or "voice"), or None without a queue."""
+    if queue is None:
+        return None
+    from .browser.errands import BrowseTool
+
+    return BrowseTool(queue, list(cfg.telegram.people), via)
+
+
+def make_errands(cfg: Config, root: Path, client, queue, tars, reminders=None, presence=None):
+    """[browser]'s errands, run by the Telegram service with OpenAI's `client` from `queue`, reaching the person in
+    their chat (`tars`); with `reminders` (a ReminderTools), the answer to one asked aloud is said aloud."""
+    from .browser.errands import ERRANDS, Errands
+    from .homenet import configured
+    from .telegram_errands import TelegramErrands
+
+    orders = "orders placed once approved" if cfg.browser.really_order else "approved orders a dry run"
+    print(f"(errands in the browser, by {cfg.browser.model} at {cfg.browser.effort} effort; {orders})")
+    chats = TelegramErrands(tars, cfg.browser.login_host, cfg.browser.login_port)
+    say = errand_said_aloud(reminders.reminders, presence) if reminders else None
+    home = configured(cfg.web.allowed_hosts, cfg.home.url)  # the house's own names: never opened either
+    return Errands(cfg.browser, chats, list(cfg.telegram.people), queue=queue, say_aloud=say, folder=root / ERRANDS,
+                   openai=client, home=home)  # fmt: skip
+
+
+def errand_said_aloud(reminders, presence=None):
+    """How an errand asked for aloud has its answer said aloud at home: as a message for its person, said once, as a
+    reminder is. Not for someone known to be out: it's in their chat."""
+    from .reminders import MESSAGE, VOICE, NewReminder
+
+    def say(person: str, text: str) -> None:
+        if presence is not None and presence.board.is_out(person):
+            return
+        reminders.add(NewReminder(MESSAGE, text, for_name=person, due=time.time(), needs_ack=False, max_tries=1), VOICE)
+
+    return say
+
+
+def voice_errands(cfg: Config, events):
+    """The browse tool for the voice (browser/errands.py), with [browser] on: an errand asked for aloud goes into
+    the queue in the event database, for the Telegram service to run. None without the browser, Telegram or that
+    database."""
+    if not (cfg.browser.enabled and cfg.telegram.enabled and cfg.telegram.people):
+        return None
+    if events is None:
+        print("(browser: errands asked aloud need [learning] log_events, where they're queued)")
+        return None
+    from .browser.errands import Queue
+
+    return browse_tool(cfg, Queue(events.store), "voice")
 
 
 def make_s3(cfg: Config, root: Path) -> S3:
@@ -787,7 +881,8 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     start_presence(presence, reminders)
     announcements = Announcements()
     home = make_home(cfg, root, announcements.add, presence)
-    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home)
+    browser = voice_errands(cfg, events)
+    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home, browser=browser)
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
     speaker = Speaker(

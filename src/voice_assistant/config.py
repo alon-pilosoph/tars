@@ -271,6 +271,29 @@ class BackupConfig:
     keep_snapshots_days: int = 30
 
 
+EFFORTS = ("minimal", "low", "medium", "high", "xhigh")  # how hard an OpenAI model may be asked to think
+
+
+@dataclass
+class BrowserConfig:
+    # TARS's own web browser, for errands asked in a Telegram chat or aloud: ordering, booking, looking something up
+    # on a site (docs/browser.md). The Telegram service runs them, so it needs [telegram]; asked aloud, they're queued
+    # in the event database ([learning] log_events). And the browser extra and OPENAI_API_KEY.
+    enabled: bool = False
+    # The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
+    model: str = "gpt-6-luna"
+    effort: str = "high"
+    # The most turns an errand takes before it stops and says where it got to.
+    turns: int = 40
+    # Press the button that places an order once the person approves it on Telegram. Off: an approved order is a dry
+    # run, and nothing is ordered.
+    really_order: bool = False
+    # Where the one-time page for a login TARS lacks is served, for the person's phone: this machine's address on the
+    # home network or Tailscale ("": its Tailscale address if it has one, else its address at home).
+    login_host: str = ""
+    login_port: int = 8091
+
+
 @dataclass
 class Config:
     audio: AudioConfig
@@ -287,6 +310,7 @@ class Config:
     home: HomeConfig
     presence: PresenceConfig
     backup: BackupConfig
+    browser: BrowserConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
@@ -481,6 +505,17 @@ def _problems(cfg: Config) -> list[str]:
         problems.append(f"[telegram] brain must be openai or quick, not {cfg.telegram.brain!r}")
     if len(set(cfg.telegram.people.values())) < len(cfg.telegram.people):
         problems.append("[telegram] people has the same chat id twice")
+    w = cfg.browser
+    if w.enabled and not cfg.telegram.enabled:
+        problems.append("[browser] needs [telegram]: errands are asked for, approved and answered in a chat")
+    if w.effort not in EFFORTS:
+        problems.append(f"[browser] effort must be one of {', '.join(EFFORTS)}, not {w.effort!r}")
+    if not 5 <= w.turns <= 100:
+        problems.append("[browser] turns must be between 5 and 100")
+    if w.model.startswith("claude-"):  # evals try Claude in the loop; errands read email and write notes by OpenAI
+        problems.append("[browser] model must be an OpenAI model: errands read sign-in emails and site notes with it")
+    if not 1024 <= w.login_port <= 65535:
+        problems.append("[browser] login_port must be between 1024 and 65535")
     b = cfg.backup
     if b.enabled and not b.bucket:
         problems.append("[backup] bucket must name the S3 bucket to back up to")

@@ -50,7 +50,7 @@ SERVICES_FRESH_S = 60.0  # the services are asked again only once their last ans
 # by then is a failure, so a service that hangs can't hold the page up.
 ASK_DEADLINE_S = 10.0
 STATUS_PAGE_TIMEOUT_S = 8.0
-HOT_C = 80.0  # a Pi 5 slows itself down at 85 °C, and its fan is on well before: 80 is worth a look
+HOT_C = 80.0  # a Pi 4 slows itself down from 80 °C, a Pi 5 from 85: either way 80 is worth a look
 # The Raspberry Pi's firmware: what `vcgencmd get_throttled` reports, bit by bit, now and since it started.
 THROTTLED = {
     0: "under-voltage now: the power supply can't keep up",

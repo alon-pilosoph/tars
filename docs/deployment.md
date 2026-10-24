@@ -1,6 +1,6 @@
 # Running TARS at home
 
-How to run TARS on a Mac while working on it, and on a Raspberry Pi 5 as the household's assistant: install,
+How to run TARS on a Mac while working on it, and on a Raspberry Pi 4 (or 5) as the household's assistant: install,
 operation, storage and backup, and a first test run.
 
 TARS is local-first: the Pi listens, records, serves the web UI and learns voiceprints. Nothing leaves the house
@@ -27,7 +27,7 @@ Without the backup, the event log, the audio kept for learning, voiceprints and 
 
 ```
                  home network (Wi-Fi)                               internet
-┌──────────────── Raspberry Pi 5 ────────────────┐
+┌──────────────── Raspberry Pi 4 ────────────────┐
 │ voice-assistant.service                        │── request audio / text ──► Deepgram, Groq, Cerebras, OpenAI, Cartesia
 │   wake → double-check → answer                 │     (only after "hey TARS")
 │   writes voice_data/events/ (SQLite + WAVs)    │
@@ -81,7 +81,9 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 ~/voice-assistant/deploy/install-pi.sh
 ```
 
-[`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
+[`deploy/install-pi.sh`](../deploy/install-pi.sh) installs the system packages in
+[`deploy/pi-packages.txt`](../deploy/pi-packages.txt) (PortAudio, and Chromium on a virtual screen for
+[TARS's browser](browser.md#on-the-pi)) and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node),
 downloads the models, lists the audio devices, and installs and starts the systemd user units, at boot too: the
 assistant and the web UI, TARS on Telegram with `[telegram]` on ([setting it up](telegram.md#setting-it-up)), and the
@@ -106,10 +108,22 @@ on: the PowerConf's light is red then.
 By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service),
+[`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service) (the browser's screen),
 [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
 [`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
-[`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]` or
-`[backup]` off stops and disables that unit.
+[`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]`,
+`[backup]` or `[browser]` off stops and disables that unit.
+
+### Trying it on a simulated Pi first
+
+[`deploy/sim/run.sh`](../deploy/sim/run.sh) runs TARS on a simulated Pi 4 in a container, from this clone: the Pi's
+OS and architecture, the packages `install-pi.sh` installs (the same list), its user, cores and memory. Any Docker
+engine does. See [the simulator](simulator.md) for what it is and isn't, and its devices.
+
+```bash
+deploy/sim/run.sh test                              # TARS's tests, on the simulated Pi
+deploy/sim/run.sh uv run python -m voice_assistant.browser view https://wolt.com   # anything, run on it
+```
 
 ## Recognizing people from the start
 
@@ -146,7 +160,8 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   token when `[telegram]` is on, and any without a key or not in use skipped), the voice (it says "TARS is ready."),
   the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant and each device in the
   house (with `[home]` devices), each router (with `[presence]`: signed into, and whose phone it sees), the backup
-  (the bucket, and how the last pass went) and the systemd services. Each problem comes with what to do about it,
+  (the bucket, and how the last pass went), the browser (with `[browser]`: its model, the Chromium it found, errands
+  waiting while nothing runs them, and its virtual screen's service) and the systemd services. Each problem comes with what to do about it,
   and it exits 1 if anything is broken. It never hangs on a device: one that
   doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same when
   it's opened or refreshed: whether each process is running, the services with their own status pages, Home

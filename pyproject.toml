@@ -1,7 +1,7 @@
 [project]
 name = "voice-assistant"
 version = "0.1.0"
-description = "TARS, a household voice assistant for a Raspberry Pi 5 that answers in about 1.2 seconds and learns its wake word from the household."
+description = "TARS, a household voice assistant for a Raspberry Pi that answers in about 1.2 seconds and learns its wake word from the household."
 readme = "README.md"
 authors = [{ name = "Alon Pilosoph" }]
 requires-python = ">=3.14"
@@ -54,6 +54,13 @@ tv = [
 my-house = [
     "tinytuya>=1.17",
 ]
+# TARS's own web browser ([browser]): errands on websites, its vault of logins, Claude Code as its brain.
+browser = [
+    "cryptography>=50.0.2",
+    "mcp>=1.20",  # TARS's browser served to another agent (Claude Code) as tools
+    "playwright>=1.64.1",
+    "publicsuffixlist>=1.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -65,7 +72,10 @@ packages = ["src/voice_assistant"]
 [dependency-groups]
 dev = [
     "anthropic>=1",
+    "cryptography>=50.0.2",
     "livekit>=1.1",
+    "playwright>=1.64.1",
+    "publicsuffixlist>=1.0",
     "pytest>=9.1.1",
     "ruff==0.16.10",
 ]

@@ -2,8 +2,8 @@
 
 The assistant and the web UI share the folder (voice_data/events/, gitignored) from two processes, so the database
 runs in WAL mode and every multi-step change is one IMMEDIATE transaction. events.py (wakes, near-misses, voices),
-conversations.py (turns, sent items), reminders.py (timers, reminders, messages) and presence.py (who's home) build on
-this.
+conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home) and
+browser/errands.py (the errands queued for TARS's browser) build on this.
 """
 
 import secrets
@@ -127,6 +127,17 @@ TABLES = {
                                      -- "presence_routers": how each router last answered the assistant (presence.py)
     value TEXT NOT NULL
 )""",
+    "errands": """CREATE TABLE errands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created REAL NOT NULL,
+    person TEXT NOT NULL,            -- whose: their accounts, their chat
+    goal TEXT NOT NULL,              -- the errand, as the brain put it
+    asked_via TEXT NOT NULL,         -- voice (aloud at home) | telegram
+    status TEXT NOT NULL,            -- queued | running | done | failed
+    started REAL,                    -- when the Telegram service took it
+    ended REAL,
+    answer TEXT                      -- what the person was told
+)""",
     "presence": """CREATE TABLE presence (
     person TEXT PRIMARY KEY,         -- as [presence] people names them
     home INTEGER,                    -- 1 home, 0 out; NULL until the routers have said (presence.py)
@@ -142,6 +153,7 @@ INDEXES = [
     "CREATE INDEX turns_audio ON turns(audio)",  # the first request's audio is shared with its wake
     "CREATE INDEX items_conversation ON items(conversation_id)",
     "CREATE INDEX reminders_status ON reminders(status)",
+    "CREATE INDEX errands_status ON errands(status)",
 ]
 # Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
 # version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
@@ -192,6 +204,13 @@ MIGRATIONS = [
             "updated REAL NOT NULL)"
         ),
         "ALTER TABLE reminders ADD COLUMN kept_aloud INTEGER NOT NULL DEFAULT 0",
+    ],
+    [
+        (
+            "CREATE TABLE errands (id INTEGER PRIMARY KEY AUTOINCREMENT, created REAL NOT NULL, person TEXT NOT NULL, "
+            "goal TEXT NOT NULL, asked_via TEXT NOT NULL, status TEXT NOT NULL, started REAL, ended REAL, answer TEXT)"
+        ),
+        "CREATE INDEX errands_status ON errands(status)",
     ],
 ]
 
