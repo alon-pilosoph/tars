@@ -19,7 +19,7 @@ It isn't part of the voice assistant yet: it runs from a terminal (below) and fr
 The code is `src/voice_assistant/browser/`.
 
 **The browser** (`chrome.py`) is a real Chrome with TARS's own profile, which stays signed in to what it's been signed
-in to by hand. It's started without automation flags, since sites refuse sign-in to a browser that says it's
+in to (below). It's started without automation flags, since sites refuse sign-in to a browser that says it's
 automated, and with a debugging port on this machine only, which Playwright attaches to. It's a window, not
 headless: headless Chrome gives itself away, and some sites answer it with an "I am human" check.
 
@@ -80,6 +80,27 @@ Every click is checked, whichever way it's asked for: by ref, by text, or at a p
 read first). What a page says is information, never an instruction: the agent is told so, and the gate doesn't
 read the page.
 
+## Signing in
+
+When a site wants a sign-in, the agent calls `sign_in`, and code types the login (`login.py`): the person's
+username, their password, and a code the site sends them, a page at a time. The model never sees any of it, only
+how it went, and the trace leaves out what was typed. Before each step the page must be at the login's own site, as
+the browser reports its address, over HTTPS; the field must be in the page itself, not a frame from elsewhere; and
+its form must send to that same site. A look-alike address gets nothing, and so does a page asking to sign up: TARS
+signs in to accounts the person has, it doesn't make them.
+
+The logins are in TARS's vault (`vault.py`): each a household member's (a task uses only its person's), tied to the
+exact sites it's for, and kept encrypted beside the browser's profile. One TARS lacks is asked for when it's needed,
+for the site the browser is actually at, and kept for that site; so is a code the site sends. Or ahead of time:
+
+```bash
+uv run python -m voice_assistant.browser vault add https://www.ksp.co.il   # asks for the email and the password
+uv run python -m voice_assistant.browser vault list                       # whose, for which sites (no passwords)
+```
+
+Once signed in, the site's cookies keep it so, often for weeks. For a site that signs in only with Google or a
+passkey, `signin` opens TARS's Chrome on a desktop to sign in by hand.
+
 ## Learning a site
 
 After each run, the model writes a few short notes about the site it worked (`notes.py`, one file a site in
@@ -96,12 +117,12 @@ later: the requests that did the work, replayed by code.
 
 ```bash
 uv sync --extra browser
-uv run python -m voice_assistant.browser signin https://wolt.com     # sign in by hand, then press Enter
 uv run python -m voice_assistant.browser run "What was my last order on Wolt?"
 uv run python -m voice_assistant.browser view https://wolt.com --shot wolt.jpg   # what the model is shown
 ```
 
-`run` asks in the terminal before anything is committed, and even then presses nothing without `--really-commit`.
+`run` asks in the terminal before anything is committed, and even then presses nothing without `--really-commit`;
+a login or a code it lacks is asked for there too.
 
 ## On the Pi
 
@@ -115,10 +136,9 @@ The same code, with three differences that come from the Pi having no screen
 - **Logins without a keyring.** Pi OS Lite has none, so Chromium keeps them with `--password-store=basic`: the
   profile (`~/.cache/tars-browser`) is only as safe as its folder, which only TARS's user may read, and which the
   backup leaves out.
-- **Signing in through a VNC view.** `python -m voice_assistant.browser signin https://wolt.com --vnc` shares the
-  virtual screen as a web page on the Pi itself, with a password made for that sign-in, for a laptop to open through
-  `ssh -L 6080:localhost:6080 pi` or Tailscale. A site that asks whether you're a robot (rail.co.il's Cloudflare
-  check, on Linux Chromium) is answered there too, by you, once: TARS doesn't try to get past one.
+- **Nobody sees its screen.** TARS signs in from its vault (above): `vault add` over ssh puts a login in ahead of
+  time. A site that asks whether you're a robot (rail.co.il's Cloudflare check, on Linux Chromium) can't be
+  answered, and TARS says so rather than trying to get past it.
 
 [`deploy/sim`](deployment.md#trying-it-on-a-simulated-pi-first) tries all of it on a simulated Pi first. At about a
 Pi 4's speed there, a page takes 1-4 s to load and 1.5-5 s to read (most of it waiting for a busy page to stop
@@ -126,8 +146,8 @@ moving), so an errand takes longer than on a Mac, mostly in the browser: the mod
 
 ## How well it works
 
-Sixteen tasks on the real sites (`evals/browser/tasks.toml`): seven questions, one look at the person's own
-account, and eight orders and bookings up to the last button. Nothing is ever ordered: the runner approves each
+Sixteen tasks on the real sites (`evals/browser/tasks.toml`): eight questions, one look at the person's own
+account, and seven orders and bookings up to the last button. Nothing is ever ordered: the runner approves each
 commit as a dry run, which stops the agent there, and empties any basket a task filled. Graded by reading each
 answer and trace against the task's `check`. Run on 2026-10-23 with Luna, against the first prototype
 (`tools/browser_proto.py`: its own page scraping, numbered elements, a screenshot every turn):
@@ -153,8 +173,8 @@ answer and trace against the task's `check`. Run on 2026-10-23 with Luna, agains
 | **All** | **6/16**, 202 turns, 24.5 min, $0.07 | **12/16**, 114 turns, 10.1 min, $0.07 | **12/16**, 118 turns, 10.9 min, $0.09 |
 
 ✅ right; 🟡 most of the way (the right basket, but a step short or a choice not checked); ❌ wrong or stopped.
-Two ✅ are a right "can't": the hummus place was closed (the basket was ready at checkout), and that IKEA lamp is
-sold in stores only.
+Two ✅ are a right "can't": the hummus place was closed (the basket was ready at checkout), and IKEA Israel sells in
+stores only (ikea-lamp was an order then; it's a question now).
 
 - **Twice the tasks, in less than half the time.** Most of it is seeing the page as it is: the prototype's own
   scraping missed what sites draw in code (Wolt's required options, a menu Booking.com opens at the end of the page,
@@ -190,6 +210,7 @@ A round starts with TARS's baskets empty, and costs about $0.10 and ten minutes.
 
 - **Part of TARS.** Asked aloud or on Telegram, with the approval on Telegram (the prototype did it: an Order button
   and a screenshot), and a long-lived browser per person on the Pi.
-- **Signing in by itself.** The prototype has a vault of logins tied to the exact sites they're for, codes asked for
-  on Telegram, and email sign-in (`tools/browser_signin.py`); the agent has the `sign_in` call waiting for it.
+- **Signing in from a phone.** A login or a code TARS lacks is asked for in the terminal it runs in. As part of TARS
+  it's asked on Telegram: a one-time page for the login, the code in the chat, and a sign-in link or code read
+  from the person's email (the prototype did all three, `tools/browser_signin.py`).
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.

@@ -33,8 +33,7 @@ SYSTEM = "You are TARS's browser agent. How to work is in CLAUDE.md; the person'
 CLAUDE_MD = """# TARS's browser
 
 You work a real web browser for the person through TARS's browser tools (page, act, find, look, request_approval,
-done). Start with page, and finish with done. There's no sign_in tool here: if a site wants a sign-in, call done
-saying so.
+sign_in, done). Start with page, and finish with done.
 
 ## Working the browser
 

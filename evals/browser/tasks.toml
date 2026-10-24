@@ -94,9 +94,9 @@ check = "one USB-C to USB-C cable costing under ₪50"
 
 [[task]]
 id = "ikea-lamp"
-kind = "commit"
-goal = "On IKEA Israel (ikea.co.il), order a white desk lamp under 100 shekels."
-check = "one white desk lamp under ₪100"
+kind = "answer"
+goal = "On IKEA Israel (ikea.co.il), find a white desk lamp under 100 shekels, and say which IKEA store has it in stock."
+check = "a white desk lamp under ₪100 and a store with it in stock (IKEA Israel doesn't sell online)"
 
 [[task]]
 id = "booking-athens"

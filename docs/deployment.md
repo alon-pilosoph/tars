@@ -123,7 +123,6 @@ engine does; on a Mac with Apple Silicon the arm64 device runs natively, and on 
 
 ```bash
 deploy/sim/run.sh                                   # build and start a Pi 4 (--device pi5 for a Pi 5)
-deploy/sim/run.sh signin https://wolt.com           # sign in on its browser: the VNC view at localhost:6080
 deploy/sim/run.sh uv run python -m voice_assistant.browser view https://wolt.com   # anything, run on it
 deploy/sim/run.sh --speed shell                     # capped to about the device's speed: a rough idea of it
 deploy/sim/run.sh stop                              # stop it (remove: it, its environment and browser profile)

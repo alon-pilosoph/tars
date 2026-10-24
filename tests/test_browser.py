@@ -287,6 +287,7 @@ class FakeSession:
         self.text, self.refs, self.acted, self.pressed = text, refs or {}, [], []
         self.current = None
         self.outcomes: list[Outcome] = []
+        self.network: list = []
 
     def look(self):
         self.current = types.SimpleNamespace(text=self.text, url=self.page.url, refs=self.refs,

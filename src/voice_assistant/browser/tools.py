@@ -81,6 +81,7 @@ class Tools:
             if self.sign_in is None:
                 return Did("TARS has no login for this site: call done and say it needs one", trouble=True)
             said = self.sign_in(session)
+            session.network.clear()  # what the sign-in sent (the password, a code) never goes in the trace
             session.look()
             return Did(said, changed=True)
         if name == "done":

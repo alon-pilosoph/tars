@@ -103,6 +103,7 @@ class Session:
         self.opened: list[Page] = []
         self.dialogs: list[str] = []
         self.network: list[Response] = []
+        self.secrets: set[str] = set()  # what a sign-in typed (login.py): blanked out of what the trace keeps
         context.on("page", self._on_page)
         self._watch(self.page)
 
@@ -427,20 +428,33 @@ class Session:
         out = []
         for r in taken[-40:]:
             try:
-                out.append(_entry(r))
+                out.append(_entry(r, self.secrets))
             except PlaywrightError, ValueError:  # gone with its page, or not text: the trace does without it
                 continue
         return out
 
 
-def _entry(r: Response) -> dict[str, Any]:
+def _entry(r: Response, secrets: set[str] = frozenset()) -> dict[str, Any]:
     entry: dict[str, Any] = {"method": r.request.method, "url": r.url[:500], "status": r.status}
     if r.request.method != "GET" and (sent := r.request.post_data_buffer):
         entry["sent"] = sent[:2_000].decode(errors="replace")
     if "json" in r.headers.get("content-type", ""):
         body = r.body()
         entry["json"] = body[:JSON_KEPT].decode(errors="replace") if len(body) <= JSON_LARGEST else f"({len(body)} B)"
+    for key, text in entry.items():
+        if isinstance(text, str):
+            entry[key] = _blank(text, secrets)
     return entry
+
+
+def _blank(text: str, secrets: set[str]) -> str:
+    """`text` with each of `secrets` blanked out, as typed and as a form or a URL encodes it."""
+    from urllib.parse import quote, quote_plus
+
+    for secret in secrets:
+        for form in {secret, quote(secret, safe=""), quote_plus(secret), json.dumps(secret)[1:-1]}:
+            text = text.replace(form, "•••")
+    return text
 
 
 ACTIONS = {"click", "type", "select", "press", "scroll", "hover", "goto", "back", "wait", "click_at", "fill"}

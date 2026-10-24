@@ -1,6 +1,6 @@
 # systemd *user* service for the virtual screen TARS's browser draws to on the Pi (docs/browser.md). Pi OS Lite has
 # no screen of its own, and Chromium runs as a normal window there rather than headless, which some sites refuse.
-# Nothing shows it; to sign in to a site by hand, `python -m voice_assistant.browser signin --vnc` shares it.
+# Nothing shows it: TARS signs in to sites itself, from its vault (browser/vault.py).
 #
 #   cp deploy/voice-assistant-display.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload

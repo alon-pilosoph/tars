@@ -5,7 +5,6 @@
 #
 #   deploy/sim/run.sh [--device pi4] [start]          # build and start it (default: start the one there is)
 #   deploy/sim/run.sh --device pi4 --speed [start]    # the same, capped to about a Pi 4's speed (until started without)
-#   deploy/sim/run.sh [--device pi4] signin URL       # sign in on it: the VNC view at http://localhost:6080/vnc.html
 #   deploy/sim/run.sh [--device pi4] shell            # a shell on it
 #   deploy/sim/run.sh [--device pi4] stop | remove    # stop it, or remove it and its volume (profile, environment)
 #   deploy/sim/run.sh [--device pi4] COMMAND ...      # run anything on it, in the clone: uv run python -m ...
@@ -46,7 +45,7 @@ start() {
     # Chromium's sandbox needs calls Docker's default seccomp profile refuses (on the device it has them anyway), and
     # --init reaps the processes the browser leaves, as the device's init does.
     docker run -d --init --name "$NAME" --platform "$PLATFORM" --cpus "$cpus" --memory "${mem}m" --shm-size 1g \
-      --security-opt seccomp=unconfined -p 127.0.0.1:6080:6080 \
+      --security-opt seccomp=unconfined \
       -v "$REPO:$HOME_IN/voice-assistant" -v "$NAME:$HOME_IN/.cache" "$NAME" >/dev/null
   else
     [ "$(docker container inspect -f '{{.State.Running}}' "$NAME")" = true ] || docker start "$NAME" >/dev/null
@@ -72,7 +71,5 @@ case "${1:-start}" in
   stop) docker stop "$NAME" >/dev/null ;;
   remove) docker rm -f "$NAME" >/dev/null 2>&1 || true; docker volume rm "$NAME" >/dev/null 2>&1 || true ;;
   shell) start; exec docker exec -it "$NAME" bash ;;
-  signin) start; exec docker exec -it "$NAME" uv run --frozen python -m voice_assistant.browser signin \
-            "${2:-about:blank}" --vnc --vnc-host 0.0.0.0 ;;
   *) start; exec docker exec -i "$NAME" "$@" ;;
 esac

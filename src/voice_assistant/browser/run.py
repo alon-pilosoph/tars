@@ -10,8 +10,10 @@ from playwright.sync_api import sync_playwright
 from ..check import env_value
 from .agent import Agent, Approver, Settings
 from .chrome import PORT, PROFILE, own_chrome
+from .login import Person, Unattended, sign_in
 from .notes import Notes, site
 from .session import Session
+from .vault import Vault, household_person
 
 ROOT = Path(__file__).resolve().parents[3]
 TIDY = (
@@ -66,13 +68,19 @@ def run_task(
     port: int = PORT,
     tidy: bool = False,
     notes: Notes | None = None,
+    person: Person | None = None,
+    vault: Vault | None = None,
 ) -> dict[str, Any]:
     """Runs the agent on `goal` in a fresh TARS Chrome; what it did, as a dict.
 
     `tidy` (for evals): after a run that asked to commit or may have filled a basket, a fresh run empties the basket
     on that site, so the next starts as this one did; its tokens are counted in the cost, and nothing else of it is.
-    `notes`: the agent reads what it noted on the sites before, and writes what this run taught it."""
+    `notes`: the agent reads what it noted on the sites before, and writes what this run taught it.
+    `person`: whose logins it signs in with (the vault's), and who's asked for a login or a code it lacks; with no
+    one, the household's first person, whom nobody can ask."""
     settings = settings or Settings(turns=steps)
+    person = person or Unattended(household_person(ROOT / "config.toml"))
+    vault = vault or Vault()
     with own_chrome(profile, port) as address, sync_playwright() as p:
         context = p.chromium.connect_over_cdp(address).contexts[0]
         session = Session(context)
@@ -83,7 +91,8 @@ def run_task(
             model = anthropic_client(ROOT / ".env")
         else:
             model = client()
-        agent = Agent(model, session, approver, settings, trace=trace_to, notes=notes)
+        agent = Agent(model, session, approver, settings, trace=trace_to, notes=notes,
+                      sign_in=lambda s: sign_in(s.page, vault, person, goal, hide=s.secrets.add))  # fmt: skip
         try:
             result = agent.run(goal)
         except Exception as e:  # noqa: BLE001 - a crash is a result like any other, and the trace says where

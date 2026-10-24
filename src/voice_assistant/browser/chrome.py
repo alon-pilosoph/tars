@@ -9,8 +9,8 @@ closed first, the way quitting it would (so its profile is saved).
 On Linux (the Pi) it's Debian's Chromium, drawing to a virtual screen (Xvfb, `deploy/voice-assistant-display.service`)
 when there's no real one: the same window as on a desktop, which nothing shows. Pi OS Lite has no desktop keyring
 either, so Chromium keeps its logins with `--password-store=basic`: encrypted with a fixed key, so the profile is only
-as safe as its folder (TARS's user only, and kept out of the backup). Signing in is done by hand, through a VNC view of
-that screen (`python -m voice_assistant.browser signin --vnc`)."""
+as safe as its folder (TARS's user only, and kept out of the backup). TARS signs in itself, from its vault
+(vault.py, login.py)."""
 
 import json
 import os

@@ -6,11 +6,8 @@ libportaudio2
 libatomic1
 
 # The browser (docs/browser.md): Debian's Chromium (Google Chrome has no build for the Pi), a virtual screen to draw
-# to, a way to see it from a laptop when signing in, and fonts for the pages it reads (Hebrew among them).
+# to, and fonts for the pages it reads (Hebrew among them).
 chromium
 xvfb
-x11vnc
-novnc
-websockify
 fonts-noto-core
 fonts-noto-color-emoji

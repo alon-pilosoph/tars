@@ -1,9 +1,9 @@
 """TARS's browser as MCP tools, so another agent can be its brain: Claude Code, say, on the person's own Claude
 subscription (`claude -p` with this as its only MCP server and no tools of its own; run.py's run_claude).
 
-The tools are TARS's agent's own (tools.py): act, find, look, request_approval and done, with the same view of the
-page, the same gate on every click and the same approval, so what keeps an order from being placed doesn't depend on
-which model is asking. Each answer brings the page as it is after the call, when it changed.
+The tools are TARS's agent's own (tools.py): act, find, look, request_approval, sign_in and done, with the same
+view of the page, the same gate on every click and the same approval, so what keeps an order from being placed
+doesn't depend on which model is asking. Each answer brings the page as it is after the call, when it changed.
 
 It owns TARS's Chrome for as long as it runs. Playwright's sync API runs on one thread of its own, since the MCP
 server's event loop runs on another. How it runs comes from the environment, as Claude Code starts it:
@@ -12,7 +12,8 @@ server's event loop runs on another. How it runs comes from the environment, as 
     TARS_BROWSER_TURNS   at most this many calls (default 30); after that, only done
     TARS_BROWSER_COMMIT  "really" to press an approved commit; anything else is a dry run, approved and not pressed
 
-There's no one to ask from here, so a commit is approved only as a dry run: with "really", it's refused."""
+There's no one to ask from here, so a commit is approved only as a dry run: with "really", it's refused. For the
+same reason sign_in uses only the logins in the vault (the household's first person's), and has no code to give."""
 
 import json
 import os
@@ -24,10 +25,13 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
+from . import login
 from .chrome import PROFILE, own_chrome
 from .session import Session
 from .tools import Tools
+from .vault import Vault, household_person
 
+ROOT = Path(__file__).resolve().parents[3]
 TURNS = int(os.environ.get("TARS_BROWSER_TURNS", "30"))
 TRACE = Path(os.environ["TARS_BROWSER_TRACE"]) if os.environ.get("TARS_BROWSER_TRACE") else None
 REALLY = os.environ.get("TARS_BROWSER_COMMIT") == "really"
@@ -55,7 +59,9 @@ class Browser:
         address = self.stack.enter_context(own_chrome(PROFILE))
         playwright = self.stack.enter_context(sync_playwright())
         session = Session(playwright.chromium.connect_over_cdp(address).contexts[0])
-        self.tools = Tools(session, DryRun(), really_commit=REALLY, log=log)
+        person, vault = login.Unattended(household_person(ROOT / "config.toml")), Vault()
+        self.tools = Tools(session, DryRun(), really_commit=REALLY, log=log,
+                           sign_in=lambda s: login.sign_in(s.page, vault, person, hide=s.secrets.add))  # fmt: skip
         return self.tools
 
     def _call(self, name: str, args: dict[str, Any]) -> list[str | Image]:
@@ -148,6 +154,13 @@ def request_approval(ref: str, summary: str) -> list[str | Image]:
     """At the last step: ask the person to approve pressing this button (it places the order, pays, books or sends),
     with what it commits them to (what, how many, when, the total). TARS presses it only if they say yes."""
     return browser.call("request_approval", {"ref": ref, "summary": summary})
+
+
+@server.tool()
+def sign_in(note: str = "") -> list[str | Image]:
+    """Sign in to the site this page is on, with TARS's login for it (you never see it); says how it went. Call it on
+    the site's sign-in page. `note`: a few words for the person's progress line."""
+    return browser.call("sign_in", {"note": note})
 
 
 @server.tool()
