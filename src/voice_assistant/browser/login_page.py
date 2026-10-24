@@ -137,7 +137,10 @@ def ask(
             self.reply(200, form)
 
         def do_POST(self) -> None:
-            length = min(int(self.headers.get("Content-Length") or 0), MOST_BYTES)
+            try:
+                length = max(0, min(int(self.headers.get("Content-Length") or 0), MOST_BYTES))
+            except ValueError:
+                length = 0
             sent = parse_qs(self.rfile.read(length).decode(errors="replace"), keep_blank_values=True)
             if urlsplit(self.path).path != "/login" or not self._ours(_one(sent, "token")):
                 self.reply(404, DONE.format(message="This link isn't valid any more."))

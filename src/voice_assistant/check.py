@@ -376,6 +376,9 @@ def browser(cfg: Config) -> Result:
     if not cfg.browser.enabled:
         return Result("Browser", SKIP, "off ([browser] enabled)")
     try:
+        import cryptography  # noqa: F401 - only whether they're there
+        import playwright  # noqa: F401
+
         from .browser.chrome import executable
     except ImportError:
         return Result("Browser", FAIL, 'no optional extra "browser"', "uv sync --all-extras")
@@ -411,7 +414,7 @@ def errands_waiting(cfg: Config, folder: Path, now: float | None = None) -> Resu
         name,
         WARN,
         f"{said}, with Telegram running",
-        "is an errand stuck? (journalctl --user -u voice-assistant-telegram)",
+        "is an errand stuck? (journalctl --user-unit voice-assistant-telegram)",
     )
 
 

@@ -4,12 +4,13 @@ import types
 
 import pytest
 
+pytest.importorskip("playwright")
+pytest.importorskip("cryptography")
+
 from voice_assistant.browser.login import Unattended, sign_in
 from voice_assistant.browser.session import _blank
 from voice_assistant.browser.tools import Tools
 from voice_assistant.browser.vault import Vault, origin
-
-pytest.importorskip("cryptography")
 
 KSP = "https://www.ksp.co.il"
 

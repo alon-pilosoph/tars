@@ -404,15 +404,6 @@ def test_a_step_that_failed_isnt_tried_again_and_a_run_that_changes_nothing_stop
     assert result.screenshots >= 2  # a picture after the failure and with each refusal
 
 
-def test_a_follow_up_carries_on_in_the_same_conversation():
-    model = FakeModel(call("done", success=True, answer="ordered"), call("done", success=True, answer="tidied"))
-    agent = Agent(model, FakeSession(), Person())
-    agent.run("Order a pizza")
-    result = agent.follow_up("Take out what you put in")
-    assert result.answer == "tidied"
-    assert "Take out what you put in" in json.dumps(model.sent[-1]["input"])
-
-
 def test_the_tools_say_what_they_take():
     names = {t["name"] for t in agents.TOOLS}
     assert names == {"act", "find", "look", "request_approval", "sign_in", "done"}

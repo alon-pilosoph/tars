@@ -31,6 +31,8 @@ ERRANDS = "voice_data/browser/errands"  # under TARS's folder: each errand's tra
 VOICE, TELEGRAM = "voice", "telegram"  # how an errand was asked for
 QUEUED, RUNNING, DONE, FAILED = "queued", "running", "done", "failed"
 LOOK_EVERY_S = 2.0
+TRACES_KEPT_DAYS = 30  # an errand's trace has the pages it read (an order history, a saved address): not for ever
+DAY_S = 24 * 3600.0
 
 ERRAND = {
     "type": "string",
@@ -139,10 +141,8 @@ class BrowseTool:
         person = self._people[person_key(person)]
         ahead = self.queue.ahead()
         self.queue.add(person, goal, self.via)
-        if ahead:
-            whose = ahead[0]["person"]
-            return (f"queued: the browser is on {whose}'s errand first ({ahead[0]['goal'][:100]}); say this one "
-                    "comes after it")  # fmt: skip
+        if ahead:  # whose, and what it is, is theirs: it isn't said
+            return f"queued: the browser is on another errand first ({len(ahead)} ahead); say this one comes after it"
         where = "comes to their phone, and is said here too" if self.via == VOICE else "comes to this chat"
         return f"started: say you're on it, in a few words; the answer {where} when it's done"
 
@@ -225,6 +225,8 @@ class Errands:
         """Takes the queue's errands in turn, for as long as the service runs (a thread of its own)."""
         if left := self.queue.left_running():
             print(f"(browser: {left} errand(s) left running when TARS last stopped are marked failed)")
+        if gone := prune(self._folder, time.time() - TRACES_KEPT_DAYS * DAY_S):
+            print(f"(browser: {gone} errand trace(s) older than {TRACES_KEPT_DAYS} days deleted)")
 
         def loop() -> None:
             while True:
@@ -288,6 +290,16 @@ class Errands:
             self.chats.tell(person, text)
         except Exception as e:  # noqa: BLE001 - the chat unreachable: it's in the log and the trace
             print(f"(browser: couldn't tell {person} about the errand: {e!r})")
+
+
+def prune(folder: Path, before: float) -> int:
+    """Deletes the errand traces in `folder` written before `before` (epoch seconds); how many."""
+    gone = 0
+    for trace in folder.glob("*.jsonl") if folder.exists() else ():
+        if trace.stat().st_mtime < before:
+            trace.unlink(missing_ok=True)
+            gone += 1
+    return gone
 
 
 def _run_task():

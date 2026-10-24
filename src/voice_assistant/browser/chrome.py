@@ -54,7 +54,7 @@ def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[s
 
 
 @contextmanager
-def own_chrome(profile: Path = PROFILE, port: int = PORT, headless: bool = False) -> Iterator[str]:
+def own_chrome(profile: Path = PROFILE, port: int = PORT) -> Iterator[str]:
     """TARS's Chrome for as long as it's needed, then shut; yields the address Playwright attaches to."""
     close(port)
     private_folder(profile.parent)  # the vault is beside the profiles: private before Chrome makes anything
@@ -69,10 +69,7 @@ def own_chrome(profile: Path = PROFILE, port: int = PORT, headless: bool = False
         # No GPU on a virtual screen: WebGL drawn in software, since a browser without it looks like a bot to
         # Cloudflare (rail.co.il's "Just a moment" never clears).
         flags += ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
-        if not headless:
-            env.setdefault("DISPLAY", DISPLAY)
-    if headless:
-        flags.append("--headless=new")
+        env.setdefault("DISPLAY", DISPLAY)
     process = subprocess.Popen([executable(), *flags, "about:blank"], stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, env=env)  # fmt: skip
     try:

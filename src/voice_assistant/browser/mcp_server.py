@@ -1,5 +1,5 @@
 """TARS's browser as MCP tools, so another agent can be its brain: Claude Code, say, on the person's own Claude
-subscription (`claude -p` with this as its only MCP server and no tools of its own; run.py's run_claude).
+subscription (`claude -p` with this as its only MCP server and no tools of its own; claude.py's run_claude).
 
 The tools are TARS's agent's own (tools.py): act, find, look, request_approval, sign_in and done, with the same
 view of the page, the same gate on every click and the same approval, so what keeps an order from being placed

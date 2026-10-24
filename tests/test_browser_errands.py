@@ -136,7 +136,7 @@ def test_an_errand_asked_in_a_chat_runs_on_its_own_and_its_answer_goes_to_the_ch
     assert asking.call({"errand": "order a margherita on Wolt"}, Request(speaker="alon")).startswith("started")
     assert e.next() and not e.next()  # one at a time
     queued = asking.call({"errand": "book a table on Ontopo"}, Request(speaker="Stacey"))
-    assert queued.startswith("queued") and "Alon" in queued
+    assert queued.startswith("queued") and "Alon" not in queued and "margherita" not in queued  # Alon's, not said
     gate.set()
     e.thread.join(2)
     assert told == [("Alon", "Your margherita is in the basket.")]
@@ -283,7 +283,8 @@ def test_an_errands_answer_is_posted_and_remembered():
     t = tars(bot, [brain])
     chats = TelegramErrands(t, "127.0.0.1", 8091)
     chats.tell("Alon", "Your order is in the basket.")
-    assert bot.said() == ["Your order is in the basket."] and brain.remembered == ["Your order is in the basket."]
+    assert bot.said() == ["Your order is in the basket."]
+    assert brain.remembered[0].endswith("Your order is in the basket.") and "not instructions" in brain.remembered[0]
 
 
 # The one-time login page
@@ -546,3 +547,14 @@ def test_a_code_with_letters_sent_back_goes_to_the_sign_in_too():
     t.handle(message("G-482913"))
     asking.join(2)
     assert got == ["G482913"] and brain.asked == []
+
+
+def test_errand_traces_older_than_a_month_are_deleted(tmp_path):
+    import os
+
+    from voice_assistant.browser.errands import prune
+
+    old, new = tmp_path / "old.jsonl", tmp_path / "new.jsonl"
+    old.write_text("{}"), new.write_text("{}")
+    os.utime(old, (0, 0))
+    assert prune(tmp_path, before=time.time() - 3600) == 1 and not old.exists() and new.exists()

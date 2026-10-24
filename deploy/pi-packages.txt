@@ -1,4 +1,4 @@
-# The apt packages TARS needs on the Pi: install-pi.sh installs them, and the simulated Pi (deploy/sim, device pi5)
+# The apt packages TARS needs on the Pi: install-pi.sh installs them, and the simulated Pi (deploy/sim, its devices)
 # is built with them, so the two can't drift apart. One a line; # starts a comment.
 
 # Audio: PortAudio for the mic and the speaker; libatomic for Vosk, the wake double-check.

@@ -11,7 +11,7 @@
 
 [Unit]
 Description=TARS on Telegram
-After=network-online.target
+After=network-online.target voice-assistant-display.service
 Wants=network-online.target
 
 [Service]

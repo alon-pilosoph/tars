@@ -49,7 +49,8 @@ ONE_MOMENT = "One moment."
 @dataclass
 class Request:
     """Who asked, and how: what the home tool needs to know about the turn it's answering. `speaker` and `score`
-    come from speaker ID on this turn's own recording, and `heard` is its transcript, never the model's words.
+    come from speaker ID on this turn's own recording (by voice), or are the chat's person (on Telegram), and `heard`
+    is its transcript, never the model's words.
     `may_act(timeout_s)` blocks until the turn is over: True if the reply is going to be played (go ahead), False if
     it was thrown away. None for a turn that's over already (typed)."""
 

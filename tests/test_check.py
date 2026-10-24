@@ -397,7 +397,17 @@ def test_the_browser_is_checked_only_when_it_is_on(tmp_path, cfg):
 
     assert browser(cfg).status == SKIP and errands_waiting(cfg, tmp_path).status == SKIP
     on = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
-    assert browser(on).status in (OK, FAIL)  # OK where there's a Chrome, FAIL with what to install where there isn't
+    from voice_assistant.browser import chrome
+
+    found = browser(on)
+    assert found.status == (OK if _has_chrome(chrome) else FAIL)
+
+
+def _has_chrome(chrome) -> bool:
+    try:
+        return bool(chrome.executable())
+    except RuntimeError:
+        return False
 
 
 def test_errands_asked_aloud_waiting_while_telegram_is_off_fail(tmp_path, cfg):

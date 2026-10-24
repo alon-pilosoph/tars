@@ -278,15 +278,6 @@ class Agent:
                 "of date: where the page shows otherwise, the page is right; the person's goal decides):\n"
                 f"{notes}\n\n")  # fmt: skip
 
-    def follow_up(self, request: str, turns: int = 10) -> Result:
-        """Carries on in the same browser and conversation with something more (after `run`): its own result."""
-        self.result, self.tools.committed = Result(ended="out of turns"), False
-        self.tools.screenshots, self.tools.commits_asked = 0, []
-        self._log({"event": "follow_up", "request": request})
-        view = self.session.current or self.session.look()
-        self.brain.show(f"The person now asks: {request}\n\n{view.text}", None)
-        return self._loop(turns)
-
     def _loop(self, turns: int) -> Result:
         started = time.perf_counter()
         s = self.settings
