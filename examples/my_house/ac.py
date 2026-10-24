@@ -5,6 +5,9 @@ An AC remote sends its whole display with every press: mode, temperature, fan, s
 send power as a toggle, a bit that means "switch over": the same press turns the AC on when it's off and off when it's
 on, and a press without it changes the settings and leaves the power alone. IR goes one way, so TARS can't ask the AC
 which it is: it keeps track of what it sent (voice_data/ac/state.json), and is told when that's wrong ("the AC is on").
+Asked to turn it on or off when TARS thinks it already is, it sends the toggle anyway: whoever asks can see the AC,
+and TARS can't. Not within RESEND_S of sending that same toggle itself, though: that's the same ask twice (said
+again, or retried), and a second toggle would switch the AC straight back.
 
 With a sensor that sees the AC's own light ([[home.devices]] state), it reads that instead, toggles only when it has
 to, and checks the light changed. A toggle the AC missed is sent again, once: only when the sensor has reported again
@@ -38,12 +41,14 @@ FOLDER, PROFILE, STATE = Path("voice_data/ac"), "profile.json", "state.json"
 SENSOR_WAIT_S = 6.0
 SENSOR_POLL_S = 0.5
 FRESH_S = 2.0  # a report later than this after the toggle went out could have seen it
+RESEND_S = 60.0  # how long after TARS toggles the AC another ask the same way is taken as the same ask
 MAX_PULSE_US = 65535  # a Tuya code is 16-bit microseconds
 AC_RULES = (
     "The AC can't tell TARS whether it's on: TARS keeps track of what it sent. When the tool says what it sent rather "
-    "than what the AC did, say it's sent, not that it's on. When someone says the AC is really on or off (\"it "
-    'didn\'t turn on", "someone turned it on from the wall"), tell the tool with is_on or is_off, which sends '
-    "nothing, then do what they asked."
+    "than what the AC did, say it's sent, not that it's on. on and off switch its power: call them when asked to "
+    "turn it on or off, even if TARS thinks it already is; to change the settings of an AC that's on, use set. When "
+    'someone says the AC is really on or off ("it didn\'t turn on", "someone turned it on from the wall"), tell the '
+    "tool with is_on or is_off, which sends nothing, then do what they asked."
 )
 
 
@@ -184,7 +189,7 @@ class State:
     on: bool = False
     settings: Settings | None = None
     how: str = "sent"  # sent (TARS's own record), told (someone said), sensor (its light)
-    at: float = 0.0
+    at: float = 0.0  # when `on` was last sent or told (0: never)
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -266,26 +271,41 @@ class AC(Device):
             on_now = state.on if seen is None else seen
             if action == SET and not on_now:
                 return "error: the AC is off as far as TARS knows; to turn it on with these settings, use on"
-            toggle = (action == ON) != on_now if action in (ON, OFF) else False
+            word, other = ("on", "off") if action == ON else ("off", "on")
+            toggle = action in (ON, OFF) and (action == ON) != on_now
+            overruled = action in (ON, OFF) and not toggle and seen is None  # asked anyway: they can see it, TARS can't
+            ago = self._clock() - state.at
+            same_ask = overruled and state.how == "sent" and state.at > 0 and ago < RESEND_S
+            toggle = toggle or (overruled and not same_ask)
+            again = (
+                f"TARS turned the AC {word} {ago:.0f} seconds ago, and another press of its power would turn it "
+                f"{other}; if it isn't {word}, tell the tool with is_{other}, then {word}"
+            )
             if action == OFF and not toggle:
-                return "already off as far as TARS knows, so nothing was sent; if it's on, say so and ask again"
+                return f"nothing sent: {again}" if same_ask else "already off, its light says so, so nothing was sent"
             try:
                 pulses = self.profile.pulses(settings, toggle)
             except KeyError as e:
                 return f"error: the remote was never recorded sending {e.args[0]!r}, so there's no code for it"
             self._send(pulses)
-            state.settings, state.at = settings, self._clock()
+            state.settings = settings
             if toggle:
-                state.on, state.how = action == ON, "sent"
+                state.on, state.how, state.at = action == ON, "sent", self._clock()
             state.save(self._path)
             if not toggle:
+                if same_ask:
+                    return f"sent: {settings.said()}, without touching its power: {again}"
                 seen = "its light says" if self._sensor else "TARS thinks"
                 return f"sent: {settings.said()}; {seen} the AC was already on, so its power wasn't touched"
             if self._sensor:
                 return self._confirm(state, settings, action == ON)
-            verb = "turn on" if action == ON else "turn off"
             set_to = f", set to {settings.said()}" if action == ON else ""
-            return f"sent: {verb}{set_to}; TARS can't see the AC, so if it didn't, someone should say so"
+            if overruled:
+                return (
+                    f"sent: turn {word}{set_to}, though TARS had the AC as {word} already; its power switches either "
+                    f"way, so if it came {other} instead, someone should say so"
+                )
+            return f"sent: turn {word}{set_to}; TARS can't see the AC, so if it didn't, someone should say so"
 
     def _confirm(self, state: State, settings: Settings, want_on: bool) -> str:
         """With a light sensor: waits for the light to show the toggle, and sends it again once if the AC missed it

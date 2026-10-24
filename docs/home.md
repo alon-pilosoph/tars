@@ -231,8 +231,11 @@ IMDb.
 - **The token is a key to the house.** It lives in `.env`, which never leaves the machine.
 - **The web UI has no accounts**, and TARS can lock the door and run the boiler from what it hears. Unlocking is the
   one change it won't make without a voice it knows, sure, asking for it.
-- **"Sent" is honest.** An IR device can't report back; TARS says it sent the command, and someone can say "the AC
-  is actually off" when it didn't take.
+- **"Sent" is honest, and an IR device's status is a guess.** An IR device can't report back: TARS says it sent the
+  command, and its status says it's Home Assistant's guess. So asked to change one, TARS does even when the status
+  says it's already that way ("turn off the AC" when it says off): someone may have used its remote since. Asked to
+  set an AC Home Assistant has as off, it turns it on first, since an IR one may send nothing while it's "off". And
+  someone can say "the AC is actually off" when it didn't take.
 - **ADB is a key to the TV.** Anyone on the home network whose key the TV accepted can work it; TARS's key is in
   `voice_data/androidtv/`. The TV's "Allow USB debugging?" is what lets a new one in.
 - **A device that doesn't answer costs a sentence, not the reply.** Home Assistant down, a box off the Wi-Fi: TARS

@@ -118,7 +118,8 @@ class Entity(Device):
 
     def status(self) -> str:
         found = self._hass.state(self.entity)
-        parts = [f"{self.name}: {self._said(found)}", *self._extra(found)]
+        guess = " (Home Assistant's guess: it can't report back)" if _assumed(found) else ""
+        parts = [f"{self.name}: {self._said(found)}{guess}", *self._extra(found)]
         parts += [_reading(self._hass, e) for e in self.details]
         return ", ".join(p for p in parts if p)
 
@@ -155,7 +156,7 @@ class Entity(Device):
         entity Home Assistant only assumes, or "not confirmed: ..." when time runs out."""
         before = self._hass.state(self.entity)
         self._hass.call(service, {"entity_id": self.entity, **data})
-        if (before.get("attributes") or {}).get("assumed_state"):
+        if _assumed(before):
             return f"sent: asked the {self.name} to {asked}; it can't report back, so nothing can tell if it did"
         ended, found = self._settled(lambda f: done(f) or f.get("state") == "jammed", self.settle_s)
         state = found.get("state", "")
@@ -181,6 +182,11 @@ class Entity(Device):
             if self._clock() >= deadline:
                 return False, found
             self._sleep(POLL_S)
+
+
+def _assumed(found: dict) -> bool:
+    """Whether Home Assistant only assumes the entity's state (one worked by IR): it can't report back."""
+    return bool((found.get("attributes") or {}).get("assumed_state"))
 
 
 def _state_is(*states: str) -> Callable[[dict], bool]:
@@ -313,10 +319,13 @@ class Climate(Entity):
             low, high = a.get("min_temp", 7), a.get("max_temp", 35)
             if not low <= temperature <= high:
                 return f"error: the {self.name} goes from {low:g} to {high:g} degrees"
-        if action == SET and found.get("state") == "off" and mode is None:
+        # Asked to change the settings of one Home Assistant guesses is off: someone turned it on with its remote. It's
+        # turned on first, since an IR one may send nothing while Home Assistant has it off (SmartIR's doesn't).
+        turn_on = action == ON or (action == SET and found.get("state") == "off" and _assumed(found))
+        if action == SET and found.get("state") == "off" and mode is None and not turn_on:
             return f"error: the {self.name} is off; to turn it on with these settings, use on"
         steps = []  # (service, data, what it should then say)
-        if mode is not None or action == ON:
+        if mode is not None or turn_on:
             if mode is None:
                 steps.append(("climate.turn_on", {}, lambda f: f.get("state") not in ("off", *UNKNOWN)))
             else:
@@ -434,7 +443,7 @@ class MediaPlayer(Entity):
         said = f"{pressed}{f' {sent} times' if sent > 1 else ''}"
         if sent < times:
             said += f" (of {times}: Home Assistant stopped answering)"
-        if (found.get("attributes") or {}).get("assumed_state"):
+        if _assumed(found):
             return f"sent: {said} to the {self.name}; it can't report back, so nothing can tell if it took"
         shown = READ_BACK[pressed]
         changed, _ = self._settled(lambda f: shown(f) != shown(found), PRESS_SETTLE_S)

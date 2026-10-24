@@ -78,16 +78,17 @@ temperature, the fan and the swing, and checks the result against every press it
 profile (`voice_data/ac/profile.json`) TARS makes any setting the remote could, and decides itself whether to send
 the toggle:
 
-- **on**: the toggle only if TARS thinks the AC is off; otherwise only the settings.
-- **off**: the toggle only if TARS thinks it's on; otherwise nothing is sent.
+- **on**, **off**: the toggle, even when TARS thinks the AC is already that way: whoever asks can see it, and TARS
+  can't. Not within a minute of TARS sending that same toggle itself, though: that's the same ask twice (said again,
+  or retried), and a second toggle would switch the AC straight back. An **on** then sends only its settings.
 - **set** (a temperature, a mode, a fan speed): only the settings, never the power.
 - **is_on**, **is_off**: someone says "the AC is on", and TARS corrects what it thinks, sending nothing.
 
-IR goes one way: TARS knows what it sent, not what the AC did. It keeps what it believes in
-`voice_data/ac/state.json`, says "sent", not "it's on", and is corrected when someone used the wall controller. A
-light sensor on the AC's indicator (`state`: any `binary_sensor` in Home Assistant, on when the light is) makes it
-sure: TARS reads the light before deciding to toggle, checks it changed, and sends the toggle once more if the first
-was missed, but never on a slow sensor's old reading, which would turn the AC straight back (`ac.py` says how).
+IR goes one way: TARS knows what it sent, not what the AC did. It keeps what it believes in `voice_data/ac/state.json`,
+says "sent", not "it's on", and is corrected when someone used the wall controller. A light sensor on the AC's indicator
+(`state`: any `binary_sensor` in Home Assistant, on when the light is) makes it sure: TARS reads the light before
+deciding to toggle (and goes by it, not by who asks), checks it changed, and sends the toggle once more if the first was
+missed, but never on a slow sensor's old reading, which would turn the AC straight back (`ac.py` says how).
 
 ## The TV and the soundbar
 

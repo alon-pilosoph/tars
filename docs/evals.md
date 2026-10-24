@@ -11,9 +11,9 @@ TARS's real brain, hand-offs followed through to OpenAI's model and the thinking
 
 ## Method
 
-- **47 scenarios, 64 turns**, in five groups: hand-offs (9), reminders over a conversation (9), the conversation
+- **48 scenarios, 66 turns**, in five groups: hand-offs (9), reminders over a conversation (9), the conversation
   itself (8: follow-ups without the wake word, memory, voices, what TARS can't do, its humor setting), failures (3)
-  and [the house](home.md) (18, in `evals/scenarios/house.toml`). The house scenarios play TARS's real home tool
+  and [the house](home.md) (19, in `evals/scenarios/house.toml`). The house scenarios play TARS's real home tool
   over a pretend Home Assistant and TV box: only what was asked changed, only what the tool answered said, and the
   door unlocked for a trusted voice and nobody else. They run with every other scenario, but were added after the
   results below (the first 29 scenarios, 46 turns), and no run of them has been saved yet.
