@@ -15,6 +15,7 @@ server's event loop runs on another. How it runs comes from the environment, as 
 There's no one to ask from here, so a commit is approved only as a dry run: with "really", it's refused. For the
 same reason sign_in uses only the logins in the vault (the household's first person's), and has no code to give."""
 
+import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,8 +26,8 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import login
-from .chrome import PROFILE, own_chrome
-from .session import Session
+from .agent import STEP, TOOLS
+from .chrome import PROFILE, browser_session
 from .tools import Tools
 from .trace import Trace
 from .vault import Vault, household_person
@@ -54,11 +55,7 @@ class Browser:
         self.turns = 0
 
     def _start(self) -> Tools:
-        from playwright.sync_api import sync_playwright
-
-        address = self.stack.enter_context(own_chrome(PROFILE))
-        playwright = self.stack.enter_context(sync_playwright())
-        session = Session(playwright.chromium.connect_over_cdp(address).contexts[0])
+        session = self.stack.enter_context(browser_session(PROFILE))
         person, vault = login.Unattended(household_person(ROOT / "config.toml")), Vault()
         self.tools = Tools(session, DryRun(), really_commit=REALLY, log=log,
                            sign_in=lambda s: login.sign_in(s.page, vault, person, hide=s.secrets.add))  # fmt: skip
@@ -82,8 +79,8 @@ class Browser:
              "network": tools.session.take_network()})  # fmt: skip
         if name == "done":
             log({"event": "end", "ended": "done", "success": bool(args.get("success")),
-                 "answer": str(args.get("answer", "")), "turns": self.turns, "screenshots": tools.screenshots,
-                 "commits_asked": tools.commits_asked})  # fmt: skip
+                 "answer": str(args.get("answer", "")), "aloud": str(args.get("aloud", "")), "turns": self.turns,
+                 "screenshots": tools.screenshots, "commits_asked": tools.commits_asked})  # fmt: skip
             return ["ok: that's the answer. Stop now."]
         out: list[str | Image] = [said] if said else []
         if changed and view is not None:
@@ -108,60 +105,48 @@ browser = Browser()
 server = MCPServer("tars-browser")
 
 
-@server.tool()
+NOTE = " `note`: a few words for the person's progress line, saying what this call is for."
+
+
+def _described(name: str, extra: str = "") -> str:
+    """The tool's description as TARS's own agent has it (agent.TOOLS), so the two can't drift apart."""
+    return next(t["description"] for t in TOOLS if t["name"] == name) + extra
+
+
+@server.tool(description="The page as it is now: its title and address, its text, and everything on it to click or "
+             "type into, each with a ref ([e36 button \"Add to order\"]). Call it first.")  # fmt: skip
 def page() -> list[str | Image]:
-    """The page as it is now: its title and address, its headings and text, and everything on it to click or type
-    into, each with a ref ([e36 button "Add to order"]). Call it first."""
     return browser.call("page", {})
 
 
-@server.tool()
+@server.tool(description=_described("act", f" Each step is an object of this JSON schema: {json.dumps(STEP)}.{NOTE}"))
 def act(steps: list[dict[str, Any]], note: str = "") -> list[str | Image]:
-    """Steps to take in order on the page, then the page as it is after them. Each step is an object with an
-    action: {"action": "click", "ref": "e36"}; {"action": "click", "text": "20:00", "near": "other text on the same
-    card"} for text with no ref; {"action": "type", "ref": "e46", "text": "...", "submit": true, "slowly": false};
-    {"action": "select", "ref": "e12", "option": "label"}; {"action": "press", "key": "Escape"};
-    {"action": "scroll", "direction": "down"} (with "ref" to scroll inside a panel), or {"action": "scroll",
-    "ref": "e88"} to bring it into view; {"action": "hover", "ref": "e5"}; {"action": "goto", "url": "https://..."};
-    {"action": "back"}; {"action": "wait", "seconds": 2}; {"action": "click_at", "x": 640, "y": 300} on the
-    screenshot, the last resort. A step that opens something ends the batch. `note`: a few words for the person's
-    progress line, saying what these steps are for ("Opening the cart"), or, after one that didn't work, what you're
-    trying instead."""
     return browser.call("act", {"steps": steps, "note": note})
 
 
-@server.tool()
+@server.tool(description=_described("find", NOTE))
 def find(text: str, note: str = "") -> list[str | Image]:
-    """Lines anywhere on the page with all of these words in them (any case): quicker than scrolling. `note`: a few
-    words for the person's progress line, saying what you're looking for and why."""
     return browser.call("find", {"text": text, "note": note})
 
 
-@server.tool()
+@server.tool(description=_described("look", NOTE))
 def look(note: str = "") -> list[str | Image]:
-    """A screenshot of the screen as it is, with the refs drawn on it. `note`: a few words for the person's progress
-    line, saying what you want to check."""
     return browser.call("look", {"note": note})
 
 
-@server.tool()
+@server.tool(description=_described("request_approval"))
 def request_approval(ref: str, summary: str) -> list[str | Image]:
-    """At the last step: ask the person to approve pressing this button (it places the order, pays, books or sends),
-    with what it commits them to (what, how many, when, the total). TARS presses it only if they say yes."""
     return browser.call("request_approval", {"ref": ref, "summary": summary})
 
 
-@server.tool()
+@server.tool(description=_described("sign_in", NOTE))
 def sign_in(note: str = "") -> list[str | Image]:
-    """Sign in to the site this page is on, with TARS's login for it (you never see it); says how it went. Call it on
-    the site's sign-in page. `note`: a few words for the person's progress line."""
     return browser.call("sign_in", {"note": note})
 
 
-@server.tool()
-def done(success: bool, answer: str) -> list[str | Image]:
-    """Finish, with the answer for the person."""
-    return browser.call("done", {"success": success, "answer": answer})
+@server.tool(description=_described("done", " `aloud`: the answer as said aloud, in one or two short sentences."))
+def done(success: bool, answer: str, aloud: str = "") -> list[str | Image]:
+    return browser.call("done", {"success": success, "answer": answer, "aloud": aloud})
 
 
 def main() -> None:
