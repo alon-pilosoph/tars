@@ -9,7 +9,8 @@ that differs between them.
   the history only ever grows (an edited one would invalidate them). Past SQUEEZE tokens a request, or with short
   history, pages shrink to a line once a newer one comes; then the thinking blocks are left out from then on, as
   the API asks of an edited history, and each turn goes back as its text and tool call.
-- The tools and the system prompt are cached: they're the same on every turn.
+- The tools, the system prompt and the conversation so far are cached (the conversation by the request's own
+  marker, which moves to its end each turn): with full history, each turn pays full price only for what's new.
 - If the model declines a request, Anthropic's API runs it again on another model (`fallbacks: "default"`); that's
   counted, since it would mean the turn wasn't the model's own.
 """
@@ -80,6 +81,7 @@ class AnthropicBrain:
                 tool_choice={"type": "auto", "disable_parallel_tool_use": True},
                 output_config={"effort": effort},
                 messages=self.messages,
+                cache_control={"type": "ephemeral"},  # the conversation so far: re-read each turn, at a cache read
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
             )

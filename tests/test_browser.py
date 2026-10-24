@@ -667,6 +667,7 @@ def test_opus_with_short_history_gets_pages_after_tool_results_and_never_its_thi
     assert last["fallbacks"] == "default" and "thinking" not in last
     assert "exactly one call" in last["system"][0]["text"] and "Find it" in last["system"][0]["text"]
     assert last["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert last["cache_control"] == {"type": "ephemeral"}  # the conversation too, not only tools and system
     for m in last["messages"]:
         if m["role"] == "assistant":
             assert all(b["type"] in ("text", "tool_use") for b in m["content"])  # thinking stays out
