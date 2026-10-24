@@ -182,12 +182,12 @@ part of every request's address, so no error message includes the address.
 
 ## What it sends Telegram
 
-Telegram gets what's written in the chats, the voice messages sent there, TARS's replies, the reminders posted
-there, and what TARS sends to them; with `[browser]`, an errand's checkout screenshot and what it asks to approve,
-and the sign-in codes sent back. A login is never sent through Telegram: only a link to TARS's own page for it. Nothing from home goes to Telegram except the things sent for someone with a
-chat. A voice message's recording also goes to speech to text, as a request at home does: Deepgram, or OpenAI if
-Deepgram fails. Telegram bot chats aren't end-to-end encrypted: Telegram's servers can read them, as they can any
-chat that isn't a secret chat.
+Telegram gets what's written in the chats, the voice messages sent there, TARS's replies, the reminders posted there,
+and what TARS sends to them; with `[browser]`, an errand's checkout screenshot and what it asks to approve, and the
+sign-in codes sent back. A login is never sent through Telegram: only a link to TARS's own page for it. Nothing from
+home goes to Telegram except the things sent for someone with a chat. A voice message's recording also goes to speech to
+text, as a request at home does: Deepgram, or OpenAI if Deepgram fails. Telegram bot chats aren't end-to-end encrypted:
+Telegram's servers can read them, as they can any chat that isn't a secret chat.
 
 ## Not yet
 
