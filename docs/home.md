@@ -37,7 +37,10 @@ lock until it reports locked, for up to 12 seconds, and answers the model with o
 - `not confirmed: asked the front door to lock, and it still says locking`
 - `error: the front door jammed; someone needs to check it`, or `error: Home Assistant didn't answer ...`
 
-The model is told to say what the tool answered, and never that something's done when it isn't. Home Assistant
+The model is told to say what the tool answered, and never that something's done when it isn't. Asked to change a
+device, it changes it even when the status says it's already that way ("turn off the AC" when it says off): the
+status of an AC worked by infrared is Home Assistant's guess, a remote changes things without telling it, and
+whoever asks may know better. Home Assistant
 answers a service call once the device has done it, so a slow lock gets 30 seconds, and one that answers later still
 isn't said to have failed: the tool reads back what the lock says, as ever. A media player's press is done once its
 volume or mute shows it; anything it can't show (play, next) is sent. TARS says "One moment." first while a lock

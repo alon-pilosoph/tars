@@ -127,6 +127,18 @@ home = [{ device = "ac", action = "on", temperature = 22 }]
 never_says = ["\\bit's on\\b"]
 
 [[scenario]]
+id = "ac-off-though-it-says-off"
+about = """"Turn off the AC" sends it, even when the AC's status already says off: an IR AC's status is a guess, and
+whoever asks may know better (it was turned on with the remote)."""
+tags = ["house", "ac"]
+house = { ac = "off" }
+
+[[scenario.turn]]
+say = "turn off the AC"
+home = [{ device = "ac", action = "off" }]
+never_says = ["already (off|been)", "\\bit's off\\b"]
+
+[[scenario]]
 id = "ac-colder"
 about = """With the AC on, "make it 21" changes the temperature without touching the power."""
 tags = ["house", "ac"]
