@@ -15,12 +15,20 @@ KSP = "https://www.ksp.co.il"
 
 
 def field(ident, action=None, empty=True, label=""):
-    return {"tag": ident, "empty": empty, "action": action, "kind": "other", "key": ident, "label": label}
+    return {
+        "tag": ident,
+        "empty": empty,
+        "action": action,
+        "kind": "other",
+        "key": ident,
+        "label": label,
+        "email": False,
+    }
 
 
 def screen(url=KSP + "/login", username=None, password=None, code=None, signup=False, others=()):
     """A page of a sign-in, as FIELDS_JS reads it: its code box, or its form's fields, in order."""
-    fields = [{**username, "kind": "username", "key": "username"}] if username else []
+    fields = [{**username, "kind": "username", "key": "username", "email": True}] if username else []
     fields += list(others)
     fields += [{**password, "kind": "password", "key": "password"}] if password else []
     return {"url": url, "found": {"code": {**code, "kind": "code"} if code else None, "fields": fields,
@@ -54,6 +62,9 @@ class SignInPage:
 
             def fill(self, text):
                 page.typed.append((tag, text))
+
+            def element_handle(self, timeout=None):
+                return self
 
             def press(self, key):
                 page.at = min(page.at + 1, len(page.screens) - 1)
@@ -159,7 +170,8 @@ def test_the_sign_in_call_keeps_its_requests_out_of_the_trace():
     tools = Tools(session, approver=None, sign_in=lambda s: "entered the password")
     did = tools.call("sign_in", {})
     assert did.said == "entered the password" and session.network == []
-    assert tools.call("sign_in", {}).trouble  # once a task
+    tools.call("sign_in", {})  # once more: the first may have been on the wrong page
+    assert tools.call("sign_in", {}).trouble  # and no more
 
 
 def test_origin_is_what_pages_are_compared_by():

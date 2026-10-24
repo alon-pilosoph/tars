@@ -22,6 +22,7 @@ from .money import amounts
 from .session import Session, normal
 
 REPEATS = 3  # the same steps this many times in a row on one page: not done again
+SIGN_INS = 2  # a sign-in a task, and one more: the first may have been on the wrong page
 WAITS = {"wait", "scroll", "press", "hover", "back"}  # steps that change nothing the first time and may later
 
 
@@ -52,7 +53,7 @@ class Tools:
     screenshots: int = 0
     commits_asked: list[str] = field(default_factory=list)
     committed: bool = False
-    signed_in: bool = False
+    signed_in: int = 0  # times sign_in ran: once more after one that found nothing to sign in to
     failed_steps: set[str] = field(default_factory=set)
     last_act: str = ""
     repeats: int = 0
@@ -77,9 +78,9 @@ class Tools:
         if name == "request_approval":
             return Did(self.approval(str(args.get("ref", "")), str(args.get("summary", ""))), changed=True)
         if name == "sign_in":
-            if self.signed_in:
+            if self.signed_in >= SIGN_INS:
                 return Did("sign_in already ran for this task: call done and say what stopped it", trouble=True)
-            self.signed_in = True
+            self.signed_in += 1
             if self.sign_in is None:
                 return Did("TARS has no login for this site: call done and say it needs one", trouble=True)
             said = self.sign_in(session)

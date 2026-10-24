@@ -118,3 +118,90 @@ def test_an_address_at_home_is_never_opened(on):
     session, page = on("<p>hello</p>")
     outcome = session.act([{"goto": "http://127.0.0.1:9/"}])
     assert outcome.failed and page.url == "about:blank"
+
+
+# Signing in, on pages served as a site of their own
+
+
+SITE = "https://login.example"
+
+
+@pytest.fixture
+def site(browser):
+    """A page served at SITE with `html` on it (each next page by the path a form posts to), and its session."""
+    context = browser.new_context()
+
+    def make(pages: dict[str, str]):
+        def serve(route):
+            path = route.request.url.removeprefix(SITE).split("?")[0] or "/"
+            route.fulfill(status=200, content_type="text/html; charset=utf-8", body=pages.get(path, "<p>signed in</p>"))
+
+        context.route(f"{SITE}/**", serve)
+        page = context.new_page()
+        page.goto(f"{SITE}/")
+        return Session(context, page), page
+
+    yield make
+    context.close()
+
+
+class Asked:
+    def __init__(self, name="Alon", login=None, code=None):
+        self.name, self.given, self.sent, self.asked = name, login, code, []
+
+    def login(self, site, goal, fields):
+        self.asked.append([f.label for f in fields])
+        return self.given
+
+    def code(self, site, answer):
+        return self.sent
+
+
+def vault_with(tmp_path, **values):
+    from voice_assistant.browser.vault import Vault
+
+    vault = Vault(tmp_path)
+    if values:
+        vault.store("Alon", [SITE], values)
+    return vault
+
+
+def test_a_login_without_ids_or_names_is_typed_and_its_confirm_button_is_fine(site, tmp_path):
+    from voice_assistant.browser.login import sign_in
+
+    _, page = site({"/": '<form action="/next" method=post><label>דוא״ל <input type=email></label>'
+                         '<label>סיסמה <input type=password></label><button>אישור</button></form>'})  # fmt: skip
+    vault = vault_with(tmp_path, username="alon@example.com", password="hunter2-secret")
+    said = sign_in(page, vault, Asked())
+    assert "entered the username and the password" in said and page.url == f"{SITE}/next"
+
+
+def test_a_code_in_six_boxes_is_typed_a_character_a_box(site, tmp_path):
+    from voice_assistant.browser.login import sign_in
+
+    boxes = "".join(f"<input inputmode=numeric maxlength=1 autocomplete=one-time-code name=d{i}>" for i in range(6))
+    _, page = site({"/": f'<form action="/done" method=post>{boxes}<button>Verify</button></form>'})
+    sign_in(page, vault_with(tmp_path, username="alon@example.com"), Asked(code="482913"))
+    assert page.url == f"{SITE}/done"
+
+
+def test_a_promo_code_is_no_sign_in_code_and_a_sign_up_gets_nothing(site, tmp_path):
+    from voice_assistant.browser.login import FIELDS_JS, sign_in
+
+    _, page = site({"/": "<form><label>Promo code <input name=promo></label><label>Email <input type=email></label>"
+                         "</form>"})  # fmt: skip
+    assert page.evaluate(FIELDS_JS)["code"] is None
+    page.set_content('<form><input type=email><input type=password autocomplete="new-password"></form>')
+    said = sign_in(page, vault_with(tmp_path, username="alon@example.com"), Asked())
+    assert "sign up" in said or "no sign-in form" in said
+
+
+def test_a_mailboxs_address_never_goes_into_a_phone_field(site, tmp_path):
+    from voice_assistant.browser.login import sign_in
+
+    _, page = site({"/": '<form action="/next"><label>Phone <input type=tel></label><button>Send</button></form>'})
+    vault = vault_with(tmp_path)
+    vault.store_mailbox("Alon", "alon@gmail.com", "abcd efgh")
+    person = Asked(login={"username": "0541234567"})
+    sign_in(page, vault, person, wait_for_mail=lambda *a, **k: (None, None))
+    assert person.asked == [["Phone", "Password, if it asks for one next"]]
