@@ -22,7 +22,7 @@ script.
 
 | Asset | License | How it's used |
 |---|---|---|
-| [Newsreader](https://github.com/productiontype/Newsreader) and [Instrument Sans](https://github.com/Instrument/instrument-sans) | SIL OFL 1.1 (`webui/src/fonts/OFL.txt`) | the web UI's and the How TARS works page's fonts, in this repo |
+| [Newsreader](https://github.com/productiontype/Newsreader) and [Instrument Sans](https://github.com/Instrument/instrument-sans) | SIL OFL 1.1 (`webui/src/fonts/OFL.txt`) | the web UI's and the site's fonts, in this repo |
 
 ## Voices the training clips were synthesized with
 

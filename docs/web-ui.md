@@ -140,7 +140,7 @@ npm run build      # typecheck, then rebuild src/voice_assistant/webui_static/ (
 npm run e2e        # the functional checks against a real backend (below)
 npm run visual     # the screenshot tests (below); npm run visual:update accepts an intended change
 npm run screenshots  # docs/screenshots/, from the current build
-npm run site       # the How TARS works page, site/index.html into site/dist/ (below)
+npm run site       # the site's pages, site/ into site/dist/ (below)
 ```
 
 Add `?demo` to the URL for built-in sample data with no server (`?demo=empty` for none, `?demo=long` for
@@ -170,10 +170,11 @@ build (`.github/workflows/pages.yml`, `npm run site`) run in Playwright's own Ch
 - **`npm run visual`** (`checks/visual.spec.ts`, under 2 minutes): Playwright's `toHaveScreenshot()` on the states
   a link can open and after interactions (opening a menu, rating, ticking, a dialog), on desktop and phone. The page
   loads from the build on disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.
-- **`npm run site`** (`checks/site.spec.ts`): builds the [How TARS works](https://tars.alonp.dev) page from
-  `site/index.html` into `site/dist/`, cutting real pages of the demo (Review, Voices, Models, Reminders) into it,
-  with the fonts and icons inlined, and takes its link preview (`og.png`). It fails if a placeholder it fills is
-  missing.
+- **`npm run site`** (`checks/site.spec.ts`): builds [the site](https://tars.alonp.dev) from `site/` into
+  `site/dist/`: the front page, How it works (one request through TARS) and Features (everything else it does),
+  each one file with `site.css`, `site.js`, the fonts and icons inlined, and real pages of the demo (Review, Voices,
+  Models, Reminders) cut into Features. It takes the link preview (`og.png`) from the front page, and fails if a
+  placeholder it fills is missing or a panel is on no page.
 
 After a change that's meant to look different, run `npm run visual:update`, look at the new images in the diff,
 and commit them with the change. `npm test` runs the unit tests (Vitest), `npm run lint` the linter
