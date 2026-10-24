@@ -202,7 +202,7 @@ class Errands:
     def __init__(
         self,
         cfg: BrowserConfig,
-        chats: Chats | None,
+        chats: Chats,
         people: list[str],
         queue: Queue,
         say_aloud: Callable[[str, str], None] | None = None,
@@ -211,7 +211,7 @@ class Errands:
         openai=None,
         home: frozenset[str] = frozenset(),
     ):
-        """`chats`: where an errand reaches the person (set once the chats are made, if not yet). `people`: who may
+        """`chats`: where an errand reaches the person. `people`: who may
         ask, the household's first first. `say_aloud(person, text)`: has TARS say an errand's answer at home, for one
         asked aloud. `run`: run.run_task (the tests pass their own). `openai`: TARS's OpenAI client, for the browser's
         model."""
@@ -220,10 +220,6 @@ class Errands:
         self._say_aloud, self._run, self._openai, self._home = say_aloud, run, openai, home
         self.current: dict | None = None  # the errand running
         self.thread: threading.Thread | None = None
-
-    def tool(self, via: str = TELEGRAM) -> BrowseTool:
-        """The browse tool for a brain that asks for errands this way."""
-        return BrowseTool(self.queue, self._people, via)
 
     def serve(self, every_s: float = LOOK_EVERY_S) -> None:
         """Takes the queue's errands in turn, for as long as the service runs (a thread of its own)."""

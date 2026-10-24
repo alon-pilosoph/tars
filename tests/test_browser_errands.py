@@ -18,6 +18,7 @@ import pytest
 from voice_assistant.config import BrowserConfig, LLMConfig
 from voice_assistant.home import Request
 from voice_assistant.llm import OpenAIChat
+from voice_assistant.telegram_errands import TelegramErrands
 
 from .conftest import fake_openai_chat
 from .test_telegram import ALON, FakeBot, ScriptedBrain, message, tars
@@ -123,7 +124,7 @@ def test_an_errand_asked_in_a_chat_runs_on_its_own_and_its_answer_goes_to_the_ch
         return {"ended": "done", "answer": "Your margherita is in the basket.", "commits_asked": []}
 
     e, told = errands(tmp_path, run)
-    asking = e.tool(TELEGRAM)
+    asking = BrowseTool(e.queue, ["Alon", "Stacey"], TELEGRAM)
     assert asking.call({"errand": "order a margherita on Wolt"}, Request(speaker="alon")).startswith("started")
     assert e.next() and not e.next()  # one at a time
     queued = asking.call({"errand": "book a table on Ontopo"}, Request(speaker="Stacey"))
@@ -139,7 +140,7 @@ def test_an_errand_asked_in_a_chat_runs_on_its_own_and_its_answer_goes_to_the_ch
 
 def test_an_errand_needs_someone_known_asking_a_goal_and_a_turn_that_goes_ahead(tmp_path):
     e, _ = errands(tmp_path, run=done("x"))
-    asking = e.tool(VOICE)
+    asking = BrowseTool(e.queue, ["Alon", "Stacey"], VOICE)
     assert asking.call({"errand": "order a pizza on Wolt"}, Request(by_voice=True)).startswith("error")
     assert asking.call({"errand": "order a pizza on Wolt"}, Request(speaker="Mallory")).startswith("error")
     assert asking.call({"errand": "pizza"}, Request(speaker="Alon")).startswith("error")
@@ -193,7 +194,7 @@ def test_an_errand_that_breaks_is_said_so_and_one_left_running_is_failed(tmp_pat
 
     store = Store(tmp_path / "db")
     e, told = errands(tmp_path, run, store=store)
-    e.tool().call({"errand": "order a margherita on Wolt"}, Request(speaker="Alon"))
+    BrowseTool(e.queue, ["Alon"], TELEGRAM).call({"errand": "order a margherita on Wolt"}, Request(speaker="Alon"))
     e.next()
     e.thread.join(2)
     assert told[0][0] == "Alon" and "broke" in told[0][1] and "Nothing was ordered" in told[0][1]
@@ -215,8 +216,9 @@ def test_each_person_has_a_browser_profile_of_their_own():
 def test_an_order_is_approved_only_by_a_tap_on_order_in_the_persons_own_chat():
     bot = ButtonBot()
     t = tars(bot, [ScriptedBrain()])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
     answers = []
-    asking = threading.Thread(target=lambda: answers.append(t.approve("Alon", "Order a margherita, ₪62?", b"jpg")))
+    asking = threading.Thread(target=lambda: answers.append(chats.approve("Alon", "Order a margherita, ₪62?", b"jpg")))
     asking.start()
     until(lambda: bot.buttons)
     chat_id, _, buttons = bot.buttons[0]
@@ -233,20 +235,22 @@ def test_an_order_is_approved_only_by_a_tap_on_order_in_the_persons_own_chat():
 def test_cancel_says_nothing_was_ordered():
     bot = ButtonBot()
     t = tars(bot, [ScriptedBrain()])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
     answers = []
-    asking = threading.Thread(target=lambda: answers.append(t.approve("Alon", "Book ESO for 2?", None)))
+    asking = threading.Thread(target=lambda: answers.append(chats.approve("Alon", "Book ESO for 2?", None)))
     asking.start()
     until(lambda: bot.buttons)
     t.handle(tap(bot.buttons[0][2][1][1]))
     asking.join(2)
-    assert answers == [False] and "Cancelled: nothing ordered." in bot.said()
+    assert answers == [False] and "Cancelled: nothing done." in bot.said()
 
 
 def test_a_code_sent_back_goes_to_the_sign_in_and_not_to_the_brain():
     bot, brain = ButtonBot(), ScriptedBrain(["Hi!"])
     t = tars(bot, [brain])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
     answer, got = Answer(), []
-    asking = threading.Thread(target=lambda: got.append(t.code("Alon", KSP, answer)))
+    asking = threading.Thread(target=lambda: got.append(chats.code("Alon", KSP, answer)))
     asking.start()
     until(lambda: any("sign-in code" in m for m in bot.said()))
     t.handle(message("123 456"))
@@ -259,16 +263,18 @@ def test_a_code_sent_back_goes_to_the_sign_in_and_not_to_the_brain():
 def test_a_code_found_in_the_email_first_is_said_so():
     bot = ButtonBot()
     t = tars(bot, [ScriptedBrain()])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
     answer = Answer(mail=True)
     threading.Timer(0.05, lambda: answer.give("777111", "email")).start()
-    assert t.code("Alon", KSP, answer) == "777111"
+    assert chats.code("Alon", KSP, answer) == "777111"
     assert "email too" in bot.said()[0] and "Found it in your email" in bot.said()[1]
 
 
 def test_an_errands_answer_is_posted_and_remembered():
     bot, brain = ButtonBot(), ScriptedBrain()
     t = tars(bot, [brain])
-    t.tell("Alon", "Your order is in the basket.")
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
+    chats.tell("Alon", "Your order is in the basket.")
     assert bot.said() == ["Your order is in the basket."] and brain.remembered == ["Your order is in the basket."]
 
 
@@ -492,20 +498,22 @@ def test_a_mailbox_is_never_a_login_for_a_page(tmp_path):
 
 
 def test_the_telegram_service_makes_errands_only_with_browser_on(tmp_path):
-    from voice_assistant.__main__ import make_errands
+    from voice_assistant.__main__ import browse_tool, errand_queue, make_errands
     from voice_assistant.config import ConfigError, load_config
-
-    cfg = load_config(Path("config.toml"), local=False)
-    assert make_errands(cfg, tmp_path, client=object()) is None
-    on = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
-    with pytest.raises(ConfigError):
-        make_errands(on, tmp_path, client=None)
-    with pytest.raises(ConfigError):  # the queue is in the event database
-        make_errands(on, tmp_path, client=object())
     from voice_assistant.events import EventLog
 
-    made = make_errands(on, tmp_path, client=object(), events=EventLog(tmp_path / "events"))
-    assert isinstance(made, Errands) and made.chats is None
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    events = EventLog(tmp_path / "events")
+    assert errand_queue(cfg, events, has_openai=True) is None and browse_tool(cfg, None, TELEGRAM) is None
+    on = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
+    with pytest.raises(ConfigError):
+        errand_queue(on, events, has_openai=False)
+    with pytest.raises(ConfigError):  # the queue is in the event database
+        errand_queue(on, None, has_openai=True)
+    queue = errand_queue(on, events, has_openai=True)
+    made = make_errands(on, tmp_path, object(), queue, tars(ButtonBot(), [ScriptedBrain()]))
+    assert isinstance(made, Errands) and isinstance(made.chats, TelegramErrands)
+    assert browse_tool(on, queue, VOICE).rules != browse_tool(on, queue, TELEGRAM).rules
 
 
 @pytest.mark.parametrize(
@@ -522,8 +530,9 @@ def test_what_a_one_time_code_is(text, code):
 def test_a_code_with_letters_sent_back_goes_to_the_sign_in_too():
     bot, brain = ButtonBot(), ScriptedBrain(["Hi!"])
     t = tars(bot, [brain])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
     answer, got = Answer(), []
-    asking = threading.Thread(target=lambda: got.append(t.code("Alon", KSP, answer)))
+    asking = threading.Thread(target=lambda: got.append(chats.code("Alon", KSP, answer)))
     asking.start()
     until(lambda: any("sign-in code" in m for m in bot.said()))
     t.handle(message("G-482913"))
