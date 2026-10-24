@@ -126,7 +126,7 @@ deploy/sim/run.sh                                   # build and start a Pi 4 (--
 deploy/sim/run.sh signin https://wolt.com           # sign in on its browser: the VNC view at localhost:6080
 deploy/sim/run.sh uv run python -m voice_assistant.browser view https://wolt.com   # anything, run on it
 deploy/sim/run.sh --speed shell                     # capped to about the device's speed: a rough idea of it
-deploy/sim/run.sh stop                              # remove: it, its environment and its browser profile
+deploy/sim/run.sh stop                              # stop it (remove: it, its environment and browser profile)
 ```
 
 The devices are profiles in [`deploy/sim/devices/`](../deploy/sim/devices/). It's the Pi's software, not its
