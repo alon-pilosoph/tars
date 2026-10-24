@@ -61,6 +61,7 @@ def run_task(
     person: Person | None = None,
     vault: Vault | None = None,
     openai=None,
+    home: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Runs the agent on `goal` in a fresh TARS Chrome; what it did, as a dict.
 
@@ -69,13 +70,14 @@ def run_task(
     `notes`: the agent reads what it noted on the sites before, and writes what this run taught it.
     `person`: whose logins it signs in with (the vault's), and who's asked for a login or a code it lacks; with no
     one, the household's first person, whom nobody can ask. `openai`: the OpenAI client to use, if there is one
-    already (TARS's own), else one from .env."""
+    already (TARS's own), else one from .env. `home`: the names the house is reached by ([web] allowed_hosts,
+    [home] url), which the browser never opens."""
     settings = settings or Settings(turns=steps)
     person = person or Unattended(household_person(ROOT / "config.toml"))
     vault = vault or Vault()
     with own_chrome(profile, port) as address, sync_playwright() as p:
         context = p.chromium.connect_over_cdp(address).contexts[0]
-        session = Session(context)
+        session = Session(context, home=home)
         claude = settings.model.startswith("claude-")  # Anthropic's API, in TARS's own loop
         if claude:
             from .anthropic_brain import client as anthropic_client

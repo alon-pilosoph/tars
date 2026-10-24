@@ -21,6 +21,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
+from ..homenet import host_of
 from .vault import Login, site
 
 PORT = 993
@@ -53,7 +54,9 @@ READ_SCHEMA = {
 
 
 def on_domain(link: str, domain: str) -> bool:
-    host = (urlsplit(link).hostname or "").lower()
+    """Whether `link` goes to `domain`, by the host a browser would go to (homenet.host_of): not by how Python reads
+    https://evil.example\\@wolt.com, which is wolt.com to it and evil.example to Chrome."""
+    host = host_of(link)
     return link.startswith("https://") and (host == domain or host.endswith("." + domain))
 
 

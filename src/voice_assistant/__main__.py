@@ -635,15 +635,16 @@ def make_errands(cfg: Config, root: Path, client, events=None, reminders=None, p
         import playwright  # noqa: F401 - only whether it's there
 
         from .browser.errands import ERRANDS, Errands, Queue
+        from .homenet import configured
     except ImportError:
         raise ConfigError('[browser] needs the optional extra "browser": run uv sync --all-extras') from None
     orders = "orders placed once approved" if cfg.browser.really_order else "approved orders a dry run"
     print(f"(errands in the browser, by {cfg.browser.model} at {cfg.browser.effort} effort; {orders})")
     say = errand_said_aloud(reminders.reminders, presence) if reminders else None
     queue = Queue(events.store if events else None)
-    return Errands(
-        cfg.browser, None, list(cfg.telegram.people), queue=queue, say_aloud=say, folder=root / ERRANDS, openai=client
-    )
+    home = configured(cfg.web.allowed_hosts, cfg.home.url)  # the house's own names: never opened either
+    return Errands(cfg.browser, None, list(cfg.telegram.people), queue=queue, say_aloud=say, folder=root / ERRANDS,
+                   openai=client, home=home)  # fmt: skip
 
 
 def errand_said_aloud(reminders, presence=None):

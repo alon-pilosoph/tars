@@ -22,6 +22,7 @@ from urllib.parse import urljoin
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
+from ..homenet import at_home
 from .gate import says_commit
 from .login_page import Field
 from .session import PAYING_JS, SUBMITS_JS
@@ -285,7 +286,7 @@ def _sign_in(page: Page, vault: Vault, person: Person, goal: str, hide, wait_for
                     break  # nothing left to fill: signed in, or the site wants something only the person can do
                 sent.add("link")  # "check your email": the site sent a sign-in link, or a code for a page to come
                 code, link = wait_for_mail(boxes, page.url, asked, MAIL_WAIT_S)
-                if link:
+                if link and not at_home(link):
                     page.goto(link, wait_until="domcontentloaded", timeout=20_000)
                     done.append("opened the sign-in link from their email")
                     continue

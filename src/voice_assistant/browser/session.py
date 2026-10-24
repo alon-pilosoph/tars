@@ -7,17 +7,16 @@ again. A link that opens a new tab moves the agent there, as it would a person. 
 checked against the gate (gate.py) first: what would commit the person to something isn't done, whatever the model
 says. What the page loaded behind the scenes (its JSON) is kept with the step, for the trace."""
 
-import ipaddress
 import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlsplit
 
 from playwright.sync_api import BrowserContext, Dialog, Page, Response
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
+from ..homenet import at_home
 from . import page as pages
 from .gate import Press, commits, says_commit
 
@@ -148,8 +147,10 @@ class Outcome:
 class Session:
     """One task's browser: a tab of TARS's Chrome, and what the agent has seen of it."""
 
-    def __init__(self, context: BrowserContext, page: Page | None = None):
-        self.context = context
+    def __init__(self, context: BrowserContext, page: Page | None = None, home: frozenset[str] = frozenset()):
+        """`home`: names the house goes by besides those any home network's do ([web] allowed_hosts, [home] url's),
+        which the agent never opens either (homenet.py)."""
+        self.context, self.home = context, home
         self.page = page or (context.pages[0] if context.pages else context.new_page())
         self.current: pages.View | None = None
         self.opened: list[Page] = []
@@ -189,6 +190,7 @@ class Session:
     def look(self) -> pages.View:
         """The page as it is now, as the model is shown it."""
         self._front()
+        self._leave_home()
         self._still()
         self._loaded()
         page = self.page
@@ -263,8 +265,7 @@ class Session:
                 outcome.said.append(f"failed: {json.dumps(step, ensure_ascii=False)}: {_why(e)}")
                 outcome.failed = True
                 break
-            if at_home(self.page.url):  # a link there: left before the model sees any of it
-                self.page.goto("about:blank")
+            if self._leave_home():  # a link there: left before the model sees any of it
                 outcome.said.append("refused: that went to an address on this machine or the home network, which "
                                     "TARS doesn't open; the tab is empty now")  # fmt: skip
                 outcome.refused, outcome.failed = "home network", True
@@ -375,7 +376,7 @@ class Session:
             url = str(step["goto"])
             if not url.startswith(("https://", "http://")):
                 raise ValueError("goto takes an http(s) address")
-            if at_home(url):
+            if at_home(url, self.home):
                 raise ValueError("that's an address on this machine or the home network, which TARS doesn't open")
             page.goto(url, wait_until="domcontentloaded", timeout=30_000)
             return f"went to {url}"
@@ -535,6 +536,18 @@ class Session:
         self._watch(self.page)
         self.page.bring_to_front()
         self._settle()
+        self._leave_home()
+        return True
+
+    def _leave_home(self) -> bool:
+        """If the tab is at an address at home (a link, a new tab, a redirect went there), it's emptied before
+        anything of it is read; whether it was."""
+        if not at_home(self.page.url, self.home):
+            return False
+        try:
+            self.page.goto("about:blank")
+        except PlaywrightError:
+            pass
         return True
 
     # The trace
@@ -549,23 +562,6 @@ class Session:
             except PlaywrightError, ValueError:  # gone with its page, or not text: the trace does without it
                 continue
         return out
-
-
-# Names that are on the home network, not the internet: mDNS, Tailscale, and what routers call their own.
-HOME_NAMES = (".local", ".ts.net", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", "localhost")
-
-
-def at_home(url: str) -> bool:
-    """Whether `url` is on this machine or the home network (TARS's web UI, its login page, Chrome's debugging port,
-    the router, Home Assistant), which the agent never opens, whatever a page asks: an address that isn't public, or
-    a name that isn't one on the internet (a single word, like tars, or one of HOME_NAMES)."""
-    host = (urlsplit(url).hostname or "").lower().rstrip(".")
-    if not host or urlsplit(url).scheme not in ("http", "https"):
-        return False
-    try:
-        return not ipaddress.ip_address(host).is_global
-    except ValueError:
-        return "." not in host or host.endswith(HOME_NAMES) or host == "localhost"
 
 
 def _entry(r: Response, secrets: set[str] = frozenset()) -> dict[str, Any]:

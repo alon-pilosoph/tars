@@ -232,6 +232,7 @@ class Errands:
         run: Callable[..., dict[str, Any]] | None = None,
         folder: Path = Path(ERRANDS),
         openai=None,
+        home: frozenset[str] = frozenset(),
     ):
         """`chats`: where an errand reaches the person (set once the chats are made, if not yet). `people`: who may
         ask, the household's first first. `say_aloud(person, text)`: has TARS say an errand's answer at home, for one
@@ -239,7 +240,7 @@ class Errands:
         model."""
         self._cfg, self.chats, self._people, self._folder = cfg, chats, people, folder
         self.queue = queue or Queue()
-        self._say_aloud, self._run, self._openai = say_aloud, run, openai
+        self._say_aloud, self._run, self._openai, self._home = say_aloud, run, openai, home
         self.current: dict | None = None  # the errand running
         self.thread: threading.Thread | None = None
 
@@ -283,7 +284,7 @@ class Errands:
         you, result = ByChat(person, self.chats), {}
         try:
             run = self._run or _run_task()
-            result = run(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai,
+            result = run(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai, home=self._home,
                          profile=profile_for(person, self._people[0]), notes=_notes(self._folder.parent))  # fmt: skip
             text, status = _told(result), DONE if result.get("ended") == "done" else FAILED
         except Exception as e:  # noqa: BLE001 - an errand that broke is said so, never left hanging
