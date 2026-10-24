@@ -49,6 +49,7 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ("[recorder]\nend_silence = 0.8", "[recorder] has no setting end_silence"),
         ('[recorder]\nend_silence_s = "0.8"', "[recorder] end_silence_s must be a number"),
         ("[speaker]\nenabled = 1", "[speaker] enabled must be true or false"),
+        ('[home]\nown_speaker = "yes"', "[home] own_speaker must be true or false"),
         ("[speakers]\nenabled = true", "no [speakers] section"),
         ("[audio\n", "config.toml"),  # not TOML at all
         ("[telegram]\nenabled = true", "[telegram] people"),

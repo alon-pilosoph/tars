@@ -218,6 +218,8 @@ class HomeConfig:
     unlock_threshold: float = 0.6
     # The model that works an Android TV step by step, reading its screen. Empty = [llm] model.
     tv_model: str = ""
+    # TARS's own speaker as a device, for the voice: "how loud are you?", "turn yourself down" (docs/home.md).
+    own_speaker: bool = False
     # Code of your own for devices Home Assistant doesn't work: a name, and { module = "...", and its own settings }.
     plugins: dict[str, dict] = field(default_factory=dict)
     # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).

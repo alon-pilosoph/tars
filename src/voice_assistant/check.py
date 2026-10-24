@@ -40,6 +40,7 @@ from .errors import SERVICE_FAILURES
 if TYPE_CHECKING:
     from .backup import Backup
     from .backup import Status as BackupStatus
+    from .volume import Mixer
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
 MARKS = {OK: "✓", WARN: "!", FAIL: "✗", SKIP: "-"}
@@ -551,6 +552,21 @@ def house(built, hass_ok: bool) -> list[Result]:
     return results
 
 
+def own_speaker(cfg: Config, mixer: Callable[[str], Mixer]) -> Result | list[Result]:
+    """[home] own_speaker: whether TARS can read and set its own speaker's volume (`mixer`: volume.speaker_mixer),
+    and what it is now."""
+    from .home import HomeError
+    from .volume import DEVICE, OwnVolume
+
+    if not cfg.home.own_speaker:
+        return Result(DEVICE, SKIP, "off ([home] own_speaker)")
+    try:
+        found = OwnVolume(mixer(cfg.audio.output_device)).check()
+    except HomeError as e:
+        return Result(DEVICE, FAIL, str(e), "docs/home.md#tarss-own-speaker")
+    return [Result(DEVICE, status, detail, fix) for status, detail, fix in found]
+
+
 def routers_now(
     cfg: Config, secret: Callable[[str], str | None], make_router: Callable | None = None
 ) -> Result | list[Result]:
@@ -797,6 +813,11 @@ def check_all(cfg: Config, root: Path) -> int:
         built = made_house()
         return within(60, "The house", lambda: house(built, hass_check().status == OK), "a device didn't answer", "")
 
+    def speaker_volume():
+        from .volume import speaker_mixer
+
+        return own_speaker(cfg, speaker_mixer)
+
     def models():
         def load():
             t = time.perf_counter()
@@ -849,6 +870,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Web UI", lambda: web(http_status, web_port())),
         ("Home Assistant", hass_check),
         ("The house", devices),
+        ("TARS's speaker", speaker_volume),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
         ("Browser", lambda: browser(cfg)),
