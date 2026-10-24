@@ -117,9 +117,22 @@ AROUND_JS = """(e) => {
 # Whether the page takes payment: a card field (autocomplete cc-*, the standard's) or a frame given the payment
 # permission (how Stripe's, PayPal's and Apple Pay's are put on a page). Asked of each frame.
 PAYING_JS = '() => !!document.querySelector(\'input[autocomplete^="cc-"], iframe[allow*="payment"]\')'
-# The values in the page's password fields, in its own document and its frames' (each is asked on its own): left out
-# of what the model is shown, whoever typed them.
-PASSWORDS_JS = "() => [...document.querySelectorAll('input[type=password]')].map((e) => e.value).filter(Boolean)"
+# The values in the page's password fields, in its own document, its shadow roots and its frames' (each is asked on
+# its own), and in any field that was one ("show password" makes it text) or that a sign-in typed a secret into
+# (marked data-tars-secret): left out of what the model is shown, whoever typed them, and covered in screenshots.
+PASSWORDS_JS = """() => {
+  const found = [], roots = [document];
+  while (roots.length) {
+    const root = roots.pop();
+    for (const e of root.querySelectorAll('*')) {
+      if (e.shadowRoot) roots.push(e.shadowRoot);
+      if (e.tagName !== 'INPUT') continue;
+      if (e.type === 'password') e.setAttribute('data-tars-secret', '');  // still one, if "show password" turns it
+      if (e.hasAttribute('data-tars-secret') && e.value) found.push(e.value);
+    }
+  }
+  return found;
+}"""
 UNMARK_JS = "() => document.querySelectorAll('.tars-mark').forEach((m) => m.remove())"
 
 # What Enter would send, from the field it's pressed in: its form's submit button, as the gate reads it.
@@ -243,7 +256,8 @@ class Session:
         ]
         try:
             self.page.evaluate(MARKS_JS, marks)
-            return self.page.screenshot(type="jpeg", quality=70, scale="css", timeout=10_000)
+            secret = self.page.locator("[data-tars-secret], input[type=password]")
+            return self.page.screenshot(type="jpeg", quality=70, scale="css", timeout=10_000, mask=[secret])
         finally:
             try:
                 self.page.evaluate(UNMARK_JS)
@@ -574,15 +588,14 @@ class Session:
 
 
 def _entry(r: Response, secrets: set[str] = frozenset()) -> dict[str, Any]:
-    entry: dict[str, Any] = {"method": r.request.method, "url": r.url[:500], "status": r.status}
+    """A response for the trace, each part blanked of `secrets` before it's cut short, so none is left half there."""
+    entry: dict[str, Any] = {"method": r.request.method, "url": _blank(r.url, secrets)[:500], "status": r.status}
     if r.request.method != "GET" and (sent := r.request.post_data_buffer):
-        entry["sent"] = sent[:2_000].decode(errors="replace")
+        entry["sent"] = _blank(sent[:JSON_LARGEST].decode(errors="replace"), secrets)[:2_000]
     if "json" in r.headers.get("content-type", ""):
         body = r.body()
-        entry["json"] = body[:JSON_KEPT].decode(errors="replace") if len(body) <= JSON_LARGEST else f"({len(body)} B)"
-    for key, text in entry.items():
-        if isinstance(text, str):
-            entry[key] = _blank(text, secrets)
+        entry["json"] = (_blank(body.decode(errors="replace"), secrets)[:JSON_KEPT] if len(body) <= JSON_LARGEST
+                         else f"({len(body)} B)")  # fmt: skip
     return entry
 
 
@@ -591,8 +604,11 @@ def _blank(text: str, secrets: set[str]) -> str:
     from urllib.parse import quote, quote_plus
 
     for secret in filter(None, secrets):  # an empty one would blank between every character
-        for form in {secret, quote(secret, safe=""), quote_plus(secret), json.dumps(secret)[1:-1]}:
+        for form in {secret, quote(secret, safe=""), quote_plus(secret), json.dumps(secret)[1:-1], quote(secret)}:
             text = text.replace(form, "•••")
+        if len(digits := "".join(c for c in secret if c.isdigit())) >= 6 and digits == secret:
+            # a number shown grouped (054-123-4567, 482 913): its digits, with what separates them
+            text = re.sub(r"[\s.\-]?".join(digits), "•••", text)
     return text
 
 

@@ -205,3 +205,15 @@ def test_a_mailboxs_address_never_goes_into_a_phone_field(site, tmp_path):
     person = Asked(login={"username": "0541234567"})
     sign_in(page, vault, person, wait_for_mail=lambda *a, **k: (None, None))
     assert person.asked == [["Phone", "Password, if it asks for one next"]]
+
+
+def test_a_password_in_a_shadow_root_or_shown_as_text_is_never_shown_either(on):
+    session, page = on("<div id=host></div><input type=password id=p><button id=show>show</button><script>"
+                       "host.attachShadow({mode: 'open'}).innerHTML = '<input type=password id=s>';"
+                       "show.onclick = () => { p.type = 'text'; };</script>")  # fmt: skip
+    page.locator("#host").locator("#s").fill("shadow-secret")
+    page.fill("#p", "toggled-secret")
+    session.look()  # marks the password fields, while they are
+    page.click("#show")
+    seen = session.look().text
+    assert "shadow-secret" not in seen and "toggled-secret" not in seen

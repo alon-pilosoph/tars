@@ -223,3 +223,8 @@ def test_a_code_is_not_typed_if_the_page_moved_on_while_it_came(tmp_path):
 
     said = sign_in(page, vault, types.SimpleNamespace(name="Alon", code=code))
     assert "moved on" in said and page.typed == []
+
+
+def test_a_number_secret_is_blanked_however_its_grouped():
+    assert _blank("phone 054-123-4567 and 0541234567", {"0541234567"}) == "phone ••• and •••"
+    assert _blank("code 482 913", {"482913"}) == "code •••"

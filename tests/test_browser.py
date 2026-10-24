@@ -784,3 +784,13 @@ def test_amounts_are_read_however_a_page_writes_them(text, found):
     from voice_assistant.browser.money import amounts
 
     assert amounts(text) == found
+
+
+def test_a_clickable_divs_own_text_and_a_price_said_twice_are_both_shown():
+    snapshot = """- row [ref=e1] [box=0,0,300,20]:
+  - text: Cola 1
+  - text: ₪10
+  - text: ₪10
+- generic [ref=e12] [cursor=pointer] [box=0,30,100,20]: Add to cart"""
+    text = pages.view(snapshot, "T", "https://x.example", 800).text
+    assert "Cola 1 ₪10 ₪10" in text and '[e12 clickable "Add to cart"]' in text

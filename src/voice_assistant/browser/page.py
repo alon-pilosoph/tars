@@ -167,11 +167,13 @@ class Line:
 
 def _label(node: Node) -> str:
     """How an element to act on is written: its ref, its role, its name, its state and what's in it."""
-    name = node.name or text_of(node) or node.placeholder
+    fields = ("textbox", "searchbox", "combobox", "spinbutton")
+    own = node.value if node.role not in fields else ""  # a clickable div's own text: "Add to cart"
+    name = node.name or text_of(node) or own or node.placeholder
     parts = [node.ref, node.role if node.role in ACTS else "clickable"]
     if name:
         parts.append(json.dumps(" ".join(name.split())[:120], ensure_ascii=False))
-    if node.role in ("textbox", "searchbox", "combobox", "spinbutton") and node.value:
+    if node.role in fields and node.value:
         parts.append(f"= {json.dumps(node.value[:80], ensure_ascii=False)}")
     elif node.placeholder and node.name and node.role in ("textbox", "searchbox"):
         parts.append(f"(placeholder {json.dumps(node.placeholder[:40], ensure_ascii=False)})")
@@ -290,8 +292,8 @@ class _Writer:
         """Ends the line being made: in pieces of at most LINE characters, broken between parts, so nothing is lost."""
         piece, last = "", ""
         for part in (p.strip() for p in parts):
-            if not part or (not part.startswith("[") and part in last):  # a label's own text, said again beside it
-                continue
+            if not part or (last.startswith("[") and not part.startswith("[") and part in last):
+                continue  # a label's own text, said again beside it (but a price that's there twice is twice)
             last = part
             if piece and len(piece) + 1 + len(part) > LINE:
                 self.out.append(Line(self.depth, piece, self.top))

@@ -370,6 +370,8 @@ def _fill(page: Page, login: Login, field: dict, value: str) -> None:
     found: a handle stops working if the page navigates, rather than finding the same tag on another page."""
     handle = _locate(page, field).element_handle(timeout=3_000)
     _check(page, login, field)
+    if field["kind"] != "username":  # a secret: never shown to the model, and covered in screenshots
+        handle.evaluate("(e) => e.setAttribute('data-tars-secret', '')")
     handle.fill(value)
 
 

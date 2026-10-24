@@ -159,7 +159,7 @@ class Tools:
         """The amounts beside what `ref` is (its form, dialog or part of the page), else on the whole page."""
         try:
             return amounts(self.session.around(ref)) or amounts(self.session.look().text)
-        except (PlaywrightError, ValueError):
+        except PlaywrightError, ValueError:
             return amounts(self.session.look().text)
 
     def picture(self) -> bytes | None:
