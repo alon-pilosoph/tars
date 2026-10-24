@@ -643,11 +643,12 @@ def test_opus_with_short_history_gets_pages_after_tool_results_and_never_its_thi
 
 
 def test_opus_is_reminded_once_to_call_a_tool_and_a_fallback_is_counted():
-    from voice_assistant.browser.agent import brain_for
+    from voice_assistant.browser.agent import TOOLS
+    from voice_assistant.browser.brain import brain_for
 
     claude = FakeAnthropic([block("text", text="Let me think.")], use("done", success=False, answer="x"),
                            fallback=True)  # fmt: skip
-    brain = brain_for(claude, Settings(model="claude-opus-5-5"))
+    brain = brain_for(claude, Settings(model="claude-opus-5-5"), TOOLS)
     brain.start("rules")
     brain.show("Title: T", None)
     call = brain.ask("medium")
@@ -704,7 +705,9 @@ def test_full_history_keeps_every_page_and_carries_the_reasoning_back():
     kinds = [i.get("type") for i in last["input"] if i.get("type")]
     assert kinds.count("reasoning") == 2 and kinds.index("reasoning") < kinds.index("function_call")
 
-    brain = agent_module.OpenAIBrain(model, Settings())
+    from voice_assistant.browser.openai_brain import OpenAIBrain
+
+    brain = OpenAIBrain(model, Settings(), agent_module.TOOLS)
     for n in range(3):
         brain.show(f"Title: page {n}\nAddress: https://x/{n}\n\nbody", None)
     brain._squeeze()  # too long now: the newest page stays whole, the others shrink, and it stays short after
@@ -723,9 +726,10 @@ def test_opus_with_full_history_gets_its_thinking_back_until_the_history_is_sque
              if b["type"] == "text"]  # fmt: skip
     assert sum("Total ₪98.65" in p for p in pages) == 2  # nothing shrank
 
-    from voice_assistant.browser.agent import brain_for
+    from voice_assistant.browser.agent import TOOLS
+    from voice_assistant.browser.brain import brain_for
 
-    brain = brain_for(claude, Settings(model="claude-opus-5-5"))
+    brain = brain_for(claude, Settings(model="claude-opus-5-5"), TOOLS)
     page = {"type": "text", "text": "Title: A\nAddress: a\n\nbody"}
     tool = {"type": "tool_use", "id": "t", "name": "act", "input": {}}
     thought = {"type": "thinking", "thinking": "", "signature": "s"}

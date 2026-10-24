@@ -21,12 +21,12 @@ from typing import Any
 from anthropic import Anthropic
 
 from ..check import env_value
+from .brain import SQUEEZE, Call, earlier_page
 
 ONE_CALL = ("\n\nAnswer every turn with exactly one call to one of your tools, and nothing else: the act tool to work "
             "the page, the done tool to finish.")  # fmt: skip
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_TOKENS = 16_000
-SQUEEZE = 150_000  # input tokens a request: past this, the rest of the run keeps only the newest page in full
 
 
 def client(env) -> Anthropic:
@@ -38,9 +38,6 @@ def client(env) -> Anthropic:
 
 class AnthropicBrain:
     def __init__(self, client: Anthropic, settings, tools: list[dict[str, Any]]):
-        from .agent import Call  # the agent module imports this one only when a Claude model is asked for
-
-        self.Call = Call
         self.client, self.settings = client, settings
         self.tools = [
             {"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools
@@ -95,7 +92,7 @@ class AnthropicBrain:
             self.messages.append({"role": "assistant", "content": kept or [{"type": "text", "text": "(no reply)"}]})
             if uses:
                 use = uses[0]
-                return self.Call(use.id, use.name, use.input if isinstance(use.input, dict) else {})
+                return Call(use.id, use.name, use.input if isinstance(use.input, dict) else {})
             self.messages.append({"role": "user", "content": [{"type": "text", "text": "Call one of your tools."}]})
         return None
 
@@ -112,9 +109,10 @@ class AnthropicBrain:
     def _shrink(self, keep: int) -> None:
         """Every page but the newest `keep` as a line: its title and address."""
         for m, b in self.pages[: len(self.pages) - keep]:
-            head = self.messages[m]["content"][b]["text"]
-            title = next((ln for ln in head.splitlines() if ln.startswith(("Title:", "Address:"))), "")
-            self.messages[m]["content"][b] = {"type": "text", "text": f"(an earlier page. {title})"}
+            self.messages[m]["content"][b] = {
+                "type": "text",
+                "text": earlier_page(self.messages[m]["content"][b]["text"]),
+            }
         self.pages = self.pages[len(self.pages) - keep :] if keep else []
 
     def _squeeze(self) -> None:
