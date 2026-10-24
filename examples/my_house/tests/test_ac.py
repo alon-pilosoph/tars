@@ -232,8 +232,8 @@ class Sent:
 
 def ac(tmp_path: Path, sensor=None, sent=None, clock=None) -> tuple[AC, Sent, Path]:
     """The AC, its blaster, and where it keeps its state. `sensor()`: the light sensor's state, or all of what Home
-    Assistant says of it. `clock`: [seconds], which only waiting moves."""
-    sent, clock = sent or Sent(), clock or [0.0]
+    Assistant says of it. `clock`: [seconds], which only waiting (and the test) moves."""
+    sent, clock = sent or Sent(), clock or [1000.0]
     path = tmp_path / "state.json"
     hass = None
     if sensor is not None:
@@ -266,18 +266,48 @@ def every_2_s(t: float) -> float:
     return 2 * math.floor(t / 2)
 
 
-def test_on_toggles_only_when_tars_thinks_its_off(tmp_path):
+def test_on_toggles_when_tars_thinks_its_off(tmp_path):
     unit, sent, path = ac(tmp_path)
     said = unit.call("on", {**NOTHING, "temperature": 22})
     assert said.startswith("sent: turn on, set to cool 22, fan auto") and sent.codes[-1][0] is True
     assert State.load(path).on
-    said = unit.call("on", {**NOTHING, "temperature": 23})
-    assert said.startswith("sent: cool 23") and sent.codes[-1][0] is False  # already on: settings only
 
 
-def test_off_when_already_off_sends_nothing(tmp_path):
+def test_set_while_on_leaves_the_power_alone(tmp_path):
     unit, sent, _ = ac(tmp_path)
-    assert unit.call("off", NOTHING).startswith("already off") and sent.codes == []
+    unit.call("on", NOTHING)
+    said = unit.call("set", {**NOTHING, "temperature": 21})
+    assert said.startswith("sent: cool 21, fan auto; TARS thinks the AC was already on") and sent.codes[-1][0] is False
+
+
+@pytest.mark.parametrize("action", ["on", "off"])
+def test_asked_for_what_tars_thinks_it_already_is_it_toggles_anyway(tmp_path, action):
+    # Someone used the remote or the wall controller: whoever asks can see the AC, TARS can't.
+    unit, sent, path = ac(tmp_path)
+    if action == "on":
+        unit.call("is_on", NOTHING)
+    said = unit.call(action, NOTHING)
+    assert said.startswith(f"sent: turn {action}") and f"TARS had the AC as {action} already" in said
+    assert sent.codes[-1][0] is True and State.load(path).on is (action == "on")
+
+
+def test_the_same_ask_again_soon_after_doesnt_toggle_it_back(tmp_path):
+    clock = [1000.0]
+    unit, sent, _ = ac(tmp_path, clock=clock)
+    unit.call("off", NOTHING)  # TARS had it off, but was asked: toggled
+    clock[0] += 20
+    said = unit.call("off", NOTHING)  # said twice, or retried: a second toggle would turn it back on
+    assert said.startswith("nothing sent: TARS turned the AC off 20 seconds ago") and "is_on, then off" in said
+    assert len(sent.codes) == 1
+    unit.call("on", NOTHING)
+    clock[0] += 20
+    said = unit.call("on", {**NOTHING, "temperature": 23})  # its settings, without the power
+    assert said.startswith("sent: cool 23, fan auto, without touching its power") and sent.codes[-1][0] is False
+    clock[0] += 60
+    assert unit.call("off", NOTHING).startswith("sent: turn off")  # long enough after: a new ask
+    unit.call("is_off", NOTHING)
+    assert unit.call("off", NOTHING).startswith("sent: turn off")  # told, not sent: a correction, then the ask
+    assert [toggle for toggle, _ in sent.codes] == [True, True, False, True, True]
 
 
 def test_set_while_off_says_so_and_sends_nothing(tmp_path):
@@ -373,6 +403,11 @@ def test_with_the_light_sensor_on_already_means_no_toggle(tmp_path):
     assert unit.status().startswith("AC: on (its light says so)")
 
 
+def test_with_the_light_sensor_off_already_off_sends_nothing(tmp_path):
+    unit, sent, _ = ac(tmp_path, sensor=lambda: "off")
+    assert unit.call("off", NOTHING) == "already off, its light says so, so nothing was sent" and sent.codes == []
+
+
 def test_a_blaster_that_doesnt_answer_changes_nothing(tmp_path):
     unit, _, path = ac(tmp_path, sent=Sent(fail=True))
     with pytest.raises(HomeError):
@@ -393,6 +428,7 @@ def test_the_ac_says_how_to_use_it_and_what_check_finds(tmp_path):
     unit, _, _ = ac(tmp_path)
     assert unit.actions == ("status", "on", "off", "set", "is_on", "is_off")
     assert "16 to 30 degrees" in unit.what() and "is_on or is_off" in unit.rules()
+    assert "even if TARS thinks it already is" in unit.rules()
     (untried,) = unit.check()  # fitted from the presses, never tried on the AC itself
     assert untried.status == "warn" and "ac_onboard try" in untried.fix
     unit.profile.checked = True

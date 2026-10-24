@@ -138,11 +138,23 @@ def test_a_thermostat_takes_only_the_modes_fans_and_temperatures_it_lists():
 
 
 def test_changing_settings_while_off_says_to_turn_it_on():
-    ac, ha = device({"name": "AC", "entity": "climate.living_room"}, {"ac": "off"})
+    house = entities({"ac": "off"})
+    house["climate.living_room"][1].pop("assumed_state")
+    ha = PretendHA(house)
+    ac = entity_device("AC", {"entity": "climate.living_room"}, HomeAssistant(URL, TOKEN, ha.transport))
     assert "use on" in do(ac, "set", temperature=21) and ha.calls == []
     assert "set needs a mode" in device({"name": "AC", "entity": "climate.living_room"}, {"ac": "cool"})[0].call(
         "set", dict.fromkeys(SETTINGS), None
     )
+
+
+def test_an_ac_home_assistant_only_guesses_is_off_is_still_set_and_its_status_says_its_a_guess():
+    # Someone turned it on with its remote: Home Assistant still has it off, and an IR one sends nothing while it does.
+    ac, ha = device({"name": "AC", "entity": "climate.living_room"}, {"ac": "off"})
+    assert ac.status().startswith("AC: off (Home Assistant's guess: it can't report back)")
+    assert do(ac, "set", temperature=21).startswith("sent: asked the AC to change to 21 degrees")
+    assert [c for c, _ in ha.calls] == ["climate.turn_on", "climate.set_temperature"]
+    assert do(ac, "off").startswith("sent: asked the AC to turn off")  # whatever Home Assistant has it as
 
 
 def test_a_media_player_presses_its_buttons_and_says_where_it_is_now():

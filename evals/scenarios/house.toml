@@ -128,15 +128,20 @@ never_says = ["\\bit's on\\b"]
 
 [[scenario]]
 id = "ac-off-though-it-says-off"
-about = """"Turn off the AC" sends it, even when the AC's status already says off: an IR AC's status is a guess, and
-whoever asks may know better (it was turned on with the remote)."""
+about = """TARS has just said the AC is off, and is asked to turn it off: it sends it anyway. An IR AC's status is
+Home Assistant's guess, and whoever asks may have turned it on with the remote since."""
 tags = ["house", "ac"]
 house = { ac = "off" }
 
 [[scenario.turn]]
+say = "is the AC on?"
+home = []
+says = ["off"]
+
+[[scenario.turn]]
 say = "turn off the AC"
 home = [{ device = "ac", action = "off" }]
-never_says = ["already (off|been)", "\\bit's off\\b"]
+never_says = ["\\bit's off\\b"]
 
 [[scenario]]
 id = "ac-colder"

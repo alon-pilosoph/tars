@@ -37,10 +37,7 @@ lock until it reports locked, for up to 12 seconds, and answers the model with o
 - `not confirmed: asked the front door to lock, and it still says locking`
 - `error: the front door jammed; someone needs to check it`, or `error: Home Assistant didn't answer ...`
 
-The model is told to say what the tool answered, and never that something's done when it isn't. Asked to change a
-device, it changes it even when the status says it's already that way ("turn off the AC" when it says off): the
-status of an AC worked by infrared is Home Assistant's guess, a remote changes things without telling it, and
-whoever asks may know better. Home Assistant
+The model is told to say what the tool answered, and never that something's done when it isn't. Home Assistant
 answers a service call once the device has done it, so a slow lock gets 30 seconds, and one that answers later still
 isn't said to have failed: the tool reads back what the lock says, as ever. A media player's press is done once its
 volume or mute shows it; anything it can't show (play, next) is sent. TARS says "One moment." first while a lock
@@ -234,8 +231,11 @@ IMDb.
 - **The token is a key to the house.** It lives in `.env`, which never leaves the machine.
 - **The web UI has no accounts**, and TARS can lock the door and run the boiler from what it hears. Unlocking is the
   one change it won't make without a voice it knows, sure, asking for it.
-- **"Sent" is honest.** An IR device can't report back; TARS says it sent the command, and someone can say "the AC
-  is actually off" when it didn't take.
+- **"Sent" is honest, and an IR device's status is a guess.** An IR device can't report back: TARS says it sent the
+  command, and its status says it's Home Assistant's guess. So asked to change one, TARS does even when the status
+  says it's already that way ("turn off the AC" when it says off): someone may have used its remote since. Asked to
+  set an AC Home Assistant has as off, it turns it on first, since an IR one may send nothing while it's "off". And
+  someone can say "the AC is actually off" when it didn't take.
 - **ADB is a key to the TV.** Anyone on the home network whose key the TV accepted can work it; TARS's key is in
   `voice_data/androidtv/`. The TV's "Allow USB debugging?" is what lets a new one in.
 - **A device that doesn't answer costs a sentence, not the reply.** Home Assistant down, a box off the Wi-Fi: TARS
