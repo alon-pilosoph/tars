@@ -518,10 +518,10 @@ def test_an_address_at_home_is_never_opened():
         ({"type": "e4", "text": "x"}, {"type": "e4", "text": "x"}),
     ],
 )
-def test_a_step_as_written_is_read_into_what_is_done(written, done):
-    from voice_assistant.browser.session import normal
+def test_a_step_is_the_same_step_however_its_written(written, done):
+    from voice_assistant.browser.session import Step
 
-    assert normal(written) == done
+    assert Step.of(written) == Step.of(done)
 
 
 def test_what_a_step_added_to_the_same_page_is_said_first():

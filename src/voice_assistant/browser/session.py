@@ -9,7 +9,7 @@ says. What the page loaded behind the scenes (its JSON) is kept with the step, f
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from playwright.sync_api import BrowserContext, Dialog, Page, Response
@@ -290,7 +290,7 @@ class Session:
                 outcome.refused, outcome.failed = "home network", True
                 break
             outcome.said.append(f"ok: {said}")
-            if self.page.url != url or "goto" in step or "back" in step:
+            if self.page.url != url or Step.of(step).action in NAVIGATES:
                 self._settle()  # a new page: until it has loaded
             else:
                 self._still(quiet_ms=250, most_ms=1500)  # the same page: until what the step started has drawn
@@ -313,100 +313,95 @@ class Session:
             self.current = after.with_new([text for text, _ in before[1]])
         return outcome
 
-    def _step(self, step: dict[str, Any]) -> str:
-        step = normal(step)
-        page = self.page
-        if "click" in step and isinstance(step["click"], dict):  # by its text, for what has no ref
-            text = str(step["click"].get("text", "")).strip()
-            near = str(step["click"].get("near", "")).strip()
-            if not text:
-                raise ValueError('click by text takes {"click": {"text": "..."}}')
-            target = self._by_text(text, near)
-            self._gate(self._press(target, text), "call request_approval with its ref")
+    def _step(self, raw: dict[str, Any]) -> str:
+        step = Step.of(raw)
+        return getattr(self, "_press_key" if step.action == "press" else f"_{step.action}")(step)
+
+    def _click(self, step: Step) -> str:
+        if step.text:  # by its text, for what has no ref (a ref beside it is where the model saw it)
+            target = self._by_text(step.text, step.near)
+            self._gate(self._press(target, step.text), "call request_approval with its ref")
             target.click(timeout=6_000)
-            return f"clicked the text {text[:60]!r}"
-        if "click" in step:
-            ref = str(step["click"])
-            target = self._target(ref)
-            label = self._label(ref, target)
-            self._gate(self._press(target, label), "call request_approval with this ref")
-            target.click(timeout=6_000)
-            return f"clicked {ref} {label[:60]!r}"
-        if "click_at" in step:  # a point on the screenshot: the last resort, for what the view can't name
-            x, y = (float(v) for v in step["click_at"])
-            found = self.page.evaluate(POINT_JS, [x, y])
-            press = self._gate(found, "call request_approval with its ref", "that point")
-            page.mouse.click(x, y)
-            return f"clicked at {x:g},{y:g} ({(press.labels or ('',))[0][:60]!r})"
-        if "fill" in step and "type" not in step:  # what models also call it
-            step = {**step, "type": step["fill"]}
-        if "type" in step:
-            ref = str(step["type"])
-            field = self._target(ref)
-            text = str(step.get("text", ""))
-            if step.get("slowly"):
-                field.click(timeout=6_000)
-                field.press("ControlOrMeta+a")
-                field.press_sequentially(text, delay=60, timeout=20_000)
-            else:
-                field.fill(text, timeout=6_000)
-            if step.get("submit"):
-                self._enter(field)
-            return f"typed into {ref}" + (" and pressed Enter" if step.get("submit") else "")
-        if "select" in step:
-            ref = str(step["select"])
-            target = self._target(ref)
-            try:
-                chosen = target.select_option(label=str(step.get("option", "")), timeout=6_000)
-            except PlaywrightError as e:  # most often a label not quite as written: say what the labels are
-                options = target.evaluate("(e) => [...(e.options || [])].map((o) => o.label.trim()).slice(0, 30)")
-                raise ValueError(f"{_why(e)}; its options are {options}") from e
-            return f"chose {chosen} in {ref}"
-        if "press" in step:
-            key = str(step["press"])
-            if key not in KEYS:
-                raise ValueError(f"no such key {key!r} (one of {', '.join(sorted(KEYS))})")
-            if key in ("Enter", "Space"):  # either presses a focused button; Enter also submits a field's form
-                focused = page.evaluate(FOCUSED_JS)
-                if focused is not None:
-                    self._gate(focused, "call request_approval with its ref", "that key")
-                if key == "Enter":
-                    self._gate(self._form_submit(page.locator(":focus")), "call request_approval instead", "Enter")
-            page.keyboard.press(key)
-            return f"pressed {key}"
-        if "scroll" in step:
-            where = str(step["scroll"])
-            if where not in ("down", "up"):  # a ref: brought into view
-                self._target(where).scroll_into_view_if_needed(timeout=6_000)
-                return f"scrolled {where} into view"
-            inside = step.get("in")
-            box = self._target(str(inside)).bounding_box() if inside else None
-            size = page.viewport_size or {"width": 1200, "height": 800}
-            x, y = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2) if box else (
-                size["width"] / 2, size["height"] / 2)  # fmt: skip
-            page.mouse.move(x, y)
-            page.mouse.wheel(0, (1 if where == "down" else -1) * size["height"] * 0.8)
-            return f"scrolled {where}" + (f" in {inside}" if inside else "")
-        if "hover" in step:
-            ref = str(step["hover"])
-            self._target(ref).hover(timeout=6_000)
-            return f"hovered over {ref}"
-        if "goto" in step:
-            url = str(step["goto"])
-            if not url.startswith(("https://", "http://")):
-                raise ValueError("goto takes an http(s) address")
-            if at_home(url, self.home):
-                raise ValueError("that's an address on this machine or the home network, which TARS doesn't open")
-            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            return f"went to {url}"
-        if "back" in step:
-            page.go_back(wait_until="domcontentloaded", timeout=20_000)
-            return "went back"
-        if "wait" in step:
-            seconds = min(max(float(step["wait"]), 0.5), 10)
-            page.wait_for_timeout(seconds * 1000)
-            return f"waited {seconds:g}s"
-        raise ValueError(f"unknown step {json.dumps(step, ensure_ascii=False)}")
+            return f"clicked the text {step.text[:60]!r}"
+        target = self._target(step.ref)
+        label = self._label(step.ref, target)
+        self._gate(self._press(target, label), "call request_approval with this ref")
+        target.click(timeout=6_000)
+        return f"clicked {step.ref} {label[:60]!r}"
+
+    def _click_at(self, step: Step) -> str:
+        """A point on the screenshot: the last resort, for what the view can't name."""
+        found = self.page.evaluate(POINT_JS, [step.x, step.y])
+        press = self._gate(found, "call request_approval with its ref", "that point")
+        self.page.mouse.click(step.x, step.y)
+        return f"clicked at {step.x:g},{step.y:g} ({(press.labels or ('',))[0][:60]!r})"
+
+    def _type(self, step: Step) -> str:
+        field = self._target(step.ref)
+        if step.slowly:
+            field.click(timeout=6_000)
+            field.press("ControlOrMeta+a")
+            field.press_sequentially(step.text, delay=60, timeout=20_000)
+        else:
+            field.fill(step.text, timeout=6_000)
+        if step.submit:
+            self._enter(field)
+        return f"typed into {step.ref}" + (" and pressed Enter" if step.submit else "")
+
+    def _select(self, step: Step) -> str:
+        target = self._target(step.ref)
+        try:
+            chosen = target.select_option(label=step.option, timeout=6_000)
+        except PlaywrightError as e:  # most often a label not quite as written: say what the labels are
+            options = target.evaluate("(e) => [...(e.options || [])].map((o) => o.label.trim()).slice(0, 30)")
+            raise ValueError(f"{_why(e)}; its options are {options}") from e
+        return f"chose {chosen} in {step.ref}"
+
+    def _press_key(self, step: Step) -> str:
+        key = step.text
+        if key not in KEYS:
+            raise ValueError(f"no such key {key!r} (one of {', '.join(sorted(KEYS))})")
+        if key in ("Enter", "Space"):  # either presses a focused button; Enter also submits a field's form
+            focused = self.page.evaluate(FOCUSED_JS)
+            if focused is not None:
+                self._gate(focused, "call request_approval with its ref", "that key")
+            if key == "Enter":
+                self._gate(self._form_submit(self.page.locator(":focus")), "call request_approval instead", "Enter")
+        self.page.keyboard.press(key)
+        return f"pressed {key}"
+
+    def _scroll(self, step: Step) -> str:
+        if step.direction not in ("down", "up"):  # a ref: brought into view
+            self._target(step.ref).scroll_into_view_if_needed(timeout=6_000)
+            return f"scrolled {step.ref} into view"
+        box = self._target(step.ref).bounding_box() if step.ref else None
+        size = self.page.viewport_size or {"width": 1200, "height": 800}
+        x, y = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2) if box else (
+            size["width"] / 2, size["height"] / 2)  # fmt: skip
+        self.page.mouse.move(x, y)
+        self.page.mouse.wheel(0, (1 if step.direction == "down" else -1) * size["height"] * 0.8)
+        return f"scrolled {step.direction}" + (f" in {step.ref}" if step.ref else "")
+
+    def _hover(self, step: Step) -> str:
+        self._target(step.ref).hover(timeout=6_000)
+        return f"hovered over {step.ref}"
+
+    def _goto(self, step: Step) -> str:
+        if not step.url.startswith(("https://", "http://")):
+            raise ValueError("goto takes an http(s) address")
+        if at_home(step.url, self.home):
+            raise ValueError("that's an address on this machine or the home network, which TARS doesn't open")
+        self.page.goto(step.url, wait_until="domcontentloaded", timeout=30_000)
+        return f"went to {step.url}"
+
+    def _back(self, step: Step) -> str:
+        self.page.go_back(wait_until="domcontentloaded", timeout=20_000)
+        return "went back"
+
+    def _wait(self, step: Step) -> str:
+        seconds = min(max(step.seconds, 0.5), 10)
+        self.page.wait_for_timeout(seconds * 1000)
+        return f"waited {seconds:g}s"
 
     def _by_text(self, text: str, near: str = ""):
         """The visible element with exactly this text, else the first that has it in it. With `near`, the one in
@@ -612,42 +607,84 @@ def _blank(text: str, secrets: set[str]) -> str:
     return text
 
 
-ACTIONS = {"click", "type", "select", "press", "scroll", "hover", "goto", "back", "wait", "click_at", "fill"}
+ACTIONS = ("click", "type", "select", "press", "scroll", "hover", "goto", "back", "wait", "click_at")
+NAVIGATES = ("goto", "back")  # steps that load a page: the batch waits for it to load
 
 
-def normal(step: dict[str, Any]) -> dict[str, Any]:
-    """A step as the model writes it ({"action": "type", "ref": "e4", "text": ...}) in the form it's done in
-    ({"type": "e4", "text": ...}). The forms models drift into are read too: the action under "type", or "fill"
-    for "type"; a step already in the done form passes as it is."""
-    action = step.get("action")
-    if action is None and step.get("type") in ACTIONS and ("ref" in step or "url" in step or "key" in step):
-        action = step["type"]  # {"type": "click", "ref": "e4"}
-    if action is None:
-        return step
-    action = "type" if action == "fill" else str(action)
-    ref, rest = step.get("ref"), {k: v for k, v in step.items() if k not in ("action", "type", "ref")}
-    if action == "click":  # text, when it's given, is what to click: a ref beside it is where the model saw it
-        if step.get("text"):
-            return {"click": {"text": step["text"], **({"near": step["near"]} if step.get("near") else {})}}
-        return {"click": ref}
-    if action in ("type", "select", "hover"):
-        return {action: ref, **rest}
-    if action == "press":
-        return {"press": step.get("key", step.get("text", ""))}
-    if action == "scroll":
-        direction = step.get("direction")
-        if direction:
-            return {"scroll": direction, **({"in": ref} if ref else {})}
-        return {"scroll": ref or "down"}
-    if action == "goto":
-        return {"goto": step.get("url", "")}
-    if action == "back":
-        return {"back": True}
-    if action == "wait":
-        return {"wait": step.get("seconds", 1)}
-    if action == "click_at":
-        return {"click_at": [step.get("x", 0), step.get("y", 0)]}
-    raise ValueError(f"no such action {action!r}")
+@dataclass(frozen=True)
+class Step:
+    """One step on the page, however the model wrote it (Step.of): what to do, and to what."""
+
+    action: str  # one of ACTIONS ("press" is done by _press_key)
+    ref: str = ""  # the element: what's clicked, typed into, chosen in, scrolled (in) or hovered
+    text: str = ""  # what's typed; what's clicked, by its text; the key pressed
+    near: str = ""  # click by text: the one in the same card or row as this
+    option: str = ""
+    direction: str = ""  # scroll: down or up ("" brings ref into view)
+    url: str = ""
+    seconds: float = 1.0
+    x: float = 0.0
+    y: float = 0.0
+    submit: bool = False  # type: and press Enter
+    slowly: bool = False  # type: a key at a time, for a field that reacts to each
+
+    @classmethod
+    def of(cls, raw: dict[str, Any]) -> Step:
+        """The model's step ({"action": "type", "ref": "e4", "text": "pizza"}), or a short form of one ({"type": "e4",
+        "text": "pizza"}, {"click": {"text": "Tel Aviv"}}), and the forms models drift into: the action under
+        "type", "fill" for "type". ValueError for anything else."""
+        action = raw.get("action")
+        if action is None and raw.get("type") in (*ACTIONS, "fill") and ("ref" in raw or "url" in raw or "key" in raw):
+            action = raw["type"]  # {"type": "click", "ref": "e4"}
+        if action is None:
+            return cls._short(raw)
+        action = "type" if action == "fill" else str(action)
+        if action not in ACTIONS:
+            raise ValueError(f"no such action {action!r}")
+        text, ref = str(raw.get("text") or ""), str(raw.get("ref") or "")
+        if action == "press":
+            text = str(raw.get("key") or text)
+        if action == "click" and text:
+            ref = ""  # text, when it's given, is what's clicked: a ref beside it is only where the model saw it
+        return cls(action, ref=ref, text=text, near=str(raw.get("near") or ""),
+                   option=str(raw.get("option") or ""), direction=str(raw.get("direction") or ""),
+                   url=str(raw.get("url") or ""), seconds=float(raw.get("seconds") or 1),
+                   x=float(raw.get("x") or 0), y=float(raw.get("y") or 0), submit=bool(raw.get("submit")),
+                   slowly=bool(raw.get("slowly")))  # fmt: skip
+
+    @classmethod
+    def _short(cls, raw: dict[str, Any]) -> Step:
+        if "fill" in raw and "type" not in raw:
+            raw = {**raw, "type": raw["fill"]}
+        if isinstance(raw.get("click"), dict):
+            return cls("click", text=str(raw["click"].get("text") or "").strip(),
+                       near=str(raw["click"].get("near") or "").strip())  # fmt: skip
+        for action in ("click", "type", "select", "hover"):
+            if action in raw:
+                return cls(action, ref=str(raw[action]), text=str(raw.get("text") or ""),
+                           option=str(raw.get("option") or ""), submit=bool(raw.get("submit")),
+                           slowly=bool(raw.get("slowly")))  # fmt: skip
+        if "press" in raw:
+            return cls("press", text=str(raw["press"]))
+        if "scroll" in raw:
+            where = str(raw["scroll"])
+            if where in ("down", "up"):
+                return cls("scroll", direction=where, ref=str(raw.get("in") or ""))
+            return cls("scroll", ref=where)
+        if "goto" in raw:
+            return cls("goto", url=str(raw["goto"]))
+        if "back" in raw:
+            return cls("back")
+        if "wait" in raw:
+            return cls("wait", seconds=float(raw["wait"]))
+        if "click_at" in raw:
+            x, y = (float(v) for v in raw["click_at"])
+            return cls("click_at", x=x, y=y)
+        raise ValueError(f"unknown step {json.dumps(raw, ensure_ascii=False)}")
+
+    def key(self) -> str:
+        """The step, the same however it was written: what a repeat is told by."""
+        return json.dumps(asdict(self), sort_keys=True, ensure_ascii=False)
 
 
 class Refused(Exception):

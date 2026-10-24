@@ -19,7 +19,7 @@ from playwright.sync_api import Error as PlaywrightError
 from . import page as pages
 from .gate import moves_on
 from .money import amounts
-from .session import Session, normal
+from .session import Session, Step
 
 REPEATS = 3  # the same steps this many times in a row on one page: not done again
 SIGN_INS = 2  # a sign-in a task, and one more: the first may have been on the wrong page
@@ -115,7 +115,7 @@ class Tools:
         if not outcome.changed and not outcome.failed:
             said += "\nnothing changed on the page: that wasn't it. Look at the screenshot before the next step."
             for s in steps:  # a click or what was typed isn't tried again here; waiting, scrolling and keys may be
-                if not WAITS.intersection(normal(s)):
+                if Step.of(s).action not in WAITS:
                     self.failed_steps.add(_key(s, session.page.url))
         trouble = outcome.failed or not outcome.changed
         return Did(said, self.picture() if trouble and not outcome.refused else None, outcome.changed, trouble)
@@ -172,4 +172,9 @@ class Tools:
 
 
 def _key(step: dict[str, Any], url: str) -> str:
-    return url + " " + json.dumps(step, sort_keys=True, ensure_ascii=False)
+    """A step on a page, the same however the model wrote it; a batch of them as written."""
+    try:
+        written = Step.of(step).key()
+    except ValueError, TypeError:
+        written = json.dumps(step, sort_keys=True, ensure_ascii=False)
+    return url + " " + written
