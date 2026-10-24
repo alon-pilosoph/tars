@@ -81,7 +81,9 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 ~/voice-assistant/deploy/install-pi.sh
 ```
 
-[`deploy/install-pi.sh`](../deploy/install-pi.sh) installs PortAudio and uv, the Python packages (every one has a
+[`deploy/install-pi.sh`](../deploy/install-pi.sh) installs the system packages in
+[`deploy/pi-packages.txt`](../deploy/pi-packages.txt) (PortAudio, and Chromium on a virtual screen for
+[TARS's browser](browser.md#on-the-pi)) and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node),
 downloads the models, lists the audio devices, and installs and starts the systemd user units, at boot too: the
 assistant and the web UI, TARS on Telegram with `[telegram]` on ([setting it up](telegram.md#setting-it-up)), and the
@@ -106,10 +108,30 @@ on: the PowerConf's light is red then.
 By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service),
+[`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service) (the browser's screen),
 [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
 [`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
 [`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]` or
 `[backup]` off stops and disables that unit.
+
+### Trying it on a simulated Pi first
+
+[`deploy/sim/run.sh`](../deploy/sim/run.sh) runs TARS on a simulated device in a container, from this clone: the
+device's OS and architecture (Debian bookworm on arm64, as Raspberry Pi OS is), the packages `install-pi.sh` installs
+there (the same list), a normal user, its cores and memory, as far as the Docker engine here allows. Any Docker
+engine does; on a Mac with Apple Silicon the arm64 device runs natively, and on an x86 machine emulated.
+
+```bash
+deploy/sim/run.sh                                   # build and start a Pi 4 (--device pi5 for a Pi 5)
+deploy/sim/run.sh signin https://wolt.com           # sign in on its browser: the VNC view at localhost:6080
+deploy/sim/run.sh uv run python -m voice_assistant.browser view https://wolt.com   # anything, run on it
+deploy/sim/run.sh --speed shell                     # capped to about the device's speed: a rough idea of it
+deploy/sim/run.sh stop                              # remove: it, its environment and its browser profile
+```
+
+The devices are profiles in [`deploy/sim/devices/`](../deploy/sim/devices/). It's the Pi's software, not its
+hardware: not its speed (`--speed` comes closer, roughly), its audio or its GPU, and not systemd: the container's
+entry script does what the services would.
 
 ## Recognizing people from the start
 

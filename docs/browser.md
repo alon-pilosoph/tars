@@ -103,6 +103,27 @@ uv run python -m voice_assistant.browser view https://wolt.com --shot wolt.jpg  
 
 `run` asks in the terminal before anything is committed, and even then presses nothing without `--really-commit`.
 
+## On the Pi
+
+The same code, with three differences that come from the Pi having no screen
+([`chrome.py`](../src/voice_assistant/browser/chrome.py)):
+
+- **Debian's Chromium on a virtual screen.** Google Chrome has no build for the Pi; Chromium runs as a normal window
+  on Xvfb ([`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service)), not headless,
+  which says so in every request (`HeadlessChrome`) and some sites refuse. WebGL is drawn in software (SwiftShader):
+  a browser without it is a bot to Cloudflare.
+- **Logins without a keyring.** Pi OS Lite has none, so Chromium keeps them with `--password-store=basic`: the
+  profile (`~/.cache/tars-browser`) is only as safe as its folder, which only TARS's user may read, and which the
+  backup leaves out.
+- **Signing in through a VNC view.** `python -m voice_assistant.browser signin https://wolt.com --vnc` shares the
+  virtual screen as a web page on the Pi itself, with a password made for that sign-in, for a laptop to open through
+  `ssh -L 6080:localhost:6080 pi` or Tailscale. A site that asks whether you're a robot (rail.co.il's Cloudflare
+  check, on Linux Chromium) is answered there too, by you, once: TARS doesn't try to get past one.
+
+[`deploy/sim`](deployment.md#trying-it-on-a-simulated-pi-first) tries all of it on a simulated Pi first. At about a
+Pi 4's speed there, a page takes 1-4 s to load and 1.5-5 s to read (most of it waiting for a busy page to stop
+moving), so an errand takes longer than on a Mac, mostly in the browser: the model is in the cloud either way.
+
 ## How well it works
 
 Sixteen tasks on the real sites (`evals/browser/tasks.toml`): seven questions, one look at the person's own
