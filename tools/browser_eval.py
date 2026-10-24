@@ -26,6 +26,7 @@ import tomllib
 from datetime import datetime
 from pathlib import Path
 
+from voice_assistant.browser.trace import read
 from voice_assistant.config import EFFORTS, BrowserConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,26 +146,72 @@ def run_proto(task: dict, steps: int, folder: Path) -> dict:
     }
 
 
+TIDY = (
+    "Empty the basket or cart on {site}: everything in it was put there by test runs (it was empty before them). "
+    "Open it, remove every item, and check it's empty; if the site keeps a basket for each store or restaurant, "
+    "empty the one the last run used (it said: {said}). Then say what you took out. Only a basket or a cart: if the "
+    "site has none, change nothing (not saved lists, favourites or anything else) and say so."
+)
+
+
+def tidy_goal(turns: list[dict], said: str) -> str:
+    """What a tidying run is asked, after a task that fills a basket: to empty the basket on the run's site, which
+    the run's answer (`said`) says more about. A round starts with empty baskets, so anything in one is a run's."""
+    from voice_assistant.browser.vault import site
+
+    where = site(next((t["url"] for t in reversed(turns) if t.get("url")), "")) or "the site"
+    return TIDY.format(site=where, said=" ".join(said.split())[:400] or "nothing")
+
+
+class NoOne:
+    """The person, for a tidying run: it never commits, so any approval it asks for is a no."""
+
+    def approve(self, draft: str, picture: bytes | None = None) -> bool:
+        return False
+
+
 def run_new(task: dict, steps: int, folder: Path, options: argparse.Namespace) -> dict:
-    """The agent on one task, with the brain and the notes `options` says (--model, --effort, --notes)."""
-    from voice_assistant.browser.agent import Settings
+    """The agent on one task, with the brain and the notes `options` says (--model, --effort, --notes), and on a
+    task that fills a basket, a tidying run after it in the same browser."""
+    from voice_assistant.browser.agent import Agent, Settings
+    from voice_assistant.browser.chrome import browser_session
     from voice_assistant.browser.notes import Notes
-    from voice_assistant.browser.run import run_task
+    from voice_assistant.browser.run import model_client, run_in
 
     settings = Settings(model=options.model, effort=options.effort, turns=steps, read_notes=options.notes == "use",
                         history=options.history)  # fmt: skip
-    return run_task(task["goal"], DryRun(), trace_to=folder / f"{task['id']}.jsonl", tidy=task["kind"] == "commit",
-                    settings=settings,
-                    notes=None if options.notes == "off" else Notes())  # fmt: skip
+    trace = folder / f"{task['id']}.jsonl"
+    model = model_client(settings)
+    with browser_session() as session:
+        run = run_in(session, task["goal"], DryRun(), model, settings, trace,
+                     notes=None if options.notes == "off" else Notes())  # fmt: skip
+        record, tidied = run.record(), None
+        if task["kind"] == "commit":
+            tidier = Agent(model, session, NoOne(), Settings(model=settings.model, turns=20), trace=trace)
+            tidier.log({"event": "follow_up", "request": "tidy"})
+            try:
+                tidied = tidier.run(tidy_goal(run.turns, run.result.answer))
+            except Exception as e:  # noqa: BLE001 - a basket left as it is is said so, not raised
+                tidier.log({"event": "error", "error": f"tidying: {type(e).__name__}: {e}"})
+    return {**record, "tidied": tidied.answer if tidied else "", "tidy_tokens_in": tidied.tokens_in if tidied else 0,
+            "tidy_tokens_out": tidied.tokens_out if tidied else 0}  # fmt: skip
 
 
 def run_claude(task: dict, steps: int, folder: Path, options: argparse.Namespace) -> dict:
-    """Claude Code on one task, on the person's Claude plan, working TARS's browser (--model, --effort)."""
+    """Claude Code on one task, on the person's Claude plan, working TARS's browser (--model, --effort), and on a
+    task that fills a basket, Claude again to empty it (TARS's own agent took twice as long to find it)."""
     from voice_assistant.browser.claude import run_claude as run
+    from voice_assistant.browser.trace import read
 
-    return run(task["goal"], folder / f"{task['id']}.jsonl", model=options.model, effort=options.effort,
-               turns=steps, tidy=task["kind"] == "commit", notes=options.notes != "off",
-               narrate=options.narrate)  # fmt: skip
+    trace = folder / f"{task['id']}.jsonl"
+    record = run(task["goal"], trace, model=options.model, effort=options.effort, turns=steps,
+                 notes=options.notes != "off", narrate=options.narrate)  # fmt: skip
+    if task["kind"] == "commit":
+        turns = [e for e in read(trace) if e.get("event") == "turn"] if trace.exists() else []
+        tidied = run(tidy_goal(turns, record["answer"]), trace.with_suffix(".tidy.jsonl"), model=options.model,
+                     effort=options.effort, turns=25)  # fmt: skip
+        record |= {"tidied": tidied["answer"], "tidy_api_usd": tidied["api_usd"]}
+    return record
 
 
 def relearn(folder: Path) -> None:
@@ -177,7 +224,7 @@ def relearn(folder: Path) -> None:
     spent_in = spent_out = 0
     traces = [p for p in folder.glob("*.jsonl") if p.name != "results.jsonl" and not p.name.endswith(".tidy.jsonl")]
     for trace in sorted(traces, key=lambda p: p.stat().st_mtime):
-        events = [json.loads(line) for line in trace.read_text().split("\n") if line]  # not splitlines: a page's U+2028
+        events = read(trace)
         start = next((e for e in events if e["event"] == "start"), None)
         end = next((e for e in events if e["event"] == "end"), None)
         if start is None or end is None:

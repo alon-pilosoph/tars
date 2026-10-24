@@ -19,8 +19,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..config import BrowserConfig
 from .agent import RULES, header_for
 from .chrome import close as close_chrome
+from .trace import Trace, read
 
 MODEL = "claude-opus-5-5"
 SERVER = "tars-browser"
@@ -62,11 +64,10 @@ NARRATE = ("The person follows your progress: give every act, find and look call
            "note says what you're trying instead.")  # fmt: skip
 
 
-def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "medium", turns: int = 30,
-               timeout_s: float = 900, tidy: bool = False, notes: bool = False,
-               narrate: bool = False) -> dict[str, Any]:  # fmt: skip
-    """Runs Claude Code on `goal` with TARS's browser; what it did, in run_task's shape. `tidy`: then empties a
-    basket the run may have filled (as run_task does for evals). `notes`: it reads the notes on the sites it goes to,
+def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "medium", turns: int = BrowserConfig.turns,
+               timeout_s: float = 900, notes: bool = False, narrate: bool = False) -> dict[str, Any]:  # fmt: skip
+    """Runs Claude Code on `goal` with TARS's browser; what it did, as run.Run.record() has it. `notes`: it reads the
+    notes on the sites it goes to,
     and writes what the run taught it (in notes/, the only files it can touch). `narrate`: it writes a short note
     before each step, for studying how it works (kept with the rest of its stream, beside the trace)."""
     trace_to.parent.mkdir(parents=True, exist_ok=True)
@@ -92,7 +93,7 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
         "--output-format", "stream-json", "--verbose", "--no-session-persistence",
         "--setting-sources", "project", "--settings", json.dumps({"autoMemoryEnabled": False}),
     ]  # fmt: skip
-    _log(trace_to, {"event": "start", "goal": goal, "model": model, "effort": effort})
+    Trace(trace_to)({"event": "start", "goal": goal, "model": model, "effort": effort})
     started = time.perf_counter()
     error = ""
     try:
@@ -105,7 +106,7 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
     close_chrome()  # Claude Code stops its MCP server without letting it shut the browser
     trace_to.with_suffix(".stream.jsonl").write_text(stream)  # every message and call, as Claude Code streamed them
     final = next((m for m in map(_json, reversed(stream.splitlines())) if m.get("type") == "result"), {})
-    events = [_json(line) for line in trace_to.read_text().split("\n") if line] if trace_to.exists() else []
+    events = read(trace_to) if trace_to.exists() else []
     calls = [e for e in events if e.get("event") == "turn"]
     end = next((e for e in events if e.get("event") == "end"), None)
     usage = final.get("usage", {})
@@ -129,19 +130,7 @@ def run_claude(goal: str, trace_to: Path, model: str = MODEL, effort: str = "med
         "commits_asked": end.get("commits_asked", []) if end else [],
         "error": error or (final.get("result", "") if final.get("is_error") else ""),
     }
-    if tidy:
-        result |= _tidy(calls, result["answer"], trace_to, model, effort)
     return result
-
-
-def _tidy(calls: list[dict[str, Any]], said: str, trace_to: Path, model: str, effort: str) -> dict[str, Any]:
-    """Empties the basket the run may have filled, by Claude too (TARS's own agent took twice as long to find it)."""
-    from .run import tidy_goal
-
-    _log(trace_to, {"event": "follow_up", "request": "tidy"})
-    tidied = run_claude(tidy_goal(calls, said), trace_to.with_suffix(".tidy.jsonl"), model=model, effort=effort,
-                        turns=25)  # fmt: skip
-    return {"tidied": tidied["answer"], "tidy_api_usd": tidied["api_usd"]}
 
 
 def _json(line: str) -> dict[str, Any]:
@@ -150,8 +139,3 @@ def _json(line: str) -> dict[str, Any]:
     except ValueError:
         return {}
     return found if isinstance(found, dict) else {}
-
-
-def _log(trace: Path, entry: dict[str, Any]) -> None:
-    with trace.open("a") as out:
-        out.write(json.dumps({"t": round(time.time(), 2), **entry}, ensure_ascii=False, default=str) + "\n")

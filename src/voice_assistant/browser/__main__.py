@@ -116,8 +116,8 @@ def main() -> None:
         settings = Settings(model=browser.model, effort=browser.effort, turns=args.turns,
                             really_commit=args.really_commit)  # fmt: skip
         you = Terminal(args.person)
-        result = run_task(args.goal, you, trace_to=args.trace, settings=settings, person=you)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        run = run_task(args.goal, you, trace_to=args.trace, settings=settings, person=you)
+        print(json.dumps(run.record(), ensure_ascii=False, indent=2))
         return
     if args.command == "vault":
         if args.action != "list" and not args.site:

@@ -42,6 +42,18 @@ def executable() -> str:
 
 
 @contextmanager
+def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[str] = frozenset()):
+    """TARS's Chrome with Playwright attached, as a Session (session.py), for as long as it's needed, then shut.
+    `home`: the house's own names, never opened (homenet.py)."""
+    from playwright.sync_api import sync_playwright
+
+    from .session import Session
+
+    with own_chrome(profile, port) as address, sync_playwright() as p:
+        yield Session(p.chromium.connect_over_cdp(address).contexts[0], home=home)
+
+
+@contextmanager
 def own_chrome(profile: Path = PROFILE, port: int = PORT, headless: bool = False) -> Iterator[str]:
     """TARS's Chrome for as long as it's needed, then shut; yields the address Playwright attaches to."""
     close(port)

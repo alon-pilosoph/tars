@@ -524,14 +524,6 @@ def test_a_step_as_written_is_read_into_what_is_done(written, done):
     assert normal(written) == done
 
 
-def test_a_tidying_run_is_told_the_site_and_what_the_run_said():
-    from voice_assistant.browser.run import tidy_goal
-
-    turns = [{"call": "act", "url": "https://wolt.com/x", "said": "ok"}, {"call": "done", "url": "", "said": "ok"}]
-    goal = tidy_goal(turns, "Your margherita from Pizza Har Sinai is at checkout, ₪66.")
-    assert "Empty the basket or cart on wolt.com" in goal and "Pizza Har Sinai" in goal
-
-
 def test_what_a_step_added_to_the_same_page_is_said_first():
     before = pages.view(CARD_PAGE, "T", "U", 700)
     picker = (

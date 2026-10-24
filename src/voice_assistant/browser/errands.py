@@ -213,8 +213,8 @@ class Errands:
     ):
         """`chats`: where an errand reaches the person. `people`: who may
         ask, the household's first first. `say_aloud(person, text)`: has TARS say an errand's answer at home, for one
-        asked aloud. `run`: run.run_task (the tests pass their own). `openai`: TARS's OpenAI client, for the browser's
-        model."""
+        asked aloud. `run`: run.run_task, which returns a run.Run (the tests pass their own). `openai`: TARS's
+        OpenAI client, for the browser's model."""
         self._cfg, self.chats, self._people, self._folder = cfg, chats, people, folder
         self.queue = queue
         self._say_aloud, self._run, self._openai, self._home = say_aloud, run, openai, home
@@ -254,12 +254,13 @@ class Errands:
         trace = self._folder / f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(person)}.jsonl"
         settings = Settings(model=self._cfg.model, effort=self._cfg.effort, turns=self._cfg.turns,
                             really_commit=self._cfg.really_order)  # fmt: skip
-        you, result = ByChat(person, self.chats), {}
+        you, run = ByChat(person, self.chats), None
         try:
-            run = self._run or _run_task()
-            result = run(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai, home=self._home,
-                         profile=profile_for(person, self._people[0]), notes=_notes(self._folder.parent))  # fmt: skip
-            text, status = _told(result), DONE if result.get("ended") == "done" else FAILED
+            run_task = self._run or _run_task()
+            run = run_task(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai,
+                           home=self._home, profile=profile_for(person, self._people[0]),
+                           notes=_notes(self._folder.parent))  # fmt: skip
+            text, status = _told(run.result), DONE if run.result.ended == "done" else FAILED
         except Exception as e:  # noqa: BLE001 - an errand that broke is said so, never left hanging
             traceback.print_exc()
             text, status = f"The errand broke before it was done ({type(e).__name__}), so I stopped.", FAILED
@@ -276,7 +277,7 @@ class Errands:
             print(f"(browser: couldn't record errand {row['id']}: {e!r})")
         self._tell(person, text)
         if row["asked_via"] == VOICE and self._say_aloud:
-            aloud = (result.get("aloud") or "").strip() or _first_sentences(text)
+            aloud = (run.result.aloud.strip() if run else "") or _first_sentences(text)
             try:
                 self._say_aloud(person, aloud)  # cut to a reminder's length there
             except Exception as e:  # noqa: BLE001 - it's in their chat all the same
@@ -301,17 +302,17 @@ def _notes(folder: Path):
     return Notes(folder / "notes")
 
 
-def _told(result: dict[str, Any]) -> str:
-    """What the person is told: the agent's answer, or why there's none."""
-    answer = (result.get("answer") or "").strip()
-    nothing = "" if result.get("commits_asked") else " Nothing was ordered."
-    if result.get("ended") == "error":
+def _told(result) -> str:
+    """What the person is told: the agent's answer (an agent.Result), or why there's none."""
+    answer = result.answer.strip()
+    nothing = "" if result.commits_asked else " Nothing was ordered."
+    if result.ended == "error":
         return "The errand broke before it was done, so I stopped." + (
             f" Where it got to: {answer}" if answer else nothing
         )
     if answer:
         return answer
-    if result.get("ended") == "out of turns":
+    if result.ended == "out of turns":
         return "That took more steps than I allow an errand, so I stopped." + nothing
     return "I stopped without an answer." + nothing
 

@@ -111,17 +111,25 @@ def errands(tmp_path, run, people=("Alon", "Stacey"), store=None, say_aloud=None
     return e, chats.told
 
 
-def done(answer, aloud="", **more):
-    return lambda goal, approver, **kw: {"ended": "done", "answer": answer, "aloud": aloud, "commits_asked": [], **more}
+def ran(answer, aloud="", ended="done"):
+    """A run.Run that did `answer`."""
+    from voice_assistant.browser.agent import Result
+    from voice_assistant.browser.run import Run
+
+    return Run(Result(ended=ended, answer=answer, aloud=aloud), "gpt-6-luna")
+
+
+def done(answer, aloud=""):
+    return lambda goal, approver, **kw: ran(answer, aloud)
 
 
 def test_an_errand_asked_in_a_chat_runs_on_its_own_and_its_answer_goes_to_the_chat(tmp_path):
-    gate, ran = threading.Event(), []
+    gate, calls = threading.Event(), []
 
     def run(goal, approver, **kw):
-        ran.append((goal, approver.name, kw["profile"].name, kw["settings"].model))
+        calls.append((goal, approver.name, kw["profile"].name, kw["settings"].model))
         gate.wait(2)
-        return {"ended": "done", "answer": "Your margherita is in the basket.", "commits_asked": []}
+        return ran("Your margherita is in the basket.")
 
     e, told = errands(tmp_path, run)
     asking = BrowseTool(e.queue, ["Alon", "Stacey"], TELEGRAM)
@@ -132,10 +140,10 @@ def test_an_errand_asked_in_a_chat_runs_on_its_own_and_its_answer_goes_to_the_ch
     gate.set()
     e.thread.join(2)
     assert told == [("Alon", "Your margherita is in the basket.")]
-    assert ran == [("order a margherita on Wolt", "Alon", "profile", "gpt-6-luna")]
+    assert calls == [("order a margherita on Wolt", "Alon", "profile", "gpt-6-luna")]
     assert e.next()  # Stacey's, next
     e.thread.join(2)
-    assert ran[1][:2] == ("book a table on Ontopo", "Stacey") and ran[1][2] not in ("profile", ran[0][2])
+    assert calls[1][:2] == ("book a table on Ontopo", "Stacey") and calls[1][2] not in ("profile", calls[0][2])
 
 
 def test_an_errand_needs_someone_known_asking_a_goal_and_a_turn_that_goes_ahead(tmp_path):

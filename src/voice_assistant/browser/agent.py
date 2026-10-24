@@ -26,6 +26,7 @@ from ..config import BrowserConfig
 from .notes import Notes, site
 from .session import Session
 from .tools import Approver, Tools
+from .trace import Trace
 
 # The goal, and what changes with it; RULES (below) are the same for every goal, and are also what Claude Code is
 # given as its CLAUDE.md (claude.py).
@@ -352,7 +353,7 @@ class Agent:
     ):
         self.session = session
         self.settings = settings or Settings()
-        self.trace = trace
+        self.trace, self.log = trace, Trace(trace)
         self.brain = brain_for(client, self.settings)
         self.result = Result(ended="out of turns")
         self.tools = Tools(session, approver, self.settings.really_commit, sign_in, self._log)
@@ -446,8 +447,4 @@ class Agent:
         return self.result
 
     def _log(self, entry: dict[str, Any]) -> None:
-        if self.trace is None:
-            return
-        self.trace.parent.mkdir(parents=True, exist_ok=True)
-        with self.trace.open("a") as out:
-            out.write(json.dumps({"t": round(time.time(), 2), **entry}, ensure_ascii=False, default=str) + "\n")
+        self.log(entry)

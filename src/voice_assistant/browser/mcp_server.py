@@ -15,7 +15,6 @@ server's event loop runs on another. How it runs comes from the environment, as 
 There's no one to ask from here, so a commit is approved only as a dry run: with "really", it's refused. For the
 same reason sign_in uses only the logins in the vault (the household's first person's), and has no code to give."""
 
-import json
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -29,6 +28,7 @@ from . import login
 from .chrome import PROFILE, own_chrome
 from .session import Session
 from .tools import Tools
+from .trace import Trace
 from .vault import Vault, household_person
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -101,12 +101,7 @@ class Browser:
         self.thread.shutdown()
 
 
-def log(entry: dict[str, Any]) -> None:
-    if TRACE is None:
-        return
-    TRACE.parent.mkdir(parents=True, exist_ok=True)
-    with TRACE.open("a") as out:
-        out.write(json.dumps({"t": round(time.time(), 2), **entry}, ensure_ascii=False, default=str) + "\n")
+log = Trace(TRACE)
 
 
 browser = Browser()
