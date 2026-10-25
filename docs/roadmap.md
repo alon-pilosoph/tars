@@ -87,9 +87,9 @@ The systemd services run unconfined.
 
 **Plan, most worth it first:**
 
-1. **The threat model.** `docs/security.md`: who might attack (a guest or device on the Wi-Fi, a malicious web page,
-   poisoned web content or a message, a plugin, a stolen Pi or key, a recorded or cloned voice), and for each, the
-   defense and its test. A `SECURITY.md` for reporting a vulnerability.
+1. **The threat model.** Written: [security](security.md) lists who might attack, the defense and test for each,
+   and what's open, and [SECURITY.md](../SECURITY.md) says how to report a vulnerability. It's kept current as each
+   item below lands.
 2. **The web UI.** Passkey sign-in per household member, with HttpOnly, SameSite=Strict session cookies; HTTPS from
    `tailscale cert` (the browser's login page too); served on the tailnet only, not the LAN, with Tailscale's access
    rules as the outer wall. A test that walks every route and fails if one answers without a session, so a new

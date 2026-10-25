@@ -114,6 +114,7 @@ assistant, edit the system prompt.
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
 | [Trying it on a simulated device](docs/simulator.md) | the Pi's software in a container: tests, the browser, a service; device profiles |
 | [Backing up to S3](docs/backup.md) | what goes to the bucket, making room on the Pi, archiving, bringing it back |
+| [Security](docs/security.md) | what TARS protects, the defense and test for each threat, what's still open |
 | [What's next](docs/roadmap.md) | real use, security, interrupting, plugins and updates, automations and skills, memory |
 
 ## Development
