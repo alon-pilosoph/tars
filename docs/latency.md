@@ -340,4 +340,4 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 ## Next steps
 
 Measure the echo canceller in the room, then keep the mic open while TARS answers too, so "hey TARS" can interrupt
-a reply ([what's next](roadmap.md#2-tars-stop-interrupting-a-reply)).
+a reply ([what's next](roadmap.md#3-tars-stop-interrupting-a-reply)).

@@ -55,7 +55,7 @@ Anyone can acknowledge anything; the status records who.
   Missed. TARS can't hear while it makes a sound, so it rings in bursts and listens in between: "stop" works without
   the wake word, and "hey TARS, turn the timer off" any time.
 - **Never over a conversation.** If something comes due while someone is talking to TARS, it waits until the
-  conversation is over. (Interrupting needs ["TARS stop"](roadmap.md#2-tars-stop-interrupting-a-reply).)
+  conversation is over. (Interrupting needs ["TARS stop"](roadmap.md#3-tars-stop-interrupting-a-reply).)
 - **Late ones say so.** Anything that came due while TARS was off, or in a long conversation, is said as soon as it
   can be, with "This was due at 8:00." A snoozed one is on time at its new time.
 - **When the voice is down**, nothing plays, not even the chime: the line's audio is made first, and the chime and
