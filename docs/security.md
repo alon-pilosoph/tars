@@ -61,6 +61,9 @@ instructions and…". A model may believe them, so what matters is what code all
   - **Unlocking is decided by code, from what was heard.** Only by voice, only for a voice in `[home] unlock_voices`
     recognised at `unlock_threshold` or better, and only when the person's own transcribed words say "unlock"; a model
     asking to unlock for any other reason is refused (`home.py`).
+  - **A reply that searched the web changes nothing in the house.** From the moment a search starts, the house
+    tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in
+    `home.py`).
   - **A Telegram chat works nothing in the house** (it can only ask who's home: `__main__.py`, `chat_home()`).
   - **The browser never orders, pays, books or sends on its own.** Code checks every click and key against what
     commits (`browser/gate.py`), and presses that button only on the person's tap on Order in their own chat, and only
@@ -70,7 +73,8 @@ instructions and…". A model may believe them, so what matters is what code all
   - **Secrets never reach a model.** Passwords and what a sign-in typed are left out of every page the model reads,
     covered in screenshots and blanked from traces; logins are typed by code only into their own site's origin.
 - **Tests:** `tests/test_home.py::test_nothing_else_unlocks` (a note saying to let the plumber in, a typed request, an
-  unsure match);
+  unsure match), `::test_a_reply_that_searched_the_web_changes_nothing_in_the_house`,
+  `::test_a_reply_that_searched_the_web_still_reads_the_house`;
   `tests/test_browser_chrome.py::test_what_commits_is_never_clicked_whichever_way_its_asked_for`,
   `::test_a_key_on_what_commits_is_refused`; `tests/test_browser.py::test_what_commits_is_stopped`,
   `::test_a_real_approval_presses_only_on_a_yes_with_the_same_total`;
@@ -80,9 +84,6 @@ instructions and…". A model may believe them, so what matters is what code all
   `tests/test_browser_login.py::test_what_a_sign_in_sent_is_blanked_out_of_the_trace`,
   `::test_origin_is_what_pages_are_compared_by`.
 - **Open:**
-  - A voice turn that looks something up gives OpenAI's model web search and the house tool together (`llm.py`), so a
-    poisoned search result could switch a device other than the lock (the boiler, the AC). Nothing but the model
-    stands in the way.
   - No set of injection attempts is run against the models to show these hold in practice (it would call the models,
     so it's run on request with a cost estimate).
 

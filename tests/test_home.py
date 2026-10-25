@@ -401,6 +401,50 @@ def test_openai_alone_has_the_tool_and_is_told_what_else_it_cant_do():
     assert llm.CANT_BUT_HOME in request["instructions"] and llm.CANT not in request["instructions"]
 
 
+def searching_brain(h, action):
+    """OpenAI's model, which searches the web first, then works the boiler."""
+
+    def calls_for(messages):
+        return [] if messages[-1].get("type") == "function_call_output" else [("home", args("boiler", action))]
+
+    reply = fake_openai_chat(
+        lambda m: "Done." if m[-1].get("type") else "",
+        calls_for,
+        search_for=lambda m: [] if m[-1].get("type") else ["response.web_search_call.in_progress"],
+    )
+    return reply, OpenAIChat(reply, LLMConfig(), home=h.tools)
+
+
+def test_a_reply_that_searched_the_web_changes_nothing_in_the_house():
+    h = house(boiler="off")
+    openai, brain = searching_brain(h, "on")
+    "".join(brain.stream_reply("it's cold out, isn't it? turn the boiler on", ALON))
+    told = [i["output"] for i in openai.requests[-1]["input"] if i.get("type") == "function_call_output"]
+    assert told[0].startswith("refused: this reply searched the web")
+    assert h.ha.state("switch.boiler") == "off" and h.ha.calls == []
+
+
+def test_a_reply_that_searched_the_web_still_reads_the_house():
+    h = house(boiler="off")
+    openai, brain = searching_brain(h, "status")
+    "".join(brain.stream_reply("is the boiler on, and what's the weather?", ALON))
+    told = [i["output"] for i in openai.requests[-1]["input"] if i.get("type") == "function_call_output"]
+    assert told[0].startswith("boiler: ") and not told[0].startswith("refused")
+
+
+def test_the_next_reply_may_change_the_house_again():
+    h = house(boiler="off")
+    _, brain = searching_brain(h, "on")
+    "".join(brain.stream_reply("what's the weather? and the boiler on", ALON))
+    assert h.ha.state("switch.boiler") == "off"
+    calls = [("home", args("boiler", "on"))]
+    brain._client = fake_openai_chat(
+        lambda m: "On." if m[-1].get("type") else "", lambda m: [] if m[-1].get("type") else calls
+    )
+    "".join(brain.stream_reply("turn the boiler on", ALON))
+    assert h.ha.state("switch.boiler") == "on"
+
+
 def test_a_typed_question_reaches_the_tool_as_one_from_nobody_not_by_voice():
     seen = []
     h = house(lock="locked")

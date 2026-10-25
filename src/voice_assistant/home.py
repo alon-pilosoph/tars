@@ -52,13 +52,16 @@ class Request:
     come from speaker ID on this turn's own recording (by voice), or are the chat's person (on Telegram), and `heard`
     is its transcript, never the model's words.
     `may_act(timeout_s)` blocks until the turn is over: True if the reply is going to be played (go ahead), False if
-    it was thrown away. None for a turn that's over already (typed)."""
+    it was thrown away. None for a turn that's over already (typed).
+    `read_the_web`: the turn has read web search results, so text from anywhere may be steering the model: it can
+    still read the house, but changes nothing in it."""
 
     speaker: str | None = None
     score: float | None = None
     by_voice: bool = False
     heard: str = ""
     may_act: Callable[[float], bool] | None = None
+    read_the_web: bool = False
 
     def go_ahead(self) -> bool:
         return True if self.may_act is None else self.may_act(GO_AHEAD_TIMEOUT_S)
@@ -307,6 +310,11 @@ class HomeTools:
             return f"error: the {name} can do: {', '.join(device.actions)}"
         if action == STATUS:
             return self._status(device)
+        if request.read_the_web:
+            return (
+                "refused: this reply searched the web, so it changes nothing in the house; "
+                "they can ask for the change on its own"
+            )
         if action == UNLOCK and (refused := self._may_unlock(request)):
             return refused
         # A change waits for the turn to be over: a reply still being drafted may yet be thrown away.
