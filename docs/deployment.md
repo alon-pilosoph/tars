@@ -219,4 +219,4 @@ household, the Pi-only setup is simpler and private, which is why TARS is built 
   nothing leaves the Pi but the turns themselves.
 - **Measured on the development Mac.** The wake stages' cost and the response times come from the Mac; the Pi should
   be comfortable (stage 1 is tiny), but running the wake model and the voice's playback at once on the Pi is still to
-  be checked ([what's next](roadmap.md#2-tars-stop-interrupting-a-reply)).
+  be checked ([what's next](roadmap.md#3-tars-stop-interrupting-a-reply)).

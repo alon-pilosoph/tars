@@ -272,7 +272,7 @@ accented clips, other recognizers as the check) are in
 models and the test sets are here.
 
 **"TARS stop"**, the interrupt phrase under development ([wake word](../docs/wake-word.md#tars-stop),
-[roadmap](../docs/roadmap.md), step 2), is trained with `stage1/train.py generic --phrase tars_stop` and tested with
+[roadmap](../docs/roadmap.md), step 3), is trained with `stage1/train.py generic --phrase tars_stop` and tested with
 `eval/pipeline.py --phrase tars_stop` (with `--user`, on the owner's "TARS stop" takes too). A learned layer for it,
 `stage2/train_check.py generic --phrase tars_stop`, did worse on the owner and isn't used. Its rejects include "stop"
 on its own and in sentences, because a model trained without them learned the word "stop". The generators add to what's there, so on a data folder made before those rejects

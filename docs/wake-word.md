@@ -358,7 +358,7 @@ work, below.
 ## "TARS stop"
 
 "TARS stop" is the interrupt phrase under development: said while TARS talks, it should cut the answer off
-([roadmap](roadmap.md), step 2). It isn't in use yet. Its model, `models/generic/tars_stop.tflite`, is trained like
+([roadmap](roadmap.md), step 3). It isn't in use yet. Its model, `models/generic/tars_stop.tflite`, is trained like
 "hey TARS" (`stage1/train.py generic --phrase tars_stop`) and checked by Vosk with a "tars stop" grammar.
 
 **Why "stop" is a negative.** A model trained without "stop" among its negatives learned the word "stop" rather than
