@@ -63,7 +63,7 @@ class PretendS3:
     def _bucket(self, Bucket):
         if self.down:
             raise ConnectionError("no route to host")
-        assert Bucket == "tars-home"
+        assert Bucket == "my-tars-backup"
 
     def head_bucket(self, Bucket):
         self._bucket(Bucket)
@@ -130,7 +130,7 @@ class PretendS3:
 
 
 def config(**kw) -> BackupConfig:
-    return BackupConfig(enabled=True, bucket="tars-home", region="eu-central-1", **kw)
+    return BackupConfig(enabled=True, bucket="my-tars-backup", region="eu-central-1", **kw)
 
 
 @pytest.fixture
@@ -144,7 +144,7 @@ def now():
 
 
 def backup(log, s3, now, files=None, **kw) -> Backup:
-    return Backup(log, config(**kw), S3(s3, "tars-home"), files or {}, clock=lambda: now[0])
+    return Backup(log, config(**kw), S3(s3, "my-tars-backup"), files or {}, clock=lambda: now[0])
 
 
 def places(root: Path) -> dict[str, Path]:
@@ -334,7 +334,7 @@ def test_a_new_machine_gets_the_latest_snapshot_back(log, convos, s3, now, tmp_p
     now[0] += 2 * DAY_S
     job.run()
     new = tmp_path / "new-pi"
-    latest = restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+    latest = restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
     assert latest == snapshot_keys(s3)[-1]
     assert (new / "voice_data/voiceprints.npz").read_bytes() == b"voices"
     with sqlite3.connect(new / "voice_data/events/events.db") as db:
@@ -348,7 +348,7 @@ def test_a_restored_machines_first_pass_brings_back_what_must_be_on_it(log, conv
     sent = log.store.rows("SELECT file FROM items")[0]["file"]
     backup(log, s3, now).run()  # all of it uploaded, and still on the old machine: the snapshot says so
     new = tmp_path / "new-pi"
-    restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+    restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
     restored = EventLog(new / "voice_data/events")
     status = backup(restored, s3, now).run()
     assert status.error == "" and status.brought_back == 2
@@ -372,9 +372,9 @@ def test_a_new_machine_never_writes_over_the_backup_and_carries_it_on_once_resto
     assert status.error.startswith("tars/ in the bucket is the backup of another database")
     assert s3.objects == bucket  # nothing written: no snapshot of its own to be restored by mistake
     with pytest.raises(ValueError, match="has a history of its own"):
-        restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+        restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
     (new / "voice_data/events/events.db").rename(new / "voice_data/events/new.db")  # moved away, as it says
-    restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+    restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
     restored = EventLog(new / "voice_data/events")
     assert len(restored.store.rows("SELECT id FROM conversations")) == 1
     assert backup(restored, s3, now).run().error == ""  # the same database: the backup carries on
@@ -396,7 +396,7 @@ def test_a_new_machines_empty_database_is_restored_over(log, convos, s3, now, tm
     backup(log, s3, now).run()
     new = tmp_path / "new-pi"
     EventLog(new / "voice_data/events")  # TARS was started once: an empty database, closed
-    restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+    restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
     with sqlite3.connect(new / "voice_data/events/events.db") as db:
         assert db.execute("SELECT count(*) FROM events").fetchone() == (1,)
 
@@ -409,12 +409,12 @@ def test_a_restore_never_writes_over_a_history_or_an_open_database(log, convos, 
     log.store.connect().execute(f"VACUUM INTO '{stopped / 'voice_data/events/events.db'}'")
     for _ in range(2):  # looking leaves nothing behind that would read as open the second time
         with pytest.raises(ValueError, match="has a history of its own"):
-            restore_snapshot(S3(s3, "tars-home"), config(), places(stopped))
+            restore_snapshot(S3(s3, "my-tars-backup"), config(), places(stopped))
     new = tmp_path / "new-pi"
     (new / "voice_data/events").mkdir(parents=True)
     (new / "voice_data/events/events.db-wal").write_bytes(b"")
     with pytest.raises(ValueError, match="is open"):
-        restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+        restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
 
 
 def test_a_restore_waits_for_a_pass_or_a_fetch(log, convos, s3, now, tmp_path):
@@ -422,7 +422,7 @@ def test_a_restore_waits_for_a_pass_or_a_fetch(log, convos, s3, now, tmp_path):
     backup(log, s3, now).run()
     new = tmp_path / "new-pi"
     with exclusive(new / "voice_data/events"), pytest.raises(Busy):
-        restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+        restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
 
 
 def test_a_restore_that_fails_partway_changes_nothing(log, convos, s3, now, tmp_path, monkeypatch):
@@ -444,12 +444,12 @@ def test_a_restore_that_fails_partway_changes_nothing(log, convos, s3, now, tmp_
 
     monkeypatch.setattr(shutil, "copyfile", disk_full)
     with pytest.raises(OSError, match="No space"):
-        restore_snapshot(S3(s3, "tars-home"), config(), places(new))
+        restore_snapshot(S3(s3, "my-tars-backup"), config(), places(new))
     assert copies and {p.name for p in new.rglob("*") if p.is_file()} == {"backup.lock"}
 
 
 def test_tars_snapshot_holds_the_database_voiceprints_its_wake_models_and_local_settings(tmp_path, monkeypatch):
-    monkeypatch.setattr(cli, "make_s3", lambda cfg, root: S3(PretendS3(), "tars-home"))
+    monkeypatch.setattr(cli, "make_s3", lambda cfg, root: S3(PretendS3(), "my-tars-backup"))
     cfg = dataclasses.replace(load_config(REPO_CONFIG, local=False), backup=config())
     (tmp_path / "voice_data").mkdir()
     (tmp_path / "voice_data/voiceprints.npz").write_bytes(b"voices")
@@ -472,7 +472,7 @@ def house(root: Path, module: str, source: str) -> Config:
 
 
 def test_the_snapshot_keeps_what_the_house_learned_and_a_restore_puts_it_back(tmp_path, monkeypatch):
-    pretend = S3(PretendS3(), "tars-home")
+    pretend = S3(PretendS3(), "my-tars-backup")
     monkeypatch.setattr(cli, "make_s3", lambda cfg, root: pretend)
     old, new = tmp_path / "old", tmp_path / "new"
     old.mkdir()
@@ -505,7 +505,7 @@ def test_the_snapshot_keeps_what_the_house_learned_and_a_restore_puts_it_back(tm
 def test_a_plugin_that_wont_load_or_reaches_outside_costs_only_its_own_files(
     tmp_path, monkeypatch, capsys, source, said
 ):
-    monkeypatch.setattr(cli, "make_s3", lambda cfg, root: S3(PretendS3(), "tars-home"))
+    monkeypatch.setattr(cli, "make_s3", lambda cfg, root: S3(PretendS3(), "my-tars-backup"))
     cfg = house(tmp_path, f"odd_house_{len(said)}", source)
     (tmp_path / "config.local.toml").write_text("")
     names = set(snapshot_of(cli.make_backup(cfg, tmp_path)))
@@ -681,9 +681,9 @@ def test_the_web_ui_plays_a_recording_thats_only_in_the_bucket(log, convos, s3, 
 def test_s3s_errors_keep_their_code():
     s3 = PretendS3()
     with pytest.raises(BackupError) as e:
-        S3(s3, "tars-home").get("tars/nothing")
+        S3(s3, "my-tars-backup").get("tars/nothing")
     assert e.value.code == "NoSuchKey"
-    assert S3(s3, "tars-home").size("tars/nothing") is None
+    assert S3(s3, "my-tars-backup").size("tars/nothing") is None
 
 
 def test_the_keys_come_from_env_and_nowhere_else(tmp_path, monkeypatch):
@@ -698,7 +698,7 @@ def test_the_keys_come_from_env_and_nowhere_else(tmp_path, monkeypatch):
 def test_s3_is_made_for_the_buckets_region():
     pytest.importorskip("boto3")
     s3 = make_s3(config(), "AKIA", "secret")
-    assert s3.bucket == "tars-home" and s3._client.meta.region_name == "eu-central-1"
+    assert s3.bucket == "my-tars-backup" and s3._client.meta.region_name == "eu-central-1"
 
 
 def test_a_status_from_another_version_reads_as_none(tmp_path):
