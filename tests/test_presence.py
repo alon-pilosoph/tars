@@ -3,6 +3,7 @@ and out (never out on a router's silence, a clock's jump or a page this can't re
 read, and what it changes: "who's home" in the house, reminders for someone out going to their chat, and messages
 waiting for someone said once they're home."""
 
+import dataclasses
 import hashlib
 import json
 import random
@@ -13,7 +14,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from voice_assistant.__main__ import make_home
+from voice_assistant.__main__ import chat_home, make_home
 from voice_assistant.config import ROUTER_KINDS, ConfigError, PresenceConfig, load_config
 from voice_assistant.home import SETTINGS, Request
 from voice_assistant.presence import (
@@ -421,6 +422,17 @@ def test_a_board_the_assistant_stopped_writing_knows_nothing(log):
 
 def house(board, tmp_path):
     return make_home(load_config(CONFIG, local=False), tmp_path, presence=Presence(PEOPLE, board, [], [], 10, 30))
+
+
+def test_a_chat_works_nothing_in_the_house_whatever_it_lists(board, tmp_path):
+    (tmp_path / ".env").write_text("HOME_ASSISTANT_TOKEN=t\n")
+    cfg = load_config(CONFIG, local=False)
+    lock = {"name": "front door", "entity": "lock.front_door"}
+    cfg = dataclasses.replace(cfg, home=dataclasses.replace(cfg.home, url="http://ha.invalid:8123", devices=[lock]))
+    people = Presence(PEOPLE, board, [], [], 10, 30)
+    assert "front door" in make_home(cfg, tmp_path, presence=people).devices
+    assert list(chat_home(cfg, tmp_path, presence=people).devices) == [DEVICE]
+    assert chat_home(cfg, tmp_path) is None
 
 
 def ask(device: str) -> dict:

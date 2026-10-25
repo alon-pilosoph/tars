@@ -36,6 +36,7 @@ echo "== Python packages (uv installs its own Python)"
 
 echo "== API keys (TARS uses the services there are keys for, and says what it does without the others)"
 [ -e .env ] || cp .env.example .env
+chmod 600 .env  # the keys are for TARS's user only
 if ! "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.__main__ import keyed; \
 from voice_assistant.config import load_config; keyed(load_config(Path('config.toml')), Path('.'))"; then
   echo "!! Put the keys in $REPO/.env (see .env.example), then run this again"

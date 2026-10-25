@@ -139,10 +139,18 @@ def keys(cfg: Config, env: Path) -> Result:
         _, notes = with_keys(cfg, have)
     except ConfigError as e:
         return Result("API keys", FAIL, str(e.code), f"put them in {env} (see .env.example)")
-    if notes:
-        return Result("API keys", WARN, "; ".join(notes), f"for all of config.toml's setup, put the keys in {env}")
+    shared = [f"other users can read {env.name}"] if readable_by_others(env) else []
+    if notes or shared:
+        fix = [f"for all of config.toml's setup, put the keys in {env}"] if notes else []
+        fix += [f"chmod 600 {env}"] if shared else []
+        return Result("API keys", WARN, "; ".join(notes + shared), "; ".join(fix))
     used = [OPENAI_KEY, DEEPGRAM_KEY, CARTESIA_KEY, *(provider.key_name for provider in QUICK_PROVIDERS)]
     return Result("API keys", OK, ", ".join(name for name in used if name in have))
+
+
+def readable_by_others(path: Path) -> bool:
+    """True if users other than its owner can read the file (always False where files have no such modes)."""
+    return os.name == "posix" and path.exists() and bool(path.stat().st_mode & 0o077)
 
 
 def device(kind: str, wanted: str, find: Callable[[str, str], int | None], names: list[str], default: int) -> Result:

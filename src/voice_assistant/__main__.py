@@ -499,6 +499,12 @@ def own_speaker(cfg: Config):
         return None
 
 
+def chat_home(cfg: Config, root: Path, presence=None):
+    """The house as a Telegram chat has it: nothing in it can be worked from a chat, whatever [home] lists; only who's
+    home can be asked, given `presence`."""
+    return make_home(dataclasses.replace(cfg, home=HomeConfig()), root, presence=presence)
+
+
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
@@ -606,8 +612,7 @@ def telegram(cfg: Config, root: Path) -> None:
         voiceprints = root / cfg.speaker.voiceprints
         names = (lambda: voiceprint_names(voiceprints)) if cfg.speaker.enabled else list
         tools = reminder_tools(Reminders.from_config(events.store, cfg.reminders), names, presence)
-    # A chat works nothing in the house, but can ask who's home.
-    home = make_home(dataclasses.replace(cfg, home=HomeConfig()), root, presence=presence)
+    home = chat_home(cfg, root, presence)
     client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
