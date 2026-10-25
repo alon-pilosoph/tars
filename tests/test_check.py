@@ -32,7 +32,20 @@ def test_missing_keys_say_what_runs_instead_and_where_to_put_them(cfg, tmp_path)
     env.write_text("GROQ_API_KEY=g\n")
     assert check.keys(cfg, env).status == FAIL
     env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nGROQ_API_KEY=g\nCEREBRAS_API_KEY=c\nCARTESIA_API_KEY=d\n")
+    env.chmod(0o600)
     assert check.keys(cfg, env).status == OK
+
+
+def test_keys_others_can_read_are_a_warning_with_the_fix(cfg, tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nGROQ_API_KEY=g\nCEREBRAS_API_KEY=c\nCARTESIA_API_KEY=d\n")
+    env.chmod(0o644)
+    r = check.keys(cfg, env)
+    assert r.status == WARN and "other users can read .env" in r.detail and r.fix == f"chmod 600 {env}"
+    env.write_text("OPENAI_API_KEY=sk-1\n")
+    r = check.keys(cfg, env)
+    assert r.status == WARN and "no DEEPGRAM_API_KEY" in r.detail and "other users" in r.detail
+    assert str(env) in r.fix and "chmod 600" in r.fix
 
 
 def test_a_device_is_found_by_name_or_says_how_to_find_it():

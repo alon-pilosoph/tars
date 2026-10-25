@@ -61,7 +61,7 @@ instructions and…". A model may believe them, so what matters is what code all
   - **Unlocking is decided by code, from what was heard.** Only by voice, only for a voice in `[home] unlock_voices`
     recognised at `unlock_threshold` or better, and only when the person's own transcribed words say "unlock"; a model
     asking to unlock for any other reason is refused (`home.py`).
-  - **A Telegram chat works nothing in the house** (it can only ask who's home: `__main__.py`, `telegram()`).
+  - **A Telegram chat works nothing in the house** (it can only ask who's home: `__main__.py`, `chat_home()`).
   - **The browser never orders, pays, books or sends on its own.** Code checks every click and key against what
     commits (`browser/gate.py`), and presses that button only on the person's tap on Order in their own chat, and only
     if the amounts are still the ones they were shown (`browser/errands.py`, `browser/money.py`).
@@ -75,14 +75,14 @@ instructions and…". A model may believe them, so what matters is what code all
   `::test_a_key_on_what_commits_is_refused`; `tests/test_browser.py::test_what_commits_is_stopped`,
   `::test_a_real_approval_presses_only_on_a_yes_with_the_same_total`;
   `tests/test_browser_errands.py::test_an_order_is_approved_only_by_a_tap_on_order_in_the_persons_own_chat`;
-  `tests/test_homenet.py`; `tests/test_browser_chrome.py::test_a_password_on_the_page_is_never_shown_to_the_model`,
+  `tests/test_presence.py::test_a_chat_works_nothing_in_the_house_whatever_it_lists`; `tests/test_homenet.py`;
+  `tests/test_browser_chrome.py::test_a_password_on_the_page_is_never_shown_to_the_model`,
   `tests/test_browser_login.py::test_what_a_sign_in_sent_is_blanked_out_of_the_trace`,
   `::test_origin_is_what_pages_are_compared_by`.
 - **Open:**
   - A voice turn that looks something up gives OpenAI's model web search and the house tool together (`llm.py`), so a
     poisoned search result could switch a device other than the lock (the boiler, the AC). Nothing but the model
     stands in the way.
-  - "A chat works nothing in the house" has no test of its own.
   - No set of injection attempts is run against the models to show these hold in practice (it would call the models,
     so it's run on request with a cost estimate).
 
@@ -112,9 +112,11 @@ instructions and…". A model may believe them, so what matters is what code all
 
 ### A stolen Pi, or its SD card
 
-- **Defenses:** none on the disk itself.
-- **Open, and accepted for now:** everything is readable from the card: `.env` in plain text (nothing sets it to mode
-  600 either), the browser's vault beside its key, the browser profile's cookies, every recording. Encrypting the disk
+- **Defenses:** on the machine, `.env` is for TARS's user only: `deploy/install-pi.sh` makes it mode 600, and
+  `--check` warns when other users can read it. The browser's vault and key are made mode 600 too.
+- **Tests:** `tests/test_check.py::test_keys_others_can_read_are_a_warning_with_the_fix`.
+- **Open, and accepted for now:** to anyone holding the card, everything is readable: `.env` in plain text, the
+  browser's vault beside its key, the browser profile's cookies, every recording. Encrypting the disk
   on a Pi without a secure key store means keeping the key on it to boot unattended, which buys little. What limits the
   damage is revoking: each key in `.env` can be revoked at its service, and the browser's sites signed out.
 
