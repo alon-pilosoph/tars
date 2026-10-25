@@ -212,21 +212,21 @@ def test_the_backup_says_how_its_last_pass_went(cfg, log, convos, tmp_path):
 
     from .test_backup import NOW, PretendS3, a_request
 
-    on = dataclasses.replace(cfg, backup=BackupConfig(enabled=True, bucket="tars-home", region="eu-central-1"))
+    on = dataclasses.replace(cfg, backup=BackupConfig(enabled=True, bucket="my-tars-backup", region="eu-central-1"))
     assert check.backup(cfg, raising(AssertionError("not asked")))[0].status == SKIP
     bucket = PretendS3()
-    job = Backup(log, on.backup, S3(bucket, "tars-home"), clock=lambda: NOW)
+    job = Backup(log, on.backup, S3(bucket, "my-tars-backup"), clock=lambda: NOW)
     (never,) = check.backup(on, lambda: job, now=NOW)
     assert never.status == WARN and "no pass has run yet" in never.detail
     a_request(log, convos, NOW)
     job.run()
     (fine,) = check.backup(on, lambda: job, now=NOW + 60)
-    assert fine.status == OK and "s3://tars-home/tars answers" in fine.detail and "2 files there" in fine.detail
+    assert fine.status == OK and "s3://my-tars-backup/tars answers" in fine.detail and "2 files there" in fine.detail
     assert check.backup(on, lambda: job, now=NOW + 3 * 3600)[0].status == WARN  # no good pass for hours
     Status(last_run=NOW, last_ok=NOW - 60, error="S3 put_object: Access Denied").save(job.status_path)
     (failed,) = check.backup(on, lambda: job, now=NOW)
     assert failed.status == FAIL
-    assert failed.detail.startswith("s3://tars-home/tars answers (")
+    assert failed.detail.startswith("s3://my-tars-backup/tars answers (")
     assert failed.detail.endswith("; the last pass failed: S3 put_object: Access Denied")
     bucket.down = True
     assert check.backup(on, lambda: job, now=NOW)[0].status == FAIL

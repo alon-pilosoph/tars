@@ -58,7 +58,7 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ('[telegram]\npeople = { " " = 1 }', "a name for each chat id"),
         ("[telegram]\nmemory_minutes = 0", "memory_minutes must be more than 0"),
         ("[backup]\nenabled = true", "[backup] bucket must name"),
-        ('[backup]\nenabled = true\nbucket = "tars-home"', "[backup] region must say"),
+        ('[backup]\nenabled = true\nbucket = "my-tars-backup"', "[backup] region must say"),
         ('[backup]\nbucket = "Tars_Home"', "must be an S3 bucket name"),
         ('[backup]\nregion = "europe"', "must be an AWS region"),
         ('[backup]\nprefix = "/tars/"', "no slash at either end"),

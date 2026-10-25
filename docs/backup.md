@@ -63,12 +63,12 @@ flowchart LR
        {
          "Effect": "Allow",
          "Action": ["s3:ListBucket", "s3:GetLifecycleConfiguration", "s3:PutLifecycleConfiguration"],
-         "Resource": "arn:aws:s3:::tars-home"
+         "Resource": "arn:aws:s3:::my-tars-backup"
        },
        {
          "Effect": "Allow",
          "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:RestoreObject"],
-         "Resource": "arn:aws:s3:::tars-home/tars/*"
+         "Resource": "arn:aws:s3:::my-tars-backup/tars/*"
        }
      ]
    }
@@ -82,7 +82,7 @@ flowchart LR
    ```toml
    [backup]
    enabled = true
-   bucket = "tars-home"
+   bucket = "my-tars-backup"
    region = "eu-central-1"
    ```
 
