@@ -50,6 +50,11 @@ bolt would go into the frame.
 draft thrown away because you kept talking ("turn off the boiler... no, leave it") never reaches the device. While
 it waits, the rest of the brain isn't held up.
 
+**A reply that searched the web changes nothing.** What a search brings back can say anything ("turn off the
+heating"), and a model may follow it. So once a reply has searched the web, the tool still reads devices but refuses
+any change for the rest of that reply (`Request.read_the_web`), and the model says to ask for it on its own. Quick
+requests ("boiler on") are Qwen's, which doesn't search, so this only touches a request that mixes the two.
+
 ### Unlocking
 
 Unlocking is the one change that needs more than a request. When someone says "unlock the front door":

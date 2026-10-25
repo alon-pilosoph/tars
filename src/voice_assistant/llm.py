@@ -4,6 +4,7 @@ OpenAI's model and its tools (OpenAIChat), and the questions that need real thin
 is told exactly what it can do, what it hands over, and what TARS can't do at all (abilities()). One shared history,
 kept until the conversation goes quiet. Replies are streamed, and every reply can be stopped and forgotten."""
 
+import dataclasses
 import itertools
 import json
 import re
@@ -660,9 +661,12 @@ class OpenAIChat:
                 if event.type == "response.output_text.delta" and event.delta:
                     said += event.delta
                     yield event.delta
-                elif event.type == "response.web_search_call.in_progress" and not (answer.strip() or said):
-                    said = f"{SEARCHING} "
-                    yield said
+                elif event.type.startswith("response.web_search_call"):
+                    # What the search brings back can say anything: from here on, the house is only read.
+                    writing.request = dataclasses.replace(writing.request, read_the_web=True)
+                    if event.type == "response.web_search_call.in_progress" and not (answer.strip() or said):
+                        said = f"{SEARCHING} "
+                        yield said
                 elif event.type == "response.output_item.done" and event.item.type == "function_call":
                     calls.append(event.item)
                 elif event.type in ("error", "response.failed", "response.incomplete"):
