@@ -220,6 +220,11 @@ class HomeConfig:
     tv_model: str = ""
     # TARS's own speaker as a device, for the voice: "how loud are you?", "turn yourself down" (docs/home.md).
     own_speaker: bool = False
+    # With own_speaker, its volume keys turn it a step a press: the speakerphone's own + and -, a keyboard's.
+    volume_keys: bool = True
+    # With own_speaker, a remote's volume buttons do too, through an IR receiver: their codes, { volume_up = 0x80,
+    # volume_down = 0x81 } (docs/home.md#volume-buttons says how to read them). Empty = no remote.
+    remote: dict[str, int] = field(default_factory=dict)
     # Code of your own for devices Home Assistant doesn't work: a name, and { module = "...", and its own settings }.
     plugins: dict[str, dict] = field(default_factory=dict)
     # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).
@@ -587,6 +592,13 @@ def _home_problems(home: HomeConfig) -> list[str]:
     problems: list[str] = []
     if home.url and not re.fullmatch(r"https?://[^\s/]+(:\d+)?/?", home.url):
         problems.append(f"[home] url must be an address like http://homeassistant.local:8123, not {home.url!r}")
+    for button, code in home.remote.items():
+        if button not in ("volume_up", "volume_down"):
+            problems.append(f"[home] remote has volume_up and volume_down, not {button!r}")
+        elif isinstance(code, bool) or not 0 <= code <= 0xFFFFFFFF:
+            problems.append(f"[home] remote {button} must be the code the receiver reads, like 0x80, not {code}")
+    if len(set(home.remote.values())) < len(home.remote):
+        problems.append("[home] remote's volume_up and volume_down must be different codes")
     if not 0 < home.unlock_threshold <= 1:
         problems.append("[home] unlock_threshold must be more than 0 and at most 1")
     if any(not v.strip() for v in home.unlock_voices):

@@ -7,6 +7,7 @@ the mic is shared (PipeWire), so it works either way.
 
 import functools
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -575,6 +576,38 @@ def own_speaker(cfg: Config, mixer: Callable[[str], Mixer]) -> Result | list[Res
     return [Result(DEVICE, status, detail, fix) for status, detail, fix in found]
 
 
+VOLUME_BUTTONS = "Volume buttons"
+VOLUME_BUTTONS_FIX = "docs/home.md#volume-buttons"
+
+
+def volume_buttons(cfg: Config, find: Callable | None = None, system: str = "", readable=os.access) -> Result:
+    """[home] volume_keys and remote: whether there's anything to read the buttons from, and whether TARS's user may
+    (`find`: buttons.inputs)."""
+    from .buttons import inputs
+
+    if not cfg.home.own_speaker:
+        return Result(VOLUME_BUTTONS, SKIP, "off ([home] own_speaker)")
+    if not (cfg.home.volume_keys or cfg.home.remote):
+        return Result(VOLUME_BUTTONS, SKIP, "off ([home] volume_keys, remote)")
+    if (system or platform.system()) != "Linux":
+        return Result(VOLUME_BUTTONS, SKIP, "Linux only: the volume keys are the system's on a Mac")
+    found = (find or inputs)()
+    unreadable = [i.name for i in found if not readable(i.path, os.R_OK)]
+    if unreadable:
+        return Result(VOLUME_BUTTONS, FAIL, f"can't read {', '.join(unreadable)}",
+                      f"add TARS's user to the input group (sudo usermod -aG input $USER), then log in again; "
+                      f"{VOLUME_BUTTONS_FIX}")  # fmt: skip
+    receivers = [i.name for i in found if i.remote]
+    if cfg.home.remote and not receivers:
+        fix = f"turn the receiver on (dtoverlay=gpio-ir in /boot/firmware/config.txt); {VOLUME_BUTTONS_FIX}"
+        return Result(VOLUME_BUTTONS, WARN, "[home] remote is set, and there's no IR receiver", fix)
+    codes = ", ".join(f"{button} {code:#x}" for button, code in cfg.home.remote.items())
+    which = ["volume keys"] if cfg.home.volume_keys else []
+    if cfg.home.remote:
+        which.append(f"the remote on {', '.join(receivers)} ({codes})")
+    return Result(VOLUME_BUTTONS, OK, " and ".join(which))
+
+
 def routers_now(
     cfg: Config, secret: Callable[[str], str | None], make_router: Callable | None = None
 ) -> Result | list[Result]:
@@ -879,6 +912,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Home Assistant", hass_check),
         ("The house", devices),
         ("TARS's speaker", speaker_volume),
+        (VOLUME_BUTTONS, lambda: volume_buttons(cfg)),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
         ("Browser", lambda: browser(cfg)),

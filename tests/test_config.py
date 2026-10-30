@@ -50,6 +50,10 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ('[recorder]\nend_silence_s = "0.8"', "[recorder] end_silence_s must be a number"),
         ("[speaker]\nenabled = 1", "[speaker] enabled must be true or false"),
         ('[home]\nown_speaker = "yes"', "[home] own_speaker must be true or false"),
+        ("[home]\nremote = { mute = 0x82 }", "[home] remote has volume_up and volume_down, not 'mute'"),
+        ("[home]\nremote = { volume_up = -1 }", "[home] remote volume_up must be the code"),
+        ("[home]\nremote = { volume_up = 0x80, volume_down = 0x80 }", "must be different codes"),
+        ('[home]\nremote = { volume_up = "0x80" }', "[home] remote"),
         ("[speakers]\nenabled = true", "no [speakers] section"),
         ("[audio\n", "config.toml"),  # not TOML at all
         ("[telegram]\nenabled = true", "[telegram] people"),
@@ -205,3 +209,8 @@ def test_a_mistake_in_the_local_file_says_so(tmp_path):
     (tmp_path / "config.local.toml").write_text("[audio\n")
     with pytest.raises(SystemExit, match="config.local.toml"):
         config(tmp_path, "")
+
+
+def test_a_remote_s_codes_are_written_as_the_receiver_reads_them(tmp_path):
+    cfg = config(tmp_path, "[home]\nremote = { volume_up = 0x80, volume_down = 0x81 }")
+    assert cfg.home.remote == {"volume_up": 0x80, "volume_down": 0x81} and cfg.home.volume_keys is True
