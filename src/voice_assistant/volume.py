@@ -18,6 +18,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from .home import PRESS, SET, STATUS, Check, Device, HomeError, Request, button, presses
@@ -177,16 +178,39 @@ def mixer_for(output: str, default: str, system: str, run: Run = _run, which=shu
     return mixer
 
 
-def speaker_mixer(output_device: str) -> Mixer:
+def card_named(name: str, cards: str) -> int | None:
+    """The ALSA card whose name has `name` in it, from /proc/asound/cards, where each card is two lines:
+    ` 1 [PowerConf      ]: USB-Audio - PowerConf` and `Anker PowerConf at usb-0000:01:00.0-1.2, full speed`."""
+    card = None
+    for line in cards.splitlines():
+        number, bracket, _ = line.strip().partition(" [")
+        if bracket and number.isdigit():
+            card = int(number)
+            line = line.partition("]:")[2]
+        if card is not None and name.lower() in line.lower():
+            return card
+    return None
+
+
+def speaker_mixer(output_device: str, cards: Path = Path("/proc/asound/cards")) -> Mixer:
     """The volume of the speaker TARS plays to ([audio] output_device; "" is the system's default output), or a
-    HomeError saying why it has none."""
+    HomeError saying why it has none. On Linux a device one program has open isn't listed to the others (the
+    running assistant's, to --check): its card is then found by name among ALSA's, whose mixer anyone may turn."""
     from .audio import NoDeviceError, device_names, find_device
 
     names, _, default = device_names()
     try:
         index = find_device(output_device, "output")
     except NoDeviceError as e:
-        raise HomeError(str(e)) from None
+        card = None
+        if output_device and platform.system() == "Linux":
+            try:
+                card = card_named(output_device, cards.read_text())
+            except OSError:
+                pass
+        if card is None:
+            raise HomeError(str(e)) from None
+        return mixer_for(f"{output_device} (hw:{card},0)", "", "Linux")
     if index is None and not 0 <= default < len(names):
         raise HomeError("there's no default output")
     default_name = names[default] if 0 <= default < len(names) else ""
