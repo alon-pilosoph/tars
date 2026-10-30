@@ -83,7 +83,7 @@ function reminder(r: ReminderRow, now: number): Reminder {
   return { ...full, says: says(full) };
 }
 
-const MISSED_WINDOW_S = 6; // mirrors events.py
+const MISSED_WINDOW_S = 10; // mirrors events.py
 
 interface WakeRow {
   minutesAgo: number;
@@ -994,10 +994,15 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
 
   if (p === "/api/events") {
     const answered = d.events.filter(e => e.kind === "wake" && e.outcome === "answer").map(e => e.ts);
-    return newestFirst(d.events).map(e => {
-      const [auto_label, auto_reason] = demoAuto(e, answered);
-      return { ...e, auto_label, auto_reason };
-    });
+    return (
+      newestFirst(d.events)
+        .map(e => {
+          const [auto_label, auto_reason] = demoAuto(e, answered);
+          return { ...e, auto_label, auto_reason };
+        })
+        // As events.py's for_review: a near-miss nobody answered waits only when a real wake followed it.
+        .filter(e => e.kind !== "near_miss" || e.label || e.auto_label)
+    );
   }
   if (p === "/api/clusters" && method === "GET") {
     return d.clusters
