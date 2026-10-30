@@ -157,9 +157,10 @@ toggles twice.
   them before. Any keyboard's volume keys count the same.
 - **The speakerphone's own mute** (`[home] speakerphone_mute`, on by default). Its mute button mutes its mic in the
   speakerphone itself, and TARS follows: while it's muted TARS doesn't listen for its name, or the talk button, and
-  says what's due all the same. The remote's mute works the same mute (TARS sets it as the button does), so the two
-  never disagree. TARS reads the speakerphone's buttons and lights from what it says it has (its HID report
-  descriptor: a phone-mute button, mute and off-hook lights), and unmutes it when it starts. Without one, the
+  says what's due all the same. The remote's mute works the same mute, so the two never disagree. TARS reads the
+  speakerphone's buttons and lights from what it says it has (its HID report descriptor: a phone-mute button, mute
+  and off-hook lights). The PowerConf takes the computer's mute only off-hook (in a call), so TARS keeps it off-hook,
+  which no light shows, and sets the mute; it unmutes it when it starts, however it was muted. Without one, the
   remote's mute is TARS's alone: it stops listening, and the mic stays on.
 - **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
   Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power

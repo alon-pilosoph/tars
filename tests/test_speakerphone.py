@@ -1,5 +1,6 @@
-"""The speakerphone's own mute, as TARS's: found from its HID report descriptor, set as its own button sets it (mute
-and off-hook on, both off), and followed when its button is pressed; one mute, whichever button worked it."""
+"""The speakerphone's own mute, as TARS's: found from its HID report descriptor, set off-hook with mute or without
+(on-hook, the PowerConf ignores the computer's mute), and followed when its button is pressed; one mute, whichever
+button worked it."""
 
 import os
 
@@ -39,7 +40,8 @@ def mute(tmp_path):
 def test_it_s_muted_and_unmuted_as_its_own_button_does_and_each_change_is_told(mute):
     assert mute.toggle() == "muted" and mute.muted
     assert mute.toggle() == "unmuted" and not mute.muted
-    assert mute.device.read_bytes() == bytes.fromhex("020300020000")  # mute + off-hook, then neither
+    # Off-hook with mute, then off-hook without: as the PowerConf took them on the Pi, its own mute undone too.
+    assert mute.device.read_bytes() == bytes.fromhex("020300020100")
     assert mute.changes == [True, False]
     mute.set(False)  # already unmuted: written again, nothing told
     assert mute.changes == [True, False]
@@ -66,7 +68,7 @@ def test_found_by_the_speakerphone_s_name_and_unmuted_to_start_with(tmp_path):
     device.write_bytes(b"")
     hid = Hid(str(device), "Anker PowerConf", POWERCONF_HID.descriptor)
     found, why = find_mute("powerconf", print, lambda: [hid])
-    assert found and why == "" and device.read_bytes() == bytes.fromhex("020000")
+    assert found and why == "" and device.read_bytes() == bytes.fromhex("020100")  # off-hook, unmuted
     os.close(found._fd)
     assert find_mute("", print, lambda: [hid]) == (None, "[audio] output_device doesn't name the speakerphone")
     assert find_mute("Jabra", print, lambda: [hid])[1] == "no HID device named like 'Jabra'"

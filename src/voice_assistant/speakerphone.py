@@ -4,9 +4,11 @@ never two that disagree. While it's muted TARS doesn't listen for its name (assi
 
 A USB speakerphone says what its buttons and lights are in its HID report descriptor, in the USB standard's
 telephony terms: a "phone mute" button it reports pressed and let go, and "mute" and "off-hook" lights the computer
-sets. The PowerConf mutes its mic when its button is pressed, and when the computer sets mute while off-hook (in a
-call); clearing both unmutes it. Its reports go through its hidraw device (/dev/hidraw*), root's alone unless a
-udev rule says otherwise (deploy/99-tars-speakerphone.rules gives TARS's user the PowerConf's).
+sets. The PowerConf takes the computer's mute only while off-hook (in a call): off-hook with mute mutes it, and
+off-hook without unmutes it, whichever muted it, its button too; on-hook, it keeps its own and the computer's mute is
+ignored. So TARS keeps it off-hook (no light shows it) and sets only the mute. Its reports go through its hidraw
+device (/dev/hidraw*), root's alone unless a udev rule says otherwise (deploy/99-tars-speakerphone.rules gives TARS's
+user the PowerConf's).
 
 The speakerphone doesn't say whether it's muted, only that its button was pressed, so TARS keeps count: unmuted
 when TARS starts (it unmutes it then, to be sure), and flipped by each press. Linux only."""
@@ -128,10 +130,10 @@ class SpeakerphoneMute:
         self.stop = threading.Event()
 
     def _report(self, muted: bool) -> bytes:
+        """Off-hook always, since on-hook it ignores the computer's mute; and the mute, on or off."""
         data = bytearray(self.layout.output_bytes)
-        if muted:
-            for bit in (self.layout.mute, self.layout.off_hook):
-                data[bit.bit // 8] |= 1 << bit.bit % 8
+        for bit in (self.layout.off_hook, *([self.layout.mute] if muted else [])):
+            data[bit.bit // 8] |= 1 << bit.bit % 8
         return bytes([self.layout.mute.report]) + bytes(data)
 
     def set(self, muted: bool) -> None:
