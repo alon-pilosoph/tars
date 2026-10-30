@@ -1052,6 +1052,19 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
     else if (t) t.corrected_text = body.text === t.text ? null : body.text;
     return ok;
   }
+  if (p === "/api/events/agree") {
+    // As events.py's agree: each one nobody answered takes its guess; answered or guessless ones are left alone.
+    const answered = d.events.filter(e => e.kind === "wake" && e.outcome === "answer").map(e => e.ts);
+    const saved = { real: 0, not_real: 0 };
+    for (const e of d.events.filter(x => (body.ids as number[]).includes(x.id) && !x.label)) {
+      const [guess] = demoAuto(e, answered);
+      if (guess) {
+        e.label = guess;
+        saved[guess] += 1;
+      }
+    }
+    return saved;
+  }
   if ((m = p.match(/^\/api\/events\/(\d+)\/label$/))) {
     const id = Number(m[1]);
     const target = event(id) ?? convWake(id);

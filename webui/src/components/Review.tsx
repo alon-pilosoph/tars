@@ -1,5 +1,14 @@
 import { heardText, stamp } from "../format";
-import { type State, answerWake, clusterName, menuOpen, reviewEvents, toggleMenu, useStore } from "../store";
+import {
+  type State,
+  agreeWithGuesses,
+  answerWake,
+  clusterName,
+  menuOpen,
+  reviewEvents,
+  toggleMenu,
+  useStore,
+} from "../store";
 import type { Label, TarsEvent } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
@@ -12,11 +21,19 @@ export function Review() {
   const toCheck = all.filter(e => s.snapshot.review.has(e.id));
   const reviewed = all.filter(e => !s.snapshot.review.has(e.id));
   const left = toCheck.filter(e => !e.label).length;
+  const guessed = toCheck.filter(e => !e.label && e.auto_label);
   const head = (
     <PageHead
       title={left ? `${left} to check` : "Review"}
       sub="TARS wasn't sure these were meant for it. Its guess is shaded. Answers move to Reviewed at the next Refresh."
-    />
+    >
+      {guessed.length > 1 && (
+        <button className="btn big" onClick={() => agreeWithGuesses(guessed)}>
+          <Icon name="check" size="s" />
+          {`Agree with all ${guessed.length} guesses`}
+        </button>
+      )}
+    </PageHead>
   );
   if (!all.length)
     return (

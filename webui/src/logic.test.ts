@@ -3,6 +3,7 @@ import { post, writesDone, writesMade } from "./api";
 import { demoAuto } from "./demo";
 import {
   ago,
+  answerSplit,
   checkLine,
   diskLine,
   duration,
@@ -415,5 +416,14 @@ describe("a load where some endpoints fail", () => {
       { part: "status", what: "what's set up", why: "HTTP 502" },
     ]);
     expect(loadFailures({})).toEqual([]);
+  });
+});
+
+describe("Review's agree with all", () => {
+  it("says how the guesses split, the commoner answer first, or that they're all one", () => {
+    expect(answerSplit({ real: 1, not_real: 6 })).toBe("6 “Not it” and 1 “hey TARS”");
+    expect(answerSplit({ real: 3, not_real: 2 })).toBe("3 “hey TARS” and 2 “Not it”");
+    expect(answerSplit({ real: 0, not_real: 133 })).toBe("All 133 “Not it”");
+    expect(answerSplit({ real: 2, not_real: 0 })).toBe("All 2 “hey TARS”");
   });
 });

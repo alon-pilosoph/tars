@@ -17,11 +17,11 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
-from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, UNKNOWN, EventLog
+from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, REVIEW_SHOWN, UNKNOWN, EventLog
 from .health import Report
 from .homenet import address, home_name
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
@@ -58,6 +58,10 @@ class Label(BaseModel):
 
 class Assignment(BaseModel):
     cluster_id: int | None
+
+
+class Agree(BaseModel):
+    ids: list[int] = Field(max_length=REVIEW_SHOWN)  # Review shows at most this many waiting
 
 
 class ClusterName(BaseModel):
@@ -341,6 +345,12 @@ def create_app(
         event_or_404(event_id)
         log.set_label(event_id, body.label)
         return {"ok": True}
+
+    @app.post("/api/events/agree")
+    def agree(body: Agree):
+        """Review's "agree with all": TARS's guess becomes the answer for each of these nobody has answered. Says
+        how many took each answer: what was saved, whatever the page thought."""
+        return log.agree(body.ids)
 
     @app.post("/api/events/{event_id}/cluster")
     def retag(event_id: int, body: Assignment):

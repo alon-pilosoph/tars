@@ -1,10 +1,10 @@
 import { post } from "../api";
-import { stamp } from "../format";
-import type { Conversation, Label, Turn } from "../types";
-import { confirmDelete, undoable } from "./actions";
+import { answerSplit, stamp } from "../format";
+import type { Conversation, Label, TarsEvent, Turn } from "../types";
+import { confirmDelete, saveThenReload, undoable } from "./actions";
 import { get, set, setNow } from "./core";
 import { eventById, findTurn, speakerName } from "./selectors";
-import { copyText, scrollToEl } from "./ui";
+import { confirm, copyText, scrollToEl } from "./ui";
 
 const patchTurn = (id: number, patch: Partial<Turn>) =>
   set(s => ({
@@ -112,6 +112,37 @@ export async function answerWake(id: number, value: Label) {
   if (!e) return;
   const next = e.label === value ? null : value;
   await saveLabel(id, e.label, next, next ? ANSWERED[next] : "Answer cleared.");
+}
+
+/** Review's "agree with all": TARS's guess becomes the answer for each of these nobody has answered, after saying
+    how they split. The server works the guesses out again, leaves alone any answered meanwhile, and says what it
+    saved. */
+export async function agreeWithGuesses(events: TarsEvent[]) {
+  const guessed = events.filter(e => !e.label && e.auto_label);
+  const n = guessed.length;
+  const split = answerSplit({
+    real: guessed.filter(e => e.auto_label === "real").length,
+    not_real: guessed.filter(e => e.auto_label === "not_real").length,
+  });
+  const ok = await confirm({
+    title: `Agree with all ${n} guesses?`,
+    text:
+      `**${split}.** Each gets that answer, as if you'd tapped it: they become what the next wake model learns ` +
+      "from. Answers you've given are kept. Listen to any you're unsure of first.",
+    ok: `Agree with ${n}`,
+  });
+  if (!ok) return;
+  let saved: Record<Label, number> = { real: 0, not_real: 0 };
+  await saveThenReload(
+    async () => {
+      saved = await post<Record<Label, number>>("/api/events/agree", { ids: guessed.map(e => e.id) });
+    },
+    () => {
+      const total = saved.real + saved.not_real;
+      return total ? `Answered ${total}: ${answerSplit(saved)}.` : "Nothing to answer: they'd all been answered.";
+    },
+    { fail: "Couldn't answer them" },
+  );
 }
 
 /** Going back clears the label rather than setting "real": TARS's own guess already counts a wake that a request
