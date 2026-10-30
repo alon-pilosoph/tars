@@ -156,8 +156,9 @@ toggles twice.
   itself when they're pressed: they're volume keys sent to the computer, and on a Pi with no desktop nothing acted on
   them before. Any keyboard's volume keys count the same.
 - **The speakerphone's own mute** (`[home] speakerphone_mute`, on by default). Its mute button mutes its mic in the
-  speakerphone itself, and TARS follows: while it's muted TARS doesn't listen for its name, or the talk button, and
-  says what's due all the same. The remote's mute works the same mute, so the two never disagree. TARS reads the
+  speakerphone itself, and TARS follows: while it's muted TARS doesn't listen for its name at all (the wake model
+  idles and the mic's audio is thrown away, so the Pi does next to nothing), nor for the talk button, and says
+  what's due all the same. The remote's mute works the same mute, so the two never disagree. TARS reads the
   speakerphone's buttons and lights from what it says it has (its HID report descriptor: a phone-mute button, mute
   and off-hook lights). The PowerConf takes the computer's mute only off-hook (in a call), so TARS keeps it off-hook,
   which no light shows, and sets the mute; it unmutes it when it starts, however it was muted. Without one, the
