@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from voice_assistant import volume
 from voice_assistant.__main__ import make_home
 from voice_assistant.config import HomeConfig, load_config
 from voice_assistant.home import PRESS, SET, HomeError, Request
@@ -284,3 +285,41 @@ def test_check_says_whether_it_can_be_turned():
 
     failed = check.own_speaker(on, none)
     assert failed.status == check.FAIL and "alsa-utils" in failed.detail
+
+
+CARDS = """ 0 [Headphones     ]: bcm2835_headpho - bcm2835 Headphones
+                      bcm2835 Headphones
+ 1 [PowerConf      ]: USB-Audio - PowerConf
+                      Anker PowerConf at usb-0000:01:00.0-1.2, full speed
+ 2 [vc4hdmi0       ]: vc4-hdmi - vc4-hdmi-0
+                      vc4-hdmi-0
+"""
+
+
+def test_a_card_is_found_by_name_in_alsa_s_own_list():
+    assert volume.card_named("PowerConf", CARDS) == 1
+    assert volume.card_named("anker", CARDS) == 1  # its second line counts too
+    assert volume.card_named("hdmi-0", CARDS) == 2
+    assert volume.card_named("Jabra", CARDS) is None
+
+
+def test_a_speaker_the_running_assistant_has_open_is_still_found_by_its_card(tmp_path, monkeypatch):
+    """On Linux a device one program has open isn't listed to another (--check, beside the running assistant)."""
+    from voice_assistant import audio
+
+    def unlisted(name, kind):
+        raise audio.NoDeviceError(f"No {kind} device matching {name!r}.")
+
+    cards = tmp_path / "cards"
+    cards.write_text(CARDS)
+    made = []
+    monkeypatch.setattr(audio, "device_names", lambda: (["bcm2835 Headphones: - (hw:0,0)"], 0, 0))
+    monkeypatch.setattr(audio, "find_device", unlisted)
+    monkeypatch.setattr(volume.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(volume, "mixer_for", lambda output, default, system: made.append(output) or "mixer")
+    assert volume.speaker_mixer("PowerConf", cards) == "mixer" and made == ["PowerConf (hw:1,0)"]
+    with pytest.raises(HomeError, match="No output device matching 'Jabra'"):
+        volume.speaker_mixer("Jabra", cards)
+    monkeypatch.setattr(volume.platform, "system", lambda: "Darwin")
+    with pytest.raises(HomeError, match="No output device"):
+        volume.speaker_mixer("PowerConf", cards)
