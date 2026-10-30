@@ -211,9 +211,21 @@ About half an hour, on the Pi (or the Mac while you try it).
 1. **Home Assistant.** Already running somewhere on the home network? Use that. Otherwise, on the Pi:
    `cd deploy/home-assistant && docker compose up -d` (Docker first: `curl -fsSL https://get.docker.com | sudo sh`).
    Open `http://<the Pi>:8123`, make the owner account, set the home's location, and add your devices' integrations
-   (Settings, Devices & services). For devices that report over MQTT, start the broker too: make
-   `mosquitto/passwords` with `mosquitto_passwd` (one user for Home Assistant, one for each device), then
-   `docker compose --profile mqtt up -d`, and add the MQTT integration.
+   (Settings, Devices & services). For devices that report over MQTT, start the broker too. First its passwords, one
+   user for Home Assistant and one for each device, made in Mosquitto's own image so the file ends up owned by
+   Mosquitto (user 1883) and readable by nobody else, as it requires (it warns about anything looser now, and later
+   versions refuse to start):
+
+   ```bash
+   cd deploy/home-assistant
+   docker run --rm -it -v "$PWD/mosquitto:/m" eclipse-mosquitto:2 sh -c 'touch /m/passwords &&
+     chown root:root /m/passwords && chmod 600 /m/passwords &&
+     for user in "$@"; do mosquitto_passwd /m/passwords "$user" || exit 1; done &&
+     chown 1883:1883 /m/passwords' -- homeassistant nuki
+   ```
+
+   It asks for each one's password. A device added later: the same command with just its user, then
+   `docker restart mosquitto`. Then `docker compose --profile mqtt up -d`, and add the MQTT integration.
 2. **A token for TARS.** In Home Assistant: your profile, Security, Long-lived access tokens, Create token. Put it in
    `.env` as `HOME_ASSISTANT_TOKEN`. A separate Home Assistant user for TARS, not an administrator, limits what the
    token can do.
