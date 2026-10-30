@@ -327,3 +327,20 @@ def test_the_web_ui_without_the_event_log_is_a_setup_problem_its_service_doesnt_
     (tmp_path / "config.toml").write_text("[learning]\nlog_events = false\n")
     with pytest.raises(ConfigError, match="log_events"):  # exit code 78: RestartPreventExitStatus
         cli.web_ui(load_config(tmp_path / "config.toml", local=False), tmp_path, "127.0.0.1", 0)
+
+
+def test_agree_with_all_answers_each_with_tars_s_own_guess_never_one_answered_or_unguessed(log, client):
+    from voice_assistant.events import IGNORE, NOT_REAL, SAID_NOTHING
+
+    turned_away = [log.add_wake(AUDIO, 0.3, IGNORE, "nothing clear", 0.1, ts=t) for t in (1, 2)]
+    mine = log.add_wake(AUDIO, 0.3, IGNORE, "hey tars", 0.3, ts=3)
+    log.set_label(mine, REAL)  # answered by a person first: kept
+    silent = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9, ts=4)
+    log.set_follow(silent, SAID_NOTHING)  # no guess: left waiting
+    r = client.post("/api/events/agree", json={"ids": [*turned_away, mine, silent, 999]})
+    assert r.status_code == 200 and r.json() == {"answered": 2}
+    assert [log.get(e)["label"] for e in turned_away] == [NOT_REAL, NOT_REAL]
+    assert log.get(mine)["label"] == REAL and log.get(silent)["label"] is None
+    assert client.post("/api/events/agree", json={"ids": []}).json() == {"answered": 0}
+    too_many = client.post("/api/events/agree", json={"ids": list(range(10_000))})
+    assert too_many.status_code == 422

@@ -158,6 +158,19 @@ class EventLog:
     def set_label(self, event_id: int, label: str | None) -> None:
         self.store.write("UPDATE events SET label=? WHERE id=?", (label, event_id))
 
+    def agree(self, ids: list[int]) -> int:
+        """Review's "agree with all": each of these events nobody has answered takes TARS's own guess as a person's
+        answer, the guess worked out here, not taken from the page. One answered already, or with no guess, is left
+        alone. Returns how many were answered."""
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        rows = self._labeled(self.store.rows(f"SELECT * FROM events WHERE id IN ({marks}) AND label IS NULL", ids))
+        answers = [(r["auto_label"], r["id"]) for r in rows if r["auto_label"]]
+        with self.store.transaction() as db:
+            db.executemany("UPDATE events SET label=? WHERE id=? AND label IS NULL", answers)
+        return len(answers)
+
     def delete(self, event_id: int) -> None:
         """The wake and its audio. A conversation it started stays, without its wake or the request's audio."""
         with self.store.transaction() as db:

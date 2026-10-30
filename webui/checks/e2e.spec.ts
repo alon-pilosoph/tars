@@ -401,3 +401,18 @@ test("Status shows each process by its heartbeat, today's counts, and the servic
   );
   await expect(page.locator(".kv")).toContainText(health.machine.host);
 });
+
+// Last: it answers most of Review, which the tests above count on being there.
+test("Agree with all answers each guessed wake with TARS's guess, and leaves the rest waiting", async () => {
+  await nav("Review").click();
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  const before = (await A.events()).filter(e => e.follow !== "asked" && !e.label);
+  const guessed = before.filter(e => e.auto_label);
+  await page.getByRole("button", { name: `Agree with all ${guessed.length} guesses` }).click();
+  await dialog()
+    .getByRole("button", { name: `Agree with ${guessed.length}` })
+    .click();
+  await expect.poll(async () => reviewTodo(await A.events())).toBe(before.length - guessed.length);
+  const after = await A.events();
+  for (const e of guessed) expect(after.find(x => x.id === e.id)?.label).toBe(e.auto_label);
+});
