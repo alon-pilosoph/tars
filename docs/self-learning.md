@@ -42,9 +42,9 @@ A few rules keep the log honest:
   keeps its conversation, without the wake or the request's audio. Ids are never reused, so a deleted row can't
   come back attached to something new.
 - **Old audio that teaches nothing is dropped.** After `[learning] keep_audio_days` (60 by default), the audio of
-  wakes and near-misses training wouldn't learn from is deleted; the row stays. That's a lonely near-miss, a wake
-  nobody spoke after, and a wake the double-check turned away that nobody answered in Review (the check's own
-  verdict isn't training data). Audio with a person's answer, or with an automatic label training uses, is kept.
+  wakes and near-misses training wouldn't learn from is deleted; the row stays. That's a near-miss nobody marked
+  real in Review, a wake nobody spoke after, and a wake the double-check turned away that nobody answered in Review
+  (the check's own verdict isn't training data). Audio with a person's answer, or with an automatic label training uses, is kept.
   This runs at startup and once a day.
 
 The assistant and the web UI share the database ([how](architecture.md#the-web-ui)), and an older one is upgraded
@@ -60,7 +60,7 @@ The rules run when reading, so they can change without touching stored data:
 |---|---|
 | a request followed | real |
 | "Did you call me?" and they answered | real |
-| a near-miss, followed within 6 s by a real wake | real (a missed "hey TARS", said again louder) |
+| a near-miss, followed within 10 s by a real wake | real (a missed "hey TARS", said again louder) |
 | the check heard something else | not real |
 | the reply wasn't meant for TARS | not real |
 | "Did you call me?" and nobody answered | not real |
@@ -104,11 +104,12 @@ anything. Its Models page shows the pair in use and how it tested, how much new 
 version history, where "Use this" switches back.
 
 **What training learns from** (`events.learning_label`): every labeled wake and near-miss, with a person's label
-winning over the automatic one. Near-misses labeled real (a near-miss followed within seconds by a real wake) are the
-most valuable: they're the "hey TARS" the wake model missed. One automatic label is left out: "the double-check
-heard something else", because it's only the check's own opinion. When the check wrongly turns down a soft "t"
-and nobody reviews it, learning from that would teach both stages to ignore that voice harder; answering it in
-Review makes it count.
+winning over the automatic one. Near-misses marked real are the most valuable: they're the "hey TARS" the wake model
+missed. Two automatic labels are left out. "The double-check heard something else" is only the check's own opinion:
+when it wrongly turns down a soft "t" and nobody reviews it, learning from that would teach both stages to ignore
+that voice harder. And a near-miss guessed a missed "hey TARS" is guessed only from when it came (a real wake within
+10 s), so any sound in those seconds would be taught as one. Both wait in Review, and a person's answer makes them
+count.
 
 **Versions** (`versions.py`). A trained pair (the wake model, the check's learned layer, and the threshold and check
 window they were tuned for, with the test results it was chosen on) is installed with `voice-assistant

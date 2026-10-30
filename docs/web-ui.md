@@ -13,7 +13,7 @@ palette).
 |---|---|
 | **Home** | What TARS sent since the last Refresh, then conversations by day, newest first: who spoke (by voice, or in a [Telegram](telegram.md) chat, marked as one), what they said, what TARS answered and the things it sent, and where an answer failed. Rate an answer with the thumbs, play what was said, name an unknown voice. Tap a conversation to open it: the recordings with a player, Fix text for a misheard transcript, Good and Bad, what TARS sent, how long each answer took and which model wrote it, what TARS heard, and Copy, "Not meant for TARS", Who was talking and Delete. With two or more named people, a filter by person. |
 | **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. Opening, copying or ticking something marks it seen; it stays under New until the next Refresh. |
-| **Review** | Wakes no conversation explained (a near-miss, a "Did you call me?" nobody answered, a wake followed by silence). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted. |
+| **Review** | Wakes no conversation explained (a "Did you call me?" nobody answered, a wake followed by silence, one the double-check turned away), and near-misses a real wake followed within 10 s (probably a missed "hey TARS"; other near-misses stay in the log, out of Review). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted. |
 | **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set (by voice, on this page or on Telegram), whether it's posted to a Telegram chat rather than said aloud, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice (or by phone, with [who's home](presence.md)) is back. The tab counts what's waiting for a got it. |
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
@@ -111,7 +111,7 @@ fails is shown as it last loaded, saying so, and only when none answers is TARS 
 | `POST /api/items/{id}/entries/{n}` | `{"done": true}` ticks a list entry |
 | `GET /api/items/{id}/file` | A sent file, always as a download |
 | `DELETE /api/items/{id}` | One sent item |
-| `GET /api/events` | What Review needs: the newest 500 wakes and near-misses waiting for an answer and the newest 500 answered ones, with automatic labels and why (`?limit=n` for the newest n of everything) |
+| `GET /api/events` | What Review needs: the newest 500 wakes, and near-misses a real wake followed, waiting for an answer and the newest 500 answered ones, with automatic labels and why (`?limit=n` for the newest n of everything) |
 | `GET /api/audio/{event}/wake`, `/request` | What woke it, and the request after it, as WAV, from the backup's bucket once it's left the machine |
 | `POST /api/events/{id}/label` | `{"label": "real" \| "not_real" \| null}` |
 | `POST /api/events/{id}/cluster` | `{"cluster_id": n}` moves a request to a voice and pins it there |

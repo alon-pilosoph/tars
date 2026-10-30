@@ -19,7 +19,7 @@ WAKE, NEAR_MISS = "wake", "near_miss"
 ASKED, SAID_NOTHING, NOT_FOR_US = "asked", "said_nothing", "not_for_us"
 REAL, NOT_REAL = "real", "not_real"
 PERSON, NOT_PERSON, UNKNOWN = "person", "not_person", "unknown"
-MISSED_WINDOW_S = 6.0  # a near-miss followed this soon by a real wake was probably a missed "hey TARS"
+MISSED_WINDOW_S = 10.0  # a near-miss followed this soon by a real wake was probably a missed "hey TARS"
 DAY_S = 24 * 3600
 REVIEW_SHOWN = 500  # Review shows this many of the newest wakes waiting for an answer, and as many answered ones
 # The newest requests of each voice stay on the machine whatever a backup does: a person's voiceprint is rebuilt from
@@ -210,13 +210,16 @@ class EventLog:
 
     def for_review(self) -> list[dict]:
         """Newest first: the events waiting for an answer, and the newest answered ones. A wake a request followed
-        settles itself, and one whose audio is gone can't be listened to, so neither waits."""
+        settles itself, and one whose audio is gone can't be listened to, so neither waits. A near-miss waits only
+        when a real wake followed within MISSED_WINDOW_S (probably a missed "hey TARS", said again): the rest are
+        any sound that came near, dozens a day with a lenient model, and stay in the log, out of Review."""
         return self._labeled(
             self.store.rows(
-                "SELECT * FROM events WHERE id IN (SELECT id FROM events WHERE label IS NULL AND audio IS NOT NULL "
-                "AND follow IS NOT ? ORDER BY ts DESC LIMIT ?) "
+                "SELECT * FROM events WHERE id IN (SELECT id FROM events e WHERE label IS NULL AND audio IS NOT NULL "
+                "AND follow IS NOT ? AND (kind IS NOT ? OR EXISTS (SELECT 1 FROM events w WHERE w.kind=? "
+                "AND w.outcome=? AND w.ts > e.ts AND w.ts <= e.ts + ?)) ORDER BY ts DESC LIMIT ?) "
                 "OR id IN (SELECT id FROM events WHERE label IS NOT NULL ORDER BY ts DESC LIMIT ?) ORDER BY ts DESC",
-                (ASKED, REVIEW_SHOWN, REVIEW_SHOWN),
+                (ASKED, NEAR_MISS, WAKE, ANSWER, MISSED_WINDOW_S, REVIEW_SHOWN, REVIEW_SHOWN),
             )
         )
 
@@ -325,11 +328,13 @@ def voice_decided(cluster: dict | None, pinned: bool) -> bool:
 
 def learning_label(event: dict) -> str | None:
     """The label training learns from: a person's, else the automatic one, unless that is only the check's own
-    verdict. Learning from those would teach both stages what the check already thinks, including its mistakes on a
-    soft "t"; a person's answer in Review makes them count."""
+    verdict, or a guessed miss. Learning from the check's verdict would teach both stages what the check already
+    thinks, including its mistakes on a soft "t"; a near-miss is a missed "hey TARS" only by when it came (a real
+    wake soon after), and any sound in those seconds would be taught as one. A person's answer in Review makes
+    either count."""
     if event["label"]:
         return event["label"]
-    return None if event["outcome"] == IGNORE else event["auto_label"]
+    return None if event["outcome"] == IGNORE or event["kind"] == NEAR_MISS else event["auto_label"]
 
 
 def auto_label(event: dict, answered_wake_times: list[float]) -> tuple[str | None, str]:

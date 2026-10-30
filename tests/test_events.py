@@ -70,13 +70,16 @@ def test_a_persons_label_wins_over_the_automatic_one(log):
 
 
 def test_training_learns_from_people_and_from_what_happened_but_not_from_the_check_itself():
-    def event(label=None, auto=None, outcome=ANSWER):
-        return {"label": label, "auto_label": auto, "outcome": outcome}
+    def event(label=None, auto=None, outcome=ANSWER, kind=events.WAKE):
+        return {"label": label, "auto_label": auto, "outcome": outcome, "kind": kind}
 
     assert learning_label(event(auto=REAL)) == REAL  # a request followed
     assert learning_label(event(auto=NOT_REAL, outcome=ASK)) == NOT_REAL  # nobody answered "Did you call me?"
     assert learning_label(event(auto=NOT_REAL, outcome=IGNORE)) is None  # only the check's own verdict
     assert learning_label(event(label=REAL, auto=NOT_REAL, outcome=IGNORE)) == REAL  # a person said it was real
+    # A miss guessed only from when it came (a real wake soon after) waits for a person; then it counts.
+    assert learning_label(event(auto=REAL, outcome=None, kind=events.NEAR_MISS)) is None
+    assert learning_label(event(label=REAL, auto=REAL, outcome=None, kind=events.NEAR_MISS)) == REAL
 
 
 def test_what_is_waiting_to_be_learned_from(log):
@@ -90,7 +93,7 @@ def test_what_is_waiting_to_be_learned_from(log):
 
 def test_review_gets_the_newest_waiting_and_answered_events(log, monkeypatch):
     monkeypatch.setattr(events, "REVIEW_SHOWN", 2)
-    _, waiting, newest_waiting = (log.add_near_miss(AUDIO, 0.4, ts=t) for t in (1, 2, 3))
+    _, waiting, newest_waiting = (log.add_wake(AUDIO, 0.9, IGNORE, "hey cars", 0.1, ts=t) for t in (1, 2, 3))
     old, new = (log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9, ts=t) for t in (4, 5))
     log.set_label(old, REAL)
     log.set_label(new, NOT_REAL)
@@ -103,10 +106,24 @@ def test_review_gets_the_newest_waiting_and_answered_events(log, monkeypatch):
 def test_review_leaves_out_wakes_a_request_settled_and_ones_without_audio(log):
     settled = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9, ts=1)
     log.set_follow(settled, ASKED)
-    log.add_near_miss(AUDIO, 0.4, ts=2)  # lonely: its audio is pruned
+    log.add_wake(AUDIO, 0.9, IGNORE, "hey cars", 0.1, ts=2)  # turned away and unreviewed: its audio is pruned
     log.prune_audio(keep_days=0, now=1e9)
-    waiting = log.add_near_miss(AUDIO, 0.4, ts=3)
+    waiting = log.add_wake(AUDIO, 0.9, IGNORE, "hey cars", 0.1, ts=3)
     assert [e["id"] for e in log.for_review()] == [waiting]
+
+
+def test_review_has_only_the_near_misses_a_real_wake_followed_soon_after(log):
+    log.add_near_miss(AUDIO, 0.2, ts=10)  # any sound that came near: kept, but not reviewed
+    missed = log.add_near_miss(AUDIO, 0.25, ts=100)  # "hey TARS", missed, then said again
+    log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.95, ts=100 + events.MISSED_WINDOW_S - 1)
+    log.add_near_miss(AUDIO, 0.2, ts=200)  # a turned-away wake after it doesn't make it a miss
+    log.add_wake(AUDIO, 0.4, IGNORE, "nothing clear", 0.1, ts=202)
+    late = log.add_near_miss(AUDIO, 0.2, ts=300)
+    log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.95, ts=300 + events.MISSED_WINDOW_S + 1)
+    near = [e for e in log.for_review() if e["kind"] == events.NEAR_MISS]
+    assert [e["id"] for e in near] == [missed] and near[0]["auto_label"] == REAL
+    assert late not in [e["id"] for e in log.for_review()]
+    assert len([e for e in log.events() if e["kind"] == events.NEAR_MISS]) == 4  # all still in the log
 
 
 def test_requests_keep_audio_transcript_and_voice(log):
