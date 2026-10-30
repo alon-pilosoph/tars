@@ -370,6 +370,8 @@ describe("the demo's automatic labels", () => {
   it("count a near-miss right before a real wake as a missed hey TARS", () => {
     const nearMiss = { ...demoEvent, kind: "near_miss" as const, outcome: null, ts: 1000 };
     expect(label(nearMiss, [1003])).toBe("real");
+    expect(label(nearMiss, [1009])).toBe("real"); // within 10 s, as events.MISSED_WINDOW_S
+    expect(demoAuto(nearMiss, [1011])).toEqual([null, "it never woke up"]);
     expect(demoAuto(nearMiss, [2000])).toEqual([null, "it never woke up"]);
   });
 });
