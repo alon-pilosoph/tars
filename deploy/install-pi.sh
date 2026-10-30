@@ -58,6 +58,23 @@ if cfg.speaker.enabled: make_speaker_id(cfg, root)
 echo "== Audio devices (put part of the speakerphone's name in config.toml [audio] if it isn't the default)"
 "$UV" run --frozen voice-assistant --list-devices
 
+echo "== Devices (udev rules)"
+# With no speakerphone TARS stays stopped; this starts it when one is plugged in, and lets TARS use its mute. And an
+# IR receiver, if there's one (docs/home.md#buttons), decodes the NEC most remotes send. Before the services start,
+# and applied to what's plugged in already, so TARS starts with them rather than after a replug or a reboot.
+changed=0
+for rules in 99-tars-speakerphone.rules 99-tars-ir.rules; do
+  if ! cmp -s "deploy/$rules" "/etc/udev/rules.d/$rules"; then
+    sudo cp "deploy/$rules" /etc/udev/rules.d/
+    changed=1
+  fi
+done
+if [ "$changed" = 1 ]; then
+  sudo udevadm control --reload
+  sudo udevadm trigger --action=add --subsystem-match=hidraw --subsystem-match=rc
+  sudo udevadm settle
+fi
+
 echo "== Services"
 mkdir -p "$HOME/.config/systemd/user"
 cp deploy/voice-assistant.service deploy/voice-assistant-web.service "$HOME/.config/systemd/user/"
@@ -94,14 +111,6 @@ elif [ -e "$HOME/.config/systemd/user/voice-assistant-backup.timer" ]; then
   systemctl --user disable --now voice-assistant-backup.timer || true
 fi
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
-# With no speakerphone TARS stays stopped; this starts it when one is plugged in.
-# And an IR receiver, if there's one (docs/home.md#buttons), decodes the NEC most remotes send.
-for rules in 99-tars-speakerphone.rules 99-tars-ir.rules; do
-  if ! cmp -s "deploy/$rules" "/etc/udev/rules.d/$rules"; then
-    sudo cp "deploy/$rules" /etc/udev/rules.d/
-    sudo udevadm control --reload
-  fi
-done
 
 echo "== Checking everything (it says \"TARS is ready.\" and listens a moment)"
 sleep 3  # the services just restarted
