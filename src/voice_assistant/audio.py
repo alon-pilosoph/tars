@@ -256,13 +256,6 @@ class Microphone:
     def latency(self) -> float:
         return self._stream.latency
 
-    def stop(self) -> None:
-        """From another thread (a stop button): what's playing stops now, and the rest of it isn't taken; the next
-        play_pcm_stream plays as usual."""
-        with self._lock:
-            self._stopped = True
-            self._buffer.clear()
-
     def read(self) -> np.ndarray:
         try:
             return self._queue.get(timeout=MIC_STALL_S)

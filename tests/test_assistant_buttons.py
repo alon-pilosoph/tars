@@ -1,10 +1,13 @@
 """The remote's talk and stop buttons and the speakerphone's mute, as the assistant takes them: talk wakes it as its
 name does; stop cuts what it's saying and ends the conversation, quietly, with no follow-up; muted, it doesn't wake."""
 
+import threading
+import time
 import types
 
 import pytest
 
+import voice_assistant.assistant as assistant_module
 from voice_assistant.assistant import ALWAYS, PAUSE
 from voice_assistant.wake import DUE
 
@@ -51,15 +54,35 @@ def test_the_talk_button_wakes_it_and_it_greets_at_once(speaker, conversations):
     assert conversations(assistant) == [ALWAYS, PAUSE]  # the button, then its name as usual
 
 
-def test_muted_it_wakes_to_neither_its_name_nor_the_talk_button(speaker, conversations):
+def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(speaker, conversations):
     assistant, _ = make_assistant(speaker, [], [])
+    assistant.mic.clear = lambda: None
     assistant.mute(True)
     assert assistant.talk().startswith("ignored: muted")
-    assistant.trigger = waking(assistant, "name", "talk")
-    assert conversations(assistant) == []
-    assistant.mute(False)
-    assistant.trigger = waking(assistant, "talk")
-    assert conversations(assistant) == [ALWAYS]
+    waits = []
+    trigger = waking(assistant, "name")
+    assistant.trigger = types.SimpleNamespace(wait=lambda mic, due=None: waits.append(1) or trigger.wait(mic, due))
+    threading.Timer(0.3, assistant.mute, [False]).start()  # the speakerphone unmuted, a moment later
+    started = time.monotonic()
+    assert conversations(assistant) == [PAUSE]  # then its name woke it, as usual
+    assert waits == [1, 1]  # the wake model was asked only once unmuted: its name, then Done
+    assert 0.3 <= time.monotonic() - started < 1.0  # back at once, not at the next look
+
+
+def test_muted_what_s_due_is_still_said(speaker, monkeypatch):
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.mic.clear = lambda: None
+    assistant.mute(True)
+    due = iter([False, False, True])
+    monkeypatch.setattr(assistant, "_due", lambda: next(due, False))
+    monkeypatch.setattr(assistant_module, "MUTED_POLL_S", 0.01)
+    assert assistant._wait_muted() == DUE
+
+
+def test_muting_while_it_listens_for_its_name_stops_the_listening(speaker):
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.mute(True)
+    assert assistant._woken()  # the wake wait asks this every block: it ends, and the muted wait takes over
 
 
 def test_stop_while_it_answers_ends_the_conversation_with_no_follow_up_and_no_error(speaker):

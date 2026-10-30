@@ -52,6 +52,7 @@ ERROR_LINES = {
 }
 DRY_FROM_HUMOR = 50  # percent
 PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes, <name>?" after the wake word
+MUTED_POLL_S = 0.25  # muted, how often what's due is looked for (unmuting ends the wait at once)
 ERROR_LINE_WAIT_S = 1.0
 PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes, Alon?")
 UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
@@ -204,6 +205,8 @@ class Assistant:
         self._talk = threading.Event()
         self._stop = threading.Event()
         self.muted = False
+        self._unmuted = threading.Event()  # set while not muted: what a muted wait waits for
+        self._unmuted.set()
 
     def use_reminders(self, tools: ReminderTools | None) -> None:
         self.reminder_tools = tools
@@ -229,13 +232,27 @@ class Assistant:
         return "stopped"
 
     def mute(self, muted: bool) -> None:
-        """While muted, TARS doesn't wake: not to its name, nor to the talk button. What's due is still said."""
+        """While muted, TARS doesn't wake: not to its name, nor to the talk button. It doesn't even listen for its
+        name: the wake model is idle and the mic's audio thrown away (_wait_muted). What's due is still said."""
         self.muted = muted
+        (self._unmuted.clear if muted else self._unmuted.set)()
         print("(muted: not listening)" if muted else "(unmuted: listening again)")
 
     def _woken(self) -> bool:
-        """Asked while waiting for the wake word: the talk button, or something due."""
-        return self._talk.is_set() or self._due()
+        """Asked while waiting for the wake word: the talk button, something due, or muted (stop listening)."""
+        return self._talk.is_set() or self.muted or self._due()
+
+    def _wait_muted(self) -> str | None:
+        """While muted, instead of the wake word: no wake model and no double-check, only the mic's audio thrown
+        away (its stream stays open, so unmuting is instant), and what's due looked for. DUE when something is;
+        None once unmuted."""
+        while self.muted:
+            self.mic.clear()
+            if self._due():
+                return DUE
+            self._unmuted.wait(MUTED_POLL_S)
+        self.mic.clear()  # what it heard while muted is old
+        return None
 
     def run_forever(
         self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0, greet: str = PAUSE
@@ -246,7 +263,12 @@ class Assistant:
         while True:
             print(f"\n{idle_message}")
             self._talk.clear()
-            woke = self.trigger.wait(self.mic, due=self._woken)
+            if self.muted:
+                woke = self._wait_muted()
+                if woke is None:  # unmuted: back to listening for its name
+                    continue
+            else:
+                woke = self.trigger.wait(self.mic, due=self._woken)
             self._stop.clear()  # pressed while idle, it stops nothing
             if self._talk.is_set():
                 self._talk.clear()
