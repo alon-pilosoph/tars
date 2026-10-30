@@ -21,7 +21,7 @@ export function Review() {
   const toCheck = all.filter(e => s.snapshot.review.has(e.id));
   const reviewed = all.filter(e => !s.snapshot.review.has(e.id));
   const left = toCheck.filter(e => !e.label).length;
-  const guessed = toCheck.filter(e => !e.label && e.auto_label).map(e => e.id);
+  const guessed = toCheck.filter(e => !e.label && e.auto_label);
   const head = (
     <PageHead
       title={left ? `${left} to check` : "Review"}

@@ -338,9 +338,9 @@ def test_agree_with_all_answers_each_with_tars_s_own_guess_never_one_answered_or
     silent = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9, ts=4)
     log.set_follow(silent, SAID_NOTHING)  # no guess: left waiting
     r = client.post("/api/events/agree", json={"ids": [*turned_away, mine, silent, 999]})
-    assert r.status_code == 200 and r.json() == {"answered": 2}
+    assert r.status_code == 200 and r.json() == {REAL: 0, NOT_REAL: 2}
     assert [log.get(e)["label"] for e in turned_away] == [NOT_REAL, NOT_REAL]
     assert log.get(mine)["label"] == REAL and log.get(silent)["label"] is None
-    assert client.post("/api/events/agree", json={"ids": []}).json() == {"answered": 0}
+    assert client.post("/api/events/agree", json={"ids": []}).json() == {REAL: 0, NOT_REAL: 0}
     too_many = client.post("/api/events/agree", json={"ids": list(range(10_000))})
     assert too_many.status_code == 422

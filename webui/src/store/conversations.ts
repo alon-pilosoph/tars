@@ -1,6 +1,6 @@
 import { post } from "../api";
-import { stamp } from "../format";
-import type { Conversation, Label, Turn } from "../types";
+import { answerSplit, stamp } from "../format";
+import type { Conversation, Label, TarsEvent, Turn } from "../types";
 import { confirmDelete, saveThenReload, undoable } from "./actions";
 import { get, set, setNow } from "./core";
 import { eventById, findTurn, speakerName } from "./selectors";
@@ -114,24 +114,33 @@ export async function answerWake(id: number, value: Label) {
   await saveLabel(id, e.label, next, next ? ANSWERED[next] : "Answer cleared.");
 }
 
-/** Review's "agree with all": TARS's guess becomes the answer for each of these nobody has answered. The server
-    works the guesses out again, and leaves alone any answered meanwhile. */
-export async function agreeWithGuesses(ids: number[]) {
-  const n = ids.length;
+/** Review's "agree with all": TARS's guess becomes the answer for each of these nobody has answered, after saying
+    how they split. The server works the guesses out again, leaves alone any answered meanwhile, and says what it
+    saved. */
+export async function agreeWithGuesses(events: TarsEvent[]) {
+  const guessed = events.filter(e => !e.label && e.auto_label);
+  const n = guessed.length;
+  const split = answerSplit({
+    real: guessed.filter(e => e.auto_label === "real").length,
+    not_real: guessed.filter(e => e.auto_label === "not_real").length,
+  });
   const ok = await confirm({
     title: `Agree with all ${n} guesses?`,
     text:
-      "Each one TARS guessed gets that answer, as if you'd tapped it: they become what the next wake model learns " +
+      `**${split}.** Each gets that answer, as if you'd tapped it: they become what the next wake model learns ` +
       "from. Answers you've given are kept. Listen to any you're unsure of first.",
     ok: `Agree with ${n}`,
   });
   if (!ok) return;
-  let answered = 0;
+  let saved: Record<Label, number> = { real: 0, not_real: 0 };
   await saveThenReload(
     async () => {
-      answered = (await post<{ answered: number }>("/api/events/agree", { ids })).answered;
+      saved = await post<Record<Label, number>>("/api/events/agree", { ids: guessed.map(e => e.id) });
     },
-    () => `Answered ${answered} with TARS's guess.`,
+    () => {
+      const total = saved.real + saved.not_real;
+      return total ? `Answered ${total}: ${answerSplit(saved)}.` : "Nothing to answer: they'd all been answered.";
+    },
     { fail: "Couldn't answer them" },
   );
 }

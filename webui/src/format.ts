@@ -4,6 +4,7 @@ import type {
   ConversationWake,
   FailedAt,
   Item,
+  Label,
   MachineHealth,
   Metric,
   ProcessHealth,
@@ -240,4 +241,13 @@ export function memoryLine(m: MachineHealth) {
 export function diskLine(m: MachineHealth) {
   const used = Math.round((1 - m.disk_free / m.disk_total) * 100);
   return `${fmtSize(m.disk_free)} free of ${fmtSize(m.disk_total)} (${used}% used)`;
+}
+
+const SAID = { real: "“hey TARS”", not_real: "“Not it”" } as const;
+
+/** How the answers split, the commoner first: "6 “Not it” and 1 “hey TARS”", or "All 7 “Not it”". */
+export function answerSplit(counts: Record<Label, number>): string {
+  const [many, few] = (["not_real", "real"] as const).map(l => [l, counts[l]] as const).sort((a, b) => b[1] - a[1]);
+  if (!few[1]) return `All ${many[1]} ${SAID[many[0]]}`;
+  return `${many[1]} ${SAID[many[0]]} and ${few[1]} ${SAID[few[0]]}`;
 }

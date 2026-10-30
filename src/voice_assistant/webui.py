@@ -348,8 +348,9 @@ def create_app(
 
     @app.post("/api/events/agree")
     def agree(body: Agree):
-        """Review's "agree with all": TARS's guess becomes the answer for each of these nobody has answered."""
-        return {"answered": log.agree(body.ids)}
+        """Review's "agree with all": TARS's guess becomes the answer for each of these nobody has answered. Says
+        how many took each answer: what was saved, whatever the page thought."""
+        return log.agree(body.ids)
 
     @app.post("/api/events/{event_id}/cluster")
     def retag(event_id: int, body: Assignment):

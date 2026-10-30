@@ -1,6 +1,7 @@
 /* Functional check of the web UI against the real backend and a throwaway copy of the demo log. `npm run e2e`.
    The steps run in order in one page and depend on each other. */
 import { type APIRequestContext, type Locator, type Page, expect, test } from "@playwright/test";
+import { answerSplit } from "../src/format";
 import type { ApiConversation, Cluster, Health, Item, ModelsInfo, RemindersInfo, TarsEvent } from "../src/types";
 
 const api = (r: APIRequestContext) => {
@@ -408,10 +409,16 @@ test("Agree with all answers each guessed wake with TARS's guess, and leaves the
   await page.getByRole("button", { name: "Refresh" }).first().click();
   const before = (await A.events()).filter(e => e.follow !== "asked" && !e.label);
   const guessed = before.filter(e => e.auto_label);
+  const split = answerSplit({
+    real: guessed.filter(e => e.auto_label === "real").length,
+    not_real: guessed.filter(e => e.auto_label === "not_real").length,
+  });
   await page.getByRole("button", { name: `Agree with all ${guessed.length} guesses` }).click();
+  await expect(dialog().locator("p b")).toHaveText(`${split}.`); // how they split, before agreeing
   await dialog()
     .getByRole("button", { name: `Agree with ${guessed.length}` })
     .click();
+  await expect(page.getByText(`Answered ${guessed.length}: ${split}.`)).toBeVisible();
   await expect.poll(async () => reviewTodo(await A.events())).toBe(before.length - guessed.length);
   const after = await A.events();
   for (const e of guessed) expect(after.find(x => x.id === e.id)?.label).toBe(e.auto_label);
