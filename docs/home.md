@@ -136,36 +136,56 @@ back up. Asked to mute or be quiet, it goes down to 10% and says that's as low a
 It reads the level back after setting it and says "done" only when that's what it set. At startup, and in `--check`,
 a speaker it can't turn is said with why.
 
-### Volume buttons
+### Buttons
 
-With `own_speaker` on, buttons turn TARS's speaker too, 10% a press, by the same rules: never muted, never below 10%.
-A held button turns it a step every 0.3 s. Each press is a line in the voice's log, with the level it's at after.
+Buttons work TARS without a word: the speakerphone's own, and a remote's through an IR receiver. Each press is a line
+in the voice's log, with what it did.
+
+| Button | Does |
+|---|---|
+| **Volume up and down** | Turn TARS's speaker 10% a press (with `own_speaker`), by the same rules as asking: never muted, never below 10%. Held, a step every 0.3 s. |
+| **Talk** | TARS listens, as if called by name, and says "Yes?" at once. |
+| **Stop** | What TARS is saying stops now, the reply being written with it, and it doesn't wait for a follow-up. A reminder whose line had begun counts as acknowledged, and a timer ringing on goes off; one stopped before its line is said again later, never acknowledged unheard. |
+| **Mute** | The speakerphone's own mute (below): its mic off, its light red. Again, on. |
+
+Talk, stop and mute count once a press, however long they're held: a remote repeats its code about every 0.1 s
+while a button is down, and a press is its code after a quarter of a second without it, so a held mute never
+toggles twice.
 
 - **The speakerphone's own + and -** (`[home] volume_keys`, on by default). The PowerConf doesn't change its volume
   itself when they're pressed: they're volume keys sent to the computer, and on a Pi with no desktop nothing acted on
   them before. Any keyboard's volume keys count the same.
-- **A remote's volume buttons** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any
-  wired to a GPIO pin. The remote's power button is the case's own (it turns the Pi on, and shuts it down cleanly);
-  TARS only reads the volume buttons.
+- **The speakerphone's own mute** (`[home] speakerphone_mute`, on by default). Its mute button mutes its mic in the
+  speakerphone itself, and TARS follows: while it's muted TARS doesn't listen for its name, or the talk button, and
+  says what's due all the same. The remote's mute works the same mute (TARS sets it as the button does), so the two
+  never disagree. TARS reads the speakerphone's buttons and lights from what it says it has (its HID report
+  descriptor: a phone-mute button, mute and off-hook lights), and unmutes it when it starts. Without one, the
+  remote's mute is TARS's alone: it stops listening, and the mic stays on.
+- **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
+  Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power
+  button is the case's own (it turns the Pi on, and shuts it down cleanly).
 
 Linux only. TARS reads the buttons from `/dev/input`, which TARS's user may read in the `input` group (it is on
-Raspberry Pi OS); it acts on the volume keys and the remote's two codes, and nothing else it reads is kept. Setting up
-a remote, on the Pi:
+Raspberry Pi OS), and the speakerphone's mute from its `/dev/hidraw*`, which `deploy/99-tars-speakerphone.rules`
+lets the `input` group use (the PowerConf's; another speakerphone's USB ids go beside it). It acts on the volume keys,
+the remote's codes and the mute button, and nothing else it reads is kept. Setting up a remote, on the Pi:
 
 1. **Turn the receiver on.** Add `dtoverlay=gpio-ir,gpio_pin=23` to `/boot/firmware/config.txt` (23 is the Argon
    ONE's pin; another receiver says its own), and reboot. `install-pi.sh` installs `deploy/99-tars-ir.rules`, which
    has the receiver decode NEC, what most remotes (the Argon's among them) send: by default it decodes only RC-6.
-2. **Read the remote's codes.** With TARS's speaker on, `uv run python -m voice_assistant.buttons` prints what each
-   button sends (Ctrl-C to stop): press volume up, then volume down.
+2. **Read the remote's codes.** `uv run python -m voice_assistant.buttons` prints what each button sends (Ctrl-C to
+   stop). Hold each button a second, one at a time, pointed at the receiver: a quick press can be missed.
 3. **Name them** in `config.local.toml`, and restart TARS:
 
    ```toml
    [home]
    own_speaker = true
-   remote = { volume_up = 0x80, volume_down = 0x81 }   # the Argon remote's
+   # The Argon remote's: OK talks, back stops, menu mutes.
+   remote = { volume_up = 0x80, volume_down = 0x81, talk = 0xce, stop = 0x90, mute = 0x9d }
    ```
 
-`--check` says what turns the speaker, and what's missing: a receiver that isn't on, or devices TARS may not read.
+`--check` says what the buttons do, and what's missing: a receiver that isn't on, devices TARS may not read, or a
+speakerphone whose mute TARS can't follow.
 
 ### Your own devices
 

@@ -1,6 +1,6 @@
 # Has an IR receiver on a GPIO pin (dtoverlay=gpio-ir, the Argon ONE case's) decode NEC, what most remotes send, as
 # well as what it decodes already (only RC-6, by default): TARS reads a remote's volume buttons from it
-# (docs/home.md#volume-buttons). install-pi.sh installs it:
+# (docs/home.md#buttons). install-pi.sh installs it:
 #
 #   sudo cp deploy/99-tars-ir.rules /etc/udev/rules.d/ && sudo udevadm control --reload
 ACTION=="add", SUBSYSTEM=="rc", DRIVERS=="gpio_ir_recv", ATTR{protocols}="+nec"

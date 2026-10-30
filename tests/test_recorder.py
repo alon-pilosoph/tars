@@ -204,3 +204,12 @@ def test_if_flux_fails_mid_turn_the_recorder_s_own_rules_take_over():
     rec = recorder("SSSSSS" + "." * 60, end_silence_s=0.8, answer_early_s=0.2)
     rec.record(mic(), on_pause=lambda pcm: events.append("pause"), turn_state=lambda: TurnState.FAILED)
     assert rec.trailing_silence_s == pytest.approx(0.8) and events == ["pause"]  # not the 2.5 s backstop
+
+
+def test_a_stop_button_ends_the_wait_for_speech_and_the_speech_with_nothing():
+    waiting, listening = mic(), mic()
+    asked = iter([False] * 5 + [True])
+    assert recorder("." * 100).record(waiting, start_timeout_s=8.0, stop=lambda: next(asked)) is None
+    assert waiting.reads == 5  # stopped at once, not at the end of the wait
+    said = iter([False] * 30 + [True])
+    assert recorder("." * 5 + "S" * 100).record(listening, stop=lambda: next(said)) is None

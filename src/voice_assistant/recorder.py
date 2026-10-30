@@ -65,6 +65,7 @@ class UtteranceRecorder:
         on_pause: Callable[[bytes], None] | None = None,
         on_resume: Callable[[], None] | None = None,
         turn_state: Callable[[], TurnState] | None = None,
+        stop: Callable[[], bool] | None = None,
     ) -> bytes | None:
         """Returns 16 kHz mono int16 PCM, or None if nobody spoke before the timeout.
 
@@ -73,11 +74,13 @@ class UtteranceRecorder:
         recorded, from the moment speech starts (preroll first), for streaming transcription. `on_pause` gets the
         audio so far once `answer_early_s` into a pause, and `on_resume` is called if the speaker makes a sound after.
         With `turn_state` (a service that decides the turn, like stt.FluxSession), the service ends the turn and says
-        when to call on_pause and on_resume; the silence rule is only a backstop.
+        when to call on_pause and on_resume; the silence rule is only a backstop. `stop()`, asked every block, ends
+        it at once with None, as if nobody spoke (a stop button).
         """
         cfg = self._cfg
         timeout_s = cfg.start_timeout_s if start_timeout_s is None else start_timeout_s
-        blocks = self._wait_for_speech(mic, max(preroll_blocks, START_BLOCKS), timeout_s)
+        stopped = stop or (lambda: False)
+        blocks = self._wait_for_speech(mic, max(preroll_blocks, START_BLOCKS), timeout_s, stopped)
         if blocks is None:
             return None
         send = on_audio or (lambda pcm: None)
@@ -100,6 +103,8 @@ class UtteranceRecorder:
         silence, announce_at, announced, stop_at = 0, pauses.early, False, pauses.end
         last_voiced, service_ended = len(blocks) - 1, False
         while silence < stop_at and len(blocks) < max_blocks:
+            if stopped():
+                return None
             block = mic.read()
             blocks.append(block)
             send(block.tobytes())
@@ -146,11 +151,15 @@ class UtteranceRecorder:
             blocks.append(mic.read())
         return _pcm(blocks[: last_voiced + 1 + tail_blocks])
 
-    def _wait_for_speech(self, mic: Microphone, keep: int, timeout_s: float) -> list[np.ndarray] | None:
+    def _wait_for_speech(
+        self, mic: Microphone, keep: int, timeout_s: float, stopped: Callable[[], bool] = lambda: False
+    ) -> list[np.ndarray] | None:
         self._vad.reset()
         preroll: deque[np.ndarray] = deque(maxlen=keep)
         streak = 0
         for _ in range(int(timeout_s / BLOCK_SECONDS)):
+            if stopped():
+                return None
             block = mic.read()
             preroll.append(block)
             streak = streak + 1 if self.is_speech(block) else 0

@@ -1,5 +1,6 @@
-"""Volume buttons: the speakerphone's own keys and a remote's codes turn TARS's speaker a step a press; a held button
-a step every REPEAT_S; an HDMI port's remote and the speakerphone's own codes are never taken for the remote's."""
+"""Buttons: the speakerphone's own keys and a remote's codes turn TARS's speaker a step a press, a held one a step
+every REPEAT_S; talk, stop and mute count once a press however long they're held (debounced); an HDMI port's
+remote and the speakerphone's own codes are never taken for the remote's."""
 
 import dataclasses
 import os
@@ -9,6 +10,7 @@ import pytest
 
 from voice_assistant import check
 from voice_assistant.buttons import (
+    DOWN,
     EV_KEY,
     EV_MSC,
     EVENT,
@@ -16,21 +18,37 @@ from voice_assistant.buttons import (
     KEY_VOLUMEDOWN,
     KEY_VOLUMEUP,
     MSC_SCAN,
+    MUTE,
     PRESSED,
+    RELEASE_S,
     REPEAT_S,
+    STOP,
+    TALK,
+    UP,
     Buttons,
     Input,
     Listener,
     inputs,
 )
 from voice_assistant.config import HomeConfig, load_config
+from voice_assistant.speakerphone import Hid
 from voice_assistant.volume import QUIET, Alsa, OwnVolume
 
 from .test_volume import FakeAmixer
 
 POWERCONF = Input("/dev/input/event0", "Anker PowerConf Consumer Control", remote=False)
+POWERCONF_HID = Hid(
+    "/dev/hidraw0",
+    "Anker PowerConf",
+    bytes.fromhex(
+        "050c0901a1018501150025010 9e909ea09e209cd09b509b609b309b77501950881 42c0050b0905a1018502050b150025010920"
+        "0997750195028123092f0921097009507501950481070906a10219b029bb1500250c7504950181 40c00907150025010509750195"
+        "018102750195058101050815002501091709090918092009217501950591 22050b15002501099e750195019122750195 0a9101c0"
+        "0600ff0901a101850309011500 26ff00953f750881020901150026ff00953f75089102c0".replace(" ", "")
+    ),
+)
 RECEIVER = Input("/dev/input/event2", "gpio_ir_recv", remote=True)
-REMOTE = {"volume_up": 0x80, "volume_down": 0x81}
+REMOTE = {"volume_up": 0x80, "volume_down": 0x81, "talk": 0xCE, "stop": 0x90, "mute": 0x9D}  # the Argon remote's
 
 
 def key(buttons: Buttons, code: int, value: int, now: float):
@@ -43,26 +61,43 @@ def scan(buttons: Buttons, code: int, now: float, source: Input = RECEIVER):
 
 def test_the_speakerphone_s_keys_turn_it_a_step_a_press_and_letting_go_does_nothing():
     buttons = Buttons(REMOTE)
-    assert key(buttons, KEY_VOLUMEUP, PRESSED, 0.0) is True
+    assert key(buttons, KEY_VOLUMEUP, PRESSED, 0.0) == UP
     assert key(buttons, KEY_VOLUMEUP, 0, 0.05) is None
-    assert key(buttons, KEY_VOLUMEUP, PRESSED, 0.1) is True  # pressed again, quickly: a press is never a repeat
-    assert key(buttons, KEY_VOLUMEDOWN, PRESSED, 0.2) is False
+    assert key(buttons, KEY_VOLUMEUP, PRESSED, 0.1) == UP  # pressed again, quickly: a press is never a repeat
+    assert key(buttons, KEY_VOLUMEDOWN, PRESSED, 0.2) == DOWN
 
 
 def test_a_held_key_turns_it_a_step_every_repeat_s_not_a_step_a_repeat():
     buttons = Buttons(REMOTE)
-    assert key(buttons, KEY_VOLUMEDOWN, PRESSED, 0.0) is False
+    assert key(buttons, KEY_VOLUMEDOWN, PRESSED, 0.0) == DOWN
     steps = [key(buttons, KEY_VOLUMEDOWN, HELD, t / 30) for t in range(1, 30)]  # a second of repeats
-    assert 2 <= steps.count(False) <= round(1 / REPEAT_S) and set(steps) == {False, None}
+    assert 2 <= steps.count(DOWN) <= round(1 / REPEAT_S) and set(steps) == {DOWN, None}
 
 
 def test_the_remote_s_codes_turn_it_and_its_repeats_a_step_every_repeat_s():
     buttons = Buttons(REMOTE)
-    assert scan(buttons, 0x80, 0.0) is True
+    assert scan(buttons, 0x80, 0.0) == UP
     assert scan(buttons, 0x80, 0.1) is None  # held: the remote says it again
-    assert scan(buttons, 0x80, REPEAT_S + 0.01) is True
-    assert scan(buttons, 0x81, REPEAT_S + 0.05) is False  # the other way counts at once
+    assert scan(buttons, 0x80, REPEAT_S + 0.01) == UP
+    assert scan(buttons, 0x81, REPEAT_S + 0.05) == DOWN  # the other way counts at once
     assert scan(buttons, 0x42, 5.0) is None  # another button on the remote
+
+
+@pytest.mark.parametrize("button, code", [(TALK, 0xCE), (STOP, 0x90), (MUTE, 0x9D)])
+def test_talk_stop_and_mute_count_once_a_press_however_long_they_re_held(button, code):
+    buttons = Buttons(REMOTE)
+    held = [scan(buttons, code, t * 0.11) for t in range(30)]  # held 3 s: the remote repeats it every 0.11 s
+    assert held == [button] + [None] * 29
+    assert scan(buttons, code, 29 * 0.11 + RELEASE_S / 2) is None  # a repeat a little late is still the same press
+    assert scan(buttons, code, 29 * 0.11 + RELEASE_S / 2 + RELEASE_S) == button  # let go, then pressed again
+
+
+def test_a_double_press_counts_twice_once_the_button_was_let_go_between():
+    buttons = Buttons(REMOTE)
+    assert scan(buttons, 0x9D, 0.0) == MUTE
+    assert scan(buttons, 0x9D, 0.11) is None
+    assert scan(buttons, 0x9D, 0.11 + RELEASE_S) == MUTE
+    assert scan(buttons, 0xCE, 0.11 + RELEASE_S + 0.01) == TALK  # another button's press is its own
 
 
 def test_only_a_receiver_s_codes_are_the_remote_s_never_the_speakerphone_s():
@@ -73,7 +108,7 @@ def test_only_a_receiver_s_codes_are_the_remote_s_never_the_speakerphone_s():
 def test_with_volume_keys_off_only_the_remote_turns_it():
     buttons = Buttons(REMOTE, keys=False)
     assert key(buttons, KEY_VOLUMEUP, PRESSED, 0.0) is None
-    assert scan(buttons, 0x81, 1.0) is False
+    assert scan(buttons, 0x81, 1.0) == DOWN
 
 
 def device(sys_input: Path, event: str, name: str, under: str, protocols: str | None = None) -> None:
@@ -106,21 +141,23 @@ def events(*each: tuple[int, int, int]) -> bytes:
 def test_the_listener_turns_the_speaker_for_what_a_device_says_and_logs_it():
     read, write = os.pipe()
     os.set_blocking(read, False)
-    turned, said = [], []
-    listener = Listener(Buttons(REMOTE), lambda up: turned.append(up) or "done", said.append, list)
+    pressed, said = [], []
+    act = {DOWN: lambda: pressed.append(DOWN) or "done", MUTE: lambda: pressed.append(MUTE) or "muted"}
+    listener = Listener(Buttons(REMOTE), act, said.append, list)
     listener.open[read] = RECEIVER
-    os.write(write, events((EV_MSC, MSC_SCAN, 0x81), (0, 0, 0)))
+    os.write(write, events((EV_MSC, MSC_SCAN, 0x81), (0, 0, 0), (EV_MSC, MSC_SCAN, 0xCE), (EV_MSC, MSC_SCAN, 0x9D)))
     listener.read(read)
-    assert turned == [False] and said == ["(volume buttons: gpio_ir_recv, down: done)"]
+    assert pressed == [DOWN, MUTE]  # talk has nothing to do here: skipped
+    assert said == ["(buttons: gpio_ir_recv, volume down: done)", "(buttons: gpio_ir_recv, mute: muted)"]
     listener.read(read)  # nothing more to read
-    assert turned == [False]
+    assert pressed == [DOWN, MUTE]
     os.close(write)
     os.close(read)
 
 
 def test_a_device_unplugged_is_let_go_and_a_failed_turn_never_stops_the_listening():
     read, write = os.pipe()
-    listener = Listener(Buttons(REMOTE), lambda up: 1 / 0, lambda line: None, list)
+    listener = Listener(Buttons(REMOTE), {UP: lambda: 1 / 0}, lambda line: None, list)
     listener.open[read] = POWERCONF
     os.write(write, events((EV_KEY, KEY_VOLUMEUP, PRESSED)))
     listener.read(read)  # the turn raised: logged, and the device kept
@@ -138,7 +175,7 @@ def test_a_device_it_may_not_read_is_said_once(tmp_path):
     if os.access(locked, os.R_OK):
         pytest.skip("running as root: nothing is unreadable")
     said = []
-    listener = Listener(Buttons(REMOTE), lambda up: "", said.append, lambda: [Input(str(locked), "PowerConf", False)])
+    listener = Listener(Buttons(REMOTE), {}, said.append, lambda: [Input(str(locked), "PowerConf", False)])
     listener.rescan()
     listener.rescan()
     assert len(said) == 1 and "input group" in said[0]
@@ -151,34 +188,38 @@ def test_a_button_turns_it_as_asking_does_never_below_quiet():
     assert speaker.turn(True) and speaker.mixer.level()[0] == QUIET + 10
 
 
-def config(**home):
+def config(output_device: str = "PowerConf", **home):
     defaults = load_config(Path("/nonexistent/config.toml"))
-    return dataclasses.replace(defaults, home=HomeConfig(**home))
+    audio = dataclasses.replace(defaults.audio, output_device=output_device)
+    return dataclasses.replace(defaults, home=HomeConfig(**home), audio=audio)
 
 
-def test_check_says_what_turns_the_speaker_and_what_s_missing():
+def test_check_says_what_the_buttons_do_and_what_s_missing():
     found = [POWERCONF, RECEIVER]
-    linux = {"system": "Linux", "readable": lambda path, mode: True}
-    assert check.volume_buttons(config(), lambda: found, **linux).status == check.SKIP
-    assert check.volume_buttons(config(own_speaker=True, volume_keys=False), **linux).status == check.SKIP
-    on = config(own_speaker=True, remote=REMOTE)
-    assert check.volume_buttons(on, lambda: found, system="Darwin").status == check.SKIP
-    ok = check.volume_buttons(on, lambda: found, **linux)
-    assert (
-        ok.status == check.OK
-        and ok.detail == "volume keys and the remote on gpio_ir_recv (volume_up 0x80, volume_down 0x81)"
-    )
-    no_receiver = check.volume_buttons(on, lambda: [POWERCONF], **linux)
+    hid = [POWERCONF_HID]
+    linux = {"system": "Linux", "readable": lambda path, mode: True, "find_hids": lambda: hid}
+    assert check.buttons(config(speakerphone_mute=False), lambda: found, **linux).status == check.SKIP
+    on = config(own_speaker=True, remote={"volume_up": 0x80, "volume_down": 0x81})
+    assert check.buttons(on, lambda: found, system="Darwin").status == check.SKIP
+    pressed, muting = check.buttons(on, lambda: found, **linux)
+    assert pressed.status == check.OK
+    assert pressed.detail == "volume keys and the remote on gpio_ir_recv (volume_up 0x80, volume_down 0x81)"
+    assert muting.status == check.OK and muting.detail.startswith("Anker PowerConf's")
+    no_receiver, _ = check.buttons(on, lambda: [POWERCONF], **linux)
     assert no_receiver.status == check.WARN and "dtoverlay=gpio-ir" in no_receiver.fix
-    locked = check.volume_buttons(on, lambda: found, system="Linux", readable=lambda path, mode: False)
-    assert locked.status == check.FAIL and "input group" in locked.fix
+    locked, locked_mute = check.buttons(on, lambda: found, system="Linux", readable=lambda path, mode: False,
+                                        find_hids=lambda: hid)  # fmt: skip
+    assert locked.status == locked_mute.status == check.FAIL and "input group" in locked.fix
+    assert "99-tars-speakerphone.rules" in locked_mute.fix
+    no_mute = check.buttons(config(), find_hids=list, **{k: v for k, v in linux.items() if k != "find_hids"})
+    assert [r.status for r in no_mute] == [check.WARN] and "no HID device" in no_mute[0].detail
 
 
 def test_every_event_read_is_shown_as_it_is_for_reading_a_remote_s_codes():
     read, write = os.pipe()
     os.set_blocking(read, False)
     shown = []
-    listener = Listener(Buttons({}, keys=False), lambda up: "", print, list, each=lambda *event: shown.append(event))
+    listener = Listener(Buttons({}, keys=False), {}, print, list, each=lambda *event: shown.append(event))
     listener.open[read] = RECEIVER
     os.write(write, events((EV_MSC, MSC_SCAN, -2147483520)))  # 0x80000080, as the kernel's signed value
     listener.read(read)

@@ -226,11 +226,15 @@ tv_model = ""
 # there; on a Mac, the system's output volume, only when TARS plays to the default output.
 own_speaker = false
 # With own_speaker, its volume keys turn it a step a press: the speakerphone's own + and -, a keyboard's
-# (docs/home.md#volume-buttons).
+# (docs/home.md#buttons).
 volume_keys = true
-# With own_speaker, a remote's volume buttons do too, through an IR receiver: the codes they send, as
-# `python -m voice_assistant.buttons` prints them. Empty = no remote.
-# remote = { volume_up = 0x80, volume_down = 0x81 }
+# A remote's buttons, through an IR receiver: the codes they send, as `python -m voice_assistant.buttons` prints
+# them, for any of volume_up and volume_down (with own_speaker), talk (TARS listens), stop (TARS stops, and a
+# reminder it was saying is acknowledged) and mute. Empty = no remote.
+# remote = { volume_up = 0x80, volume_down = 0x81, talk = 0xce, stop = 0x90, mute = 0x9d }
+# The speakerphone's own mute is TARS's: while it's muted (its light red), TARS doesn't listen, and the remote's
+# mute mutes it the same way. Linux, with a speakerphone that has one (deploy/99-tars-speakerphone.rules).
+speakerphone_mute = true
 # Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
 # [home.plugins.my_house]
 # module = "examples.my_house"

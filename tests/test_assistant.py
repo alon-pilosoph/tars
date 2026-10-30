@@ -897,3 +897,41 @@ def test_never_greeting_waits_quietly(speaker):
     assistant, _, played = greeting_at_once(speaker, [None], [])
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet="never")
     assert played == [] and assistant.recorder.timeouts == [None]
+
+
+def test_the_stop_button_cuts_a_reminder_and_acknowledges_it_without_listening(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [b"ok", None], ["got it"])
+    line = "Stacey, a message from Alon: dinner's at eight."
+
+    def play(chunks, *a, **k):
+        played.extend(chunks)
+        if line.encode() in played:  # pressed while its line plays
+            assistant.stop()
+
+    speaker.play_pcm_stream = play
+    assistant.say_reminders(follow_up_s=4.0)
+    r = reminders.get(rid)
+    assert (r["status"], r["acked_via"]) == (ACKNOWLEDGED, VOICE)
+    assert assistant.recorder.timeouts == []  # nobody was listened for
+
+
+def test_stopped_before_its_line_a_reminder_isn_t_acknowledged_unheard(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(speaker, tmp_path, [b"ok", None], ["got it"])
+    speaker.play_pcm_stream = lambda chunks, *a, **k: (played.extend(chunks), assistant.stop())  # pressed on the chime
+    assistant.say_reminders(follow_up_s=4.0)
+    assert played == [chime(24_000)]  # its line was never said
+    assert reminders.get(rid)["status"] != ACKNOWLEDGED and reminders.get(rid)["tries"] == 0
+    assert assistant.recorder.timeouts == []
+
+
+def test_the_stop_button_turns_a_ringing_timer_off_on_its_chime(speaker, tmp_path):
+    assistant, reminders, rid, played = reminding(
+        speaker, tmp_path, [None, None], [], kind=TIMER, text="pasta", for_name=None, from_name=None
+    )
+    assistant.say_reminders()  # the first ring: the chime and the line; nobody answers
+    reminders.store.write("UPDATE reminders SET next_at=? WHERE id=?", (time.time() - 1, rid))
+    speaker.play_pcm_stream = lambda chunks, *a, **k: (played.extend(chunks), assistant.stop())
+    assistant.say_reminders(follow_up_s=4.0)  # the second: only the chime, and the button pressed on it
+    r = reminders.get(rid)
+    assert (r["status"], r["tries"]) == (ACKNOWLEDGED, 2)
+    assert assistant.recorder.timeouts == [assistant.ack_window_s]  # only the first ring listened

@@ -50,9 +50,12 @@ def test_missing_config_falls_back_to_defaults(tmp_path):
         ('[recorder]\nend_silence_s = "0.8"', "[recorder] end_silence_s must be a number"),
         ("[speaker]\nenabled = 1", "[speaker] enabled must be true or false"),
         ('[home]\nown_speaker = "yes"', "[home] own_speaker must be true or false"),
-        ("[home]\nremote = { mute = 0x82 }", "[home] remote has volume_up and volume_down, not 'mute'"),
+        (
+            "[home]\nremote = { power = 0x82 }",
+            "[home] remote has volume_up, volume_down, talk, stop and mute, not 'power'",
+        ),
         ("[home]\nremote = { volume_up = -1 }", "[home] remote volume_up must be the code"),
-        ("[home]\nremote = { volume_up = 0x80, volume_down = 0x80 }", "must be different codes"),
+        ("[home]\nremote = { volume_up = 0x80, volume_down = 0x80 }", "must each have a different code"),
         ('[home]\nremote = { volume_up = "0x80" }', "[home] remote"),
         ("[speakers]\nenabled = true", "no [speakers] section"),
         ("[audio\n", "config.toml"),  # not TOML at all

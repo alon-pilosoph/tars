@@ -69,6 +69,11 @@ class FakeTrigger:
 class FakeSpeaker:
     """Plays nothing: a test that wants to hear what was said replaces play_pcm_stream."""
 
+    stops = 0
+
+    def stop(self):
+        self.stops += 1
+
 
 def raising(error: Exception):
     def fail(*args, **kwargs):
