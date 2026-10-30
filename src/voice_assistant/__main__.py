@@ -6,6 +6,7 @@ import dataclasses
 import functools
 import hashlib
 import json
+import platform
 import sys
 import threading
 import time
@@ -852,6 +853,18 @@ def phrase_folder(cfg: Config, root: Path) -> Path:
     return root / PHRASES / hashlib.sha256(setup.encode()).hexdigest()[:12]
 
 
+def start_volume_buttons(cfg: Config, volume) -> None:
+    """With TARS's own speaker (`volume`, own_speaker's), its volume keys and [home] remote's buttons turn it, from
+    a thread of their own (buttons.py). Linux only: elsewhere there's no /dev/input to read them from."""
+    if volume is None or not (cfg.home.volume_keys or cfg.home.remote) or platform.system() != "Linux":
+        return
+    from .buttons import Buttons, Listener
+
+    Listener(Buttons(cfg.home.remote, cfg.home.volume_keys), volume.turn).start()
+    which = (["its volume keys"] if cfg.home.volume_keys else []) + (["the remote"] if cfg.home.remote else [])
+    print(f"(volume buttons: {' and '.join(which)} turn TARS's speaker)")
+
+
 def typed(cfg: Config, root: Path) -> None:
     """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
     from .assistant import UNPROMPTED_WAIT_S, Assistant
@@ -903,7 +916,9 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
     start_presence(presence, reminders)
     announcements = Announcements()
-    home = make_home(cfg, root, announcements.add, presence, own_speaker(cfg))
+    volume = own_speaker(cfg)
+    home = make_home(cfg, root, announcements.add, presence, volume)
+    start_volume_buttons(cfg, volume)
     browser = voice_errands(cfg, events)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home, browser=browser)
     recorder = make_recorder(cfg, root)

@@ -10,8 +10,8 @@ system's output volume, so only when TARS plays to the system's default output.
 
 TARS never mutes it or sets it below QUIET: a TARS that can't be heard can't say a timer is up, or that it's turned
 itself back up. Whatever it sets leaves it unmuted, and the level is read back after: what it says is what the
-computer reads. A speakerphone's own buttons may change its volume without telling the computer (not yet checked on
-the PowerConf), so after those the level said may be off until it's next set by asking."""
+computer reads. The PowerConf's own + and - don't change its volume themselves: they're keys sent to the computer,
+which [home] volume_keys has TARS act on, as it does a remote's ([home] remote; buttons.py)."""
 
 import platform
 import shutil
@@ -239,7 +239,13 @@ class OwnVolume(Device):
             return self._set(max(before, QUIET), "unmuted" if muted else "wasn't muted", was_muted=False)
         if pressed not in ("volume_up", "volume_down"):
             return "error: press takes volume_up, volume_down or unmute; nothing changed"
-        up, step = pressed == "volume_up", STEP * presses(args)
+        return self.turn(pressed == "volume_up", presses(args), (before, muted))
+
+    def turn(self, up: bool, times: int = 1, now: tuple[int, bool] | None = None) -> str:
+        """Up or down STEP% `times` (a volume button's press is one), from `now`, the level and whether it's muted,
+        read here if not given."""
+        before, muted = now or self.mixer.level()
+        step = STEP * times
         # Down never raises it: one set below QUIET elsewhere stays where it is.
         wanted = min(100, before + step) if up else max(min(before, QUIET), before - step)
         if wanted == before and not muted:

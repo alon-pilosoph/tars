@@ -6,7 +6,7 @@
 #
 # Safe to run again: it adds what's missing and restarts the services (after a `git pull`, say). It asks for sudo
 # for three things: the system packages (deploy/pi-packages.txt), letting the services start at boot without anyone
-# logged in, and starting TARS when the speakerphone is plugged in.
+# logged in, and the udev rules (starting TARS when the speakerphone is plugged in; a remote's IR receiver).
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
@@ -95,11 +95,13 @@ elif [ -e "$HOME/.config/systemd/user/voice-assistant-backup.timer" ]; then
 fi
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
 # With no speakerphone TARS stays stopped; this starts it when one is plugged in.
-RULE=/etc/udev/rules.d/99-tars-speakerphone.rules
-if ! cmp -s deploy/99-tars-speakerphone.rules "$RULE"; then
-  sudo cp deploy/99-tars-speakerphone.rules "$RULE"
-  sudo udevadm control --reload
-fi
+# And an IR receiver, if there's one (docs/home.md#volume-buttons), decodes the NEC most remotes send.
+for rules in 99-tars-speakerphone.rules 99-tars-ir.rules; do
+  if ! cmp -s "deploy/$rules" "/etc/udev/rules.d/$rules"; then
+    sudo cp "deploy/$rules" /etc/udev/rules.d/
+    sudo udevadm control --reload
+  fi
+done
 
 echo "== Checking everything (it says \"TARS is ready.\" and listens a moment)"
 sleep 3  # the services just restarted

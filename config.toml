@@ -225,6 +225,12 @@ tv_model = ""
 # 40" (docs/home.md#tarss-own-speaker). On the Pi it's [audio] output_device's own volume, so name the speakerphone
 # there; on a Mac, the system's output volume, only when TARS plays to the default output.
 own_speaker = false
+# With own_speaker, its volume keys turn it a step a press: the speakerphone's own + and -, a keyboard's
+# (docs/home.md#volume-buttons).
+volume_keys = true
+# With own_speaker, a remote's volume buttons do too, through an IR receiver: the codes they send, as
+# `python -m voice_assistant.buttons` prints them. Empty = no remote.
+# remote = { volume_up = 0x80, volume_down = 0x81 }
 # Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
 # [home.plugins.my_house]
 # module = "examples.my_house"

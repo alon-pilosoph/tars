@@ -133,10 +133,39 @@ TARS's to turn.
 
 It's never muted or set below 10%: a TARS that can't be heard can't say a timer is up, or that it's turned itself
 back up. Asked to mute or be quiet, it goes down to 10% and says that's as low as it goes; anything it sets unmutes it.
-It reads the level back after setting it and says "done" only when that's what it set. A speakerphone's own volume
-buttons may change its volume without telling the computer (not yet checked on the PowerConf), so after those, the
-level TARS says may be off until it's next set by asking. At startup, and in `--check`, a speaker it can't turn is
-said with why.
+It reads the level back after setting it and says "done" only when that's what it set. At startup, and in `--check`,
+a speaker it can't turn is said with why.
+
+### Volume buttons
+
+With `own_speaker` on, buttons turn TARS's speaker too, 10% a press, by the same rules: never muted, never below 10%.
+A held button turns it a step every 0.3 s. Each press is a line in the voice's log, with the level it's at after.
+
+- **The speakerphone's own + and -** (`[home] volume_keys`, on by default). The PowerConf doesn't change its volume
+  itself when they're pressed: they're volume keys sent to the computer, and on a Pi with no desktop nothing acted on
+  them before. Any keyboard's volume keys count the same.
+- **A remote's volume buttons** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any
+  wired to a GPIO pin. The remote's power button is the case's own (it turns the Pi on, and shuts it down cleanly);
+  TARS only reads the volume buttons.
+
+Linux only. TARS reads the buttons from `/dev/input`, which TARS's user may read in the `input` group (it is on
+Raspberry Pi OS); it acts on the volume keys and the remote's two codes, and nothing else it reads is kept. Setting up
+a remote, on the Pi:
+
+1. **Turn the receiver on.** Add `dtoverlay=gpio-ir,gpio_pin=23` to `/boot/firmware/config.txt` (23 is the Argon
+   ONE's pin; another receiver says its own), and reboot. `install-pi.sh` installs `deploy/99-tars-ir.rules`, which
+   has the receiver decode NEC, what most remotes (the Argon's among them) send: by default it decodes only RC-6.
+2. **Read the remote's codes.** With TARS's speaker on, `uv run python -m voice_assistant.buttons` prints what each
+   button sends (Ctrl-C to stop): press volume up, then volume down.
+3. **Name them** in `config.local.toml`, and restart TARS:
+
+   ```toml
+   [home]
+   own_speaker = true
+   remote = { volume_up = 0x80, volume_down = 0x81 }   # the Argon remote's
+   ```
+
+`--check` says what turns the speaker, and what's missing: a receiver that isn't on, or devices TARS may not read.
 
 ### Your own devices
 
