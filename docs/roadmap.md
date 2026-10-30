@@ -16,7 +16,8 @@ being right.
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | large |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | large |
 
-Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go).
+Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after
+the six: [working offline](#later-working-offline) and [TARS in other homes](#later-tars-in-other-homes).
 
 **Built so far, alongside step 1:** [reminders, timers and messages](reminders.md), [the house](home.md) (Home
 Assistant's devices, an Android TV box and the agent that works it, plugins for the rest), [TARS on
@@ -262,6 +263,62 @@ one person's memory never reaches another's answer.
 
 **Open question:** what TARS offers to remember. Too eager and it's a nag; the week of real use will show which
 facts come up again.
+
+## Later: working offline
+
+**Goal:** when the internet or a provider is down, TARS still does the essentials at home: the lights, the door, the
+AC, timers and reminders, said and heard, with no cloud. And anything someone would rather keep in the house can stay
+there.
+
+**Where it stands.** The wake word, its double-check, the speech detectors and speaker ID already run on the Pi, and
+so does working the house: Home Assistant, the lock and the boiler through it, the IR blaster and the Android TV box
+are all on the home network. Everything between hearing a request and saying the answer is a cloud service: speech
+to text (Deepgram, OpenAI), the model (Groq, Cerebras, OpenAI) and the voice (Cartesia, Deepgram, OpenAI). When all
+of a stage's services fail, TARS says it couldn't, and the Status page shows which ([web UI](web-ui.md#the-status-page)).
+
+**Plan:**
+
+1. **A local fallback for each stage,** used only when the cloud ones fail: speech to text with a small Whisper
+   model, a voice from Piper (whose voices the wake word was already trained with), and a small local model for the
+   brain, limited to the house tool, timers and reminders, with web search, sending and the browser turned off and
+   said so.
+2. **Where it runs.** A Pi 4 is too slow for a useful local model. Either a Pi 5 with an AI accelerator, or a small
+   home server on the network (an old laptop, a mini PC), which the Pi calls the way it calls a provider today. The
+   choice is measured: time to first sound and how often it picks the right device, on step 1's recorded requests.
+3. **Private on purpose:** a setting that keeps chosen things local even when online (a person's requests, or
+   anything about the house), at the cost of a slower, plainer answer.
+
+**Measure:** the share of real requests from step 1 the local path answers right, and its time to first sound,
+against the cloud path. **Done when** pulling the Pi's internet still leaves the lights, the door, timers and reminders
+working by voice, in under three seconds to first sound.
+
+## Later: TARS in other homes
+
+**Goal:** someone who isn't a developer can run TARS at home: buy the parts, follow one guide, and have it working in
+an evening, then keep it updated without SSH.
+
+**Where it stands.** The repo is public and MIT-licensed (the trained wake models are CC BY-NC-SA). Setup is
+`deploy/install-pi.sh` on a Pi plus written runbooks ([deployment](deployment.md), [the house](home.md)) that a coding
+agent can follow over SSH, checking each step with `--check`. Every paid service is optional, and the household's own
+devices are a plugin (`examples/my_house`). What's missing for anyone else: an image to flash, a setup that doesn't
+assume a terminal, updates (step 4), sign-in for the web UI (step 2), and the keys, which each home brings itself.
+
+**Plan:**
+
+1. **Steps 2 and 4 first:** no one else's home should run an always-on mic without sign-in, granted plugins and
+   signed updates.
+2. **A Pi image** with TARS installed, and a first-run page on the home network: Wi-Fi, the speakerphone (found and
+   tested), which services to use with links to get each key, and the house (Home Assistant found on the network, or
+   set up), ending with `--check` in plain words.
+3. **A tested parts list:** the Pi, a speakerphone that works full- or half-duplex as measured in step 3, a case,
+   optional Bluetooth proxies; and what each service costs a month at typical use (from the [evals'](evals.md) usage
+   profile).
+4. **Plugins people can share:** a catalogue of declared, versioned plugins (step 4) for common devices, each with
+   the grants it asks for shown before it's installed.
+5. **Licensing settled:** the wake models' non-commercial license, and any provider terms, checked for what a
+   shared image may include; what can't ship is downloaded on first run.
+
+**Done when** a second household, set up from the image and the guide without help, uses it for a week.
 
 ## Built: handing hard questions to a larger model
 
