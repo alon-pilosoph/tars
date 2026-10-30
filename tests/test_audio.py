@@ -227,3 +227,23 @@ def test_a_device_is_opened_at_the_rate_wanted_if_it_takes_it_and_its_own_if_not
     takes.clear()
     monkeypatch.setattr(audio_module.sd, "query_devices", nothing_there)
     assert device_rate(None, "input", 16_000) == 16_000  # opening it then says what's wrong
+
+
+def test_a_stop_cuts_what_s_playing_and_takes_no_more_of_it_and_the_next_plays(monkeypatch):
+    monkeypatch.setattr(audio_module.sd, "RawOutputStream", FakeOutput)
+    taken = []
+
+    def reply(speaker):  # streamed, and stopped after its first piece is in
+        for n in range(10):
+            taken.append(n)
+            yield np.full(2400, 1000 + n, np.int16).tobytes()
+            if n == 0:
+                speaker.stop()
+
+    with Speaker(None, 24_000, prebuffer_s=10.0) as speaker:
+        speaker.play_pcm_stream(reply(speaker), 24_000)
+        assert taken == [0, 1]  # the piece after the stop was the last taken, and none of it went in
+        assert not np.frombuffer(bytes(speaker._stream.played), np.int16).any()  # cut before it played
+        speaker.play_pcm_stream([np.full(2400, 3000, np.int16).tobytes()], 24_000)
+        played = np.frombuffer(bytes(speaker._stream.played), np.int16)
+    assert (played == 3000).sum() == 2400

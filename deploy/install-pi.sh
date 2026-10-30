@@ -95,7 +95,7 @@ elif [ -e "$HOME/.config/systemd/user/voice-assistant-backup.timer" ]; then
 fi
 loginctl show-user "$USER" -p Linger | grep -q yes || sudo loginctl enable-linger "$USER"
 # With no speakerphone TARS stays stopped; this starts it when one is plugged in.
-# And an IR receiver, if there's one (docs/home.md#volume-buttons), decodes the NEC most remotes send.
+# And an IR receiver, if there's one (docs/home.md#buttons), decodes the NEC most remotes send.
 for rules in 99-tars-speakerphone.rules 99-tars-ir.rules; do
   if ! cmp -s "deploy/$rules" "/etc/udev/rules.d/$rules"; then
     sudo cp "deploy/$rules" /etc/udev/rules.d/

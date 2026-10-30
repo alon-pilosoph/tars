@@ -576,36 +576,57 @@ def own_speaker(cfg: Config, mixer: Callable[[str], Mixer]) -> Result | list[Res
     return [Result(DEVICE, status, detail, fix) for status, detail, fix in found]
 
 
-VOLUME_BUTTONS = "Volume buttons"
-VOLUME_BUTTONS_FIX = "docs/home.md#volume-buttons"
+BUTTONS = "Buttons"
+BUTTONS_FIX = "docs/home.md#buttons"
 
 
-def volume_buttons(cfg: Config, find: Callable | None = None, system: str = "", readable=os.access) -> Result:
-    """[home] volume_keys and remote: whether there's anything to read the buttons from, and whether TARS's user may
-    (`find`: buttons.inputs)."""
+def buttons(
+    cfg: Config, find: Callable | None = None, system: str = "", readable=os.access, find_hids: Callable | None = None
+) -> Result | list[Result]:
+    """The volume keys, [home] remote and speakerphone_mute: whether there's anything to read the buttons from, and
+    whether TARS's user may (`find`: buttons.inputs; `find_hids`: speakerphone.hids). Never presses anything: the
+    speakerphone's mute is only looked at, not set."""
     from .buttons import inputs
+    from .speakerphone import hids, layout
 
-    if not cfg.home.own_speaker:
-        return Result(VOLUME_BUTTONS, SKIP, "off ([home] own_speaker)")
-    if not (cfg.home.volume_keys or cfg.home.remote):
-        return Result(VOLUME_BUTTONS, SKIP, "off ([home] volume_keys, remote)")
+    keys = cfg.home.own_speaker and cfg.home.volume_keys
+    if not (keys or cfg.home.remote or cfg.home.speakerphone_mute):
+        return Result(BUTTONS, SKIP, "off ([home] volume_keys, remote, speakerphone_mute)")
     if (system or platform.system()) != "Linux":
-        return Result(VOLUME_BUTTONS, SKIP, "Linux only: the volume keys are the system's on a Mac")
-    found = (find or inputs)()
-    unreadable = [i.name for i in found if not readable(i.path, os.R_OK)]
-    if unreadable:
-        return Result(VOLUME_BUTTONS, FAIL, f"can't read {', '.join(unreadable)}",
-                      f"add TARS's user to the input group (sudo usermod -aG input $USER), then log in again; "
-                      f"{VOLUME_BUTTONS_FIX}")  # fmt: skip
-    receivers = [i.name for i in found if i.remote]
-    if cfg.home.remote and not receivers:
-        fix = f"turn the receiver on (dtoverlay=gpio-ir in /boot/firmware/config.txt); {VOLUME_BUTTONS_FIX}"
-        return Result(VOLUME_BUTTONS, WARN, "[home] remote is set, and there's no IR receiver", fix)
-    codes = ", ".join(f"{button} {code:#x}" for button, code in cfg.home.remote.items())
-    which = ["volume keys"] if cfg.home.volume_keys else []
-    if cfg.home.remote:
-        which.append(f"the remote on {', '.join(receivers)} ({codes})")
-    return Result(VOLUME_BUTTONS, OK, " and ".join(which))
+        return Result(BUTTONS, SKIP, "Linux only: on a Mac, the system has the keys")
+    results = []
+    if keys or cfg.home.remote:
+        found = (find or inputs)()
+        unreadable = [i.name for i in found if not readable(i.path, os.R_OK)]
+        receivers = [i.name for i in found if i.remote]
+        if unreadable:
+            fix = f"add TARS's user to the input group (sudo usermod -aG input $USER), then log in again; {BUTTONS_FIX}"
+            results.append(Result(BUTTONS, FAIL, f"can't read {', '.join(unreadable)}", fix))
+        elif cfg.home.remote and not receivers:
+            fix = f"turn the receiver on (dtoverlay=gpio-ir in /boot/firmware/config.txt); {BUTTONS_FIX}"
+            results.append(Result(BUTTONS, WARN, "[home] remote is set, and there's no IR receiver", fix))
+        else:
+            codes = ", ".join(f"{button} {code:#x}" for button, code in cfg.home.remote.items())
+            which = ["volume keys"] if keys else []
+            if cfg.home.remote:
+                which.append(f"the remote on {', '.join(receivers)} ({codes})")
+            results.append(Result(BUTTONS, OK, " and ".join(which)))
+    if cfg.home.speakerphone_mute:
+        name = "Speakerphone mute"
+        wanted = cfg.audio.output_device
+        matching = [h for h in (find_hids or hids)() if wanted and wanted.lower() in h.name.lower()]
+        muting = [h for h in matching if layout(h.descriptor)]
+        if not wanted:
+            results.append(Result(name, SKIP, "[audio] output_device doesn't name the speakerphone"))
+        elif not muting:
+            why = f"{matching[0].name} has no mute button with a mute light" if matching else "no HID device found"
+            results.append(Result(name, WARN, f"TARS can't follow its mute: {why}", BUTTONS_FIX))
+        elif not readable(muting[0].path, os.R_OK | os.W_OK):
+            fix = f"install deploy/99-tars-speakerphone.rules (install-pi.sh does), then replug it; {BUTTONS_FIX}"
+            results.append(Result(name, FAIL, f"TARS's user may not use {muting[0].path}", fix))
+        else:
+            results.append(Result(name, OK, f"{muting[0].name}'s: while it's muted, TARS doesn't listen"))
+    return results
 
 
 def routers_now(
@@ -912,7 +933,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Home Assistant", hass_check),
         ("The house", devices),
         ("TARS's speaker", speaker_volume),
-        (VOLUME_BUTTONS, lambda: volume_buttons(cfg)),
+        (BUTTONS, lambda: buttons(cfg)),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
         ("Browser", lambda: browser(cfg)),

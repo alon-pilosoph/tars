@@ -853,16 +853,40 @@ def phrase_folder(cfg: Config, root: Path) -> Path:
     return root / PHRASES / hashlib.sha256(setup.encode()).hexdigest()[:12]
 
 
-def start_volume_buttons(cfg: Config, volume) -> None:
-    """With TARS's own speaker (`volume`, own_speaker's), its volume keys and [home] remote's buttons turn it, from
-    a thread of their own (buttons.py). Linux only: elsewhere there's no /dev/input to read them from."""
-    if volume is None or not (cfg.home.volume_keys or cfg.home.remote) or platform.system() != "Linux":
+def start_buttons(cfg: Config, volume, assistant) -> None:
+    """The buttons, from threads of their own (buttons.py): with TARS's own speaker (`volume`, own_speaker's), its
+    volume keys and the remote's volume buttons turn it; the remote's talk and stop wake and stop `assistant`; and
+    the speakerphone's own mute (speakerphone.py), which the remote's mute button works too, keeps it from waking.
+    Linux only: elsewhere there's no /dev/input or hidraw to read them from."""
+    if platform.system() != "Linux":
         return
-    from .buttons import Buttons, Listener
+    from .buttons import DOWN, MUTE, STOP, TALK, UP, Buttons, Listener
+    from .speakerphone import find_mute
 
-    Listener(Buttons(cfg.home.remote, cfg.home.volume_keys), volume.turn).start()
-    which = (["its volume keys"] if cfg.home.volume_keys else []) + (["the remote"] if cfg.home.remote else [])
-    print(f"(volume buttons: {' and '.join(which)} turn TARS's speaker)")
+    act = {TALK: assistant.talk, STOP: assistant.stop}
+    if volume is not None:
+        act |= {UP: lambda: volume.turn(True), DOWN: lambda: volume.turn(False)}
+    mute = None
+    if cfg.home.speakerphone_mute:
+        mute, why = find_mute(cfg.audio.output_device, assistant.mute)
+        if mute:
+            mute.start()
+            print("(buttons: the speakerphone's mute is TARS's: while it's muted, TARS doesn't listen)")
+        else:
+            print(f"(buttons: the speakerphone's mute isn't TARS's: {why}; docs/home.md#buttons)")
+
+    def toggle() -> str:  # without the speakerphone's mute, TARS's own: it stops listening, the mic stays on
+        assistant.mute(not assistant.muted)
+        return "muted (TARS only)" if assistant.muted else "unmuted"
+
+    act[MUTE] = mute.toggle if mute else toggle
+    keys = cfg.home.volume_keys and volume is not None
+    remote = {b: c for b, c in cfg.home.remote.items() if b in act}
+    if not (keys or remote):
+        return
+    Listener(Buttons(remote, keys), act).start()
+    which = (["the volume keys"] if keys else []) + ([f"the remote's {', '.join(remote)}"] if remote else [])
+    print(f"(buttons: {' and '.join(which)})")
 
 
 def typed(cfg: Config, root: Path) -> None:
@@ -918,7 +942,6 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     announcements = Announcements()
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume)
-    start_volume_buttons(cfg, volume)
     browser = voice_errands(cfg, events)
     transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home, browser=browser)
     recorder = make_recorder(cfg, root)
@@ -950,6 +973,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
         )
+        start_buttons(cfg, volume, assistant)
         assistant.run_forever(
             idle_message,
             follow_up_s=cfg.recorder.follow_up_s,

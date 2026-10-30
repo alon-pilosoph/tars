@@ -199,6 +199,11 @@ class Assistant:
         self.use_reminders(reminders)
         self._just_said: list[int] = []  # reminders just said, waiting for an acknowledgement
         self._last_who: str | None = None
+        # The buttons (buttons.py), from their own thread: talk wakes it, stop ends what it's doing, and while muted
+        # (the speakerphone's own mute, or TARS's when it has none) it doesn't wake.
+        self._talk = threading.Event()
+        self._stop = threading.Event()
+        self.muted = False
 
     def use_reminders(self, tools: ReminderTools | None) -> None:
         self.reminder_tools = tools
@@ -208,6 +213,30 @@ class Assistant:
     def reminders(self) -> Reminders | None:
         return self.reminder_tools.reminders if self.reminder_tools else None
 
+    def talk(self) -> str:
+        """The talk button: TARS listens, as if called by name. Not while muted, or while it's busy already."""
+        if self.muted:
+            return "ignored: muted (unmute first)"
+        self._talk.set()
+        return "listening"
+
+    def stop(self) -> str:
+        """The stop button: what TARS is saying stops now, the reply being written with it; it doesn't wait for a
+        follow-up; and a reminder it just said counts as acknowledged."""
+        self._stop.set()
+        self.speaker.stop()
+        self.brain.interrupt()
+        return "stopped"
+
+    def mute(self, muted: bool) -> None:
+        """While muted, TARS doesn't wake: not to its name, nor to the talk button. What's due is still said."""
+        self.muted = muted
+        print("(muted: not listening)" if muted else "(unmuted: listening again)")
+
+    def _woken(self) -> bool:
+        """Asked while waiting for the wake word: the talk button, or something due."""
+        return self._talk.is_set() or self._due()
+
     def run_forever(
         self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0, greet: str = PAUSE
     ) -> None:
@@ -216,8 +245,20 @@ class Assistant:
             self._reminder_clock.start()
         while True:
             print(f"\n{idle_message}")
-            due = self._due if self._reminder_clock or self.announcements else None
-            woke = self.trigger.wait(self.mic, due=due)
+            self._talk.clear()
+            woke = self.trigger.wait(self.mic, due=self._woken)
+            self._stop.clear()  # pressed while idle, it stops nothing
+            if self._talk.is_set():
+                self._talk.clear()
+                if not self.muted:
+                    self._woke_at, self._greet_s = time.monotonic(), None
+                    print("Listening...  (the talk button)")
+                    self.converse(follow_up_s, greet=ALWAYS)
+                if woke != DUE:
+                    continue
+            if self.muted and woke != DUE:
+                print("(muted: not answering)")
+                continue
             if woke == DUE:
                 if self.announcements and self.announcements.waiting():
                     self.say_announcements(follow_up_s)
@@ -313,6 +354,8 @@ class Assistant:
         self.journal.unprompted()
         self._chime()
         for line in said:
+            if self._stop.is_set():
+                break
             print(f"Bot:  {line}  (on its own)")
             self._play(audio[line])
             self.journal.said(line)
@@ -348,14 +391,27 @@ class Assistant:
         if said:
             self.journal.unprompted()  # what's said back answers the reminder, not the last wake
             self._chime()
+        # Reminders whose line was begun, or that are only the chime (a timer ringing on): one stopped before its
+        # line is said again later.
+        heard = [r["id"] for r in said if not lines[r["id"]]]
         for r in said:
             for text in [t for t in lines[r["id"]] if t in audio]:
+                if self._stop.is_set():
+                    break
                 print(f"Bot:  {text}  (reminder {r['id']})")
+                heard.append(r["id"])
                 self._play(audio[text])
                 self.journal.said(text)
-            self._mark_said(r)
+            if r["id"] in heard:
+                self._mark_said(r)
         self._reread_reminders()
-        self._just_said = [r["id"] for r in said if r["needs_ack"]]
+        self._just_said = [r["id"] for r in said if r["needs_ack"] and r["id"] in heard]
+        if self._stop.is_set():  # the stop button: what was begun is acknowledged, and nobody is listened for
+            if self._just_said:
+                print("(the stop button: acknowledged)")
+                self._ack(list(self._just_said), None)
+            self._just_said = []
+            return
         try:
             heard = self.listen(start_timeout_s=self.ack_window_s, tag=REMINDER_TAG) if self._just_said else None
             if heard is None:
@@ -503,6 +559,7 @@ class Assistant:
                 on_pause=paused,
                 on_resume=resumed,
                 turn_state=session.turn_state,
+                stop=self._stop.is_set,
             )
         except BaseException:
             # Every draft must be settled, or the next one would wait behind it.
@@ -563,10 +620,16 @@ class Assistant:
             except AudioDeviceError:
                 raise
             except Exception as e:  # noqa: BLE001 - one failed request shouldn't take the assistant down
+                if self._stop.is_set():  # the stop button cut the reply off: that's no failure to say
+                    print("(stopped)")
+                    return
                 print(f"Error: {e!r}")
                 if not isinstance(e, SERVICE_FAILURES):  # a service failing is no bug to trace
                     traceback.print_exc()
                 self.say_error()
+                return
+            if self._stop.is_set():
+                print("(stopped)")
                 return
             if not answered and heard.echo_of and self._only_echo:
                 # All it heard was a trace of its own greeting: the request is still to come.

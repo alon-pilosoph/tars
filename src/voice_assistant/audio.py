@@ -256,6 +256,13 @@ class Microphone:
     def latency(self) -> float:
         return self._stream.latency
 
+    def stop(self) -> None:
+        """From another thread (a stop button): what's playing stops now, and the rest of it isn't taken; the next
+        play_pcm_stream plays as usual."""
+        with self._lock:
+            self._stopped = True
+            self._buffer.clear()
+
     def read(self) -> np.ndarray:
         try:
             return self._queue.get(timeout=MIC_STALL_S)
@@ -301,6 +308,7 @@ class Speaker:
         self._input_done = True
         self._on_start: Callable[[], None] | None = None
         self._drained = threading.Event()
+        self._stopped = False  # stop(): what's playing now ends here
         try:
             self._stream = sd.RawOutputStream(
                 samplerate=self._rate, device=device, channels=1, dtype="int16", callback=self._fill
@@ -346,6 +354,13 @@ class Speaker:
     def latency(self) -> float:
         return self._stream.latency
 
+    def stop(self) -> None:
+        """From another thread (a stop button): what's playing stops now, and the rest of it isn't taken; the next
+        play_pcm_stream plays as usual."""
+        with self._lock:
+            self._stopped = True
+            self._buffer.clear()
+
     def play_pcm_stream(
         self,
         chunks: Iterable[bytes],
@@ -361,6 +376,7 @@ class Speaker:
             self._input_done = False
             self._on_start = on_first_audio
             self._drained.clear()
+            self._stopped = False
         resample = Resampler(sample_rate, self._rate) if sample_rate != self._rate else None
         pending, heard = b"", False
         try:
@@ -375,11 +391,14 @@ class Speaker:
                 if resample is not None:
                     ready = resample(np.frombuffer(ready, np.int16)).tobytes()
                 with self._lock:
+                    if self._stopped:
+                        break
                     self._buffer += ready
                 pending = pending[usable:]
             if resample is not None:
                 with self._lock:
-                    self._buffer += resample.flush().tobytes()
+                    if not self._stopped:
+                        self._buffer += resample.flush().tobytes()
         except BaseException:
             # The reply failed partway: cut the audio now, so nothing is still playing once the mic reopens.
             with self._lock:
