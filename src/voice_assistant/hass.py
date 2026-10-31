@@ -8,6 +8,7 @@ so. An entity whose state Home Assistant only assumes (an IR-controlled AC or TV
 import json
 import time
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 import httpx
 from websockets import WebSocketException
@@ -35,6 +36,7 @@ from .home import (
     button,
     presses,
 )
+from .homenet import reachable_host
 
 HTTP_TIMEOUT_S = 5.0
 # Home Assistant answers a service call once the device has done it (a lock's bolt turning), so it gets longer.
@@ -112,14 +114,19 @@ class HomeAssistant:
 
     def stream_link(self, entity: str, expires_s: int) -> str:
         """A link anyone can open to watch a camera entity live for about `expires_s` seconds, without signing in:
-        Home Assistant signs the path over its websocket (auth/sign_path), and this is the full address."""
+        Home Assistant signs the path over its websocket (auth/sign_path), and this joins it to an address the phone
+        can reach. The signature is for the path, not the host, so [home] url being localhost (TARS reaching Home
+        Assistant on the Pi itself) doesn't matter: the link goes to this machine's reachable name, on the same
+        port."""
         result = self._command(
             {"type": "auth/sign_path", "path": f"/api/camera_proxy_stream/{entity}", "expires": expires_s}
         )
         path = result.get("path") if isinstance(result, dict) else None
         if not isinstance(path, str) or not path:
             raise HomeError(f"Home Assistant didn't sign a live link for {entity}")
-        return f"{self._url}{path}"
+        split = urlsplit(self._url)
+        port = f":{split.port}" if split.port else ""
+        return f"{split.scheme or 'http'}://{reachable_host()}{port}{path}"
 
     def _websocket(self, message: dict) -> object:
         """Sends one command over Home Assistant's websocket API, signed in with the token, and returns its result.

@@ -5,6 +5,7 @@ an injected websocket for the signed live link."""
 import httpx
 import pytest
 
+from voice_assistant import hass as hass_module
 from voice_assistant.config import HomeConfig, _home_problems
 from voice_assistant.conversations import FILE, LINK, SentItem
 from voice_assistant.hass import Camera, HomeAssistant
@@ -12,6 +13,13 @@ from voice_assistant.home import HomeError, Request
 
 URL, TOKEN = "http://homeassistant.local:8123", "test-token"
 JPEG = b"\xff\xd8\xff\xe0" + b"pretend-jpeg" + b"\xff\xd9"
+REACHABLE = "homepi.tailnet.ts.net"  # this machine's reachable name, as the live link's host
+
+
+@pytest.fixture(autouse=True)
+def _steady_reachable_host(monkeypatch):
+    """The live link's host is this machine's reachable name; pin it so the tests don't ask the real Tailscale."""
+    monkeypatch.setattr(hass_module, "reachable_host", lambda: REACHABLE)
 
 
 def ha(snapshot: bytes | None = JPEG, sign: object = "ok", status: int = 200) -> HomeAssistant:
@@ -74,7 +82,8 @@ def test_watch_sends_a_signed_live_link_that_expires():
     assert result == "sent: a link to watch the nursery live is on the TARS page"
     (item,) = turn.items
     assert item.kind == LINK
-    assert item.url == f"{URL}/api/camera_proxy_stream/camera.nursery?authSig=signed-120"
+    # the signed path, but on this machine's reachable name and Home Assistant's port, not [home] url's localhost
+    assert item.url == f"http://{REACHABLE}:8123/api/camera_proxy_stream/camera.nursery?authSig=signed-120"
     assert "2 minutes" in (item.description or "")
 
 
@@ -82,6 +91,21 @@ def test_watch_uses_the_default_window_when_none_is_set():
     cam, turn = camera(), Collected()
     cam.call("watch", {}, turn.request)
     assert turn.items[0].url.endswith("authSig=signed-600")
+
+
+def test_the_live_link_is_reachable_not_localhost():
+    # [home] url is localhost on the Pi (TARS reaches Home Assistant on the same machine); the link must not be, so
+    # a phone can open it. The signature is for the path, so swapping the host keeps the link good.
+    local = HomeAssistant(
+        "http://127.0.0.1:8123",
+        TOKEN,
+        httpx.MockTransport(lambda r: httpx.Response(200, json={})),
+        command=lambda m: {"path": f"{m['path']}?authSig=x"},
+    )
+    cam, turn = Camera("nursery", {"name": "nursery", "entity": "camera.nursery"}, local), Collected()
+    cam.call("watch", {}, turn.request)
+    url = turn.items[0].url
+    assert url.startswith(f"http://{REACHABLE}:8123/") and "127.0.0.1" not in url and "localhost" not in url
 
 
 def test_show_fails_cleanly_when_the_camera_has_no_picture():

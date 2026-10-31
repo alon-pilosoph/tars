@@ -124,9 +124,12 @@ changes nothing in the house; it has two things it does, both for whoever asked:
 
 - **show** sends a still snapshot, as Home Assistant renders it now, to the person's [TARS page](webui.md) and their
   Telegram chat — the same way the send tool delivers what it sends. "Show me the nursery", and the picture is there.
-- **watch** sends a link to see it live. Home Assistant signs the link (its `camera_proxy_stream`, an MJPEG video
+- **watch** sends a link to see it live. Home Assistant signs the path (its `camera_proxy_stream`, an MJPEG video
   feed, no sound), so it opens in any browser without signing in, and stops working after a while (`watch_seconds`,
-  ten minutes by default).
+  ten minutes by default). The link is to this machine by a name a phone can reach — its Tailscale name if it has
+  one, else its address on the home network — on Home Assistant's port, not the `[home] url` TARS itself uses (which
+  may be `localhost`, reaching Home Assistant on the same machine). The signature is for the path, not the host, so
+  the swap keeps it good.
 
 Both take a second or two, so TARS says "One moment." first. The snapshot and the link reach only the person who
 asked, on the page and in the chat, never said aloud. A camera that Home Assistant can't reach, or won't give a
@@ -332,7 +335,8 @@ see is the conversation, as for any request: which device was asked about, and w
 and as screenshots, while it works. A plugin may reach out too, and says so: `examples/my_house` looks titles up on
 IMDb. A camera's snapshot or live link goes to the person who asked: the snapshot to their TARS page (kept on the
 machine) and their Telegram chat (to Telegram, like any file it sends), and the live link is to Home Assistant on the
-home network, signed so it opens without the token and expires on its own. The models never see the picture.
+home network by a name their phone can reach (its Tailscale name if it has one), signed so it opens without the token
+and expires on its own. The models never see the picture.
 
 ## Things to know
 
