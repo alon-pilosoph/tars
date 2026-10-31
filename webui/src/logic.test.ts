@@ -25,7 +25,7 @@ import {
   wakeLine,
 } from "./format";
 import { md, plain } from "./markdown";
-import { type State, forPerson, get, personShown } from "./store";
+import { type State, byGuess, forPerson, get, personShown } from "./store";
 import { loadFailures, normalize, settle, snapshotOf, within } from "./store/load";
 import type {
   ApiConversation,
@@ -425,5 +425,18 @@ describe("Review's agree with all", () => {
     expect(answerSplit({ real: 3, not_real: 2 })).toBe("3 “hey TARS” and 2 “Not it”");
     expect(answerSplit({ real: 0, not_real: 133 })).toBe("All 133 “Not it”");
     expect(answerSplit({ real: 2, not_real: 0 })).toBe("All 2 “hey TARS”");
+  });
+});
+
+describe("Review's filter by TARS's guess", () => {
+  const wake = (auto_label: TarsEvent["auto_label"], label: TarsEvent["label"] = null) =>
+    ({ auto_label, label }) as TarsEvent;
+  it("keeps the wakes TARS guessed yes, no, or didn't guess, even once answered", () => {
+    const wakes = [wake("real"), wake("not_real"), wake("not_real", "real"), wake(null)];
+    const kept = (g: Parameters<typeof byGuess>[1]) => wakes.filter(e => byGuess(e, g));
+    expect(kept("all")).toEqual(wakes);
+    expect(kept("yes")).toEqual([wakes[0]]);
+    expect(kept("no")).toEqual([wakes[1], wakes[2]]);
+    expect(kept("none")).toEqual([wakes[3]]);
   });
 });
