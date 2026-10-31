@@ -31,11 +31,28 @@ TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
 STATUS, ON, OFF, SET, PRESS = "status", "on", "off", "set", "press"
 LOCK, UNLOCK, OPEN, CLOSE = "lock", "unlock", "open", "close"
 PLAY, DO = "play", "do"
+HISTORY = "history"
 SHOW, WATCH = "show", "watch"
 # The actions every device kind together can take, in the order the tool lists them; a plugin may add its own.
-ACTIONS = (STATUS, ON, OFF, SET, PRESS, LOCK, UNLOCK, OPEN, CLOSE, PLAY, DO, SHOW, WATCH)
+ACTIONS = (STATUS, HISTORY, ON, OFF, SET, PRESS, LOCK, UNLOCK, OPEN, CLOSE, PLAY, DO, SHOW, WATCH)
+# The actions that only read: they go through at once, change nothing, and are fine after a web search.
+READS = (STATUS, HISTORY)
 # The settings an action may take, as the tool's arguments; each device uses the ones it needs.
-SETTINGS = ("minutes", "temperature", "mode", "fan", "level", "button", "times", "app", "title", "goal")
+SETTINGS = (
+    "minutes",
+    "temperature",
+    "mode",
+    "fan",
+    "level",
+    "button",
+    "times",
+    "app",
+    "title",
+    "goal",
+    "since",
+    "until",
+    "every",
+)
 # How long a change waits for the turn to be over before it gives up: longer than anyone pauses mid-sentence.
 GO_AHEAD_TIMEOUT_S = 60.0
 # The words heard have to ask to unlock: the model can't unlock on its own reading of something else.
@@ -107,8 +124,12 @@ class Device:
         raise NotImplementedError
 
     def call(self, action: str, args: dict, request: Request) -> str:
-        """Does `action` (one of `actions`, never status), with the settings in `args`, once the turn is over."""
+        """Does `action` (one of `actions`, never a read), with the settings in `args`, once the turn is over."""
         raise NotImplementedError
+
+    def history(self, args: dict) -> str:
+        """Its past readings, for the `history` action, over `args`' since, until and every (history.py)."""
+        raise HomeError(f"the {self.name} keeps no history")
 
     def rules(self) -> str:
         """Anything the model must know to use this kind of device well; the same text is given once."""
@@ -256,6 +277,9 @@ def home_tool(devices: dict[str, Device]) -> dict:
         "app": ("string", "open or play: the app, by name."),
         "title": ("string", 'play: the film or series, as "Ratatouille (2007)" or "Wednesday S1E3".'),
         "goal": ("string", "do: what they asked for, in their own words."),
+        "since": ("string", "history: from when, local time, as 2026-10-30T22:00 or 2026-10-01; null: a day ago."),
+        "until": ("string", "history: until when, the same way; null: now."),
+        "every": ("string", "history: hour, day, week or month; null: as fine as fits the span."),
     }
     properties = {
         "device": {"type": "string", "enum": [*devices, EVERYTHING], "description": f"{EVERYTHING}: status only."},
@@ -303,7 +327,7 @@ class HomeTools:
             return False
         device = self.devices.get(str(args.get("device") or "").strip().lower())
         action = args.get("action")
-        return bool(device and action in device.actions and action != STATUS and device.slow(action, args))
+        return bool(device and action in device.actions and action not in READS and device.slow(action, args))
 
     def call(self, args: dict, request: Request) -> str:
         """What to tell the model: what happened, or "error: ..." with what's wrong."""
@@ -321,6 +345,11 @@ class HomeTools:
             return f"error: the {name} can do: {', '.join(device.actions)}"
         if action == STATUS:
             return self._status(device)
+        if action == HISTORY:
+            try:
+                return device.history(args)
+            except HomeError as e:
+                return f"error: {e}"
         if request.read_the_web:
             return (
                 "refused: this reply searched the web, so it changes nothing in the house; "

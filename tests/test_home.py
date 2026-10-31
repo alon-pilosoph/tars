@@ -167,7 +167,20 @@ def test_the_tool_offers_only_the_actions_its_devices_have_and_every_setting():
     h = house()
     parameters = h.tools.tool["parameters"]
     actions = parameters["properties"]["action"]["enum"]
-    assert actions == ["status", "on", "off", "set", "press", "lock", "unlock", "open", "close", "play", "do"]
+    assert actions == [
+        "status",
+        "history",
+        "on",
+        "off",
+        "set",
+        "press",
+        "lock",
+        "unlock",
+        "open",
+        "close",
+        "play",
+        "do",
+    ]
     assert parameters["required"] == ["device", "action", *SETTINGS] and parameters["additionalProperties"] is False
     assert parameters["properties"]["device"]["enum"][-1] == "everything"
 

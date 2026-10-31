@@ -21,7 +21,8 @@ def device(spec: dict, house: dict | None = None, steps: int = 1, **flags):
     def sleep(seconds):
         now[0] += seconds
 
-    made = entity_device(spec["name"], spec, HomeAssistant(URL, TOKEN, ha.transport), clock=lambda: now[0], sleep=sleep)
+    hass = HomeAssistant(URL, TOKEN, ha.transport, ha.command)
+    made = entity_device(spec["name"], spec, hass, clock=lambda: now[0], sleep=sleep)
     return made, ha
 
 
@@ -250,7 +251,8 @@ def test_a_sensor_is_read_in_words_and_never_changed():
     room, _ = device({"name": "living room", "entity": "sensor.living_room_temperature"})
     door, _ = device({"name": "door", "entity": "binary_sensor.front_door_door"}, {"door": "open"})
     assert room.status() == "living room: 23.5 °C" and door.status() == "door: open"
-    assert room.actions == ("status",) and do(room, "on").startswith("error")
+    assert room.actions == ("status", "history") and door.actions == ("status",)
+    assert do(room, "on").startswith("error")
 
 
 def test_home_assistant_not_answering_is_an_error():

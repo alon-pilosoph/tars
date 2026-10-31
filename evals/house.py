@@ -4,13 +4,14 @@ so a scenario can check it locked the door once, and never unlocked it for the w
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import httpx
 
 from voice_assistant.androidtv import APPS, TvDevice
 from voice_assistant.config import HomeConfig
 from voice_assistant.hass import HomeAssistant, entity_device
-from voice_assistant.home import STATUS, HomeTools, Request
+from voice_assistant.home import READS, HomeError, HomeTools, Request
 
 URL, TOKEN = "http://pretend:8123", "eval"
 # The pretend house: Home Assistant's entities, as [[home.devices]] lists them, and an Android TV box.
@@ -73,13 +74,17 @@ def entities(house: dict) -> dict[str, tuple[str, dict]]:
 
 class PretendHA:
     """Home Assistant's REST API, as TARS uses it: states, and services that change them. A lock or a cover moves for
-    `steps` reads before it gets there; `jams` jams the lock; `down` answers nothing."""
+    `steps` reads before it gets there; `jams` jams the lock; `down` answers nothing. Its websocket API (`command`)
+    answers statistics from `statistics`: {entity: rows}, each {start: ms, mean, min, max}, given in the period asked
+    for."""
 
     def __init__(self, states: dict[str, tuple[str, dict]], steps: int = 1, jams: bool = False, down: bool = False):
         self.states = {e: [s, dict(a)] for e, (s, a) in states.items()}
         self.steps, self.jams, self.down = steps, jams, down
         self.calls: list[tuple[str, dict]] = []  # ("domain.service", data), in order
         self._moving: dict[str, tuple[int, str]] = {}
+        self.statistics: dict[str, list[dict]] = {}
+        self.asked: list[dict] = []  # the websocket commands, in order
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -87,6 +92,18 @@ class PretendHA:
 
     def state(self, entity: str) -> str:
         return self.states[entity][0]
+
+    def command(self, message: dict) -> object:
+        if self.down:
+            raise HomeError("Home Assistant didn't answer (OSError)")
+        self.asked.append(message)
+        if message.get("type") != "recorder/statistics_during_period":
+            raise HomeError("Home Assistant said: Unknown command.")
+        start, end = (datetime.fromisoformat(message[k]).timestamp() * 1000 for k in ("start_time", "end_time"))
+        found = {
+            e: [r for r in self.statistics.get(e, []) if start <= r["start"] < end] for e in message["statistic_ids"]
+        }
+        return {e: rows for e, rows in found.items() if rows}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if self.down:
@@ -227,7 +244,7 @@ class House:
 def make_house(house: dict, unlock_voices=("alon",), unlock_chats=()) -> House:
     """The pretend house, as a scenario's `house` table sets it, with its home tool."""
     ha = PretendHA(entities(house), jams=house.get("jams", False), down=house.get("down", False))
-    hass = HomeAssistant(URL, TOKEN, transport=ha.transport)
+    hass = HomeAssistant(URL, TOKEN, transport=ha.transport, command=ha.command)
     now = [0.0]  # pretend time, which passes only by waiting: the house moves on reads, never on the clock
 
     def sleep(seconds: float) -> None:
@@ -247,7 +264,7 @@ def make_house(house: dict, unlock_voices=("alon",), unlock_chats=()) -> House:
 
     def kept(args: dict, request: Request) -> str:
         said = call(args, request)
-        if isinstance(args, dict) and args.get("action") != STATUS and said.startswith(CHANGED):
+        if isinstance(args, dict) and args.get("action") not in READS and said.startswith(CHANGED):
             result.changes.append({**args, "device": str(args.get("device", "")).lower(), "result": said})
         return said
 
