@@ -5,11 +5,16 @@ Every change is read back from what the entity reports afterwards, so the answer
 so. An entity whose state Home Assistant only assumes (an IR-controlled AC or TV, which can't report back) answers
 "sent" instead: the request went out, and nothing can tell whether it worked."""
 
+import json
 import time
 from collections.abc import Callable
 
 import httpx
+from websockets import WebSocketException
+from websockets.sync.client import connect
 
+from .config import CAMERA_WATCH_S
+from .conversations import FILE, LINK, SentItem
 from .home import (
     CLOSE,
     LOCK,
@@ -18,12 +23,15 @@ from .home import (
     OPEN,
     PRESS,
     SET,
+    SHOW,
     STATUS,
     TOKEN_KEY,
     UNLOCK,
+    WATCH,
     Check,
     Device,
     HomeError,
+    Request,
     button,
     presses,
 )
@@ -43,7 +51,16 @@ class HomeAssistant:
     """Home Assistant's REST API. Reading a state is short: a device that doesn't answer is reported, never waited on.
     A service call waits as long as Home Assistant does for the device, up to SERVICE_TIMEOUT_S."""
 
-    def __init__(self, url: str, token: str, transport: httpx.BaseTransport | None = None):
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        transport: httpx.BaseTransport | None = None,
+        command: Callable[[dict], object] | None = None,
+    ):
+        self._url, self._token = url.rstrip("/"), token
+        # The websocket API, for what the REST one can't do (signing a camera's live link); replaced in the tests.
+        self._command = command or self._websocket
         self._http = httpx.Client(
             base_url=url.rstrip("/"),
             headers={"Authorization": f"Bearer {token}"},
@@ -73,6 +90,57 @@ class HomeAssistant:
             print(f"(home: no answer to {service} after {SERVICE_TIMEOUT_S:.0f} s; reading back what it did)")
             return False
         return True
+
+    def snapshot(self, entity: str) -> bytes:
+        """A still JPEG from a camera entity, as Home Assistant renders it now: its bytes, or a HomeError if the
+        camera can't be reached or gives nothing back."""
+        try:
+            response = self._http.get(f"/api/camera_proxy/{entity}")
+        except httpx.ReadTimeout as e:
+            raise NoAnswer(f"Home Assistant didn't answer in time ({type(e).__name__})") from e
+        except httpx.HTTPError as e:
+            raise HomeError(f"Home Assistant didn't answer ({type(e).__name__})") from e
+        if response.status_code == 401:
+            raise HomeError(f"Home Assistant refused the token ({TOKEN_KEY} in .env)")
+        if response.status_code == 404:
+            raise HomeError(f"Home Assistant has no {entity}, or it has no picture")
+        if response.status_code >= 400:
+            raise HomeError(f"Home Assistant said HTTP {response.status_code} for {entity}")
+        if not response.content:
+            raise HomeError(f"{entity} gave no picture")
+        return response.content
+
+    def stream_link(self, entity: str, expires_s: int) -> str:
+        """A link anyone can open to watch a camera entity live for about `expires_s` seconds, without signing in:
+        Home Assistant signs the path over its websocket (auth/sign_path), and this is the full address."""
+        result = self._command(
+            {"type": "auth/sign_path", "path": f"/api/camera_proxy_stream/{entity}", "expires": expires_s}
+        )
+        path = result.get("path") if isinstance(result, dict) else None
+        if not isinstance(path, str) or not path:
+            raise HomeError(f"Home Assistant didn't sign a live link for {entity}")
+        return f"{self._url}{path}"
+
+    def _websocket(self, message: dict) -> object:
+        """Sends one command over Home Assistant's websocket API, signed in with the token, and returns its result.
+        The REST API can't do everything (signing a camera's live link); this covers the rest."""
+        url = "ws" + self._url.removeprefix("http") + "/api/websocket"
+        try:
+            with connect(url, open_timeout=HTTP_TIMEOUT_S, close_timeout=1) as ws:
+                ws.recv(timeout=HTTP_TIMEOUT_S)  # auth_required
+                ws.send(json.dumps({"type": "auth", "access_token": self._token}))
+                if json.loads(ws.recv(timeout=HTTP_TIMEOUT_S)).get("type") != "auth_ok":
+                    raise HomeError(f"Home Assistant refused the token ({TOKEN_KEY} in .env)")
+                ws.send(json.dumps({"id": 1, **message}))
+                while (answer := json.loads(ws.recv(timeout=HTTP_TIMEOUT_S))).get("id") != 1:
+                    pass
+        except TimeoutError as e:
+            raise NoAnswer("Home Assistant didn't answer in time") from e
+        except (OSError, WebSocketException, ValueError) as e:
+            raise HomeError(f"Home Assistant didn't answer ({type(e).__name__})") from e
+        if not answer.get("success"):
+            raise HomeError(f"Home Assistant said: {(answer.get('error') or {}).get('message', 'no')}")
+        return answer.get("result")
 
     def _send(self, method: str, path: str, data: dict | None = None, timeout: httpx.Timeout | None = None) -> dict:
         try:
@@ -543,3 +611,56 @@ def entity_device(name: str, spec: dict, hass: HomeAssistant, **timing) -> Entit
     """The device for a [[home.devices]] entry with an entity, by its domain (config.py checked it's one of these).
     `timing`: clock and sleep, for the tests and evals."""
     return KINDS[spec["entity"].partition(".")[0]](name, spec, hass, **timing)
+
+
+class Camera(Device):
+    """A Home Assistant camera ([[home.devices]] kind = "camera", entity = camera.*). It changes nothing in the
+    house: "show" sends a still snapshot, and "watch" a link to see it live for a while. Both go to whoever asked,
+    on their TARS page and chat, through the turn's Request.emit, like the send tool's own items. The live link is
+    signed over Home Assistant's websocket, so it stops working if that can't be reached."""
+
+    actions = (STATUS, SHOW, WATCH)
+
+    def __init__(self, name: str, spec: dict, hass: HomeAssistant, **kw):
+        super().__init__(name)
+        self.entity = spec["entity"]
+        self._hass = hass
+        self._watch_s = int(spec.get("watch_seconds") or CAMERA_WATCH_S)
+
+    def what(self) -> str:
+        minutes = max(1, self._watch_s // 60)
+        return (
+            f'the {self.name}: "show" sends a snapshot to the TARS page and chat, "watch" a link to see it live '
+            f"for about {minutes} minutes"
+        )
+
+    def status(self) -> str:
+        found = self._hass.state(self.entity)
+        state = found.get("state", "")
+        if state in UNKNOWN:
+            return f"{self.name}: Home Assistant can't reach it"
+        return f"{self.name}: {state}; ask to show or watch it"
+
+    def slow(self, action: str, args: dict) -> bool:
+        return action in (SHOW, WATCH)  # a snapshot or a signed link takes a second or two: say "One moment." first
+
+    def call(self, action: str, args: dict, request: Request) -> str:
+        if request.emit is None:
+            raise HomeError(f"there's nowhere to send the {self.name} to from here")
+        if action == SHOW:
+            data = self._hass.snapshot(self.entity)
+            name = f"{self.name.lower().replace(' ', '-')}.jpg"
+            request.emit(SentItem(FILE, self.name, file_name=name, file_bytes=data, mime="image/jpeg"))
+            return f"sent: a snapshot of the {self.name} is on the TARS page"
+        if action == WATCH:
+            url = self._hass.stream_link(self.entity, self._watch_s)
+            minutes = max(1, self._watch_s // 60)
+            request.emit(SentItem(LINK, f"{self.name}, live", url=url, description=f"live for about {minutes} minutes"))
+            return f"sent: a link to watch the {self.name} live is on the TARS page"
+        raise HomeError(f"the {self.name} can't {action}")
+
+
+def camera_device(name: str, spec: dict, hass: HomeAssistant, **timing) -> Camera:
+    """The device for a [[home.devices]] camera entry. `timing` is ignored (a camera waits for nothing), taken only
+    so it's made like the others."""
+    return Camera(name, spec, hass)

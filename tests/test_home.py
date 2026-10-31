@@ -320,7 +320,7 @@ kind = "my_house.ac"
         "TARS works lock, switch",
         "timer must be",
         "(androidtv) needs address",
-        "kind must be androidtv or a plugin's",
+        "kind must be androidtv, camera or a plugin's",
         "'everything' is the name for every device at once",
     ]:
         assert says in message, says

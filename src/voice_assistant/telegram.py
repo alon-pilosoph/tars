@@ -676,7 +676,9 @@ class TelegramTars:
     def _post_item(self, chat_id: int, item: SentItem, raises: bool = False) -> float | None:
         """When it was posted, or None if it couldn't be (it's on the TARS page all the same)."""
         try:
-            if item.kind == FILE:
+            if item.kind == FILE and (item.mime or "").startswith("image/"):
+                self._bot.send_photo(chat_id, item.file_bytes, item.title)  # a camera snapshot: shown inline
+            elif item.kind == FILE:
                 self._bot.send_file(chat_id, item.file_name, item.file_bytes, item.mime, item.title)
             else:
                 self._bot.send(chat_id, item_text(item))
