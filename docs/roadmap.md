@@ -16,7 +16,8 @@ being right.
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | large |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | large |
 
-Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after
+Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
+them. Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after
 the six: [working offline](#later-working-offline) and [TARS in other homes](#later-tars-in-other-homes).
 
 **Built so far, alongside step 1:** [reminders, timers and messages](reminders.md), [the house](home.md) (Home
@@ -265,6 +266,45 @@ one person's memory never reaches another's answer.
 **Open question:** what TARS offers to remember. Too eager and it's a nag; the week of real use will show which
 facts come up again.
 
+## Planned: house commands on the Pi
+
+**Goal:** "lock the door", "AC to 23", "turn off the TV" handled on the Pi itself: answered at once, nearly free, and
+still working when the internet is down. Anything else goes on to the cloud as it does today. It's the house part
+of [working offline](#later-working-offline), early and with no model.
+
+**Why not a local LLM:** a Pi 4 has no GPU, so a model small enough to fit takes tens of seconds just to read TARS's
+instructions, and the benchmark ([choosing the quick model](models.md)) shows how much less accurate small models
+get; a confidently wrong lock is worse than a quarter of a cent. House commands are a fixed set, so they don't need
+one.
+
+**Design:**
+
+- **Vosk with a list of phrases**, the same small offline recognizer and the same trick the wake double-check uses
+  (`verify.py`): limited to a known list plus "[unk]", it's fast and reliable on a Pi. The list is built from
+  templates over the `[home]` devices: verbs ("turn on", "switch on", "put on", "start"), the devices by every name
+  they have, numbers for the AC's temperature and the volume, and optional politeness ("please", "can you", "TARS").
+  That makes thousands of phrasings from a few dozen lines. Device names the model's vocabulary doesn't know are
+  found when the list is built, so a name it can't hear fails loudly instead of quietly never matching.
+- **Beside the cloud, hanging up early.** After the wake word, the audio goes to the cloud speech-to-text as now and
+  to Vosk. As soon as Vosk is sure it's hearing a command, TARS stops the cloud stream (billed only for the second or
+  two already sent) and acts; with "[unk]", the turn carries on exactly as today, no slower. A setting,
+  `local_first`, sends nothing to the cloud until Vosk has heard the whole request: a command is then free, at the
+  cost of every other request losing the streaming head start (to be measured). With no internet, it works that way
+  by itself.
+- **The same house tool, the same guards.** A matched command becomes the call the model would have made, so a
+  change still counts as done only when the device itself reports it, unlocking stays as guarded as it is now, and
+  the web UI shows the turn like any other, marked as handled on the Pi.
+- **Replies in TARS's voice, a few of each, picked at random.** Every reply ("Door's locked.", "Locked. Fort Knox
+  has nothing on us.", "AC on, 23 degrees.") is recorded once in the current voice and kept on disk, several per
+  outcome, never the same one twice running; the jokes follow `[llm] humor`. A failure has its own ("The door didn't
+  answer."). Numbers are recorded as pieces, so "23 degrees" doesn't need its own file for every temperature.
+
+**Measure:** recorded commands from each voice in the house, said many ways, plus near-misses and ordinary
+conversation: a command must match the right device and action, and conversation must never match a command (a
+wrong match is the one failure that matters). Then time to the device changing, against today's, and the cloud
+seconds saved. **Done when** a week of real house commands has no wrong match and the door locks with the internet
+off.
+
 ## Later: working offline
 
 **Goal:** when the internet or a provider is down, TARS still does the essentials at home: the lights, the door, the
@@ -282,7 +322,8 @@ of a stage's services fail, TARS says it couldn't, and the Status page shows whi
 1. **A local fallback for each stage,** used only when the cloud ones fail: speech to text with a small Whisper
    model, a voice from Piper (whose voices the wake word was already trained with), and a small local model for the
    brain, limited to the house tool, timers and reminders, with web search, sending and the browser turned off and
-   said so.
+   said so. House commands may already work offline by then, from [house commands on the
+   Pi](#planned-house-commands-on-the-pi).
 2. **Where it runs.** A Pi 4 is too slow for a useful local model. Either a Pi 5 with an AI accelerator, or a small
    home server on the network (an old laptop, a mini PC), which the Pi calls the way it calls a provider today. The
    choice is measured: time to first sound and how often it picks the right device, on step 1's recorded requests.
