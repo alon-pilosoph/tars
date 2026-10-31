@@ -117,6 +117,22 @@ sent twice: one the box may have had before it stopped answering isn't tried aga
 each step is one request, with a screenshot when the app's text isn't enough, and only the latest screenshot is sent
 again.
 
+### A camera
+
+A `[[home.devices]]` with `kind = "camera"` and a `camera.*` `entity` is a Home Assistant camera (`hass.py`). It
+changes nothing in the house; it has two things it does, both for whoever asked:
+
+- **show** sends a still snapshot, as Home Assistant renders it now, to the person's [TARS page](webui.md) and their
+  Telegram chat — the same way the send tool delivers what it sends. "Show me the nursery", and the picture is there.
+- **watch** sends a link to see it live. Home Assistant signs the link (its `camera_proxy_stream`, an MJPEG video
+  feed, no sound), so it opens in any browser without signing in, and stops working after a while (`watch_seconds`,
+  ten minutes by default).
+
+Both take a second or two, so TARS says "One moment." first. The snapshot and the link reach only the person who
+asked, on the page and in the chat, never said aloud. A camera that Home Assistant can't reach, or won't give a
+picture, costs a sentence, like any other device. Getting the camera itself into Home Assistant is Home Assistant's
+job (an integration for its make); TARS only shows what Home Assistant already has.
+
 ### TARS's own speaker
 
 With `[home] own_speaker = true`, TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which
@@ -314,7 +330,9 @@ Home Assistant, the devices and the TV box are all on the home network; TARS tal
 see is the conversation, as for any request: which device was asked about, and what the home tool answered
 ("front door reports locked"). A task on the TV is the exception: the model working it sees the TV's screen, as text
 and as screenshots, while it works. A plugin may reach out too, and says so: `examples/my_house` looks titles up on
-IMDb.
+IMDb. A camera's snapshot or live link goes to the person who asked: the snapshot to their TARS page (kept on the
+machine) and their Telegram chat (to Telegram, like any file it sends), and the live link is to Home Assistant on the
+home network, signed so it opens without the token and expires on its own. The models never see the picture.
 
 ## Things to know
 

@@ -620,7 +620,7 @@ class OpenAIChat:
             self._history.append(self._asked)
             self.sent, self.changes = [], []
             self._writing = writing = _Writing(self.first_answerer)
-            writing.request = request or Request()
+            writing.request = dataclasses.replace(request or Request(), emit=self._emit)
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
 
@@ -742,6 +742,14 @@ class OpenAIChat:
             _check(writing)
             self._history.append({"role": "assistant", "content": answer.strip()})
             self._history = self._history[-MAX_TURNS * 2 :]
+
+    def _emit(self, item: object) -> None:
+        """A home device (a camera) handing its media to this turn's reply: onto the TARS page and the asker's chat,
+        exactly like the send tool's own items, and cleared with them if the reply is thrown away. Called on the
+        reply's own thread from the home tool (which runs with the lock released), so self.sent isn't touched by
+        anyone else meanwhile."""
+        if isinstance(item, SentItem) and not any(_same_send(s, item) for s in self.sent):
+            self.sent.append(item)
 
     def _run_tool(self, call, no_links: str = "", writing: _Writing | None = None) -> str:
         """Called with the lock held. `no_links`: what this model should do instead of sending a link, which needs
