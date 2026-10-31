@@ -1,12 +1,14 @@
 /* The page's link parameters, for linking to a view:
 
    ?tab=home|sent|review|reminders|voices|models|status     ?person=all|household|<voice id>
+   ?guess=yes|no|none   Review: only the wakes TARS guessed were for it, weren't, or didn't guess
    ?conv=<id>     that conversation, open and scrolled to
    ?item=<id>     scrolled to that item
    ?demo          built-in sample data, no server; demoParams.ts adds more parameters for the screenshot tests */
 
 export type Tab = "home" | "sent" | "review" | "reminders" | "voices" | "models" | "status";
 export type PersonFilter = "all" | "household" | number;
+export type GuessFilter = "all" | "yes" | "no" | "none";
 
 const TABS: Tab[] = ["home", "sent", "review", "reminders", "voices", "models", "status"];
 
@@ -24,6 +26,7 @@ export const DEMO = PARAMS.has("demo");
 export const LINK = {
   tab: oneOf(PARAMS.get("tab"), TABS) ?? "home",
   person: personParam(PARAMS.get("person")),
+  guess: oneOf(PARAMS.get("guess"), ["yes", "no", "none"] as const) ?? ("all" as GuessFilter),
   conv: idParam(PARAMS.get("conv")),
   item: idParam(PARAMS.get("item")),
 };

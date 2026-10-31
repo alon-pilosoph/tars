@@ -1,11 +1,14 @@
 import { heardText, stamp } from "../format";
+import type { GuessFilter } from "../params";
 import {
   type State,
   agreeWithGuesses,
   answerWake,
+  byGuess,
   clusterName,
   menuOpen,
   reviewEvents,
+  setGuess,
   toggleMenu,
   useStore,
 } from "../store";
@@ -18,9 +21,11 @@ export function Review() {
   const s = useStore();
   // Rows stay where they are until Refresh, even after an answer is given or cleared.
   const all = reviewEvents(s);
-  const toCheck = all.filter(e => s.snapshot.review.has(e.id));
-  const reviewed = all.filter(e => !s.snapshot.review.has(e.id));
-  const left = toCheck.filter(e => !e.label).length;
+  const toCheckAll = all.filter(e => s.snapshot.review.has(e.id));
+  const left = toCheckAll.filter(e => !e.label).length;
+  const g = s.guess;
+  const toCheck = toCheckAll.filter(e => byGuess(e, g));
+  const reviewed = all.filter(e => !s.snapshot.review.has(e.id) && byGuess(e, g));
   const guessed = toCheck.filter(e => !e.label && e.auto_label);
   const head = (
     <PageHead
@@ -35,6 +40,7 @@ export function Review() {
       )}
     </PageHead>
   );
+  const seg = <GuessSeg s={s} events={toCheckAll} />;
   if (!all.length)
     return (
       <>
@@ -48,12 +54,15 @@ export function Review() {
   return (
     <>
       {head}
+      {seg}
       {toCheck.length ? (
         <div className="wakes">
           {toCheck.map(e => (
             <Wake key={e.id} e={e} s={s} />
           ))}
         </div>
+      ) : g !== "all" && toCheckAll.length ? (
+        <Empty title={GUESSES[g].none} text="All shows the rest." />
       ) : (
         <Empty title="All checked" text="Nothing to listen to until TARS has another doubt." />
       )}
@@ -70,6 +79,27 @@ export function Review() {
         </section>
       )}
     </>
+  );
+}
+
+const GUESSES: Record<GuessFilter, { label: string; none: string }> = {
+  all: { label: "All", none: "" },
+  yes: { label: "Thinks yes", none: "Nothing TARS thinks was for it" },
+  no: { label: "Thinks no", none: "Nothing TARS thinks wasn't for it" },
+  none: { label: "No guess", none: "Nothing without a guess" },
+};
+
+/** Review's filter by TARS's guess, with how many to check each has: the one hey TARS among a hundred nos. */
+function GuessSeg({ s, events }: { s: State; events: TarsEvent[] }) {
+  if (!events.some(e => e.auto_label) && s.guess === "all") return null;
+  return (
+    <div className="seg guess-seg" role="group" aria-label="By TARS's guess">
+      {(Object.keys(GUESSES) as GuessFilter[]).map(g => (
+        <button key={g} aria-pressed={s.guess === g} onClick={() => setGuess(g)}>
+          {`${GUESSES[g].label} ${events.filter(e => byGuess(e, g)).length}`}
+        </button>
+      ))}
+    </div>
   );
 }
 
