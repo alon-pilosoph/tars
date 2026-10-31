@@ -53,6 +53,7 @@ OPENAI_TIMEOUT_S = 15.0
 BROWSER_TIMEOUT_S = 120.0  # a browser turn at high effort over a long errand's pages
 QUICK_TIMEOUT_S = 4.0  # the quick brain's replies take well under a second
 PHRASES = "voice_data/phrases"  # the short lines TARS makes ahead, kept across restarts
+MUTED_FILE = "voice_data/muted"  # there while TARS is muted, so a restart keeps it muted
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
 EX_CONFIG = 78
 # sysexits' EX_UNAVAILABLE: no speakerphone. Not restarted either; plugging it in starts TARS (the udev rule).
@@ -853,22 +854,26 @@ def phrase_folder(cfg: Config, root: Path) -> Path:
     return root / PHRASES / hashlib.sha256(setup.encode()).hexdigest()[:12]
 
 
-def start_buttons(cfg: Config, volume, assistant) -> None:
+def start_buttons(cfg: Config, volume, assistant, root: Path) -> None:
     """The buttons, from threads of their own (buttons.py): with TARS's own speaker (`volume`, own_speaker's), its
     volume keys and the remote's volume buttons turn it; the remote's talk and stop wake and stop `assistant`; and
     the speakerphone's own mute (speakerphone.py), which the remote's mute button works too, keeps it from waking.
-    Linux only: elsewhere there's no /dev/input or hidraw to read them from."""
+    Muted when it last stopped (MUTED_FILE), it starts muted. Linux only: elsewhere there's no /dev/input or hidraw
+    to read them from."""
     if platform.system() != "Linux":
         return
     from .buttons import DOWN, MUTE, STOP, TALK, UP, Buttons, Listener
-    from .speakerphone import find_mute
+    from .speakerphone import find_mute, kept
 
+    flag = root / MUTED_FILE
+    was_muted = flag.exists()
+    muted = kept(flag, assistant.mute)
     act = {TALK: assistant.talk, STOP: assistant.stop}
     if volume is not None:
         act |= {UP: lambda: volume.turn(True), DOWN: lambda: volume.turn(False)}
     mute = None
     if cfg.home.speakerphone_mute:
-        mute, why = find_mute(cfg.audio.output_device, assistant.mute)
+        mute, why = find_mute(cfg.audio.output_device, muted)
         if mute:
             mute.start()
             print("(buttons: the speakerphone's mute is TARS's: while it's muted, TARS doesn't listen)")
@@ -876,12 +881,21 @@ def start_buttons(cfg: Config, volume, assistant) -> None:
             print(f"(buttons: the speakerphone's mute isn't TARS's: {why}; docs/home.md#buttons)")
 
     def toggle() -> str:  # without the speakerphone's mute, TARS's own: it stops listening, the mic stays on
-        assistant.mute(not assistant.muted)
+        muted(not assistant.muted)
         return "muted (TARS only)" if assistant.muted else "unmuted"
 
     act[MUTE] = mute.toggle if mute else toggle
     keys = cfg.home.volume_keys and volume is not None
     remote = {b: c for b, c in cfg.home.remote.items() if b in act}
+    if was_muted:  # muted again, unless nothing could unmute it now: then the flag goes
+        if mute:
+            mute.set(True)
+        elif MUTE in remote:
+            muted(True)
+        else:
+            flag.unlink(missing_ok=True)
+        if assistant.muted:
+            print("(muted, as it was when TARS last stopped)")
     if not (keys or remote):
         return
     Listener(Buttons(remote, keys), act).start()
@@ -973,7 +987,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
         )
-        start_buttons(cfg, volume, assistant)
+        start_buttons(cfg, volume, assistant, root)
         assistant.run_forever(
             idle_message,
             follow_up_s=cfg.recorder.follow_up_s,

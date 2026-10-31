@@ -161,8 +161,9 @@ toggles twice.
   what's due all the same. The remote's mute works the same mute, so the two never disagree. TARS reads the
   speakerphone's buttons and lights from what it says it has (its HID report descriptor: a phone-mute button, mute
   and off-hook lights). The PowerConf takes the computer's mute only off-hook (in a call), so TARS keeps it off-hook,
-  which no light shows, and sets the mute; it unmutes it when it starts, however it was muted. Without one, the
-  remote's mute is TARS's alone: it stops listening, and the mic stays on.
+  which no light shows, and sets the mute. Without one, the remote's mute is TARS's alone: it stops listening, and
+  the mic stays on. Either mute outlasts a restart: muted when TARS stopped, it starts muted (`voice_data/muted` is
+  there while it's muted).
 - **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
   Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power
   button is the case's own (it turns the Pi on, and shuts it down cleanly).
