@@ -162,6 +162,9 @@ class WebConfig:
     # More names the web UI may be reached by, besides IP addresses, localhost, *.local, *.ts.net and single-label
     # names (which always work). Requests to any other name are refused.
     allowed_hosts: list[str] = field(default_factory=list)
+    # Where a phone opens the web UI, for the links TARS sends (recording sessions): "http://homepi.local:8080".
+    # "": this machine's Tailscale address if it has one, else its address at home, on the web UI's port.
+    link: str = ""
 
 
 @dataclass

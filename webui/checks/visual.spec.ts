@@ -71,6 +71,15 @@ const STATES = [
   "tab=status",
   "tab=status&health=trouble",
   "tab=status&demo=empty",
+  "session=house",
+  "session=house&done=2&step=ready",
+  "session=house&done=2&step=recording",
+  "session=house&done=2&step=heard",
+  "session=house&done=2&step=problem",
+  "session=house&done=2&step=busy",
+  "session=house&done=8&step=done",
+  "session=voice&done=3",
+  "session=house&step=gone",
 ];
 
 /** Click the i-th match, click the first match whose text starts with `text`, or type into a field. */

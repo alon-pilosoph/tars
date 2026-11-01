@@ -21,6 +21,7 @@ import numpy as np
 
 from .audio import AudioDeviceError, Microphone, Speaker, chime
 from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
+from .control import Op, Refused
 from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .echo import without_echo
@@ -30,11 +31,13 @@ from .journal import Journal
 from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
 from .phrases import Audio, Phrases
 from .recorder import UtteranceRecorder
+from .recording import NO_SPEECH, SILENCE, TAP
 from .reminders import VOICE, Change, Clock, Reminders, ReminderTools, held_line, late, says_line
 from .reminders import line as reminder_line
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
 from .stt import Session, Transcriber
+from .takes import MUTED, Take, TakeDesk, level
 from .tts import Voice
 from .verify import ASK
 from .wake import DUE, Trigger
@@ -59,6 +62,9 @@ UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wa
 VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
 ANNOUNCEMENT_KEEP_S = 600.0  # how the TV went is old news after this, and isn't said any more
 REMINDERS_REST_S = 30.0  # after the reminders table fails, nothing is said for this long
+HELD_POLL_S = 0.1  # held by a recording session, how often what's due is looked for between takes
+TAKE_PAD_BLOCKS = 6  # room kept before and after a take's speech (6 blocks of 80 ms)
+TAKE_START_S = 6.0  # after a take's beep, how long it waits for someone to speak
 
 
 def greeting(name: str | None) -> str:
@@ -207,6 +213,8 @@ class Assistant:
         self.muted = False
         self._unmuted = threading.Event()  # set while not muted: what a muted wait waits for
         self._unmuted.set()
+        # A recording session (recording.py) holds TARS and asks for takes from the control thread (control.py).
+        self.takes = TakeDesk()
 
     def use_reminders(self, tools: ReminderTools | None) -> None:
         self.reminder_tools = tools
@@ -220,6 +228,8 @@ class Assistant:
         """The talk button: TARS listens, as if called by name. Not while muted, or while it's busy already."""
         if self.muted:
             return "ignored: muted (unmute first)"
+        if self.takes.held():
+            return "ignored: a recording session is open"
         self._talk.set()
         return "listening"
 
@@ -240,7 +250,7 @@ class Assistant:
 
     def _woken(self) -> bool:
         """Asked while waiting for the wake word: the talk button, something due, or muted (stop listening)."""
-        return self._talk.is_set() or self.muted or self._due()
+        return self._talk.is_set() or self.muted or self.takes.held() or self._due()
 
     def _wait_muted(self) -> str | None:
         """While muted, instead of the wake word: no wake model and no double-check, only the mic's audio thrown
@@ -254,6 +264,71 @@ class Assistant:
         self.mic.clear()  # what it heard while muted is old
         return None
 
+    def control_ops(self) -> dict[str, Op]:
+        """What the web UI may ask for over control.py, for a recording session: hold TARS, let it go, and the takes."""
+
+        def record(_: dict) -> dict:
+            if self.muted:
+                raise Refused(MUTED)
+            return self.takes.state(self.takes.ask())
+
+        def hold(_: dict) -> dict:
+            self.takes.hold()
+            return {"ok": True, "muted": self.muted}
+
+        def release(_: dict) -> dict:
+            self.takes.release()
+            return {"ok": True}
+
+        return {
+            "hold": hold,
+            "release": release,
+            "record": record,
+            "status": lambda r: self.takes.state(self.takes.find(int(r["id"]))),
+            "stop": lambda r: self.takes.finish(int(r["id"])),
+        }
+
+    def _wait_held(self) -> str | None:
+        """While a recording session holds TARS, instead of the wake word: the takes it asks for, and what's due in
+        between. DUE when something is; None once the session lets go (or its hold lapses)."""
+        while self.takes.held():
+            if self._due():
+                return DUE
+            take = self.takes.next(HELD_POLL_S)
+            if take:
+                self._take(take)
+            else:
+                self.mic.clear()
+        self.mic.clear()
+        return None
+
+    def _take(self, take: Take) -> None:
+        """The beep, then what's said after it, until a pause ends it (the recorder's own rule) or a tap stops it."""
+        self._chime()  # with the mic paused until it has left the speaker
+        if not self.takes.recording(take):
+            return
+        heard: list[bytes] = []
+
+        def hearing(pcm: bytes) -> None:
+            heard.append(pcm)
+            take.level = level(pcm)
+
+        pcm = self.recorder.record(
+            self.mic,
+            preroll_blocks=TAKE_PAD_BLOCKS,
+            tail_blocks=TAKE_PAD_BLOCKS,
+            start_timeout_s=TAKE_START_S,
+            on_audio=hearing,
+            stop=take.stop.is_set,
+        )
+        if pcm is not None:
+            stopped = SILENCE
+        elif heard:  # tapped while speaking: what was said so far is the take
+            pcm, stopped = b"".join(heard), TAP
+        else:
+            stopped = TAP if take.stop.is_set() else NO_SPEECH
+        self.takes.ended(take, pcm, stopped)
+
     def run_forever(
         self, idle_message: str, follow_up_s: float = 0.0, greet_after_s: float = 0.0, greet: str = PAUSE
     ) -> None:
@@ -263,7 +338,11 @@ class Assistant:
         while True:
             print(f"\n{idle_message}")
             self._talk.clear()
-            if self.muted:
+            if self.takes.held():
+                woke = self._wait_held()
+                if woke is None:  # the session ended: back to listening for its name
+                    continue
+            elif self.muted:
                 woke = self._wait_muted()
                 if woke is None:  # unmuted: back to listening for its name
                     continue

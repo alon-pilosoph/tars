@@ -2,11 +2,15 @@ import "./fonts.css";
 import "./styles.css";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { DEMO, LINK } from "./params";
+import { DEMO, LINK, PARAMS } from "./params";
+import { RecordPage } from "./record/Record";
 import { refresh, scrollToEl, settled } from "./store";
 
+// A recording session's link (?session=<token>) opens that page alone: it needs nothing else the web UI loads.
+const RECORDING = PARAMS.has("session");
+
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<App />);
+if (root) createRoot(root).render(RECORDING ? <RecordPage /> : <App />);
 
 async function scrollToLinked() {
   if (LINK.conv == null && LINK.item == null) return;
@@ -16,6 +20,8 @@ async function scrollToLinked() {
 }
 
 (async function start() {
+  if (RECORDING) return; // the page loads its own session, and marks itself ready
+
   const demo = DEMO ? await import("./linkStates") : null;
   try {
     if (demo && !demo.openEarlyState()) return;

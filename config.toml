@@ -182,6 +182,9 @@ ack_window_s = 6.0
 # The web UI only answers to IP addresses, localhost, *.local, *.ts.net and single-label names (tars, the Pi's
 # hostname), so a web page elsewhere can't reach it through someone's browser. Add any other name you use here.
 allowed_hosts = []
+# Where a phone opens the web UI, for the links TARS sends (recording sessions): "http://homepi.local:8080".
+# "": this machine's Tailscale address if it has one, else its address at home, on the web UI's port.
+link = ""
 
 [telegram]
 # Chat with TARS on Telegram, and get what it sends you there (docs/telegram.md): voice-assistant --telegram, with a

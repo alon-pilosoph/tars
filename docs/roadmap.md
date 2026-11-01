@@ -37,8 +37,8 @@ starting with the 20-minute [first test run](deployment.md#a-first-test-run). No
 **Before starting:** the speakerphone is named in `input_device` and `output_device` (in the Pi's
 `config.local.toml`; `uv run voice-assistant --list-devices` lists the names), and `--mic-test` from across the room
 sounds right. Speaker ID has no voiceprints until someone names their voice in the Voices tab, which offers it after 5
-requests, or records and enrolls on the speakerphone (`--record-voice alon --mic powerconf`, then
-`--enroll alon --mic powerconf`). Until then nobody is greeted by name or can unlock by voice.
+requests, or records a [voice session](web-ui.md#recording-sessions) on the speakerphone
+(`--record-session voice --for alon`). Until then nobody is greeted by name or can unlock by voice.
 
 **What to track:**
 

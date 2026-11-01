@@ -29,6 +29,30 @@ dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (
 Every page, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo data, made with
 `npm run screenshots`).
 
+## Recording sessions
+
+A page of its own, opened from a link TARS sends, that has one person say a list of phrases into TARS's own
+speakerphone, one at a time: their voice, so speaker ID knows them from the start, or the house's commands, for
+testing offline recognizers on them ([roadmap](roadmap.md)). `voice-assistant --record-session voice|house --for NAME`
+makes one and sends its link to NAME's Telegram chat (or prints it). The link is the session's only key, and works for
+a day or until the last phrase is done.
+
+Each phrase is shown as it should be said, with how to say it ("From across the room", "Quietly"). A tap, a beep from
+the speakerphone, and TARS records until you stop talking (or a second tap). Each take is checked straight away, and
+one worth doing again says why: nothing heard, too quiet, too loud, cut off or too short. Hear it back, redo it, or
+go on; a phrase can be skipped. While the page is open TARS doesn't listen for its name (a phrase can say "hey
+TARS"), what's due is still said between takes, and three minutes after the page last asked for anything it listens
+again by itself. A session left halfway carries on where it stopped. When a voice session's last phrase is done, its
+good takes (at least five) become the person's voiceprint.
+
+| The phrase, before a take | A take that needs doing again |
+|---|---|
+| ![A phrase to record, on a phone](screenshots/record-phone.png) | ![A take too quiet, on a phone](screenshots/record-problem-phone.png) |
+
+The assistant does the recording, since it holds the speakerphone: the web UI asks it over a socket in the event
+log's folder (`control.py`; [architecture](architecture.md#the-web-ui)), and keeps the takes in the event database
+with their audio (`recording.py`).
+
 ## Design decisions
 
 ### Nothing moves by itself
@@ -129,6 +153,14 @@ fails is shown as it last loaded, saying so, and only when none answers is TARS 
 | `POST /api/reminders/{id}/ack` | Acknowledged on the page |
 | `POST /api/reminders/{id}/snooze` | `{"minutes": n}` said again then, with all its tries |
 | `POST /api/reminders/{id}/cancel` | Stopped before it's acknowledged |
+| `GET /api/session/{token}` | A [recording session](#recording-sessions): its phrases (not what a command means), takes and skips; 404 once its link is used up or a day old |
+| `POST /api/session/{token}/begin`, `/leave` | TARS stops listening for its name for the session, or listens again |
+| `POST /api/session/{token}/record` | `{"prompt": id}`: the beep, then a take, answered once it's recording; 409 if TARS is in a conversation or muted, 503 if it isn't running |
+| `GET /api/session/{token}/record/{id}` | The take as it goes (seconds, loudness for the meter); kept and checked once it has ended |
+| `POST /api/session/{token}/record/{id}/stop` | Ends the take now, and keeps it |
+| `POST /api/session/{token}/skip` | `{"prompt": id}` |
+| `POST /api/session/{token}/finish` | Once every phrase has a take or was skipped: the link stops working, and a voice session becomes a voiceprint |
+| `GET /api/session/{token}/takes/{id}/audio` | A take, as WAV |
 
 ## Working on it
 
