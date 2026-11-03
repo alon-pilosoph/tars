@@ -635,6 +635,10 @@ def _home_problems(home: HomeConfig) -> list[str]:
             problems.append(f"{where}: two devices have that name")
         else:
             names.add(name.strip().lower())
+        if "label" in d:  # any device's: how it's written for people (/home), the name staying what it's called
+            if not (isinstance(d["label"], str) and d["label"].strip()):
+                problems.append(f'{where}: label is how it\'s written for people, like "Fire TV"')
+            d = {k: v for k, v in d.items() if k != "label"}
         kind = d.get("kind")
         if kind is None:
             problems += _entity_problems(home, d, where)

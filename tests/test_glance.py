@@ -2,9 +2,9 @@
 
 import types
 
-from voice_assistant.config import HomeConfig
+from voice_assistant.config import HomeConfig, _home_problems
 from voice_assistant.hass import entity_device
-from voice_assistant.home import Device, HomeError, HomeTools
+from voice_assistant.home import Context, Device, HomeError, HomeTools, build
 
 STATES = {
     "lock.door": ("locked", "Home door", ""),
@@ -67,9 +67,24 @@ def test_airvisuals_pollutant_codes_are_said_in_words():
     assert "U.S. Main pollutant: PM2.5" in outdoor.status()  # the model reads it in words too
 
 
-def test_short_names_are_in_capitals_whatever_the_config_says():
-    tools = HomeTools(HomeConfig(), {"fire tv": Said("fire tv", "asleep"), "ac": Said("ac", "off")})
-    assert tools.glance() == "Fire TV: asleep\nAC: off"
+def test_a_label_is_how_its_written_and_the_name_stays_what_its_called(tmp_path):
+    cfg = HomeConfig(
+        url="http://ha.invalid:8123",
+        devices=[
+            {"name": "boiler", "entity": "switch.boiler", "label": "Water heater"},
+            {"name": "front door", "entity": "lock.door"},
+        ],
+    )
+    assert _home_problems(cfg) == []
+    context = Context(tmp_path, lambda key: None)
+    context.hass = HASS
+    tools = build(cfg, context).tools
+    assert list(tools.devices) == ["boiler", "front door"]  # still asked for as the boiler
+    assert tools.glance() == "Water heater: off\nFront door: locked"
+    bad = HomeConfig(
+        url="http://ha.invalid:8123", devices=[{"name": "boiler", "entity": "switch.boiler", "label": " "}]
+    )
+    assert any("label" in p for p in _home_problems(bad))
 
 
 def test_a_line_a_device_leaving_out_what_nothing_can_tell():
@@ -81,7 +96,7 @@ def test_a_line_a_device_leaving_out_what_nothing_can_tell():
             "boiler": Said("boiler", HomeError("Home Assistant didn't answer")),
         },
     )
-    assert tools.glance() == "Fire TV: on · HBO Max\nBoiler: can't tell (Home Assistant didn't answer)"
+    assert tools.glance() == "Fire tv: on · HBO Max\nBoiler: can't tell (Home Assistant didn't answer)"
     assert HomeTools(HomeConfig(), {"TV": Said("TV", None)}).glance() == "Nothing in the house to show."
 
 

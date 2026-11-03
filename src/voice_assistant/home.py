@@ -94,9 +94,15 @@ class Device:
     call is said as an error. The tool calls one device at a time."""
 
     actions: tuple[str, ...] = (STATUS,)
+    label: str | None = None  # [[home.devices]] label: how it's written for people, "Fire TV" for "fire tv"
 
     def __init__(self, name: str):
         self.name = name
+
+    @property
+    def display(self) -> str:
+        """How a person reads its name at the start of a line: its label, or its name with a capital."""
+        return self.label or self.name[:1].upper() + self.name[1:]
 
     def what(self) -> str:
         """One line for the instructions: what it is and what it can do, with any buttons or limits."""
@@ -130,17 +136,6 @@ class Device:
     def stop(self) -> None:
         """Stops anything it's still doing in the background (the Android TV agent): as TARS shuts down, or someone
         takes over (a button pressed while the agent works the screen)."""
-
-
-# Short names written in capitals whatever case a device's name has them in: "fire tv" reads "Fire TV".
-CAPITALS = {"tv", "ac"}
-
-
-def display_name(name: str) -> str:
-    """A device's name as a person reads it at the start of a line: "Fire TV", "AC", "Front door"."""
-    words = [w.upper() if w.lower() in CAPITALS else w for w in name.split()]
-    said = " ".join(words)
-    return said[:1].upper() + said[1:]
 
 
 def button(args: dict) -> str:
@@ -183,7 +178,9 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     from . import androidtv, hass
 
     unavailable: dict[str, str] = {}
-    specs = [(d["name"].strip(), d) for d in cfg.devices]  # as people call them: "AC", "front door"
+    # As people call them ("AC", "front door"), and without label, which is how each is written, the same for all.
+    specs = [(d["name"].strip(), {k: v for k, v in d.items() if k != "label"}) for d in cfg.devices]
+    labels = {d["name"].strip(): d["label"].strip() for d in cfg.devices if d.get("label")}
     if context.hass is None and cfg.url and context.secret(TOKEN_KEY):
         context.hass = hass.HomeAssistant(cfg.url, context.secret(TOKEN_KEY))
     makers: dict[str, Callable[[dict], Device]] = {}
@@ -223,6 +220,7 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         except Exception as e:  # noqa: BLE001 - one device that can't be made never stops the others
             unavailable[name] = str(e) or type(e).__name__
             continue
+        device.label = labels.get(name) or device.label
         context.devices[name.lower()] = device
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
@@ -387,7 +385,7 @@ class HomeTools:
             except HomeError as e:
                 said = f"can't tell ({e})"
             if said:
-                lines.append(f"{display_name(device.name)}: {said}")
+                lines.append(f"{device.display}: {said}")
         return "\n".join(lines) or "Nothing in the house to show."
 
     def _status(self, device: Device) -> str:

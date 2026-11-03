@@ -93,7 +93,9 @@ domain:
 | `sensor`, `binary_sensor` | status | |
 
 Any of them can have `details`, other entities read out with its status (`["sensor.boiler_time_left"]`). The device
-names are what people call them, and the model gets each one's name and what it can do.
+names are what people call them, and the model gets each one's name and what it can do. Any device, of any kind, may
+have a `label`: how it's written for people, in a chat's `/home`, when that isn't its name (`name = "fire tv"`,
+`label = "Fire TV"`). It's still called and asked for by its name.
 
 ### An Android TV box
 
