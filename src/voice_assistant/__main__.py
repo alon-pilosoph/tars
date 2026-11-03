@@ -29,7 +29,6 @@ from .config import (
     WEB_PORT,
     Config,
     ConfigError,
-    HomeConfig,
     LLMConfig,
     QuickProvider,
     load_config,
@@ -520,12 +519,12 @@ def make_chat_when_out(cfg: Config, presence, reminders):
     return ChatWhenOut(reminders.reminders, presence.board.is_out, cfg.telegram.people)
 
 
-def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=None):
-    """The devices in the house, as [home] lists them, with "who's home" given `presence` and TARS's own speaker given
-    `speaker` (own_speaker's), as a HomeTools, or None. Like every service, optional: one that can't be made (no
-    token, a missing extra, a plugin's own problem) is left out with a line saying why. `announce(line)`: how TARS
-    says something on its own, later (how a task on the TV went)."""
-    if not (cfg.home.devices or presence or speaker):
+def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=None, mic=None):
+    """The devices in the house, as [home] lists them, with "who's home" given `presence`, TARS's own speaker given
+    `speaker` (own_speaker's) and its microphone given `mic` (a chat's), as a HomeTools, or None. Like every service,
+    optional: one that can't be made (no token, a missing extra, a plugin's own problem) is left out with a line saying
+    why. `announce(line)`: how TARS says something on its own, later (how a task on the TV went)."""
+    if not (cfg.home.devices or presence or speaker or mic):
         return None
     from .androidtv import make_tv_agent
     from .home import Context, build
@@ -538,8 +537,9 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=Non
         from .presence import DEVICE, WhoIsHome
 
         extra[DEVICE] = WhoIsHome(presence.board, presence.away_after_min)
-    if speaker:
-        extra[speaker.name] = speaker
+    for own in (speaker, mic):
+        if own:
+            extra[own.name] = own
     built = build(cfg.home, context, extra)
     for name, why in built.unavailable.items():
         print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
@@ -563,10 +563,17 @@ def own_speaker(cfg: Config):
         return None
 
 
-def chat_home(cfg: Config, root: Path, presence=None):
-    """The house as a Telegram chat has it: nothing in it can be worked from a chat, whatever [home] lists; only who's
-    home can be asked, given `presence`."""
-    return make_home(dataclasses.replace(cfg, home=HomeConfig()), root, presence=presence)
+def chat_home(cfg: Config, root: Path, presence=None, events=None, announce=None):
+    """The house as a Telegram chat has it: all the voice's, worked the same way, with who's home given `presence`
+    and TARS's own speaker; unlocking only for [home] unlock_chats (home.py). `announce(line)`: how a task on the TV
+    tells the chat that asked how it went. With `events`, the event log the assistant's socket is beside, TARS's
+    microphone too, to mute and unmute it from afar: in a chat, "mute yourself" is about it, not the speaker."""
+    mic = None
+    if events:
+        from .mic_mute import MicMute
+
+        mic = MicMute(events.store.folder)
+    return make_home(cfg, root, announce, presence, own_speaker(cfg), mic)
 
 
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):
@@ -676,7 +683,13 @@ def telegram(cfg: Config, root: Path) -> None:
         voiceprints = root / cfg.speaker.voiceprints
         names = (lambda: voiceprint_names(voiceprints)) if cfg.speaker.enabled else list
         tools = reminder_tools(Reminders.from_config(events.store, cfg.reminders), names, presence)
-    home = chat_home(cfg, root, presence)
+    told: list = []  # the TelegramTars, once made: how a task on the TV went is posted through it
+
+    def announce(line: str) -> None:
+        if told:
+            told[0].announce(line)
+
+    home = chat_home(cfg, root, presence, events, announce)
     client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
@@ -702,6 +715,7 @@ def telegram(cfg: Config, root: Path) -> None:
         transcriber=make_recording_transcriber(cfg, env, client),
         env=env,
     )
+    told.append(tars)
     if queue:
         make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
     tars.run_forever(me)
@@ -916,14 +930,14 @@ def phrase_folder(cfg: Config, root: Path) -> Path:
     return root / PHRASES / hashlib.sha256(setup.encode()).hexdigest()[:12]
 
 
-def start_buttons(cfg: Config, volume, assistant, root: Path) -> None:
+def start_buttons(cfg: Config, volume, assistant, root: Path):
     """The buttons, from threads of their own (buttons.py): with TARS's own speaker (`volume`, own_speaker's), its
     volume keys and the remote's volume buttons turn it; the remote's talk and stop wake and stop `assistant`; and
     the speakerphone's own mute (speakerphone.py), which the remote's mute button works too, keeps it from waking.
     Muted when it last stopped (MUTED_FILE), it starts muted. Linux only: elsewhere there's no /dev/input or hidraw
-    to read them from."""
+    to read them from. Returns how to mute it as the mute button does (a chat's, over control.py), or None."""
     if platform.system() != "Linux":
-        return
+        return None
     from .buttons import DOWN, MUTE, STOP, TALK, UP, Buttons, Listener
     from .speakerphone import find_mute, kept
 
@@ -958,11 +972,13 @@ def start_buttons(cfg: Config, volume, assistant, root: Path) -> None:
             flag.unlink(missing_ok=True)
         if assistant.muted:
             print("(muted, as it was when TARS last stopped)")
+    set_muted = mute.set if mute else muted
     if not (keys or remote):
-        return
+        return set_muted
     Listener(Buttons(remote, keys), act).start()
     which = (["the volume keys"] if keys else []) + ([f"the remote's {', '.join(remote)}"] if remote else [])
     print(f"(buttons: {' and '.join(which)})")
+    return set_muted
 
 
 def typed(cfg: Config, root: Path) -> None:
@@ -1049,11 +1065,12 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
         )
-        start_buttons(cfg, volume, assistant, root)
+        set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
             from .control import Server
 
-            Server(events.store.folder, assistant.control_ops())  # recording sessions, from the web UI
+            # Recording sessions, from the web UI; muting and unmuting, from a chat.
+            Server(events.store.folder, assistant.control_ops(set_muted))
         assistant.run_forever(
             idle_message,
             follow_up_s=cfg.recorder.follow_up_s,

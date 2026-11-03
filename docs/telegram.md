@@ -46,6 +46,9 @@ client, which its terms forbid.
 | "tell Stacey dinner's at 8, at 7:30" | to Stacey's chat at 7:30 if she has one; aloud at home if not |
 | "tell the house dinner's ready" | said aloud at home now ("Everyone, a message from Alon: dinner's ready."), and the chat hears when it was said and who said they got it |
 | "tell Stacey at home to call me" | said aloud at home, even if Stacey has a chat |
+| "turn on the AC, cooling, 23" | the house, worked as by voice ([home.md](home.md#from-a-chat)); a task on the TV posts how it went here |
+| "unlock the front door" | unlocked, only for someone `[home] unlock_chats` names, and only when their own message says "unlock" |
+| "unmute yourself" | TARS's microphone at home unmuted, as its button does; "mute yourself" mutes it |
 | "send me a packing list for Rome" | the list is posted in the chat, and kept on the TARS page |
 | /new | starts a new conversation: TARS forgets this one |
 | "I took the pills" | acknowledges a reminder that was said aloud at home and is waiting for a "got it" |

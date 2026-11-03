@@ -58,13 +58,17 @@ Web search results, the pages TARS's browser reads, Telegram messages and sent f
 instructions and…". A model may believe them, so what matters is what code allows whatever the model decides.
 
 - **Defenses:**
-  - **Unlocking is decided by code, from what was heard.** Only by voice, only for a voice in `[home] unlock_voices`
-    recognised at `unlock_threshold` or better, and only when the person's own transcribed words say "unlock"; a model
+  - **Unlocking is decided by code, from what was heard or written.** By voice, only for a voice in `[home]
+    unlock_voices` recognised at `unlock_threshold` or better; from a Telegram chat, only for a person in `[home]
+    unlock_chats`; either way only when the person's own words (transcribed, or their message) say "unlock". A model
     asking to unlock for any other reason is refused (`home.py`).
   - **A reply that searched the web changes nothing in the house.** From the moment a search starts, the house
     tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in
     `home.py`).
-  - **A Telegram chat works nothing in the house** (it can only ask who's home: `__main__.py`, `chat_home()`).
+  - **A Telegram chat works the house as the voice does** (`__main__.py`, `chat_home()`): only people in
+    `[telegram] people` reach it at all, it unlocks only as above, and a chat's reply that searched the web changes
+    nothing either. A chat can mute and unmute TARS's microphone at home
+    (`mic_mute.py`): asked over a socket only TARS's user can open (`control.py`).
   - **The browser never orders, pays, books or sends on its own.** Code checks every click and key against what
     commits (`browser/gate.py`), and presses that button only on the person's tap on Order in their own chat, and only
     if the amounts are still the ones they were shown (`browser/errands.py`, `browser/money.py`).
@@ -79,11 +83,16 @@ instructions and…". A model may believe them, so what matters is what code all
   `::test_a_key_on_what_commits_is_refused`; `tests/test_browser.py::test_what_commits_is_stopped`,
   `::test_a_real_approval_presses_only_on_a_yes_with_the_same_total`;
   `tests/test_browser_errands.py::test_an_order_is_approved_only_by_a_tap_on_order_in_the_persons_own_chat`;
-  `tests/test_presence.py::test_a_chat_works_nothing_in_the_house_whatever_it_lists`; `tests/test_homenet.py`;
+  `tests/test_home.py::test_a_chat_unlocks_only_for_someone_named_who_wrote_unlock`,
+  `tests/test_presence.py::test_a_chat_works_the_house_and_unlocks_only_when_named`; `tests/test_homenet.py`;
   `tests/test_browser_chrome.py::test_a_password_on_the_page_is_never_shown_to_the_model`,
   `tests/test_browser_login.py::test_what_a_sign_in_sent_is_blanked_out_of_the_trace`,
   `::test_origin_is_what_pages_are_compared_by`.
 - **Open:**
+  - A Telegram account taken over is the house in someone else's hands: the AC, the boiler, the TV, TARS's
+    microphone, which a chat can unmute (it hears the room at home again), and, for someone in `[home]
+    unlock_chats`, the front door. Telegram's own sign-in
+    (a passcode, two-step verification) is what stands in the way.
   - No set of injection attempts is run against the models to show these hold in practice (it would call the models,
     so it's run on request with a cost estimate).
 

@@ -138,6 +138,23 @@ def tars(bot, brains, convos=None, tools=None, people=None, **kw) -> TelegramTar
     return TelegramTars(bot, people or PEOPLE, lambda: next(made), convos, tools, typing=False, **kw)
 
 
+def test_the_house_hears_a_chats_own_words_as_from_that_chat():
+    bot, brain = FakeBot(), ScriptedBrain(["Unlocked."])
+    tars(bot, [brain]).handle(message("unlock the front door"))
+    assert brain.request.by_chat and not brain.request.by_voice
+    assert (brain.request.speaker, brain.request.heard) == ("Alon", "unlock the front door")
+
+
+def test_how_a_task_went_is_posted_to_the_chat_that_asked_and_remembered():
+    bot, alon = FakeBot(), ScriptedBrain(["On it."])
+    t = tars(bot, [alon])
+    t.announce("Nobody to tell yet.")  # nobody asked anything: only printed
+    t.handle(message("put on the news on the TV"))
+    t.announce("The news is playing.")
+    assert bot.messages[-1] == (ALON, "The news is playing.")
+    assert alon.remembered == ["The news is playing."]
+
+
 def test_a_message_from_someone_in_people_is_answered_with_their_name_on_it():
     bot, brain = FakeBot(), ScriptedBrain(["Nine o'clock."])
     tars(bot, [brain]).handle(message("what time is it?"))

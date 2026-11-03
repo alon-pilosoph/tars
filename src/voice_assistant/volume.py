@@ -1,6 +1,6 @@
 """TARS's own speaker as a device the home tool works: "how loud are you?", "turn yourself down a bit", "set your
 volume to 40". TARS's voice speaks through it, so only the voice's processes have it, and only with [home]
-own_speaker; a chat has no speaker of TARS's to turn.
+own_speaker; a chat turns it too, but there "mute yourself" is about TARS's microphone (mic_mute.py).
 
 On Linux (the Pi) it's the playback volume of the sound card TARS plays to ([audio] output_device, the PowerConf),
 through ALSA's mixer (amixer, in alsa-utils). The card is the one PortAudio names the device by ("Anker PowerConf: USB

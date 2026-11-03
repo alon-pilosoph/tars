@@ -264,8 +264,9 @@ class Assistant:
         self.mic.clear()  # what it heard while muted is old
         return None
 
-    def control_ops(self) -> dict[str, Op]:
-        """What the web UI may ask for over control.py, for a recording session: hold TARS, let it go, and the takes."""
+    def control_ops(self, mute: Callable[[bool], None] | None = None) -> dict[str, Op]:
+        """What TARS's other processes may ask for over control.py: the web UI, for a recording session, to hold TARS,
+        let it go, and the takes; and with `mute` (how the buttons mute it), a chat, to mute or unmute it."""
 
         def holder(r: dict) -> str:  # the session asking: each holds TARS on its own
             return str(r.get("session", ""))
@@ -283,13 +284,18 @@ class Assistant:
             self.takes.release(holder(r))
             return {"ok": True}
 
+        def muted(r: dict) -> dict:  # {"muted": true or false} sets it; without, only says
+            if isinstance(r.get("muted"), bool):
+                mute(r["muted"])
+            return {"ok": True, "muted": self.muted}
+
         return {
             "hold": hold,
             "release": release,
             "record": record,
             "status": lambda r: self.takes.state(self.takes.find(int(r["id"]))),
             "stop": lambda r: self.takes.finish(int(r["id"])),
-        }
+        } | ({"mute": muted} if mute else {})
 
     def _wait_held(self) -> str | None:
         """While a recording session holds TARS, instead of the wake word: the takes it asks for, and what's due in

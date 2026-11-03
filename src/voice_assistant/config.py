@@ -223,6 +223,9 @@ class HomeConfig:
     unlock_voices: list[str] = field(default_factory=list)
     # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
     unlock_threshold: float = 0.6
+    # Who may unlock from their own Telegram chat, by their names in [telegram] people, when their own message says
+    # "unlock". Empty = nobody.
+    unlock_chats: list[str] = field(default_factory=list)
     # The model that works an Android TV step by step, reading its screen. Empty = [llm] model.
     tv_model: str = ""
     # TARS's own speaker as a device, for the voice: "how loud are you?", "turn yourself down" (docs/home.md).
@@ -613,6 +616,8 @@ def _home_problems(home: HomeConfig) -> list[str]:
         problems.append("[home] unlock_threshold must be more than 0 and at most 1")
     if any(not v.strip() for v in home.unlock_voices):
         problems.append("[home] unlock_voices has an empty name")
+    if any(not v.strip() for v in home.unlock_chats):
+        problems.append("[home] unlock_chats has an empty name")
     for name, plugin in home.plugins.items():
         if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
             problems.append(f"[home.plugins] {name!r}: a name is lowercase letters, digits and _")

@@ -62,7 +62,8 @@ Unlocking is the one change that needs more than a request. When someone says "u
 1. Speech to text writes down what was said, and speaker ID works out who said it, from the same recording.
 2. The model calls `unlock`, at once, with no question first.
 3. The tool checks four things before anything is sent:
-   - **by voice**: the request came through the microphone, not a typed `--text` question or a Telegram chat;
+   - **by voice**: the request came through the microphone, not a typed `--text` question (a Telegram chat has its
+     own rule: [from a chat](#from-a-chat));
    - **a trusted voice**: speaker ID named someone in `[home] unlock_voices`;
    - **sure enough**: speaker ID's score is at least `unlock_threshold` (0.6, against 0.5 to greet someone by name);
    - **asked for**: the words heard in that turn include "unlock". The model can't unlock on its own reading of
@@ -140,8 +141,8 @@ job (an integration for its make); TARS only shows what Home Assistant already h
 
 With `[home] own_speaker = true`, TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which
 "you", "yourself" and "your volume" are about (`volume.py`). Its status is the volume; `set` takes a level, a percent;
-`press` takes volume up or down (10% a press) or unmute. Only the voice's processes have it: a chat has no speaker of
-TARS's to turn.
+`press` takes volume up or down (10% a press) or unmute. Only the voice's processes have it: from a chat, "mute
+yourself" is about TARS's microphone ([below](#from-a-chat)).
 
 - **On the Pi** it's the playback volume of the sound card TARS plays to, through Linux's sound mixer (`amixer`, in
   `alsa-utils`). The card is the one in the device's name as `--list-devices` shows it ("Anker PowerConf: USB Audio
@@ -154,6 +155,16 @@ It's never muted or set below 10%: a TARS that can't be heard can't say a timer 
 back up. Asked to mute or be quiet, it goes down to 10% and says that's as low as it goes; anything it sets unmutes it.
 It reads the level back after setting it and says "done" only when that's what it set. At startup, and in `--check`,
 a speaker it can't turn is said with why.
+
+### From a chat
+
+A [Telegram chat](telegram.md) works everything the voice does ("turn on the AC, cooling, 23"), TARS's speaker
+included. A task on the TV posts how it went to the chat that asked. Unlocking from a chat is only for the people
+`[home] unlock_chats` names (by their names in `[telegram] people`), and only when their own message, or voice
+message, says "unlock": the model can't unlock on its reading of anything else, a forwarded message included. Whoever
+holds their phone can, so nobody is named by default. A chat also has **TARS's microphone** (`mic_mute.py`): its status says whether TARS is listening at home, and on and off unmute and mute it,
+the way the speakerphone's mute button does. The chat's process asks the assistant over its socket (`control.py`), and
+says "done" with what the assistant answers it is now. With the voice assistant stopped, it says so.
 
 ### Buttons
 
@@ -308,6 +319,7 @@ About half an hour, on the Pi (or the Mac while you try it).
    [home]
    url = "http://127.0.0.1:8123"
    unlock_voices = ["alon"]          # names from the web UI's Voices page; empty: nobody unlocks by voice
+   unlock_chats = ["Alon"]           # names from [telegram] people; empty: nobody unlocks from a chat
 
    [[home.devices]]
    name = "front door"

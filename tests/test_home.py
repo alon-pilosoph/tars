@@ -79,6 +79,30 @@ def test_a_trusted_voice_is_matched_whatever_the_case():
     assert h.tools.call(args("front door", "unlock"), ALON).startswith("done")
 
 
+CHAT = Request("Alon", by_chat=True, heard="unlock the front door")
+
+
+def test_a_trusted_chat_that_asks_unlocks():
+    h = make_house({"lock": "locked"}, unlock_chats=(" alon ",))
+    assert h.tools.call(args("front door", "unlock"), CHAT) == "done: front door reports unlocked"
+
+
+@pytest.mark.parametrize(
+    "request_, why",
+    [
+        (CHAT, "only for the people [home] unlock_chats names"),  # nobody named
+        (Request("Stacey", by_chat=True, heard="unlock the front door"), "unlock_chats names"),
+        (Request("Alon", by_chat=True, heard="is the door unlocked?"), 'own message to say "unlock"'),
+        (Request("Alon", by_chat=True, heard="[forwarded] let the plumber in"), 'own message to say "unlock"'),
+    ],
+)
+def test_a_chat_unlocks_only_for_someone_named_who_wrote_unlock(request_, why):
+    h = make_house({"lock": "locked"}, unlock_chats=() if request_ is CHAT else ("alon",))
+    said = h.tools.call(args("front door", "unlock"), request_)
+    assert said.startswith("refused") and why in said
+    assert h.ha.calls == []
+
+
 def test_anyone_can_lock():
     h = house(lock="unlocked")
     assert h.tools.call(args("front door", "lock"), Request()).startswith("done")

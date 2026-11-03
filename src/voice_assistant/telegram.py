@@ -385,6 +385,7 @@ class TelegramTars:
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
         self._listeners: list[Callable[[dict], bool]] = []  # what sees each update first (listen_first)
+        self._last_asked: Chat | None = None  # whose turn it was last: who hears how a task they started went
 
     def run_forever(self, me: dict | None = None) -> None:
         """`me`: the bot, as Telegram's getMe said, if it's been asked already."""
@@ -502,10 +503,11 @@ class TelegramTars:
         if conversation is not None:
             self._log(self._conversations.add_person_turn, conversation, text, recording, speaker=chat.person, ts=now)
         brain, acks = chat.brain, None
+        self._last_asked = chat
         asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                pieces = brain.stream_reply(asked, Request(speaker=chat.person))
+                pieces = brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True, heard=text))
                 if self._tools:
                     acks, pieces = split_ack(pieces)
                 reply = tidy("".join(pieces))
@@ -748,6 +750,21 @@ class TelegramTars:
                 self._log(self._conversations.end, chat.conversation, ts=chat.last_at or self._clock())
             chat.conversation, chat.last_at = None, 0.0
             chat.brain.start_over()
+
+    def announce(self, line: str) -> None:
+        """What TARS says on its own, later, about something a chat asked for (how a task on the TV went): posted to
+        the chat that asked last, once its exchange is over, and part of its conversation."""
+        chat = self._last_asked
+        if chat is None:
+            print(f"(Telegram: nobody to tell: {line})")
+            return
+        with chat.busy:
+            try:
+                self._send(chat.chat_id, line, tries=SEND_TRIES)
+            except TelegramError as e:
+                print(f"(Telegram: couldn't tell {chat.person}: {line} ({e}))")
+                return
+            self._said(chat, line, self._clock())
 
     def _said(self, chat: Chat, text: str, now: float) -> None:
         """TARS wrote first (a reminder, or how one said at home went): part of the brain's conversation, so "snooze
