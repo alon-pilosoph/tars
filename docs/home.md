@@ -195,7 +195,8 @@ toggles twice.
   and off-hook lights). The PowerConf takes the computer's mute only off-hook (in a call), so TARS keeps it off-hook,
   which no light shows, and sets the mute. Without one, the remote's mute is TARS's alone: it stops listening, and
   the mic stays on. Either mute outlasts a restart: muted when TARS stopped, it starts muted (`voice_data/muted` is
-  there while it's muted).
+  there while it's muted). Muted, what's due is still said; one waiting for "got it" unmutes it just for the answer
+  (the light shows it), and what follows from it, then mutes it again.
 - **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
   Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power
   button is the case's own (it turns the Pi on, and shuts it down cleanly).

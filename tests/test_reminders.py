@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pytest
 
+from voice_assistant.events import known_as
 from voice_assistant.reminders import (
     ACKNOWLEDGED,
     CANCELLED,
@@ -335,3 +336,22 @@ def test_one_on_telegram_can_move_to_being_said_aloud(reminders):
     rid = on_telegram(reminders)
     assert reminders.say_aloud(rid)
     assert [r["id"] for r in reminders.due(NOW + 61)] == [rid]
+
+
+def test_a_name_spelled_as_it_sounds_is_the_person_tars_knows(reminders):
+    new = NewReminder(MESSAGE, "Alon is on his way home", "Stacy", "Alon", due=NOW + 60)
+    assert reminders.check(new, now=NOW, phones=["Alon", "Stacey"]).for_name == "Stacey"
+    assert reminders.check(new, now=NOW, phones=["Alon"]).for_name == "Stacy"  # nobody it could be: as written
+    assert reminders.check(new, now=NOW, phones=["Stacey", "Stacie"]).for_name == "Stacy"  # two: neither
+
+
+def test_sounds_alike_matches_one_person_only():
+    people = ["Alon", "Stacey"]
+    assert [known_as(n, people) for n in ("STACEY", "Stacie", "Allon", "Steve", "Ari", None)] == [
+        "Stacey",
+        "Stacey",
+        "Alon",
+        None,
+        None,
+        None,
+    ]

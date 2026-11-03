@@ -212,6 +212,9 @@ class Assistant:
         self._talk = threading.Event()
         self._stop = threading.Event()
         self.muted = False
+        # How the buttons mute it (the speakerphone's own mute, start_buttons): muted, a message waiting for "got it"
+        # unmutes it just for the answer, then mutes it again. None: nothing to switch (its mute is TARS's alone).
+        self.set_muted: Callable[[bool], None] | None = None
         self._unmuted = threading.Event()  # set while not muted: what a muted wait waits for
         self._unmuted.set()
         # A recording session (recording.py) holds TARS and asks for takes from the control thread (control.py).
@@ -532,6 +535,11 @@ class Assistant:
                 self._ack(list(self._just_said), None)
             self._just_said = []
             return
+        # Muted, nobody could say they got it: unmuted for the answer (and what follows from it), then muted again.
+        for_the_answer = bool(self._just_said and self.muted and self.set_muted)
+        if for_the_answer:
+            print('(muted: listening for "got it" only)')
+            self.set_muted(False)
         try:
             heard = self.listen(start_timeout_s=self.ack_window_s, tag=REMINDER_TAG) if self._just_said else None
             if heard is None:
@@ -540,6 +548,8 @@ class Assistant:
             self.converse(follow_up_s, first=heard)
         finally:
             self._just_said = []
+            if for_the_answer and not self.muted:  # muted again, unless someone's button already did
+                self.set_muted(True)
 
     def _say_held_line(self, r: dict) -> bool:
         text = held_line(r)

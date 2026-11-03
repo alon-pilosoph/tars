@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as clock_time
 
 from .config import RemindersConfig
-from .events import DAY_S, person_key
+from .events import DAY_S, known_as, person_key
 from .store import Store
 
 TIMER, REMINDER, MESSAGE = "timer", "reminder", "message"
@@ -149,6 +149,8 @@ class Reminders:
             raise ValueError(f"kind must be one of {', '.join(KINDS)}")
         text = " ".join((new.text or "").split())[:MAX_TEXT] or None
         for_name = " ".join((new.for_name or "").split()) or None
+        # As TARS knows them, when it's someone it does: "Stacy", as a model spelled what it heard, is Stacey.
+        for_name = known_as(for_name, [*voices, *phones]) or for_name
         from_name = " ".join((new.from_name or "").split()) or None
         if new.kind != TIMER and not text:
             raise ValueError(f"a {new.kind} needs something to say")
