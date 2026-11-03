@@ -36,7 +36,7 @@ from .home import (
     button,
     presses,
 )
-from .homenet import reachable_host
+from .homenet import LOOPBACK, address, reachable_host
 
 HTTP_TIMEOUT_S = 5.0
 # Home Assistant answers a service call once the device has done it (a lock's bolt turning), so it gets longer.
@@ -117,7 +117,7 @@ class HomeAssistant:
         Home Assistant signs the path over its websocket (auth/sign_path), and this joins it to an address the phone
         can reach. The signature is for the path, not the host, so [home] url being localhost (TARS reaching Home
         Assistant on the Pi itself) doesn't matter: the link goes to this machine's reachable name, on the same
-        port."""
+        port. A Home Assistant on another machine keeps its own host."""
         result = self._command(
             {"type": "auth/sign_path", "path": f"/api/camera_proxy_stream/{entity}", "expires": expires_s}
         )
@@ -126,7 +126,12 @@ class HomeAssistant:
             raise HomeError(f"Home Assistant didn't sign a live link for {entity}")
         split = urlsplit(self._url)
         port = f":{split.port}" if split.port else ""
-        return f"{split.scheme or 'http'}://{reachable_host()}{port}{path}"
+        host = split.hostname or ""
+        if host in LOOPBACK or (found := address(host)) is not None and found.is_loopback:
+            host = reachable_host()  # on this machine: a phone reaches it by this machine's name
+        elif ":" in host:
+            host = f"[{host}]"
+        return f"{split.scheme or 'http'}://{host}{port}{path}"
 
     def _websocket(self, message: dict) -> object:
         """Sends one command over Home Assistant's websocket API, signed in with the token, and returns its result.

@@ -82,8 +82,8 @@ def test_watch_sends_a_signed_live_link_that_expires():
     assert result == "sent: a link to watch the nursery live is on the TARS page"
     (item,) = turn.items
     assert item.kind == LINK
-    # the signed path, but on this machine's reachable name and Home Assistant's port, not [home] url's localhost
-    assert item.url == f"http://{REACHABLE}:8123/api/camera_proxy_stream/camera.nursery?authSig=signed-120"
+    # the signed path, on Home Assistant's own host and port: it's on another machine, so the link goes there
+    assert item.url == "http://homeassistant.local:8123/api/camera_proxy_stream/camera.nursery?authSig=signed-120"
     assert "2 minutes" in (item.description or "")
 
 
