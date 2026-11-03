@@ -1,5 +1,5 @@
-import type { PersonFilter } from "../params";
-import type { Cluster, Conversation, Item, Reminder, Speaker, Turn } from "../types";
+import type { GuessFilter, PersonFilter } from "../params";
+import type { Cluster, Conversation, Item, Reminder, Speaker, TarsEvent, Turn } from "../types";
 import type { MenuTarget, State } from "./core";
 
 export const eventById = (s: State, id: number) => s.events.find(e => e.id === id);
@@ -33,6 +33,10 @@ export const people = (s: State) =>
 /** A wake that a request followed labels itself; only the rest need a look. */
 export const reviewEvents = (s: State) => s.events.filter(e => e.follow !== "asked");
 export const reviewTodo = (s: State) => reviewEvents(s).filter(e => !e.label);
+/** Review's filter: the wakes TARS guessed were for it (yes), weren't (no), or had no guess for. Its guess, even
+    once answered. */
+export const byGuess = (e: TarsEvent, g: GuessFilter) =>
+  g === "all" || (g === "none" ? !e.auto_label : e.auto_label === (g === "yes" ? "real" : "not_real"));
 export const unseen = (s: State) => s.items.filter(i => !i.seen);
 
 /** The filter carries across tabs, but a page only applies one its control can show: Home has no Household option

@@ -1,7 +1,7 @@
 /* App state: one store the components read with useStore(); actions update it immutably. */
 import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
-import { LINK, type PersonFilter, type Tab } from "../params";
+import { type GuessFilter, LINK, type PersonFilter, type Tab } from "../params";
 import type {
   Cluster,
   Conversation,
@@ -68,6 +68,7 @@ export type LoadErrors = Partial<Record<LoadPart, string>>;
 export interface State {
   tab: Tab;
   person: PersonFilter;
+  guess: GuessFilter; // Review's filter, by TARS's guess
   phase: "loading" | "ready" | "error";
   error: string;
   loadErrors: LoadErrors;
@@ -95,6 +96,7 @@ export interface State {
 let current: State = {
   tab: LINK.tab,
   person: LINK.person,
+  guess: LINK.guess,
   phase: "loading",
   error: "",
   loadErrors: {},

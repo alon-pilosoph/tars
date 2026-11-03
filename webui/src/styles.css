@@ -273,6 +273,9 @@ main.wide {
   color: var(--muted);
   border-radius: var(--r-pill);
 }
+.guess-seg {
+  margin: -8px 0 12px -10px; /* the first label lines up with the page's edge */
+}
 .seg button[aria-pressed="true"] {
   color: var(--ink);
   font-weight: 600;

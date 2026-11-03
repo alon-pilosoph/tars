@@ -1,5 +1,5 @@
 import { stopAudio } from "../audio";
-import type { PersonFilter, Tab } from "../params";
+import type { GuessFilter, PersonFilter, Tab } from "../params";
 import { set, setNow } from "./core";
 
 export function setTab(tab: Tab) {
@@ -10,4 +10,8 @@ export function setTab(tab: Tab) {
 
 export function setPerson(person: PersonFilter) {
   set({ person });
+}
+
+export function setGuess(guess: GuessFilter) {
+  set({ guess });
 }
