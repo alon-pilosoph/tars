@@ -114,6 +114,11 @@ class Device:
         """Anything the model must know to use this kind of device well; the same text is given once."""
         return ""
 
+    def glance(self) -> str | None:
+        """How it is, in a few words for a person reading the whole house at once (a chat's /home), without its
+        name: "locked · battery 80%". None leaves it out (nothing can tell). By default, its status."""
+        return self.status().removeprefix(f"{self.name}: ")
+
     def slow(self, action: str, args: dict) -> bool:
         """Whether the action takes long enough that TARS should say "One moment." first."""
         return False
@@ -361,6 +366,18 @@ class HomeTools:
         if not UNLOCK_WORDS.search(request.heard):
             return 'refused: unlocking needs them to say "unlock"; it never follows from anything else'
         return None
+
+    def glance(self) -> str:
+        """The whole house for a person to read: a line a device, "Front door: locked · battery 80%"."""
+        lines = []
+        for device in self.devices.values():
+            try:
+                said = device.glance()
+            except HomeError as e:
+                said = f"can't tell ({e})"
+            if said:
+                lines.append(f"{device.name[:1].upper()}{device.name[1:]}: {said}")
+        return "\n".join(lines) or "Nothing in the house to show."
 
     def _status(self, device: Device) -> str:
         try:

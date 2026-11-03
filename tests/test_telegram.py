@@ -983,6 +983,10 @@ class FakeHouse:
         self.answers, self.calls, self.args = answers, [], []
         self.devices = {MIC.lower(): None, SPEAKER.lower(): None}
 
+    def glance(self):
+        self.calls.append(("everything", "glance", False))
+        return "AC: off"
+
     def call(self, args, request):
         self.calls.append((args["device"], args["action"], request.by_chat))
         self.args.append(args)
@@ -1012,9 +1016,7 @@ def test_volume_reads_sets_and_turns_tarss_speaker():
 
 def test_mute_unmute_and_home_go_to_the_house_without_the_model():
     bot, brain = FakeBot(), ScriptedBrain()
-    house = FakeHouse(
-        {"off": f"done: {MIC} is muted", "on": "error: the voice assistant at home isn't running", "status": "AC: off"}
-    )
+    house = FakeHouse({"off": f"done: {MIC} is muted", "on": "error: the voice assistant at home isn't running"})
     t = tars(bot, [brain], home=house)
     for text in ("/mute", "/unmute", "/home"):
         t.handle(message(text))
@@ -1023,5 +1025,5 @@ def test_mute_unmute_and_home_go_to_the_house_without_the_model():
         "Couldn't: the voice assistant at home isn't running",
         "AC: off",
     ]
-    assert house.calls == [(MIC, "off", True), (MIC, "on", True), ("everything", "status", False)]
+    assert house.calls == [(MIC, "off", True), (MIC, "on", True), ("everything", "glance", False)]
     assert brain.asked == []

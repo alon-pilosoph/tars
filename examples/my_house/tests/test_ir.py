@@ -91,3 +91,7 @@ def test_check_says_when_the_on_and_off_codes_were_never_tried(tmp_path):
     assert untried.status == "warn" and "ir test" in untried.fix
     tried, _ = samsung(tmp_path, {"on": True, "off": True, "power": True})
     assert tried.check() == []
+
+
+def test_nothing_can_tell_so_its_left_out_at_a_glance():
+    assert Remote("tv", CODE_SETS["samsung-tv"], lambda pulses: None).glance() is None

@@ -6,6 +6,7 @@ so. An entity whose state Home Assistant only assumes (an IR-controlled AC or TV
 "sent" instead: the request went out, and nothing can tell whether it worked."""
 
 import json
+import re
 import time
 from collections.abc import Callable
 from urllib.parse import urlsplit
@@ -202,6 +203,12 @@ class Entity(Device):
         parts = [f"{self.name}: {self._said(found)}{guess}", *self._extra(found)]
         parts += [_reading(self._hass, e) for e in self.details]
         return ", ".join(p for p in parts if p)
+
+    def glance(self) -> str:
+        found = self._hass.state(self.entity)
+        own = (found.get("attributes") or {}).get("friendly_name") or ""
+        parts = [self._said(found), *self._extra(found), *_short_readings(self._hass, self.details, own)]
+        return " · ".join(p for p in parts if p)
 
     def check(self) -> list[Check]:
         said, missing = [], []
@@ -603,6 +610,42 @@ def _reading(hass: HomeAssistant, entity: str, say: Callable[[str], str | None] 
     a = found.get("attributes") or {}
     unit = f" {a['unit_of_measurement']}" if a.get("unit_of_measurement") else ""
     return f"{a.get('friendly_name') or entity}: {state}{unit}"
+
+
+def _short_readings(hass: HomeAssistant, entities: list[str], own: str) -> list[str]:
+    """Other entities' readings, for a person: "PM2.5 18 μg/m³", "Humidity 67%". The words their names share with
+    each other and `own` (the device's own name, "airvisual pro - home") are dropped, and so are readings of
+    nothing (0 W, 00:00:00 left): they say nothing at a glance."""
+    found = []
+    for entity in entities:
+        try:
+            state = hass.state(entity)
+        except HomeError:
+            continue
+        value = state.get("state", "")
+        if value in UNKNOWN or re.fullmatch(r"[0:.]+", value):
+            continue
+        a = state.get("attributes") or {}
+        found.append((a.get("friendly_name") or entity, value, a.get("unit_of_measurement") or ""))
+    theirs = [name.split() for name, _, _ in found]
+    shared = _shared_words(theirs, own.split()) or _shared_words(theirs)
+    said = []
+    for name, value, unit in found:
+        label = " ".join(name.split()[shared:])
+        said.append(f"{label} {value}{unit if unit == '%' else f' {unit}' if unit else ''}")
+    return said
+
+
+def _shared_words(names: list[list[str]], own: list[str] | None = None) -> int:
+    """How many words all of `names` start with, leaving each at least one of its own: with `own` (never shown, so
+    it may be used up), the words they share with it; without, those they share among themselves (two or more)."""
+    if not names or (own is None and len(names) < 2):
+        return 0
+    first = own if own is not None else names[0]
+    shared = 0
+    while shared < len(first) and all(len(n) > shared + 1 and n[shared] == first[shared] for n in names):
+        shared += 1
+    return shared
 
 
 KINDS: dict[str, type[Entity]] = {

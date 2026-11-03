@@ -176,6 +176,10 @@ class Board:
         return "; ".join(lines) or "nobody is set up to be followed"
 
 
+def _and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 def _since(at: float | None, now: float, words: str) -> str:
     if at is None:
         return ""
@@ -273,6 +277,20 @@ class WhoIsHome(Device):
             return f"{DEVICE}: {self.board.summary()}"
         except sqlite3.Error as e:
             raise HomeError(f"who's home can't be read just now ({e})") from None
+
+    def glance(self) -> str:
+        """ "Alon and Stacey", "Alon · Stacey out": by their phones, without the times."""
+        try:
+            states = self.board.states()
+        except sqlite3.Error as e:
+            raise HomeError(f"it can't be read just now ({e})") from None
+        names = self.board.people.names
+        home = [names[p] for p, s in states.items() if s.home]
+        out = [names[p] for p, s in states.items() if s.home is False]
+        unknown = [names[p] for p, s in states.items() if s.home is None]
+        said = [_and(home) if home else "nobody", *([f"{_and(out)} out"] if out else [])]
+        said += [f"{_and(unknown)} not known yet"] if unknown else []
+        return " · ".join(said) if states else "nobody is followed"
 
     def rules(self) -> str:
         return (
