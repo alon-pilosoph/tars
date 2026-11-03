@@ -132,6 +132,17 @@ class Device:
         takes over (a button pressed while the agent works the screen)."""
 
 
+# Short names written in capitals whatever case a device's name has them in: "fire tv" reads "Fire TV".
+CAPITALS = {"tv", "ac"}
+
+
+def display_name(name: str) -> str:
+    """A device's name as a person reads it at the start of a line: "Fire TV", "AC", "Front door"."""
+    words = [w.upper() if w.lower() in CAPITALS else w for w in name.split()]
+    said = " ".join(words)
+    return said[:1].upper() + said[1:]
+
+
 def button(args: dict) -> str:
     """The button asked for, as the devices list them: "volume up" and "volume-up" are volume_up."""
     return str(args.get("button") or "").strip().lower().replace(" ", "_").replace("-", "_")
@@ -376,7 +387,7 @@ class HomeTools:
             except HomeError as e:
                 said = f"can't tell ({e})"
             if said:
-                lines.append(f"{device.name[:1].upper()}{device.name[1:]}: {said}")
+                lines.append(f"{display_name(device.name)}: {said}")
         return "\n".join(lines) or "Nothing in the house to show."
 
     def _status(self, device: Device) -> str:

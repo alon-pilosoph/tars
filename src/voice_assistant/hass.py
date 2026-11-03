@@ -44,6 +44,9 @@ HTTP_TIMEOUT_S = 5.0
 SERVICE_TIMEOUT_S = 30.0
 POLL_S = 0.5
 UNKNOWN = ("unknown", "unavailable", "")
+# AirVisual's (IQAir's) main pollutant, as its sensor's state codes it: Home Assistant's API gives the code, and only
+# its own pages put it in words.
+POLLUTANTS = {"p2": "PM2.5", "p1": "PM10", "o3": "ozone", "n2": "NO₂", "s2": "SO₂", "co": "CO"}
 
 
 class NoAnswer(HomeError):
@@ -229,7 +232,7 @@ class Entity(Device):
         return []
 
     def _said(self, found: dict) -> str:
-        state = found.get("state", "")
+        state = _worded(found)
         if state == "unavailable":
             return "not reachable (Home Assistant can't reach it)"
         return state or "unknown"
@@ -609,7 +612,7 @@ def _reading(hass: HomeAssistant, entity: str, say: Callable[[str], str | None] 
         return say(state) or ""
     a = found.get("attributes") or {}
     unit = f" {a['unit_of_measurement']}" if a.get("unit_of_measurement") else ""
-    return f"{a.get('friendly_name') or entity}: {state}{unit}"
+    return f"{a.get('friendly_name') or entity}: {_worded(found)}{unit}"
 
 
 def _short_readings(hass: HomeAssistant, entities: list[str], own: str) -> list[str]:
@@ -626,7 +629,7 @@ def _short_readings(hass: HomeAssistant, entities: list[str], own: str) -> list[
         if value in UNKNOWN or re.fullmatch(r"[0:.]+", value):
             continue
         a = state.get("attributes") or {}
-        found.append((a.get("friendly_name") or entity, value, a.get("unit_of_measurement") or ""))
+        found.append((a.get("friendly_name") or entity, _worded(state), a.get("unit_of_measurement") or ""))
     theirs = [name.split() for name, _, _ in found]
     shared = _shared_words(theirs, own.split()) or _shared_words(theirs)
     said = []
@@ -634,6 +637,15 @@ def _short_readings(hass: HomeAssistant, entities: list[str], own: str) -> list[
         label = " ".join(name.split()[shared:])
         said.append(f"{label} {value}{unit if unit == '%' else f' {unit}' if unit else ''}")
     return said
+
+
+def _worded(found: dict) -> str:
+    """Its state, with a code an integration only words on its own pages put in words (AirVisual's "p2")."""
+    state = found.get("state", "")
+    options = (found.get("attributes") or {}).get("options")
+    if isinstance(options, list) and options and set(options) <= set(POLLUTANTS):
+        return POLLUTANTS.get(state, state)
+    return state
 
 
 def _shared_words(names: list[list[str]], own: list[str] | None = None) -> int:

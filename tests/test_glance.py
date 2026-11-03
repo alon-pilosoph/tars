@@ -16,12 +16,17 @@ STATES = {
     "sensor.pm": ("18", "airvisual pro - home PM2.5", "μg/m³"),
     "sensor.humidity": ("67", "airvisual pro - home Humidity", "%"),
     "sensor.gone": ("unavailable", "airvisual pro - home Battery", "%"),
+    "sensor.out": ("40", "U.S. Air quality index", ""),
+    "sensor.pollutant": ("p2", "U.S. Main pollutant", ""),
 }
 
 
 def _state(entity: str) -> dict:
     state, name, unit = STATES[entity]
-    return {"state": state, "attributes": {"friendly_name": name, **({"unit_of_measurement": unit} if unit else {})}}
+    a = {"friendly_name": name, **({"unit_of_measurement": unit} if unit else {})}
+    if entity == "sensor.pollutant":  # an enum sensor, as AirVisual's is
+        a |= {"device_class": "enum", "options": ["co", "n2", "o3", "p1", "p2", "s2"]}
+    return {"state": state, "attributes": a}
 
 
 HASS = types.SimpleNamespace(state=_state)
@@ -56,6 +61,17 @@ class Said(Device):
         return self.said
 
 
+def test_airvisuals_pollutant_codes_are_said_in_words():
+    outdoor = device("outdoor air", "sensor.out", details=["sensor.pollutant"])
+    assert outdoor.glance() == "40 · Main pollutant PM2.5"
+    assert "U.S. Main pollutant: PM2.5" in outdoor.status()  # the model reads it in words too
+
+
+def test_short_names_are_in_capitals_whatever_the_config_says():
+    tools = HomeTools(HomeConfig(), {"fire tv": Said("fire tv", "asleep"), "ac": Said("ac", "off")})
+    assert tools.glance() == "Fire TV: asleep\nAC: off"
+
+
 def test_a_line_a_device_leaving_out_what_nothing_can_tell():
     tools = HomeTools(
         HomeConfig(),
@@ -65,7 +81,7 @@ def test_a_line_a_device_leaving_out_what_nothing_can_tell():
             "boiler": Said("boiler", HomeError("Home Assistant didn't answer")),
         },
     )
-    assert tools.glance() == "Fire tv: on · HBO Max\nBoiler: can't tell (Home Assistant didn't answer)"
+    assert tools.glance() == "Fire TV: on · HBO Max\nBoiler: can't tell (Home Assistant didn't answer)"
     assert HomeTools(HomeConfig(), {"TV": Said("TV", None)}).glance() == "Nothing in the house to show."
 
 
