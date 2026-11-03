@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from voice_assistant.config import ConfigError, LLMConfig
+from voice_assistant.control import Refused, Unavailable
 from voice_assistant.conversations import FILE, LIST, NOTE, OTHER, SentItem
 from voice_assistant.llm import SEARCHING, THINKING, OpenAIChat
 from voice_assistant.reminders import (
@@ -28,7 +29,6 @@ from voice_assistant.reminders import (
     NewReminder,
     Reminders,
     ReminderTools,
-    line,
 )
 from voice_assistant.telegram import (
     CANT_READ,
@@ -44,8 +44,10 @@ from voice_assistant.telegram import (
     NO_WORDS,
     SAY_HOW,
     SORRY,
+    SPEAKER,
     STALE_S,
     TOO_LONG,
+    VOLUME_HOW,
     Bot,
     TelegramError,
     TelegramTars,
@@ -954,32 +956,58 @@ def test_the_bot_downloads_a_file_by_its_id_and_never_puts_the_token_in_an_error
 # ---------- Commands ----------
 
 
-def test_say_is_said_aloud_at_home_at_once_as_a_message_from_them(convos):
-    bot, tools = FakeBot(), tools_with(convos)
-    t = tars(bot, [ScriptedBrain()], convos, tools)
-    t.handle(message("/say dinner's ready"))
-    assert bot.said() == ["Saying it at home now."]
-    due = tools.reminders.due(time.time() + 1)
-    assert [line(r) for r in due] == ["Everyone, a message from Alon: dinner's ready."]
-    assert due[0]["channel"] == VOICE and not due[0]["needs_ack"]
+def test_say_has_the_assistant_say_it_word_for_word():
+    bot, said = FakeBot(), []
+    t = tars(bot, [ScriptedBrain()], say=said.append)
+    t.handle(message("/say Ari, time for bed"))
+    t.handle(message("/say"))
+    assert said == ["Ari, time for bed"]
+    assert bot.said() == ["Saying it at home now.", SAY_HOW]
 
 
-def test_say_with_nothing_to_say_says_how_and_without_reminders_says_why(convos):
+@pytest.mark.parametrize("problem", [Unavailable("no socket"), Refused("unknown")])
+def test_say_with_the_assistant_not_running_says_so(problem):
+    def say(text):
+        raise problem
+
     bot = FakeBot()
-    tars(bot, [ScriptedBrain()], convos, tools_with(convos)).handle(message("/say"))
+    tars(bot, [ScriptedBrain()], say=say).handle(message("/say hello"))
     tars(bot, [ScriptedBrain()]).handle(message("/say hello"))
-    assert bot.said() == [SAY_HOW, NO_ALOUD]
+    assert bot.said() == [NO_ALOUD, NO_ALOUD]
 
 
 class FakeHouse:
     """The chat's house, as the home tool answers."""
 
     def __init__(self, answers):
-        self.answers, self.calls, self.devices = answers, [], {MIC.lower(): None}
+        self.answers, self.calls, self.args = answers, [], []
+        self.devices = {MIC.lower(): None, SPEAKER.lower(): None}
 
     def call(self, args, request):
         self.calls.append((args["device"], args["action"], request.by_chat))
+        self.args.append(args)
         return self.answers[args["action"]]
+
+
+def test_volume_reads_sets_and_turns_tarss_speaker():
+    bot = FakeBot()
+    house = FakeHouse(
+        {
+            "status": f"{SPEAKER}: volume 40%",
+            "set": f"done: {SPEAKER} set to 55%; volume 55%",
+            "press": "error: press takes volume_up, volume_down or unmute; nothing changed",
+        }
+    )
+    t = tars(bot, [ScriptedBrain()], home=house)
+    for text in ("/volume", "/volume 55%", "/volume up", "/volume loud"):
+        t.handle(message(text))
+    assert bot.said() == [
+        f"{SPEAKER}: volume 40%",
+        f"Done: {SPEAKER} set to 55%; volume 55%.",
+        "Couldn't: press takes volume_up, volume_down or unmute; nothing changed",
+        VOLUME_HOW,
+    ]
+    assert [a.get("level") or a.get("button") for a in house.args] == [None, 55, "volume_up"]
 
 
 def test_mute_unmute_and_home_go_to_the_house_without_the_model():

@@ -61,6 +61,7 @@ PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting whi
 UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
 VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
 ANNOUNCEMENT_KEEP_S = 600.0  # how the TV went is old news after this, and isn't said any more
+MOST_SAID = 1000  # characters a chat's /say has said aloud: a minute or so
 REMINDERS_REST_S = 30.0  # after the reminders table fails, nothing is said for this long
 HELD_POLL_S = 0.1  # held by a recording session, how often what's due is looked for between takes
 TAKE_PAD_BLOCKS = 6  # room kept before and after a take's speech (6 blocks of 80 ms)
@@ -266,7 +267,8 @@ class Assistant:
 
     def control_ops(self, mute: Callable[[bool], None] | None = None) -> dict[str, Op]:
         """What TARS's other processes may ask for over control.py: the web UI, for a recording session, to hold TARS,
-        let it go, and the takes; and with `mute` (how the buttons mute it), a chat, to mute or unmute it."""
+        let it go, and the takes; a chat, to have something said aloud, word for word, as an announcement is; and with
+        `mute` (how the buttons mute it), to mute or unmute it."""
 
         def holder(r: dict) -> str:  # the session asking: each holds TARS on its own
             return str(r.get("session", ""))
@@ -284,6 +286,13 @@ class Assistant:
             self.takes.release(holder(r))
             return {"ok": True}
 
+        def say(r: dict) -> dict:  # {"text": ...}: after a chime, between conversations, even while muted
+            text = r.get("text")
+            if not (isinstance(text, str) and text.strip()) or self.announcements is None:
+                raise Refused("unknown")
+            self.announcements.add(text[:MOST_SAID])
+            return {"ok": True}
+
         def muted(r: dict) -> dict:  # {"muted": true or false} sets it; without, only says
             if isinstance(r.get("muted"), bool):
                 mute(r["muted"])
@@ -295,6 +304,7 @@ class Assistant:
             "record": record,
             "status": lambda r: self.takes.state(self.takes.find(int(r["id"]))),
             "stop": lambda r: self.takes.finish(int(r["id"])),
+            "say": say,
         } | ({"mute": muted} if mute else {})
 
     def _wait_held(self) -> str | None:

@@ -1,4 +1,4 @@
-"""TARS's microphone, muted and unmuted from a chat: the chat's process asks the assistant over control.py."""
+"""What a chat asks of the assistant over control.py: TARS's microphone muted and unmuted, and /say."""
 
 import shutil
 import tempfile
@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from voice_assistant import control
+from voice_assistant.assistant import Announcements
 from voice_assistant.config import HomeConfig
 from voice_assistant.home import HomeTools, Request
 from voice_assistant.mic_mute import DEVICE, MicMute
@@ -71,3 +72,16 @@ def test_with_the_assistant_not_running_nothing_is_said_to_have_changed(short_fo
 def test_a_mute_the_assistant_didnt_take_is_not_confirmed():
     mic = MicMute(Path("/nowhere"), ask=lambda folder, op, **args: {"ok": True, "muted": False})
     assert chat(mic).call(ask("off"), Request()).startswith("not confirmed:")
+
+
+def test_a_chats_say_is_announced_word_for_word(speaker, short_folder):
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.announcements = Announcements()
+    server = control.Server(short_folder, assistant.control_ops())
+    try:
+        control.ask(short_folder, "say", text="Ari, time for bed")
+        with pytest.raises(control.Refused):
+            control.ask(short_folder, "say", text="  ")
+    finally:
+        server.close()
+    assert assistant.announcements.take() == ["Ari, time for bed"]

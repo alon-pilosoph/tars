@@ -576,6 +576,13 @@ def chat_home(cfg: Config, root: Path, presence=None, events=None, announce=None
     return make_home(cfg, root, announce, presence, own_speaker(cfg), mic)
 
 
+def ask_to_say(folder: Path, text: str) -> None:
+    """Has the assistant say `text` aloud at home, word for word (its "say" op, over control.py)."""
+    from .control import ask
+
+    ask(folder, "say", text=text)
+
+
 def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
@@ -715,6 +722,7 @@ def telegram(cfg: Config, root: Path) -> None:
         transcriber=make_recording_transcriber(cfg, env, client),
         env=env,
         home=home,
+        say=functools.partial(ask_to_say, events.store.folder) if events else None,
     )
     told.append(tars)
     if queue:

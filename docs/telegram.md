@@ -50,7 +50,8 @@ client, which its terms forbid.
 | "unlock the front door" | unlocked, only for someone `[home] unlock_chats` names, and only when their own message says "unlock" |
 | "unmute yourself" | TARS's microphone at home unmuted, as its button does; "mute yourself" mutes it |
 | "send me a packing list for Rome" | the list is posted in the chat, and kept on the TARS page |
-| /say dinner's ready | said aloud at home now, once: "Everyone, a message from Alon: dinner's ready.", and the chat hears when |
+| /say dinner's ready | said aloud at home, word for word, after a chime and never over a conversation; even while TARS is muted. For a message with who it's from, and word of when it was said, write "tell the house…" |
+| /volume 40, /volume up | TARS's speaker set, or turned a step (10%); /volume alone says the level |
 | /home | how everything in the house is, as the home tool reads it |
 | /mute, /unmute | TARS's microphone at home muted or unmuted, as its button does |
 | /new | starts a new conversation: TARS forgets this one |
