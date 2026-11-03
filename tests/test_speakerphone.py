@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from voice_assistant.speakerphone import Bit, Hid, Layout, SpeakerphoneMute, find_mute, layout
+from voice_assistant.speakerphone import Bit, Hid, Layout, SpeakerphoneMute, find_mute, kept, layout
 
 from .test_buttons import POWERCONF_HID
 
@@ -84,3 +84,25 @@ def test_one_it_may_not_use_says_which_rule_lets_it(tmp_path):
         pytest.skip("running as root: nothing is unreadable")
     found, why = find_mute("PowerConf", print, lambda: [Hid(str(device), "Anker PowerConf", POWERCONF_HID.descriptor)])
     assert found is None and "99-tars-speakerphone.rules" in why
+
+
+def test_the_mute_is_kept_in_a_file_for_the_next_start(tmp_path):
+    flag = tmp_path / "voice_data" / "muted"
+    told = []
+    changed = kept(flag, told.append)
+    changed(True)
+    assert flag.exists() and told == [True]
+    changed(True)  # muted again: still there
+    assert flag.exists()
+    changed(False)
+    assert not flag.exists() and told == [True, True, False]
+    changed(False)  # unmuted again: nothing to remove, nothing goes wrong
+    assert not flag.exists()
+
+
+def test_a_flag_it_can_t_write_is_said_and_the_mute_still_works(tmp_path, capsys):
+    blocked = tmp_path / "voice_data"
+    blocked.write_text("")  # a file where its folder should be
+    told = []
+    kept(blocked / "muted", told.append)(True)
+    assert told == [True] and "not kept" in capsys.readouterr().out

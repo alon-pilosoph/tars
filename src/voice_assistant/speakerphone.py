@@ -11,7 +11,8 @@ device (/dev/hidraw*), root's alone unless a udev rule says otherwise (deploy/99
 user the PowerConf's).
 
 The speakerphone doesn't say whether it's muted, only that its button was pressed, so TARS keeps count: unmuted
-when TARS starts (it unmutes it then, to be sure), and flipped by each press. Linux only."""
+when TARS starts (it unmutes it then, to be sure), and flipped by each press. What it was is kept in a file
+(`kept`), so a restart mutes it again if it was muted. Linux only."""
 
 import contextlib
 import os
@@ -184,6 +185,23 @@ class SpeakerphoneMute:
                 return
             if self.pressed(report):
                 print(f"(speakerphone: its mute button, {'muted' if self.muted else 'unmuted'})")
+
+
+def kept(flag: Path, on_change: Callable[[bool], None]) -> Callable[[bool], None]:
+    """`on_change`, and the mute kept in `flag`: the file is there while TARS is muted, so it starts as it was."""
+
+    def changed(muted: bool) -> None:
+        on_change(muted)
+        try:
+            if muted:
+                flag.parent.mkdir(parents=True, exist_ok=True)
+                flag.touch()
+            else:
+                flag.unlink(missing_ok=True)
+        except OSError as e:  # not kept: the next start is unmuted, as before
+            print(f"(mute not kept for the next start: {e})")
+
+    return changed
 
 
 def find_mute(
