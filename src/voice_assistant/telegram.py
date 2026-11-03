@@ -35,11 +35,13 @@ from .audio import SAMPLE_RATE, decode_recording
 from .config import TELEGRAM_KEY, ConfigError
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
-from .home import Request
+from .home import EVERYTHING, OFF, ON, STATUS, HomeTools, Request
 from .llm import REMIND_TOOLS, SEARCHING, THINKING, Brain, split_ack
+from .mic_mute import DEVICE as MIC
 from .reminders import (
     ACKNOWLEDGED,
     ADD,
+    MESSAGE,
     MISSED,
     SAID,
     TELEGRAM,
@@ -47,6 +49,7 @@ from .reminders import (
     WAITING,
     WEB,
     Change,
+    NewReminder,
     ReminderTools,
     late,
     line,
@@ -84,12 +87,21 @@ NO_WORDS = "I couldn't make out any words in that. Try again, or write it."
 COULDNT_LISTEN = "I couldn't listen to that just now. Try again in a moment, or write it."
 VOICE_TAG = "[Voice message]"  # what the brain is asked is spoken, and written down by speech to text
 HELLO = (
-    "Hello, {name}. It's TARS. Ask me anything, have me set a timer or a reminder, or ask me to send you something. "
-    "Send /new to start a new conversation."
+    "Hello, {name}. It's TARS. Ask me anything, have me set a timer or a reminder, work the house, or ask me to send "
+    "you something. /say says something aloud at home; the menu has the rest."
 )
 FRESH = "Starting fresh. What's up?"
-# The bot's menu of commands in Telegram's app.
-COMMANDS = [{"command": "new", "description": "Start a new conversation"}]
+# The bot's menu of commands in Telegram's app. Each is done by code at once, with no model in between, but /new's.
+COMMANDS = [
+    {"command": "say", "description": "Say something aloud at home: /say dinner's ready"},
+    {"command": "home", "description": "How everything in the house is"},
+    {"command": "mute", "description": "Mute TARS's microphone at home"},
+    {"command": "unmute", "description": "Unmute TARS's microphone at home"},
+    {"command": "new", "description": "Start a new conversation"},
+]
+SAY_HOW = "Send /say and what to say, like: /say dinner's ready"
+NO_ALOUD = "I can't say things at home from here: reminders are off."
+NO_HOUSE = "There's no house to work from here."
 WRITTEN = (
     "This conversation is on Telegram, in writing, not aloud: what's said above about replies being read aloud, "
     "and written for the ear, doesn't apply here. Reply as in a text message: short, plain text with no markdown. "
@@ -369,18 +381,20 @@ class TelegramTars:
         sleep: Callable[[float], None] = time.sleep,
         transcriber: Transcriber | None = None,
         env: Path | str = ".env",
+        home: HomeTools | None = None,
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
         each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
         `send_items`: also post what TARS sends at home for someone with a chat. `transcriber`: speech to text for
         voice messages (None: they're turned down). `env`: where the token is, for saying so when Telegram refuses it.
+        `home`: the chat's house, for /home, /mute and /unmute.
         `clock`, `typing` and `sleep` are for the tests."""
         self._bot, self._make_brain = bot, make_brain
         self._chats = {chat_id: Chat(name, chat_id, make_brain()) for name, chat_id in people.items()}
         self._by_person = {person_key(name): chat_id for name, chat_id in people.items()}
         self._conversations, self._tools = conversations, reminder_tools
         self._memory_s, self._send_items, self._clock, self._typing = memory_s, send_items, clock, typing
-        self._sleep, self._transcriber, self._env = sleep, transcriber, env
+        self._sleep, self._transcriber, self._env, self._home = sleep, transcriber, env, home
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
@@ -453,7 +467,44 @@ class TelegramTars:
             self.start_over(chat)
             self._send(chat_id, FRESH)
             return
+        rest = text[len(text.split()[0]) :].strip()
+        if command == "/say":
+            self._send(chat_id, self.say_aloud(chat, rest))
+            return
+        if command in ("/home", "/mute", "/unmute"):
+            self._send(chat_id, self.house_command(chat, command))
+            return
         self.answer(chat, text)
+
+    def say_aloud(self, chat: Chat, text: str) -> str:
+        """/say: said aloud at home now, once, as a message from them to everyone ("Everyone, a message from
+        Alon: dinner's ready."), the way a chat's "tell the house" is; the chat hears when it was said."""
+        if not text:
+            return SAY_HOW
+        if not self._tools:
+            return NO_ALOUD
+        now = self._clock()
+        new = NewReminder(MESSAGE, text, for_name="everyone", from_name=chat.person, due=now, needs_ack=False)
+        try:
+            self._tools.reminders.add(new, TELEGRAM, now=now, channel=VOICE)
+        except ValueError as e:
+            return f"I can't say that: {e}."
+        print(f"(Telegram: {chat.person} /say: {text!r})", flush=True)
+        return "Saying it at home now."
+
+    def house_command(self, chat: Chat, command: str) -> str:
+        """/home: every device's status, as the home tool reads it. /mute and /unmute: TARS's microphone at home."""
+        if self._home is None:
+            return NO_HOUSE
+        if command == "/home":
+            return self._home.call({"device": EVERYTHING, "action": STATUS}, Request(speaker=chat.person))
+        if MIC.lower() not in self._home.devices:
+            return "I can't reach my microphone from here: the voice assistant has no event log to meet me at."
+        action = OFF if command == "/mute" else ON
+        said = self._home.call({"device": MIC, "action": action}, Request(speaker=chat.person, by_chat=True))
+        if said.startswith("done"):
+            return "Muted: I'm not listening at home." if action == OFF else "Unmuted: I'm listening at home again."
+        return "Couldn't: " + said.partition(": ")[2]
 
     def listen(self, chat: Chat, voice: dict) -> None:
         """A voice message: written down by speech to text (Deepgram, then OpenAI, as at home), then answered as if

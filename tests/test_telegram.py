@@ -28,6 +28,7 @@ from voice_assistant.reminders import (
     NewReminder,
     Reminders,
     ReminderTools,
+    line,
 )
 from voice_assistant.telegram import (
     CANT_READ,
@@ -37,8 +38,11 @@ from voice_assistant.telegram import (
     FRESH,
     HELLO,
     MAX_VOICE_S,
+    MIC,
+    NO_ALOUD,
     NO_VOICE,
     NO_WORDS,
+    SAY_HOW,
     SORRY,
     STALE_S,
     TOO_LONG,
@@ -945,3 +949,51 @@ def test_the_bot_downloads_a_file_by_its_id_and_never_puts_the_token_in_an_error
     with pytest.raises(TelegramError) as e:
         bot_answering(gone).download("AwACAgQ")
     assert e.value.status == 404 and "SECRET" not in str(e.value)
+
+
+# ---------- Commands ----------
+
+
+def test_say_is_said_aloud_at_home_at_once_as_a_message_from_them(convos):
+    bot, tools = FakeBot(), tools_with(convos)
+    t = tars(bot, [ScriptedBrain()], convos, tools)
+    t.handle(message("/say dinner's ready"))
+    assert bot.said() == ["Saying it at home now."]
+    due = tools.reminders.due(time.time() + 1)
+    assert [line(r) for r in due] == ["Everyone, a message from Alon: dinner's ready."]
+    assert due[0]["channel"] == VOICE and not due[0]["needs_ack"]
+
+
+def test_say_with_nothing_to_say_says_how_and_without_reminders_says_why(convos):
+    bot = FakeBot()
+    tars(bot, [ScriptedBrain()], convos, tools_with(convos)).handle(message("/say"))
+    tars(bot, [ScriptedBrain()]).handle(message("/say hello"))
+    assert bot.said() == [SAY_HOW, NO_ALOUD]
+
+
+class FakeHouse:
+    """The chat's house, as the home tool answers."""
+
+    def __init__(self, answers):
+        self.answers, self.calls, self.devices = answers, [], {MIC.lower(): None}
+
+    def call(self, args, request):
+        self.calls.append((args["device"], args["action"], request.by_chat))
+        return self.answers[args["action"]]
+
+
+def test_mute_unmute_and_home_go_to_the_house_without_the_model():
+    bot, brain = FakeBot(), ScriptedBrain()
+    house = FakeHouse(
+        {"off": f"done: {MIC} is muted", "on": "error: the voice assistant at home isn't running", "status": "AC: off"}
+    )
+    t = tars(bot, [brain], home=house)
+    for text in ("/mute", "/unmute", "/home"):
+        t.handle(message(text))
+    assert bot.said() == [
+        "Muted: I'm not listening at home.",
+        "Couldn't: the voice assistant at home isn't running",
+        "AC: off",
+    ]
+    assert house.calls == [(MIC, "off", True), (MIC, "on", True), ("everything", "status", False)]
+    assert brain.asked == []

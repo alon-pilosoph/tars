@@ -714,6 +714,7 @@ def telegram(cfg: Config, root: Path) -> None:
         send_items=cfg.telegram.send_items,
         transcriber=make_recording_transcriber(cfg, env, client),
         env=env,
+        home=home,
     )
     told.append(tars)
     if queue:
