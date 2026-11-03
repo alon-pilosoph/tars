@@ -248,7 +248,7 @@ def test_a_take_long_forgotten_is_gone():
 def test_the_hold_lapses_unless_the_page_keeps_asking():
     now = [0.0]
     desk = TakeDesk(clock=lambda: now[0])
-    desk.hold(180)
+    desk.hold(seconds=180)
     now[0] = 179
     assert desk.held()
     now[0] = 181
@@ -256,6 +256,21 @@ def test_the_hold_lapses_unless_the_page_keeps_asking():
     desk.hold()
     desk.release()
     assert not desk.held()
+
+
+def test_each_session_holds_tars_on_its_own():
+    desk = TakeDesk()
+    desk.hold("1")
+    desk.hold("2")
+    desk.release("1")  # one page leaves: the other still holds it, so a "hey TARS" prompt doesn't wake it
+    assert desk.held()
+    desk.release("2")
+    assert not desk.held()
+
+
+def test_take_ids_dont_start_again_after_a_restart():
+    # The web UI outlives the assistant and remembers takes by their id: a new run's mustn't be an old one's.
+    assert TakeDesk()._ids.__next__() != TakeDesk()._ids.__next__()
 
 
 # ---------- The socket ----------
@@ -305,7 +320,7 @@ def test_held_it_records_takes_instead_of_listening_for_its_name(speaker):
 
     threading.Thread(target=page, daemon=True).start()
     assert assistant._wait_held() is None  # until the page let go
-    assert answers["record"]["id"] == 1  # answered once recording (the fake recorder is done at once)
+    assert answers["stop"]["id"] == answers["record"]["id"]  # answered with the take it then stopped
     assert base64.b64decode(answers["stop"]["pcm"]) == pcm and answers["stop"]["stopped"] == SILENCE
     assert assistant.mic.pauses == 1  # the beep, with the mic shut
     assert assistant.talk().startswith("listening")
@@ -352,9 +367,11 @@ class FakeAssistant:
 
     def __init__(self, pcm=None, why=None):
         self.pcm, self.why, self.asked, self.ids = pcm or take_audio(), why, [], 0
+        self.sessions = []  # the session each op was asked for
 
     def __call__(self, op, **args):
         self.asked.append(op)
+        self.sessions.append(args.get("session"))
         if self.why == "down":
             raise control.Unavailable("no socket")
         if self.why and op == "record":
@@ -374,6 +391,57 @@ def page(log, fake=None, finished=None):
     fake = fake or FakeAssistant()
     client = TestClient(create_app(log, ask=fake, finished=finished), base_url="http://tars.local:8080")
     return client, fake
+
+
+def test_a_take_id_the_assistant_gives_again_isnt_an_old_take(log):
+    # Should an id come round again, say after a restart, the new take is recorded, not the old one shown.
+    token = Sessions(log.store).create(VOICE, "Alon", voice_script()[:2])
+    client, fake = page(log)
+    first, second = client.get(f"/api/session/{token}").json()["prompts"]
+    a = client.post(f"/api/session/{token}/record", json={"prompt": first["id"]}).json()
+    client.get(f"/api/session/{token}/record/{a['id']}")
+    fake.ids = 0
+    b = client.post(f"/api/session/{token}/record", json={"prompt": second["id"]}).json()
+    assert b["id"] == a["id"]
+    heard = client.get(f"/api/session/{token}/record/{b['id']}").json()
+    assert heard["take"]["prompt"] == second["id"]
+    sessions = Sessions(log.store)
+    kept = sorted(t["prompt"] for t in sessions.takes(sessions.open(token)["id"]))
+    assert kept == sorted([first["id"], second["id"]])
+
+
+def test_holds_and_releases_are_by_session(log):
+    token = Sessions(log.store).create(VOICE, "Alon", voice_script()[:2])
+    client, fake = page(log)
+    session_id = Sessions(log.store).open(token)["id"]
+    client.post(f"/api/session/{token}/begin")
+    client.post(f"/api/session/{token}/leave")
+    assert list(zip(fake.asked, fake.sessions, strict=True)) == [("hold", session_id), ("release", session_id)]
+
+
+def test_enrolling_waits_for_a_regroup_of_the_voices(log):
+    # A finished voice session changes the voices, so it waits its turn behind a regroup, and the other way round.
+    token = Sessions(log.store).create(VOICE, "Alon", voice_script()[:1])
+    regrouping, let_go, enrolled = threading.Event(), threading.Event(), threading.Event()
+
+    def regroup():
+        regrouping.set()
+        let_go.wait(5)
+        return {"ok": True}
+
+    client = TestClient(
+        create_app(log, ask=FakeAssistant(), recluster=regroup, finished=lambda s: enrolled.set()),
+        base_url="http://tars.local:8080",
+    )
+    (prompt,) = client.get(f"/api/session/{token}").json()["prompts"]
+    rec = client.post(f"/api/session/{token}/record", json={"prompt": prompt["id"]}).json()
+    client.post(f"/api/session/{token}/record/{rec['id']}/stop")
+    threading.Thread(target=lambda: client.post("/api/recluster"), daemon=True).start()
+    assert regrouping.wait(5)
+    assert client.post(f"/api/session/{token}/finish").status_code == 200
+    assert not enrolled.wait(0.3)  # still regrouping
+    let_go.set()
+    assert enrolled.wait(5)
 
 
 def test_a_whole_session_from_the_page(log):

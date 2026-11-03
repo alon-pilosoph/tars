@@ -2,13 +2,15 @@
 assistant's own thread, which owns the mic.
 
 While a session is open TARS is held: it doesn't listen for its name (a prompt can say "hey TARS"), and what's due
-is still said between takes. The hold lapses HOLD_S after the page last asked for anything, so a page left open
-doesn't keep TARS deaf. A take asked for while TARS is busy with a conversation is refused rather than kept waiting.
+is still said between takes. Each session holds it on its own (by its id): one leaving or finishing doesn't let go
+of another still open. A hold lapses HOLD_S after its page last asked for anything, so a page left open doesn't keep
+TARS deaf. A take asked for while TARS is busy with a conversation is refused rather than kept waiting.
 """
 
 import base64
 import itertools
 import queue
+import secrets
 import threading
 import time
 from collections import OrderedDict
@@ -32,6 +34,7 @@ BUSY, MUTED, GONE = "busy", "muted", "gone"
 @dataclass
 class Take:
     id: int
+    holder: str = ""  # the session holding TARS for it
     started: threading.Event = field(default_factory=threading.Event)
     stop: threading.Event = field(default_factory=threading.Event)
     done: threading.Event = field(default_factory=threading.Event)
@@ -56,26 +59,34 @@ class TakeDesk:
         self._clock = clock
         self._lock = threading.Lock()
         self._queue: queue.Queue[Take] = queue.Queue()
-        self._ids = itertools.count(1)
+        # Ids start somewhere new each run, so one from before a restart is never another take's: the web UI, which
+        # keeps running, remembers takes by it. Well under 2**53, for the page's JavaScript.
+        self._ids = itertools.count(secrets.randbits(40) + 1)
         self._takes: OrderedDict[int, Take] = OrderedDict()
-        self._held_until = 0.0
+        self._holds: dict[str, float] = {}  # each session holding TARS: until when
 
     # The control thread's side.
 
-    def hold(self, seconds: float = HOLD_S) -> None:
-        self._held_until = self._clock() + seconds
+    def hold(self, holder: str = "", seconds: float = HOLD_S) -> None:
+        with self._lock:
+            self._holds[holder] = self._clock() + seconds
 
-    def release(self) -> None:
-        self._held_until = 0.0
+    def release(self, holder: str = "") -> None:
+        """`holder` lets go; TARS stays held while any other session still holds it."""
+        with self._lock:
+            self._holds.pop(holder, None)
 
     def held(self) -> bool:
-        return self._clock() < self._held_until
+        now = self._clock()
+        with self._lock:
+            self._holds = {h: until for h, until in self._holds.items() if until > now}
+            return bool(self._holds)
 
-    def ask(self, pickup_s: float = PICKUP_S) -> Take:
+    def ask(self, holder: str = "", pickup_s: float = PICKUP_S) -> Take:
         """A new take, once its beep has played and it's recording; Refused(BUSY) if the assistant didn't come to it
         within `pickup_s` (it's in a conversation)."""
-        self.hold()
-        take = Take(next(self._ids))
+        self.hold(holder)
+        take = Take(next(self._ids), holder)
         with self._lock:
             self._takes[take.id] = take
             while len(self._takes) > KEPT:
@@ -109,7 +120,7 @@ class TakeDesk:
     def finish(self, take_id: int, wait_s: float = STOP_WAIT_S) -> dict:
         """Stops the take if it's still going, and answers with its audio: base64 PCM, or None if nobody spoke."""
         take = self.find(take_id)
-        self.hold()
+        self.hold(take.holder)
         take.stop.set()
         if not take.done.wait(wait_s):
             raise Refused(BUSY)

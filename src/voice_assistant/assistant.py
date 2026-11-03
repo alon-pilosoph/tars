@@ -267,17 +267,20 @@ class Assistant:
     def control_ops(self) -> dict[str, Op]:
         """What the web UI may ask for over control.py, for a recording session: hold TARS, let it go, and the takes."""
 
-        def record(_: dict) -> dict:
+        def holder(r: dict) -> str:  # the session asking: each holds TARS on its own
+            return str(r.get("session", ""))
+
+        def record(r: dict) -> dict:
             if self.muted:
                 raise Refused(MUTED)
-            return self.takes.state(self.takes.ask())
+            return self.takes.state(self.takes.ask(holder(r)))
 
-        def hold(_: dict) -> dict:
-            self.takes.hold()
+        def hold(r: dict) -> dict:
+            self.takes.hold(holder(r))
             return {"ok": True, "muted": self.muted}
 
-        def release(_: dict) -> dict:
-            self.takes.release()
+        def release(r: dict) -> dict:
+            self.takes.release(holder(r))
             return {"ok": True}
 
         return {

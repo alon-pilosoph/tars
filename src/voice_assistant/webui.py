@@ -11,6 +11,7 @@ through the browser of someone at home.
 import base64
 import functools
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -67,6 +68,7 @@ REFUSALS = {
     "gone": (410, "That recording was lost. Record it again."),
 }
 NOT_RUNNING = "TARS isn't running right now, so nothing can be recorded. Try again in a minute."
+MOST_TAKES = 64  # the takes the recording API remembers, by the assistant's id: enough for a few pages at once
 LINK_GONE = "It was used up, or it expired: links last a day."
 
 
@@ -580,7 +582,13 @@ def create_app(
             raise HTTPException(409, "it's over already")
         return {"ok": True}
 
-    _recording_sessions(app, log, recording, ask or functools.partial(control.ask, log.folder), finished)
+    def finished_with_voices(session: dict) -> None:  # enrolling changes the voices: not while they're regrouped
+        with voices:
+            finished(session)
+
+    _recording_sessions(
+        app, log, recording, ask or functools.partial(control.ask, log.folder), finished and finished_with_voices
+    )
 
     @app.get("/api/status")
     def status():
@@ -608,8 +616,15 @@ def _recording_sessions(
     recorded by the assistant (takes.py), asked over control.py, and kept here once they've ended."""
     sessions = Sessions(log.store)
     lock = threading.Lock()
-    asked: dict[int, tuple[int, str]] = {}  # each take the assistant is recording: its session and prompt
-    kept: dict[int, dict] = {}  # each take kept, by the assistant's id for it, so asking twice is harmless
+    # By the assistant's id for each take, the most recent MOST_TAKES of them:
+    asked: OrderedDict[int, tuple[int, str]] = OrderedDict()  # what it's recording: its session and prompt
+    kept: OrderedDict[int, dict] = OrderedDict()  # what's been kept, so asking twice is harmless
+
+    def remember(where: OrderedDict, take_id: int, value) -> None:
+        where[take_id] = value
+        where.move_to_end(take_id)
+        while len(where) > MOST_TAKES:
+            where.popitem(last=False)
 
     def open_or_404(token: str) -> dict:
         session = sessions.open(token)
@@ -651,7 +666,7 @@ def _recording_sessions(
             answer = assistant("stop", id=take_id)
             pcm = base64.b64decode(answer["pcm"]) if answer.get("pcm") else None
             take = sessions.add_take(session, sessions.prompt(session, prompt_id), pcm, answer["stopped"])
-            kept[take_id] = recorded(answer, take)
+            remember(kept, take_id, recorded(answer, take))
             return kept[take_id]
 
     @app.get("/api/session/{token}")
@@ -660,14 +675,13 @@ def _recording_sessions(
 
     @app.post("/api/session/{token}/begin")
     def begin(token: str):
-        open_or_404(token)
-        return assistant("hold")
+        return assistant("hold", session=open_or_404(token)["id"])
 
     @app.post("/api/session/{token}/leave")
     def leave(token: str):
-        if sessions.open(token):
+        if session := sessions.open(token):
             try:
-                ask("release")
+                ask("release", session=session["id"])
             except control.Unavailable, control.Refused:
                 pass  # nothing to let go of
         return {"ok": True}
@@ -677,9 +691,10 @@ def _recording_sessions(
         session = open_or_404(token)
         if not sessions.prompt(session, body.prompt):
             raise HTTPException(404, "no such prompt")
-        answer = assistant("record")
+        answer = assistant("record", session=session["id"])
         with lock:
-            asked[answer["id"]] = (session["id"], body.prompt)
+            kept.pop(answer["id"], None)  # not that an id comes round again, but a stale one mustn't stand in for it
+            remember(asked, answer["id"], (session["id"], body.prompt))
         return recorded(answer, None)
 
     @app.get("/api/session/{token}/record/{take_id}")
@@ -711,7 +726,7 @@ def _recording_sessions(
             raise HTTPException(409, "some prompts haven't been recorded or skipped yet")
         if sessions.finish(session):
             try:
-                ask("release")
+                ask("release", session=session["id"])
             except control.Unavailable, control.Refused:
                 pass
             if finished:
