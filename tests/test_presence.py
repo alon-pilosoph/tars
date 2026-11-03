@@ -8,6 +8,7 @@ import hashlib
 import json
 import random
 import sqlite3
+import types
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -17,6 +18,7 @@ import pytest
 from voice_assistant.__main__ import chat_home, make_home
 from voice_assistant.config import ROUTER_KINDS, ConfigError, PresenceConfig, load_config
 from voice_assistant.home import SETTINGS, Request
+from voice_assistant.mic_mute import DEVICE as MIC
 from voice_assistant.presence import (
     DEVICE,
     STALE_AFTER_S,
@@ -424,15 +426,19 @@ def house(board, tmp_path):
     return make_home(load_config(CONFIG, local=False), tmp_path, presence=Presence(PEOPLE, board, [], [], 10, 30))
 
 
-def test_a_chat_works_nothing_in_the_house_whatever_it_lists(board, tmp_path):
+def test_a_chat_works_the_house_and_unlocks_only_when_named(board, tmp_path):
     (tmp_path / ".env").write_text("HOME_ASSISTANT_TOKEN=t\n")
     cfg = load_config(CONFIG, local=False)
     lock = {"name": "front door", "entity": "lock.front_door"}
     cfg = dataclasses.replace(cfg, home=dataclasses.replace(cfg.home, url="http://ha.invalid:8123", devices=[lock]))
     people = Presence(PEOPLE, board, [], [], 10, 30)
-    assert "front door" in make_home(cfg, tmp_path, presence=people).devices
-    assert list(chat_home(cfg, tmp_path, presence=people).devices) == [DEVICE]
-    assert chat_home(cfg, tmp_path) is None
+    events = types.SimpleNamespace(store=types.SimpleNamespace(folder=tmp_path))
+    tools = chat_home(cfg, tmp_path, presence=people, events=events)
+    assert list(tools.devices) == ["front door", DEVICE, MIC.lower()]
+    unlock = {**ask("front door"), "action": "unlock"}
+    said = tools.call(unlock, Request(speaker="Alon", by_chat=True, heard="unlock the front door"))
+    assert said.startswith("refused: unlocking from a chat is only for the people")
+    assert list(chat_home(cfg, tmp_path).devices) == ["front door"]  # no event log: no microphone to reach
 
 
 def ask(device: str) -> dict:

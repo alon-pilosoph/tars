@@ -97,8 +97,8 @@ minutes. The model is told so, and says it's going by their phone when that matt
 ## Where it's used
 
 **"Who's home?"** is a device in the [home tool](home.md), `who's home`, with only a status: the model asks it, and
-nothing about anyone's whereabouts is in the instructions of every turn. In a Telegram chat it's the one device
-there is: a chat works nothing in the house.
+nothing about anyone's whereabouts is in the instructions of every turn. A Telegram chat has it too, with the rest
+of the house ([home.md](home.md#from-a-chat)).
 
 **Reminders for someone who's out** ([reminders](reminders.md)): when a reminder or message for someone comes due
 aloud, and they're out and on [Telegram](telegram.md), it's posted to their chat instead, once, like one set there.

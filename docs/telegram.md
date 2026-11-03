@@ -46,10 +46,21 @@ client, which its terms forbid.
 | "tell Stacey dinner's at 8, at 7:30" | to Stacey's chat at 7:30 if she has one; aloud at home if not |
 | "tell the house dinner's ready" | said aloud at home now ("Everyone, a message from Alon: dinner's ready."), and the chat hears when it was said and who said they got it |
 | "tell Stacey at home to call me" | said aloud at home, even if Stacey has a chat |
+| "turn on the AC, cooling, 23" | the house, worked as by voice ([home.md](home.md#from-a-chat)); a task on the TV posts how it went here |
+| "unlock the front door" | unlocked, only for someone `[home] unlock_chats` names, and only when their own message says "unlock" |
+| "unmute yourself" | TARS's microphone at home unmuted, as its button does; "mute yourself" mutes it |
 | "send me a packing list for Rome" | the list is posted in the chat, and kept on the TARS page |
+| /say dinner's ready | said aloud at home, word for word, after a chime and never over a conversation; even while TARS is muted. For a message with who it's from, and word of when it was said, write "tell the house…" |
+| /volume 40, /volume up | TARS's speaker set, or turned a step (10%); /volume alone says the level |
+| /home | how everything in the house is, as the home tool reads it |
+| /mute, /unmute | TARS's microphone at home muted or unmuted, as its button does |
 | /new | starts a new conversation: TARS forgets this one |
 | "I took the pills" | acknowledges a reminder that was said aloud at home and is waiting for a "got it" |
 | "order the usual margherita from Wolt" | with [browser] on, an errand in TARS's browser ([browser.md](browser.md)): "On it.", then the order to approve here, and how it went |
+
+The commands are in the bot's menu, and done by code at once: no model reads them, so they're instant and
+can't be talked into anything else. A plain message does the same things too, more slowly ("tell the house dinner's
+ready", "mute yourself").
 
 And from home: "hey TARS, send me the recipe" puts it on the TARS page and in the asker's chat. Things sent for the
 household (a shared shopping list) stay on the TARS page only.

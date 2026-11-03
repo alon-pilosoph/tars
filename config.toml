@@ -218,10 +218,13 @@ reasoning_effort = "low"
 # Home Assistant on the home network; its token is HOME_ASSISTANT_TOKEN in .env. Empty = none.
 url = ""
 # Who may unlock by voice, by their names in the web UI's Voices list. TARS unlocks only for them, recognised from the
-# request itself, and only when they said "unlock"; never from a typed message or a chat. Empty = nobody.
+# request itself, and only when they said "unlock"; never from a typed message. Empty = nobody.
 unlock_voices = []
 # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
 unlock_threshold = 0.6
+# Who may unlock from their own Telegram chat, by their names in [telegram] people: only when their own message (or
+# voice message) says "unlock". Whoever holds their phone can, so it's off unless named. Empty = nobody.
+unlock_chats = []
 # The model that works an Android TV step by step, reading its screen. Empty = [llm] model.
 tv_model = ""
 # TARS's own speaker as a device, for the voice: "how loud are you?", "turn yourself down a bit", "set your volume to

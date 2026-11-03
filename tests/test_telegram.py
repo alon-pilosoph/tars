@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from voice_assistant.config import ConfigError, LLMConfig
+from voice_assistant.control import Refused, Unavailable
 from voice_assistant.conversations import FILE, LIST, NOTE, OTHER, SentItem
 from voice_assistant.llm import SEARCHING, THINKING, OpenAIChat
 from voice_assistant.reminders import (
@@ -37,11 +38,16 @@ from voice_assistant.telegram import (
     FRESH,
     HELLO,
     MAX_VOICE_S,
+    MIC,
+    NO_ALOUD,
     NO_VOICE,
     NO_WORDS,
+    SAY_HOW,
     SORRY,
+    SPEAKER,
     STALE_S,
     TOO_LONG,
+    VOLUME_HOW,
     Bot,
     TelegramError,
     TelegramTars,
@@ -136,6 +142,23 @@ def tars(bot, brains, convos=None, tools=None, people=None, **kw) -> TelegramTar
     made = iter(brains)
     kw.setdefault("sleep", lambda s: None)
     return TelegramTars(bot, people or PEOPLE, lambda: next(made), convos, tools, typing=False, **kw)
+
+
+def test_the_house_hears_a_chats_own_words_as_from_that_chat():
+    bot, brain = FakeBot(), ScriptedBrain(["Unlocked."])
+    tars(bot, [brain]).handle(message("unlock the front door"))
+    assert brain.request.by_chat and not brain.request.by_voice
+    assert (brain.request.speaker, brain.request.heard) == ("Alon", "unlock the front door")
+
+
+def test_how_a_task_went_is_posted_to_the_chat_that_asked_and_remembered():
+    bot, alon = FakeBot(), ScriptedBrain(["On it."])
+    t = tars(bot, [alon])
+    t.announce("Nobody to tell yet.")  # nobody asked anything: only printed
+    t.handle(message("put on the news on the TV"))
+    t.announce("The news is playing.")
+    assert bot.messages[-1] == (ALON, "The news is playing.")
+    assert alon.remembered == ["The news is playing."]
 
 
 def test_a_message_from_someone_in_people_is_answered_with_their_name_on_it():
@@ -928,3 +951,77 @@ def test_the_bot_downloads_a_file_by_its_id_and_never_puts_the_token_in_an_error
     with pytest.raises(TelegramError) as e:
         bot_answering(gone).download("AwACAgQ")
     assert e.value.status == 404 and "SECRET" not in str(e.value)
+
+
+# ---------- Commands ----------
+
+
+def test_say_has_the_assistant_say_it_word_for_word():
+    bot, said = FakeBot(), []
+    t = tars(bot, [ScriptedBrain()], say=said.append)
+    t.handle(message("/say Ari, time for bed"))
+    t.handle(message("/say"))
+    assert said == ["Ari, time for bed"]
+    assert bot.said() == ["Saying it at home now.", SAY_HOW]
+
+
+@pytest.mark.parametrize("problem", [Unavailable("no socket"), Refused("unknown")])
+def test_say_with_the_assistant_not_running_says_so(problem):
+    def say(text):
+        raise problem
+
+    bot = FakeBot()
+    tars(bot, [ScriptedBrain()], say=say).handle(message("/say hello"))
+    tars(bot, [ScriptedBrain()]).handle(message("/say hello"))
+    assert bot.said() == [NO_ALOUD, NO_ALOUD]
+
+
+class FakeHouse:
+    """The chat's house, as the home tool answers."""
+
+    def __init__(self, answers):
+        self.answers, self.calls, self.args = answers, [], []
+        self.devices = {MIC.lower(): None, SPEAKER.lower(): None}
+
+    def call(self, args, request):
+        self.calls.append((args["device"], args["action"], request.by_chat))
+        self.args.append(args)
+        return self.answers[args["action"]]
+
+
+def test_volume_reads_sets_and_turns_tarss_speaker():
+    bot = FakeBot()
+    house = FakeHouse(
+        {
+            "status": f"{SPEAKER}: volume 40%",
+            "set": f"done: {SPEAKER} set to 55%; volume 55%",
+            "press": "error: press takes volume_up, volume_down or unmute; nothing changed",
+        }
+    )
+    t = tars(bot, [ScriptedBrain()], home=house)
+    for text in ("/volume", "/volume 55%", "/volume up", "/volume loud"):
+        t.handle(message(text))
+    assert bot.said() == [
+        f"{SPEAKER}: volume 40%",
+        f"Done: {SPEAKER} set to 55%; volume 55%.",
+        "Couldn't: press takes volume_up, volume_down or unmute; nothing changed",
+        VOLUME_HOW,
+    ]
+    assert [a.get("level") or a.get("button") for a in house.args] == [None, 55, "volume_up"]
+
+
+def test_mute_unmute_and_home_go_to_the_house_without_the_model():
+    bot, brain = FakeBot(), ScriptedBrain()
+    house = FakeHouse(
+        {"off": f"done: {MIC} is muted", "on": "error: the voice assistant at home isn't running", "status": "AC: off"}
+    )
+    t = tars(bot, [brain], home=house)
+    for text in ("/mute", "/unmute", "/home"):
+        t.handle(message(text))
+    assert bot.said() == [
+        "Muted: I'm not listening at home.",
+        "Couldn't: the voice assistant at home isn't running",
+        "AC: off",
+    ]
+    assert house.calls == [(MIC, "off", True), (MIC, "on", True), ("everything", "status", False)]
+    assert brain.asked == []
