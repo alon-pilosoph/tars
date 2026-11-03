@@ -3,9 +3,12 @@
 import { useSyncExternalStore } from "react";
 import { DEMO } from "./params";
 
-export type Clip = { event: number; part: "wake" | "request" } | { turn: number };
-const clipKey = (c: Clip) => ("turn" in c ? `turn-${c.turn}` : `${c.event}-${c.part}`);
-const clipUrl = (c: Clip) => ("turn" in c ? `/api/audio/turn/${c.turn}` : `/api/audio/${c.event}/${c.part}`);
+/** A wake's or request's audio, a conversation turn's, or a take in a recording session (at its own address). */
+export type Clip =
+  { event: number; part: "wake" | "request" } | { turn: number } | { take: number; url: string | null };
+const clipKey = (c: Clip) => ("take" in c ? `take-${c.take}` : "turn" in c ? `turn-${c.turn}` : `${c.event}-${c.part}`);
+const clipUrl = (c: Clip) =>
+  "take" in c ? (c.url ?? "") : "turn" in c ? `/api/audio/turn/${c.turn}` : `/api/audio/${c.event}/${c.part}`;
 
 export interface Playing {
   progress: number;

@@ -2,8 +2,9 @@
 
 The assistant and the web UI share the folder (voice_data/events/, gitignored) from two processes, so the database
 runs in WAL mode and every multi-step change is one IMMEDIATE transaction. events.py (wakes, near-misses, voices),
-conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home) and
-browser/errands.py (the errands queued for TARS's browser) build on this.
+conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home),
+recording.py (recording sessions and their takes) and browser/errands.py (the errands queued for TARS's browser)
+build on this.
 """
 
 import secrets
@@ -145,6 +146,27 @@ TABLES = {
     last_seen REAL,                  -- when a router last saw their phone
     updated REAL NOT NULL            -- when the assistant last wrote this row
 )""",
+    "sessions": """CREATE TABLE sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT NOT NULL UNIQUE,      -- the link's key (recording.py)
+    kind TEXT NOT NULL,              -- voice | house
+    person TEXT NOT NULL,            -- whose voice, as TARS knows them
+    created REAL NOT NULL,
+    expires REAL NOT NULL,
+    prompts TEXT NOT NULL,           -- JSON: what to say, in order (recording.Prompt)
+    skipped TEXT NOT NULL DEFAULT '[]', -- JSON: the prompts skipped, by id
+    finished REAL                    -- when the last prompt was done; the link works no more
+)""",
+    "takes": """CREATE TABLE takes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    prompt TEXT NOT NULL,            -- the prompt's id; one take a prompt (a redo replaces it)
+    ts REAL NOT NULL,
+    audio TEXT,                      -- NULL when nothing was heard
+    seconds REAL NOT NULL,
+    problem TEXT,                    -- nothing | quiet | loud | cut_off | short (recording.check); NULL = fine
+    stopped TEXT NOT NULL            -- silence | tap | nobody: how the take ended (recording.py)
+)""",
 }
 INDEXES = [
     "CREATE INDEX events_ts ON events(ts)",
@@ -154,6 +176,7 @@ INDEXES = [
     "CREATE INDEX items_conversation ON items(conversation_id)",
     "CREATE INDEX reminders_status ON reminders(status)",
     "CREATE INDEX errands_status ON errands(status)",
+    "CREATE INDEX takes_session ON takes(session_id)",
 ]
 # Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
 # version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
@@ -211,6 +234,19 @@ MIGRATIONS = [
             "goal TEXT NOT NULL, asked_via TEXT NOT NULL, status TEXT NOT NULL, started REAL, ended REAL, answer TEXT)"
         ),
         "CREATE INDEX errands_status ON errands(status)",
+    ],
+    [
+        (
+            "CREATE TABLE sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT NOT NULL UNIQUE, "
+            "kind TEXT NOT NULL, person TEXT NOT NULL, created REAL NOT NULL, expires REAL NOT NULL, "
+            "prompts TEXT NOT NULL, skipped TEXT NOT NULL DEFAULT '[]', finished REAL)"
+        ),
+        (
+            "CREATE TABLE takes (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, "
+            "prompt TEXT NOT NULL, ts REAL NOT NULL, audio TEXT, seconds REAL NOT NULL, problem TEXT, "
+            "stopped TEXT NOT NULL)"
+        ),
+        "CREATE INDEX takes_session ON takes(session_id)",
     ],
 ]
 

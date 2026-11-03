@@ -128,7 +128,14 @@ deploy/sim/run.sh uv run python -m voice_assistant.browser view https://wolt.com
 ## Recognizing people from the start
 
 Voices are grouped in the web UI as people use TARS, and naming one makes a voiceprint. To recognize someone before
-that, record and enroll them:
+that, send them a [recording session](web-ui.md#recording-sessions): a link to a page on their phone that has them
+say twelve sentences into TARS's own speakerphone, and makes their voiceprint from them.
+
+```bash
+uv run voice-assistant --record-session voice --for NAME   # the link, to NAME's Telegram chat if they have one
+```
+
+The older way works on a machine where TARS isn't running, at a terminal beside the mic:
 
 ```bash
 uv run voice-assistant --record-voice NAME   # ~10 min guided session: wake phrases and read-aloud sentences

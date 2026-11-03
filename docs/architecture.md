@@ -255,6 +255,12 @@ elsewhere could reach it through someone's browser:
 
 To use it away from home, put the Pi and the phone on Tailscale rather than forwarding a port.
 
+**The web UI asks the assistant for one thing: takes.** A [recording session](web-ui.md#recording-sessions) records
+on the speakerphone, which only the assistant holds, so the web UI asks it over a Unix socket in the event log's
+folder (`control.py`): a line of JSON each way, readable by TARS's user only. The assistant records on its own
+thread, between listening for its name (`takes.py`): a take asked for in the middle of a conversation is refused
+rather than kept waiting, and the hold a session puts on the wake word lapses on its own.
+
 ## Code map
 
 The assistant is `src/voice_assistant/`:
@@ -270,7 +276,7 @@ The assistant is `src/voice_assistant/`:
 | The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` (the loop), `brain.py`, `openai_brain.py` and `anthropic_brain.py` (its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `money.py` (amounts, however written), `tools.py`, `login.py`, `login_page.py`, `codes.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `trace.py`, `run.py`, `chrome.py` (TARS's own Chrome), `mcp_server.py` and `claude.py` (Claude Code as its brain); `telegram_errands.py` (an errand's questions and answer in a chat); `homenet.py` (what's at home, for the browser and the web UI) |
 | The house | `home.py` (the `home` tool, its rules, the `Device` interface, plugins), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), `volume.py` (TARS's own speaker as a device: its sound card's volume through amixer, or the Mac's), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
 | Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
-| Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people) |
+| Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people at a terminal), `recording.py` (recording sessions: scripts, checks, takes), `takes.py` (the assistant's side of them), `control.py` (the socket the web UI asks the assistant over) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
 | Downloads | `models.py` (the small local models, on first use) |

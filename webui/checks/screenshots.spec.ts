@@ -16,3 +16,16 @@ for (const tab of PAGES)
       const file = path.join(REPO, "docs/screenshots", `${tab}-${size}.png`);
       await page.screenshot({ path: file, animations: "disabled" });
     });
+
+// The recording page, which a link opens on its own (docs/web-ui.md#recording-sessions).
+const RECORDING = { record: "session=house&done=2&step=ready", "record-problem": "session=house&done=2&step=problem" };
+for (const [name, link] of Object.entries(RECORDING))
+  for (const [size, viewport] of Object.entries(SIZES))
+    test(`${name}, ${size}`, async ({ page }) => {
+      await serveFromDisk(page);
+      await page.setViewportSize(viewport);
+      await page.goto(`${ORIGIN}/index.html?demo&${link}`);
+      await pageReady(page);
+      const file = path.join(REPO, "docs/screenshots", `${name}-${size}.png`);
+      await page.screenshot({ path: file, animations: "disabled" });
+    });

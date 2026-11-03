@@ -36,7 +36,7 @@ from .config import (
     with_keys,
 )
 from .recorder import make_recorder
-from .store import DB_FILE
+from .store import DB_FILE, Store
 from .versions import UNUSABLE, model_versions, pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
 
@@ -254,7 +254,58 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         voice_names=voices,
         health=make_health(cfg, root, log),
         bucket=bucket,
+        finished=functools.partial(enroll_from_session, speaker_id, log.store),
     )
+
+
+def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -> None:
+    """--record-session: a recording session for `person` (recording.py), its link printed and sent to their
+    Telegram chat if they have one."""
+    import random
+
+    from .browser.login_page import reachable_address
+    from .recording import ABOUT, HOUSE, SECONDS_A_PROMPT, Sessions, house_script, voice_script
+    from .telegram import Bot, TelegramError
+
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("Recording sessions keep their takes in the event log: set [learning] log_events = true.")
+    if kind == HOUSE and not cfg.home.devices:
+        raise ConfigError("There are no [[home.devices]] in config.toml to make house commands from.")
+    prompts = house_script(cfg.home.devices, random.Random()) if kind == HOUSE else voice_script()
+    token = Sessions(log.store).create(kind, person, prompts)
+    url = f"{cfg.web.link.rstrip('/') or f'http://{reachable_address()}:{port}'}/?session={token}"
+    minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
+    print(f"{ABOUT[kind][0]} for {person}, {len(prompts)} phrases (about {minutes} minutes):\n{url}")
+    chat = next((chat for name, chat in cfg.telegram.people.items() if name.lower() == person.lower()), None)
+    if not (cfg.telegram.enabled and chat):
+        print(f"({person} has no Telegram chat in [telegram] people: open the link on their phone.)")
+        return
+    text = (
+        f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes. "
+        f"Open it when you're near TARS; the link works for a day.\n{url}"
+    )
+    try:
+        Bot(api_key(root / ".env", TELEGRAM_KEY)).call("sendMessage", chat_id=chat, text=text)
+    except TelegramError as e:
+        print(f"(couldn't send it on Telegram: {e})")
+        return
+    print(f"Sent to {person} on Telegram.")
+
+
+def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
+    """A voice session's takes become its person's voiceprint (speaker ID), as --enroll does with --record-voice's."""
+    from .audio import read_wav
+    from .recording import MIN_ENROLL_TAKES, VOICE, Sessions
+
+    if session["kind"] != VOICE or speaker_id is None:
+        return
+    takes = [t for t in Sessions(store).takes(session["id"]) if t["audio"] and not t["problem"]]
+    if len(takes) < MIN_ENROLL_TAKES:
+        print(f"(only {len(takes)} good takes from {session['person']}'s session: not enough to enroll)")
+        return
+    speaker_id.enroll(session["person"], [read_wav(store.folder / t["audio"]) for t in takes])
+    print(f"Enrolled {session['person']} from {len(takes)} takes of their recording session.")
 
 
 def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
@@ -300,6 +351,12 @@ def main() -> None:
         "--web", action="store_true", help="the web UI: conversations, what TARS sent, wakes to check, voices"
     )
     parser.add_argument(
+        "--record-session",
+        choices=["voice", "house"],
+        help="send a link to a recording session on TARS's speakerphone: someone's voice, or the house's commands",
+    )
+    parser.add_argument("--for", dest="person", metavar="NAME", help="whose --record-session it is")
+    parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
     parser.add_argument("--port", type=int, default=WEB_PORT)
@@ -342,6 +399,8 @@ def main() -> None:
         parser.error("--restore-archived goes with --fetch-audio")
     if args.delete_anyway and not args.backup:
         parser.error("--delete-anyway goes with --backup")
+    if bool(args.record_session) != bool(args.person):
+        parser.error("--record-session and --for NAME go together")
 
     if args.list_devices:
         list_devices()
@@ -370,6 +429,9 @@ def main() -> None:
             return
         if args.web:
             web_ui(cfg, root, args.host, args.port)
+            return
+        if args.record_session:
+            record_session(cfg, root, args.record_session, args.person, args.port)
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)
@@ -988,6 +1050,10 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             elsewhere=make_chat_when_out(cfg, presence, reminders),
         )
         start_buttons(cfg, volume, assistant, root)
+        if events and not push_to_talk:
+            from .control import Server
+
+            Server(events.store.folder, assistant.control_ops())  # recording sessions, from the web UI
         assistant.run_forever(
             idle_message,
             follow_up_s=cfg.recorder.follow_up_s,

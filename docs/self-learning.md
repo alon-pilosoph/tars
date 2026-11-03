@@ -80,8 +80,8 @@ person".
 
 Regrouping also rebuilds the voiceprints speaker ID uses, from exactly the named people with 5 or more requests
 (two voices with the same name count as one person). A name that's gone (renamed, merged away, marked not a person)
-stops being recognized, and a voice named after someone enrolled with `--enroll` replaces that voiceprint; other
-`--enroll` voiceprints stay. The file is replaced in one step, and the running assistant picks it up before its next
+stops being recognized, and a voice named after someone enrolled with `--enroll` or a
+[voice session](web-ui.md#recording-sessions) replaces that voiceprint; other enrolled voiceprints stay. The file is replaced in one step, and the running assistant picks it up before its next
 greeting or request, without a restart.
 
 Correcting a conversation's voice ("that was Stacey, not Alon") applies to the request that came with the wake, to

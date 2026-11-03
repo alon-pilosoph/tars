@@ -8,7 +8,10 @@ machine by a home-network name are answered (see allowed_host), so a page elsewh
 through the browser of someone at home.
 """
 
+import base64
+import functools
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -19,11 +22,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from . import control
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, REVIEW_SHOWN, UNKNOWN, EventLog
 from .health import Report
 from .homenet import address, home_name
+from .recording import Sessions, public_take
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .versions import INSTALLED, FixedPair, ModelVersions
 
@@ -50,6 +55,21 @@ REMINDER_FIELDS = (
     "acked_via",
     "channel",
 )
+
+
+class PromptRef(BaseModel):
+    prompt: str = Field(max_length=40)
+
+
+# What the recording page says when the assistant can't record a take (control.py, takes.py).
+REFUSALS = {
+    "busy": (409, "TARS is in the middle of a conversation. Try again in a moment."),
+    "muted": (409, "TARS's speakerphone is muted. Unmute it, then try again."),
+    "gone": (410, "That recording was lost. Record it again."),
+}
+NOT_RUNNING = "TARS isn't running right now, so nothing can be recorded. Try again in a minute."
+MOST_TAKES = 64  # the takes the recording API remembers, by the assistant's id: enough for a few pages at once
+LINK_GONE = "It was used up, or it expired: links last a day."
 
 
 class Label(BaseModel):
@@ -192,6 +212,8 @@ def create_app(
     voice_names: Callable[[], list[str]] = list,
     health: Callable[[], Report] | None = None,
     bucket: Callable[[str], bytes | None] | None = None,
+    ask: Callable[..., dict] | None = None,
+    finished: Callable[[dict], None] | None = None,
 ) -> FastAPI:
     """`recluster` regroups the voices (see clustering.regroup); None hides the button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
@@ -199,7 +221,9 @@ def create_app(
     `reminders`: TARS's timers, reminders and messages; None when they're off. `voice_names`: the names TARS knows
     by voice (speaker ID's voiceprints), which a message waiting until someone is back needs. `health`: what the
     Status page shows (health.py); None hides it. `bucket`: a recording that's only in the backup's bucket now, by
-    its path ([backup], Backup.read); None if it isn't there either."""
+    its path ([backup], Backup.read); None if it isn't there either. `ask` asks the assistant for something over
+    control.py (by default, at the event log's folder): recording sessions' takes. `finished(session)` is called, in a
+    thread of its own, once a recording session's last prompt is done (to enroll a voice from it)."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
@@ -558,6 +582,14 @@ def create_app(
             raise HTTPException(409, "it's over already")
         return {"ok": True}
 
+    def finished_with_voices(session: dict) -> None:  # enrolling changes the voices: not while they're regrouped
+        with voices:
+            finished(session)
+
+    _recording_sessions(
+        app, log, recording, ask or functools.partial(control.ask, log.folder), finished and finished_with_voices
+    )
+
     @app.get("/api/status")
     def status():
         return {"clustering": recluster is not None, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": health is not None}
@@ -571,6 +603,142 @@ def create_app(
         return health()
 
     return app
+
+
+def _recording_sessions(
+    app: FastAPI,
+    log: EventLog,
+    recording: Callable[[str | None, Request], Response],
+    ask: Callable[..., dict],
+    finished: Callable[[dict], None] | None,
+) -> None:
+    """The recording page's API (recording.py; webui/src/record/): its link's token is its only key. Takes are
+    recorded by the assistant (takes.py), asked over control.py, and kept here once they've ended."""
+    sessions = Sessions(log.store)
+    lock = threading.Lock()
+    # By the assistant's id for each take, the most recent MOST_TAKES of them:
+    asked: OrderedDict[int, tuple[int, str]] = OrderedDict()  # what it's recording: its session and prompt
+    kept: OrderedDict[int, dict] = OrderedDict()  # what's been kept, so asking twice is harmless
+
+    def remember(where: OrderedDict, take_id: int, value) -> None:
+        where[take_id] = value
+        where.move_to_end(take_id)
+        while len(where) > MOST_TAKES:
+            where.popitem(last=False)
+
+    def open_or_404(token: str) -> dict:
+        session = sessions.open(token)
+        if not session:
+            raise HTTPException(404, LINK_GONE)
+        return session
+
+    def assistant(op: str, **args) -> dict:
+        try:
+            return ask(op, **args)
+        except control.Unavailable:
+            raise HTTPException(503, NOT_RUNNING) from None
+        except control.Refused as e:
+            status, why = REFUSALS.get(e.why, (500, "TARS couldn't record that. Try again."))
+            raise HTTPException(status, why) from None
+
+    def recorded(answer: dict, take: dict | None) -> dict:
+        return {
+            "id": answer["id"],
+            "state": answer["state"],
+            "seconds": answer["seconds"],
+            "level": answer.get("level", 0.0),
+            "take": public_take(take) if take else None,
+        }
+
+    def asked_or_404(session: dict, take_id: int) -> str:
+        with lock:
+            where = asked.get(take_id)
+        if not where or where[0] != session["id"]:
+            raise HTTPException(404, "no such recording")
+        return where[1]
+
+    def keep(session: dict, take_id: int) -> dict:
+        """Stops the take if it's still going, and keeps it: once, however often it's asked."""
+        prompt_id = asked_or_404(session, take_id)
+        with lock:
+            if take_id in kept:
+                return kept[take_id]
+            answer = assistant("stop", id=take_id)
+            pcm = base64.b64decode(answer["pcm"]) if answer.get("pcm") else None
+            take = sessions.add_take(session, sessions.prompt(session, prompt_id), pcm, answer["stopped"])
+            remember(kept, take_id, recorded(answer, take))
+            return kept[take_id]
+
+    @app.get("/api/session/{token}")
+    def session(token: str):
+        return sessions.public(open_or_404(token))
+
+    @app.post("/api/session/{token}/begin")
+    def begin(token: str):
+        return assistant("hold", session=open_or_404(token)["id"])
+
+    @app.post("/api/session/{token}/leave")
+    def leave(token: str):
+        if session := sessions.open(token):
+            try:
+                ask("release", session=session["id"])
+            except control.Unavailable, control.Refused:
+                pass  # nothing to let go of
+        return {"ok": True}
+
+    @app.post("/api/session/{token}/record")
+    def record(token: str, body: PromptRef):
+        session = open_or_404(token)
+        if not sessions.prompt(session, body.prompt):
+            raise HTTPException(404, "no such prompt")
+        answer = assistant("record", session=session["id"])
+        with lock:
+            kept.pop(answer["id"], None)  # not that an id comes round again, but a stale one mustn't stand in for it
+            remember(asked, answer["id"], (session["id"], body.prompt))
+        return recorded(answer, None)
+
+    @app.get("/api/session/{token}/record/{take_id}")
+    def recording_now(token: str, take_id: int):
+        session = open_or_404(token)
+        asked_or_404(session, take_id)
+        with lock:
+            if take_id in kept:
+                return kept[take_id]
+        answer = assistant("status", id=take_id)
+        return keep(session, take_id) if answer["state"] == "done" else recorded(answer, None)
+
+    @app.post("/api/session/{token}/record/{take_id}/stop")
+    def stop(token: str, take_id: int):
+        return keep(open_or_404(token), take_id)
+
+    @app.post("/api/session/{token}/skip")
+    def skip(token: str, body: PromptRef):
+        session = open_or_404(token)
+        if not sessions.prompt(session, body.prompt):
+            raise HTTPException(404, "no such prompt")
+        sessions.skip(session, body.prompt)
+        return {"ok": True}
+
+    @app.post("/api/session/{token}/finish")
+    def finish(token: str):
+        session = open_or_404(token)
+        if not sessions.done(session):
+            raise HTTPException(409, "some prompts haven't been recorded or skipped yet")
+        if sessions.finish(session):
+            try:
+                ask("release", session=session["id"])
+            except control.Unavailable, control.Refused:
+                pass
+            if finished:
+                threading.Thread(target=finished, args=(session,), name="session-finished", daemon=True).start()
+        return {"ok": True}
+
+    @app.get("/api/session/{token}/takes/{take_id}/audio")
+    def take_audio(token: str, take_id: int, request: Request):
+        take = sessions.take(open_or_404(token)["id"], take_id)
+        if not take:
+            raise HTTPException(404, "no such take")
+        return recording(take["audio"], request)
 
 
 def serve(log: EventLog, host: str, port: int, **options) -> None:
