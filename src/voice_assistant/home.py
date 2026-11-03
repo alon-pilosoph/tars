@@ -25,14 +25,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
-from .config import ANDROID_TV, EVERYTHING, HomeConfig
+from .config import ANDROID_TV, CAMERA, EVERYTHING, HomeConfig
 
 TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
 STATUS, ON, OFF, SET, PRESS = "status", "on", "off", "set", "press"
 LOCK, UNLOCK, OPEN, CLOSE = "lock", "unlock", "open", "close"
 PLAY, DO = "play", "do"
+SHOW, WATCH = "show", "watch"
 # The actions every device kind together can take, in the order the tool lists them; a plugin may add its own.
-ACTIONS = (STATUS, ON, OFF, SET, PRESS, LOCK, UNLOCK, OPEN, CLOSE, PLAY, DO)
+ACTIONS = (STATUS, ON, OFF, SET, PRESS, LOCK, UNLOCK, OPEN, CLOSE, PLAY, DO, SHOW, WATCH)
 # The settings an action may take, as the tool's arguments; each device uses the ones it needs.
 SETTINGS = ("minutes", "temperature", "mode", "fan", "level", "button", "times", "app", "title", "goal")
 # How long a change waits for the turn to be over before it gives up: longer than anyone pauses mid-sentence.
@@ -54,7 +55,10 @@ class Request:
     `may_act(timeout_s)` blocks until the turn is over: True if the reply is going to be played (go ahead), False if
     it was thrown away. None for a turn that's over already (typed).
     `read_the_web`: the turn has read web search results, so text from anywhere may be steering the model: it can
-    still read the house, but changes nothing in it."""
+    still read the house, but changes nothing in it.
+    `emit`: hands a device's media (a camera's snapshot or live link, as a conversations.SentItem) to this turn's
+    reply, so it reaches the asker's TARS page and chat like the send tool's own items; None when nothing collects
+    it (a --check run), so a device that needs it says so."""
 
     speaker: str | None = None
     score: float | None = None
@@ -62,6 +66,7 @@ class Request:
     heard: str = ""
     may_act: Callable[[float], bool] | None = None
     read_the_web: bool = False
+    emit: Callable[[object], None] | None = None  # object is a conversations.SentItem; typed loosely to avoid a cycle
 
     def go_ahead(self) -> bool:
         return True if self.may_act is None else self.may_act(GO_AHEAD_TIMEOUT_S)
@@ -189,6 +194,11 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
                 device = hass.entity_device(name, d, context.hass)
             elif kind == ANDROID_TV:
                 device = androidtv.make(name, d, context)
+            elif kind == CAMERA:
+                if context.hass is None:
+                    why = f"no {TOKEN_KEY} in .env" if cfg.url else "[home] url isn't set"
+                    raise ValueError(f"it goes through Home Assistant, and {why}")
+                device = hass.camera_device(name, d, context.hass)
             elif kind in makers:
                 device = makers[kind](d | {"name": name})
             else:

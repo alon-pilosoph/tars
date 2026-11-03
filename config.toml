@@ -262,6 +262,12 @@ speakerphone_mute = true
 # name = "tv"
 # kind = "androidtv"                                # over ADB: python -m voice_assistant.androidtv pair
 # address = "192.168.1.60"
+#
+# [[home.devices]]
+# name = "nursery"
+# kind = "camera"                                   # a Home Assistant camera: "show" sends a snapshot, "watch" a
+# entity = "camera.nursery"                         #   live link, both to the TARS page and chat
+# watch_seconds = 600                               # optional: how long the live link stays good for (30-3600)
 
 [presence]
 # Who's home (docs/presence.md): whose phone the home network's routers see, asked every every_s seconds by the

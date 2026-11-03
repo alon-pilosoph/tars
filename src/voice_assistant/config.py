@@ -202,6 +202,10 @@ HOME_DOMAINS = ("lock", "switch", "light", "fan", "input_boolean", "cover", "cli
 HOME_SENSORS = ("sensor", "binary_sensor")
 # A device worked over ADB rather than through Home Assistant ([[home.devices]] kind = "androidtv").
 ANDROID_TV = "androidtv"
+# A Home Assistant camera, shown or watched rather than switched ([[home.devices]] kind = "camera", entity = camera.*).
+CAMERA = "camera"
+# How long a camera's "watch" live link stays good for, in seconds, when [[home.devices]] watch_seconds isn't set.
+CAMERA_WATCH_S = 600
 EVERYTHING = "everything"  # what the home tool calls all the devices at once, for their status
 _ENTITY = re.compile(r"[a-z_]+\.[a-z0-9_]+")
 _SERVICE = re.compile(r"[a-z_]+\.[a-z0-9_]+")
@@ -631,9 +635,22 @@ def _home_problems(home: HomeConfig) -> list[str]:
                 problems.append(f"{where} ({ANDROID_TV}) needs address, its IP address on the home network")
             extra = [k for k in d if k not in ("name", "kind", "address")]
             problems += [f"{where} ({ANDROID_TV}) has no setting {k}" for k in extra]
+        elif kind == CAMERA:
+            entity = d.get("entity")
+            if not (isinstance(entity, str) and _ENTITY.fullmatch(entity) and entity.partition(".")[0] == "camera"):
+                problems.append(f"{where} ({CAMERA}) needs entity, a camera.* id, like camera.nursery")
+            if not home.url:
+                problems.append(f"{where} ({CAMERA}) goes through Home Assistant: set [home] url")
+            watch = d.get("watch_seconds")
+            if "watch_seconds" in d and not (
+                isinstance(watch, int) and not isinstance(watch, bool) and 30 <= watch <= 3600
+            ):
+                problems.append(f"{where} ({CAMERA}): watch_seconds must be a whole number of seconds, 30 to 3600")
+            extra = [k for k in d if k not in ("name", "kind", "entity", "watch_seconds")]
+            problems += [f"{where} ({CAMERA}) has no setting {k}" for k in extra]
         elif not (isinstance(kind, str) and kind.partition(".")[0] in home.plugins and kind.partition(".")[2]):
             problems.append(
-                f"{where}: kind must be {ANDROID_TV} or a plugin's, like my_house.ac, with the plugin under "
+                f"{where}: kind must be {ANDROID_TV}, {CAMERA} or a plugin's, like my_house.ac, with the plugin under "
                 f"[home.plugins]; for a Home Assistant entity leave kind out (not {kind!r})"
             )
     return problems

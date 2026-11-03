@@ -37,3 +37,38 @@ def test_the_houses_own_names_are_at_home():
 def test_a_browsers_reading_of_an_address():
     assert host_of("https://evil.example\\@wolt.com/x") == "evil.example"
     assert str(address("127.1")) == "127.0.0.1" and address("wolt.com") is None
+
+
+# --- reachable_host: a name or address the household's phones can reach this machine by ---------------------------
+
+import shutil
+import subprocess
+from types import SimpleNamespace
+
+from voice_assistant.homenet import reachable_host
+
+
+def _fake_tailscale(monkeypatch, outputs: dict[str, str]):
+    """Pretend the tailscale CLI is there, and answers each subcommand ("status", "ip") with `outputs`."""
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/tailscale")
+
+    def run(cmd, **kwargs):
+        return SimpleNamespace(stdout=outputs.get(cmd[1], ""))
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+
+def test_reachable_host_prefers_the_magicdns_name(monkeypatch):
+    _fake_tailscale(monkeypatch, {"status": '{"Self": {"DNSName": "homepi.tailnet.ts.net."}}'})
+    assert reachable_host() == "homepi.tailnet.ts.net"  # the trailing dot is dropped
+
+
+def test_reachable_host_falls_back_to_the_tailscale_address(monkeypatch):
+    _fake_tailscale(monkeypatch, {"status": "{}", "ip": "100.81.107.50\n"})
+    assert reachable_host() == "100.81.107.50"
+
+
+def test_reachable_host_without_tailscale_gives_an_address(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    host = reachable_host()  # the home-network address a packet out would leave from, or loopback
+    assert host and "ts.net" not in host  # not a MagicDNS name, since there's no Tailscale

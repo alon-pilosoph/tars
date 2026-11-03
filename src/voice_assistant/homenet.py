@@ -50,6 +50,41 @@ def host_of(url: str) -> str:
     return (urlsplit(url.replace("\\", "/")).hostname or "").lower().rstrip(".")
 
 
+def reachable_host() -> str:
+    """A name or address of this machine the household's phones can reach from anywhere, for a link TARS hands them
+    (a camera's live stream): its Tailscale MagicDNS name if it has one (homepi.tailnet.ts.net — steadier, and
+    reads better in a link, than an address), else its Tailscale address, else its address on the home network, else
+    loopback. browser/login_page.py keeps its own reachable_address(), from before this, which stays on the address."""
+    import json as json_
+    import shutil
+    import subprocess
+
+    def ran(tailscale: str, *args: str) -> str:
+        try:
+            done = subprocess.run([tailscale, *args], capture_output=True, text=True, timeout=5, check=False)
+        except OSError, subprocess.TimeoutExpired:
+            return ""
+        return done.stdout
+
+    for tailscale in (shutil.which("tailscale"), "/Applications/Tailscale.app/Contents/MacOS/Tailscale"):
+        if not tailscale:
+            continue
+        try:
+            name = json_.loads(ran(tailscale, "status", "--json") or "{}").get("Self", {}).get("DNSName", "")
+        except ValueError:
+            name = ""
+        if name := name.rstrip("."):
+            return name
+        if found := ran(tailscale, "ip", "-4").split()[:1]:
+            return found[0]
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:  # the address a packet out would leave from
+        try:
+            probe.connect(("192.0.2.1", 9))  # nothing is sent: a UDP connect only picks the way out
+            return probe.getsockname()[0]
+        except OSError:
+            return "127.0.0.1"
+
+
 def at_home(url: str, extra: frozenset[str] = frozenset(), resolve=None) -> bool:
     """Whether `url` is on this machine or the home network: by its name, by its address, or by what its name
     resolves to (192-168-1-1.nip.io is a public name for a home address). Only web addresses are; about:blank and
