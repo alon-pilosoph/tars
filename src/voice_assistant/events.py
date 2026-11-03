@@ -65,14 +65,14 @@ def _soundex(word: str) -> str:
 
 
 def known_as(name: str | None, people: Collection[str]) -> str | None:
-    """Which of `people` `name` is: the same name whatever its case, or else the one person it sounds like, the way a
-    model may spell what it heard ("Stacy" for Stacey). None if it's nobody, or could be more than one."""
+    """Which of `people` `name` is: itself, as written, when it's one of them whatever its case; or else the one person
+    it sounds like, the way a model may spell what it heard ("Stacy" for Stacey). None if it's nobody, or could be
+    more than one."""
     key = person_key(name)
     if key is None:
         return None
-    for person in people:
-        if person_key(person) == key:
-            return person
+    if any(person_key(person) == key for person in people):
+        return name
     sound = [_soundex(w) for w in key.split()]
     alike = {person_key(p): p for p in people if [_soundex(w) for w in p.split()] == sound}
     return next(iter(alike.values())) if len(alike) == 1 else None

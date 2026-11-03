@@ -348,7 +348,7 @@ def test_a_name_spelled_as_it_sounds_is_the_person_tars_knows(reminders):
 def test_sounds_alike_matches_one_person_only():
     people = ["Alon", "Stacey"]
     assert [known_as(n, people) for n in ("STACEY", "Stacie", "Allon", "Steve", "Ari", None)] == [
-        "Stacey",
+        "STACEY",  # one of them already: as written
         "Stacey",
         "Alon",
         None,
