@@ -50,8 +50,9 @@ backup = [
 tv = [
     "adb-shell>=0.4.4",
 ]
-# examples/my_house: its Tuya IR blaster.
+# examples/my_house: its Tuya IR blaster, and Bluetooth for its air purifier.
 my-house = [
+    "bleak>=1",
     "tinytuya>=1.17",
 ]
 # TARS's own web browser ([browser]): errands on websites, its vault of logins, Claude Code as its brain.

@@ -23,6 +23,11 @@ In config.toml (or config.local.toml):
     name = "fire tv"
     kind = "my_house.firetv"
     address = "192.168.1.60"
+
+    [[home.devices]]
+    name = "air purifier"
+    kind = "my_house.purifier"
+    address = "48:87:2D:00:00:00"         # its Bluetooth address: a Soehnle AC500, from this machine's own adapter
 """
 
 from collections.abc import Callable
@@ -35,6 +40,7 @@ from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, TESTED, Remote, tested_path
+from .purifier import Bluetooth, Purifier
 
 # What this house has learned, kept in the backup's snapshot: the AC's profile, its presses and what it was last sent,
 # and which power codes each remote's set answered to.
@@ -106,7 +112,17 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         agent = context.tv_agent(box, extra_rules=STREMIO_RULES) if context.tv_agent else None
         return FireTv(spec["name"], box, agent, Catalog())
 
-    return {"ac": ac, "remote": remote, "firetv": firetv}
+    def purifier(spec: dict) -> Purifier:
+        _only(spec, {"address"})
+        if not (isinstance(spec.get("address"), str) and spec["address"].strip()):
+            raise ValueError("it needs address, its Bluetooth address")
+        try:
+            import bleak  # noqa: F401 - only whether it's there
+        except ImportError:
+            raise ValueError('it needs the optional extra "my-house": uv sync --all-extras') from None
+        return Purifier(spec["name"], Bluetooth(spec["address"].strip()))
+
+    return {"ac": ac, "remote": remote, "firetv": firetv, "purifier": purifier}
 
 
 def _only(spec: dict, allowed: set[str]) -> None:

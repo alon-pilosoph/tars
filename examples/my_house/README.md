@@ -10,6 +10,7 @@ devices will differ, and most of them need no plugin at all.
 | Switcher water heater | Home Assistant, with its own timer | `switch.boiler` in config |
 | Electra AC, no Wi-Fi of its own | the plugin: a Tuya IR blaster, codes learned from its remote | `ac.py`, `ac_onboard.py` |
 | Samsung TV, Polk Signa S2 soundbar | the plugin: the same blaster, their published IR codes | `ir.py` |
+| Soehnle Airfresh Clean Connect 500 air purifier | the plugin: Bluetooth LE from the machine TARS runs on | `purifier.py` |
 | Fire TV Stick | TARS's Android TV box, with "play" going straight to Stremio | `direct_play.py` |
 
 The blaster (`blaster.py`) is shared: one Tuya "Smart IR" on the home network, worked locally with
@@ -109,6 +110,17 @@ search suggestions (Stremio's add-ons go by IMDb's ids), its page opened by link
 stream chosen, and it's said to be playing only once the stick's media session says so. A series without an episode
 opens its page, and TARS asks which. Another app, or a title IMDb doesn't find, goes to the agent as usual, told how
 Stremio lists streams (the plugin's own rule for it). The title asked for is all that goes to IMDb.
+
+## The air purifier
+
+A Soehnle AC500 has no Wi-Fi and no Home Assistant integration of its own, but its Bluetooth takes commands and reports
+its state, with no pairing. `purifier.py` speaks that protocol, as [narolinus/soehnle-ac500](https://github.com/narolinus/soehnle-ac500)
+worked it out: on, off, fan, auto and night modes, UV and its 2, 4 or 8 hour timer. A change is "done" once its own
+status shows it. Set `address`, found with any Bluetooth scanner, where it shows as `AC500`; it has to be in range of
+the machine TARS runs on.
+
+Left unplugged for days it stops taking commands until it's turned on once at its panel. TARS says so rather than
+trying. Coming back from a short power cut it stays in standby and still listens.
 
 ## Setting it up
 
