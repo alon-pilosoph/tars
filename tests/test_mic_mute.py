@@ -85,3 +85,8 @@ def test_a_chats_say_is_announced_word_for_word(speaker, short_folder):
     finally:
         server.close()
     assert assistant.announcements.take() == ["Ari, time for bed"]
+
+
+def test_at_a_glance_muted_or_listening():
+    for muted, said in ((True, "muted"), (False, "listening")):
+        assert MicMute(Path("/nowhere"), ask=lambda folder, op, m=muted, **args: {"muted": m}).glance() == said

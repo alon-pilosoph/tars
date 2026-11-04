@@ -1074,7 +1074,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
         )
-        set_muted = start_buttons(cfg, volume, assistant, root)
+        set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
             from .control import Server
 

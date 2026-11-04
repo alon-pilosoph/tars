@@ -38,6 +38,9 @@ class MicMute(Device):
     def status(self) -> str:
         return f"{DEVICE}: {said(self._answer())}"
 
+    def glance(self) -> str:
+        return "muted" if self._answer() else "listening"
+
     def call(self, action: str, args: dict, request: Request) -> str:
         want = action == OFF
         muted = self._answer(muted=want)

@@ -454,6 +454,15 @@ def test_who_is_home_is_a_status_only_device_in_the_house(board, tmp_path):
     assert "going by their phone" in tools.rules()
 
 
+def test_who_is_home_at_a_glance_names_them_without_the_times(board, tmp_path):
+    written(board, alon=(True, None, NOW), stacey=(True, None, NOW))
+    assert house(board, tmp_path).devices[DEVICE].glance() == "Alon and Stacey"
+    written(board, alon=(True, None, NOW), stacey=(False, None, NOW))
+    assert house(board, tmp_path).devices[DEVICE].glance() == "Alon · Stacey out"
+    written(board, alon=(False, None, NOW), stacey=(None, None, None))
+    assert house(board, tmp_path).devices[DEVICE].glance() == "nobody · Alon out · Stacey not known yet"
+
+
 def test_a_database_that_fails_is_who_is_home_unknown_not_the_whole_house_failing(board, monkeypatch, tmp_path):
     def locked(*a, **kw):
         raise sqlite3.OperationalError("database is locked")

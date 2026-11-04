@@ -434,3 +434,12 @@ def test_the_ac_says_how_to_use_it_and_what_check_finds(tmp_path):
     unit.profile.checked = True
     (found,) = unit.check()
     assert found.status == "ok" and found.detail.startswith("profile: cool")
+
+
+def test_at_a_glance_on_with_its_settings_and_how_tars_knows(tmp_path):
+    unit, _, _ = ac(tmp_path)
+    assert unit.glance() == "off (as TARS last set it)"
+    unit.call("on", {**NOTHING, "temperature": 24})
+    assert unit.glance() == "on · cool 24, fan auto (as TARS last set it)"
+    seen, _, _ = ac(tmp_path / "seen", sensor=lambda: "on")  # its light says so: nothing to add
+    assert seen.glance() == "on · cool 24, fan auto"

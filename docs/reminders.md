@@ -24,7 +24,9 @@ missed one can be snoozed too).
 ### Who it's for
 
 A reminder or message can be for anyone, by name. TARS starts with the name ("Stacey, …"), so it works for people
-TARS has no voiceprint for. A message says who it's from: the voice that set it, or the name typed on the web UI.
+TARS has no voiceprint for. A name that sounds like someone TARS knows (by voice or phone) is that person, however
+it was spelled: "Stacy", as a model wrote what it heard, is Stacey (Soundex, and only when it can be one person
+alone). A message says who it's from: the voice that set it, or the name typed on the web UI.
 Without a name, it's for whoever is there. **Waiting until they're back** needs that person's voiceprint (a named
 voice) or their phone ([who's home](presence.md)); without either, TARS asks for a time instead, and the web UI won't
 set it.

@@ -93,7 +93,9 @@ domain:
 | `sensor`, `binary_sensor` | status | |
 
 Any of them can have `details`, other entities read out with its status (`["sensor.boiler_time_left"]`). The device
-names are what people call them, and the model gets each one's name and what it can do.
+names are what people call them, and the model gets each one's name and what it can do. Any device, of any kind, may
+have a `label`: how it's written for people, in a chat's `/home`, when that isn't its name (`name = "fire tv"`,
+`label = "Fire TV"`). It's still called and asked for by its name.
 
 ### An Android TV box
 
@@ -193,7 +195,8 @@ toggles twice.
   and off-hook lights). The PowerConf takes the computer's mute only off-hook (in a call), so TARS keeps it off-hook,
   which no light shows, and sets the mute. Without one, the remote's mute is TARS's alone: it stops listening, and
   the mic stays on. Either mute outlasts a restart: muted when TARS stopped, it starts muted (`voice_data/muted` is
-  there while it's muted).
+  there while it's muted). Muted, what's due is still said; one waiting for "got it" unmutes it just for the answer
+  (the light shows it), and what follows from it, then mutes it again.
 - **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
   Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power
   button is the case's own (it turns the Pi on, and shuts it down cleanly).

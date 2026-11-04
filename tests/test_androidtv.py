@@ -454,3 +454,14 @@ def test_check_says_whether_the_box_answers_and_whether_it_can_do_tasks():
 def test_the_box_is_slow_to_wake_and_open_but_not_to_press():
     device = tv(Box())
     assert device.slow("on", {}) and device.slow("open", {}) and not device.slow("press", {})
+
+
+def test_at_a_glance_the_app_in_front_by_name_and_what_it_plays():
+    hbo = MEDIA.replace("com.stremio.one", "com.hbo.hbonow").replace("Stremio/Stremio", "HBO/HBO")
+    assert TvDevice("tv", Box(front="com.hbo.hbonow", media=hbo), None).glance() == "on · HBO Max · playing Toy Story"
+    # YouTube's session, paused behind it with no title ("null"), isn't what's in front: not said.
+    youtube = "    package=com.amazon.firetv.youtube\n      active=true\n      state=PlaybackState {state=2}\n"
+    youtube += "      metadata: size=0, description=null\n"
+    assert TvDevice("tv", Box(front="com.hbo.hbonow", media=youtube), None).glance() == "on · HBO Max"
+    assert Box(media=youtube).media() == [("com.amazon.firetv.youtube", "paused", "")]
+    assert TvDevice("tv", Box(awake=False), None).glance() == "asleep"
