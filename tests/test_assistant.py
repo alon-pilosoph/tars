@@ -606,6 +606,29 @@ def test_a_due_reminder_is_said_after_a_chime_and_got_it_acknowledges_it(speaker
     ]
 
 
+def test_muted_its_unmuted_just_for_got_it_then_muted_again(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [b"ok", None], ["got it"], replies=["<ack>"])
+    switched = []
+
+    def button(muted):  # the speakerphone's mute, as start_buttons hands it over
+        switched.append(muted)
+        assistant.mute(muted)
+
+    assistant.set_muted = button
+    assistant.mute(True)
+    assistant.say_reminders(follow_up_s=4.0)
+    assert reminders.get(rid)["status"] == ACKNOWLEDGED
+    assert switched == [False, True] and assistant.muted
+
+
+def test_muted_with_nothing_to_wait_for_it_stays_muted(speaker, tmp_path):
+    assistant, reminders, rid, _ = reminding(speaker, tmp_path, [], [], needs_ack=False)
+    assistant.set_muted = lambda muted: pytest.fail("nothing to listen for")
+    assistant.mute(True)
+    assistant.say_reminders()
+    assert assistant.muted and reminders.get(rid)["status"] == SAID
+
+
 def test_nobody_answering_leaves_it_waiting_to_be_said_again(speaker, tmp_path):
     assistant, reminders, rid, _ = reminding(speaker, tmp_path, [None], [])
     assistant.say_reminders()

@@ -247,7 +247,8 @@ speakerphone_mute = true
 
 # One [[home.devices]] for each thing TARS may work, by the name people call it. Home Assistant's entity ids are in
 # Settings > Devices & services > Entities; TARS works locks, switches, lights, fans, toggle helpers (input_boolean),
-# covers, climate, media players, and reads sensors.
+# covers, climate, media players, and reads sensors. Any device may have a label, how it's written for people (a
+# chat's /home), when that isn't its name: name = "fire tv", label = "Fire TV".
 #
 # [[home.devices]]
 # name = "front door"

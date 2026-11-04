@@ -52,7 +52,7 @@ client, which its terms forbid.
 | "send me a packing list for Rome" | the list is posted in the chat, and kept on the TARS page |
 | /say dinner's ready | said aloud at home, word for word, after a chime and never over a conversation; even while TARS is muted. For a message with who it's from, and word of when it was said, write "tell the house…" |
 | /volume 40, /volume up | TARS's speaker set, or turned a step (10%); /volume alone says the level |
-| /home | how everything in the house is, as the home tool reads it |
+| /home | the house at a glance: a short line a device ("Front door: locked · battery 80%"); what nothing can tell (IR) is left out |
 | /mute, /unmute | TARS's microphone at home muted or unmuted, as its button does |
 | /new | starts a new conversation: TARS forgets this one |
 | "I took the pills" | acknowledges a reminder that was said aloud at home and is waiting for a "got it" |

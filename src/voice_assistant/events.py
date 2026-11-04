@@ -7,6 +7,7 @@ win over the automatic ones.
 
 import sqlite3
 import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import NamedTuple
 
@@ -42,6 +43,39 @@ SAMPLES = 4  # requests a voice is shown with
 def person_key(name: str | None) -> str | None:
     """Voiceprint, cluster and "for" names are the same person whatever their case or stray spaces."""
     return (name.strip().lower() or None) if name else None
+
+
+# Soundex's digits: letters that sound alike share one; vowels, h, w and y have none.
+_SOUNDS = {c: d for d, letters in enumerate(["bfpv", "cgjkqsxz", "dt", "l", "mn", "r"], 1) for c in letters}
+
+
+def _soundex(word: str) -> str:
+    """How a word sounds, roughly, as Soundex codes it: "Stacy" and "Stacey" are both s32."""
+    letters = [c for c in word.lower() if c.isalpha()]
+    if not letters:
+        return ""
+    code, last = letters[0], _SOUNDS.get(letters[0])
+    for c in letters[1:]:
+        digit = _SOUNDS.get(c)
+        if digit and digit != last:
+            code += str(digit)
+        if c not in "hw":  # h and w don't part two letters that sound alike
+            last = digit
+    return code[:4]
+
+
+def known_as(name: str | None, people: Collection[str]) -> str | None:
+    """Which of `people` `name` is: itself, as written, when it's one of them whatever its case; or else the one person
+    it sounds like, the way a model may spell what it heard ("Stacy" for Stacey). None if it's nobody, or could be
+    more than one."""
+    key = person_key(name)
+    if key is None:
+        return None
+    if any(person_key(person) == key for person in people):
+        return name
+    sound = [_soundex(w) for w in key.split()]
+    alike = {person_key(p): p for p in people if [_soundex(w) for w in p.split()] == sound}
+    return next(iter(alike.values())) if len(alike) == 1 else None
 
 
 class EventLog:

@@ -46,6 +46,13 @@ def decode_recording(data: bytes) -> np.ndarray:
     return (np.clip(mono, -1.0, 1.0) * 32767).astype(np.int16)
 
 
+def warm_decoder() -> None:
+    """Loads what decode_recording needs (scipy's signal takes seconds to import on a Pi), so the first recording
+    decoded doesn't wait for it."""
+    import soundfile  # noqa: F401
+    from scipy.signal import resample_poly  # noqa: F401
+
+
 def wav_bytes(pcm: bytes | np.ndarray) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as f:

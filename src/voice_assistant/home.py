@@ -111,9 +111,15 @@ class Device:
     call is said as an error. The tool calls one device at a time."""
 
     actions: tuple[str, ...] = (STATUS,)
+    label: str | None = None  # [[home.devices]] label: how it's written for people, "Fire TV" for "fire tv"
 
     def __init__(self, name: str):
         self.name = name
+
+    @property
+    def display(self) -> str:
+        """How a person reads its name at the start of a line: its label, or its name with a capital."""
+        return self.label or self.name[:1].upper() + self.name[1:]
 
     def what(self) -> str:
         """One line for the instructions: what it is and what it can do, with any buttons or limits."""
@@ -134,6 +140,11 @@ class Device:
     def rules(self) -> str:
         """Anything the model must know to use this kind of device well; the same text is given once."""
         return ""
+
+    def glance(self) -> str | None:
+        """How it is, in a few words for a person reading the whole house at once (a chat's /home), without its
+        name: "locked · battery 80%". None leaves it out (nothing can tell). By default, its status."""
+        return self.status().removeprefix(f"{self.name}: ")
 
     def slow(self, action: str, args: dict) -> bool:
         """Whether the action takes long enough that TARS should say "One moment." first."""
@@ -188,7 +199,9 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     from . import androidtv, hass
 
     unavailable: dict[str, str] = {}
-    specs = [(d["name"].strip(), d) for d in cfg.devices]  # as people call them: "AC", "front door"
+    # As people call them ("AC", "front door"), and without label, which is how each is written, the same for all.
+    specs = [(d["name"].strip(), {k: v for k, v in d.items() if k != "label"}) for d in cfg.devices]
+    labels = {d["name"].strip(): d["label"].strip() for d in cfg.devices if d.get("label")}
     if context.hass is None and cfg.url and context.secret(TOKEN_KEY):
         context.hass = hass.HomeAssistant(cfg.url, context.secret(TOKEN_KEY))
     makers: dict[str, Callable[[dict], Device]] = {}
@@ -228,6 +241,7 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         except Exception as e:  # noqa: BLE001 - one device that can't be made never stops the others
             unavailable[name] = str(e) or type(e).__name__
             continue
+        device.label = labels.get(name) or device.label
         context.devices[name.lower()] = device
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
@@ -390,6 +404,18 @@ class HomeTools:
         if not UNLOCK_WORDS.search(request.heard):
             return 'refused: unlocking needs them to say "unlock"; it never follows from anything else'
         return None
+
+    def glance(self) -> str:
+        """The whole house for a person to read: a line a device, "Front door: locked · battery 80%"."""
+        lines = []
+        for device in self.devices.values():
+            try:
+                said = device.glance()
+            except HomeError as e:
+                said = f"can't tell ({e})"
+            if said:
+                lines.append(f"{device.display}: {said}")
+        return "\n".join(lines) or "Nothing in the house to show."
 
     def _status(self, device: Device) -> str:
         try:

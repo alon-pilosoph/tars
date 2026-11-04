@@ -238,6 +238,15 @@ class AC(Device):
         how = "someone said so" if state.how == "told" else "as far as TARS knows: it can't see the AC"
         return f"{self.name}: {'on' if state.on else 'off'} ({how}), last set to {settings}"
 
+    def glance(self) -> str:
+        """ "on · cool 24, fan auto", with "(as TARS last set it)" when nothing sees the AC."""
+        state, seen = State.load(self._path), self._seen()
+        on = state.on if seen is None else seen
+        how = "" if seen is not None else " (as someone said)" if state.how == "told" else " (as TARS last set it)"
+        if not on:
+            return f"off{how}"
+        return f"on · {(state.settings or self._default()).said()}{how}"
+
     def what(self) -> str:
         temps = self.profile.temperatures()
         degrees = f", {temps[0]} to {temps[1]} degrees" if temps else ""

@@ -181,6 +181,9 @@ class Remote(Device):
     def status(self) -> str:
         return f"{self.name}: unknown (IR can't tell)"
 
+    def glance(self) -> None:
+        return None  # nothing can tell: left out of the house at a glance
+
     def call(self, action: str, args: dict, request=None) -> str:
         if action in ("on", "off"):
             return self._power(action == "on")

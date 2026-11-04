@@ -57,6 +57,24 @@ APPS = {
     "kodi": "org.xbmc.kodi",
     "apple tv": "com.apple.atve.amazon.appletv",
     "max": "com.wbd.stream",
+    "hbo max": "com.hbo.hbonow",
+}
+# What a person reads for an app in front (/home); any other is its package.
+LABELS = {
+    "com.stremio.one": "Stremio",
+    "com.netflix.ninja": "Netflix",
+    "com.amazon.firetv.youtube": "YouTube",
+    "com.google.android.youtube.tv": "YouTube",
+    "com.amazon.avod": "Prime Video",
+    "com.disney.disneyplus": "Disney+",
+    "com.spotify.tv.android": "Spotify",
+    "com.plexapp.android": "Plex",
+    "org.xbmc.kodi": "Kodi",
+    "com.apple.atve.amazon.appletv": "Apple TV",
+    "com.wbd.stream": "Max",
+    "com.hbo.hbonow": "HBO Max",
+    "com.amazon.tv.launcher": "the home screen",
+    "com.amazon.firebat": "the home screen",
 }
 PLAYBACK = {"0": "nothing", "1": "stopped", "2": "paused", "3": "playing", "6": "buffering", "7": "error"}
 SETTLE_S = 4.0  # how long waking or sleeping gets to show on the box
@@ -199,7 +217,8 @@ class AndroidTV:
                 continue
             title = re.search(r"description=([^,\n]+)", block)
             active = "active=true" in block
-            entry = (package.group(1), PLAYBACK.get(state.group(1), "unknown"), title.group(1).strip() if title else "")
+            words = title.group(1).strip() if title else ""
+            entry = (package.group(1), PLAYBACK.get(state.group(1), "unknown"), "" if words == "null" else words)
             sessions.insert(0 if active else len(sessions), entry)
         return sessions
 
@@ -589,6 +608,18 @@ class TvDevice(Device):
         if not self.box.awake():
             return f"{self.name}: asleep (the TV is off, or showing something else)"
         return f"{self.name}: on, in {self.box.app() or 'nothing'}; {self.box.playing()}"
+
+    def glance(self) -> str:
+        """ "on · HBO Max · playing Toy Story": the app in front, and what it plays when it says."""
+        if not self.box.awake():
+            return "asleep"
+        app = self.box.app()
+        parts = ["on", LABELS.get(app, app)]
+        for package, state, title in self.box.media():
+            if package == app and title and state in ("playing", "paused"):
+                parts.append(f"{state} {title}")
+                break
+        return " · ".join(p for p in parts if p)
 
     def check(self) -> list[Check]:
         try:

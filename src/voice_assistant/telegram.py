@@ -31,12 +31,12 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from .audio import SAMPLE_RATE, decode_recording
+from .audio import SAMPLE_RATE, decode_recording, warm_decoder
 from .config import TELEGRAM_KEY, ConfigError
 from .control import Refused, Unavailable
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
-from .home import EVERYTHING, OFF, ON, PRESS, SET, STATUS, HomeTools, Request
+from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
 from .llm import REMIND_TOOLS, SEARCHING, THINKING, Brain, split_ack
 from .mic_mute import DEVICE as MIC
 from .reminders import (
@@ -334,6 +334,16 @@ class Chat:
 
 
 @contextmanager
+def _timed(took: dict[str, float], what: str) -> Iterator[None]:
+    """How long the block took, in seconds, kept in `took` under `what`."""
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        took[what] = time.perf_counter() - start
+
+
+@contextmanager
 def _free(chat: Chat) -> Iterator[bool]:
     """Holds `chat` if nothing else is: True then, False if TARS is answering in it (try again later)."""
     got = chat.busy.acquire(blocking=False)
@@ -415,6 +425,8 @@ class TelegramTars:
         except TelegramError as e:  # only the menu: /new works without it
             print(f"(Telegram: couldn't set the commands menu: {e})")
         threading.Thread(target=self._deliver_forever, daemon=True, name="telegram-deliver").start()
+        if self._transcriber is not None:  # a voice message's decoder loads in seconds on a Pi: not on the first one
+            threading.Thread(target=warm_decoder, daemon=True, name="telegram-warm").start()
         offset, failures = None, 0
         while True:
             try:
@@ -495,12 +507,12 @@ class TelegramTars:
         return "Saying it at home now."
 
     def house_command(self, chat: Chat, command: str, rest: str = "") -> str:
-        """/home: every device's status, as the home tool reads it. /volume: TARS's speaker's, read, set or turned.
-        /mute and /unmute: TARS's microphone at home."""
+        """/home: the whole house, a line a device, for reading (HomeTools.glance). /volume: TARS's speaker's, read,
+        set or turned. /mute and /unmute: TARS's microphone at home."""
         if self._home is None:
             return NO_HOUSE
         if command == "/home":
-            return self._home.call({"device": EVERYTHING, "action": STATUS}, Request(speaker=chat.person))
+            return self._home.glance()
         if command == "/volume":
             return self.volume(chat, rest)
         if MIC.lower() not in self._home.devices:
@@ -543,22 +555,26 @@ class TelegramTars:
             self._send(chat.chat_id, TOO_LONG)
             return
         with chat.busy:
-            recording, stage, start = None, OTHER, time.perf_counter()
+            recording, stage, took = None, OTHER, {}
             try:
                 with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                    data = self._bot.download(voice["file_id"])
+                    with _timed(took, "download"):
+                        data = self._bot.download(voice["file_id"])
                     stage = STT
-                    recording = decode_recording(data)
+                    with _timed(took, "decode"):
+                        recording = decode_recording(data)
                     if len(recording) > MAX_VOICE_S * SAMPLE_RATE:  # Telegram's duration is a claim; this is the audio
                         self._send(chat.chat_id, TOO_LONG)
                         return
-                    text = transcribe_recording(self._transcriber, recording) if len(recording) >= MIN_VOICE else ""
+                    with _timed(took, "speech to text"):
+                        text = transcribe_recording(self._transcriber, recording) if len(recording) >= MIN_VOICE else ""
             except Exception as e:  # noqa: BLE001 - said in the chat, and kept as a failed turn with where it failed
                 print(f"(Telegram: couldn't listen to {chat.person}'s voice message: {e!r})", flush=True)
                 self._keep_unanswered(chat, recording, failed_at=stage, error=f"{type(e).__name__}: {e}")
                 self._send(chat.chat_id, COULDNT_LISTEN)
                 return
-            print(f"(Telegram: {chat.person}'s voice message, {time.perf_counter() - start:.1f} s to write down)")
+            stages = ", ".join(f"{what} {s:.1f} s" for what, s in took.items())
+            print(f"(Telegram: {chat.person}'s voice message, {sum(took.values()):.1f} s to write down: {stages})")
             if not text:
                 self._keep_unanswered(chat, recording, said=NO_WORDS)
                 self._send(chat.chat_id, NO_WORDS)
