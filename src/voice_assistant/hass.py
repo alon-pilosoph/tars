@@ -9,16 +9,19 @@ import json
 import re
 import time
 from collections.abc import Callable
+from datetime import datetime
 from urllib.parse import urlsplit
 
 import httpx
 from websockets import WebSocketException
 from websockets.sync.client import connect
 
+from . import history
 from .config import CAMERA_WATCH_S
 from .conversations import FILE, LINK, SentItem
 from .home import (
     CLOSE,
+    HISTORY,
     LOCK,
     OFF,
     ON,
@@ -44,6 +47,8 @@ HTTP_TIMEOUT_S = 5.0
 SERVICE_TIMEOUT_S = 30.0
 POLL_S = 0.5
 UNKNOWN = ("unknown", "unavailable", "")
+# Years of hourly statistics can take Home Assistant a few seconds to gather.
+STATISTICS_TIMEOUT_S = 20.0
 # AirVisual's (IQAir's) main pollutant, as its sensor's state codes it: Home Assistant's API gives the code, and only
 # its own pages put it in words.
 POLLUTANTS = {"p2": "PM2.5", "p1": "PM10", "o3": "ozone", "n2": "NO₂", "s2": "SO₂", "co": "CO"}
@@ -65,7 +70,7 @@ class HomeAssistant:
         command: Callable[[dict], object] | None = None,
     ):
         self._url, self._token = url.rstrip("/"), token
-        # The websocket API, for what the REST one can't do (signing a camera's live link); replaced in the tests.
+        # The websocket API, for what the REST one can't do (a camera's live link, statistics); replaced in the tests.
         self._command = command or self._websocket
         self._http = httpx.Client(
             base_url=url.rstrip("/"),
@@ -137,9 +142,24 @@ class HomeAssistant:
             host = f"[{host}]"
         return f"{split.scheme or 'http'}://{host}{port}{path}"
 
+    def statistics(self, entities: list[str], start: datetime, end: datetime, period: str) -> dict[str, list[dict]]:
+        """The entities' long-term statistics from start to end, a row a period ({start: ms, mean, min, max}): only
+        its websocket API has them."""
+        found = self._command(
+            {
+                "type": "recorder/statistics_during_period",
+                "start_time": start.isoformat(),
+                "end_time": end.isoformat(),
+                "statistic_ids": entities,
+                "period": period,
+                "types": ["mean", "min", "max"],
+            }
+        )
+        return found if isinstance(found, dict) else {}
+
     def _websocket(self, message: dict) -> object:
         """Sends one command over Home Assistant's websocket API, signed in with the token, and returns its result.
-        The REST API can't do everything (signing a camera's live link); this covers the rest."""
+        The REST API can't do everything (a camera's live link, statistics); this covers the rest."""
         url = "ws" + self._url.removeprefix("http") + "/api/websocket"
         try:
             with connect(url, open_timeout=HTTP_TIMEOUT_S, close_timeout=1) as ws:
@@ -148,7 +168,7 @@ class HomeAssistant:
                 if json.loads(ws.recv(timeout=HTTP_TIMEOUT_S)).get("type") != "auth_ok":
                     raise HomeError(f"Home Assistant refused the token ({TOKEN_KEY} in .env)")
                 ws.send(json.dumps({"id": 1, **message}))
-                while (answer := json.loads(ws.recv(timeout=HTTP_TIMEOUT_S))).get("id") != 1:
+                while (answer := json.loads(ws.recv(timeout=STATISTICS_TIMEOUT_S))).get("id") != 1:
                     pass
         except TimeoutError as e:
             raise NoAnswer("Home Assistant didn't answer in time") from e
@@ -563,10 +583,41 @@ READ_BACK: dict[str, Callable[[dict], tuple]] = {
 
 
 class Sensor(Entity):
-    """Something only read: a temperature, a door or window, a power meter."""
+    """Something only read: a temperature, a door or window, a power meter. A sensor with numbers (not a binary
+    sensor) has a history too: Home Assistant's statistics of it and its details (history.py)."""
+
+    def __init__(self, name: str, spec: dict, hass: HomeAssistant, **timing):
+        super().__init__(name, spec, hass, **timing)
+        self.actions = (STATUS, HISTORY) if self.domain == "sensor" else (STATUS,)
 
     def what(self) -> str:
-        return "a sensor: status only"
+        if HISTORY not in self.actions:
+            return "a sensor: status only"
+        return "a sensor: status, and history (its readings in the past, its details' too)"
+
+    def rules(self) -> str:
+        return SENSOR_HISTORY_RULES if HISTORY in self.actions else ""
+
+    def history(self, args: dict) -> str:
+        now = datetime.now().astimezone()
+        try:
+            start, end, period = history.span(args.get("since"), args.get("until"), args.get("every"), now)
+        except history.WhenError as e:
+            raise HomeError(str(e)) from None
+        entities = [self.entity, *(e for e in self.details if e.startswith("sensor."))]
+        rows = self._hass.statistics(entities, start, end, period)
+        readings = []
+        for entity in entities:
+            try:
+                a = self._hass.state(entity).get("attributes") or {}
+            except HomeError:
+                a = {}
+            readings.append(
+                history.Reading(
+                    a.get("friendly_name") or entity, a.get("unit_of_measurement") or "", rows.get(entity) or []
+                )
+            )
+        return history.table(self.name, readings, start, end, period)
 
     def _said(self, found: dict) -> str:
         state = super()._said(found)
@@ -578,6 +629,14 @@ class Sensor(Entity):
 
     def call(self, action: str, args: dict, request) -> str:
         return f"error: the {self.name} can only be read"
+
+
+SENSOR_HISTORY_RULES = (
+    "A sensor's history is Home Assistant's record of it: an average, low and high for each hour, day, week or month. "
+    "Use it for anything about the past (last night, this week, last winter, since when), with since and until in "
+    "local time; last night is 22:00 to 07:00. Say what it shows in a sentence or two, a trend, a peak and when, a "
+    "comparison: never read the table out. It says where there are no readings; don't guess what they were."
+)
 
 
 def _binary(state: str, device_class: str) -> str:

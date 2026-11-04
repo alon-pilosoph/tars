@@ -9,7 +9,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from voice_assistant.home import ACTIONS, STATUS
+from voice_assistant.home import ACTIONS, READS
 from voice_assistant.llm import FALLBACK, LOOKED_UP, PONDERED, QUICK
 from voice_assistant.reminders import ADD, CANCEL, KINDS, SNOOZE, Change, due_at
 
@@ -233,8 +233,8 @@ def _turn(raw: dict, where: str) -> Turn:
                 {"device", "action", "minutes", "temperature", "mode", "fan", "button", "app", "title", "goal"},
                 f"{where}, home",
             )
-            if h.get("action") not in ACTIONS or h["action"] == STATUS:
-                raise ValueError(f"{where}, home: action must be one of {[a for a in ACTIONS if a != STATUS]}")
+            if h.get("action") not in ACTIONS or h["action"] in READS:
+                raise ValueError(f"{where}, home: action must be one of {[a for a in ACTIONS if a not in READS]}")
             home.append(ExpectedHome(**{**h, "device": str(h["device"]).lower()}))
     return Turn(
         say=raw["say"],

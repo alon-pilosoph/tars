@@ -20,6 +20,7 @@ household's IR-only AC and TV remotes.
 | "Turn it up a bit" | the soundbar's volume up, three presses |
 | "You're too loud" / "Set your volume to 40" | with `[home] own_speaker`: TARS's own speaker a step down, or at 40%, read back; "how loud are you?" says its level |
 | "How warm is it in the living room?" | a sensor, read |
+| "How was the air last night?" / "Was CO₂ worse last winter?" | a sensor's history: Home Assistant's hourly record of it and its details, told in a sentence or two |
 | "Play Toy Story on Stremio" | "On it.", and the TV's agent works it out on screen; "Toy Story is playing." after a chime |
 | "Is everything off?" | every device's status at once |
 
@@ -90,12 +91,23 @@ domain:
 | `cover` | status, open, close | |
 | `climate` | status, on, off, set (mode, temperature, fan, from those it lists) | |
 | `media_player` | status, on, off, press (volume up and down, mute, play and pause, next, previous) | |
-| `sensor`, `binary_sensor` | status | |
+| `sensor` | status, history | |
+| `binary_sensor` | status | |
 
 Any of them can have `details`, other entities read out with its status (`["sensor.boiler_time_left"]`). The device
 names are what people call them, and the model gets each one's name and what it can do. Any device, of any kind, may
 have a `label`: how it's written for people, in a chat's `/home`, when that isn't its name (`name = "fire tv"`,
 `label = "Fire TV"`). It's still called and asked for by its name.
+
+**A sensor's history** (`history.py`) is Home Assistant's long-term statistics of it and its `sensor` details: an
+average, low and high for each hour, which Home Assistant keeps for good (its state history goes after ten days). The
+model asks for a span (`since`, `until`, local time) and how finely (`every`: hour, day, week or month), and gets a
+short table: a row a period, then each reading's average, lowest and highest over the span, and when, and the
+stretches with no readings, so it says there's nothing rather than guessing. A span too long for the period asked
+comes back in bigger periods, at most 48 rows. History is a read, like status: it goes through at once, and after a
+web search too. Only sensors with a `state_class` have statistics in Home Assistant (most numeric sensors do). Older
+readings kept elsewhere (a monitor's own files) can be added to them with Home Assistant's
+`recorder/import_statistics`, for the hours before its own.
 
 ### An Android TV box
 
