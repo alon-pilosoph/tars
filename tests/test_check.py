@@ -19,7 +19,7 @@ from .test_presence import FakeHomeware, FakeXiaomi, presence_config
 
 @pytest.fixture
 def cfg():
-    # The repo's, as shipped: OpenAI, Deepgram, Groq and Cerebras.
+    # The repo's, as shipped: OpenAI, Deepgram and Cerebras.
     return load_config(Path(__file__).parents[1] / "config.toml", local=False)
 
 
@@ -28,8 +28,8 @@ def test_missing_keys_say_what_runs_instead_and_where_to_put_them(cfg, tmp_path)
     env.write_text("OPENAI_API_KEY=sk-1\nDEEPGRAM_API_KEY=\n")
     r = check.keys(cfg, env)
     assert r.status == WARN and str(env) in r.fix
-    assert "no DEEPGRAM_API_KEY" in r.detail and "no GROQ_API_KEY" in r.detail
-    env.write_text("GROQ_API_KEY=g\n")
+    assert "no DEEPGRAM_API_KEY" in r.detail and "no CEREBRAS_API_KEY" in r.detail
+    env.write_text("CEREBRAS_API_KEY=c\n")
     assert check.keys(cfg, env).status == FAIL
     env.write_text("OPENAI_API_KEY=a\nDEEPGRAM_API_KEY=b\nGROQ_API_KEY=g\nCEREBRAS_API_KEY=c\nCARTESIA_API_KEY=d\n")
     env.chmod(0o600)

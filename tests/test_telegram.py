@@ -789,12 +789,12 @@ def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path)
     from voice_assistant.__main__ import chat_brain_config
     from voice_assistant.config import load_config
 
-    # As shipped: Qwen on Groq and Cerebras, Luna at "fast".
+    # As shipped: Qwen on Cerebras, Luna at "fast".
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     llm = chat_brain_config(cfg, has_openai=True)
     assert (llm.groq_model, llm.cerebras_model, llm.service_tier, llm.reasoning_effort) == ("", "", "", "low")
     assert llm.model == cfg.llm.model and llm.send == cfg.llm.send
-    assert chat_brain_config(cfg, has_openai=False).groq_model == cfg.llm.groq_model  # no OpenAI: Qwen answers
+    assert chat_brain_config(cfg, has_openai=False).cerebras_model == cfg.llm.cerebras_model  # no OpenAI: Qwen answers
     quick = dataclasses.replace(cfg, telegram=dataclasses.replace(cfg.telegram, brain="quick"))
     assert chat_brain_config(quick, has_openai=True).service_tier == cfg.llm.service_tier
     # A written reply often comes back later than a spoken one: the chat remembers for longer, whoever answers.

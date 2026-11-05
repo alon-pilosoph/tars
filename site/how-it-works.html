@@ -362,13 +362,11 @@
             </tr>
             <tr>
               <td>Brain</td>
-              <td>Qwen on Groq</td>
+              <td>Qwen on Cerebras</td>
               <td>
-                Qwen on Cerebras, then OpenAI<span class="small"
-                  >If Groq hasn't started answering within half a second, Cerebras is asked too and the first to answer
-                  is kept. A service that fails is skipped for the next two minutes, so an outage doesn't cost every
-                  turn its timeout; with both out, OpenAI answers. A reply too long for Groq's cap, like a long note, is
-                  written on Cerebras.</span
+                OpenAI<span class="small"
+                  >A service that fails is skipped for the next two minutes, so an outage doesn't cost every turn its
+                  timeout, and OpenAI answers.</span
                 >
               </td>
             </tr>

@@ -1,5 +1,6 @@
 """config.toml: the shipped one loads, and a setting that can't work stops the assistant with one clear line."""
 
+import dataclasses
 import re
 from pathlib import Path
 
@@ -101,8 +102,15 @@ def test_with_every_key_the_setup_runs_as_config_toml_says():
     assert with_keys(cfg, EVERY_KEY) == (cfg, [])
 
 
-def test_without_groqs_key_qwen_runs_on_cerebras_alone():
+def test_qwen_ships_on_cerebras_alone_and_needs_no_groq_key():
     cfg, notes = with_keys(load_config(REPO_CONFIG, local=False), EVERY_KEY - {"GROQ_API_KEY"})
+    assert cfg.llm.groq_model == "" and cfg.llm.cerebras_model and notes == []
+
+
+def test_with_groq_set_up_but_no_key_qwen_runs_on_cerebras_alone():
+    shipped = load_config(REPO_CONFIG, local=False)
+    groq = dataclasses.replace(shipped, llm=dataclasses.replace(shipped.llm, groq_model="qwen-g"))
+    cfg, notes = with_keys(groq, EVERY_KEY - {"GROQ_API_KEY"})
     assert cfg.llm.groq_model == "" and cfg.llm.cerebras_model
     assert notes == ["no GROQ_API_KEY: Qwen doesn't run on Groq"]
 

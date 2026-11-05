@@ -97,19 +97,18 @@ request, so a stream that's connected but stalled costs its wait once: 5 s for N
 words Flux never sent. A short line keeps a conversation waiting at most 3 s while it's made ("Yes, Alon?" for someone
 just enrolled), and what TARS says on its own at most 10 s, after which it's tried again later.
 
-Qwen runs on Groq first, then on Cerebras, then OpenAI's Luna answers (`QuickChat` in `llm.py`):
+Qwen runs on Cerebras, then OpenAI's Luna answers (`QuickChat` in `llm.py`). With Groq set up too, Groq is asked first:
 
 - **A hedge, not a timeout.** If the service asked hasn't started answering within 0.5 s (`HEDGE_S`), the next one is
   asked too, and the first to say anything is kept. The others are closed before any of their tools run, so a reminder
   is never set twice.
 - **A failed service is skipped** for the next two minutes, so an outage doesn't cost every turn its timeout. After
   "too many requests" it's skipped for as long as the service asks (`Retry-After`), or a minute if it doesn't say.
-  With both out, Luna answers.
+  With every service out, Luna answers.
 - **An interrupted reply isn't a failure.** When you carry on talking and the draft is stopped, nothing is skipped
   and no other service is asked.
-- **A reply that runs into Qwen's cap** (500 tokens on Groq, which refuses a request without one and allows its free
-  key 1,000 a minute; 2,000 on Cerebras) is written on Cerebras if nothing was said or done yet, like a long note,
-  and otherwise carried on by Luna, told what was already said.
+- **A reply that runs into Qwen's cap** (2,000 tokens on Cerebras) is carried on by Luna, told what was already said.
+  With Groq set up, whose cap is 500, one that runs out there before anything was said or done is written on Cerebras.
 
 A failed answer is kept in its conversation with where it failed (speech to text, the answer, or the voice) and why,
 and Home shows it.
@@ -119,7 +118,7 @@ and Home shows it.
 Each of TARS's turns keeps the same stages as the log line (`timings` in the `turns` table, in seconds), which model
 wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed the turn over, `ponder` when it went to the
 thinking model, `fallback` when Qwen couldn't answer on any service or ran into its cap, `openai` with no quick service
-set up), and where Qwen's reply came from (`quick_service`: `Groq` or `Cerebras`, hand-offs included). Home shows the
+set up), and where Qwen's reply came from (`quick_service`, hand-offs included). Home shows the
 time to first sound and the model under each answer; hovering shows each stage. For a week's numbers, by service:
 
 ```sql
@@ -245,8 +244,11 @@ Both services run the same weights, so whichever answers, it's the same model wi
 **Trade-off:** Groq's free key allows 8,000 tokens a minute, 1,000 of them written, plus a daily allowance; with
 TARS's instructions and tools that is about two requests a minute, which a conversation can use up. When Groq says
 "too many requests", Cerebras answers until Groq is ready again, so a busy minute costs about 0.2 s a turn rather than
-the answer, and a slow start on Groq costs a second request on Cerebras. `quick_service` on every turn shows how often
-that happens in real use ([timings on every answer](#timings-on-every-answer)).
+the answer, and a slow start on Groq costs a second request on Cerebras.
+
+**Decision since: Qwen on Cerebras alone.** On the Pi, from 17 October to 4 November 2026, Groq wrote 3 of 27 quick
+replies and Cerebras 24; the logs show it returning nothing six times and running into its rate limit. A benchmark's
+quick run hid what a free key does in use. Groq stays as an option (`[llm] groq_model`), off by default.
 
 ### Which voice?
 
@@ -305,8 +307,6 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 
 - **Measured on the development Mac**; the numbers move by a few tenths between runs, and the four-setup comparison
   ran while the Mac was also training models.
-- **Groq's free-key limits are untested in real use.** In the benchmark Groq answered every turn; how often a
-  household's conversations run into its limit, and hand turns to Cerebras, is what `quick_service` will show.
 - **Spliced pauses aren't real hesitations** (no "um", no stretched last word), which may flatter Flux in the
   cut-off test.
 - **Starting early costs brain calls.** Flux's early "maybe done", where a draft starts, came 0.65 s after the end of
@@ -323,8 +323,8 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 | Setting | In `config.toml` | What it does |
 |---|---|---|
 | `[stt] provider` | `"flux"` | `flux`: Deepgram's Flux transcribes while you talk and decides when you're done. `deepgram`: Nova-3 transcribes while you talk, and the local rules below decide. `openai`: the finished recording is sent after the local rules decide (slowest, one key fewer) |
-| `[llm] groq_model` | `"qwen/qwen3.8-27b"` | the quick brain, on Groq, asked first; empty, or no `GROQ_API_KEY`: not used |
-| `[llm] cerebras_model` | `"qwen-3.8-27b"` | the same Qwen on Cerebras, asked when Groq is being skipped, fails, or hasn't started answering within 0.5 s; empty, or no `CEREBRAS_API_KEY`: not used. Neither: OpenAI's `model` answers everything (~0.3 s slower) |
+| `[llm] groq_model` | `""` | the quick brain on Groq, asked first with Cerebras as its hedge, when set and with a `GROQ_API_KEY` |
+| `[llm] cerebras_model` | `"qwen-3.8-27b"` | the quick brain, on Cerebras; empty, or no `CEREBRAS_API_KEY`: not used. Neither: OpenAI's `model` answers everything (~0.3 s slower) |
 | `[stt] deepgram_host`, `[tts] deepgram_host` | `"api.eu.deepgram.com"` | Deepgram's servers: the EU's, or `api.deepgram.com` for the US (from Israel, the voice's first audio ~0.2 s later) |
 | `[tts] provider`, `model`, `cartesia_voice` | `"cartesia"`, `"sonic-3.6"`, James's id | the voice; `deepgram` with a Flux or Aura-2 voice as the model; `openai` with `gpt-4o-mini-tts` takes delivery instructions but starts ~0.8 s later |
 | `[tts] effect` | `""` | `"tars"`: a speaker in a metal box, applied as the voice streams |

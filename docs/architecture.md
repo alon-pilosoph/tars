@@ -38,7 +38,6 @@ flowchart LR
     api <--> data
     stt <-.-> deepgram["Deepgram"]
     tts <-.-> cartesia["Cartesia"]
-    llm <-.-> groq["Groq"]
     llm <-.-> cerebras["Cerebras"]
     llm <-.-> openai["OpenAI"]
     phone["Phone / laptop browser"] <--> page
@@ -60,11 +59,10 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
 4. **Speech to text** is Flux too, streamed while you talk, so the words come with its decision; if the stream
    fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX, local) runs at the same
    time, so knowing who's talking adds no latency. The request reaches the LLM tagged `[Speaker: Alon]`.
-5. **The LLM** answers in TARS's voice, streamed: Qwen on Groq first (about 0.4 s to its first sentence, at low
-   reasoning with its tools). If Groq hasn't started answering within 0.5 s, the same Qwen on Cerebras is asked too;
-   the first to say anything is kept, and the other is closed before any of its tools run. When the answer needs the
+5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras (about 0.6 s to its first sentence, at low
+   reasoning with its tools). When the answer needs the
    web or the TARS page, Qwen replies `<look-up>`, and that turn goes to OpenAI's model (the Responses API, with web
-   search and the send tool), which also answers when neither Groq nor Cerebras can; all of them share one
+   search and the send tool), which also answers when Cerebras can't; all of them share one
    conversation. Each finished sentence goes to **text to speech** (Cartesia's Sonic voice James; or a Deepgram
    voice, or OpenAI's Onyx) straight away, and playback starts on the first audio chunk, so TARS starts talking while
    the reply is still being written. With `[tts] effect = "tars"`, a speaker-in-a-metal-box effect is applied as it
@@ -78,7 +76,7 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
 class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
-to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice while you're still talking.
+to end. When TARS wakes, it connects to Cerebras, OpenAI and the voice while you're still talking.
 
 ### When something fails
 
@@ -86,11 +84,8 @@ to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice whi
 |---|---|
 | Deepgram's speech-to-text stream, or Flux never sending a turn's last words | OpenAI transcribes the same recording, and the rest of that request, so a stalled stream costs its timeout once |
 | Flux's end of turn | the local rules (Silero VAD, then Smart Turn) take over for that turn |
-| Groq: slow to start | after 0.5 s, Cerebras is asked too, and the first to start answering is kept |
-| Groq or Cerebras: an error, or "too many requests" | the next one answers, and the failed one is skipped for two minutes, or for as long as it asks after "too many requests" |
-| Both Groq and Cerebras | OpenAI's model answers |
-| Qwen's reply runs into its cap (500 tokens on Groq, for its free key; 2,000 on Cerebras) before saying or doing anything | Cerebras writes it, with room for a long note |
-| Qwen's reply runs into its cap after saying or doing something | OpenAI's model carries on, told what was already said, so nothing is said twice |
+| Cerebras: an error, or "too many requests" | OpenAI's model answers, and Cerebras is skipped for two minutes, or for as long as it asks after "too many requests" |
+| Qwen's reply runs into its cap (2,000 tokens) | OpenAI's model carries on, told what was already said, so nothing is said twice |
 | Qwen writes a tool call out as text (`<toolcall>`, `<function=`, also HTML-escaped) | the reply is cut off there, unsaid, and OpenAI takes the turn |
 | Qwen writes a marker HTML-escaped (`&lt;look-up&gt;`, `&lt;skip&gt;`) | it still counts as the marker: it isn't spoken, and does what the marker does |
 | The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed; a reminder or how a task on the TV went waits, with no chime, and is tried again a minute later; the lines made ahead are tried again once a minute, not at every chance |
@@ -100,7 +95,7 @@ to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice whi
 
 ### Running on the keys there are
 
-**Constraint:** TARS uses five services with a key each (Deepgram, Cartesia, Groq, Cerebras and OpenAI), and not
+**Constraint:** TARS uses five services with a key each (Deepgram, Cartesia, Cerebras and OpenAI), and not
 every household will have an account with each, or keep it paid. A missing key shouldn't mean a TARS that won't
 start, or one that fails on the first request.
 
@@ -109,7 +104,7 @@ the rest of the code only sees the setup that runs:
 
 | No key for | What runs instead |
 |---|---|
-| Groq or Cerebras | Qwen on the other one; with neither, OpenAI's model answers everything |
+| Cerebras | OpenAI's model answers everything |
 | Deepgram | OpenAI transcribes once you've stopped (the local rules decide when). Cartesia still speaks; with `[tts] provider = "deepgram"`, OpenAI's voice speaks instead |
 | Cartesia | Deepgram's Flux voice Wes speaks, or OpenAI's without Deepgram |
 | OpenAI | Deepgram hears (Flux) and Cartesia speaks; Qwen answers everything itself, hard questions included, with no web search or speech-to-text backup; it's told it can't look things up, so asked to, it says so |
@@ -170,15 +165,14 @@ failed ([evals](evals.md#what-it-found)). Now and then, in a long reply, Qwen wr
 (`<toolcall> <function=send> ...`) instead of making it. Its words go to the voice as they come, so the reply is cut off
 at the first sign of one (`TOOL_CALL_TEXT`, also when written HTML-escaped), unsaid, and OpenAI takes the turn. An
 HTML-escaped marker (`&lt;look-up&gt;`, `&lt;skip&gt;`, `&lt;ack&gt;`) still counts as the marker: it isn't spoken, and
-does what the marker does. Groq's replies are capped at 500 tokens (its free key allows 1,000 a minute), Cerebras's at
-2,000: a reply that runs out on Groq before anything was said or done, like a long note, is written on Cerebras instead;
-one that already said something goes to OpenAI, which is told what was said and carries on from it. A tool round never
+does what the marker does. Its replies are capped at 2,000 tokens: one that runs out goes to OpenAI, which is told what
+was said and carries on from it. A tool round never
 says again what the reply already said. `tools/capability_bench.py` checks it gets them right; [choosing the quick
 model](models.md) has every model and reasoning effort tried, and how to try the next. The marker isn't `<think>`
 because Qwen 3 models write their own reasoning between those tags.
 
-**Why a quick model that hands off, rather than one model for everything:** Qwen on Groq starts its first sentence
-in about 0.4 s against about 0.7 s for OpenAI's model, and answers what it can itself. The turns that need the web
+**Why a quick model that hands off, rather than one model for everything:** Qwen on Cerebras starts its first sentence
+in about 0.6 s against about 0.7 s for OpenAI's model, and answers what it can itself. The turns that need the web
 or real thinking go to models that are slower but stronger, and TARS says so first, so the wait isn't silent.
 
 ## What it keeps, and where
@@ -201,10 +195,8 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
   - **Deepgram**, on its EU servers (`deepgram_host`), gets your request's audio, streamed for speech to text from
     when you start speaking after a wake.
   - **Cartesia** gets TARS's reply text, a sentence at a time, to speak it.
-  - **Groq** gets the conversation so far (its text, with each request's `[Speaker: name]` tag and TARS's replies)
+  - **Cerebras** gets the conversation so far (its text, with each request's `[Speaker: name]` tag and TARS's replies)
     and answers first.
-  - **Cerebras** gets the same conversation when Groq is being skipped, fails, or hasn't started answering within
-    0.5 s.
   - **OpenAI** gets the same conversation for the turns Qwen hands over (anything that needs the web or the TARS page)
     or can't answer, and runs those turns' web searches. With `[llm] home_city` and `home_country` set, both models
     and the web search are told the city and country, so "what's the weather?" is about home; nothing closer. It also
@@ -277,7 +269,7 @@ The assistant is `src/voice_assistant/`:
 | Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
-| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Groq and Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
+| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API, an errand's approvals, login links and codes) |
 | The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` (the loop), `brain.py`, `openai_brain.py` and `anthropic_brain.py` (its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `money.py` (amounts, however written), `tools.py`, `login.py`, `login_page.py`, `codes.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `trace.py`, `run.py`, `chrome.py` (TARS's own Chrome), `mcp_server.py` and `claude.py` (Claude Code as its brain); `telegram_errands.py` (an errand's questions and answer in a chat); `homenet.py` (what's at home, for the browser and the web UI) |

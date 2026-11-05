@@ -1,4 +1,4 @@
-"""The brain. Qwen answers first (QuickChat), on Groq or else on Cerebras, with its own tools for reminders and the
+"""The brain. Qwen answers first (QuickChat), on Cerebras (or Groq, if set up), with its own tools for reminders and the
 TARS page when `quick_tools` is on, and hands over the turns it can't do (the web, and whatever it has no tool for) to
 OpenAI's model and its tools (OpenAIChat), and the questions that need real thinking to the thinking model. Each model
 is told exactly what it can do, what it hands over, and what TARS can't do at all (abilities()). One shared history,

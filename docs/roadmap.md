@@ -49,7 +49,7 @@ requests, or records a [voice session](web-ui.md#recording-sessions) on the spea
 | Wrong names | Home, a conversation's "who was talking" | rare once voiceprints come from the speakerphone |
 | Cut off mid-sentence | your notes | never |
 | Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 1.2-1.5 s ([response time](latency.md)) |
-| Turns Groq couldn't take | `quick_service` in the `turns` table: `Cerebras`, or none with `answered_by = 'fallback'` | rare; if Groq's free key runs out often, a paid Groq key or Cerebras first |
+| Turns Cerebras couldn't take | `answered_by = 'fallback'` in the `turns` table | rare |
 | Hard questions handed over | `answered_by = 'ponder'` in the `turns` table, and the time to "Let me think" | rare, never for a simple question, and "Let me think" as quick as any first sound |
 | Failed answers | Home, in red: where it failed (speech to text, the answer, the voice) and why | rare, and no one stage over and over |
 | Answers you'd rate bad | Home's good / bad buttons | a list, for step 6 and the benched step |
@@ -274,7 +274,7 @@ there.
 **Where it stands.** The wake word, its double-check, the speech detectors and speaker ID already run on the Pi, and
 so does working the house: Home Assistant, the lock and the boiler through it, the IR blaster and the Android TV box
 are all on the home network. Everything between hearing a request and saying the answer is a cloud service: speech
-to text (Deepgram, OpenAI), the model (Groq, Cerebras, OpenAI) and the voice (Cartesia, Deepgram, OpenAI). When all
+to text (Deepgram, OpenAI), the model (Cerebras, OpenAI) and the voice (Cartesia, Deepgram, OpenAI). When all
 of a stage's services fail, TARS says it couldn't, and the Status page shows which ([web UI](web-ui.md#the-status-page)).
 
 **Plan:**
