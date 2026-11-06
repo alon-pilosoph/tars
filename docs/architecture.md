@@ -94,7 +94,7 @@ to end. When TARS wakes, it connects to Groq, Cerebras, OpenAI and the voice whi
 | Qwen writes a marker HTML-escaped (`&lt;look-up&gt;`, `&lt;skip&gt;`) | it still counts as the marker: it isn't spoken, and does what the marker does |
 | The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed; a reminder or how a task on the TV went waits, with no chime, and is tried again a minute later; the lines made ahead are tried again once a minute, not at every chance |
 | Speaker ID | "Yes?" for the wake word, and the request answered as from an unknown voice |
-| The microphone stops delivering audio | the assistant exits so systemd restarts it |
+| The microphone stops delivering audio, muted too | the assistant exits so systemd restarts it |
 | A write to the event log | `journal.py` absorbs it; the reply goes ahead |
 
 ### Running on the keys there are

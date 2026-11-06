@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from voice_assistant import control
-from voice_assistant.audio import SAMPLE_RATE
+from voice_assistant.audio import SAMPLE_RATE, MicrophoneError
 from voice_assistant.control import Refused
 from voice_assistant.recording import (
     CUT_OFF,
@@ -308,7 +308,7 @@ def test_a_request_and_its_answer_over_the_socket(short_folder):
 def test_held_it_records_takes_instead_of_listening_for_its_name(speaker):
     pcm = take_audio()
     assistant, _ = make_assistant(speaker, [pcm], [])
-    assistant.mic.clear = lambda: None
+    assistant.mic.clear = assistant.mic.discard = lambda: None
     ops = assistant.control_ops()
     ops["hold"]({})
     answers = {}
@@ -324,6 +324,18 @@ def test_held_it_records_takes_instead_of_listening_for_its_name(speaker):
     assert base64.b64decode(answers["stop"]["pcm"]) == pcm and answers["stop"]["stopped"] == SILENCE
     assert assistant.mic.pauses == 1  # the beep, with the mic shut
     assert assistant.talk().startswith("listening")
+
+
+def test_held_a_microphone_that_s_gone_still_ends_tars(speaker):
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.control_ops()["hold"]({})
+
+    def gone():
+        raise MicrophoneError("gone")
+
+    assistant.mic.discard = gone
+    with pytest.raises(MicrophoneError):
+        assistant._wait_held()
 
 
 def test_tapped_mid_sentence_what_was_said_so_far_is_the_take(speaker):
@@ -346,7 +358,7 @@ def test_tapped_mid_sentence_what_was_said_so_far_is_the_take(speaker):
 
 def test_muted_no_take_is_recorded_and_held_whats_due_is_still_said(speaker, monkeypatch):
     assistant, _ = make_assistant(speaker, [], [])
-    assistant.mic.clear = lambda: None
+    assistant.mic.clear = assistant.mic.discard = lambda: None
     assistant.mute(True)
     with pytest.raises(Refused) as e:
         assistant.control_ops()["record"]({})

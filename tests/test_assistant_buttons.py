@@ -9,6 +9,7 @@ import pytest
 
 import voice_assistant.assistant as assistant_module
 from voice_assistant.assistant import ALWAYS, PAUSE
+from voice_assistant.audio import MicrophoneError
 from voice_assistant.wake import DUE
 
 from .conftest import make_assistant
@@ -56,7 +57,7 @@ def test_the_talk_button_wakes_it_and_it_greets_at_once(speaker, conversations):
 
 def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(speaker, conversations):
     assistant, _ = make_assistant(speaker, [], [])
-    assistant.mic.clear = lambda: None
+    assistant.mic.clear = assistant.mic.discard = lambda: None
     assistant.mute(True)
     assert assistant.talk().startswith("ignored: muted")
     waits = []
@@ -71,12 +72,26 @@ def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(sp
 
 def test_muted_what_s_due_is_still_said(speaker, monkeypatch):
     assistant, _ = make_assistant(speaker, [], [])
-    assistant.mic.clear = lambda: None
+    assistant.mic.clear = assistant.mic.discard = lambda: None
     assistant.mute(True)
     due = iter([False, False, True])
     monkeypatch.setattr(assistant, "_due", lambda: next(due, False))
     monkeypatch.setattr(assistant_module, "MUTED_POLL_S", 0.01)
     assert assistant._wait_muted() == DUE
+
+
+def test_muted_a_microphone_that_s_gone_still_ends_tars(speaker, monkeypatch):
+    """So systemd restarts it on the device that came back, not left deaf and mute until someone looks."""
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.mute(True)
+    monkeypatch.setattr(assistant, "_due", lambda: False)
+
+    def gone():
+        raise MicrophoneError("gone")
+
+    assistant.mic.discard = gone
+    with pytest.raises(MicrophoneError):
+        assistant._wait_muted()
 
 
 def test_muting_while_it_listens_for_its_name_stops_the_listening(speaker):

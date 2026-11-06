@@ -259,9 +259,9 @@ class Assistant:
     def _wait_muted(self) -> str | None:
         """While muted, instead of the wake word: no wake model and no double-check, only the mic's audio thrown
         away (its stream stays open, so unmuting is instant), and what's due looked for. DUE when something is;
-        None once unmuted."""
+        None once unmuted. A mic that's gone raises, as it does while listening."""
         while self.muted:
-            self.mic.clear()
+            self.mic.discard()
             if self._due():
                 return DUE
             self._unmuted.wait(MUTED_POLL_S)
@@ -320,7 +320,7 @@ class Assistant:
             if take:
                 self._take(take)
             else:
-                self.mic.clear()
+                self.mic.discard()
         self.mic.clear()
         return None
 
