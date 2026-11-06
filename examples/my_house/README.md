@@ -11,7 +11,7 @@ devices will differ, and most of them need no plugin at all.
 | Electra AC, no Wi-Fi of its own | the plugin: a Tuya IR blaster, codes learned from its remote | `ac.py`, `ac_onboard.py` |
 | Samsung TV, Polk Signa S2 soundbar | the plugin: the same blaster, their published IR codes | `ir.py` |
 | Soehnle Airfresh Clean Connect 500 air purifier | the plugin: Bluetooth LE from the machine TARS runs on | `purifier.py` |
-| Fire TV Stick | TARS's Android TV box, with "play" going straight to Stremio | `direct_play.py` |
+| Fire TV Stick | TARS's Android TV box, with "play" going straight to Stremio, or to live Channel 11 and 12 | `direct_play.py`, `channels.py` |
 
 The blaster (`blaster.py`) is shared: one Tuya "Smart IR" on the home network, worked locally with
 [tinytuya](https://github.com/jasonacox/tinytuya), never through Tuya's cloud.
@@ -110,6 +110,17 @@ search suggestions (Stremio's add-ons go by IMDb's ids), its page opened by link
 stream chosen, and it's said to be playing only once the stick's media session says so. A series without an episode
 opens its page, and TARS asks which. Another app, or a title IMDb doesn't find, goes to the agent as usual, told how
 Stremio lists streams (the plugin's own rule for it). The title asked for is all that goes to IMDb.
+
+### Live channels
+
+"Put on Channel 12" and "put on Channel 11" go through fixed steps, with no model working the screen (`channels.py`):
+Channel 12 in Keshet's 12+, Channel 11 in Kan Box, both Android TV apps sideloaded on the Fire TV. Neither takes a link
+to its live channel, so the app is closed, opened again to start from a known screen, and worked by its remote, each
+step waiting for what the app shows. It runs in the background, up to a minute, and TARS says how it went. It's on only
+once the box says the app is making sound, since neither app has a media session; so an ad before the channel counts.
+
+"Put the news on", with no channel said, asks which of the two before anything changes. Behind a VPN 12+ says it's for
+subscribers: TARS says that, rather than that nothing played.
 
 ## The air purifier
 
