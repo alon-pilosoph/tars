@@ -112,9 +112,38 @@ def test_review_leaves_out_wakes_a_request_settled_and_ones_without_audio(log):
     assert [e["id"] for e in log.for_review()] == [waiting]
 
 
+def clip(ms: float) -> np.ndarray:
+    """A second of a quiet room, cut to zeros by the speakerphone, with `ms` of sound in it."""
+    pcm = np.zeros(SAMPLE_RATE, np.int16)
+    pcm[: int(SAMPLE_RATE * ms / 1000)] = 2000
+    return pcm
+
+
+def test_review_skips_a_near_miss_with_nothing_to_hear_and_keeps_it_in_the_log(log):
+    click = log.add_near_miss(clip(60), 0.18, ts=100)
+    said = log.add_near_miss(clip(500), 0.18, ts=110)
+    log.add_wake(clip(600), 0.9, ANSWER, "hey tars", 0.95, ts=112)
+    shown = [e["id"] for e in log.for_review()]
+    assert said in shown and click not in shown
+    assert click in [e["id"] for e in log.events()]
+
+
+def test_a_blank_near_miss_someone_answered_stays_in_review(log):
+    click = log.add_near_miss(clip(60), 0.18, ts=100)
+    log.set_label(click, NOT_REAL)
+    assert click in [e["id"] for e in log.for_review()]
+
+
+def test_a_near_miss_whose_audio_is_gone_is_left_to_review(log):
+    gone = log.add_near_miss(clip(600), 0.18, ts=100)
+    log.add_wake(clip(600), 0.9, ANSWER, "hey tars", 0.95, ts=102)
+    (log.folder / log.get(gone)["audio"]).unlink()
+    assert gone in [e["id"] for e in log.for_review()]
+
+
 def test_review_has_only_the_near_misses_a_real_wake_followed_soon_after(log):
     log.add_near_miss(AUDIO, 0.2, ts=10)  # any sound that came near: kept, but not reviewed
-    missed = log.add_near_miss(AUDIO, 0.25, ts=100)  # "hey TARS", missed, then said again
+    missed = log.add_near_miss(clip(500), 0.25, ts=100)  # "hey TARS", missed, then said again
     log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.95, ts=100 + events.MISSED_WINDOW_S - 1)
     log.add_near_miss(AUDIO, 0.2, ts=200)  # a turned-away wake after it doesn't make it a miss
     log.add_wake(AUDIO, 0.4, IGNORE, "nothing clear", 0.1, ts=202)

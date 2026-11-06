@@ -59,12 +59,17 @@ def test_a_device_is_found_by_name_or_says_how_to_find_it():
 
 @pytest.mark.parametrize(
     "level, status, words",
-    [(0, FAIL, "silence"), (20, WARN, "very quiet"), (3000, OK, "hears the room")],
+    [(0, WARN, "heard nothing"), (20, WARN, "very quiet"), (3000, OK, "hears the room")],
 )
-def test_the_mic_level_tells_muted_from_quiet_from_working(level, status, words):
+def test_the_mic_level_tells_silence_from_quiet_from_working(level, status, words):
     block = np.full(1280, level, dtype=np.int16)
     r = check.mic_level(lambda: block, blocks=3)
     assert r.status == status and words in r.detail
+
+
+def test_pure_silence_may_be_a_quiet_room_so_it_says_to_talk_and_still_names_a_mute():
+    r = check.mic_level(lambda: np.zeros(1280, dtype=np.int16), blocks=3)
+    assert "say something" in r.fix and "muted" in r.fix
 
 
 def test_a_device_that_never_opens_fails_in_time_instead_of_hanging():

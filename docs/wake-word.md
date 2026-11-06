@@ -42,6 +42,8 @@ flowchart LR
 (`models/generic/hey_tars.tflite`, 69 KB). It sees every 80 ms block and costs almost nothing, so it can be lenient:
 the threshold is 0.2, low on purpose, because stage 2 filters what gets through. A score that comes close (60% of
 the threshold) and then falls away is logged as a near-miss, which is often a real "hey TARS" said too softly.
+One with under 150 ms of sound in it stays in the log and out of Review, since there's nothing to hear: a speakerphone
+cuts a quiet room to pure zeros, and the shortest real "hey TARS" has about 490 ms.
 
 **Stage 2** runs only when stage 1 fires. [Vosk](https://alphacephei.com/vosk/) (small English model, 0.15) listens
 to the last 3 seconds with a grammar limited to "hey tars", "hey darts" (the soft *t*), 19 lookalikes ("hey cars",
