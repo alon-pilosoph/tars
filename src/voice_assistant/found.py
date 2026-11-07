@@ -68,7 +68,7 @@ def mac_of(ip: str) -> str | None:
 
 
 def arp_linux(table: str, ip: str) -> str | None:
-    """From /proc/net/arp: "192.168.1.209  0x1  0x2  0c:dc:91:3d:ef:60  *  wlan0"."""
+    """From /proc/net/arp: "192.168.1.55  0x1  0x2  02:1a:2b:3c:4d:5e  *  wlan0"."""
     for line in table.splitlines()[1:]:
         parts = line.split()
         if len(parts) >= 4 and parts[0] == ip and parts[3] != "00:00:00:00:00:00":
@@ -77,7 +77,7 @@ def arp_linux(table: str, ip: str) -> str | None:
 
 
 def arp_bsd(out: str) -> str | None:
-    """From macOS's arp -n: "? (192.168.1.209) at c:dc:91:3d:ef:60 on en0 ifscope [ethernet]" (no leading zeros)."""
+    """From macOS's arp -n: "? (192.168.1.55) at 2:1a:2b:3c:4d:5e on en0 ifscope [ethernet]" (no leading zeros)."""
     found = re.search(r" at ((?:[0-9a-f]{1,2}:){5}[0-9a-f]{1,2})\b", out, re.IGNORECASE)
     return normal_mac(found.group(1)) if found else None
 

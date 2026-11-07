@@ -307,14 +307,14 @@ A skill is a name for a list of things to do, run the same way every time with n
 
 ```toml
 [[home.skills]]
-name = "panda"
-done = "Panda is on."                 # optional: what TARS says when it's worked
+name = "cartoons"
+done = "Cartoons are on."                 # optional: what TARS says when it's worked
 steps = [
   { device = "fire tv", action = "play", app = "youtube", title = "https://youtu.be/..." },
 ]
 ```
 
-Each step is the home tool's own call, with the same settings, checked as any call is. "Put on panda" reaches it by
+Each step is the home tool's own call, with the same settings, checked as any call is. "Put on cartoons" reaches it by
 name, whether by voice or in a chat. It runs in the background, up to a minute or so, and TARS says how it went. A
 failed step ends it there and says which it was. A skill can't unlock: one that tries is left out, and `--check` says
 why. Only the name has to be recognized, so a skill costs one short model turn, and none of its steps.

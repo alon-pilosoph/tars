@@ -53,9 +53,9 @@ class Skills(Device):
 
     def rules(self) -> str:
         return (
-            'When they ask for a skill by its name ("put on panda" is the skill panda), use skills\' do with its name '
-            "as the goal, never its steps yourself. It works in the background and TARS says when it's done: say only "
-            "that you're on it, in a few words."
+            'When they ask for a skill by its name ("put on cartoons" is the skill cartoons), use skills\' do with its '
+            "name as the goal, never its steps yourself. It works in the background and TARS says when it's done: say "
+            "only that you're on it, in a few words."
         )
 
     def status(self) -> str:

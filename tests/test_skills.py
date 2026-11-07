@@ -35,12 +35,12 @@ class Door(Thing):
 
 def house(*steps, done="", answers=()):
     tv, said = Thing("tv", answers), []
-    device = Skills([Skill("panda", steps, done)], said.append)
+    device = Skills([Skill("cartoons", steps, done)], said.append)
     device.tools = HomeTools(HomeConfig(), {"tv": tv, "skills": device})
     return device, tv, said
 
 
-def run(device, goal="panda"):
+def run(device, goal="cartoons"):
     answer = device.call(DO, {"goal": goal}, Request())
     if device._thread:
         device._thread.join(5)
@@ -52,16 +52,16 @@ PLAY_IT = {"device": "tv", "action": PLAY, "title": "https://youtu.be/x"}
 
 
 def test_a_skill_runs_its_steps_in_order_and_says_it_worked():
-    device, tv, said = house(TV_ON, PLAY_IT, done="Panda is on.")
+    device, tv, said = house(TV_ON, PLAY_IT, done="Cartoons is on.")
     assert run(device).startswith("started")
     assert tv.calls == [(ON, None), (PLAY, "https://youtu.be/x")]
-    assert said == ["Panda is on."]
+    assert said == ["Cartoons is on."]
 
 
 def test_with_nothing_to_say_it_uses_its_name():
     device, _, said = house(TV_ON)
     run(device)
-    assert said == ["panda is on."]
+    assert said == ["cartoons is on."]
 
 
 @pytest.mark.parametrize("failed", ["error: it's broken", "not confirmed: nothing plays", "refused: no"])
@@ -69,18 +69,18 @@ def test_a_failed_step_ends_it_there_and_says_which(failed):
     device, tv, said = house(TV_ON, PLAY_IT, answers=[failed])
     run(device)
     assert tv.calls == [(ON, None)]
-    assert said == [f"I couldn't finish panda: the tv said {failed}."]
+    assert said == [f"I couldn't finish cartoons: the tv said {failed}."]
 
 
 def test_a_name_it_doesnt_know_lists_the_ones_it_does():
     device, tv, said = house(TV_ON)
-    assert run(device, "movie night") == "error: there's no skill called 'movie night'; there are: panda"
+    assert run(device, "movie night") == "error: there's no skill called 'movie night'; there are: cartoons"
     assert tv.calls == [] and said == []
 
 
 def test_its_name_is_matched_whatever_the_case():
     device, tv, _ = house(TV_ON)
-    run(device, " Panda ")
+    run(device, " Cartoons ")
     assert len(tv.calls) == 1
 
 
@@ -95,7 +95,7 @@ def test_stopped_before_a_step_it_goes_no_further_and_says_nothing():
         return original(action, args, request)
 
     tv.call = held
-    device.call(DO, {"goal": "panda"}, Request())
+    device.call(DO, {"goal": "cartoons"}, Request())
     assert reached.wait(5)
     threading.Timer(0.05, release.set).start()
     device.stop()
@@ -113,20 +113,20 @@ def test_a_skill_that_cant_run_is_left_out_saying_why_and_the_others_run():
     specs = [
         {"name": "bad", "steps": [{"device": "nothing", "action": ON}]},
         {"name": "odd", "steps": [{"device": "tv", "action": LOCK}]},
-        {"name": "panda", "steps": [TV_ON]},
+        {"name": "cartoons", "steps": [TV_ON]},
     ]
     made = skills.make(specs, devices, None, unavailable)
-    assert list(made.skills) == ["panda"]
+    assert list(made.skills) == ["cartoons"]
     assert unavailable == {"bad": "there's no device called 'nothing'", "odd": "the tv can do: status, on, play"}
 
 
 def test_build_makes_them_a_device_the_model_can_call(tmp_path):
-    cfg = HomeConfig(skills=[{"name": "panda", "steps": [TV_ON]}])
+    cfg = HomeConfig(skills=[{"name": "cartoons", "steps": [TV_ON]}])
     context = Context(tmp_path, lambda name: None, announce=lambda line: None)
     built = build(cfg, context, extra={"tv": Thing("tv")})
     assert built.unavailable == {}
     assert "skills" in built.tools.devices and built.tools.devices["skills"].tools is built.tools
-    assert "panda" in built.tools.rules() and "use skills' do" in built.tools.rules()
+    assert "cartoons" in built.tools.rules() and "use skills' do" in built.tools.rules()
 
 
 def test_no_skills_no_device(tmp_path):

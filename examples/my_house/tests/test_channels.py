@@ -220,8 +220,8 @@ def test_the_model_is_told_how_to_ask_for_them():
     assert "YouTube link" in device.rules()
 
 
-LINK = "https://youtu.be/UBcVbAFntQo?si=abc"
-WATCH_LINK = "https://www.youtube.com/watch?v=UBcVbAFntQo"
+LINK = "https://youtu.be/a1B2c3D4e5F?si=abc"
+WATCH_LINK = "https://www.youtube.com/watch?v=a1B2c3D4e5F"
 YOUTUBE = "com.amazon.firetv.youtube"
 
 
