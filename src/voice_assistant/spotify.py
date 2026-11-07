@@ -425,7 +425,10 @@ class Spotify(Device):
             raise HomeError("Spotify has no device playing to do that on")
         if answer.status_code >= 400:
             raise HomeError(f"Spotify said {answer.status_code}")
-        return answer.json() if answer.content else {}
+        try:  # some answers carry a body that isn't JSON (a pause's): only what's read matters
+            return answer.json() if answer.content else {}
+        except ValueError:
+            return {}
 
 
 def normal(text: str) -> str:

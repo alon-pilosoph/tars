@@ -368,3 +368,14 @@ def test_more_like_this_is_more_of_the_artist_playing():
 
 def test_an_unknown_mode_is_refused():
     assert play(device(Service()), "x", "vibes").startswith("error: mode must be")
+
+
+def test_an_answer_that_isnt_json_is_nothing_to_read():
+    service = Service()
+    found = device(service)
+    original = service.handle
+    service.handle = lambda request: (
+        httpx.Response(200, text="ok") if request.url.path.endswith("/pause") else original(request)
+    )
+    found._http = httpx.Client(transport=httpx.MockTransport(service.handle))
+    assert found.call("press", {"button": "pause"}, Request()) == "sent: pause"
