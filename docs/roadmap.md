@@ -208,8 +208,9 @@ said in plain words, and done the same way every time.
 **Design:**
 
 - **Everything is a skill.** An automation is a skill with a trigger: plain words for the model, carried out with
-  its tools, as skills already are ([skills](skills.md)). Only the trigger is code: a time (done), someone coming
-  home or leaving, a device's event (the door unlocked, CO₂ over a level). Taught, changed and removed by talking.
+  its tools, as skills already are ([skills](skills.md)). Only the trigger is code: a time, someone coming home or
+  leaving, a device's status (the door unlocked, CO₂ over a level), all done. Taught, changed and removed by
+  talking; "what did you do today?" answered from the runs kept.
 - **Read back before it's kept.** TARS says what it understood ("Every weekday at 7, the boiler on for 40 minutes.
   Every time, or just tomorrow?"), and checks it against the last weeks of the event log ("that would have run 3
   times last week").

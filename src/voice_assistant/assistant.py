@@ -508,13 +508,17 @@ class Assistant:
             self.converse(follow_up_s, first=heard)
 
     def run_skills(self, follow_up_s: float = 0.0) -> None:
-        """Each skill whose time has come: a turn of its own, with its instructions as the request, whose reply is
-        said after a chime; then it listens a moment, without the wake word, for an answer to what it asked."""
-        for skill, when in self._skill_clock.take() if self._skill_clock else []:
-            print(f"(skill {skill.name}: it's {when:%H:%M})")
+        """Each skill whose time has come, or that something happening set off: a turn of its own, with its
+        instructions as the request, whose reply is said after a chime; then it listens a moment, without the wake
+        word, for an answer to what it asked."""
+        clock = self._skill_clock
+        for due in clock.take() if clock else []:
+            skill = due.skill
+            print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'})")
             try:
                 whose = Request(speaker=None if skill.household else skill.owner)  # their feeds and preferences
-                skipped, pieces = split_skip(self.brain.stream_reply(on_its_own(skill, when, SKIP), whose))
+                asked = on_its_own(skill, due.when, SKIP, due.why)
+                skipped, pieces = split_skip(self.brain.stream_reply(asked, whose))
                 text = "".join(pieces).strip()
             except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
                 print(f"(skill {skill.name} didn't run: {e!r})")
@@ -523,10 +527,12 @@ class Assistant:
             if skipped or not text:
                 print(f"(skill {skill.name}: nothing to do now)")
                 self.brain.forget_last()
+                clock.record(due, "")
                 continue
             audio = self._made_now([text])
             if text not in audio:
                 continue
+            clock.record(due, text)
             self.journal.unprompted()
             self._chime()
             print(f"Bot:  {text}  (skill {skill.name})")

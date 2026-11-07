@@ -193,7 +193,17 @@ TABLES = {
     paused INTEGER NOT NULL DEFAULT 0,
     created REAL NOT NULL,
     updated REAL NOT NULL,
-    updated_by TEXT NOT NULL         -- who taught it, or last changed it
+    updated_by TEXT NOT NULL,        -- who taught it, or last changed it
+    trigger TEXT                     -- JSON: something happening it runs on (skills.trigger); NULL: none
+)""",
+    "skill_runs": """CREATE TABLE skill_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id INTEGER,                -- the skill's, which may have been deleted since
+    name TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    at REAL NOT NULL,
+    why TEXT NOT NULL,               -- "at 19:55", "Stacey just came home"
+    said TEXT NOT NULL               -- what it said; "" when there was nothing to do
 )""",
     "preferences": """CREATE TABLE preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,6 +319,13 @@ MIGRATIONS = [
             "about TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, guessed INTEGER NOT NULL DEFAULT 0, at REAL NOT NULL)"
         ),
         "CREATE INDEX preferences_person ON preferences(person)",
+    ],
+    [
+        "ALTER TABLE skills ADD COLUMN trigger TEXT",
+        (
+            "CREATE TABLE skill_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, skill_id INTEGER, name TEXT NOT NULL, "
+            "owner TEXT NOT NULL, at REAL NOT NULL, why TEXT NOT NULL, said TEXT NOT NULL)"
+        ),
     ],
 ]
 
