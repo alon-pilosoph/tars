@@ -57,6 +57,9 @@ ERROR_LINES = {
 }
 DRY_FROM_HUMOR = 50  # percent
 PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes, <name>?" after the wake word
+# Muted, and unmuted only to hear the answer to what TARS asked: the longest that answer is recorded. "No, I'm
+# good" and "channel twelve" take two seconds; what's said after is the room's, not TARS's.
+ANSWER_ONLY_S = 6.0
 MUTED_POLL_S = 0.25  # muted, how often what's due is looked for (unmuting ends the wait at once)
 ERROR_LINE_WAIT_S = 1.0
 PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes, Alon?")
@@ -500,12 +503,12 @@ class Assistant:
             self._play(audio[line])
             self.journal.said(line)
         self.brain.remember_said(" ".join(said))
-        with self._open_for_answer(bool(follow_up_s) and asks(said)):
-            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True) if follow_up_s else None
+        with self._open_for_answer(bool(follow_up_s) and asks(said)) as answer_s:
+            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if follow_up_s else None
             if heard is None:
                 self.journal.nobody_spoke()
                 return
-            self.converse(follow_up_s, first=heard)
+            self.converse(0.0 if answer_s else follow_up_s, first=heard)
 
     def run_skills(self, follow_up_s: float = 0.0) -> None:
         """Each skill whose time has come, or that something happening set off: a turn of its own, with its
@@ -538,12 +541,14 @@ class Assistant:
             print(f"Bot:  {text}  (skill {skill.name})")
             self._play(audio[text])
             self.journal.said(text)
-            with self._open_for_answer(bool(follow_up_s) and asks([text])):
-                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True) if follow_up_s else None
+            with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
+                heard = (
+                    self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if follow_up_s else None
+                )
                 if heard is None:
                     self.journal.nobody_spoke()
                     continue
-                self.converse(follow_up_s, first=heard)
+                self.converse(0.0 if answer_s else follow_up_s, first=heard)
 
     def say_reminders(self, follow_up_s: float = 0.0) -> None:
         """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""
@@ -592,25 +597,31 @@ class Assistant:
             self._just_said = []
             return
         try:
-            with self._open_for_answer(bool(self._just_said), '"got it"'):
-                heard = self.listen(start_timeout_s=self.ack_window_s, tag=REMINDER_TAG) if self._just_said else None
+            with self._open_for_answer(bool(self._just_said), '"got it"') as answer_s:
+                heard = (
+                    self.listen(start_timeout_s=self.ack_window_s, tag=REMINDER_TAG, max_s=answer_s)
+                    if self._just_said
+                    else None
+                )
                 if heard is None:
                     self.journal.nobody_spoke()
                     return
-                self.converse(follow_up_s, first=heard)
+                self.converse(0.0 if answer_s else follow_up_s, first=heard)
         finally:
             self._just_said = []
 
     @contextmanager
     def _open_for_answer(self, waits: bool, what: str = "the answer"):
-        """Muted, nobody could answer what TARS just said: when it `waits` for an answer, unmuted for it (and what
-        follows from it), with the light showing, then muted again, unless someone's button already did."""
+        """Muted, nobody could answer what TARS just said: when it `waits` for an answer, unmuted for it, with the
+        light showing, then muted again, unless someone's button already did. Yields how long the answer may be
+        (ANSWER_ONLY_S) when it unmuted, else None: the answer is all it hears, and once it's replied, it listens for
+        no follow-up, since the room was muted for a reason."""
         opened = bool(waits and self.muted and self.set_muted)
         if opened:
             print(f"(muted: listening for {what} only)")
             self.set_muted(False)
         try:
-            yield
+            yield ANSWER_ONLY_S if opened else None
         finally:
             if opened and not self.muted:
                 self.set_muted(True)
@@ -726,9 +737,10 @@ class Assistant:
         follow_up: bool = False,
         tag: str | None = None,
         echo_of: str | None = None,
+        max_s: float | None = None,
     ) -> Utterance | None:
         """Records one utterance, transcribing it as it comes, and starts answering at each pause in case it's the
-        end."""
+        end. `max_s`: the longest it records, instead of the configured longest."""
         session = self.transcriber.session()
         draft: Draft[Answer] | None = None
 
@@ -754,6 +766,7 @@ class Assistant:
                 on_resume=resumed,
                 turn_state=session.turn_state,
                 stop=self._stop.is_set,
+                max_s=max_s,
             )
         except BaseException:
             # Every draft must be settled, or the next one would wait behind it.

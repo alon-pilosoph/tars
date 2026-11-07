@@ -33,7 +33,7 @@ the model, which carries them out with the tools it already has.
   said. Saying one makes it no longer a guess.
 - **At its time**, a skill runs as a turn of its own, with its instructions as the request and a note that nobody
   asked. Aloud, the voice's TARS says the reply after a chime and listens for an answer without the wake word (even
-  while muted, when it asks something: unmuted just for the answer). In a chat, the Telegram service posts it, and
+  while muted, when it asks something: unmuted just for the answer, a few seconds of it, then muted again). In a chat, the Telegram service posts it, and
   the answer follows on in that chat. When there's nothing to do (the news is already on), it says nothing. A
   person's own skill runs as theirs: their feeds, and what they like.
 - **On something happening**: a skill can run when someone comes home or goes out (by name, anyone, or everyone:

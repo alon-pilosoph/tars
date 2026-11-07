@@ -619,6 +619,7 @@ def test_muted_its_unmuted_just_for_got_it_then_muted_again(speaker, tmp_path):
     assistant.say_reminders(follow_up_s=4.0)
     assert reminders.get(rid)["status"] == ACKNOWLEDGED
     assert switched == [False, True] and assistant.muted
+    assert assistant.recorder.longest == [assistant_module.ANSWER_ONLY_S]  # "got it", and nothing after
 
 
 def test_muted_with_nothing_to_wait_for_it_stays_muted(speaker, tmp_path):
