@@ -243,7 +243,7 @@ class HomeConfig:
     plugins: dict[str, dict] = field(default_factory=dict)
     # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).
     devices: list[dict] = field(default_factory=list)
-    # [[home.skills]]: a name for a list of the home tool's calls, run in order (docs/home.md#skills).
+    # [[home.skills]]: a name, and what to do when someone says it, in plain words (docs/home.md#skills).
     skills: list[dict] = field(default_factory=list)
 
 
@@ -602,6 +602,31 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
     return problems
 
 
+_SKILL_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _skill_problems(skill: dict) -> list[str]:
+    """What's wrong with one [[home.skills]] entry: its instructions and its times."""
+    problems = []
+    if "steps" in skill:
+        problems.append("steps are gone: say what to do in plain words, as instructions (docs/home.md#skills)")
+    elif not (isinstance(skill.get("instructions"), str) and skill["instructions"].strip()):
+        problems.append("needs instructions: what to do, in plain words")
+    if not isinstance(skill.get("when", ""), str):
+        problems.append("when is what it's for, in plain words")
+    at = skill.get("at", [])
+    times = [at] if isinstance(at, str) else at
+    clock = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+    if not (isinstance(times, list) and all(isinstance(t, str) and clock.fullmatch(t) for t in times)):
+        problems.append(f'at is a time of day like "19:55", or a list of them, not {at!r}')
+    days = skill.get("days", [])
+    if not (isinstance(days, list) and all(isinstance(d, str) and d.lower()[:3] in _SKILL_DAYS for d in days)):
+        problems.append(f'days are like ["sun", "mon"], not {days!r}')
+    elif days and not times:
+        problems.append("days are when it runs by itself, so it needs at")
+    return problems
+
+
 def _home_problems(home: HomeConfig) -> list[str]:
     """What's wrong with [home]. A plugin's devices are checked by the plugin when they're made; here only that
     the plugin is named."""
@@ -622,13 +647,10 @@ def _home_problems(home: HomeConfig) -> list[str]:
     if any(not v.strip() for v in home.unlock_chats):
         problems.append("[home] unlock_chats has an empty name")
     for skill in home.skills:
-        steps = skill.get("steps") if isinstance(skill, dict) else None
         if not (isinstance(skill, dict) and isinstance(skill.get("name"), str) and skill["name"].strip()):
             problems.append(f"[[home.skills]] needs a name (not {skill!r})")
-        elif not (isinstance(steps, list) and steps):
-            problems.append(f"[[home.skills]] {skill['name']!r} needs steps")
-        elif not all(isinstance(s, dict) and s.get("device") and s.get("action") for s in steps):
-            problems.append(f"[[home.skills]] {skill['name']!r}: each step needs a device and an action")
+        else:
+            problems += [f"[[home.skills]] {skill['name']!r}: {why}" for why in _skill_problems(skill)]
     for name, plugin in home.plugins.items():
         if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
             problems.append(f"[home.plugins] {name!r}: a name is lowercase letters, digits and _")

@@ -548,6 +548,18 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=Non
     return built.tools
 
 
+def skill_clock(cfg: Config, home):
+    """The skills that run by themselves at set times, kept by the voice's TARS alone (a chat's runs them only when
+    asked), or None. They need the house: without it, they aren't in the instructions either."""
+    from .skills import Clock, from_config
+
+    timed = [s for s in from_config(cfg.home.skills) if s.at]
+    if not (home and timed):
+        return None
+    print(f"(skills: {', '.join(f'{s.name} at {", ".join(s.at)}' for s in timed)})")
+    return Clock(timed).start()
+
+
 def own_speaker(cfg: Config):
     """With [home] own_speaker, TARS's own speaker as a device of the voice's (volume.py), or None, saying why, when
     its volume can't be read or set."""
@@ -1089,6 +1101,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
+            skill_clock=skill_clock(cfg, home),
         )
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:

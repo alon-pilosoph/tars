@@ -213,8 +213,8 @@ said in plain words, and done the same way every time.
 - **Read back before it's kept.** TARS says what it understood ("Every weekday at 7, the boiler on for 40 minutes.
   Every time, or just tomorrow?"), and checks it against the last weeks of the event log ("that would have run 3
   times last week").
-- **Skills** are named lists of actions taught by talking ("movie night is: the TV and soundbar on, Stremio open"),
-  said back, and run by name.
+- **Skills** are a name and what to do, in plain words, for the model to carry out with its tools ("movie night:
+  the TV and soundbar on, Stremio open"), now in `[[home.skills]]` and taught by talking next ([skills](home.md#skills)).
 - **A page in the web UI** lists every rule and skill, where it came from, when it last ran and what happened; each
   can be paused, edited or deleted. It needs step 2's sign-in first.
 - **Limits held in code:** unlocking stays voice-only and in person, an order still needs its tap, and a rule can't

@@ -207,8 +207,9 @@ toggles twice.
   and off-hook lights). The PowerConf takes the computer's mute only off-hook (in a call), so TARS keeps it off-hook,
   which no light shows, and sets the mute. Without one, the remote's mute is TARS's alone: it stops listening, and
   the mic stays on. Either mute outlasts a restart: muted when TARS stopped, it starts muted (`voice_data/muted` is
-  there while it's muted). Muted, what's due is still said; one waiting for "got it" unmutes it just for the answer
-  (the light shows it), and what follows from it, then mutes it again.
+  there while it's muted). Muted, what's due is still said, after a chime; a reminder waiting for "got it", or
+  anything TARS says on its own that asks a question (a skill at its time, the TV's "Toy Story, or Toy Story 4?"),
+  unmutes it just for the answer (the light shows it), and what follows from it, then mutes it again.
 - **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
   Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power
   button is the case's own (it turns the Pi on, and shuts it down cleanly).
@@ -260,14 +261,14 @@ from voice_assistant.home import Check, Context, Device, ON, OFF, STATUS
 class Kettle(Device):
     actions = (STATUS, ON, OFF)
 
-    def what(self) -> str:                      # one line for the model
+    def what(self) -> str:  # one line for the model
         return "a kettle: status, on, off"
 
-    def status(self) -> str:                    # starting with its name
+    def status(self) -> str:  # starting with its name
         return f"{self.name}: cold"
 
     def call(self, action, args, request) -> str:
-        ...                                     # do it, then say what the device reports
+        ...  # do it, then say what the device reports
         return f"done: {self.name} reports boiling"
 
 
@@ -348,21 +349,33 @@ it's used. It isn't in the backup, so a restored TARS signs in again.
 
 ### Skills
 
-A skill is a name for a list of things to do, run the same way every time with no model working them:
+A skill is a name, and what to do when someone says it, in plain words. The model does it with the tools it has, as
+it would if they'd asked for all of it themselves, and asks whatever the words leave open:
 
 ```toml
 [[home.skills]]
-name = "cartoons"
-done = "Cartoons are on."                 # optional: what TARS says when it's worked
-steps = [
-  { device = "fire tv", action = "play", app = "youtube", title = "https://youtu.be/..." },
-]
+name = "panda"
+instructions = "Play https://youtu.be/... on the Fire TV."
+when = "the kids want something calm to watch"   # optional: what it's for, so it's found by more than its name
+
+[[home.skills]]
+name = "news"
+instructions = """
+Unless the Fire TV is already on Channel 11 or 12, ask Alon whether he wants the news, and which channel.
+If he does, put it on."""
+at = "19:55"                                # optional: it also runs by itself then (or a list of times)
+days = ["sun", "mon", "tue", "wed", "thu"]  # optional, with at: only on these days
 ```
 
-Each step is the home tool's own call, with the same settings, checked as any call is. "Put on cartoons" reaches it by
-name, whether by voice or in a chat. It runs in the background, up to a minute or so, and TARS says how it went. A
-failed step ends it there and says which it was. A skill can't unlock: one that tries is left out, and `--check` says
-why. Only the name has to be recognized, so a skill costs one short model turn, and none of its steps.
+"Put on panda" reaches it by name, by voice or in a chat; with `when`, so does "the kids are bored, put something on".
+Each skill's words are in the model's instructions, so a skill costs nothing until it's used, and then the tool calls it
+takes, like any request. The tools keep their own rules whatever a skill says: unlocking still needs the words said, by
+a voice trusted with it, so a skill can't open the door.
+
+With `at`, the voice's TARS (never a chat's) runs it by itself, local time: a turn of its own, with the skill's words
+as the request and a note that nobody asked. What the model replies is said after a chime, and TARS listens for an
+answer without the wake word, even while it's muted, when what it said asks something: unmuted just for the answer,
+then muted again. When there's nothing to do (the news is already on), it says nothing.
 
 ## Setting it up
 
