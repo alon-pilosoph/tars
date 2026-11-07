@@ -124,6 +124,10 @@ where it is, and its position would need updating if the app changes.
 "Put the news on", with no channel said, asks which of the two before anything changes. Behind a VPN 12+ says it's for
 subscribers: TARS says that, rather than that nothing played.
 
+`play` with a link as the title (`app = "youtube"`) opens that video, for a skill (docs/home.md#skills). YouTube may
+stop at "who's watching" while its media session says playing, so it's on only once the box says the app makes sound,
+and a press takes the profile that has the focus if none comes.
+
 ### The TV and soundbar with it
 
 Waking the Fire TV doesn't turn this TV on, so with `tv_address` and `tv_input` set, anything that needs the picture

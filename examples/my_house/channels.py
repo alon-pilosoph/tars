@@ -102,7 +102,7 @@ class Tuner:
 
         def over() -> bool:
             ui = self.box.ui()
-            if self._sounding(channel.package) and channel.menu not in ui:
+            if self.sounding(channel.package) and channel.menu not in ui:
                 return True
             walled.extend([True] * (SUBSCRIBERS in ui))
             return bool(walled)
@@ -134,7 +134,7 @@ class Tuner:
     def _focus(self, words: str, what: str, stopped: threading.Event) -> None:
         self._see(f"[focused] {words} @", what, stopped, FOCUS_WAIT_S)
 
-    def _sounding(self, package: str) -> bool:
+    def sounding(self, package: str) -> bool:
         """Whether the app is playing sound, as the box's audio service says."""
         found = re.search(
             r"userId=(\d+)", self.box.shell(f"dumpsys package {package} | grep -m1 userId=", repeatable=True)

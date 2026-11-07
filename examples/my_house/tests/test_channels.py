@@ -217,3 +217,52 @@ def test_only_what_takes_time_says_one_moment_first():
 def test_the_model_is_told_how_to_ask_for_them():
     device, _ = tv(Box())
     assert '"channel 11"' in device.rules() and '"channel 12"' in device.rules() and "news" in device.rules()
+
+
+LINK = "https://youtu.be/x"
+YOUTUBE = "com.amazon.firetv.youtube"
+
+
+class LinkBox(Box):
+    """YouTube: it plays once `presses_needed` presses of select have got it past "who's watching"."""
+
+    def __init__(self, presses_needed=0, plays=True):
+        super().__init__()
+        self.presses_needed, self.plays, self.links = presses_needed, plays, []
+
+    def find_app(self, name):
+        return YOUTUBE if name == "youtube" else None
+
+    def open_link(self, uri, package, component="", flags="", extras=None):
+        self.links.append(uri)
+
+    def shell(self, command, timeout_s=10.0, repeatable=False):
+        if command.startswith("dumpsys package"):
+            return "    userId=10150"
+        if command.startswith("dumpsys audio") and self.plays and self.presses.count("select") >= self.presses_needed:
+            return "  AudioPlaybackConfiguration u/pid:10150/9 state:started attr: usage=USAGE_MEDIA content=X"
+        return ""
+
+
+def test_a_link_opens_afresh_and_is_on_when_it_makes_sound():
+    box = LinkBox()
+    device, _ = tv(box)
+    assert device.play(LINK, "youtube").startswith("done: it's playing on youtube")
+    assert box.links == [LINK] and box.stopped_apps == [YOUTUBE] and box.presses == []
+
+
+def test_stopped_at_whos_watching_a_press_takes_the_profile():
+    box = LinkBox(presses_needed=1)
+    device, _ = tv(box)
+    assert "after choosing the profile" in device.play(LINK, "youtube")
+    assert box.presses == ["select"]
+
+
+def test_a_link_that_never_plays_isnt_said_to():
+    device, _ = tv(LinkBox(plays=False))
+    assert device.play(LINK, "youtube").startswith("not confirmed")
+
+
+def test_a_link_on_an_app_that_isnt_there_says_so():
+    device, _ = tv(LinkBox())
+    assert device.play(LINK, "vimeo").startswith("error: vimeo isn't installed")

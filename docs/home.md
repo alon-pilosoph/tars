@@ -301,6 +301,24 @@ def setup(settings: dict, context: Context) -> dict:
 from its remote, and a Samsung TV and a Polk soundbar from their published IR codes, all through a Tuya IR blaster,
 and a Fire TV that plays a title on Stremio straight from its link.
 
+### Skills
+
+A skill is a name for a list of things to do, run the same way every time with no model working them:
+
+```toml
+[[home.skills]]
+name = "panda"
+done = "Panda is on."                 # optional: what TARS says when it's worked
+steps = [
+  { device = "fire tv", action = "play", app = "youtube", title = "https://youtu.be/..." },
+]
+```
+
+Each step is the home tool's own call, with the same settings, checked as any call is. "Put on panda" reaches it by
+name, whether by voice or in a chat. It runs in the background, up to a minute or so, and TARS says how it went. A
+failed step ends it there and says which it was. A skill can't unlock: one that tries is left out, and `--check` says
+why. Only the name has to be recognized, so a skill costs one short model turn, and none of its steps.
+
 ## Setting it up
 
 About half an hour, on the Pi (or the Mac while you try it).

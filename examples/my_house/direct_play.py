@@ -23,6 +23,7 @@ STREMIO = "stremio"
 IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/{first}/{query}.json"
 LOOKUP_TIMEOUT_S = 5.0
 MOVIES, SERIES = ("movie", "tvMovie"), ("tvSeries", "tvMiniSeries")
+LINK_SOUND_WAIT_S = 12.0  # a link's video starting, or being stopped at YouTube's "who's watching"
 STREAMS_WAIT_S = 2.5  # Stremio's stream list filling in once its page is up
 PLAY_WAIT_S = 20.0  # the first stream starting to play
 EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
@@ -138,6 +139,8 @@ class FireTv(TvDevice):
             return self.tuner.start(live)
         if only_news(title, app):
             return ASK_WHICH
+        if title.startswith(("https://", "http://")):
+            return self._link(title, app or "youtube")
         app = (app or STREMIO).strip().lower()  # this house watches on Stremio unless it says otherwise
         wanted = Title.parse(title)
         if app != STREMIO or not wanted.name:
@@ -170,6 +173,22 @@ class FireTv(TvDevice):
         if wait_for(lambda: self._playing(package), PLAY_WAIT_S, self._sleep):
             return f"done: {found.said()}{episode} is playing on Stremio (the {self.name} says so)"
         return f"not confirmed: opened {found.said()}{episode} on Stremio and chose the first stream; nothing plays yet"
+
+    def _link(self, url: str, app: str) -> str:
+        """A video by its link, started afresh. It's on only once the box says the app makes sound: YouTube's media
+        session says playing at its "who's watching", where a press takes the profile that has the focus."""
+        package = self.box.find_app(app)
+        if not package:
+            return f"error: {app} isn't installed on the {self.name}"
+        self.box.force_stop(package)
+        self.box.open_link(url, package)
+        sounding = lambda: self.tuner.sounding(package)
+        if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
+            return f"done: it's playing on {app} (the {self.name} says so)"
+        self.box.press("select")
+        if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
+            return f"done: it's playing on {app} (the {self.name} says so), after choosing the profile"
+        return f"not confirmed: opened the link on {app}, and nothing plays yet"
 
     def _playing(self, package: str) -> bool:
         return any(p == package and state == "playing" for p, state, _ in self.box.media())

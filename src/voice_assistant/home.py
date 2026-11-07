@@ -245,7 +245,15 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         context.devices[name.lower()] = device
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
+    from . import skills
+
+    named = {k.strip().lower(): d for k, d in context.devices.items()}
+    made = skills.make(cfg.skills, named, context.announce, unavailable)
+    if made:
+        context.devices[skills.DEVICE] = made
     tools = HomeTools(cfg, dict(context.devices)) if context.devices else None
+    if made:
+        made.tools = tools
     return Built(tools, unavailable)
 
 
