@@ -111,6 +111,7 @@ assistant, edit the system prompt.
 | [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
 | [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
 | [Who's home](docs/presence.md) | phones on the Wi-Fi, asking the routers, the rules, where it's used |
+| [Feeds](docs/feeds.md) | RSS feeds found, followed and summed up by talking: "find me feeds about gaming", "what's new in gaming?" |
 | [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person |
 | [Evaluating the browser](docs/browser-evals.md) | sixteen live tasks; the prototype, Luna, Sol, Opus and Claude Code compared; on a simulated Pi |
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |

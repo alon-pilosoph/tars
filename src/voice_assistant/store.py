@@ -3,8 +3,8 @@
 The assistant and the web UI share the folder (voice_data/events/, gitignored) from two processes, so the database
 runs in WAL mode and every multi-step change is one IMMEDIATE transaction. events.py (wakes, near-misses, voices),
 conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home),
-recording.py (recording sessions and their takes) and browser/errands.py (the errands queued for TARS's browser)
-build on this.
+recording.py (recording sessions and their takes), browser/errands.py (the errands queued for TARS's browser) and
+feeds.py (the feeds each person follows) build on this.
 """
 
 import secrets
@@ -167,6 +167,20 @@ TABLES = {
     problem TEXT,                    -- nothing | quiet | loud | cut_off | short (recording.check); NULL = fine
     stopped TEXT NOT NULL            -- silence | tap | nobody: how the take ended (recording.py)
 )""",
+    "feeds": """CREATE TABLE feeds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person TEXT NOT NULL,            -- whose: as person_key has them (feeds.py)
+    category TEXT NOT NULL,          -- theirs, in their words: "gaming", "israeli news"
+    name TEXT NOT NULL,              -- the feed's, as it's told: "Ynet"
+    url TEXT NOT NULL,               -- the feed itself, found from the site if a site was given
+    added REAL NOT NULL
+)""",
+    "feed_seen": """CREATE TABLE feed_seen (
+    person TEXT NOT NULL,
+    link TEXT NOT NULL,              -- a story handed to the model for them: "what's new" is what isn't here
+    at REAL NOT NULL,
+    PRIMARY KEY (person, link)
+)""",
 }
 INDEXES = [
     "CREATE INDEX events_ts ON events(ts)",
@@ -177,6 +191,7 @@ INDEXES = [
     "CREATE INDEX reminders_status ON reminders(status)",
     "CREATE INDEX errands_status ON errands(status)",
     "CREATE INDEX takes_session ON takes(session_id)",
+    "CREATE UNIQUE INDEX feeds_person_url ON feeds(person, url)",
 ]
 # Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
 # version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
@@ -247,6 +262,17 @@ MIGRATIONS = [
             "stopped TEXT NOT NULL)"
         ),
         "CREATE INDEX takes_session ON takes(session_id)",
+    ],
+    [
+        (
+            "CREATE TABLE feeds (id INTEGER PRIMARY KEY AUTOINCREMENT, person TEXT NOT NULL, category TEXT NOT NULL, "
+            "name TEXT NOT NULL, url TEXT NOT NULL, added REAL NOT NULL)"
+        ),
+        (
+            "CREATE TABLE feed_seen (person TEXT NOT NULL, link TEXT NOT NULL, at REAL NOT NULL, "
+            "PRIMARY KEY (person, link))"
+        ),
+        "CREATE UNIQUE INDEX feeds_person_url ON feeds(person, url)",
     ],
 ]
 

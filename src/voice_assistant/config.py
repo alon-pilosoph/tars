@@ -318,6 +318,13 @@ class BrowserConfig:
 
 
 @dataclass
+class FeedsConfig:
+    # The RSS feeds each person follows are theirs, chosen by talking to TARS and kept in the event database
+    # (docs/feeds.md). Who's asking is the voice TARS knows, or the chat; when neither says, they're this person's.
+    default_person: str = ""
+
+
+@dataclass
 class Config:
     audio: AudioConfig
     wake: WakeConfig
@@ -334,6 +341,7 @@ class Config:
     presence: PresenceConfig
     backup: BackupConfig
     browser: BrowserConfig
+    feeds: FeedsConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's

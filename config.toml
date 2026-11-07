@@ -349,3 +349,9 @@ really_order = false
 # Tailscale (encrypted) is better than the home Wi-Fi.
 login_host = ""
 login_port = 8091
+
+[feeds]
+# RSS feeds, followed by talking to TARS: "find me good feeds about gaming", "what's new in gaming?" (docs/feeds.md).
+# Each person's are their own, kept in the event database ([learning] log_events). When TARS can't tell whose voice
+# asked, they're this person's (a name as TARS knows them; "": it says it doesn't know whose).
+default_person = ""
