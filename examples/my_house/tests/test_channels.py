@@ -256,6 +256,7 @@ def test_stopped_at_whos_watching_a_press_takes_the_profile():
     device, _ = tv(box)
     assert "after choosing the profile" in device.play(LINK, "youtube")
     assert box.presses == ["select"]
+    assert box.links == [LINK, LINK]  # choosing it may have dropped the link for the home page
 
 
 def test_a_link_that_never_plays_isnt_said_to():

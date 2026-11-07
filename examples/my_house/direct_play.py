@@ -24,6 +24,7 @@ IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/{first}/{query}.json"
 LOOKUP_TIMEOUT_S = 5.0
 MOVIES, SERIES = ("movie", "tvMovie"), ("tvSeries", "tvMiniSeries")
 LINK_SOUND_WAIT_S = 12.0  # a link's video starting, or being stopped at YouTube's "who's watching"
+PROFILE_WAIT_S = 5.0  # YouTube settling once a profile is chosen
 STREAMS_WAIT_S = 2.5  # Stremio's stream list filling in once its page is up
 PLAY_WAIT_S = 20.0  # the first stream starting to play
 EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
@@ -176,7 +177,8 @@ class FireTv(TvDevice):
 
     def _link(self, url: str, app: str) -> str:
         """A video by its link, started afresh. It's on only once the box says the app makes sound: YouTube's media
-        session says playing at its "who's watching", where a press takes the profile that has the focus."""
+        session says nothing useful. Stopped at "who's watching", a press takes the profile that has the focus, and
+        may then drop the link for a home page that makes sound of its own, so the link is sent again."""
         package = self.box.find_app(app)
         if not package:
             return f"error: {app} isn't installed on the {self.name}"
@@ -186,6 +188,8 @@ class FireTv(TvDevice):
         if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
             return f"done: it's playing on {app} (the {self.name} says so)"
         self.box.press("select")
+        self._sleep(PROFILE_WAIT_S)
+        self.box.open_link(url, package)
         if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
             return f"done: it's playing on {app} (the {self.name} says so), after choosing the profile"
         return f"not confirmed: opened the link on {app}, and nothing plays yet"

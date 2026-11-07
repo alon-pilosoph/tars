@@ -18,7 +18,7 @@ STATE_URL = "http://{address}:8001/api/v2/"  # Samsung's: answers on or standby,
 STATE_TIMEOUT_S = 1.5
 ON, STANDBY = "on", "standby"
 POWER = "power"  # the soundbar's button: its code set has no on or off, so nothing names it as the power one
-TV_WAIT_S = 25.0  # the TV coming on
+ON_TRIES, ON_WAIT_S = 3, 8.0  # IR can miss, and its on code can't turn the TV off, so it's sent again
 SETTLE_S = 3.0  # a TV that's just on taking its input
 OFF_WAIT_S = 8.0  # the TV saying it's gone off
 
@@ -54,9 +54,7 @@ class Screen:
         came_on = was != ON
         if came_on:
             certainly_off = was == STANDBY or not self.box.awake()
-            tv.send(tv.codes.on)
-            if not self._until(lambda: self.state() == ON, TV_WAIT_S, stopped):
-                raise HomeError("the TV didn't come on")
+            self._turn_on(tv, stopped)
             if certainly_off and (soundbar := self._soundbar()):
                 soundbar.send(POWER)
         if not self.box.awake():
@@ -65,6 +63,15 @@ class Screen:
             self._sleep(SETTLE_S)
         tv.send(self.source)
         return came_on
+
+    def _turn_on(self, tv: Remote, stopped: threading.Event | None) -> None:
+        for _ in range(ON_TRIES):
+            tv.send(tv.codes.on)
+            if self._until(lambda: self.state() == ON, ON_WAIT_S, stopped):
+                return
+            if stopped and stopped.is_set():
+                break
+        raise HomeError("the TV didn't come on")
 
     def off(self) -> bool:
         """The TV, the soundbar and the Fire TV off. Whether the TV was on, to turn off."""

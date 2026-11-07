@@ -80,7 +80,20 @@ def test_a_tv_that_never_comes_on_is_said_and_the_soundbar_stays_as_it_was():
     house = House(takes_ir=False)
     with pytest.raises(HomeError, match="didn't come on"):
         house.screen.on()
-    assert house.sent == ["tv on"]
+    assert house.sent == ["tv on", "tv on", "tv on"]
+
+
+def test_ir_that_misses_is_sent_again():
+    house = House(takes_ir=False)
+    send = house._tv_button
+
+    def second_time_lucky(pressed):
+        send(pressed)
+        house.takes_ir = True
+
+    house.remote.send = second_time_lucky
+    assert house.screen.on() is True
+    assert house.sent == ["tv on", "tv on", "bar power", "tv hdmi4"]
 
 
 def test_off_takes_the_soundbar_and_stick_with_it():
@@ -101,6 +114,7 @@ def test_someone_stopping_it_ends_the_wait():
     stopped.set()
     with pytest.raises(HomeError):
         house.screen.on(stopped)
+    assert house.sent == ["tv on"]
 
 
 def fire_tv(house: House, opened: list) -> FireTv:
