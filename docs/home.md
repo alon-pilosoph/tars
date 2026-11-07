@@ -301,6 +301,33 @@ def setup(settings: dict, context: Context) -> dict:
 from its remote, and a Samsung TV and a Polk soundbar from their published IR codes, all through a Tuya IR blaster,
 and a Fire TV that plays a title on Stremio straight from its link.
 
+### Spotify
+
+Spotify, played through Spotify Connect on a Spotify device in the house: "play some jazz", "the Beatles", a Spotify
+link, then pause, next, previous, the volume, and "what's playing?". TARS finds it with Spotify's own search (a name
+that matches exactly wins, a playlist before an album, an artist, a song; otherwise a playlist of it, then the first
+song), plays it, and says it's playing only once Spotify says so. It needs Premium.
+
+```toml
+[[home.devices]]
+name = "spotify"
+kind = "spotify"
+play_on = "Fire TV"                   # the Spotify device to play on, or part of its name, as Spotify shows it
+wake = "fire tv"                      # optional: the device that opens its app, when it isn't on Spotify till then
+```
+
+A TV's Spotify app shows up as a device only while it's open, so `wake` names the device that opens it: an Android TV
+box, whose "open" turns the TV on too where it can. To sign in, once:
+
+1. Make an app at developer.spotify.com (Dashboard, Create app), for the Web API, with the redirect URI
+   `http://127.0.0.1:8888/callback`, and put its client id in .env as `SPOTIFY_CLIENT_ID`. There's no secret to keep:
+   the sign-in uses PKCE.
+2. `uv run python -m voice_assistant.spotify login` prints a link: open it on any phone or computer, sign in and agree.
+   The browser then goes on to an address that won't load; copy it from the address bar and paste it back.
+
+The sign-in is kept in `voice_data/spotify.json`, readable by TARS's user alone, and Spotify swaps it for a new one as
+it's used. It isn't in the backup, so a restored TARS signs in again.
+
 ### Skills
 
 A skill is a name for a list of things to do, run the same way every time with no model working them:
