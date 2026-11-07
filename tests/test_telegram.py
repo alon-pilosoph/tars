@@ -40,6 +40,7 @@ from voice_assistant.telegram import (
     MAX_VOICE_S,
     MIC,
     NO_ALOUD,
+    NO_SPOTIFY,
     NO_VOICE,
     NO_WORDS,
     SAY_HOW,
@@ -963,6 +964,30 @@ def test_say_has_the_assistant_say_it_word_for_word():
     t.handle(message("/say"))
     assert said == ["Ari, time for bed"]
     assert bot.said() == ["Saying it at home now.", SAY_HOW]
+
+
+def test_spotify_signs_in_from_the_chat_in_the_background():
+    bot, done = FakeBot(), threading.Event()
+
+    def login(send):
+        send("open this")
+        done.set()
+        return "Spotify is signed in."
+
+    t = tars(bot, [ScriptedBrain()], spotify_login=login)
+    t.handle(message("/spotify"))
+    assert done.wait(5)
+    for _ in range(50):
+        if len(bot.said()) == 2:
+            break
+        time.sleep(0.02)
+    assert bot.said() == ["open this", "Spotify is signed in."]
+
+
+def test_spotify_not_set_up_says_so():
+    bot = FakeBot()
+    tars(bot, [ScriptedBrain()]).handle(message("/spotify"))
+    assert bot.said() == [NO_SPOTIFY]
 
 
 @pytest.mark.parametrize("problem", [Unavailable("no socket"), Refused("unknown")])

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
-from .config import ANDROID_TV, CAMERA, EVERYTHING, HomeConfig
+from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
 
 TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
 STATUS, ON, OFF, SET, PRESS = "status", "on", "off", "set", "press"
@@ -234,6 +234,10 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
                     why = f"no {TOKEN_KEY} in .env" if cfg.url else "[home] url isn't set"
                     raise ValueError(f"it goes through Home Assistant, and {why}")
                 device = hass.camera_device(name, d, context.hass)
+            elif kind == SPOTIFY:
+                from . import spotify
+
+                device = spotify.make(name, d, context)
             elif kind in makers:
                 device = makers[kind](d | {"name": name})
             else:

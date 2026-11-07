@@ -207,6 +207,7 @@ HOME_SENSORS = ("sensor", "binary_sensor")
 ANDROID_TV = "androidtv"
 # A Home Assistant camera, shown or watched rather than switched ([[home.devices]] kind = "camera", entity = camera.*).
 CAMERA = "camera"
+SPOTIFY = "spotify"  # [[home.devices]] kind: Spotify, played on a Spotify device in the house (docs/home.md#spotify)
 # How long a camera's "watch" live link stays good for, in seconds, when [[home.devices]] watch_seconds isn't set.
 CAMERA_WATCH_S = 600
 EVERYTHING = "everything"  # what the home tool calls all the devices at once, for their status
@@ -670,10 +671,19 @@ def _home_problems(home: HomeConfig) -> list[str]:
                 problems.append(f"{where} ({CAMERA}): watch_seconds must be a whole number of seconds, 30 to 3600")
             extra = [k for k in d if k not in ("name", "kind", "entity", "watch_seconds")]
             problems += [f"{where} ({CAMERA}) has no setting {k}" for k in extra]
+        elif kind == SPOTIFY:
+            if not (isinstance(d.get("play_on"), str) and d["play_on"].strip()):
+                problems.append(
+                    f"{where} ({SPOTIFY}) needs play_on, the Spotify device to play on, as Spotify names it"
+                )
+            if "wake" in d and not (isinstance(d["wake"], str) and d["wake"].strip()):
+                problems.append(f"{where} ({SPOTIFY}): wake is the name of the device that opens its app")
+            extra = [k for k in d if k not in ("name", "kind", "play_on", "wake")]
+            problems += [f"{where} ({SPOTIFY}) has no setting {k}" for k in extra]
         elif not (isinstance(kind, str) and kind.partition(".")[0] in home.plugins and kind.partition(".")[2]):
             problems.append(
-                f"{where}: kind must be {ANDROID_TV}, {CAMERA} or a plugin's, like my_house.ac, with the plugin under "
-                f"[home.plugins]; for a Home Assistant entity leave kind out (not {kind!r})"
+                f"{where}: kind must be {ANDROID_TV}, {CAMERA}, {SPOTIFY} or a plugin's, like my_house.ac, with the "
+                f"plugin under [home.plugins]; for a Home Assistant entity leave kind out (not {kind!r})"
             )
     return problems
 

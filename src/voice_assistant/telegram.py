@@ -98,12 +98,14 @@ COMMANDS = [
     {"command": "volume", "description": "TARS's volume at home: /volume 40, up, down"},
     {"command": "mute", "description": "Mute TARS's microphone at home"},
     {"command": "unmute", "description": "Unmute TARS's microphone at home"},
+    {"command": "spotify", "description": "Sign TARS in to Spotify"},
     {"command": "new", "description": "Start a new conversation"},
 ]
 SAY_HOW = "Send /say and what to say, like: /say dinner's ready"
 NO_ALOUD = "I can't say it: the voice assistant at home isn't running."
 VOLUME_HOW = "Send /volume and a level, up or down, like: /volume 40"
 NO_HOUSE = "There's no house to work from here."
+NO_SPOTIFY = "Spotify isn't set up here: SPOTIFY_CLIENT_ID in .env (docs/home.md#spotify)."
 WRITTEN = (
     "This conversation is on Telegram, in writing, not aloud: what's said above about replies being read aloud, "
     "and written for the ear, doesn't apply here. Reply as in a text message: short, plain text with no markdown. "
@@ -395,6 +397,7 @@ class TelegramTars:
         env: Path | str = ".env",
         home: HomeTools | None = None,
         say: Callable[[str], None] | None = None,
+        spotify_login: Callable[[Callable[[str], None]], str] | None = None,
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
         each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
@@ -402,6 +405,7 @@ class TelegramTars:
         voice messages (None: they're turned down). `env`: where the token is, for saying so when Telegram refuses it.
         `home`: the chat's house, for /home, /volume, /mute and /unmute. `say(text)`: has the assistant say it aloud
         at home, word for word, for /say; raises control.py's Unavailable or Refused when it can't.
+        `spotify_login(send)`: signs in to Spotify for /spotify, telling them with `send` (spotify.page_login).
         `clock`, `typing` and `sleep` are for the tests."""
         self._bot, self._make_brain = bot, make_brain
         self._chats = {chat_id: Chat(name, chat_id, make_brain()) for name, chat_id in people.items()}
@@ -409,6 +413,7 @@ class TelegramTars:
         self._conversations, self._tools = conversations, reminder_tools
         self._memory_s, self._send_items, self._clock, self._typing = memory_s, send_items, clock, typing
         self._sleep, self._transcriber, self._env, self._home, self._say = sleep, transcriber, env, home, say
+        self._spotify_login = spotify_login
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
@@ -490,7 +495,22 @@ class TelegramTars:
         if command in ("/home", "/volume", "/mute", "/unmute"):
             self._send(chat_id, self.house_command(chat, command, rest))
             return
+        if command == "/spotify":
+            self.spotify(chat_id)
+            return
         self.answer(chat, text)
+
+    def spotify(self, chat_id: int) -> None:
+        """/spotify: a sign-in from this chat, in a thread of its own, since it waits minutes for the page."""
+        if self._spotify_login is None:
+            self._send(chat_id, NO_SPOTIFY)
+            return
+        login = self._spotify_login
+
+        def run() -> None:
+            self._send(chat_id, login(lambda text: self._send(chat_id, text)))
+
+        threading.Thread(target=run, daemon=True, name="spotify-login").start()
 
     def say_aloud(self, chat: Chat, text: str) -> str:
         """/say: what they wrote, said aloud at home word for word, after a chime, between conversations (an

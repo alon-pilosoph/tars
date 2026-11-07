@@ -301,6 +301,51 @@ def setup(settings: dict, context: Context) -> dict:
 from its remote, and a Samsung TV and a Polk soundbar from their published IR codes, all through a Tuya IR blaster,
 and a Fire TV that plays a title on Stremio straight from its link.
 
+### Spotify
+
+Spotify, played through Spotify Connect on an official Spotify app in the house: "play some jazz", "the Beatles", a
+song, an album, a mood, "something I like", a Spotify link; then pause, next, previous, the volume, and "what's
+playing?". It needs Premium. The model says what kind of thing was asked for, and code finds it:
+
+- **A song or an album:** Spotify gives an app like this no popularity, so it's the artist with the most versions of
+  it (an original has its live ones and remixes, a cover one), the first of theirs as Spotify ranks them. A remaster
+  is the same recording; a live one or a remix plays only when asked for. When two artists come level ("Hello"), the
+  one they play themselves wins; otherwise Spotify's first, with the others said, so "the Adele one" switches.
+- **An artist:** that artist. **A playlist:** their own first; two of theirs with the name are asked about.
+- **A genre or a mood:** a playlist of it with enough songs in it. Spotify's own playlists are closed to an app like
+  this one.
+- **"Something I like":** a shuffled mix of their most played and liked songs. Spotify's own picks for them are closed
+  too. **"More like this":** more of the artist playing.
+
+It's said to play only once Spotify says so.
+
+```toml
+[[home.devices]]
+name = "spotify"
+kind = "spotify"
+play_on = "Fire TV"                   # the Spotify device to play on, or part of its name, as Spotify shows it
+wake = "fire tv"                      # optional: the device that opens its app, when it isn't on Spotify till then
+```
+
+A TV's Spotify app shows up as a device only while it's open, so `wake` names the device that opens it: an Android TV
+box, whose "open" turns the TV on too where it can. Play on an official Spotify app or speaker: Spotify refuses the
+audio of unofficial players (librespot, and the raspotify and spotifyd built on it) on some accounts, which then skip
+every song in silence while Spotify says they play.
+
+To sign in, once:
+
+1. Make an app at developer.spotify.com (Dashboard, Create app; on a phone it may need the desktop site), for the Web
+   API, with the redirect URI `http://127.0.0.1:8888/callback`, and put its client id in .env as `SPOTIFY_CLIENT_ID`.
+   There's no secret to keep: the sign-in uses PKCE. Spotify's development mode allows one such app per person, with
+   Premium, and five accounts on it.
+2. Send `/spotify` to TARS on Telegram. It sends a link to sign in with, then a one-time page, as a login for the
+   browser is added (docs/browser.md): sign in and agree, and the browser goes on to an address that won't load. Copy
+   it from the address bar and paste it on the page, which works once, for ten minutes. Without Telegram,
+   `uv run python -m voice_assistant.spotify login` does the same in a terminal.
+
+The sign-in is kept in `voice_data/spotify.json`, readable by TARS's user alone, and Spotify swaps it for a new one as
+it's used. It isn't in the backup, so a restored TARS signs in again.
+
 ### Skills
 
 A skill is a name for a list of things to do, run the same way every time with no model working them:
