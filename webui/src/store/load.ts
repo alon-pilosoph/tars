@@ -8,6 +8,7 @@ import type {
   Item,
   ModelsInfo,
   RemindersInfo,
+  SkillsInfo,
   Status,
   TarsEvent,
 } from "../types";
@@ -23,6 +24,7 @@ interface Data {
   convs: Conversation[];
   items: Item[];
   reminders: RemindersInfo | null;
+  skills: SkillsInfo | null;
 }
 
 type Answers = Omit<Data, "convs"> & { convs: ApiConversation[] };
@@ -58,6 +60,7 @@ const PART_NAMES: Record<LoadPart, string> = {
   convs: "the conversations",
   items: "what TARS sent",
   reminders: "the reminders",
+  skills: "the skills",
 };
 
 /** The parts the last load couldn't get, with why: every page says so, since most read several parts. */
@@ -107,7 +110,7 @@ export function within<D extends Pick<Data, "events" | "convs" | "items">>(snap:
 type Loaded = { data: Data; failed: LoadErrors };
 
 async function fetchData(): Promise<Loaded> {
-  const [events, clusters, models, status, convs, items, reminders] = await Promise.allSettled([
+  const [events, clusters, models, status, convs, items, reminders, skills] = await Promise.allSettled([
     getJson<TarsEvent[]>("/api/events"),
     getJson<Cluster[]>("/api/clusters"),
     getJson<ModelsInfo>("/api/models"),
@@ -115,8 +118,10 @@ async function fetchData(): Promise<Loaded> {
     getJson<ApiConversation[]>("/api/conversations"),
     getJson<Item[]>("/api/items"),
     getJson<RemindersInfo>("/api/reminders"),
+    getJson<SkillsInfo>("/api/skills"),
   ]);
-  const { data, failed } = settle<Answers>({ events, clusters, models, status, convs, items, reminders }, get());
+  const answers = { events, clusters, models, status, convs, items, reminders, skills };
+  const { data, failed } = settle<Answers>(answers, get());
   return { data: { ...data, ...normalize(data.convs, data.items) }, failed };
 }
 

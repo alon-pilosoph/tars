@@ -267,3 +267,42 @@ export interface NewReminder {
   repeat_every_min: number | null;
   max_tries: number | null;
 }
+
+/** A skill, as the Skills page shows it (skills.Skills.page): taught by talking to TARS. */
+export interface Skill {
+  id: number;
+  name: string;
+  instructions: string;
+  when: string; // what it's for, so it's found by more than its name
+  owner: string; // a person's name, or "household"
+  household: boolean;
+  runs_by_itself: string; // "at 19:55 every day", "when stacey comes home"; "" for only when asked
+  say: "aloud" | "chat";
+  paused: boolean;
+}
+
+/** Something TARS knows a person likes, or doesn't. */
+export interface Preference {
+  id: number;
+  person: string;
+  about: string;
+  text: string;
+  guessed: boolean; // noticed by TARS, not said
+  at: number;
+}
+
+/** A skill that ran by itself. */
+export interface SkillRun {
+  id: number;
+  name: string;
+  owner: string;
+  at: number;
+  why: string; // "at 19:55", "Stacey just came home"
+  said: string; // "" when there was nothing to do
+}
+
+export interface SkillsInfo {
+  skills: Skill[];
+  preferences: Preference[];
+  runs: SkillRun[];
+}

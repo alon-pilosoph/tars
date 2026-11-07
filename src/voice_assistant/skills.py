@@ -243,9 +243,19 @@ def line(skill: Skill) -> str:
     return f"- {skill.name} ({'; '.join(parts)}): {skill.instructions}"
 
 
+def runs_by_itself(skill: Skill) -> str:
+    """When a skill runs by itself, in words for a person: "at 07:30 on mon, sun", "when stacey comes home"; ""
+    for only when asked."""
+    if skill.at:
+        on = f" on {', '.join(d.title() for d in skill.days)}" if skill.days else " every day"
+        return f"at {', '.join(skill.at)}{on}"
+    return f"when {describe(skill.trigger)}" if skill.trigger else ""
+
+
 def describe(trigger: dict) -> str:
     """A trigger, in words: "stacey comes home", "the front door says unlocked"."""
     who = trigger.get("who") or ANYONE
+    who = who if who in (ANYONE, EVERYONE) else who.title()
     if trigger["event"] == ARRIVES:
         return "the first one comes home" if who == EVERYONE else f"{who} comes home"
     if trigger["event"] == LEAVES:
@@ -445,6 +455,45 @@ class Skills:
                 )
         whose = "the household's" if owner == HOUSEHOLD else f"{person}'s"
         return f"done: {'changed' if had else 'saved'} {whose} skill {name}; say so in a few words"
+
+    # The web UI's Skills page: everything, everyone's, and changed by id (it has no one asking).
+
+    def page(self) -> dict:
+        """Every skill, everyone's preferences and the latest runs, for the web UI (types.ts SkillsInfo)."""
+        skills = [
+            {
+                "id": s.id,
+                "name": s.name,
+                "instructions": s.instructions,
+                "when": s.when,
+                "owner": s.owner,
+                "household": s.household,
+                "runs_by_itself": runs_by_itself(s),
+                "say": s.say,
+                "paused": s.paused,
+            }
+            for s in self.all()
+        ]
+        prefs = self.store.rows("SELECT id, person, about, text, guessed, at FROM preferences ORDER BY person, id DESC")
+        runs = self.store.rows("SELECT id, name, owner, at, why, said FROM skill_runs ORDER BY id DESC LIMIT 50")
+        return {
+            "skills": skills,
+            "preferences": [{**p, "guessed": bool(p["guessed"])} for p in prefs],
+            "runs": runs,
+        }
+
+    def set_paused(self, skill_id: int, paused: bool) -> bool:
+        return self._by_id("UPDATE skills SET paused=?, updated=? WHERE id=?", (paused, self._clock(), skill_id))
+
+    def delete(self, skill_id: int) -> bool:
+        return self._by_id("DELETE FROM skills WHERE id=?", (skill_id,))
+
+    def forget(self, preference_id: int) -> bool:
+        return self._by_id("DELETE FROM preferences WHERE id=?", (preference_id,))
+
+    def _by_id(self, sql: str, args: tuple) -> bool:
+        with self.store.transaction() as db:
+            return db.execute(sql, args).rowcount > 0
 
     def _check_reading(self, on_event: dict) -> None:
         """A reading's limit only works if the device's status has that reading, in its own words ("Carbon

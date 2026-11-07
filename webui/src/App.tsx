@@ -6,6 +6,7 @@ import { Menu } from "./components/Menu";
 import { Models } from "./components/Models";
 import { Reminders } from "./components/Reminders";
 import { Review } from "./components/Review";
+import { Skills } from "./components/Skills";
 import { LoadErrors, Loading, Unreachable } from "./components/States";
 import { StatusView } from "./components/Status";
 import { Toasts } from "./components/Toasts";
@@ -28,6 +29,7 @@ const VIEWS = {
   sent: Sent,
   review: Review,
   reminders: Reminders,
+  skills: Skills,
   voices: Voices,
   models: Models,
   status: StatusView,
@@ -102,6 +104,7 @@ export function App() {
         </nav>
         <div className="top-end">
           <nav className="nav-2" aria-label="More pages">
+            <NavLink s={s} tab="skills" label="Skills" />
             <NavLink s={s} tab="voices" label="Voices" />
             <NavLink s={s} tab="models" label="Models" />
             {s.status.health && <NavLink s={s} tab="status" label="Status" />}

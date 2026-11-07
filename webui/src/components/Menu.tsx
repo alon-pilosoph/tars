@@ -241,6 +241,9 @@ function itemMenu(s: State, i: Item | undefined) {
 function moreMenu(s: State) {
   return (
     <>
+      <MenuItem icon="spark" act={() => setTab("skills")} checked={s.tab === "skills"}>
+        Skills
+      </MenuItem>
       <MenuItem icon="voices" act={() => setTab("voices")} checked={s.tab === "voices"}>
         Voices
       </MenuItem>

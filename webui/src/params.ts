@@ -1,16 +1,16 @@
 /* The page's link parameters, for linking to a view:
 
-   ?tab=home|sent|review|reminders|voices|models|status     ?person=all|household|<voice id>
+   ?tab=home|sent|review|reminders|skills|voices|models|status     ?person=all|household|<voice id>
    ?guess=yes|no|none   Review: only the wakes TARS guessed were for it, weren't, or didn't guess
    ?conv=<id>     that conversation, open and scrolled to
    ?item=<id>     scrolled to that item
    ?demo          built-in sample data, no server; demoParams.ts adds more parameters for the screenshot tests */
 
-export type Tab = "home" | "sent" | "review" | "reminders" | "voices" | "models" | "status";
+export type Tab = "home" | "sent" | "review" | "reminders" | "skills" | "voices" | "models" | "status";
 export type PersonFilter = "all" | "household" | number;
 export type GuessFilter = "all" | "yes" | "no" | "none";
 
-const TABS: Tab[] = ["home", "sent", "review", "reminders", "voices", "models", "status"];
+const TABS: Tab[] = ["home", "sent", "review", "reminders", "skills", "voices", "models", "status"];
 
 export const PARAMS = new URLSearchParams(location.search);
 export const idParam = (v: string | null | undefined) => (v && /^\d+$/.test(v) ? Number(v) : null);
