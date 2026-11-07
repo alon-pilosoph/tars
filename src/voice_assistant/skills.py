@@ -16,9 +16,9 @@ DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 TICK_S = 20.0  # how often the clock looks for a skill that's due
 
 RULES = (
-    'Skills: when someone asks for one of these by name ("put on cartoons" is the skill cartoons), do what its '
-    "instructions say, with your tools, as if they'd asked for all of it themselves. Ask them only what the "
-    "instructions leave open.\n{skills}"
+    'Skills: when someone asks for one of these by name ("put on cartoons" is the skill cartoons), or what they ask '
+    "is what one is for (its when), do what its instructions say, with your tools, as if they'd asked for all of it "
+    "themselves. Ask them only what the instructions leave open.\n{skills}"
 )
 # A skill's own turn, at its time: written as the request, so the model knows nobody asked and that what it says is
 # heard by whoever is in the room.
@@ -36,6 +36,7 @@ class Skill:
     instructions: str
     at: tuple[str, ...] = ()  # "19:55": when it runs by itself, local time
     days: tuple[str, ...] = ()  # on these days ("mon"...); empty: every day
+    when: str = ""  # what it's for, so it's found by more than its name: "Ari needs something calm to watch"
 
 
 def from_config(specs: list[dict]) -> list[Skill]:
@@ -49,6 +50,7 @@ def from_config(specs: list[dict]) -> list[Skill]:
                 " ".join(spec["instructions"].split()),
                 (at,) if isinstance(at, str) else tuple(at),
                 tuple(d.lower()[:3] for d in spec.get("days", ())),
+                " ".join(spec.get("when", "").split()),
             )
         )
     return skills
@@ -58,7 +60,12 @@ def rules(skills: list[Skill]) -> str:
     """The skills, for the instructions; empty when there are none."""
     if not skills:
         return ""
-    return RULES.format(skills="\n".join(f"- {s.name}: {s.instructions}" for s in skills))
+    return RULES.format(skills="\n".join(line(s) for s in skills))
+
+
+def line(skill: Skill) -> str:
+    when = f" (when: {skill.when})" if skill.when else ""
+    return f"- {skill.name}{when}: {skill.instructions}"
 
 
 def on_its_own(skill: Skill, when: datetime, skip: str) -> str:

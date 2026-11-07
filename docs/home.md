@@ -355,6 +355,7 @@ it would if they'd asked for all of it themselves, and asks whatever the words l
 [[home.skills]]
 name = "panda"
 instructions = "Play https://youtu.be/... on the Fire TV."
+when = "the kids want something calm to watch"   # optional: what it's for, so it's found by more than its name
 
 [[home.skills]]
 name = "news"
@@ -365,10 +366,10 @@ at = "19:55"                                # optional: it also runs by itself t
 days = ["sun", "mon", "tue", "wed", "thu"]  # optional, with at: only on these days
 ```
 
-"Put on panda" reaches it by name, by voice or in a chat. Each skill's words are in the model's instructions, so a
-skill costs nothing until it's used, and then the tool calls it takes, like any request. The tools keep their own
-rules whatever a skill says: unlocking still needs the words said, by a voice trusted with it, so a skill can't open
-the door.
+"Put on panda" reaches it by name, by voice or in a chat; with `when`, so does "the kids are bored, put something on".
+Each skill's words are in the model's instructions, so a skill costs nothing until it's used, and then the tool calls it
+takes, like any request. The tools keep their own rules whatever a skill says: unlocking still needs the words said, by
+a voice trusted with it, so a skill can't open the door.
 
 With `at`, the voice's TARS (never a chat's) runs it by itself, local time: a turn of its own, with the skill's words
 as the request and a note that nobody asked. What the model replies is said after a chime, and TARS listens for an

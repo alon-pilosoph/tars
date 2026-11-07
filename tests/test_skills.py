@@ -40,6 +40,13 @@ def test_the_instructions_carry_each_skill_in_its_own_words():
     assert rules.endswith("- panda: Play https://youtu.be/x on the TV.")
 
 
+def test_a_skill_with_a_when_is_found_by_what_its_for_too():
+    spec = {"name": "panda", "instructions": "Play it.", "when": "Ari is  bored"}
+    rules = HomeTools(HomeConfig(skills=[spec]), {"tv": Thing("tv")}).rules()
+    assert "or what they ask is what one is for (its when)" in rules
+    assert rules.endswith("- panda (when: Ari is bored): Play it.")
+
+
 def test_no_skills_no_word_of_them():
     assert "Skills:" not in HomeTools(HomeConfig(), {"tv": Thing("tv")}).rules()
 
@@ -138,6 +145,7 @@ def test_a_skill_with_times_loads(tmp_path):
         ('instructions = "Ask."\nat = ["19:55", "25:00"]', 'at is a time of day like "19:55"'),
         ('instructions = "Ask."\nat = "19:55"\ndays = ["someday"]', "days are like"),
         ('instructions = "Ask."\ndays = ["sun"]', "days are when it runs by itself, so it needs at"),
+        ('instructions = "Ask."\nwhen = 3', "when is what it's for, in plain words"),
     ],
 )
 def test_a_skill_that_cant_work_stops_at_startup(tmp_path, setup, says):

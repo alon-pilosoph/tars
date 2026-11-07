@@ -612,6 +612,8 @@ def _skill_problems(skill: dict) -> list[str]:
         problems.append("steps are gone: say what to do in plain words, as instructions (docs/home.md#skills)")
     elif not (isinstance(skill.get("instructions"), str) and skill["instructions"].strip()):
         problems.append("needs instructions: what to do, in plain words")
+    if not isinstance(skill.get("when", ""), str):
+        problems.append("when is what it's for, in plain words")
     at = skill.get("at", [])
     times = [at] if isinstance(at, str) else at
     clock = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
