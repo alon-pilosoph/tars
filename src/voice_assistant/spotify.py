@@ -486,8 +486,9 @@ def make(name: str, spec: dict, context) -> Spotify:
     return Spotify(name, account, spec["play_on"], http, wake)
 
 
-def login(client_id: str, path: Path, ask: Callable[[str], str] = input, http: httpx.Client | None = None) -> None:
-    """Sign in once, with PKCE (no secret to keep): a link to open anywhere, and the address it goes on to, pasted."""
+def begin(client_id: str, path: Path, http: httpx.Client | None = None) -> tuple[str, Callable[[str], None]]:
+    """A sign-in, with PKCE (no secret to keep): the link to sign in with, and `finish(address)`, which takes the
+    address Spotify then goes on to and keeps the sign-in in `path`; ValueError if it can't."""
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state = secrets.token_urlsafe(16)
@@ -500,26 +501,70 @@ def login(client_id: str, path: Path, ask: Callable[[str], str] = input, http: h
         "code_challenge": challenge,
         "state": state,
     }
-    print(f"Open this, sign in to Spotify and agree:\n\n{ACCOUNTS}/authorize?{urlencode(query)}\n")
+
+    def finish(address: str) -> None:
+        pasted = parse_qs(urlsplit(address.strip()).query)
+        if pasted.get("state", [""])[0] != state or not pasted.get("code"):
+            raise ValueError("That isn't the address Spotify sent you to, for this sign-in")
+        answer = (http or httpx.Client(timeout=TIMEOUT_S)).post(
+            f"{ACCOUNTS}/api/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": pasted["code"][0],
+                "redirect_uri": REDIRECT,
+                "client_id": client_id,
+                "code_verifier": verifier,
+            },
+        )
+        if answer.status_code != 200:
+            raise ValueError(f"Spotify turned the sign-in down ({answer.status_code}): it may have taken too long")
+        keep(path, answer.json()["refresh_token"])
+
+    return f"{ACCOUNTS}/authorize?{urlencode(query)}", finish
+
+
+def login(client_id: str, path: Path, ask: Callable[[str], str] = input, http: httpx.Client | None = None) -> None:
+    """Signs in from the command line: the link printed, the address pasted back."""
+    link, finish = begin(client_id, path, http)
+    print(f"Open this, sign in to Spotify and agree:\n\n{link}\n")
     print("Spotify then sends the browser on to an address that won't load. Copy that address from the address bar.")
-    pasted = parse_qs(urlsplit(ask("The address: ").strip()).query)
-    if pasted.get("state", [""])[0] != state or not pasted.get("code"):
-        raise SystemExit("That isn't the address Spotify sent you to: try again")
-    http = http or httpx.Client(timeout=TIMEOUT_S)
-    answer = http.post(
-        f"{ACCOUNTS}/api/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": pasted["code"][0],
-            "redirect_uri": REDIRECT,
-            "client_id": client_id,
-            "code_verifier": verifier,
-        },
-    )
-    if answer.status_code != 200:
-        raise SystemExit(f"Spotify turned the sign-in down ({answer.status_code}): try again")
-    keep(path, answer.json()["refresh_token"])
+    try:
+        finish(ask("The address: "))
+    except ValueError as e:
+        raise SystemExit(f"{e}: try again") from None
     print(f"Signed in. Kept in {path}.")
+
+
+def page_login(
+    client_id: str, path: Path, host: str, port: int, send: Callable[[str], None], http: httpx.Client | None = None
+) -> str:
+    """Signs in from a chat, as the browser's logins are added: the link to sign in with, then a one-time page
+    (browser/login_page.py) to paste the address Spotify goes on to. What to tell them at the end."""
+    from .browser.login_page import LOGIN_WAIT_S, Asking, Field, ask
+
+    link, finish = begin(client_id, path, http)
+    send(f"To sign TARS in to Spotify, open this, sign in and agree:\n{link}")
+    minutes = f"{LOGIN_WAIT_S // 60:.0f} minutes"
+
+    def send_link(url: str) -> None:
+        send(
+            f"Your browser then goes on to an address that won't load. Copy it from the address bar and paste it "
+            f"here (the link works once, for {minutes}):\n{url}"
+        )
+
+    field = Field("address", "The address Spotify sent you to")
+    try:
+        given = ask(Asking("https://accounts.spotify.com", "to play Spotify for you", (field,)), send_link, host, port)
+    except OSError as e:  # the port taken, or the address gone
+        print(f"(spotify: couldn't serve the sign-in page on {host}:{port}: {e})")
+        return "I couldn't open the page to paste the address on, so I stopped there."
+    if not given:
+        return "No address came in time. Send /spotify to try again."
+    try:
+        finish(given["address"])
+    except ValueError as e:
+        return f"{e}. Send /spotify to try again."
+    return "Spotify is signed in."
 
 
 def main() -> None:

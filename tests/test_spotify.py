@@ -379,3 +379,41 @@ def test_an_answer_that_isnt_json_is_nothing_to_read():
     )
     found._http = httpx.Client(transport=httpx.MockTransport(service.handle))
     assert found.call("press", {"button": "pause"}, Request()) == "sent: pause"
+
+
+def test_a_sign_in_from_a_chat_sends_the_link_then_the_page_and_keeps_it(tmp_path, monkeypatch):
+    from voice_assistant.browser import login_page
+
+    path, sent, asked = tmp_path / "spotify.json", [], []
+
+    def page(asking, send_link, host, port, wait_s=600):
+        asked.append((asking.fields[0].label, host, port))
+        send_link("http://10.0.0.5:8091/login?token=t")
+        link = sent[0].split("\n")[1]
+        state = dict(httpx.URL(link).params)["state"]
+        return {"address": f"http://127.0.0.1:8888/callback?code=c&state={state}"}
+
+    monkeypatch.setattr(login_page, "ask", page)
+    accounts = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"refresh_token": "r9"})))
+    said = spotify.page_login("client", path, "10.0.0.5", 8091, sent.append, accounts)
+    assert said == "Spotify is signed in." and json.loads(path.read_text()) == {"refresh_token": "r9"}
+    assert sent[0].startswith("To sign TARS in to Spotify") and "accounts.spotify.com/authorize" in sent[0]
+    assert "works once" in sent[1] and asked == [("The address Spotify sent you to", "10.0.0.5", 8091)]
+
+
+def test_a_sign_in_from_a_chat_with_no_address_in_time_says_how_to_try_again(tmp_path, monkeypatch):
+    from voice_assistant.browser import login_page
+
+    monkeypatch.setattr(login_page, "ask", lambda *a, **kw: None)
+    said = spotify.page_login("client", tmp_path / "s.json", "h", 1, lambda text: None)
+    assert "Send /spotify" in said and not (tmp_path / "s.json").exists()
+
+
+def test_a_wrong_address_on_the_page_is_said(tmp_path, monkeypatch):
+    from voice_assistant.browser import login_page
+
+    monkeypatch.setattr(
+        login_page, "ask", lambda *a, **kw: {"address": "http://127.0.0.1:8888/callback?code=x&state=no"}
+    )
+    said = spotify.page_login("client", tmp_path / "s.json", "h", 1, lambda text: None)
+    assert said.startswith("That isn't the address") and "Send /spotify" in said

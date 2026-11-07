@@ -338,8 +338,10 @@ To sign in, once:
    API, with the redirect URI `http://127.0.0.1:8888/callback`, and put its client id in .env as `SPOTIFY_CLIENT_ID`.
    There's no secret to keep: the sign-in uses PKCE. Spotify's development mode allows one such app per person, with
    Premium, and five accounts on it.
-2. `uv run python -m voice_assistant.spotify login` prints a link: open it on any phone or computer, sign in and agree.
-   The browser then goes on to an address that won't load; copy it from the address bar and paste it back.
+2. Send `/spotify` to TARS on Telegram. It sends a link to sign in with, then a one-time page, as a login for the
+   browser is added (docs/browser.md): sign in and agree, and the browser goes on to an address that won't load. Copy
+   it from the address bar and paste it on the page, which works once, for ten minutes. Without Telegram,
+   `uv run python -m voice_assistant.spotify login` does the same in a terminal.
 
 The sign-in is kept in `voice_data/spotify.json`, readable by TARS's user alone, and Spotify swaps it for a new one as
 it's used. It isn't in the backup, so a restored TARS signs in again.

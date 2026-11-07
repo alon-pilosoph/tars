@@ -723,11 +723,27 @@ def telegram(cfg: Config, root: Path) -> None:
         env=env,
         home=home,
         say=functools.partial(ask_to_say, events.store.folder) if events else None,
+        spotify_login=spotify_login(cfg, root, env),
     )
     told.append(tars)
     if queue:
         make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
     tars.run_forever(me)
+
+
+def spotify_login(cfg: Config, root: Path, env: Path):
+    """How /spotify signs in, on the browser's one-time page and port; None without SPOTIFY_CLIENT_ID."""
+    from dotenv import dotenv_values
+
+    from .spotify import CLIENT_KEY, TOKEN_FILE, page_login
+
+    client = dotenv_values(env).get(CLIENT_KEY) if env.exists() else None
+    if not client:
+        return None
+    from .browser.login_page import reachable_address
+
+    host = cfg.browser.login_host or reachable_address()
+    return functools.partial(page_login, client, root / TOKEN_FILE, host, cfg.browser.login_port)
 
 
 def errand_queue(cfg: Config, events, has_openai: bool):
