@@ -180,8 +180,9 @@ def mic_level(read: Callable[[], np.ndarray], blocks: int) -> Result:
     if peak == 0:
         return Result(
             "Microphone",
-            FAIL,
-            "only silence, not even room noise",
+            WARN,
+            "heard nothing at all",
+            "a speakerphone sends pure silence in a quiet room, so say something during the check. Still nothing: "
             "it's muted, or this program isn't allowed to use it (macOS: System Settings → Privacy → Microphone)",
         )
     dbfs = 20 * np.log10(peak / 32768)

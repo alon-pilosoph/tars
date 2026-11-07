@@ -7,12 +7,14 @@ win over the automatic ones.
 
 import sqlite3
 import time
+import wave
 from collections.abc import Collection
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 
+from .audio import read_wav, sound_ms
 from .store import Store
 from .verify import ANSWER, ASK, IGNORE
 
@@ -22,6 +24,7 @@ REAL, NOT_REAL = "real", "not_real"
 PERSON, NOT_PERSON, UNKNOWN = "person", "not_person", "unknown"
 MISSED_WINDOW_S = 10.0  # a near-miss followed this soon by a real wake was probably a missed "hey TARS"
 DAY_S = 24 * 3600
+BLANK_MS = 150.0  # a near-miss with less sound than this has nothing to hear: the shortest real "hey TARS" has 488 ms
 REVIEW_SHOWN = 500  # Review shows this many of the newest wakes waiting for an answer, and as many answered ones
 # The newest requests of each voice stay on the machine whatever a backup does: a person's voiceprint is rebuilt from
 # them when voices are regrouped (clustering.enroll_named), and a few dozen make a good one.
@@ -259,16 +262,25 @@ class EventLog:
         """Newest first: the events waiting for an answer, and the newest answered ones. A wake a request followed
         settles itself, and one whose audio is gone can't be listened to, so neither waits. A near-miss waits only
         when a real wake followed within MISSED_WINDOW_S (probably a missed "hey TARS", said again): the rest are
-        any sound that came near, dozens a day with a lenient model, and stay in the log, out of Review."""
-        return self._labeled(
-            self.store.rows(
-                "SELECT * FROM events WHERE id IN (SELECT id FROM events e WHERE label IS NULL AND audio IS NOT NULL "
-                "AND follow IS NOT ? AND (kind IS NOT ? OR EXISTS (SELECT 1 FROM events w WHERE w.kind=? "
-                "AND w.outcome=? AND w.ts > e.ts AND w.ts <= e.ts + ?)) ORDER BY ts DESC LIMIT ?) "
-                "OR id IN (SELECT id FROM events WHERE label IS NOT NULL ORDER BY ts DESC LIMIT ?) ORDER BY ts DESC",
-                (ASKED, NEAR_MISS, WAKE, ANSWER, MISSED_WINDOW_S, REVIEW_SHOWN, REVIEW_SHOWN),
-            )
+        any sound that came near, dozens a day with a lenient model, and stay in the log, out of Review. So does one
+        with nothing to hear, a click before the real wake: there's no answering it."""
+        rows = self.store.rows(
+            "SELECT * FROM events WHERE id IN (SELECT id FROM events e WHERE label IS NULL AND audio IS NOT NULL "
+            "AND follow IS NOT ? AND (kind IS NOT ? OR EXISTS (SELECT 1 FROM events w WHERE w.kind=? "
+            "AND w.outcome=? AND w.ts > e.ts AND w.ts <= e.ts + ?)) ORDER BY ts DESC LIMIT ?) "
+            "OR id IN (SELECT id FROM events WHERE label IS NOT NULL ORDER BY ts DESC LIMIT ?) ORDER BY ts DESC",
+            (ASKED, NEAR_MISS, WAKE, ANSWER, MISSED_WINDOW_S, REVIEW_SHOWN, REVIEW_SHOWN),
         )
+        return self._labeled([r for r in rows if not self._blank(r)])
+
+    def _blank(self, event: dict) -> bool:
+        """An unanswered near-miss with next to no sound in it. One whose audio can't be read is left to Review."""
+        if event["kind"] != NEAR_MISS or event["label"] is not None:
+            return False
+        try:
+            return sound_ms(read_wav(self.folder / event["audio"])) < BLANK_MS
+        except OSError, EOFError, wave.Error:
+            return False
 
     def _labeled(self, rows: list[dict]) -> list[dict]:
         answered = self._answered_times(rows)

@@ -89,6 +89,12 @@ def silent_bytes(pcm: bytes | bytearray) -> int:
     return 2 * int(loud[0]) if len(loud) else len(pcm)
 
 
+def sound_ms(pcm: np.ndarray) -> float:
+    """How much of 16 kHz PCM is audible, in all: a speakerphone cuts a quiet room to pure zeros, so a clip can last
+    seconds and hold a click."""
+    return len(_loud(pcm.tobytes())) * 1000 / SAMPLE_RATE
+
+
 def find_device(name: str, kind: str) -> int | None:
     """By name substring, so config survives index changes across machines and boots."""
     if not name:
