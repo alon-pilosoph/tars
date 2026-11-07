@@ -13,7 +13,9 @@ from urllib.parse import quote
 
 import httpx
 
-from voice_assistant.androidtv import OPEN_WAIT_S, AndroidTV, TvAgent, TvDevice, wait_for
+from voice_assistant.androidtv import OPEN_WAIT_S, TV_RULES, AndroidTV, TvAgent, TvDevice, wait_for
+
+from .channels import ASK_WHICH, RULES, Tuner, channel, only_news
 
 STREMIO = "stremio"
 IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/{first}/{query}.json"
@@ -77,7 +79,8 @@ class Catalog:
 
 
 class FireTv(TvDevice):
-    """The household's Fire TV: the core Android TV device, with play going straight to Stremio."""
+    """The household's Fire TV: the core Android TV device, with play going straight to Stremio, or to a live channel
+    (channels.py)."""
 
     def __init__(
         self,
@@ -86,11 +89,24 @@ class FireTv(TvDevice):
         agent: TvAgent | None = None,
         catalog: Catalog | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        announce: Callable[[str], None] = print,
     ):
         super().__init__(name, box, agent, sleep=sleep)
         self.catalog = catalog or Catalog()
+        self.tuner = Tuner(box, announce, sleep)
+
+    def rules(self) -> str:
+        return f"{TV_RULES} {RULES}"
+
+    def stop(self) -> None:
+        super().stop()
+        self.tuner.stop()
 
     def play(self, title: str, app: str) -> str:
+        if live := channel(title):
+            return self.tuner.start(live)
+        if only_news(title, app):
+            return ASK_WHICH
         app = (app or STREMIO).strip().lower()  # this house watches on Stremio unless it says otherwise
         wanted = Title.parse(title)
         if app != STREMIO or not wanted.name:
@@ -128,4 +144,6 @@ class FireTv(TvDevice):
         return any(p == package and state == "playing" for p, state, _ in self.box.media())
 
     def slow(self, action: str, args: dict) -> bool:
-        return super().slow(action, args) or action == "play"
+        title = str(args.get("title") or "")
+        live = channel(title) or only_news(title, str(args.get("app") or ""))  # these answer at once
+        return super().slow(action, args) or (action == "play" and not live)

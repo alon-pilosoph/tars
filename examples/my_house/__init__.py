@@ -110,7 +110,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
             raise ValueError('it needs the optional extra "tv": uv sync --all-extras') from None
         box = AndroidTV(spec["address"], context.root / KEY_FILE, seen=Seen(context.root / FOUND_FILE))
         agent = context.tv_agent(box, extra_rules=STREMIO_RULES) if context.tv_agent else None
-        return FireTv(spec["name"], box, agent, Catalog())
+        return FireTv(spec["name"], box, agent, Catalog(), announce=context.announce or print)
 
     def purifier(spec: dict) -> Purifier:
         _only(spec, {"address"})
