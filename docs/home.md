@@ -303,10 +303,21 @@ and a Fire TV that plays a title on Stremio straight from its link.
 
 ### Spotify
 
-Spotify, played through Spotify Connect on a Spotify device in the house: "play some jazz", "the Beatles", a Spotify
-link, then pause, next, previous, the volume, and "what's playing?". TARS finds it with Spotify's own search (a name
-that matches exactly wins, a playlist before an album, an artist, a song; otherwise a playlist of it, then the first
-song), plays it, and says it's playing only once Spotify says so. It needs Premium.
+Spotify, played through Spotify Connect on an official Spotify app in the house: "play some jazz", "the Beatles", a
+song, an album, a mood, "something I like", a Spotify link; then pause, next, previous, the volume, and "what's
+playing?". It needs Premium. The model says what kind of thing was asked for, and code finds it:
+
+- **A song or an album:** Spotify gives an app like this no popularity, so it's the artist with the most versions of
+  it (an original has its live ones and remixes, a cover one), the first of theirs as Spotify ranks them. A remaster
+  is the same recording; a live one or a remix plays only when asked for. When two artists come level ("Hello"), the
+  one they play themselves wins; otherwise Spotify's first, with the others said, so "the Adele one" switches.
+- **An artist:** that artist. **A playlist:** their own first; two of theirs with the name are asked about.
+- **A genre or a mood:** a playlist of it with enough songs in it. Spotify's own playlists are closed to an app like
+  this one.
+- **"Something I like":** a shuffled mix of their most played and liked songs. Spotify's own picks for them are closed
+  too. **"More like this":** more of the artist playing.
+
+It's said to play only once Spotify says so.
 
 ```toml
 [[home.devices]]
@@ -317,11 +328,16 @@ wake = "fire tv"                      # optional: the device that opens its app,
 ```
 
 A TV's Spotify app shows up as a device only while it's open, so `wake` names the device that opens it: an Android TV
-box, whose "open" turns the TV on too where it can. To sign in, once:
+box, whose "open" turns the TV on too where it can. Play on an official Spotify app or speaker: Spotify refuses the
+audio of unofficial players (librespot, and the raspotify and spotifyd built on it) on some accounts, which then skip
+every song in silence while Spotify says they play.
 
-1. Make an app at developer.spotify.com (Dashboard, Create app), for the Web API, with the redirect URI
-   `http://127.0.0.1:8888/callback`, and put its client id in .env as `SPOTIFY_CLIENT_ID`. There's no secret to keep:
-   the sign-in uses PKCE.
+To sign in, once:
+
+1. Make an app at developer.spotify.com (Dashboard, Create app; on a phone it may need the desktop site), for the Web
+   API, with the redirect URI `http://127.0.0.1:8888/callback`, and put its client id in .env as `SPOTIFY_CLIENT_ID`.
+   There's no secret to keep: the sign-in uses PKCE. Spotify's development mode allows one such app per person, with
+   Premium, and five accounts on it.
 2. `uv run python -m voice_assistant.spotify login` prints a link: open it on any phone or computer, sign in and agree.
    The browser then goes on to an address that won't load; copy it from the address bar and paste it back.
 
