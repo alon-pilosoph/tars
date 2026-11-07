@@ -213,6 +213,7 @@ class Microphone:
         """`echo`: takes TARS's own sound out of what's heard, so the mic can stay open while TARS makes one."""
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self._muted = False
+        self._last_audio = time.monotonic()  # when the device last called back: what `discard` looks at
         self.echo = echo
         rate = device_rate(device, "input", SAMPLE_RATE)
         # A device at its own rate is read in 80 ms of its samples, and what they make at 16 kHz handed out in blocks.
@@ -231,6 +232,7 @@ class Microphone:
             raise NoDeviceError(f"No microphone to open ({e}). {PLUG_IN}") from None
 
     def _on_audio(self, indata, frames, time_info, status) -> None:
+        self._last_audio = time.monotonic()
         block = np.frombuffer(indata, dtype=np.int16).copy()
         if self._resample is None:
             self._take(block)
@@ -252,6 +254,7 @@ class Microphone:
             pass  # the consumer fell behind; dropping audio beats unbounded latency
 
     def __enter__(self) -> Self:
+        self._last_audio = time.monotonic()
         self._stream.start()
         return self
 
@@ -274,6 +277,13 @@ class Microphone:
     def clear(self) -> None:
         while not self._queue.empty():
             self._queue.get_nowait()
+
+    def discard(self) -> None:
+        """`clear`, for whoever isn't reading (muted, or held by a recording session), so a device that's gone is
+        still noticed: `read`'s stall, without its wait."""
+        self.clear()
+        if time.monotonic() - self._last_audio > MIC_STALL_S:
+            raise MicrophoneError(f"No audio from the microphone for {MIC_STALL_S:.0f}s; is it still connected?")
 
     @contextmanager
     def paused(self, tail_s: float = 0.3):

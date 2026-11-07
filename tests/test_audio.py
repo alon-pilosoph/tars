@@ -38,6 +38,29 @@ def test_dead_microphone_raises_instead_of_hanging(monkeypatch):
         mic.read()
 
 
+def test_a_microphone_nobody_reads_still_says_it_s_gone(monkeypatch):
+    """Muted, TARS throws the audio away instead of reading it: the stall has to show there too."""
+    monkeypatch.setattr(audio_module, "MIC_STALL_S", 0.1)
+    mic = Microphone.__new__(Microphone)  # skip opening a real device
+    mic._queue, mic._last_audio = queue.Queue(), time.monotonic()
+    mic._queue.put(np.zeros(1, np.int16))
+    mic.discard()
+    assert mic._queue.empty()
+    mic._last_audio -= 0.2  # the device stopped calling back
+    with pytest.raises(MicrophoneError):
+        mic.discard()
+
+
+def test_audio_arriving_is_what_keeps_a_microphone_alive(monkeypatch):
+    """Even audio that isn't kept: while TARS speaks the mic is paused, and that's not a stall."""
+    monkeypatch.setattr(audio_module, "MIC_STALL_S", 0.1)
+    mic = Microphone.__new__(Microphone)
+    mic._queue, mic._last_audio = queue.Queue(), time.monotonic() - 0.2
+    mic._muted, mic.echo, mic._resample = True, None, None
+    mic._on_audio(bytes(4), 2, None, None)
+    mic.discard()
+
+
 class FakeOutput:
     """An output device pulling 10 ms at a time, as fast as it can."""
 
