@@ -30,7 +30,8 @@ LIVE_ROW, WATCH = "טלוויזיה בשידור חי", "לצפייה"  # its li
 ASK_WHICH = "ask them: Channel 11 or Channel 12? Change nothing until they say, then play that channel"
 RULES = (
     'For live TV use play with the title "channel 11" (Kan) or "channel 12" (Keshet), on this device; an ad may run '
-    'first. "Put the news on", with no channel said, is live TV too: ask which of the two, and play it once they say.'
+    'first. "Put the news on", with no channel said, is live TV too: ask which of the two, and play it once they say. '
+    "A YouTube link they ask to play or put on: play with the link as it is as the title, and the app youtube."
 )
 
 

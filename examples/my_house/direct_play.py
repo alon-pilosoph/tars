@@ -9,7 +9,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
@@ -38,7 +38,10 @@ STREMIO_RULES = "In Stremio, choosing a title lists streams from its add-ons: ch
 def watch_link(url: str) -> str:
     """YouTube on a Fire TV takes a youtu.be link and opens its home page, so a short link becomes the long kind."""
     found = SHORT_LINK.match(url)
-    return f"https://www.youtube.com/watch?v={found[1]}" if found else url
+    if not found:
+        return url
+    playlist = parse_qs(urlsplit(url).query).get("list")
+    return f"https://www.youtube.com/watch?v={found[1]}" + (f"&list={quote(playlist[0])}" if playlist else "")
 
 
 @dataclass

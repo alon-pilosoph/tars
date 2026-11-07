@@ -124,7 +124,8 @@ where it is, and its position would need updating if the app changes.
 "Put the news on", with no channel said, asks which of the two before anything changes. Behind a VPN 12+ says it's for
 subscribers: TARS says that, rather than that nothing played.
 
-`play` with a link as the title (`app = "youtube"`) opens that video, for a skill (docs/home.md#skills). YouTube may
+`play` with a link as the title (`app = "youtube"`) opens that video, for a skill (docs/home.md#skills) or a link sent
+in a chat. YouTube may
 stop at "who's watching", so with no sound a press takes the profile that has the focus and the link is sent again.
 On a Fire TV it takes a `youtu.be` link and opens its home page, so a short link is made the long kind first. The box
 can only say there's sound, not which video it is, and that home page has ads that make sound.

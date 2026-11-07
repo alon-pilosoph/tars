@@ -217,6 +217,7 @@ def test_only_what_takes_time_says_one_moment_first():
 def test_the_model_is_told_how_to_ask_for_them():
     device, _ = tv(Box())
     assert '"channel 11"' in device.rules() and '"channel 12"' in device.rules() and "news" in device.rules()
+    assert "YouTube link" in device.rules()
 
 
 LINK = "https://youtu.be/UBcVbAFntQo?si=abc"
@@ -263,6 +264,12 @@ def test_stopped_at_whos_watching_a_press_takes_the_profile():
 def test_only_a_short_link_is_changed():
     assert watch_link("https://youtu.be/a-b_c") == "https://www.youtube.com/watch?v=a-b_c"
     assert watch_link("https://vimeo.com/1") == "https://vimeo.com/1"
+
+
+def test_a_short_link_keeps_its_playlist_and_loses_its_tracking():
+    long = "https://www.youtube.com/watch?v=abc&list=PL1"
+    assert watch_link("https://youtu.be/abc?si=xyz&list=PL1") == long
+    assert watch_link(long) == long
 
 
 def test_a_link_that_never_plays_isnt_said_to():
