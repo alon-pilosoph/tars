@@ -30,7 +30,10 @@ CLIENT_KEY = "SPOTIFY_CLIENT_ID"
 TOKEN_FILE = "voice_data/spotify.json"
 ACCOUNTS, API = "https://accounts.spotify.com", "https://api.spotify.com/v1"
 REDIRECT = "http://127.0.0.1:8888/callback"  # Spotify's own rule: plain http only on this machine's own address
-SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
+SCOPES = (  # playing, and reading what's liked and played, for "something I like"; nothing that changes the library
+    "user-read-playback-state user-modify-playback-state user-read-currently-playing user-top-read "
+    "user-read-recently-played user-library-read playlist-read-private"
+)
 TIMEOUT_S = 8.0
 WAKE_WAIT_S = 30.0  # a TV's Spotify app opening and showing up as a device
 PLAYING_WAIT_S = 6.0  # Spotify saying it's playing what it was asked to
