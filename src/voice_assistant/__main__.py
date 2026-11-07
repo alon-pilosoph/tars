@@ -555,13 +555,32 @@ def make_skills(events):
     return make(events)
 
 
-def skill_clock(skills, say: str):
+def skill_clock(skills, say: str, home=None, presence=None):
     """The clock for the skills that run by themselves and say what they have to `say` ("aloud": the voice's TARS;
     "chat": the Telegram service's, skills.ALOUD and CHAT), or None without skills. They're read again on every
-    tick, so one taught a minute ago is kept to."""
+    tick, so one taught a minute ago is kept to. With `home` (a HomeTools) and `presence`, it also watches the
+    devices and who's home for the skills that run on something happening, and a trigger saved is checked against
+    the devices and people there are."""
+    from .home import Request
     from .skills import Clock
 
-    return Clock(skills.all, say).start() if skills else None
+    if not skills:
+        return None
+    people = status = None
+    if presence:
+        names = presence.board.people.names  # by person_key: as they're written
+
+        def people() -> dict[str, bool | None]:
+            return {names[key]: state.home for key, state in presence.board.states().items()}
+
+        skills.people = lambda: set(names)
+    if home:
+
+        def status(device: str) -> str:
+            return home.call({"device": device, "action": "status"}, Request())
+
+        skills.devices, skills.status = (lambda: set(home.devices)), status
+    return Clock(skills.all, say, people=people, status=status, record=skills.ran).start()
 
 
 def own_speaker(cfg: Config):
@@ -757,7 +776,7 @@ def telegram(cfg: Config, root: Path) -> None:
         home=home,
         say=functools.partial(ask_to_say, events.store.folder) if events else None,
         spotify_login=spotify_login(cfg, root, env),
-        skill_clock=skill_clock(skills, "chat"),
+        skill_clock=skill_clock(skills, "chat", home, presence),
     )
     told.append(tars)
     if queue:
@@ -1129,7 +1148,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=skill_clock(skills, "aloud"),
+            skill_clock=skill_clock(skills, "aloud", home, presence),
         )
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:

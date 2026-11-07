@@ -674,13 +674,13 @@ class TelegramTars:
                     if free:
                         self._report(chat, r, now)
         if self._skill_clock:
-            for skill, when in self._skill_clock.take():
-                chat = self._chat_for(skill.owner)
+            for due in self._skill_clock.take():
+                chat = self._chat_for(due.skill.owner)
                 if chat is None:
-                    print(f"(skill {skill.name}: {skill.owner} has no chat to post it in)")
+                    print(f"(skill {due.skill.name}: {due.skill.owner} has no chat to post it in)")
                     continue
                 with chat.busy:  # due now: after an exchange in progress, not the next round
-                    self._run_skill(chat, skill, when)
+                    self._run_skill(chat, due)
         if self._conversations and self._send_items:
             for row in self._conversations.undelivered(since=now - ITEMS_WITHIN_S):
                 chat = self._chat_for(row["for_name"])
@@ -690,15 +690,15 @@ class TelegramTars:
                     if free:
                         self._post_sent_at_home(chat, row, now)
 
-    def _run_skill(self, chat: Chat, skill, when) -> None:
+    def _run_skill(self, chat: Chat, due) -> None:
         """A skill whose time has come, in its owner's chat: a turn of its own, with its instructions as the request,
         whose reply is posted, and part of the chat's conversation, so their answer follows on from it."""
         from .skills import on_its_own
 
-        brain = chat.brain
-        print(f"(skill {skill.name}: it's {when:%H:%M}, in {chat.person}'s chat)", flush=True)
+        brain, skill = chat.brain, due.skill
+        print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, in {chat.person}'s chat)", flush=True)
         try:
-            asked = on_its_own(skill, when, SKIP)
+            asked = on_its_own(skill, due.when, SKIP, due.why)
             skipped, pieces = split_skip(brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True)))
             reply = tidy("".join(pieces))
         except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
@@ -708,6 +708,7 @@ class TelegramTars:
         if skipped or not reply:
             brain.forget_last()
             print(f"(skill {skill.name}: nothing to do now)", flush=True)
+            self._skill_clock.record(due, "")
             return
         try:
             self._send(chat.chat_id, reply, tries=SEND_TRIES)
@@ -715,6 +716,7 @@ class TelegramTars:
             brain.forget_last()
             print(f"(skill {skill.name}: couldn't post it: {e})", flush=True)
             return
+        self._skill_clock.record(due, reply)
         now = self._clock()
         if (conversation := self._current_conversation(chat, now)) is not None:
             self._log(self._conversations.add_tars_turn, conversation, reply, ts=now)

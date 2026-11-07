@@ -11,7 +11,7 @@ from voice_assistant.audio import chime
 from voice_assistant.config import ConfigError, LLMConfig, load_config
 from voice_assistant.home import Request
 from voice_assistant.llm import SKIP, OpenAIChat
-from voice_assistant.skills import ALOUD, CHAT, HOUSEHOLD, Clock, Skill, Skills, import_config, on_its_own
+from voice_assistant.skills import ALOUD, CHAT, HOUSEHOLD, Clock, Due, Skill, Skills, import_config, on_its_own
 from voice_assistant.store import Store
 
 from .conftest import make_assistant, speech
@@ -39,6 +39,7 @@ def teach(skills, speaker="Alon", **args):
         "when": None,
         "at": None,
         "days": None,
+        "trigger": None,
         "say": None,
         "household": None,
         "about": None,
@@ -153,12 +154,12 @@ def test_the_clock_keeps_each_skill_at_its_times_on_its_days_once_and_for_its_ow
     clock = Clock(lambda: [NEWS, Skill("panda", "Play it."), chat, paused], ALOUD)
     clock.look(SUNDAY)
     clock.look(SUNDAY.replace(second=40))  # the same minute: kept once
-    assert clock.take() == [(NEWS, SUNDAY)] and not clock.is_due()
+    assert clock.take() == [Due(NEWS, SUNDAY)] and not clock.is_due()
     clock.look(datetime(2026, 11, 10, 19, 55, tzinfo=UTC))  # a Tuesday
     assert not clock.is_due()
     chats = Clock(lambda: [NEWS, chat], CHAT)
     chats.look(SUNDAY)
-    assert chats.take() == [(chat, SUNDAY)]
+    assert chats.take() == [Due(chat, SUNDAY)]
 
 
 def test_a_skill_taught_a_minute_ago_is_kept_to(skills):
@@ -166,7 +167,7 @@ def test_a_skill_taught_a_minute_ago_is_kept_to(skills):
     clock.look(SUNDAY)
     teach(skills, name="news", instructions="Ask.", at="19:56", household=True)
     clock.look(SUNDAY.replace(minute=56))
-    assert [s.name for s, _ in clock.take()] == ["news"]
+    assert [d.skill.name for d in clock.take()] == ["news"]
 
 
 def test_a_table_that_cant_be_read_waits_for_the_next_tick():
@@ -299,3 +300,187 @@ def test_skills_left_in_the_config_stop_it_saying_how_to_import_them(tmp_path):
     path.write_text('[[home.skills]]\nname = "panda"\ninstructions = "Play it."')
     with pytest.raises(ConfigError, match="import them once with"):
         load_config(path)
+
+
+# Run on something happening.
+
+STACEY_HOME = {"event": "arrives", "who": "Stacey", "device": None, "says": None, "above": None, "below": None,
+               "reading": None}  # fmt: skip
+
+
+def test_a_trigger_is_taught_checked_against_whats_there_and_described(skills):
+    skills.devices, skills.people = (lambda: {"front door", "air quality"}), (lambda: {"alon", "stacey"})
+    teach(skills, name="welcome", instructions="Tell her what's waiting.", trigger=STACEY_HOME, household=True)
+    co2 = {**STACEY_HOME, "event": "device", "who": None, "device": "Air Quality", "above": 1000, "reading": "CO2"}
+    teach(skills, name="air", instructions="Turn on the purifier and tell me.", trigger=co2)
+    note = skills.note("Alon")
+    assert "- welcome (household; runs by itself when stacey comes home, said aloud): Tell her" in note
+    assert "- air (Alon's; runs by itself when the air quality's co2 goes over 1000, said aloud)" in note
+    assert teach(skills, name="x", instructions="y", trigger={**STACEY_HOME, "who": "bob"}).startswith(
+        "error: who's home doesn't follow 'bob'"
+    )
+    door = {**STACEY_HOME, "event": "device", "device": "back door", "says": "open"}
+    assert teach(skills, name="x", instructions="y", trigger=door) == "error: there's no device called 'back door'"
+    assert teach(skills, name="x", instructions="y", at="7:00", trigger=STACEY_HOME).startswith(
+        "error: a skill runs at set times or on something happening, not both"
+    )
+
+
+class House:
+    """Who's home and the devices' statuses, as a test sets them."""
+
+    def __init__(self):
+        self.home = {"Alon": True, "Stacey": False}
+        self.statuses = {"front door": "front door: locked", "air quality": "air quality: CO2 800 ppm, PM2.5 4"}
+
+    def clock(self, *skills, now=None):
+        ticks = [0.0]
+        clock = Clock(
+            lambda: list(skills),
+            ALOUD,
+            people=lambda: dict(self.home),
+            status=lambda d: self.statuses[d],
+            clock=lambda: ticks[0],
+        )
+        clock.ticks = ticks
+        return clock
+
+
+def on(trigger, name="it", **kw):
+    return Skill(name, "Do it.", trigger={"who": None, "says": None, "above": None, "below": None,
+                                          "reading": None, **trigger}, id=hash(name), **kw)  # fmt: skip
+
+
+def test_someone_coming_home_sets_off_the_skills_waiting_for_them():
+    house = House()
+    for_stacey, for_anyone = on({"event": "arrives", "who": "stacey"}, "a"), on({"event": "arrives"}, "b")
+    for_alon = on({"event": "arrives", "who": "alon"}, "c")
+    clock = house.clock(for_stacey, for_anyone, for_alon)
+    clock.look(SUNDAY)  # the first look only sees who's home
+    assert not clock.is_due()
+    house.home["Stacey"] = True
+    clock.look(SUNDAY)
+    assert [(d.skill.name, d.why) for d in clock.take()] == [
+        ("a", "Stacey just came home"),
+        ("b", "Stacey just came home"),
+    ]
+
+
+def test_everyone_is_the_last_one_out_and_the_first_one_home():
+    house = House()
+    last, first = (
+        on({"event": "leaves", "who": "everyone"}, "last"),
+        on({"event": "arrives", "who": "everyone"}, "first"),
+    )
+    clock = house.clock(last, first)
+    clock.look(SUNDAY)
+    house.home["Alon"] = False
+    clock.look(SUNDAY)
+    assert [(d.skill.name, d.why) for d in clock.take()] == [("last", "Alon just went out (nobody's home now)")]
+    house.home["Stacey"] = True
+    clock.look(SUNDAY)
+    assert [d.skill.name for d in clock.take()] == ["first"]
+    house.home["Alon"] = True  # someone was home already
+    clock.ticks[0] += 3600
+    clock.look(SUNDAY)
+    assert clock.take() == []
+
+
+def test_a_device_saying_a_word_it_didnt_sets_off_a_skill_once():
+    house = House()
+    clock = house.clock(on({"event": "device", "device": "front door", "says": "unlocked"}))
+    clock.look(SUNDAY)
+    house.statuses["front door"] = "front door: unlocked, door open"
+    clock.look(SUNDAY)
+    (due,) = clock.take()
+    assert due.why == "the front door now says unlocked (front door: unlocked, door open)"
+    clock.look(SUNDAY)  # still unlocked: nothing new
+    assert clock.take() == []
+
+
+def test_locked_isnt_said_by_unlocked():
+    house = House()
+    house.statuses["front door"] = "front door: unlocked"
+    clock = house.clock(on({"event": "device", "device": "front door", "says": "locked"}))
+    clock.look(SUNDAY)
+    house.statuses["front door"] = "front door: unlocked, door open"
+    clock.look(SUNDAY)
+    assert clock.take() == []
+    house.statuses["front door"] = "front door: locked"
+    clock.look(SUNDAY)
+    assert len(clock.take()) == 1
+
+
+def test_a_reading_crossing_its_limit_sets_off_a_skill_but_not_again_within_the_cooldown():
+    house = House()
+    clock = house.clock(on({"event": "device", "device": "air quality", "above": 1000, "reading": "co2"}))
+    clock.look(SUNDAY)
+    house.statuses["air quality"] = "air quality: CO2 1100 ppm, PM2.5 4"
+    clock.look(SUNDAY)
+    assert [d.why for d in clock.take()] == ["the air quality's co2 went over 1000, to 1100"]
+    for co2 in (900, 1200):  # flapping around its limit
+        house.statuses["air quality"] = f"air quality: CO2 {co2} ppm, PM2.5 4"
+        clock.look(SUNDAY)
+    assert clock.take() == []
+    clock.ticks[0] += 601
+    house.statuses["air quality"] = "air quality: CO2 900 ppm"
+    clock.look(SUNDAY)
+    house.statuses["air quality"] = "air quality: CO2 1300 ppm"
+    clock.look(SUNDAY)
+    assert len(clock.take()) == 1
+
+
+def test_a_device_that_doesnt_answer_sets_nothing_off():
+    house = House()
+    clock = house.clock(on({"event": "device", "device": "front door", "says": "unlocked"}))
+    clock.look(SUNDAY)
+    house.statuses = {}  # KeyError: it doesn't answer
+    clock.look(SUNDAY)
+    house.statuses = {"front door": "front door: unlocked"}
+    clock.look(SUNDAY)  # compared with the last answer it gave
+    assert len(clock.take()) == 1
+
+
+def test_its_turn_says_what_happened():
+    asked = on_its_own(Skill("welcome", "Greet her."), SUNDAY, SKIP, "Stacey just came home")
+    assert asked.startswith("(Nobody said this: it's 19:55 and Stacey just came home, when the skill welcome runs")
+
+
+def test_runs_are_kept_and_told(skills):
+    teach(skills, name="news", instructions="Ask.", at="19:55", household=True)
+    teach(skills, name="morning", instructions="Tell me.", at="7:30", say=CHAT)
+    (news,) = [s for s in skills.all() if s.name == "news"]
+    (morning,) = [s for s in skills.all() if s.name == "morning"]
+    skills.ran(news, "at 19:55", "Alon, should I put the news on?")
+    skills.ran(morning, "at 07:30", "")
+    told = teach(skills, action="runs")
+    assert told.startswith("What skills did by themselves lately, newest first:")
+    assert "morning (at 07:30): nothing to do" in told and "news (at 19:55): Alon, should I put" in told
+    assert "morning" not in teach(skills, speaker="Stacey", action="runs")
+
+
+def test_a_run_is_recorded_with_what_it_said(speaker):
+    runs = []
+    assistant, _ = make_assistant(speaker, [None], [], replies=["News?"])
+    clock = Clock(lambda: [NEWS], ALOUD, record=lambda skill, why, said: runs.append((skill.name, why, said)))
+    clock.look(SUNDAY)
+    assistant._skill_clock = clock
+    assistant.run_skills(follow_up_s=4.0)
+    assert runs == [("news", "at 19:55", "News?")]
+
+
+def test_a_reading_is_checked_against_what_the_device_says_now(skills):
+    status = "air quality: 28, home PM2.5: 4 μg/m³, home Carbon dioxide: 801 ppm"
+    skills.devices, skills.status = (lambda: {"air quality"}), (lambda device: status)
+    co2 = {**STACEY_HOME, "event": "device", "who": None, "device": "air quality", "above": 1000, "reading": "co2"}
+    said = teach(skills, name="air", instructions="Purifier on.", trigger=co2)
+    assert said == f"error: the air quality's status has no 'co2' reading; it says: {status}"
+    said = teach(skills, name="air", instructions="Purifier on.", trigger={**co2, "reading": "carbon dioxide"})
+    assert said.startswith("done: saved")
+    house = House()
+    house.statuses["air quality"] = status
+    clock = house.clock(*skills.all())
+    clock.look(SUNDAY)
+    house.statuses["air quality"] = status.replace("801", "1150")
+    clock.look(SUNDAY)
+    assert [d.why for d in clock.take()] == ["the air quality's carbon dioxide went over 1000, to 1150"]

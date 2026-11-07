@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from .events import person_key
 from .store import Store
@@ -33,11 +34,16 @@ DEVICE = "skills"  # the tool's name
 HOUSEHOLD = "household"  # a skill's owner when it's everyone's
 ALOUD, CHAT = "aloud", "chat"  # where a skill that runs by itself says what it has to say
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
-TICK_S = 20.0  # how often a clock looks for a skill that's due
+TICK_S = 10.0  # how often a clock looks for a skill that's due, or something happening one waits for
+COOLDOWN_S = 600.0  # a skill that runs when something happens runs again no sooner: no loops, no flapping
+MOST_RUNS = 20  # told when asked what TARS did
 TIME = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
 MOST_NOTES = 40  # a person's preferences told to the model, newest first
-SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET, LIST = "save", "delete", "pause", "resume", "remember", "forget", "list"
-ACTIONS = (LIST, SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET)
+SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET = "save", "delete", "pause", "resume", "remember", "forget"
+LIST, RUNS = "list", "runs"
+ACTIONS = (LIST, RUNS, SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET)
+ARRIVES, LEAVES, CHANGES = "arrives", "leaves", "device"  # what a skill can run on, besides the time
+ANYONE, EVERYONE = "anyone", "everyone"
 
 SKILLS_TOOL = {
     "type": "function",
@@ -48,12 +54,25 @@ SKILLS_TOOL = {
     "parameters": {
         "type": "object",
         "additionalProperties": False,
-        "required": ["action", "name", "instructions", "when", "at", "days", "say", "household", "about", "guess"],
+        "required": [
+            "action",
+            "name",
+            "instructions",
+            "when",
+            "at",
+            "days",
+            "trigger",
+            "say",
+            "household",
+            "about",
+            "guess",
+        ],
         "properties": {
             "action": {
                 "type": "string",
                 "enum": list(ACTIONS),
-                "description": "list: every skill and preference they have. save: a new skill, or a change to one, "
+                "description": "list: every skill and preference they have. runs: what skills did by themselves "
+                "lately, and why. save: a new skill, or a change to one, "
                 "in full, by its name. delete, pause, resume: a skill, by name. remember: a preference, in "
                 "instructions. forget: a preference, by its words in instructions.",
             },
@@ -77,10 +96,47 @@ SKILLS_TOOL = {
                 "type": ["string", "null"],
                 "description": "save, with at: the days, comma-separated ('sun, mon'); null: every day.",
             },
+            "trigger": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["event", "who", "device", "says", "above", "below", "reading"],
+                        "properties": {
+                            "event": {
+                                "type": "string",
+                                "enum": [ARRIVES, LEAVES, CHANGES],
+                                "description": "arrives or leaves: someone comes home or goes out; device: a device "
+                                "changes.",
+                            },
+                            "who": {
+                                "type": ["string", "null"],
+                                "description": "arrives, leaves: a person, as who's home names them; 'everyone' for "
+                                "the last one out, or the first one home; null: anyone.",
+                            },
+                            "device": {"type": ["string", "null"], "description": "device: as the home tool names it."},
+                            "says": {
+                                "type": ["string", "null"],
+                                "description": "device: the word its status says once it's happened: 'unlocked', "
+                                "'open', 'off'.",
+                            },
+                            "above": {"type": ["number", "null"], "description": "device: a reading going over this."},
+                            "below": {"type": ["number", "null"], "description": "device: a reading going under this."},
+                            "reading": {
+                                "type": ["string", "null"],
+                                "description": "device, with above or below: which reading, as its status words it "
+                                "('co2', 'pm2.5'); null: its first number.",
+                            },
+                        },
+                    },
+                    {"type": "null"},
+                ],
+                "description": "save: something happening that it runs on, instead of times; null: none.",
+            },
             "say": {
                 "type": ["string", "null"],
                 "enum": [ALOUD, CHAT, None],
-                "description": "save, with at: aloud at home, or in their own chat; null: aloud.",
+                "description": "save, with at or a trigger: aloud at home, or in their own chat; null: aloud.",
             },
             "household": {
                 "type": ["boolean", "null"],
@@ -109,20 +165,21 @@ RULES = (
     '- Using a skill: when they ask for one by name ("put on cartoons" is the skill cartoons), or what they ask is '
     "what one is for, do what its instructions say, with your tools, as if they'd asked for all of it themselves; "
     "ask only what they leave open.\n"
-    '- Teaching one ("from now on, when I say bedtime, turn off the TV"; "every day at 7:30, tell me the news"): '
-    "first say it back in a sentence (the name, what it does, when it runs by itself and where), and save it only "
-    "once they say yes. Changing one is saving it again, in full. A skill about the house or the TV that anyone "
+    '- Teaching one ("from now on, when I say bedtime, turn off the TV"; "every day at 7:30, tell me the news"; '
+    '"when Stacey gets home, tell her what\'s waiting"; "if the CO2 goes over 1000, turn on the purifier"): first '
+    "say it back in a sentence (the name, what it does, when it runs by itself or on what, and where), and save it "
+    "only once they say yes. Changing one is saving it again, in full. A skill about the house or the TV that anyone "
     "might ask for is the household's; one about them is theirs. Don't save what they asked for only this once.\n"
     "- Preferences: when they say what they like or don't (in the news, music, the house, anything), remember it, "
     "and say in a few words that you will. When something is clear from what they keep asking for, remember it as "
     "a guess, without making a fuss. Follow their preferences whenever they apply, and never present a guess as "
     'something they said. "What do you know about me?": tell them, guesses as guesses; they can correct or remove '
-    "any of it."
+    'any of it. "What did you do today?": the skills\' runs.'
 )
 # A skill's own turn, at its time: written as the request, so the model knows nobody asked, and that what it says is
 # heard by whoever is in the room, or read in the chat.
 ON_ITS_OWN = (
-    "(Nobody said this: it's {time}, when the skill {name} runs by itself{whose}. Do what its instructions say now. "
+    "(Nobody said this: {why}, when the skill {name} runs by itself{whose}. Do what its instructions say now. "
     "{where} If the instructions say there's nothing to do now, reply with exactly {skip} and nothing else.)\n"
     "Instructions: {instructions}"
 )
@@ -141,6 +198,7 @@ class Skill:
     say: str = ALOUD
     paused: bool = False
     id: int | None = None
+    trigger: dict | None = None  # something happening that it runs on (trigger())
 
     @property
     def household(self) -> bool:
@@ -177,15 +235,80 @@ def line(skill: Skill) -> str:
         parts.append(
             f"runs by itself at {', '.join(skill.at)}{on}, {'said aloud' if skill.say == ALOUD else 'in their chat'}"
         )
+    if skill.trigger:
+        where = "said aloud" if skill.say == ALOUD else "in their chat"
+        parts.append(f"runs by itself when {describe(skill.trigger)}, {where}")
     if skill.paused:
         parts.append("PAUSED")
     return f"- {skill.name} ({'; '.join(parts)}): {skill.instructions}"
 
 
-def on_its_own(skill: Skill, when: datetime, skip: str) -> str:
-    """The request a skill's own turn starts with."""
+def describe(trigger: dict) -> str:
+    """A trigger, in words: "stacey comes home", "the front door says unlocked"."""
+    who = trigger.get("who") or ANYONE
+    if trigger["event"] == ARRIVES:
+        return "the first one comes home" if who == EVERYONE else f"{who} comes home"
+    if trigger["event"] == LEAVES:
+        return "the last one goes out" if who == EVERYONE else f"{who} goes out"
+    what = trigger.get("reading") or "reading"
+    if trigger.get("above") is not None:
+        return f"the {trigger['device']}'s {what} goes over {trigger['above']:g}"
+    if trigger.get("below") is not None:
+        return f"the {trigger['device']}'s {what} goes under {trigger['below']:g}"
+    return f"the {trigger['device']} says {trigger['says']}"
+
+
+def trigger(raw, devices: set[str] | None = None, people: set[str] | None = None) -> dict | None:
+    """A trigger as the tool gives it, checked and tidied; None for none; ValueError saying what's wrong. `devices`
+    and `people`: the names there are (lower case), when known."""
+    if not isinstance(raw, dict):
+        return None
+    event = raw.get("event")
+    if event in (ARRIVES, LEAVES):
+        who = _clean(raw.get("who")).lower() or ANYONE
+        if people is not None and who not in (ANYONE, EVERYONE) and who not in people:
+            raise ValueError(f"who's home doesn't follow {who!r}; it follows: {', '.join(sorted(people)) or 'nobody'}")
+        return {"event": event, "who": who}
+    if event != CHANGES:
+        raise ValueError("a trigger's event is arrives, leaves or device")
+    device = _clean(raw.get("device")).lower()
+    if not device:
+        raise ValueError("a device trigger needs the device")
+    if devices is not None and device not in devices:
+        raise ValueError(f"there's no device called {device!r}")
+    above, below = raw.get("above"), raw.get("below")
+    word = _clean(raw.get("says")).lower()
+    if above is None and below is None and not word:
+        raise ValueError("a device trigger needs what its status says once it's happened, or a reading's limit")
+    if above is not None and below is not None:
+        raise ValueError("a device trigger takes above or below, not both: two skills for both")
+    return {
+        "event": CHANGES,
+        "device": device,
+        "says": word or None,
+        "above": above,
+        "below": below,
+        "reading": _clean(raw.get("reading")).lower() or None,
+    }
+
+
+def reading(status: str, which: str | None) -> float | None:
+    """The number a status gives for a reading ("CO2 850 ppm" for "co2"), or its first; None if there's none."""
+    status = status.partition(": ")[2] or status  # not the name, which may have digits of its own
+    number = r"(-?\d+(?:\.\d+)?)"
+    found = re.search(rf"{re.escape(which)}\D{{0,12}}?{number}" if which else number, status, re.IGNORECASE)
+    return float(found[1]) if found else None
+
+
+def says(status: str, word: str) -> bool:
+    """Whether a status says a word, as a word: "unlocked" doesn't say "locked"."""
+    return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", status, re.IGNORECASE) is not None
+
+
+def on_its_own(skill: Skill, when: datetime, skip: str, why: str = "") -> str:
+    """The request a skill's own turn starts with. `why`: what happened, for one that runs on something happening."""
     return ON_ITS_OWN.format(
-        time=f"{when:%H:%M}",
+        why=f"it's {when:%H:%M} and {why}" if why else f"it's {when:%H:%M}",
         name=skill.name,
         whose="" if skill.household else f", for {skill.owner}",
         where=ALOUD_NOTE if skill.say == ALOUD else CHAT_NOTE,
@@ -202,6 +325,34 @@ class Skills:
 
     def __init__(self, store: Store, clock: Callable[[], float] = time.time):
         self.store, self._clock = store, clock
+        # The devices and who's home's people there are, when known, to check a trigger against: set once they're
+        # made, as functions so they're read when a skill is saved.
+        self.devices: Callable[[], set[str] | None] = lambda: None
+        self.people: Callable[[], set[str] | None] = lambda: None
+        self.status: Callable[[str], str] | None = None  # a device's status, to check a reading against
+
+    def ran(self, skill: Skill, why: str, said: str) -> None:
+        """A skill ran by itself: kept, so "what did you do today?" can be answered."""
+        self.store.write(
+            "INSERT INTO skill_runs (skill_id, name, owner, at, why, said) VALUES (?, ?, ?, ?, ?, ?)",
+            (skill.id, skill.name, skill.owner, self._clock(), why, said),
+        )
+
+    def runs(self, person: str | None) -> str:
+        mine = person_key(person)
+        rows = [
+            r
+            for r in self.store.rows("SELECT * FROM skill_runs ORDER BY id DESC LIMIT ?", (MOST_RUNS * 3,))
+            if r["owner"] == HOUSEHOLD or (mine and person_key(r["owner"]) == mine)
+        ][:MOST_RUNS]
+        if not rows:
+            return "No skill has run by itself lately."
+        lines = [
+            f"- {time.strftime('%a %H:%M', time.localtime(r['at']))}, {r['name']} ({r['why']}): "
+            f"{r['said'] or 'nothing to do'}"
+            for r in rows
+        ]
+        return "What skills did by themselves lately, newest first:\n" + "\n".join(lines)
 
     # Reading.
 
@@ -239,6 +390,8 @@ class Skills:
         action, person = args.get("action"), getattr(request, "speaker", None)
         if action == LIST:
             return self.note(person) or "Nothing taught yet: no skills, and no preferences."
+        if action == RUNS:
+            return self.runs(person)
         if not person_key(person):
             return "refused: TARS doesn't know who's asking, and only someone it knows can teach it; say so"
         if action not in ACTIONS:
@@ -262,30 +415,49 @@ class Skills:
         if not name or not instructions:
             raise ValueError("save needs the skill's name and its instructions, in full")
         at, on = times(args.get("at")), days(args.get("days"))
+        on_event = trigger(args.get("trigger"), self.devices(), self.people())
         if on and not at:
             raise ValueError("days are for a skill that runs by itself: it needs at")
+        if at and on_event:
+            raise ValueError("a skill runs at set times or on something happening, not both: two skills for both")
+        if on_event and on_event["event"] == CHANGES and self.status:
+            self._check_reading(on_event)
         say = args.get("say") or ALOUD
         owner = HOUSEHOLD if args.get("household") else person
         if owner == HOUSEHOLD and say == CHAT:
             raise ValueError("a household skill is said aloud; one posted in a chat is someone's own")
         now = self._clock()
-        values = (instructions, _clean(args.get("when")), json.dumps(at), json.dumps(on), say, now, person)
+        happens = json.dumps(on_event) if on_event else None
+        values = (instructions, _clean(args.get("when")), json.dumps(at), json.dumps(on), happens, say, now, person)
         with self.store.transaction() as db:
             had = self._find(db, owner, name)
             if had:
                 db.execute(
-                    "UPDATE skills SET instructions=?, purpose=?, at=?, days=?, say=?, updated=?, updated_by=?, "
-                    "paused=0 WHERE id=?",
+                    "UPDATE skills SET instructions=?, purpose=?, at=?, days=?, trigger=?, say=?, updated=?, "
+                    "updated_by=?, paused=0 WHERE id=?",
                     (*values, had["id"]),
                 )
             else:
                 db.execute(
-                    "INSERT INTO skills (instructions, purpose, at, days, say, updated, updated_by, owner, name, "
-                    "created, paused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                    "INSERT INTO skills (instructions, purpose, at, days, trigger, say, updated, updated_by, owner, "
+                    "name, created, paused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                     (*values, owner, name, now),
                 )
         whose = "the household's" if owner == HOUSEHOLD else f"{person}'s"
         return f"done: {'changed' if had else 'saved'} {whose} skill {name}; say so in a few words"
+
+    def _check_reading(self, on_event: dict) -> None:
+        """A reading's limit only works if the device's status has that reading, in its own words ("Carbon
+        dioxide", not "CO2"): checked against what it says now, which the model is shown to try again with."""
+        if on_event["above"] is None and on_event["below"] is None:
+            return
+        try:
+            now = self.status(on_event["device"])
+        except Exception:  # noqa: BLE001 - can't be read now: kept as asked
+            return
+        if reading(now, on_event["reading"]) is None:
+            which = f"{on_event['reading']!r} reading" if on_event["reading"] else "number"
+            raise ValueError(f"the {on_event['device']}'s status has no {which}; it says: {now}")
 
     def _change(self, person: str, name: str, action: str) -> str:
         with self.store.transaction() as db:
@@ -348,6 +520,7 @@ class Skills:
             row["say"],
             bool(row["paused"]),
             row["id"],
+            json.loads(row["trigger"]) if row["trigger"] else None,
         )
 
 
@@ -360,10 +533,20 @@ def _clean(value) -> str:
     return " ".join(str(value).split()) if isinstance(value, str) else ""
 
 
+class Due(NamedTuple):
+    skill: Skill
+    when: datetime
+    why: str = ""  # what happened, for one that runs on something happening; "" for its time
+
+
 class Clock:
     """Which skills are due, for the TARS that says them (`say`: ALOUD for the voice's, CHAT for the Telegram
-    service's): a thread reads them every `tick_s` and keeps those whose time has come, each once at each of its
-    times, until take() hands them over."""
+    service's). A thread looks every `tick_s`: at the time, for the skills whose time it is, each once at each of its
+    times; and at who's home (`people()`: each person's name and whether they're home, None not known) and the
+    devices triggers name (`status(device)`: its status), for the skills waiting for what changed since. Those are
+    kept until take() hands them over. A skill that runs on something happening runs again no sooner than
+    COOLDOWN_S, so one can't set itself off, or flap with a reading around its limit. What changed while TARS
+    started up is only seen, never acted on."""
 
     def __init__(
         self,
@@ -371,11 +554,20 @@ class Clock:
         say: str = ALOUD,
         now: Callable[[], datetime] = datetime.now,
         tick_s: float = TICK_S,
+        people: Callable[[], dict[str, bool | None]] | None = None,
+        status: Callable[[str], str] | None = None,
+        record: Callable[[Skill, str, str], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self._skills, self.say = skills, say
         self._now, self._tick_s = now, tick_s
+        self._people, self._status, self._record, self._clock = people, status, record, clock
         self._ran: set = set()
-        self._due: list[tuple[Skill, datetime]] = []
+        self._fired: dict = {}  # skill: when it last ran on something happening (self._clock)
+        self._home: dict[str, bool | None] | None = None  # who was home last time; None before the first look
+        self._statuses: dict[str, str] = {}  # each device's, last time
+        self._reading: dict[str, str | None] = {}  # each device's, this time
+        self._due: list[Due] = []
         self._lock = threading.Lock()
         self._closing = threading.Event()
 
@@ -389,29 +581,138 @@ class Clock:
     def is_due(self) -> bool:
         return bool(self._due)
 
-    def take(self) -> list[tuple[Skill, datetime]]:
-        """The skills due, each with when it was due, handed over once."""
+    def take(self) -> list[Due]:
+        """The skills due, each with when, and why if something happened, handed over once."""
         with self._lock:
             due, self._due = self._due, []
         return due
 
+    def record(self, due: Due, said: str) -> None:
+        """How a skill that ran by itself went: what it said, or "" for nothing to do."""
+        if self._record:
+            try:
+                self._record(due.skill, due.why or f"at {due.when:%H:%M}", said)
+            except Exception as e:  # noqa: BLE001 - the log of runs is no reason to stop
+                print(f"(skills: couldn't keep the run of {due.skill.name}: {e!r})")
+
     def look(self, when: datetime | None = None) -> None:
-        """Keeps the skills due at `when` (now), to the minute, that it hasn't kept for that minute already."""
+        """Keeps what's due at `when` (now): skills whose time it is, and those waiting for what's changed since."""
         when = when or self._now()
-        hhmm = when.strftime("%H:%M")
         try:
-            skills = self._skills()
+            skills = [s for s in self._skills() if not s.paused and s.say == self.say]
         except Exception as e:  # noqa: BLE001 - the table can't be read now: next tick
             print(f"(skills: couldn't read them: {e!r})")
             return
+        found = self._timed(skills, when) + self._happened([s for s in skills if s.trigger], when)
+        if found:
+            with self._lock:
+                self._due += found
+
+    def _timed(self, skills: list[Skill], when: datetime) -> list[Due]:
+        hhmm, found = when.strftime("%H:%M"), []
         for skill in skills:
-            if skill.paused or skill.say != self.say or hhmm not in skill.at:
-                continue
             key = (skill.id or skill.name, when.date(), hhmm)
-            if (not skill.days or DAYS[when.weekday()] in skill.days) and key not in self._ran:
+            if hhmm in skill.at and (not skill.days or DAYS[when.weekday()] in skill.days) and key not in self._ran:
                 self._ran.add(key)
-                with self._lock:
-                    self._due.append((skill, when))
+                found.append(Due(skill, when))
+        return found
+
+    def _happened(self, skills: list[Skill], when: datetime) -> list[Due]:
+        """The skills waiting for something that's happened since the last look."""
+        events: list[tuple[dict, str]] = []  # (what happened, as a trigger matches it; in words)
+        if self._people and any(s.trigger["event"] in (ARRIVES, LEAVES) for s in skills):
+            events += self._comings_and_goings()
+        found = []
+        for skill in skills:
+            why = self._matches(skill.trigger, events) if skill.trigger["event"] != CHANGES else self._changed(skill)
+            if not why:
+                continue
+            key = skill.id or skill.name
+            if self._clock() - self._fired.get(key, -COOLDOWN_S) < COOLDOWN_S:
+                print(f"(skill {skill.name}: {why}, but it ran less than {COOLDOWN_S / 60:.0f} minutes ago)")
+                continue
+            self._fired[key] = self._clock()
+            found.append(Due(skill, when, why))
+        self._remember_statuses(skills)
+        return found
+
+    def _comings_and_goings(self) -> list[tuple[dict, str]]:
+        try:
+            now = self._people()
+        except Exception as e:  # noqa: BLE001 - who's home can't be read now: next tick
+            print(f"(skills: couldn't read who's home: {e!r})")
+            return []
+        before, self._home = self._home, now
+        if before is None:
+            return []
+        events = []
+        for person, home in now.items():
+            was = before.get(person)
+            if home is None or was is None or home == was:
+                continue
+            nobody_before = not any(before.get(p) for p in now)
+            nobody_now = not any(now.values())
+            event = {
+                "event": ARRIVES if home else LEAVES,
+                "who": person.lower(),
+                "all": nobody_before if home else nobody_now,
+            }
+            events.append((event, f"{person} just {'came home' if home else 'went out'}"))
+        return events
+
+    @staticmethod
+    def _matches(trigger: dict, events: list[tuple[dict, str]]) -> str:
+        """What happened that a who's-home trigger waits for, in words; "" if nothing did."""
+        who = trigger.get("who") or ANYONE
+        for event, words in events:
+            if event["event"] == trigger["event"] and (
+                who in (ANYONE, event["who"]) or (who == EVERYONE and event["all"])
+            ):
+                if who == EVERYONE:
+                    return words + (" (nobody was home)" if event["event"] == ARRIVES else " (nobody's home now)")
+                return words
+        return ""
+
+    def _changed(self, skill: Skill) -> str:
+        """Why a device trigger is set off now, from its status before and now; "" if it isn't."""
+        trigger, device = skill.trigger, skill.trigger["device"]
+        now = self._read(device)
+        before = self._statuses.get(device)
+        if now is None or before is None:
+            return ""
+        if trigger.get("says"):
+            if says(now, trigger["says"]) and not says(before, trigger["says"]):
+                return f"the {device} now says {trigger['says']} ({now})"
+            return ""
+        was, is_ = reading(before, trigger.get("reading")), reading(now, trigger.get("reading"))
+        if was is None or is_ is None:
+            return ""
+        what = trigger.get("reading") or "reading"
+        if trigger.get("above") is not None and was <= trigger["above"] < is_:
+            return f"the {device}'s {what} went over {trigger['above']:g}, to {is_:g}"
+        if trigger.get("below") is not None and was >= trigger["below"] > is_:
+            return f"the {device}'s {what} went under {trigger['below']:g}, to {is_:g}"
+        return ""
+
+    def _read(self, device: str) -> str | None:
+        if device not in self._reading:
+            try:
+                self._reading[device] = self._status(device) if self._status else None
+            except Exception as e:  # noqa: BLE001 - a device that doesn't answer now: next tick
+                print(f"(skills: couldn't read the {device}: {e!r})")
+                self._reading[device] = None
+        return self._reading[device]
+
+    def _remember_statuses(self, skills: list[Skill]) -> None:
+        """The statuses read this look become the ones to compare the next look with; each device is read once a
+        look, whatever number of skills wait on it."""
+        for skill in skills:
+            if skill.trigger["event"] == CHANGES:
+                self._read(skill.trigger["device"])
+        for device, status in self._reading.items():
+            if status is not None:
+                self._statuses[device] = status
+        self._reading = {}
 
     def _keep(self) -> None:
         while not self._closing.wait(self._tick_s):

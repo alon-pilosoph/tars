@@ -10,6 +10,9 @@ the model, which carries them out with the tools it already has.
 | "Bedtime" / "the kids want something calm to watch" | the skill it names, or the one that's for that, done |
 | "Every day at 19:55, ask me if I want the news on" | a skill that runs by itself, said aloud at home |
 | "Every morning at 7:30, send me what's new in gaming" | one posted in your own chat instead |
+| "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out |
+| "If the CO2 goes over 1000, turn on the purifier and tell me" / "when the front door is unlocked, …" | run when a device changes |
+| "What did you do today?" | what skills did by themselves, when, and why |
 | "Change the news one to 20:00" / "pause it this week" / "delete bedtime" | changed, paused or deleted |
 | "I don't care about esports" / "skip the sports news" | remembered, and followed from then on |
 | "What do you know about me?" / "forget that I like jazz" | told, guesses as guesses; or forgotten |
@@ -33,10 +36,24 @@ the model, which carries them out with the tools it already has.
   while muted, when it asks something: unmuted just for the answer). In a chat, the Telegram service posts it, and
   the answer follows on in that chat. When there's nothing to do (the news is already on), it says nothing. A
   person's own skill runs as theirs: their feeds, and what they like.
+- **On something happening**: a skill can run when someone comes home or goes out (by name, anyone, or everyone:
+  the first one home, the last one out), or when a device changes: its status comes to say a word it didn't
+  ("unlocked", "open", "off"; as a word, so "unlocked" isn't "locked"), or a reading in it crosses a limit ("co2"
+  over 1000). The turn is told what happened ("Stacey just came home"). Each service watches for its own skills,
+  every 10 seconds: who's home from the event database, and only the devices a trigger names, by their status.
+  What changed while TARS was starting is seen, never acted on, and a skill set off runs again no sooner than ten
+  minutes later, so it can't set itself off, or flap with a reading around its limit. A skill runs at set times or
+  on something happening, not both.
+- **What it did** is kept: each run by itself, when, why, and what it said (`skill_runs`), so "what did you do
+  today?" has an answer.
 - **The tools keep their own rules**, whatever a skill says: unlocking needs the words said, by a voice trusted with
   it, so no skill opens the door; an order still waits for its tap on Telegram.
 
-Kept in the event database (`[learning] log_events`): the `skills` and `preferences` tables, backed up with the rest.
+Kept in the event database (`[learning] log_events`): the `skills`, `preferences` and `skill_runs` tables, backed
+up with the rest.
+
+Not yet: a device change shorter than ten seconds (unlocked and locked again in between) isn't seen; Home
+Assistant's own event stream would catch it.
 
 ## Skills from config.toml
 
