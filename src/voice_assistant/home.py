@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
+from . import skills
 from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
 
 TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
@@ -249,16 +250,7 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         context.devices[name.lower()] = device
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
-    from . import skills
-
-    named = {k.strip().lower(): d for k, d in context.devices.items()}
-    made = skills.make(cfg.skills, named, context.announce, unavailable)
-    if made:
-        context.devices[skills.DEVICE] = made
-    tools = HomeTools(cfg, dict(context.devices)) if context.devices else None
-    if made:
-        made.tools = tools
-    return Built(tools, unavailable)
+    return Built(HomeTools(cfg, dict(context.devices)) if context.devices else None, unavailable)
 
 
 def load_plugin(module: str, root: Path):
@@ -341,7 +333,8 @@ class HomeTools:
     def rules(self) -> str:
         listed = "\n".join(f"- {name}: {d.what()}" for name, d in self.devices.items())
         extra = list(dict.fromkeys(r for d in self.devices.values() if (r := d.rules())))
-        return "\n".join([HOME_RULES.format(devices=listed), *extra])
+        known = skills.rules(skills.from_config(self._cfg.skills))
+        return "\n".join([HOME_RULES.format(devices=listed), *extra, *([known] if known else [])])
 
     def slow(self, arguments: str) -> bool:
         """Whether a call, as the model wrote it, takes long enough to say ONE_MOMENT first."""

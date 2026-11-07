@@ -1,113 +1,110 @@
-"""Skills: a name for a list of things to do in the house, kept in [[home.skills]] and run with no model working them,
-the same way every time. To the model a skill is one more device: it only has to recognize the name. The steps are the
-home tool's own calls, checked by it as any call is, from a thread of their own, since a step can take a minute; TARS
-says how it went. A failed step ends the skill there, and says which it was.
+"""Skills: what someone wants done when they say a name, written in plain words in [[home.skills]], for the model to
+carry out with the tools it has. "Put on panda" is the skill panda: the model reads its instructions and does them, as
+it would anything asked of it, asking whatever it needs to on the way. Nothing here runs a step: the tools keep their
+own rules (a skill can't unlock, since unlocking needs the words said and a voice trusted with it).
 
-A short phrase mustn't open the door, so a skill can't unlock: one that tries is left out, and says why."""
+A skill with `at` also runs by itself at those times of day (`days`, if only some), from the voice's TARS alone: it
+starts a turn of its own with the skill's instructions, says what the model replies, and listens for an answer
+without the wake word. A chat's TARS runs skills when asked, never on its own."""
 
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
-from .home import DO, STATUS, UNLOCK, Device, HomeTools, Request
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+TICK_S = 20.0  # how often the clock looks for a skill that's due
 
-DEVICE = "skills"
-NOT_DONE = ("error", "not confirmed", "refused")  # how the home tool's answers say a step didn't work
-STOP_WAIT_S = 5.0
+RULES = (
+    'Skills: when someone asks for one of these by name ("put on cartoons" is the skill cartoons), do what its '
+    "instructions say, with your tools, as if they'd asked for all of it themselves. Ask them only what the "
+    "instructions leave open.\n{skills}"
+)
+# A skill's own turn, at its time: written as the request, so the model knows nobody asked and that what it says is
+# heard by whoever is in the room.
+ON_ITS_OWN = (
+    "(Nobody said this: it's {time}, when the skill {name} runs by itself. Do what its instructions say now. Whatever "
+    "you reply is said aloud, unprompted, to whoever is in the room, and you'll hear their answer. If the "
+    "instructions say there's nothing to do now, reply with exactly {skip} and nothing else.)\n"
+    "Instructions: {instructions}"
+)
 
 
 @dataclass(frozen=True)
 class Skill:
     name: str
-    steps: tuple[dict, ...]
-    done: str  # what TARS says when it's worked
+    instructions: str
+    at: tuple[str, ...] = ()  # "19:55": when it runs by itself, local time
+    days: tuple[str, ...] = ()  # on these days ("mon"...); empty: every day
 
 
-def problem(spec: dict, devices: dict[str, Device]) -> str | None:
-    """What's wrong with a [[home.skills]] entry, given the devices there are; None if it can run."""
-    for step in spec["steps"]:
-        name, action = str(step["device"]).strip().lower(), step["action"]
-        device = devices.get(name)
-        if device is None:
-            return f"there's no device called {name!r}"
-        if action == UNLOCK:
-            return "a skill can't unlock"
-        if action not in device.actions:
-            return f"the {name} can do: {', '.join(device.actions)}"
-    return None
-
-
-class Skills(Device):
-    actions = (STATUS, DO)
-
-    def __init__(self, skills: list[Skill], announce: Callable[[str], None]):
-        super().__init__(DEVICE)
-        self.skills = {s.name.strip().lower(): s for s in skills}
-        self._announce = announce
-        self.tools: HomeTools | None = None  # set once the tools are made: a skill's steps go through them
-        self._stopped = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def what(self) -> str:
-        return f"named routines, run with do and the goal as the name alone: {', '.join(self.skills)}"
-
-    def rules(self) -> str:
-        return (
-            'When they ask for a skill by its name ("put on cartoons" is the skill cartoons), use skills\' do with its '
-            "name as the goal, never its steps yourself. It works in the background and TARS says when it's done: say "
-            "only that you're on it, in a few words."
-        )
-
-    def status(self) -> str:
-        return f"skills: {', '.join(self.skills)}"
-
-    def call(self, action: str, args: dict, request: Request) -> str:
-        name = str(args.get("goal") or "").strip().lower()
-        skill = self.skills.get(name)
-        if skill is None:
-            return f"error: there's no skill called {name!r}; there are: {', '.join(self.skills)}"
-        self.stop()
-        self._stopped = stopped = threading.Event()
-        self._thread = threading.Thread(target=self._run, args=(skill, stopped), daemon=True, name="skill")
-        self._thread.start()
-        return "started: TARS will say when it's done, so say only that you're on it"
-
-    def stop(self) -> None:
-        """Before the next step: a step under way finishes, since the device it's on is one call at a time."""
-        self._stopped.set()
-        thread = self._thread
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(STOP_WAIT_S)
-
-    def _run(self, skill: Skill, stopped: threading.Event) -> None:
-        try:
-            say = self._steps(skill, stopped)
-        except Exception as e:  # noqa: BLE001 - said, never raised: nobody is waiting on this thread
-            print(f"(skill {skill.name}: {e!r})")
-            say = f"I couldn't finish {skill.name}."
-        if stopped.is_set():
-            print(f"(skill {skill.name} stopped)")
-            return
-        print(f"(skill {skill.name}: {say})")
-        self._announce(say)
-
-    def _steps(self, skill: Skill, stopped: threading.Event) -> str:
-        for step in skill.steps:
-            if stopped.is_set():
-                break
-            said = self.tools.call(dict(step), Request())
-            if said.startswith(NOT_DONE):
-                return f"I couldn't finish {skill.name}: the {step['device']} said {said}."
-        return skill.done or f"{skill.name} is on."
-
-
-def make(specs: list[dict], devices: dict[str, Device], announce, unavailable: dict[str, str]) -> Skills | None:
-    """The skills that can run, with why in `unavailable` for those that can't; None if there are none."""
+def from_config(specs: list[dict]) -> list[Skill]:
+    """[[home.skills]], as config.py has checked them."""
     skills = []
     for spec in specs:
-        if why := problem(spec, devices):
-            unavailable[spec["name"]] = why
-        else:
-            steps = tuple(dict(s) for s in spec["steps"])
-            skills.append(Skill(spec["name"], steps, spec.get("done", "")))
-    return Skills(skills, announce or print) if skills else None
+        at = spec.get("at", ())
+        skills.append(
+            Skill(
+                spec["name"].strip(),
+                " ".join(spec["instructions"].split()),
+                (at,) if isinstance(at, str) else tuple(at),
+                tuple(d.lower()[:3] for d in spec.get("days", ())),
+            )
+        )
+    return skills
+
+
+def rules(skills: list[Skill]) -> str:
+    """The skills, for the instructions; empty when there are none."""
+    if not skills:
+        return ""
+    return RULES.format(skills="\n".join(f"- {s.name}: {s.instructions}" for s in skills))
+
+
+def on_its_own(skill: Skill, when: datetime, skip: str) -> str:
+    """The request a skill's own turn starts with."""
+    return ON_ITS_OWN.format(time=f"{when:%H:%M}", name=skill.name, instructions=skill.instructions, skip=skip)
+
+
+class Clock:
+    """Which skills are due, for the voice's wake loop: a thread looks every `tick_s` and keeps those whose time has
+    come, each once at each of its times, until take() hands them over."""
+
+    def __init__(self, skills: list[Skill], now: Callable[[], datetime] = datetime.now, tick_s: float = TICK_S):
+        self.skills = [s for s in skills if s.at]
+        self._now, self._tick_s = now, tick_s
+        self._ran: set = set()
+        self._due: list[tuple[Skill, datetime]] = []
+        self._lock = threading.Lock()
+        self._closing = threading.Event()
+
+    def start(self) -> Clock:
+        threading.Thread(target=self._keep, daemon=True, name="skill clock").start()
+        return self
+
+    def close(self) -> None:
+        self._closing.set()
+
+    def is_due(self) -> bool:
+        return bool(self._due)
+
+    def take(self) -> list[tuple[Skill, datetime]]:
+        """The skills due, each with when it was due, handed over once."""
+        with self._lock:
+            due, self._due = self._due, []
+        return due
+
+    def look(self, when: datetime | None = None) -> None:
+        """Keeps the skills due at `when` (now), to the minute, that it hasn't kept for that minute already."""
+        when = when or self._now()
+        hhmm = when.strftime("%H:%M")
+        for skill in self.skills:
+            key = (skill.name, when.date(), hhmm)
+            if hhmm in skill.at and (not skill.days or DAYS[when.weekday()] in skill.days) and key not in self._ran:
+                self._ran.add(key)
+                with self._lock:
+                    self._due.append((skill, when))
+
+    def _keep(self) -> None:
+        while not self._closing.wait(self._tick_s):
+            self.look()

@@ -28,12 +28,14 @@ from .echo import without_echo
 from .errors import SERVICE_FAILURES
 from .home import Request
 from .journal import Journal
-from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, Brain, split_ack, split_skip
+from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, SKIP, Brain, split_ack, split_skip
 from .phrases import Audio, Phrases
 from .recorder import UtteranceRecorder
 from .recording import NO_SPEECH, SILENCE, TAP
 from .reminders import VOICE, Change, Clock, Reminders, ReminderTools, held_line, late, says_line
 from .reminders import line as reminder_line
+from .skills import Clock as SkillClock
+from .skills import on_its_own
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
 from .stt import Session, Transcriber
@@ -177,10 +179,12 @@ class Assistant:
         announcements: Announcements | None = None,
         clock: Callable[[], float] = time.monotonic,
         elsewhere: Callable[[dict], bool] | None = None,
+        skill_clock: SkillClock | None = None,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
         `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
-        reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out)."""
+        reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out). `skill_clock`: the
+        skills due to run by themselves (skills.py)."""
         self.mic = mic
         self.speaker = speaker
         self.trigger = trigger
@@ -202,6 +206,7 @@ class Assistant:
         self.ack_window_s = ack_window_s
         self.announcements = announcements
         self._elsewhere = elsewhere
+        self._skill_clock = skill_clock
         self.reminder_tools: ReminderTools | None = None
         self._reminder_clock: Clock | None = None
         self.use_reminders(reminders)
@@ -387,6 +392,8 @@ class Assistant:
                     self.say_announcements(follow_up_s)
                 if self._reminder_clock and self._reminder_clock.is_due():
                     self.say_reminders(follow_up_s)
+                if self._skill_clock and self._skill_clock.is_due():
+                    self.run_skills(follow_up_s)
                 continue
             if woke == ASK:
                 self.ask_if_called(follow_up_s)
@@ -461,7 +468,12 @@ class Assistant:
 
     def _due(self) -> bool:
         clock = self._reminder_clock
-        return bool(self.announcements and self.announcements.waiting()) or bool(clock and clock.is_due())
+        skills = self._skill_clock
+        return (
+            bool(self.announcements and self.announcements.waiting())
+            or bool(clock and clock.is_due())
+            or bool(skills and skills.is_due())
+        )
 
     def say_announcements(self, follow_up_s: float = 0.0) -> None:
         """Says what's waiting to be said (the TV is playing, or why it isn't), then listens a moment, without the
@@ -488,6 +500,36 @@ class Assistant:
             self.journal.nobody_spoke()
             return
         self.converse(follow_up_s, first=heard)
+
+    def run_skills(self, follow_up_s: float = 0.0) -> None:
+        """Each skill whose time has come: a turn of its own, with its instructions as the request, whose reply is
+        said after a chime; then it listens a moment, without the wake word, for an answer to what it asked."""
+        for skill, when in self._skill_clock.take() if self._skill_clock else []:
+            print(f"(skill {skill.name}: it's {when:%H:%M})")
+            try:
+                skipped, pieces = split_skip(self.brain.stream_reply(on_its_own(skill, when, SKIP), Request()))
+                text = "".join(pieces).strip()
+            except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
+                print(f"(skill {skill.name} didn't run: {e!r})")
+                self.brain.forget_last()
+                continue
+            if skipped or not text:
+                print(f"(skill {skill.name}: nothing to do now)")
+                self.brain.forget_last()
+                continue
+            audio = self._made_now([text])
+            if text not in audio:
+                continue
+            self.journal.unprompted()
+            self._chime()
+            print(f"Bot:  {text}  (skill {skill.name})")
+            self._play(audio[text])
+            self.journal.said(text)
+            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True) if follow_up_s else None
+            if heard is None:
+                self.journal.nobody_spoke()
+                continue
+            self.converse(follow_up_s, first=heard)
 
     def say_reminders(self, follow_up_s: float = 0.0) -> None:
         """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""
