@@ -14,8 +14,10 @@ from urllib.parse import quote
 import httpx
 
 from voice_assistant.androidtv import OPEN_WAIT_S, TV_RULES, AndroidTV, TvAgent, TvDevice, wait_for
+from voice_assistant.home import DO, OFF, ON, OPEN, PLAY, HomeError, Request
 
 from .channels import ASK_WHICH, RULES, Tuner, channel, only_news
+from .screen import Screen
 
 STREMIO = "stremio"
 IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/{first}/{query}.json"
@@ -90,10 +92,13 @@ class FireTv(TvDevice):
         catalog: Catalog | None = None,
         sleep: Callable[[float], None] = time.sleep,
         announce: Callable[[str], None] = print,
+        screen: Screen | None = None,
     ):
+        """`screen`: the TV and soundbar with it, if TARS is to turn them on for what needs the picture."""
         super().__init__(name, box, agent, sleep=sleep)
         self.catalog = catalog or Catalog()
-        self.tuner = Tuner(box, announce, sleep)
+        self.screen = screen
+        self.tuner = Tuner(box, announce, sleep, ready=lambda stopped: screen and screen.on(stopped))
 
     def rules(self) -> str:
         return f"{TV_RULES} {RULES}"
@@ -101,6 +106,32 @@ class FireTv(TvDevice):
     def stop(self) -> None:
         super().stop()
         self.tuner.stop()
+
+    def power(self, on: bool) -> str | None:
+        """The TV, soundbar and box on or off together, and how it went; None with no screen, for the usual way."""
+        if self.screen is None:
+            return None
+        self.stop()
+        try:
+            changed = self.screen.on() if on else self.screen.off()
+        except HomeError as e:
+            return f"not confirmed: {e}"
+        word = "on" if on else "off"
+        return f"done: the TV is {word} (it says so itself)" if changed else f"done: the TV was already {word}"
+
+    def call(self, action: str, args: dict, request: Request) -> str:
+        if action in (ON, OFF) and (said := self.power(action == ON)):
+            return said
+        live = action == PLAY and (channel(str(args.get("title") or "")) or self._news(args))
+        if self.screen and action in (OPEN, PLAY, DO) and not live:  # a channel does this in its own thread
+            try:
+                self.screen.on()
+            except HomeError as e:
+                return f"error: {e}"
+        return super().call(action, args, request)
+
+    def _news(self, args: dict) -> bool:
+        return only_news(str(args.get("title") or ""), str(args.get("app") or ""))
 
     def play(self, title: str, app: str) -> str:
         if live := channel(title):
@@ -144,6 +175,6 @@ class FireTv(TvDevice):
         return any(p == package and state == "playing" for p, state, _ in self.box.media())
 
     def slow(self, action: str, args: dict) -> bool:
-        title = str(args.get("title") or "")
-        live = channel(title) or only_news(title, str(args.get("app") or ""))  # these answer at once
-        return super().slow(action, args) or (action == "play" and not live)
+        live = channel(str(args.get("title") or "")) or self._news(args)  # these answer at once
+        waits = action == PLAY or (action == DO and self.screen is not None)  # the screen first
+        return super().slow(action, args) or (waits and not live)

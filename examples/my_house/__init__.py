@@ -23,6 +23,8 @@ In config.toml (or config.local.toml):
     name = "fire tv"
     kind = "my_house.firetv"
     address = "192.168.1.60"
+    tv_address = "192.168.1.61"           # optional, with tv_input: TARS turns the TV and soundbar on as needed
+    tv_input = "hdmi4"                    # the TV's button for the Fire TV's input
 
     [[home.devices]]
     name = "air purifier"
@@ -41,6 +43,7 @@ from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, TESTED, Remote, tested_path
 from .purifier import Bluetooth, Purifier
+from .screen import Screen
 
 # What this house has learned, kept in the backup's snapshot: the AC's profile, its presses and what it was last sent,
 # and which power codes each remote's set answered to.
@@ -96,12 +99,20 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
             except HomeError:
                 return None
 
+        def power_by(on: bool) -> str | None:
+            """Through the box, if it has the screen: the TV, the soundbar and the box together."""
+            device = context.devices.get(str(box).strip().lower())
+            return device.power(on) if isinstance(device, FireTv) else None
+
         name = spec["name"]
         codes, on = CODE_SETS[spec["codes"]], seems_on if box else None
-        return Remote(name, codes, b.send, tested=tested_path(context.root, name), seems_on=on, reachable=b.reachable)
+        tested = tested_path(context.root, name)
+        return Remote(
+            name, codes, b.send, tested=tested, seems_on=on, reachable=b.reachable, power_by=power_by if box else None
+        )
 
     def firetv(spec: dict) -> FireTv:
-        _only(spec, {"address"})
+        _only(spec, {"address", "tv_address", "tv_input", "tv", "soundbar"})
         if not (isinstance(spec.get("address"), str) and spec["address"].strip()):
             raise ValueError("it needs address, its IP address on the home network")
         try:
@@ -110,7 +121,17 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
             raise ValueError('it needs the optional extra "tv": uv sync --all-extras') from None
         box = AndroidTV(spec["address"], context.root / KEY_FILE, seen=Seen(context.root / FOUND_FILE))
         agent = context.tv_agent(box, extra_rules=STREMIO_RULES) if context.tv_agent else None
-        return FireTv(spec["name"], box, agent, Catalog(), announce=context.announce or print)
+        screen = None
+        if spec.get("tv_address"):
+            if not spec.get("tv_input"):
+                raise ValueError("with tv_address it needs tv_input, the TV's button for its input, like hdmi4")
+
+            def named(key: str, default: str) -> Callable[[], Remote | None]:
+                return lambda: context.devices.get(str(spec.get(key, default)).strip().lower())
+
+            tv, soundbar = named("tv", "tv"), named("soundbar", "soundbar")
+            screen = Screen(box, tv, soundbar, spec["tv_address"], spec["tv_input"])
+        return FireTv(spec["name"], box, agent, Catalog(), announce=context.announce or print, screen=screen)
 
     def purifier(spec: dict) -> Purifier:
         _only(spec, {"address"})

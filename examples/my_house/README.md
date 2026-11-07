@@ -122,6 +122,17 @@ once the box says the app is making sound, since neither app has a media session
 "Put the news on", with no channel said, asks which of the two before anything changes. Behind a VPN 12+ says it's for
 subscribers: TARS says that, rather than that nothing played.
 
+### The TV and soundbar with it
+
+Waking the Fire TV doesn't turn this TV on, so with `tv_address` and `tv_input` set, anything that needs the picture
+goes through `screen.py` first: a channel, a title, an app, a task, "turn on the TV". If the TV is off, it's turned on
+by IR, and TARS waits for the TV to say so over the network (Samsung's `:8001/api/v2/`, no pairing). Then its input is
+chosen by IR, and the soundbar's power button pressed. If the TV is already on, only its input is chosen.
+
+The soundbar can't say whether it's on, and its one button switches it either way. So it's pressed only when the TV
+was certainly off, and again when TARS turns the TV off. Turned off with the TV's own remote, the soundbar stays on,
+and the next time TARS turns the TV on it switches the soundbar off: "turn on the soundbar" fixes that.
+
 ## The air purifier
 
 A Soehnle AC500 has no Wi-Fi and no Home Assistant integration of its own, but its Bluetooth takes commands and reports

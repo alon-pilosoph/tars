@@ -53,8 +53,10 @@ class Tuner:
         announce: Callable[[str], None],
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        ready: Callable[[threading.Event], object] = lambda stopped: None,
     ):
-        self.box, self._announce, self._sleep, self._clock = box, announce, sleep, clock
+        """`ready(stopped)`: the picture on, first; raises HomeError if it can't be."""
+        self.box, self._announce, self._sleep, self._clock, self._ready = box, announce, sleep, clock, ready
         self._stopped = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -76,7 +78,7 @@ class Tuner:
         try:
             self._tune(channel, stopped)
             say = f"{channel.name} is on."
-        except Stuck as e:
+        except (Stuck, HomeError) as e:
             say = f"I couldn't put {channel.name} on: {e}."
         except Exception as e:  # noqa: BLE001 - said, never raised: nobody is waiting on this thread
             print(f"(tv: {channel.name} failed: {e!r})")
@@ -88,6 +90,7 @@ class Tuner:
         self._announce(say)
 
     def _tune(self, channel: Channel, stopped: threading.Event) -> None:
+        self._ready(stopped)
         self.box.force_stop(channel.package)
         opened, _, _ = open_app(self.box, channel.package, self._sleep, stopped)
         if not opened:

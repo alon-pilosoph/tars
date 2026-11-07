@@ -145,12 +145,18 @@ class Remote(Device):
         tested: Path | None = None,
         seems_on: Callable[[], bool | None] | None = None,
         reachable: Callable[[], Check] | None = None,
+        power_by: Callable[[bool], str | None] | None = None,
     ):
         """`send(pulses)`: the blaster's. `seems_on()`: whether the set is on now, if anything can tell (the box
-        playing on it, through HDMI-CEC). `reachable()`: whether the blaster answers, for --check."""
+        playing on it, through HDMI-CEC). `reachable()`: whether the blaster answers, for --check. `power_by(on)`:
+        turns it on or off some better way and says how it went (screen.py), or None to use its codes."""
         super().__init__(name)
         self.codes, self._send, self._sleep = codes, send, sleep
-        self.tested, self._seems_on, self._reachable = tested, seems_on, reachable
+        self.tested, self._seems_on, self._reachable, self._power_by = tested, seems_on, reachable, power_by
+
+    def send(self, pressed: str) -> None:
+        """One button, as it is: for what works the set itself (screen.py)."""
+        self._send(self.codes.pulses(pressed))
 
     @property
     def actions(self) -> tuple[str, ...]:
@@ -197,6 +203,8 @@ class Remote(Device):
         return f"sent: {pressed}{f' {times} times' if times > 1 else ''} to the {self.name} (IR can't confirm it)"
 
     def _power(self, on: bool) -> str:
+        if self._power_by and (said := self._power_by(on)):
+            return said
         if not self.codes.on:
             return f"error: the {self.name} only has a power button, which switches it either way: press power"
         word, works = "on" if on else "off", self.works()
