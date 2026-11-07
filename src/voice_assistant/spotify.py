@@ -14,10 +14,12 @@ import base64
 import hashlib
 import json
 import os
+import random
 import re
 import secrets
 import sys
 import time
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -38,7 +40,32 @@ TIMEOUT_S = 8.0
 WAKE_WAIT_S = 30.0  # a TV's Spotify app opening and showing up as a device
 PLAYING_WAIT_S = 6.0  # Spotify saying it's playing what it was asked to
 POLL_S = 1.0
-KINDS = ("playlist", "album", "artist", "track")  # an exact name is taken in this order
+KINDS = ("playlist", "album", "artist", "track")  # with no mode, an exact name is taken in this order
+SONG, ARTIST, ALBUM, PLAYLIST, GENRE, MOOD, LIKED, MORE, CHOICE = (
+    "song",
+    "artist",
+    "album",
+    "playlist",
+    "genre",
+    "mood",
+    "liked",
+    "more",
+    "choice",
+)
+MODES = ("", SONG, ARTIST, ALBUM, PLAYLIST, GENRE, MOOD, LIKED, MORE, CHOICE)
+FAVOURITES_S = 3600.0
+MOST_OFFERED = 4  # options to choose from, said aloud
+OFFER_S = 600.0  # how long an answer to "which?" still counts
+MIN_TRACKS = 15  # a mood's playlist this short is passed over when there's a longer one
+MOST_URIS = 100
+ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4}  # not "one": "the live one" isn't the first
+FILLER = {"the", "one", "a", "version", "that", "please", "by"}
+SAME_RECORDING = re.compile(r"\s*[-(\[].*(remaster|mono|stereo|radio edit).*$", re.IGNORECASE)  # not live or a mix
+ALTERED = re.compile(r"\b(live|remix|mix|acoustic|karaoke|instrumental|demo|unplugged)\b", re.IGNORECASE)
+VERSION = re.compile(
+    r"\s*[-(\[].*(remaster|live|version|edit|mix|mono|stereo|deluxe|anniversary|acoustic|karaoke|instrumental|demo|unplugged).*$",
+    re.IGNORECASE,
+)
 BUTTONS = {
     "pause": ("PUT", "/me/player/pause"),
     "play": ("PUT", "/me/player/play"),
@@ -104,15 +131,25 @@ class Spotify(Device):
         super().__init__(name)
         self.account, self.play_on, self._http, self._wake = account, play_on, http, wake
         self._sleep, self._clock = sleep, clock
+        self._offered: list[dict] = []  # the options last asked about
+        self._offered_at = 0.0
+        self._favourite_names: set[str] = set()
+        self._favourites_at = -FAVOURITES_S - 1
 
     def what(self) -> str:
-        return f"Spotify, playing on {self.play_on}: status (what's playing), play, press ({', '.join(BUTTONS)}), set"
+        return (
+            f"Spotify, playing on {self.play_on}: status (what's playing), play (title: what they asked for; mode: "
+            f"{', '.join(MODES)}), press ({', '.join(BUTTONS)}), set (volume)"
+        )
 
     def rules(self) -> str:
         return (
-            "For music on Spotify, use spotify's play with what they asked for as the title, in their words (\"some "
-            'jazz", "the Beatles", "Bohemian Rhapsody", a Spotify link); press pause, play, next or previous; set its '
-            "volume with level. Say what play found and that it's playing only when it says so."
+            "For music, use spotify's play: the title in their words, and the mode for what it is: song, artist, "
+            'album, playlist (theirs first), genre or mood ("some jazz", "something calm": a playlist of it), liked '
+            '("something I like", "my music": from what they like and play; no title needed), more ("more like this": '
+            "more of what's playing). A Spotify link needs no mode. When play asks which, say the options briefly and "
+            'ask; then play with their answer as the title ("2", "the live one") and the mode choice. Say what '
+            "play found and that it's playing only when it says so."
         )
 
     def slow(self, action: str, args: dict) -> bool:
@@ -129,7 +166,7 @@ class Spotify(Device):
 
     def call(self, action: str, args: dict, request: Request) -> str:
         if action == PLAY:
-            return self.play(str(args.get("title") or "").strip())
+            return self.play(str(args.get("title") or "").strip(), str(args.get("mode") or "").strip().lower())
         if action == SET:
             level = args.get("level")
             if not isinstance(level, (int, float)) or not 0 <= level <= 100:
@@ -143,39 +180,214 @@ class Spotify(Device):
         self._api(method, path)
         return f"sent: {pressed}"
 
-    def play(self, wanted: str) -> str:
-        if not wanted:
-            return 'error: play needs the title: what to play, as "some jazz" or "the Beatles"'
-        uri, what = self._find(wanted)
-        if uri is None:
-            return f"error: Spotify found nothing for {wanted!r}"
+    def play(self, wanted: str, mode: str = "") -> str:
+        """What to play, found by `mode`; several equally good matches are offered back to choose from instead."""
+        if mode not in MODES:
+            return f"error: mode must be one of {', '.join(MODES)}"
+        if mode == CHOICE:
+            picked = self._pick(wanted)
+            if picked is None:
+                return "error: that isn't one of the options offered; play it by name instead"
+            return self._start(*picked)
+        if found := LINK.search(wanted):
+            kind, key = (found[1], found[2]) if found[1] else (found[3], found[4])
+            return self._start(
+                [f"spotify:{kind}:{key}"] if kind == "track" else f"spotify:{kind}:{key}", f"that {kind}"
+            )
+        if not wanted and mode not in (LIKED, MORE):
+            return "error: play needs the title: what to play, in their words"
+        finding = {
+            SONG: self._song,
+            ARTIST: self._artist,
+            ALBUM: self._album,
+            PLAYLIST: self._playlist,
+            GENRE: self._mood,
+            MOOD: self._mood,
+            LIKED: self._liked,
+            MORE: self._more,
+            "": self._anything,
+        }
+        found = finding[mode](wanted)
+        if isinstance(found, str):  # a question, or why nothing was found
+            return found
+        return self._start(*found)
+
+    def _start(self, what: str | list[str], said: str, shuffle: bool = False, others: list | None = None) -> str:
+        self._last = {
+            "uri": what[0] if isinstance(what, list) else what,
+            "type": "track" if isinstance(what, list) else "",
+            "name": said,
+        }
         device = self._device()
-        body = {"uris": [uri]} if uri.startswith("spotify:track:") else {"context_uri": uri}
+        body = {"uris": what} if isinstance(what, list) else {"context_uri": what}
+        if shuffle:
+            self._api("PUT", f"/me/player/shuffle?state=true&device_id={device['id']}")
         self._api("PUT", f"/me/player/play?device_id={device['id']}", body)
-        deadline = self._clock() + PLAYING_WAIT_S
+        self._offered, deadline = [], self._clock() + PLAYING_WAIT_S
         while True:
             now = self._api("GET", "/me/player") or {}
             if now.get("is_playing") and (now.get("device") or {}).get("id") == device["id"]:
-                return f"done: playing {what} on {device['name']} (Spotify says so)"
+                done = f"done: playing {said} on {device['name']} (Spotify says so)"
+                if others:  # kept to switch to, as an answer to "which?" is
+                    self._offered, self._offered_at = [self._last, *others], self._clock()
+                    listed = "; ".join(f"{n}. {describe(i)}" for n, i in enumerate(others, 2))
+                    done += f". Also found: {listed}; say so in a few words, and play their pick with mode choice"
+                return done
             if self._clock() >= deadline:
-                return f"not confirmed: asked Spotify to play {what} on {device['name']}, and it doesn't say it is"
+                return f"not confirmed: asked Spotify to play {said} on {device['name']}, and it doesn't say it is"
             self._sleep(POLL_S)
 
-    def _find(self, wanted: str) -> tuple[str | None, str]:
-        if found := LINK.search(wanted):
-            kind, key = (found[1], found[2]) if found[1] else (found[3], found[4])
-            return f"spotify:{kind}:{key}", f"that {kind}"
-        answer = self._api("GET", "/search?" + urlencode({"q": wanted, "type": ",".join(KINDS), "limit": 5}))
-        lists = {kind: [i for i in (answer.get(f"{kind}s") or {}).get("items") or [] if i] for kind in KINDS}
+    def _search(self, query: str, kind: str, limit: int = 10) -> list[dict]:
+        answer = self._api("GET", "/search?" + urlencode({"q": query, "type": kind, "limit": limit}))
+        return [i for i in (answer.get(f"{kind}s") or {}).get("items") or [] if i]
+
+    def _offer(self, items: list[dict]) -> str:
+        """Asks which, keeping what was offered for the answer."""
+        self._offered, self._offered_at = items, self._clock()
+        options = "; ".join(f"{n}. {describe(i)}" for n, i in enumerate(items, 1))
+        return f"ask which: {options}. Then play with their answer as the title, mode choice"
+
+    def _pick(self, answer: str) -> tuple | None:
+        if not self._offered or self._clock() - self._offered_at > OFFER_S:
+            return None
+        items, words = self._offered, normal(answer)
+        number = re.search(r"\d+", answer) or next((ORDINALS[w] for w in words.split() if w in ORDINALS), None)
+        if isinstance(number, re.Match):
+            number = int(number[0])
+        if isinstance(number, int) and 1 <= number <= len(items):
+            item = items[number - 1]
+        else:  # "the live one", "the one by Panic": the option that has their words, if only one does
+            fits = [
+                i for i in items if words and all(w in normal(describe(i)) for w in words.split() if w not in FILLER)
+            ]
+            if len(fits) != 1:
+                return None
+            item = fits[0]
+        return ([item["uri"]] if item["type"] == "track" else item["uri"]), describe(item)
+
+    def _song(self, wanted: str):
+        """The song, as Spotify ranks it: its first studio version, unless they asked for a live one or a remix. Asked
+        which only when the first two are different artists' songs of that name ("Hello": Adele's, Lionel Richie's)."""
+        tracks = self._search(wanted, "track")
+        if not tracks:
+            return f"error: Spotify found no song for {wanted!r}"
+        title = normal(re.split(r"\s+by\s+", wanted)[0])
+        same = [t for t in tracks if normal(base_name(t.get("name", ""))) == title] or tracks
+        return self._first_or_ask(same, wanted)
+
+    def _first_or_ask(self, items: list[dict], wanted: str):
+        """The artist it's most likely theirs: the one with the most of these versions (an original has its live ones
+        and remixes, a cover one), and the first of theirs as Spotify ranks them. When two come level ("Hello":
+        Lionel Richie's, Adele's), the one they play themselves; otherwise Spotify's first, since it ranks by how much
+        each is played, with the others said to switch to. A live one, a remix, only when asked for."""
+        versions = distinct(items)
+        wants = {w.lower() for w in ALTERED.findall(wanted)}
+        fitting = [v for v in versions if wants & {w.lower() for w in ALTERED.findall(v.get("name", ""))}]
+        plain = [v for v in versions if not ALTERED.search(v.get("name", ""))]
+        chosen = (fitting if wants else plain) or versions
+        counts = Counter(artists(v) for v in versions)
+        ranked = sorted(dict.fromkeys(artists(v) for v in versions), key=lambda a: -counts[a])  # ties keep Spotify's
+        if len(ranked) > 1 and counts[ranked[0]] == counts[ranked[1]] and not wants:
+            level = [a for a in ranked if counts[a] == counts[ranked[0]]]
+            theirs = [a for a in level if set(a) & self._favourites()]
+            if len(theirs) == 1:  # one they play themselves
+                ranked = theirs
+            else:  # Spotify ranks by how much each is played, so its first; the others are said, to switch to
+                others = [v for v in chosen if artists(v) in level and artists(v) != ranked[0]][: MOST_OFFERED - 1]
+                pick = next((v for v in chosen if artists(v) == ranked[0]), chosen[0])
+                return ([pick["uri"]] if pick.get("type") == "track" else pick["uri"]), describe(pick), False, others
+        pick = next((v for v in chosen if artists(v) == ranked[0]), chosen[0])
+        return ([pick["uri"]] if pick.get("type") == "track" else pick["uri"]), describe(pick)
+
+    def _favourites(self) -> set[str]:
+        """The artists they play most, by name, looked up once an hour."""
+        if self._clock() - self._favourites_at > FAVOURITES_S:
+            top = self._api("GET", "/me/top/artists?limit=50&time_range=medium_term").get("items") or []
+            self._favourite_names = {a.get("name") for a in top if a}
+            self._favourites_at = self._clock()
+        return self._favourite_names
+
+    def _artist(self, wanted: str):
+        artists = self._search(wanted, "artist", 5)
+        if not artists:
+            return f"error: Spotify found no artist {wanted!r}"
+        same = [a for a in artists if normal(a.get("name", "")) == normal(wanted)] or artists[:1]
+        return same[0]["uri"], describe(same[0])
+
+    def _album(self, wanted: str):
+        albums = self._search(wanted, "album", 8)
+        if not albums:
+            return f"error: Spotify found no album {wanted!r}"
+        title = normal(re.split(r"\s+by\s+", wanted)[0])
+        return self._first_or_ask(
+            [a for a in albums if normal(base_name(a.get("name", ""))) == title] or albums, wanted
+        )
+
+    def _playlist(self, wanted: str):
+        mine = self._api("GET", "/me/playlists?limit=50").get("items") or []
+        words = normal(wanted).replace(" playlist", "").removeprefix("my ").strip()
+        own = [p for p in mine if p and words and words in normal(p.get("name", ""))]
+        if len(own) == 1:
+            return own[0]["uri"], f"your playlist {own[0]['name']}"
+        if len(own) > 1:
+            return self._offer(own[:MOST_OFFERED])
+        return self._mood(wanted)
+
+    def _mood(self, wanted: str):
+        """A genre or a mood: a playlist of it. Spotify's own playlists are closed to an app like this one."""
+        query = re.sub(
+            r"\b(some|something|music|songs|playlist|please|play)\b", " ", wanted, flags=re.IGNORECASE
+        ).strip()
+        lists = [p for p in self._search(query or wanted, "playlist") if (p.get("owner") or {}).get("id") != "spotify"]
+        lists = [p for p in lists if ((p.get("tracks") or {}).get("total") or MIN_TRACKS) >= MIN_TRACKS] or lists
+        if not lists:
+            return f"error: Spotify found no playlist for {wanted!r}"
+        return lists[0]["uri"], describe(lists[0])
+
+    def _liked(self, wanted: str):
+        """What they like: their most played and their liked songs, shuffled. Spotify's own picks for them are closed
+        to an app like this one."""
+        uris: list[str] = []
+        for path in (
+            "/me/top/tracks?limit=50&time_range=medium_term",
+            "/me/tracks?limit=50",
+            "/me/top/tracks?limit=50&time_range=short_term",
+        ):
+            for entry in self._api("GET", path).get("items") or []:
+                track = entry.get("track", entry) if entry else None
+                if track and track.get("uri") and track["uri"] not in uris:
+                    uris.append(track["uri"])
+        if not uris:
+            return "error: Spotify has nothing they've liked or played much to go by yet"
+        random.shuffle(uris)
+        return uris[:MOST_URIS], "a mix of what you like", True
+
+    def _more(self, wanted: str):
+        """More like what's playing: its artist. Spotify's recommendations are closed to an app like this one."""
+        item = (self._api("GET", "/me/player") or {}).get("item") or {}
+        artists = item.get("artists") or []
+        if not artists and not wanted:
+            return "error: nothing is playing to play more like"
+        if artists and artists[0].get("uri"):
+            return artists[0]["uri"], f"more {artists[0].get('name', 'of that')}"
+        return self._artist(wanted)
+
+    def _anything(self, wanted: str):
+        """No mode: an exact name, a playlist before an album, an artist, a song; otherwise a playlist of it."""
+        answer = self._api(
+            "GET", "/search?" + urlencode({"q": wanted, "type": "playlist,album,artist,track", "limit": 5})
+        )
+        lists = {k: [i for i in (answer.get(f"{k}s") or {}).get("items") or [] if i] for k in KINDS}
         plain = normal(wanted)
         for kind in KINDS:
             for item in lists[kind]:
                 if normal(item.get("name", "")) == plain:
-                    return item["uri"], describe(item)
-        for kind in ("playlist", "track"):  # "some jazz": a playlist of it; then whatever song came first
+                    return ([item["uri"]] if kind == "track" else item["uri"]), describe(item)
+        for kind in ("playlist", "track"):
             if lists[kind]:
-                return lists[kind][0]["uri"], describe(lists[kind][0])
-        return None, ""
+                item = lists[kind][0]
+                return ([item["uri"]] if kind == "track" else item["uri"]), describe(item)
+        return f"error: Spotify found nothing for {wanted!r}"
 
     def _device(self) -> dict:
         found = self._match(self._api("GET", "/me/player/devices").get("devices") or [])
@@ -218,6 +430,30 @@ class Spotify(Device):
 
 def normal(text: str) -> str:
     return re.sub(r"[^\w]+", " ", text.lower().removeprefix("the ")).strip()
+
+
+def base_name(name: str) -> str:
+    """A song or album without its version: "Bohemian Rhapsody - Remastered 2011" is "Bohemian Rhapsody"."""
+    return VERSION.sub("", name)
+
+
+def distinct(items: list[dict]) -> list[dict]:
+    """The same thing listed once, a remaster as the same recording: by name and artists, keeping the first, as
+    Spotify ranks them."""
+    seen, kept = set(), []
+    for item in items:
+        key = (
+            normal(SAME_RECORDING.sub("", item.get("name", ""))),
+            tuple(a.get("name") for a in item.get("artists") or []),
+        )
+        if key not in seen:
+            seen.add(key)
+            kept.append(item)
+    return kept
+
+
+def artists(item: dict) -> tuple:
+    return tuple(a.get("name") for a in item.get("artists") or [])
 
 
 def describe(item: dict) -> str:

@@ -34,12 +34,49 @@ SEARCH = {
 }
 
 
+SONGS = {
+    "bohemian rhapsody": [
+        item("track", "Bohemian Rhapsody - Live Aid", "q3", "Queen"),
+        item("track", "Bohemian Rhapsody", "q1", "Queen"),
+        item("track", "Bohemian Rhapsody - Remastered 2011", "q2", "Queen"),
+        item("track", "Bohemian Rhapsody", "p1", "Panic! At The Disco"),
+    ],
+    "hello": [
+        item("track", "Hello", "a1", "Adele"),
+        item("track", "Hello", "l1", "Lionel Richie"),
+    ],
+    "yesterday": [
+        item("track", "Yesterday - Remastered 2009", "y1", "The Beatles"),
+        item("track", "Yesterday", "y2", "The Beatles"),
+    ],
+}
+MINE = [{"type": "playlist", "name": "Running 2026", "uri": "spotify:playlist:run"}, None]
+MOODS = [
+    {"type": "playlist", "name": "Calm by Spotify", "uri": "spotify:playlist:sp", "owner": {"id": "spotify"}},
+    {
+        "type": "playlist",
+        "name": "calm 5",
+        "uri": "spotify:playlist:short",
+        "owner": {"id": "a"},
+        "tracks": {"total": 5},
+    },
+    {
+        "type": "playlist",
+        "name": "Calm Evening",
+        "uri": "spotify:playlist:calm",
+        "owner": {"id": "b"},
+        "tracks": {"total": 80},
+    },
+]
+
+
 class Service:
     """Spotify's API as far as TARS sees it: devices, a search, and a player that plays what it's told."""
 
     def __init__(self, devices=(TV, PHONE), plays=True, status=200):
         self.devices, self.plays, self.status = list(devices), plays, status
         self.played, self.calls, self.player = [], [], None
+        self.favourites: list[str] = []
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         path, query = request.url.path.removeprefix("/v1"), dict(request.url.params)
@@ -49,7 +86,19 @@ class Service:
         if path == "/me/player/devices":
             return httpx.Response(200, json={"devices": self.devices})
         if path == "/search":
-            return httpx.Response(200, json=SEARCH.get(query["q"].lower(), {}))
+            q, kind = query["q"].lower(), query["type"]
+            if kind == "track":
+                return httpx.Response(200, json={"tracks": {"items": SONGS.get(q, [])}})
+            if kind == "playlist":
+                return httpx.Response(200, json={"playlists": {"items": MOODS if "calm" in q else []}})
+            return httpx.Response(200, json=SEARCH.get(q, {}))
+        if path == "/me/playlists":
+            return httpx.Response(200, json={"items": MINE})
+        if path == "/me/top/artists":
+            return httpx.Response(200, json={"items": [{"name": n} for n in self.favourites]})
+        if path.startswith("/me/top/tracks") or path == "/me/tracks":
+            liked = [{"track": item("track", "Liked", "l1")}] if path == "/me/tracks" else [item("track", "Top", "t9")]
+            return httpx.Response(200, json={"items": liked})
         if path == "/me/player/play" and request.method == "PUT":
             body = json.loads(request.content or b"{}")
             self.played.append((query.get("device_id"), body))
@@ -72,8 +121,8 @@ def device(service, play_on="Fire TV", wake=None):
     return Spotify("spotify", Signed(), play_on, http, wake, sleep=lambda s: None, clock=lambda: next(ticks))
 
 
-def play(found, title):
-    return found.call("play", {"title": title}, Request())
+def play(found, title, mode=""):
+    return found.call("play", {"title": title, "mode": mode}, Request())
 
 
 def test_an_artist_by_name_plays_on_the_device_named_not_the_one_playing():
@@ -225,3 +274,97 @@ def test_build_needs_its_client_id(tmp_path):
     assert "SPOTIFY_CLIENT_ID" in built.unavailable["spotify"]
     built = build(cfg, Context(tmp_path, lambda name: "abc"))
     assert built.unavailable == {} and isinstance(built.tools.devices["spotify"], Spotify)
+
+
+def test_a_song_with_one_clear_version_just_plays():
+    service = Service()
+    assert "Yesterday" in play(device(service), "Yesterday", "song")  # a remaster is the same recording
+    assert service.played[0][1] == {"uris": ["spotify:track:y1"]}
+
+
+def test_one_artists_song_plays_its_studio_version_not_the_live_one_ranked_first():
+    service = Service()
+    assert "Bohemian Rhapsody by Queen" in play(device(service), "Bohemian Rhapsody", "song")
+    assert service.played[0][1] == {"uris": ["spotify:track:q1"]}
+
+
+def test_a_live_one_plays_when_its_asked_for():
+    service = Service()
+    SONGS["bohemian rhapsody live"] = SONGS["bohemian rhapsody"]
+    assert "Live Aid" in play(device(service), "Bohemian Rhapsody live", "song")
+    assert service.played[0][1] == {"uris": ["spotify:track:q3"]}
+
+
+def test_a_cover_ranked_second_doesnt_make_it_ask():
+    service = Service()
+    SONGS["shape of you"] = [
+        item("track", "Shape of You", "e1", "Ed Sheeran"),
+        item("track", "Shape of You", "c1", "Bossa Bros"),
+        item("track", "Shape of You - Acoustic", "e2", "Ed Sheeran"),
+    ]
+    assert "Ed Sheeran" in play(device(service), "Shape of You", "song")
+    assert service.played[0][1] == {"uris": ["spotify:track:e1"]}
+
+
+def test_a_tie_goes_to_the_artist_they_play_themselves():
+    service = Service()
+    service.favourites = ["Adele"]
+    assert "Hello by Adele" in play(device(service), "Hello", "song")
+    assert service.played[0][1] == {"uris": ["spotify:track:a1"]}
+
+
+def test_different_artists_songs_of_one_name_play_spotifys_first_and_say_the_others():
+    service = Service()
+    found = device(service)
+    said = play(found, "Hello", "song")
+    assert said.startswith("done: playing Hello by Adele") and "Also found: 2. Hello by Lionel Richie" in said
+    assert service.played[0][1] == {"uris": ["spotify:track:a1"]}
+    assert "Lionel Richie" in play(found, "the Lionel Richie one", "choice")
+    assert service.played[1][1] == {"uris": ["spotify:track:l1"]}
+
+
+@pytest.mark.parametrize("answer, uri", [("2", "l1"), ("the second", "l1"), ("the one by lionel", "l1")])
+def test_an_answer_can_be_its_number_or_its_words(answer, uri):
+    service = Service()
+    found = device(service)
+    play(found, "Hello", "song")
+    play(found, answer, "choice")
+    assert service.played[-1][1] == {"uris": [f"spotify:track:{uri}"]}
+
+
+def test_an_answer_that_fits_none_or_comes_too_late_plays_nothing_more():
+    service = Service()
+    found = device(service)
+    play(found, "Hello", "song")
+    assert play(found, "the jazz one", "choice").startswith("error")
+    found._offered_at -= spotify.OFFER_S + 1
+    assert play(found, "2", "choice").startswith("error") and len(service.played) == 1
+
+
+def test_their_own_playlist_comes_first():
+    service = Service()
+    assert "your playlist Running 2026" in play(device(service), "my running playlist", "playlist")
+
+
+def test_a_mood_plays_a_long_enough_playlist_not_spotifys_own():
+    service = Service()
+    assert "Calm Evening" in play(device(service), "something calm", "mood")
+
+
+def test_something_i_like_is_a_shuffled_mix_of_their_own():
+    service = Service()
+    assert "a mix of what you like" in play(device(service), "", "liked")
+    assert set(service.played[0][1]["uris"]) == {"spotify:track:l1", "spotify:track:t9"}
+    assert ("PUT", "/me/player/shuffle") in service.calls
+
+
+def test_more_like_this_is_more_of_the_artist_playing():
+    service = Service()
+    service.player = {"is_playing": True, "item": item("track", "Yesterday", "y", "The Beatles"), "device": TV}
+    service.player["item"]["artists"][0]["uri"] = "spotify:artist:b1"
+    assert "more The Beatles" in play(device(service), "", "more")
+    assert service.played[0][1] == {"context_uri": "spotify:artist:b1"}
+
+
+def test_an_unknown_mode_is_refused():
+    assert play(device(Service()), "x", "vibes").startswith("error: mode must be")
