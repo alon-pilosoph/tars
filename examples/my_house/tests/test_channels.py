@@ -9,17 +9,18 @@ import pytest
 from examples.my_house import channels
 from examples.my_house.channels import (
     ASK_WHICH,
+    CATCH_UP,
     GUEST,
     HOME,
     KAN,
     KESHET,
     LIVE,
-    LIVE_12,
     LIVE_ROW,
+    LIVE_TILE,
     SUBSCRIBERS,
     WATCH,
 )
-from examples.my_house.direct_play import Catalog, FireTv
+from examples.my_house.direct_play import Catalog, FireTv, watch_link
 from voice_assistant.androidtv import AndroidTV
 from voice_assistant.home import HomeError
 
@@ -30,6 +31,8 @@ APP_HOME = f"[focused] {WATCH} @[1,1]\n{HOME} @[2,2]\n{LIVE} @[3,3]"
 MENU = f"[focused] {HOME} @[2,2]\n{LIVE} @[3,3]"
 MENU_LIVE = f"{HOME} @[2,2]\n[focused] {LIVE} @[3,3]"
 LIVE_PAGE = f"[focused] {WATCH} @[1,1]\n{LIVE_ROW} @[4,4]\n{LIVE} @[3,3]"
+TILE_FOCUSED = f"{CATCH_UP} @[1,1]\n{LIVE_TILE}"
+BANNER_FOCUSED = f"{CATCH_UP} @[1,1]\n[focused] {WATCH} @[1616,497][1792,553]"
 # Kan Box, each press taking it to the next screen; a press from anywhere else does nothing.
 KAN_SCREENS = {
     (WELCOME, "left"): GUEST_FOCUSED,
@@ -44,9 +47,9 @@ KAN_SCREENS = {
 class Box(AndroidTV):
     """A Fire TV with both apps, whose screens follow the remote. `sounds`: the app plays once on its last screen."""
 
-    def __init__(self, first=WELCOME, sounds=True):
+    def __init__(self, first=WELCOME, sounds=True, home_12=TILE_FOCUSED, preview=False):
         super().__init__("10.0.0.8", key_path=None)
-        self.first, self.sounds = first, sounds
+        self.first, self.sounds, self.home_12, self.preview = first, sounds, home_12, preview
         self.front, self.screen, self.presses, self.stopped_apps = "", "", [], []
         self.on_press = lambda key: None
         self.after_select = ""  # what 12+ shows once its live tile is chosen
@@ -68,20 +71,24 @@ class Box(AndroidTV):
         self.stopped_apps.append(package)
 
     def open(self, package):
-        self.front, self.screen = package, self.first if package == KAN else f"{LIVE_12} @[1,1]"
+        self.front, self.screen = package, self.first if package == KAN else self.home_12
 
     def press(self, key, times=1):
         self.presses.append(key)
         self.on_press(key)
         if self.front == KESHET:
-            self.screen = self.after_select if key == "select" else self.screen
+            if key == "select":
+                self.selected = self.screen
+                self.screen = self.after_select if LIVE_TILE in self.screen else BANNER_FOCUSED + " playing a promo"
+            elif key == "down" and self.screen == BANNER_FOCUSED:
+                self.screen = TILE_FOCUSED
         else:
             self.screen = KAN_SCREENS.get((self.screen, key), self.screen)
 
     def shell(self, command, timeout_s=10.0, repeatable=False):
         if command.startswith("dumpsys package"):
             return f"    userId={UIDS[command.split()[2]]}"
-        if command.startswith("dumpsys audio") and self.sounds and self.front and not self.screen:
+        if command.startswith("dumpsys audio") and self.sounds and self.front and (self.preview or not self.screen):
             uid = UIDS[self.front]
             return f"  AudioPlaybackConfiguration piid:1 u/pid:{uid}/9 state:started attr: usage=USAGE_MEDIA content=X"
         return ""
@@ -159,6 +166,22 @@ def test_a_look_at_the_screen_that_runs_out_of_time_only_means_not_yet():
     assert said == ["Channel 12 is on."]
 
 
+def test_with_the_banner_promoting_a_show_it_goes_down_to_the_live_tile_first():
+    box = Box(home_12=BANNER_FOCUSED)
+    device, said = tv(box)
+    put_on(device, "channel 12")
+    assert box.presses == ["down", "select"] and LIVE_TILE in box.selected
+    assert said == ["Channel 12 is on."]
+
+
+def test_a_preview_making_sound_on_the_home_page_isnt_the_channel():
+    box = Box(sounds=True, preview=True)
+    box.after_select = TILE_FOCUSED  # select did nothing: still the home page, the preview still sounding
+    device, said = tv(box)
+    put_on(device, "channel 12")
+    assert said == ["I couldn't put Channel 12 on: nothing started playing."]
+
+
 def test_someone_asking_for_something_else_takes_over_quietly():
     box = Box()
     device, said = tv(box)
@@ -194,3 +217,131 @@ def test_only_what_takes_time_says_one_moment_first():
 def test_the_model_is_told_how_to_ask_for_them():
     device, _ = tv(Box())
     assert '"channel 11"' in device.rules() and '"channel 12"' in device.rules() and "news" in device.rules()
+    assert "YouTube link" in device.rules()
+
+
+LINK = "https://youtu.be/a1B2c3D4e5F?si=abc"
+WATCH_LINK = "https://www.youtube.com/watch?v=a1B2c3D4e5F"
+YOUTUBE = "com.amazon.firetv.youtube"
+
+
+class LinkBox(Box):
+    """YouTube: it plays once `presses_needed` presses of select have got it past "who's watching"."""
+
+    def __init__(self, presses_needed=0, plays=True):
+        super().__init__()
+        self.presses_needed, self.plays, self.links = presses_needed, plays, []
+
+    def find_app(self, name):
+        return YOUTUBE if name == "youtube" else None
+
+    def open_link(self, uri, package, component="", flags="", extras=None):
+        self.links.append(uri)
+
+    def shell(self, command, timeout_s=10.0, repeatable=False):
+        if command.startswith("dumpsys package"):
+            return "    userId=10150"
+        if command.startswith("dumpsys audio") and self.plays and self.presses.count("select") >= self.presses_needed:
+            return "  AudioPlaybackConfiguration u/pid:10150/9 state:started attr: usage=USAGE_MEDIA content=X"
+        return ""
+
+
+def test_a_link_opens_afresh_and_is_on_when_it_makes_sound():
+    box = LinkBox()
+    device, _ = tv(box)
+    assert device.play(LINK, "youtube").startswith("done: there's sound on youtube")
+    assert box.links == [WATCH_LINK] and box.stopped_apps == [YOUTUBE] and box.presses == []
+
+
+def test_stopped_at_whos_watching_a_press_takes_the_profile():
+    box = LinkBox(presses_needed=1)
+    device, _ = tv(box)
+    assert "after choosing the profile" in device.play(LINK, "youtube")
+    assert box.presses == ["select"]
+    assert box.links == [WATCH_LINK, WATCH_LINK]  # choosing it may have lost the link
+
+
+def test_only_a_short_link_is_changed():
+    assert watch_link("https://youtu.be/a-b_c") == "https://www.youtube.com/watch?v=a-b_c"
+    assert watch_link("https://vimeo.com/1") == "https://vimeo.com/1"
+
+
+def test_a_short_link_keeps_its_playlist_and_loses_its_tracking():
+    long = "https://www.youtube.com/watch?v=abc&list=PL1"
+    assert watch_link("https://youtu.be/abc?si=xyz&list=PL1") == long
+    assert watch_link(long) == long
+
+
+def test_a_link_that_never_plays_isnt_said_to():
+    device, _ = tv(LinkBox(plays=False))
+    assert device.play(LINK, "youtube").startswith("not confirmed")
+
+
+def test_a_link_on_an_app_that_isnt_there_says_so():
+    device, _ = tv(LinkBox())
+    assert device.play(LINK, "vimeo").startswith("error: vimeo isn't installed")
+
+
+SMART = "org.smarttube.stable"
+PLAYLIST = "https://youtube.com/playlist?list=PL1&si=x"
+
+
+class SmartBox(LinkBox):
+    """SmartTube too: a video plays from its link; a playlist plays once select starts it."""
+
+    def __init__(self, plays=True):
+        super().__init__(plays=plays)
+        self.opened = None
+
+    def find_app(self, name):
+        return {"youtube": YOUTUBE, "smarttube": SMART}.get(name)
+
+    def open_link(self, uri, package, component="", flags="", extras=None):
+        self.links.append(uri)
+        self.opened = (uri, package)
+
+    def shell(self, command, timeout_s=10.0, repeatable=False):
+        if command.startswith("dumpsys package"):
+            return "    userId=10100" if SMART in command else "    userId=10150"
+        uri, package = self.opened or ("", "")
+        playing = package == SMART and ("/playlist?" not in uri or "select" in self.presses)
+        if command.startswith("dumpsys audio") and self.plays and playing:
+            return "  AudioPlaybackConfiguration u/pid:10100/9 state:started attr: usage=USAGE_MEDIA content=X"
+        return ""
+
+
+def smart_tv(box):
+    device, _ = tv(box)
+    device.youtube = "smarttube"
+    return device
+
+
+def test_with_smarttube_a_youtube_link_plays_there_and_is_never_sent_twice():
+    box = SmartBox()
+    assert smart_tv(box).play(LINK, "youtube").startswith("done: it is playing on SmartTube")
+    assert box.links == [WATCH_LINK] and box.stopped_apps == [SMART] and box.presses == []
+
+
+def test_a_playlist_opens_as_a_list_and_one_press_starts_it():
+    box = SmartBox()
+    assert smart_tv(box).play(PLAYLIST, "").startswith("done: the playlist is playing on SmartTube")
+    assert box.presses == ["select"] and box.links == [PLAYLIST]
+
+
+def test_smarttube_that_never_plays_says_a_vpn_may_be_why():
+    assert "VPN" in smart_tv(SmartBox(plays=False)).play(LINK, "youtube")
+
+
+def test_without_smarttube_installed_youtube_is_used():
+    box = SmartBox()
+    box.find_app = lambda name: YOUTUBE if name == "youtube" else None
+    device = smart_tv(box)
+    device.play(LINK, "youtube")
+    assert box.stopped_apps == [YOUTUBE]
+
+
+def test_the_youtube_app_is_used_unless_the_house_says_smarttube():
+    box = SmartBox()
+    device, _ = tv(box)
+    device.play(LINK, "youtube")
+    assert box.stopped_apps == [YOUTUBE]

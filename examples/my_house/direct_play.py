@@ -9,25 +9,42 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
 from voice_assistant.androidtv import OPEN_WAIT_S, TV_RULES, AndroidTV, TvAgent, TvDevice, wait_for
+from voice_assistant.home import DO, OFF, ON, OPEN, PLAY, HomeError, Request
 
 from .channels import ASK_WHICH, RULES, Tuner, channel, only_news
+from .screen import Screen
 
 STREMIO = "stremio"
 IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/{first}/{query}.json"
 LOOKUP_TIMEOUT_S = 5.0
 MOVIES, SERIES = ("movie", "tvMovie"), ("tvSeries", "tvMiniSeries")
+LINK_SOUND_WAIT_S = 12.0  # a link's video starting, or being stopped at YouTube's "who's watching"
+PROFILE_WAIT_S = 5.0  # YouTube settling once a profile is chosen
+SMARTTUBE = "smarttube"  # a YouTube app for TVs, from its own releases: no ads, and no "who's watching"
+SMARTTUBE_SOUND_WAIT_S = 45.0  # its first video, from cold: 25 to 37 s on a Fire TV Stick
+SMARTTUBE_LIST_WAIT_S = 14.0  # a playlist's list coming up, its first video with the focus
 STREAMS_WAIT_S = 2.5  # Stremio's stream list filling in once its page is up
 PLAY_WAIT_S = 20.0  # the first stream starting to play
 EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
 YEAR = re.compile(r"\s*\((\d{4})\)\s*$")
 IMDB_ID = re.compile(r"tt\d+")
+SHORT_LINK = re.compile(r"https?://youtu\.be/([\w-]+)")
 # What the TV agent is told besides its own rules, for a title that goes to it on Stremio after all.
 STREMIO_RULES = "In Stremio, choosing a title lists streams from its add-ons: choose the first one that plays."
+
+
+def watch_link(url: str) -> str:
+    """YouTube on a Fire TV takes a youtu.be link and opens its home page, so a short link becomes the long kind."""
+    found = SHORT_LINK.match(url)
+    if not found:
+        return url
+    playlist = parse_qs(urlsplit(url).query).get("list")
+    return f"https://www.youtube.com/watch?v={found[1]}" + (f"&list={quote(playlist[0])}" if playlist else "")
 
 
 @dataclass
@@ -90,10 +107,16 @@ class FireTv(TvDevice):
         catalog: Catalog | None = None,
         sleep: Callable[[float], None] = time.sleep,
         announce: Callable[[str], None] = print,
+        screen: Screen | None = None,
+        youtube: str = "youtube",
     ):
+        """`screen`: the TV and soundbar with it, if TARS is to turn them on for what needs the picture. `youtube`:
+        the app that plays YouTube, "youtube" or "smarttube" (the YouTube app is used if it isn't installed)."""
         super().__init__(name, box, agent, sleep=sleep)
         self.catalog = catalog or Catalog()
-        self.tuner = Tuner(box, announce, sleep)
+        self.screen = screen
+        self.youtube = youtube
+        self.tuner = Tuner(box, announce, sleep, ready=lambda stopped: screen and screen.on(stopped))
 
     def rules(self) -> str:
         return f"{TV_RULES} {RULES}"
@@ -102,11 +125,39 @@ class FireTv(TvDevice):
         super().stop()
         self.tuner.stop()
 
+    def power(self, on: bool) -> str | None:
+        """The TV, soundbar and box on or off together, and how it went; None with no screen, for the usual way."""
+        if self.screen is None:
+            return None
+        self.stop()
+        try:
+            changed = self.screen.on() if on else self.screen.off()
+        except HomeError as e:
+            return f"not confirmed: {e}"
+        word = "on" if on else "off"
+        return f"done: the TV is {word} (it says so itself)" if changed else f"done: the TV was already {word}"
+
+    def call(self, action: str, args: dict, request: Request) -> str:
+        if action in (ON, OFF) and (said := self.power(action == ON)):
+            return said
+        live = action == PLAY and (channel(str(args.get("title") or "")) or self._news(args))
+        if self.screen and action in (OPEN, PLAY, DO) and not live:  # a channel does this in its own thread
+            try:
+                self.screen.on()
+            except HomeError as e:
+                return f"error: {e}"
+        return super().call(action, args, request)
+
+    def _news(self, args: dict) -> bool:
+        return only_news(str(args.get("title") or ""), str(args.get("app") or ""))
+
     def play(self, title: str, app: str) -> str:
         if live := channel(title):
             return self.tuner.start(live)
         if only_news(title, app):
             return ASK_WHICH
+        if title.startswith(("https://", "http://")):
+            return self._link(title, self._youtube_app(app or "youtube"))
         app = (app or STREMIO).strip().lower()  # this house watches on Stremio unless it says otherwise
         wanted = Title.parse(title)
         if app != STREMIO or not wanted.name:
@@ -140,10 +191,55 @@ class FireTv(TvDevice):
             return f"done: {found.said()}{episode} is playing on Stremio (the {self.name} says so)"
         return f"not confirmed: opened {found.said()}{episode} on Stremio and chose the first stream; nothing plays yet"
 
+    def _youtube_app(self, app: str) -> str:
+        """YouTube, asked for by any name, is the app this house plays it in, when that's installed."""
+        if app.strip().lower() in ("youtube", SMARTTUBE) and self.youtube == SMARTTUBE and self.box.find_app(SMARTTUBE):
+            return SMARTTUBE
+        return app
+
+    def _link(self, url: str, app: str) -> str:
+        if app == SMARTTUBE:
+            return self._smarttube(url)
+        """A video by its link. Stopped at YouTube's "who's watching", a press takes the profile that has the focus, and
+        the link is sent again in case that lost it. Sound is all the box can say, not which video it is, and YouTube's
+        home page has ads that make sound of their own."""
+        package = self.box.find_app(app)
+        if not package:
+            return f"error: {app} isn't installed on the {self.name}"
+        url = watch_link(url)
+        self.box.force_stop(package)
+        self.box.open_link(url, package)
+        sounding = lambda: self.tuner.sounding(package)
+        if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
+            return f"done: there's sound on {app}, with the link sent (the {self.name} says so)"
+        self.box.press("select")
+        self._sleep(PROFILE_WAIT_S)
+        self.box.open_link(url, package)
+        if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
+            return f"done: there's sound on {app}, with the link sent, after choosing the profile"
+        return f"not confirmed: opened the link on {app}, and nothing plays yet"
+
+    def _smarttube(self, url: str) -> str:
+        """SmartTube: a video plays from its link, slowly from cold; a playlist opens as a list, its first video with
+        the focus, which one press starts. It's never sent again: that would bring the list back."""
+        package = self.box.find_app(SMARTTUBE)
+        url = watch_link(url)
+        self.box.force_stop(package)
+        self.box.open_link(url, package)
+        sounding = lambda: self.tuner.sounding(package)
+        listed = "/playlist?" in url
+        if listed:
+            self._sleep(SMARTTUBE_LIST_WAIT_S)
+            self.box.press("select")
+        if wait_for(sounding, SMARTTUBE_SOUND_WAIT_S, self._sleep):
+            what = "the playlist" if listed else "it"
+            return f"done: {what} is playing on SmartTube (the {self.name} says there's sound)"
+        return "not confirmed: opened the link on SmartTube, and nothing plays yet; behind a VPN, YouTube may refuse it"
+
     def _playing(self, package: str) -> bool:
         return any(p == package and state == "playing" for p, state, _ in self.box.media())
 
     def slow(self, action: str, args: dict) -> bool:
-        title = str(args.get("title") or "")
-        live = channel(title) or only_news(title, str(args.get("app") or ""))  # these answer at once
-        return super().slow(action, args) or (action == "play" and not live)
+        live = channel(str(args.get("title") or "")) or self._news(args)  # these answer at once
+        waits = action == PLAY or (action == DO and self.screen is not None)  # the screen first
+        return super().slow(action, args) or (waits and not live)

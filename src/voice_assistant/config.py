@@ -242,6 +242,8 @@ class HomeConfig:
     plugins: dict[str, dict] = field(default_factory=dict)
     # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).
     devices: list[dict] = field(default_factory=list)
+    # [[home.skills]]: a name for a list of the home tool's calls, run in order (docs/home.md#skills).
+    skills: list[dict] = field(default_factory=list)
 
 
 # The routers presence.py can ask ([[presence.routers]] kind); routers.py has one class for each.
@@ -618,6 +620,14 @@ def _home_problems(home: HomeConfig) -> list[str]:
         problems.append("[home] unlock_voices has an empty name")
     if any(not v.strip() for v in home.unlock_chats):
         problems.append("[home] unlock_chats has an empty name")
+    for skill in home.skills:
+        steps = skill.get("steps") if isinstance(skill, dict) else None
+        if not (isinstance(skill, dict) and isinstance(skill.get("name"), str) and skill["name"].strip()):
+            problems.append(f"[[home.skills]] needs a name (not {skill!r})")
+        elif not (isinstance(steps, list) and steps):
+            problems.append(f"[[home.skills]] {skill['name']!r} needs steps")
+        elif not all(isinstance(s, dict) and s.get("device") and s.get("action") for s in steps):
+            problems.append(f"[[home.skills]] {skill['name']!r}: each step needs a device and an action")
     for name, plugin in home.plugins.items():
         if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
             problems.append(f"[home.plugins] {name!r}: a name is lowercase letters, digits and _")

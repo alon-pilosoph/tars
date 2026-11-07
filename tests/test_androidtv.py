@@ -70,8 +70,8 @@ class Box(AndroidTV):
             s["awake"] = True
         elif "KEYCODE_SLEEP" in command:
             s["awake"] = False
-        elif command.startswith("monkey -p "):
-            s["front"] = command.split()[2]
+        elif command.startswith("monkey "):
+            s["front"] = command.split()[4]
         elif command.startswith("am start "):
             s["front"] = command.split()[-1].split("/")[0]
         elif command == "input keyevent KEYCODE_DPAD_CENTER" and s["front"] == "com.stremio.one":
@@ -465,3 +465,11 @@ def test_at_a_glance_the_app_in_front_by_name_and_what_it_plays():
     assert TvDevice("tv", Box(front="com.hbo.hbonow", media=youtube), None).glance() == "on · HBO Max"
     assert Box(media=youtube).media() == [("com.amazon.firetv.youtube", "paused", "")]
     assert TvDevice("tv", Box(awake=False), None).glance() == "asleep"
+
+
+def test_opening_an_app_asks_monkey_for_no_system_keys_or_a_fire_tv_opens_nothing():
+    box = AndroidTV("10.0.0.8", key_path=None)
+    sent = []
+    box._run = lambda command, **kw: sent.append(command) or ""
+    box.open("com.example.app")
+    assert sent[0].startswith("monkey --pct-syskeys 0 -p com.example.app ")

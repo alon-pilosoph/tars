@@ -21,7 +21,8 @@ FOCUS_WAIT_S = 6.0  # the remote's press showing
 PLAY_WAIT_S = 45.0  # the live channel starting, an ad before it included
 SETTLE_S = 2.0  # a screen that's up taking its first press
 # What the apps show, as they say it to accessibility tools.
-LIVE_12 = "ערוץ 12 שידור חי"  # 12+'s home page, where 12 LIVE has the focus
+CATCH_UP = "שודר לאחרונה - Catch Up"  # 12+'s home page, whatever its banner is promoting, with sound of its own
+LIVE_TILE = "[focused] (no text) @[1292,685][1644,840]"  # its 12 LIVE tile, which says nothing: only where it is
 SUBSCRIBERS = "התוכן למנויים בלבד"  # what 12+ shows behind a VPN
 GUEST = "כניסה במצב אורח"  # Kan Box's welcome, at each start without an account
 HOME, LIVE = "עמוד הבית", "שידור חי"  # its side menu, which back opens
@@ -29,7 +30,8 @@ LIVE_ROW, WATCH = "טלוויזיה בשידור חי", "לצפייה"  # its li
 ASK_WHICH = "ask them: Channel 11 or Channel 12? Change nothing until they say, then play that channel"
 RULES = (
     'For live TV use play with the title "channel 11" (Kan) or "channel 12" (Keshet), on this device; an ad may run '
-    'first. "Put the news on", with no channel said, is live TV too: ask which of the two, and play it once they say.'
+    'first. "Put the news on", with no channel said, is live TV too: ask which of the two, and play it once they say. '
+    "A YouTube link they ask to play or put on: play with the link as it is as the title, and the app youtube."
 )
 
 
@@ -42,6 +44,7 @@ class Channel:
     name: str
     package: str
     steps: Callable[[Tuner, threading.Event], None]
+    menu: str  # what shows until the channel does: a menu can make sound of its own
 
 
 class Tuner:
@@ -53,8 +56,10 @@ class Tuner:
         announce: Callable[[str], None],
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        ready: Callable[[threading.Event], object] = lambda stopped: None,
     ):
-        self.box, self._announce, self._sleep, self._clock = box, announce, sleep, clock
+        """`ready(stopped)`: the picture on, first; raises HomeError if it can't be."""
+        self.box, self._announce, self._sleep, self._clock, self._ready = box, announce, sleep, clock, ready
         self._stopped = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -76,7 +81,7 @@ class Tuner:
         try:
             self._tune(channel, stopped)
             say = f"{channel.name} is on."
-        except Stuck as e:
+        except (Stuck, HomeError) as e:
             say = f"I couldn't put {channel.name} on: {e}."
         except Exception as e:  # noqa: BLE001 - said, never raised: nobody is waiting on this thread
             print(f"(tv: {channel.name} failed: {e!r})")
@@ -88,6 +93,7 @@ class Tuner:
         self._announce(say)
 
     def _tune(self, channel: Channel, stopped: threading.Event) -> None:
+        self._ready(stopped)
         self.box.force_stop(channel.package)
         opened, _, _ = open_app(self.box, channel.package, self._sleep, stopped)
         if not opened:
@@ -96,9 +102,10 @@ class Tuner:
         walled = []
 
         def over() -> bool:
-            if self._sounding(channel.package):
+            ui = self.box.ui()
+            if self.sounding(channel.package) and channel.menu not in ui:
                 return True
-            walled.extend([True] * (SUBSCRIBERS in self.box.ui()))
+            walled.extend([True] * (SUBSCRIBERS in ui))
             return bool(walled)
 
         if not self._until(over, PLAY_WAIT_S, stopped):
@@ -128,7 +135,7 @@ class Tuner:
     def _focus(self, words: str, what: str, stopped: threading.Event) -> None:
         self._see(f"[focused] {words} @", what, stopped, FOCUS_WAIT_S)
 
-    def _sounding(self, package: str) -> bool:
+    def sounding(self, package: str) -> bool:
         """Whether the app is playing sound, as the box's audio service says."""
         found = re.search(
             r"userId=(\d+)", self.box.shell(f"dumpsys package {package} | grep -m1 userId=", repeatable=True)
@@ -137,8 +144,11 @@ class Tuner:
         return bool(found and re.search(rf"u/pid:{found[1]}/\d+ state:started .*USAGE_MEDIA", players))
 
     def twelve(self, stopped: threading.Event) -> None:
-        self._see(LIVE_12, "the app's home page", stopped)
+        self._see(CATCH_UP, "the app's home page", stopped)
         self._sleep(SETTLE_S)
+        if LIVE_TILE not in self.box.ui():  # the banner's own button has it: the tile is the row below
+            self.box.press("down")
+            self._see(LIVE_TILE, "the live tile", stopped, FOCUS_WAIT_S)
         self.box.press("select")
 
     def eleven(self, stopped: threading.Event) -> None:
@@ -161,8 +171,8 @@ class Tuner:
         self.box.press("select")
 
 
-CHANNEL_11 = Channel("Channel 11", KAN, Tuner.eleven)
-CHANNEL_12 = Channel("Channel 12", KESHET, Tuner.twelve)
+CHANNEL_11 = Channel("Channel 11", KAN, Tuner.eleven, LIVE_ROW)
+CHANNEL_12 = Channel("Channel 12", KESHET, Tuner.twelve, CATCH_UP)
 NAMES = {
     **dict.fromkeys(("channel 11", "kan 11", "kan", "ערוץ 11", "כאן 11", "כאן"), CHANNEL_11),
     **dict.fromkeys(("channel 12", "keshet 12", "keshet", "12+", "ערוץ 12", "קשת 12", "קשת"), CHANNEL_12),

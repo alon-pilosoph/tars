@@ -64,8 +64,8 @@ def test_reachable_host_prefers_the_magicdns_name(monkeypatch):
 
 
 def test_reachable_host_falls_back_to_the_tailscale_address(monkeypatch):
-    _fake_tailscale(monkeypatch, {"status": "{}", "ip": "100.81.107.50\n"})
-    assert reachable_host() == "100.81.107.50"
+    _fake_tailscale(monkeypatch, {"status": "{}", "ip": "100.64.0.7\n"})
+    assert reachable_host() == "100.64.0.7"
 
 
 def test_reachable_host_without_tailscale_gives_an_address(monkeypatch):

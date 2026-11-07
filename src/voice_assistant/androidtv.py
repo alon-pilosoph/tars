@@ -278,7 +278,9 @@ class AndroidTV:
 
     def open(self, package: str) -> None:
         """Brings it to the front: opening one already open does nothing more, so it's repeatable."""
-        self.shell(f"monkey -p {shlex.quote(package)} -c android.intent.category.LAUNCHER 1", repeatable=True)
+        # --pct-syskeys 0: without it, monkey gives up on a box with no system keys, and opens nothing.
+        launch = f"monkey --pct-syskeys 0 -p {shlex.quote(package)} -c android.intent.category.LAUNCHER 1"
+        self.shell(launch, repeatable=True)
 
     def open_link(
         self, uri: str, package: str, component: str = "", flags: str = "", extras: dict | None = None
