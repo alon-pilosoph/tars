@@ -9,13 +9,14 @@ import pytest
 from examples.my_house import channels
 from examples.my_house.channels import (
     ASK_WHICH,
+    CATCH_UP,
     GUEST,
     HOME,
     KAN,
     KESHET,
     LIVE,
-    LIVE_12,
     LIVE_ROW,
+    LIVE_TILE,
     SUBSCRIBERS,
     WATCH,
 )
@@ -30,6 +31,8 @@ APP_HOME = f"[focused] {WATCH} @[1,1]\n{HOME} @[2,2]\n{LIVE} @[3,3]"
 MENU = f"[focused] {HOME} @[2,2]\n{LIVE} @[3,3]"
 MENU_LIVE = f"{HOME} @[2,2]\n[focused] {LIVE} @[3,3]"
 LIVE_PAGE = f"[focused] {WATCH} @[1,1]\n{LIVE_ROW} @[4,4]\n{LIVE} @[3,3]"
+TILE_FOCUSED = f"{CATCH_UP} @[1,1]\n{LIVE_TILE}"
+BANNER_FOCUSED = f"{CATCH_UP} @[1,1]\n[focused] {WATCH} @[1616,497][1792,553]"
 # Kan Box, each press taking it to the next screen; a press from anywhere else does nothing.
 KAN_SCREENS = {
     (WELCOME, "left"): GUEST_FOCUSED,
@@ -44,9 +47,9 @@ KAN_SCREENS = {
 class Box(AndroidTV):
     """A Fire TV with both apps, whose screens follow the remote. `sounds`: the app plays once on its last screen."""
 
-    def __init__(self, first=WELCOME, sounds=True):
+    def __init__(self, first=WELCOME, sounds=True, home_12=TILE_FOCUSED, preview=False):
         super().__init__("10.0.0.8", key_path=None)
-        self.first, self.sounds = first, sounds
+        self.first, self.sounds, self.home_12, self.preview = first, sounds, home_12, preview
         self.front, self.screen, self.presses, self.stopped_apps = "", "", [], []
         self.on_press = lambda key: None
         self.after_select = ""  # what 12+ shows once its live tile is chosen
@@ -68,20 +71,24 @@ class Box(AndroidTV):
         self.stopped_apps.append(package)
 
     def open(self, package):
-        self.front, self.screen = package, self.first if package == KAN else f"{LIVE_12} @[1,1]"
+        self.front, self.screen = package, self.first if package == KAN else self.home_12
 
     def press(self, key, times=1):
         self.presses.append(key)
         self.on_press(key)
         if self.front == KESHET:
-            self.screen = self.after_select if key == "select" else self.screen
+            if key == "select":
+                self.selected = self.screen
+                self.screen = self.after_select if LIVE_TILE in self.screen else BANNER_FOCUSED + " playing a promo"
+            elif key == "down" and self.screen == BANNER_FOCUSED:
+                self.screen = TILE_FOCUSED
         else:
             self.screen = KAN_SCREENS.get((self.screen, key), self.screen)
 
     def shell(self, command, timeout_s=10.0, repeatable=False):
         if command.startswith("dumpsys package"):
             return f"    userId={UIDS[command.split()[2]]}"
-        if command.startswith("dumpsys audio") and self.sounds and self.front and not self.screen:
+        if command.startswith("dumpsys audio") and self.sounds and self.front and (self.preview or not self.screen):
             uid = UIDS[self.front]
             return f"  AudioPlaybackConfiguration piid:1 u/pid:{uid}/9 state:started attr: usage=USAGE_MEDIA content=X"
         return ""
@@ -157,6 +164,22 @@ def test_a_look_at_the_screen_that_runs_out_of_time_only_means_not_yet():
     device, said = tv(box)
     put_on(device, "channel 12")
     assert said == ["Channel 12 is on."]
+
+
+def test_with_the_banner_promoting_a_show_it_goes_down_to_the_live_tile_first():
+    box = Box(home_12=BANNER_FOCUSED)
+    device, said = tv(box)
+    put_on(device, "channel 12")
+    assert box.presses == ["down", "select"] and LIVE_TILE in box.selected
+    assert said == ["Channel 12 is on."]
+
+
+def test_a_preview_making_sound_on_the_home_page_isnt_the_channel():
+    box = Box(sounds=True, preview=True)
+    box.after_select = TILE_FOCUSED  # select did nothing: still the home page, the preview still sounding
+    device, said = tv(box)
+    put_on(device, "channel 12")
+    assert said == ["I couldn't put Channel 12 on: nothing started playing."]
 
 
 def test_someone_asking_for_something_else_takes_over_quietly():

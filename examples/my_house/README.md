@@ -117,7 +117,9 @@ Stremio lists streams (the plugin's own rule for it). The title asked for is all
 Channel 12 in Keshet's 12+, Channel 11 in Kan Box, both Android TV apps sideloaded on the Fire TV. Neither takes a link
 to its live channel, so the app is closed, opened again to start from a known screen, and worked by its remote, each
 step waiting for what the app shows. It runs in the background, up to a minute, and TARS says how it went. It's on only
-once the box says the app is making sound, since neither app has a media session; so an ad before the channel counts.
+once the box says the app is making sound and its menu has gone, since neither app has a media session and 12+'s home
+page plays previews; so an ad before the channel counts. That page's banner changes, so the 12 LIVE tile is found by
+where it is, and its position would need updating if the app changes.
 
 "Put the news on", with no channel said, asks which of the two before anything changes. Behind a VPN 12+ says it's for
 subscribers: TARS says that, rather than that nothing played.
