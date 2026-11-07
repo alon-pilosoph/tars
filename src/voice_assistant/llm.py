@@ -566,6 +566,7 @@ class OpenAIChat:
         remind_tools: list[dict] | None = None,
         home: HomeTools | None = None,
         browser=None,
+        feeds=None,
     ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
         QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
@@ -573,7 +574,7 @@ class OpenAIChat:
         this conversation differs from one aloud (a Telegram chat, written), last in the instructions so they win.
         `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud).
         `home`: the devices in the house, when there are any. `browser`: TARS's errands in its browser
-        (browser/errands.py), in a chat that has them."""
+        (browser/errands.py), in a chat that has them. `feeds`: the RSS feeds people follow (feeds.py)."""
         self._clock = clock or time.monotonic
         self._channel_rules = [channel_rules] if channel_rules else []
         self._remind_tools = remind_tools or REMIND_TOOLS
@@ -582,6 +583,7 @@ class OpenAIChat:
         self._reminders = reminders
         self._home = home if home and home.devices else None
         self._browser = browser
+        self._feeds = feeds
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -596,13 +598,15 @@ class OpenAIChat:
             + (self._remind_tools if reminders else [])
             + ([self._home.tool] if self._home else [])
             + ([browser.tool] if browser else [])
+            + ([feeds.tool] if feeds else [])
         )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
         can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
-        can += [CAN_HOME] * bool(self._home) + ([browser.can] if browser else [])
+        can += [CAN_HOME] * bool(self._home) + ([browser.can] if browser else []) + ([feeds.can] if feeds else [])
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send
         rules += [self._home.rules()] if self._home else []
         rules += [browser.rules] if browser else []
+        rules += [feeds.rules] if feeds else []
         rules.append(abilities(can, [], self._cant()))
         self._instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         # Only send optional settings that are configured; not every model accepts them.
@@ -785,6 +789,9 @@ class OpenAIChat:
             # Queued only once the turn goes ahead (a draft thrown away queues nothing), as a change to the house is.
             failed = "error: couldn't start the errand ({e!r}); nothing was started"
             return self._outside_lock(self._browser.call, args, writing, failed)
+        if self._feeds and call.name == "feeds":
+            # Reading feeds takes a moment: the conversation isn't held meanwhile.
+            return self._outside_lock(self._feeds.call, args, writing, "error: couldn't read the feeds ({e!r})")
         return f"error: no tool called {call.name}"
 
     def _outside_lock(self, call, args: dict, writing: _Writing | None, failed: str) -> str:
@@ -890,8 +897,9 @@ class QuickChat(OpenAIChat):
         remind_tools: list[dict] | None = None,
         home: HomeTools | None = None,
         browser=None,
+        feeds=None,
     ):
-        super().__init__(client, cfg, reminders, clock, channel_rules, remind_tools, home, browser)
+        super().__init__(client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds)
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.
@@ -905,6 +913,7 @@ class QuickChat(OpenAIChat):
         look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind and client is not None)
         look_up += [NEEDS_HOME] * (bool(self._home) and not own_home)
         look_up += [browser.needs] if browser and client is not None else []
+        look_up += [feeds.needs] if feeds and client is not None else []
         examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:

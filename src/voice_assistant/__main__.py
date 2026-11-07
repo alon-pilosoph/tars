@@ -595,10 +595,11 @@ def ask_to_say(folder: Path, text: str) -> None:
     ask(folder, "say", text=text)
 
 
-def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None):
+def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None, feeds=None):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
-    can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands."""
+    can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands;
+    with `feeds` (feeds.py), it reads and manages the RSS feeds people follow."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -612,7 +613,7 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
-    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders, home=home, browser=browser)
+    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders, home=home, browser=browser, feeds=feeds)
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
     elif cfg.tts.provider == "cartesia":
@@ -651,6 +652,13 @@ def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
     return FallbackTranscriber(
         deepgram, OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
     )
+
+
+def make_feeds(cfg: Config, events):
+    """The feeds tool (feeds.py), in the event database, or None without one."""
+    from .feeds import make
+
+    return make(cfg.feeds, events)
 
 
 def make_brain(client, llm: LLMConfig, env: Path, reminders=None, **channel):
@@ -714,6 +722,7 @@ def telegram(cfg: Config, root: Path) -> None:
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
     print(f"(chats are answered by {who})")
     queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
+    feeds = make_feeds(cfg, events)  # one for every chat: each person's feeds are kept by person
     tars = TelegramTars(
         bot,
         cfg.telegram.people,
@@ -726,6 +735,7 @@ def telegram(cfg: Config, root: Path) -> None:
             remind_tools=CHAT_REMIND_TOOLS,
             home=home,
             browser=browse_tool(cfg, queue, "telegram"),
+            feeds=feeds,
         ),
         ConversationLog(events) if events else None,
         tools,
@@ -1033,9 +1043,10 @@ def typed(cfg: Config, root: Path) -> None:
                 if made[0].say(line, keep=False, wait_s=UNPROMPTED_WAIT_S):
                     made[0].brain.remember_said(line)
 
-    presence = make_presence(cfg, root, make_event_log(cfg, root)) if cfg.presence.enabled else None
+    events = make_event_log(cfg, root)
+    presence = make_presence(cfg, root, events) if cfg.presence.enabled else None
     home = make_home(cfg, root, announce, presence, own_speaker(cfg))
-    _, brain, voice = make_pipeline(cfg, root, typed=True, home=home)
+    _, brain, voice = make_pipeline(cfg, root, typed=True, home=home, feeds=make_feeds(cfg, events))
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
@@ -1072,7 +1083,9 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume)
     browser = voice_errands(cfg, events)
-    transcriber, brain, voice = make_pipeline(cfg, root, reminders=reminders, home=home, browser=browser)
+    transcriber, brain, voice = make_pipeline(
+        cfg, root, reminders=reminders, home=home, browser=browser, feeds=make_feeds(cfg, events)
+    )
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
     speaker = Speaker(
