@@ -1052,3 +1052,39 @@ def test_mute_unmute_and_home_go_to_the_house_without_the_model():
     ]
     assert house.calls == [(MIC, "off", True), (MIC, "on", True), ("everything", "glance", False)]
     assert brain.asked == []
+
+
+# Skills that run by themselves in a chat.
+
+
+def chat_skill_due(owner="Alon"):
+    from datetime import UTC, datetime
+
+    from voice_assistant.skills import CHAT, Clock, Skill
+
+    skill = Skill("digest", "Tell me what's new in gaming.", ("07:30",), owner=owner, say=CHAT)
+    clock = Clock(lambda: [skill], CHAT)
+    clock.look(datetime(2026, 11, 8, 7, 30, tzinfo=UTC))
+    return clock
+
+
+def test_a_skill_due_in_a_chat_is_a_turn_posted_there_as_its_owners():
+    bot, alon = FakeBot(), ScriptedBrain(["Three new games came out."])
+    tars(bot, [alon], skill_clock=chat_skill_due()).deliver()
+    assert alon.asked[0].startswith("(Nobody said this: it's 07:30, when the skill digest runs by itself, for Alon.")
+    assert (alon.request.speaker, alon.request.by_chat) == ("Alon", True)
+    assert bot.messages == [(ALON, "Three new games came out.")]
+
+
+def test_a_chat_skill_with_nothing_to_say_posts_nothing():
+    from voice_assistant.llm import SKIP
+
+    bot, alon = FakeBot(), ScriptedBrain([SKIP])
+    tars(bot, [alon], skill_clock=chat_skill_due()).deliver()
+    assert bot.messages == [] and alon.forgotten == 1
+
+
+def test_a_chat_skill_for_someone_without_a_chat_is_left():
+    bot, alon = FakeBot(), ScriptedBrain([])
+    tars(bot, [alon], skill_clock=chat_skill_due("Stacey")).deliver()
+    assert bot.messages == [] and alon.asked == []

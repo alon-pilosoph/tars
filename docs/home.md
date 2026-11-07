@@ -349,33 +349,8 @@ it's used. It isn't in the backup, so a restored TARS signs in again.
 
 ### Skills
 
-A skill is a name, and what to do when someone says it, in plain words. The model does it with the tools it has, as
-it would if they'd asked for all of it themselves, and asks whatever the words leave open:
-
-```toml
-[[home.skills]]
-name = "panda"
-instructions = "Play https://youtu.be/... on the Fire TV."
-when = "the kids want something calm to watch"   # optional: what it's for, so it's found by more than its name
-
-[[home.skills]]
-name = "news"
-instructions = """
-Unless the Fire TV is already on Channel 11 or 12, ask Alon whether he wants the news, and which channel.
-If he does, put it on."""
-at = "19:55"                                # optional: it also runs by itself then (or a list of times)
-days = ["sun", "mon", "tue", "wed", "thu"]  # optional, with at: only on these days
-```
-
-"Put on panda" reaches it by name, by voice or in a chat; with `when`, so does "the kids are bored, put something on".
-Each skill's words are in the model's instructions, so a skill costs nothing until it's used, and then the tool calls it
-takes, like any request. The tools keep their own rules whatever a skill says: unlocking still needs the words said, by
-a voice trusted with it, so a skill can't open the door.
-
-With `at`, the voice's TARS (never a chat's) runs it by itself, local time: a turn of its own, with the skill's words
-as the request and a note that nobody asked. What the model replies is said after a chime, and TARS listens for an
-answer without the wake word, even while it's muted, when what it said asks something: unmuted just for the answer,
-then muted again. When there's nothing to do (the news is already on), it says nothing.
+Skills, named things to do, some at set times, are taught by talking to TARS, and can use the house like any other
+request: [skills and preferences](skills.md).
 
 ## Setting it up
 
