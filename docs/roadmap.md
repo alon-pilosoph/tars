@@ -207,14 +207,14 @@ said in plain words, and done the same way every time.
 
 **Design:**
 
-- **Rules, not a model on watch.** The model turns what's said into a typed rule: a trigger (an event from step 4, a
-  time), conditions (who's home, a device's state) and actions (the house tool's, a message, a reminder). Code checks
-  it against the devices and events that exist, then it runs with no model involved.
+- **Everything is a skill.** An automation is a skill with a trigger: plain words for the model, carried out with
+  its tools, as skills already are ([skills](skills.md)). Only the trigger is code: a time (done), someone coming
+  home or leaving, a device's event (the door unlocked, CO₂ over a level). Taught, changed and removed by talking.
 - **Read back before it's kept.** TARS says what it understood ("Every weekday at 7, the boiler on for 40 minutes.
   Every time, or just tomorrow?"), and checks it against the last weeks of the event log ("that would have run 3
   times last week").
 - **Skills** are a name and what to do, in plain words, for the model to carry out with its tools ("movie night:
-  the TV and soundbar on, Stremio open"), now in `[[home.skills]]` and taught by talking next ([skills](home.md#skills)).
+  the TV and soundbar on, Stremio open"), taught by talking, as are each person's preferences ([skills](skills.md)).
 - **A page in the web UI** lists every rule and skill, where it came from, when it last ran and what happened; each
   can be paused, edited or deleted. It needs step 2's sign-in first.
 - **Limits held in code:** unlocking stays voice-only and in person, an order still needs its tap, and a rule can't

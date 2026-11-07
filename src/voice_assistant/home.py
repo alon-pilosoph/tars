@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
-from . import skills
 from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
 
 TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
@@ -333,8 +332,7 @@ class HomeTools:
     def rules(self) -> str:
         listed = "\n".join(f"- {name}: {d.what()}" for name, d in self.devices.items())
         extra = list(dict.fromkeys(r for d in self.devices.values() if (r := d.rules())))
-        known = skills.rules(skills.from_config(self._cfg.skills))
-        return "\n".join([HOME_RULES.format(devices=listed), *extra, *([known] if known else [])])
+        return "\n".join([HOME_RULES.format(devices=listed), *extra])
 
     def slow(self, arguments: str) -> bool:
         """Whether a call, as the model wrote it, takes long enough to say ONE_MOMENT first."""

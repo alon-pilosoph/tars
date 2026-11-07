@@ -548,16 +548,20 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=Non
     return built.tools
 
 
-def skill_clock(cfg: Config, home):
-    """The skills that run by themselves at set times, kept by the voice's TARS alone (a chat's runs them only when
-    asked), or None. They need the house: without it, they aren't in the instructions either."""
-    from .skills import Clock, from_config
+def make_skills(events):
+    """What TARS is taught, skills and preferences (skills.py), in the event database, or None without one."""
+    from .skills import make
 
-    timed = [s for s in from_config(cfg.home.skills) if s.at]
-    if not (home and timed):
-        return None
-    print(f"(skills: {', '.join(f'{s.name} at {", ".join(s.at)}' for s in timed)})")
-    return Clock(timed).start()
+    return make(events)
+
+
+def skill_clock(skills, say: str):
+    """The clock for the skills that run by themselves and say what they have to `say` ("aloud": the voice's TARS;
+    "chat": the Telegram service's, skills.ALOUD and CHAT), or None without skills. They're read again on every
+    tick, so one taught a minute ago is kept to."""
+    from .skills import Clock
+
+    return Clock(skills.all, say).start() if skills else None
 
 
 def own_speaker(cfg: Config):
@@ -595,11 +599,14 @@ def ask_to_say(folder: Path, text: str) -> None:
     ask(folder, "say", text=text)
 
 
-def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None, feeds=None):
+def make_pipeline(
+    cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None, feeds=None, skills=None
+):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
     can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands;
-    with `feeds` (feeds.py), it reads and manages the RSS feeds people follow."""
+    with `feeds` (feeds.py), it reads and manages the RSS feeds people follow; with `skills` (skills.py), it's taught
+    skills and preferences, and knows them."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -613,7 +620,9 @@ def make_pipeline(cfg: Config, root: Path, typed: bool = False, reminders=None, 
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
-    brain = make_brain(client, brain_config(cfg, typed=typed), env, reminders, home=home, browser=browser, feeds=feeds)
+    brain = make_brain(
+        client, brain_config(cfg, typed=typed), env, reminders, home=home, browser=browser, feeds=feeds, skills=skills
+    )
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
     elif cfg.tts.provider == "cartesia":
@@ -723,6 +732,7 @@ def telegram(cfg: Config, root: Path) -> None:
     print(f"(chats are answered by {who})")
     queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
     feeds = make_feeds(cfg, events)  # one for every chat: each person's feeds are kept by person
+    skills = make_skills(events)
     tars = TelegramTars(
         bot,
         cfg.telegram.people,
@@ -736,6 +746,7 @@ def telegram(cfg: Config, root: Path) -> None:
             home=home,
             browser=browse_tool(cfg, queue, "telegram"),
             feeds=feeds,
+            skills=skills,
         ),
         ConversationLog(events) if events else None,
         tools,
@@ -746,6 +757,7 @@ def telegram(cfg: Config, root: Path) -> None:
         home=home,
         say=functools.partial(ask_to_say, events.store.folder) if events else None,
         spotify_login=spotify_login(cfg, root, env),
+        skill_clock=skill_clock(skills, "chat"),
     )
     told.append(tars)
     if queue:
@@ -1046,7 +1058,9 @@ def typed(cfg: Config, root: Path) -> None:
     events = make_event_log(cfg, root)
     presence = make_presence(cfg, root, events) if cfg.presence.enabled else None
     home = make_home(cfg, root, announce, presence, own_speaker(cfg))
-    _, brain, voice = make_pipeline(cfg, root, typed=True, home=home, feeds=make_feeds(cfg, events))
+    _, brain, voice = make_pipeline(
+        cfg, root, typed=True, home=home, feeds=make_feeds(cfg, events), skills=make_skills(events)
+    )
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
@@ -1083,8 +1097,9 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume)
     browser = voice_errands(cfg, events)
+    skills = make_skills(events)
     transcriber, brain, voice = make_pipeline(
-        cfg, root, reminders=reminders, home=home, browser=browser, feeds=make_feeds(cfg, events)
+        cfg, root, reminders=reminders, home=home, browser=browser, feeds=make_feeds(cfg, events), skills=skills
     )
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
@@ -1114,7 +1129,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=skill_clock(cfg, home),
+            skill_clock=skill_clock(skills, "aloud"),
         )
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:

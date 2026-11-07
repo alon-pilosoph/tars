@@ -37,7 +37,7 @@ from .control import Refused, Unavailable
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
-from .llm import REMIND_TOOLS, SEARCHING, THINKING, Brain, split_ack
+from .llm import REMIND_TOOLS, SEARCHING, SKIP, THINKING, Brain, split_ack, split_skip
 from .mic_mute import DEVICE as MIC
 from .reminders import (
     ACKNOWLEDGED,
@@ -398,6 +398,7 @@ class TelegramTars:
         home: HomeTools | None = None,
         say: Callable[[str], None] | None = None,
         spotify_login: Callable[[Callable[[str], None]], str] | None = None,
+        skill_clock=None,
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
         each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
@@ -406,6 +407,7 @@ class TelegramTars:
         `home`: the chat's house, for /home, /volume, /mute and /unmute. `say(text)`: has the assistant say it aloud
         at home, word for word, for /say; raises control.py's Unavailable or Refused when it can't.
         `spotify_login(send)`: signs in to Spotify for /spotify, telling them with `send` (spotify.page_login).
+        `skill_clock`: the skills due to run by themselves in their owner's chat (skills.Clock).
         `clock`, `typing` and `sleep` are for the tests."""
         self._bot, self._make_brain = bot, make_brain
         self._chats = {chat_id: Chat(name, chat_id, make_brain()) for name, chat_id in people.items()}
@@ -414,6 +416,7 @@ class TelegramTars:
         self._memory_s, self._send_items, self._clock, self._typing = memory_s, send_items, clock, typing
         self._sleep, self._transcriber, self._env, self._home, self._say = sleep, transcriber, env, home, say
         self._spotify_login = spotify_login
+        self._skill_clock = skill_clock
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
@@ -670,6 +673,14 @@ class TelegramTars:
                 with _free(chat) as free:
                     if free:
                         self._report(chat, r, now)
+        if self._skill_clock:
+            for skill, when in self._skill_clock.take():
+                chat = self._chat_for(skill.owner)
+                if chat is None:
+                    print(f"(skill {skill.name}: {skill.owner} has no chat to post it in)")
+                    continue
+                with chat.busy:  # due now: after an exchange in progress, not the next round
+                    self._run_skill(chat, skill, when)
         if self._conversations and self._send_items:
             for row in self._conversations.undelivered(since=now - ITEMS_WITHIN_S):
                 chat = self._chat_for(row["for_name"])
@@ -678,6 +689,35 @@ class TelegramTars:
                 with _free(chat) as free:
                     if free:
                         self._post_sent_at_home(chat, row, now)
+
+    def _run_skill(self, chat: Chat, skill, when) -> None:
+        """A skill whose time has come, in its owner's chat: a turn of its own, with its instructions as the request,
+        whose reply is posted, and part of the chat's conversation, so their answer follows on from it."""
+        from .skills import on_its_own
+
+        brain = chat.brain
+        print(f"(skill {skill.name}: it's {when:%H:%M}, in {chat.person}'s chat)", flush=True)
+        try:
+            asked = on_its_own(skill, when, SKIP)
+            skipped, pieces = split_skip(brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True)))
+            reply = tidy("".join(pieces))
+        except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
+            brain.forget_last()
+            print(f"(skill {skill.name} didn't run: {e!r})", flush=True)
+            return
+        if skipped or not reply:
+            brain.forget_last()
+            print(f"(skill {skill.name}: nothing to do now)", flush=True)
+            return
+        try:
+            self._send(chat.chat_id, reply, tries=SEND_TRIES)
+        except TelegramError as e:
+            brain.forget_last()
+            print(f"(skill {skill.name}: couldn't post it: {e})", flush=True)
+            return
+        now = self._clock()
+        if (conversation := self._current_conversation(chat, now)) is not None:
+            self._log(self._conversations.add_tars_turn, conversation, reply, ts=now)
 
     # For what posts to a chat besides its conversation (telegram_errands.py)
 

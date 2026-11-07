@@ -513,7 +513,8 @@ class Assistant:
         for skill, when in self._skill_clock.take() if self._skill_clock else []:
             print(f"(skill {skill.name}: it's {when:%H:%M})")
             try:
-                skipped, pieces = split_skip(self.brain.stream_reply(on_its_own(skill, when, SKIP), Request()))
+                whose = Request(speaker=None if skill.household else skill.owner)  # their feeds and preferences
+                skipped, pieces = split_skip(self.brain.stream_reply(on_its_own(skill, when, SKIP), whose))
                 text = "".join(pieces).strip()
             except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
                 print(f"(skill {skill.name} didn't run: {e!r})")

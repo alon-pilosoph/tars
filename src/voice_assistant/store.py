@@ -4,7 +4,7 @@ The assistant and the web UI share the folder (voice_data/events/, gitignored) f
 runs in WAL mode and every multi-step change is one IMMEDIATE transaction. events.py (wakes, near-misses, voices),
 conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home),
 recording.py (recording sessions and their takes), browser/errands.py (the errands queued for TARS's browser) and
-feeds.py (the feeds each person follows) build on this.
+feeds.py (the feeds each person follows) and skills.py (what TARS is taught: skills and preferences) build on this.
 """
 
 import secrets
@@ -181,6 +181,28 @@ TABLES = {
     at REAL NOT NULL,
     PRIMARY KEY (person, link)
 )""",
+    "skills": """CREATE TABLE skills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner TEXT NOT NULL,             -- a person's name, as TARS knows them, or "household" (skills.py)
+    name TEXT NOT NULL,              -- lower case: what it's asked for by
+    instructions TEXT NOT NULL,      -- what to do, in plain words
+    purpose TEXT NOT NULL DEFAULT '', -- what it's for, so it's found by more than its name
+    at TEXT NOT NULL DEFAULT '[]',   -- JSON: times of day it runs by itself, "19:55"
+    days TEXT NOT NULL DEFAULT '[]', -- JSON: "mon"...; empty: every day
+    say TEXT NOT NULL DEFAULT 'aloud', -- aloud | chat: where it says what it has to, run by itself
+    paused INTEGER NOT NULL DEFAULT 0,
+    created REAL NOT NULL,
+    updated REAL NOT NULL,
+    updated_by TEXT NOT NULL         -- who taught it, or last changed it
+)""",
+    "preferences": """CREATE TABLE preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person TEXT NOT NULL,            -- as person_key has them
+    about TEXT NOT NULL DEFAULT '',  -- "gaming news", "the AC"
+    text TEXT NOT NULL,              -- the preference, in plain words
+    guessed INTEGER NOT NULL DEFAULT 0, -- noticed by the model, not said by them
+    at REAL NOT NULL
+)""",
 }
 INDEXES = [
     "CREATE INDEX events_ts ON events(ts)",
@@ -192,6 +214,7 @@ INDEXES = [
     "CREATE INDEX errands_status ON errands(status)",
     "CREATE INDEX takes_session ON takes(session_id)",
     "CREATE UNIQUE INDEX feeds_person_url ON feeds(person, url)",
+    "CREATE INDEX preferences_person ON preferences(person)",
 ]
 # Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
 # version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
@@ -273,6 +296,19 @@ MIGRATIONS = [
             "PRIMARY KEY (person, link))"
         ),
         "CREATE UNIQUE INDEX feeds_person_url ON feeds(person, url)",
+    ],
+    [
+        (
+            "CREATE TABLE skills (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, name TEXT NOT NULL, "
+            "instructions TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT '', at TEXT NOT NULL DEFAULT '[]', "
+            "days TEXT NOT NULL DEFAULT '[]', say TEXT NOT NULL DEFAULT 'aloud', paused INTEGER NOT NULL DEFAULT 0, "
+            "created REAL NOT NULL, updated REAL NOT NULL, updated_by TEXT NOT NULL)"
+        ),
+        (
+            "CREATE TABLE preferences (id INTEGER PRIMARY KEY AUTOINCREMENT, person TEXT NOT NULL, "
+            "about TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, guessed INTEGER NOT NULL DEFAULT 0, at REAL NOT NULL)"
+        ),
+        "CREATE INDEX preferences_person ON preferences(person)",
     ],
 ]
 
