@@ -130,6 +130,13 @@ stop at "who's watching", so with no sound a press takes the profile that has th
 On a Fire TV it takes a `youtu.be` link and opens its home page, so a short link is made the long kind first. The box
 can only say there's sound, not which video it is, and that home page has ads that make sound.
 
+With `youtube = "smarttube"` on the Fire TV, YouTube links play in [SmartTube](https://github.com/yuliskov/SmartTube)
+instead, a YouTube app for TVs installed from its own releases, with no ads and no "who's watching" (the YouTube app is
+used if it isn't installed). A video starts from its link, 25 to 37 s from cold on a Fire TV Stick; a playlist opens as
+a list with its first video focused, which one press starts. Behind a VPN, YouTube refuses SmartTube its streams and
+it spins forever, so it's left out of the VPN. Its 2025 releases had a stolen signing key: check a release's signature
+before installing it, and leave its own updates off.
+
 ### The TV and soundbar with it
 
 Waking the Fire TV doesn't turn this TV on, so with `tv_address` and `tv_input` set, anything that needs the picture

@@ -25,6 +25,7 @@ In config.toml (or config.local.toml):
     address = "192.168.1.60"
     tv_address = "192.168.1.61"           # optional, with tv_input: TARS turns the TV and soundbar on as needed
     tv_input = "hdmi4"                    # the TV's button for the Fire TV's input
+    youtube = "smarttube"                 # optional: YouTube's links play in SmartTube, sideloaded, not YouTube's app
 
     [[home.devices]]
     name = "air purifier"
@@ -112,7 +113,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         )
 
     def firetv(spec: dict) -> FireTv:
-        _only(spec, {"address", "tv_address", "tv_input", "tv", "soundbar"})
+        _only(spec, {"address", "tv_address", "tv_input", "tv", "soundbar", "youtube"})
         if not (isinstance(spec.get("address"), str) and spec["address"].strip()):
             raise ValueError("it needs address, its IP address on the home network")
         try:
@@ -131,7 +132,12 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
 
             tv, soundbar = named("tv", "tv"), named("soundbar", "soundbar")
             screen = Screen(box, tv, soundbar, spec["tv_address"], spec["tv_input"])
-        return FireTv(spec["name"], box, agent, Catalog(), announce=context.announce or print, screen=screen)
+        youtube = str(spec.get("youtube", "youtube")).strip().lower()
+        if youtube not in ("youtube", "smarttube"):
+            raise ValueError('youtube is "youtube" or "smarttube", the app that plays YouTube')
+        device = FireTv(spec["name"], box, agent, Catalog(), announce=context.announce or print, screen=screen)
+        device.youtube = youtube
+        return device
 
     def purifier(spec: dict) -> Purifier:
         _only(spec, {"address"})

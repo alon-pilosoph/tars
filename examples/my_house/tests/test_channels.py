@@ -280,3 +280,68 @@ def test_a_link_that_never_plays_isnt_said_to():
 def test_a_link_on_an_app_that_isnt_there_says_so():
     device, _ = tv(LinkBox())
     assert device.play(LINK, "vimeo").startswith("error: vimeo isn't installed")
+
+
+SMART = "org.smarttube.stable"
+PLAYLIST = "https://youtube.com/playlist?list=PL1&si=x"
+
+
+class SmartBox(LinkBox):
+    """SmartTube too: a video plays from its link; a playlist plays once select starts it."""
+
+    def __init__(self, plays=True):
+        super().__init__(plays=plays)
+        self.opened = None
+
+    def find_app(self, name):
+        return {"youtube": YOUTUBE, "smarttube": SMART}.get(name)
+
+    def open_link(self, uri, package, component="", flags="", extras=None):
+        self.links.append(uri)
+        self.opened = (uri, package)
+
+    def shell(self, command, timeout_s=10.0, repeatable=False):
+        if command.startswith("dumpsys package"):
+            return "    userId=10100" if SMART in command else "    userId=10150"
+        uri, package = self.opened or ("", "")
+        playing = package == SMART and ("/playlist?" not in uri or "select" in self.presses)
+        if command.startswith("dumpsys audio") and self.plays and playing:
+            return "  AudioPlaybackConfiguration u/pid:10100/9 state:started attr: usage=USAGE_MEDIA content=X"
+        return ""
+
+
+def smart_tv(box):
+    device, _ = tv(box)
+    device.youtube = "smarttube"
+    return device
+
+
+def test_with_smarttube_a_youtube_link_plays_there_and_is_never_sent_twice():
+    box = SmartBox()
+    assert smart_tv(box).play(LINK, "youtube").startswith("done: it is playing on SmartTube")
+    assert box.links == [WATCH_LINK] and box.stopped_apps == [SMART] and box.presses == []
+
+
+def test_a_playlist_opens_as_a_list_and_one_press_starts_it():
+    box = SmartBox()
+    assert smart_tv(box).play(PLAYLIST, "").startswith("done: the playlist is playing on SmartTube")
+    assert box.presses == ["select"] and box.links == [PLAYLIST]
+
+
+def test_smarttube_that_never_plays_says_a_vpn_may_be_why():
+    assert "VPN" in smart_tv(SmartBox(plays=False)).play(LINK, "youtube")
+
+
+def test_without_smarttube_installed_youtube_is_used():
+    box = SmartBox()
+    box.find_app = lambda name: YOUTUBE if name == "youtube" else None
+    device = smart_tv(box)
+    device.play(LINK, "youtube")
+    assert box.stopped_apps == [YOUTUBE]
+
+
+def test_the_youtube_app_is_used_unless_the_house_says_smarttube():
+    box = SmartBox()
+    device, _ = tv(box)
+    device.play(LINK, "youtube")
+    assert box.stopped_apps == [YOUTUBE]

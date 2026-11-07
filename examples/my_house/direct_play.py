@@ -25,6 +25,9 @@ LOOKUP_TIMEOUT_S = 5.0
 MOVIES, SERIES = ("movie", "tvMovie"), ("tvSeries", "tvMiniSeries")
 LINK_SOUND_WAIT_S = 12.0  # a link's video starting, or being stopped at YouTube's "who's watching"
 PROFILE_WAIT_S = 5.0  # YouTube settling once a profile is chosen
+SMARTTUBE = "smarttube"  # a YouTube app for TVs, from its own releases: no ads, and no "who's watching"
+SMARTTUBE_SOUND_WAIT_S = 45.0  # its first video, from cold: 25 to 37 s on a Fire TV Stick
+SMARTTUBE_LIST_WAIT_S = 14.0  # a playlist's list coming up, its first video with the focus
 STREAMS_WAIT_S = 2.5  # Stremio's stream list filling in once its page is up
 PLAY_WAIT_S = 20.0  # the first stream starting to play
 EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
@@ -105,11 +108,14 @@ class FireTv(TvDevice):
         sleep: Callable[[float], None] = time.sleep,
         announce: Callable[[str], None] = print,
         screen: Screen | None = None,
+        youtube: str = "youtube",
     ):
-        """`screen`: the TV and soundbar with it, if TARS is to turn them on for what needs the picture."""
+        """`screen`: the TV and soundbar with it, if TARS is to turn them on for what needs the picture. `youtube`:
+        the app that plays YouTube, "youtube" or "smarttube" (the YouTube app is used if it isn't installed)."""
         super().__init__(name, box, agent, sleep=sleep)
         self.catalog = catalog or Catalog()
         self.screen = screen
+        self.youtube = youtube
         self.tuner = Tuner(box, announce, sleep, ready=lambda stopped: screen and screen.on(stopped))
 
     def rules(self) -> str:
@@ -151,7 +157,7 @@ class FireTv(TvDevice):
         if only_news(title, app):
             return ASK_WHICH
         if title.startswith(("https://", "http://")):
-            return self._link(title, app or "youtube")
+            return self._link(title, self._youtube_app(app or "youtube"))
         app = (app or STREMIO).strip().lower()  # this house watches on Stremio unless it says otherwise
         wanted = Title.parse(title)
         if app != STREMIO or not wanted.name:
@@ -185,7 +191,15 @@ class FireTv(TvDevice):
             return f"done: {found.said()}{episode} is playing on Stremio (the {self.name} says so)"
         return f"not confirmed: opened {found.said()}{episode} on Stremio and chose the first stream; nothing plays yet"
 
+    def _youtube_app(self, app: str) -> str:
+        """YouTube, asked for by any name, is the app this house plays it in, when that's installed."""
+        if app.strip().lower() in ("youtube", SMARTTUBE) and self.youtube == SMARTTUBE and self.box.find_app(SMARTTUBE):
+            return SMARTTUBE
+        return app
+
     def _link(self, url: str, app: str) -> str:
+        if app == SMARTTUBE:
+            return self._smarttube(url)
         """A video by its link. Stopped at YouTube's "who's watching", a press takes the profile that has the focus, and
         the link is sent again in case that lost it. Sound is all the box can say, not which video it is, and YouTube's
         home page has ads that make sound of their own."""
@@ -204,6 +218,23 @@ class FireTv(TvDevice):
         if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
             return f"done: there's sound on {app}, with the link sent, after choosing the profile"
         return f"not confirmed: opened the link on {app}, and nothing plays yet"
+
+    def _smarttube(self, url: str) -> str:
+        """SmartTube: a video plays from its link, slowly from cold; a playlist opens as a list, its first video with
+        the focus, which one press starts. It's never sent again: that would bring the list back."""
+        package = self.box.find_app(SMARTTUBE)
+        url = watch_link(url)
+        self.box.force_stop(package)
+        self.box.open_link(url, package)
+        sounding = lambda: self.tuner.sounding(package)
+        listed = "/playlist?" in url
+        if listed:
+            self._sleep(SMARTTUBE_LIST_WAIT_S)
+            self.box.press("select")
+        if wait_for(sounding, SMARTTUBE_SOUND_WAIT_S, self._sleep):
+            what = "the playlist" if listed else "it"
+            return f"done: {what} is playing on SmartTube (the {self.name} says there's sound)"
+        return "not confirmed: opened the link on SmartTube, and nothing plays yet; behind a VPN, YouTube may refuse it"
 
     def _playing(self, package: str) -> bool:
         return any(p == package and state == "playing" for p, state, _ in self.box.media())
