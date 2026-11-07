@@ -20,7 +20,7 @@ from examples.my_house.channels import (
     SUBSCRIBERS,
     WATCH,
 )
-from examples.my_house.direct_play import Catalog, FireTv
+from examples.my_house.direct_play import Catalog, FireTv, watch_link
 from voice_assistant.androidtv import AndroidTV
 from voice_assistant.home import HomeError
 
@@ -219,7 +219,8 @@ def test_the_model_is_told_how_to_ask_for_them():
     assert '"channel 11"' in device.rules() and '"channel 12"' in device.rules() and "news" in device.rules()
 
 
-LINK = "https://youtu.be/x"
+LINK = "https://youtu.be/UBcVbAFntQo?si=abc"
+WATCH_LINK = "https://www.youtube.com/watch?v=UBcVbAFntQo"
 YOUTUBE = "com.amazon.firetv.youtube"
 
 
@@ -247,8 +248,8 @@ class LinkBox(Box):
 def test_a_link_opens_afresh_and_is_on_when_it_makes_sound():
     box = LinkBox()
     device, _ = tv(box)
-    assert device.play(LINK, "youtube").startswith("done: it's playing on youtube")
-    assert box.links == [LINK] and box.stopped_apps == [YOUTUBE] and box.presses == []
+    assert device.play(LINK, "youtube").startswith("done: there's sound on youtube")
+    assert box.links == [WATCH_LINK] and box.stopped_apps == [YOUTUBE] and box.presses == []
 
 
 def test_stopped_at_whos_watching_a_press_takes_the_profile():
@@ -256,7 +257,12 @@ def test_stopped_at_whos_watching_a_press_takes_the_profile():
     device, _ = tv(box)
     assert "after choosing the profile" in device.play(LINK, "youtube")
     assert box.presses == ["select"]
-    assert box.links == [LINK, LINK]  # choosing it may have dropped the link for the home page
+    assert box.links == [WATCH_LINK, WATCH_LINK]  # choosing it may have lost the link
+
+
+def test_only_a_short_link_is_changed():
+    assert watch_link("https://youtu.be/a-b_c") == "https://www.youtube.com/watch?v=a-b_c"
+    assert watch_link("https://vimeo.com/1") == "https://vimeo.com/1"
 
 
 def test_a_link_that_never_plays_isnt_said_to():

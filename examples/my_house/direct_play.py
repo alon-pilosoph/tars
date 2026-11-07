@@ -30,8 +30,15 @@ PLAY_WAIT_S = 20.0  # the first stream starting to play
 EPISODE = re.compile(r"\s+s(\d+)\s*e(\d+)\s*$", re.IGNORECASE)
 YEAR = re.compile(r"\s*\((\d{4})\)\s*$")
 IMDB_ID = re.compile(r"tt\d+")
+SHORT_LINK = re.compile(r"https?://youtu\.be/([\w-]+)")
 # What the TV agent is told besides its own rules, for a title that goes to it on Stremio after all.
 STREMIO_RULES = "In Stremio, choosing a title lists streams from its add-ons: choose the first one that plays."
+
+
+def watch_link(url: str) -> str:
+    """YouTube on a Fire TV takes a youtu.be link and opens its home page, so a short link becomes the long kind."""
+    found = SHORT_LINK.match(url)
+    return f"https://www.youtube.com/watch?v={found[1]}" if found else url
 
 
 @dataclass
@@ -176,22 +183,23 @@ class FireTv(TvDevice):
         return f"not confirmed: opened {found.said()}{episode} on Stremio and chose the first stream; nothing plays yet"
 
     def _link(self, url: str, app: str) -> str:
-        """A video by its link, started afresh. It's on only once the box says the app makes sound: YouTube's media
-        session says nothing useful. Stopped at "who's watching", a press takes the profile that has the focus, and
-        may then drop the link for a home page that makes sound of its own, so the link is sent again."""
+        """A video by its link. Stopped at YouTube's "who's watching", a press takes the profile that has the focus, and
+        the link is sent again in case that lost it. Sound is all the box can say, not which video it is, and YouTube's
+        home page has ads that make sound of their own."""
         package = self.box.find_app(app)
         if not package:
             return f"error: {app} isn't installed on the {self.name}"
+        url = watch_link(url)
         self.box.force_stop(package)
         self.box.open_link(url, package)
         sounding = lambda: self.tuner.sounding(package)
         if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
-            return f"done: it's playing on {app} (the {self.name} says so)"
+            return f"done: there's sound on {app}, with the link sent (the {self.name} says so)"
         self.box.press("select")
         self._sleep(PROFILE_WAIT_S)
         self.box.open_link(url, package)
         if wait_for(sounding, LINK_SOUND_WAIT_S, self._sleep):
-            return f"done: it's playing on {app} (the {self.name} says so), after choosing the profile"
+            return f"done: there's sound on {app}, with the link sent, after choosing the profile"
         return f"not confirmed: opened the link on {app}, and nothing plays yet"
 
     def _playing(self, package: str) -> bool:

@@ -125,9 +125,9 @@ where it is, and its position would need updating if the app changes.
 subscribers: TARS says that, rather than that nothing played.
 
 `play` with a link as the title (`app = "youtube"`) opens that video, for a skill (docs/home.md#skills). YouTube may
-stop at "who's watching", so with no sound a press takes the profile that has the focus and the link is sent again,
-since the press may land on the home page. It's on once the box says the app makes sound, which YouTube's home page can
-do too: TARS can't see which video it is.
+stop at "who's watching", so with no sound a press takes the profile that has the focus and the link is sent again.
+On a Fire TV it takes a `youtu.be` link and opens its home page, so a short link is made the long kind first. The box
+can only say there's sound, not which video it is, and that home page has ads that make sound.
 
 ### The TV and soundbar with it
 
