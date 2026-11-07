@@ -495,6 +495,7 @@ def test_muted_a_question_it_announces_unmutes_it_just_for_the_answer(speaker):
     assistant.say_announcements(follow_up_s=4.0)
     assert brain.asked == ["[Follow-up, no wake word] the first one"]
     assert switched == [False, True] and assistant.muted
+    assert assistant.recorder.longest == [assistant_module.ANSWER_ONLY_S]
 
 
 def test_muted_news_that_asks_nothing_leaves_it_muted(speaker):

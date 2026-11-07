@@ -209,7 +209,8 @@ toggles twice.
   the mic stays on. Either mute outlasts a restart: muted when TARS stopped, it starts muted (`voice_data/muted` is
   there while it's muted). Muted, what's due is still said, after a chime; a reminder waiting for "got it", or
   anything TARS says on its own that asks a question (a skill at its time, the TV's "Toy Story, or Toy Story 4?"),
-  unmutes it just for the answer (the light shows it), and what follows from it, then mutes it again.
+  unmutes it just for the answer (the light shows it): six seconds of it at most, replied to, and then muted again,
+  with no listening for more. The room was muted for a reason.
 - **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
   Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power
   button is the case's own (it turns the Pi on, and shuts it down cleanly).

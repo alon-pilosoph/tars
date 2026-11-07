@@ -66,6 +66,7 @@ class UtteranceRecorder:
         on_resume: Callable[[], None] | None = None,
         turn_state: Callable[[], TurnState] | None = None,
         stop: Callable[[], bool] | None = None,
+        max_s: float | None = None,
     ) -> bytes | None:
         """Returns 16 kHz mono int16 PCM, or None if nobody spoke before the timeout.
 
@@ -75,7 +76,8 @@ class UtteranceRecorder:
         audio so far once `answer_early_s` into a pause, and `on_resume` is called if the speaker makes a sound after.
         With `turn_state` (a service that decides the turn, like stt.FluxSession), the service ends the turn and says
         when to call on_pause and on_resume; the silence rule is only a backstop. `stop()`, asked every block, ends
-        it at once with None, as if nobody spoke (a stop button).
+        it at once with None, as if nobody spoke (a stop button). `max_s` overrides the configured longest utterance:
+        what's still said after it isn't recorded.
         """
         cfg = self._cfg
         timeout_s = cfg.start_timeout_s if start_timeout_s is None else start_timeout_s
@@ -96,7 +98,7 @@ class UtteranceRecorder:
         backstop = math.ceil(BACKSTOP_S / BLOCK_SECONDS)
         service = turn_state  # None once the service fails
         pauses = _Pauses(backstop, backstop, 0) if service else own
-        max_blocks = int(cfg.max_utterance_s / BLOCK_SECONDS)
+        max_blocks = int((cfg.max_utterance_s if max_s is None else max_s) / BLOCK_SECONDS)
         speaking, quiet = cfg.vad_threshold, cfg.vad_threshold - END_MARGIN
         # `silence` counts clearly quiet blocks since the last speech; soft ones in between neither end nor extend
         # the turn. An announced pause is undone by any sound that isn't clearly quiet.

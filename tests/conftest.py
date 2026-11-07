@@ -147,9 +147,11 @@ class ScriptedRecorder:
     def __init__(self, script):
         self.script = list(script)
         self.timeouts = []
+        self.longest = []  # each record()'s max_s: None for the configured longest
 
-    def record(self, mic, start_timeout_s=None, on_pause=None, on_resume=None, **kw):
+    def record(self, mic, start_timeout_s=None, on_pause=None, on_resume=None, max_s=None, **kw):
         self.timeouts.append(start_timeout_s)
+        self.longest.append(max_s)
         entry = self.script.pop(0)
         if not isinstance(entry, list):
             return entry

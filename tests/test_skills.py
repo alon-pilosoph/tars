@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+import voice_assistant.assistant as assistant_module
 from voice_assistant.audio import chime
 from voice_assistant.config import ConfigError, LLMConfig, load_config
 from voice_assistant.home import Request
@@ -251,6 +252,15 @@ def test_muted_a_skill_that_asks_unmutes_it_for_the_answer_then_mutes_it_again(s
     assistant.run_skills(follow_up_s=4.0)
     assert brain.asked[1] == "[Follow-up, no wake word] no thanks"
     assert switched == [False, True] and assistant.muted
+    # Only the answer, a few seconds of it, and no listening for more once it's replied: the room was muted.
+    assert assistant.recorder.longest == [assistant_module.ANSWER_ONLY_S]
+
+
+def test_unmuted_a_skill_listens_for_follow_ups_as_any_conversation(speaker):
+    assistant, _ = make_assistant(speaker, [speech(), None], ["no thanks"], replies=["News on?", "Okay."])
+    assistant._skill_clock = due(NEWS)
+    assistant.run_skills(follow_up_s=4.0)
+    assert assistant.recorder.longest == [None, None]  # the answer, then the follow-up window
 
 
 def test_muted_a_skill_that_only_tells_stays_muted(speaker):
