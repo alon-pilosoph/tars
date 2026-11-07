@@ -380,11 +380,20 @@ describe("the demo's automatic labels", () => {
 describe("a load where some endpoints fail", () => {
   const ok = <T>(value: T): PromiseSettledResult<T> => ({ status: "fulfilled", value });
   const no = (why: string): PromiseSettledResult<never> => ({ status: "rejected", reason: new Error(why) });
-  const last = { events: [1], clusters: [2], models: "m", status: "s", convs: [3], items: [4], reminders: "r" };
+  const last = {
+    events: [1],
+    clusters: [2],
+    models: "m",
+    status: "s",
+    convs: [3],
+    items: [4],
+    reminders: "r",
+    skills: "k",
+  };
   const answers = { events: ok([10]), clusters: ok([20]), models: ok("M"), status: ok("S"), convs: ok([30]) };
 
   it("keeps what failed as it last loaded, and says why", () => {
-    const { data, failed } = settle({ ...answers, items: no("HTTP 500"), reminders: ok("R") }, last);
+    const { data, failed } = settle({ ...answers, items: no("HTTP 500"), reminders: ok("R"), skills: ok("K") }, last);
     expect(data).toEqual({
       events: [10],
       clusters: [20],
@@ -393,6 +402,7 @@ describe("a load where some endpoints fail", () => {
       convs: [30],
       items: [4],
       reminders: "R",
+      skills: "K",
     });
     expect(failed).toEqual({ items: "HTTP 500" });
   });
@@ -406,6 +416,7 @@ describe("a load where some endpoints fail", () => {
       convs: no("convs timed out"),
       items: no("items timed out"),
       reminders: no("reminders timed out"),
+      skills: no("skills timed out"),
     };
     expect(() => settle(none, last)).toThrow("events timed out");
   });

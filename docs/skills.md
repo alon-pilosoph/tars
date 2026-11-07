@@ -49,6 +49,9 @@ the model, which carries them out with the tools it already has.
 - **The tools keep their own rules**, whatever a skill says: unlocking needs the words said, by a voice trusted with
   it, so no skill opens the door; an order still waits for its tap on Telegram.
 
+The web UI's **Skills** page shows all of it, and what skills did by themselves lately; a skill can be paused,
+resumed or deleted there, and a preference forgotten ([the web UI](web-ui.md)).
+
 Kept in the event database (`[learning] log_events`): the `skills`, `preferences` and `skill_runs` tables, backed
 up with the rest.
 

@@ -19,6 +19,7 @@ import type {
   ProcessHealth,
   Reminder,
   RemindersInfo,
+  SkillsInfo,
   ServiceHealth,
   Speaker,
   StatusPage,
@@ -38,8 +39,86 @@ interface DemoData {
   items: Item[];
   models: ModelsInfo;
   reminders: RemindersInfo;
+  skills: SkillsInfo;
 }
 let D: DemoData | null = null;
+
+/** What the household taught TARS, for the Skills page. */
+function demoSkills(now: number): SkillsInfo {
+  const ago = (minutes: number) => now - minutes * 60;
+  return {
+    skills: [
+      {
+        id: 1,
+        name: "panda",
+        instructions: "Play the panda video on the Fire TV, with the app youtube.",
+        when: "the kids want something calm to watch",
+        owner: "household",
+        household: true,
+        runs_by_itself: "",
+        say: "aloud",
+        paused: false,
+      },
+      {
+        id: 2,
+        name: "news",
+        instructions:
+          "Unless the Fire TV is already on Kan or 12+, ask whether they want the news on, Channel 11 or 12. Put on the one they pick.",
+        when: "they want the news on",
+        owner: "household",
+        household: true,
+        runs_by_itself: "at 19:55 every day",
+        say: "aloud",
+        paused: false,
+      },
+      {
+        id: 3,
+        name: "welcome",
+        instructions: "Welcome her home, and tell her what's waiting for her.",
+        when: "",
+        owner: "household",
+        household: true,
+        runs_by_itself: "when Stacey comes home",
+        say: "aloud",
+        paused: true,
+      },
+      {
+        id: 4,
+        name: "gaming digest",
+        instructions: "Tell me what's new in my gaming feeds: the three that matter most.",
+        when: "",
+        owner: "alon",
+        household: false,
+        runs_by_itself: "at 07:30 on Sun, Mon, Tue, Wed, Thu",
+        say: "chat",
+        paused: false,
+      },
+    ],
+    preferences: [
+      { id: 1, person: "alon", about: "gaming news", text: "Skip esports.", guessed: false, at: ago(60 * 26) },
+      { id: 2, person: "alon", about: "the AC", text: "Likes it at 23 at night.", guessed: true, at: ago(60 * 50) },
+      { id: 3, person: "stacey", about: "music", text: "Jazz in the evening.", guessed: false, at: ago(60 * 72) },
+    ],
+    runs: [
+      {
+        id: 2,
+        name: "gaming digest",
+        owner: "alon",
+        at: ago(95),
+        why: "at 07:30",
+        said: "Three new things in gaming…",
+      },
+      {
+        id: 1,
+        name: "news",
+        owner: "household",
+        at: ago(60 * 13),
+        why: "at 19:55",
+        said: "Should I put the news on? Channel 11 or 12?",
+      },
+    ],
+  };
+}
 
 /** What TARS says for a reminder; mirrors reminders.line. */
 function says(r: Pick<Reminder, "kind" | "text" | "for_name" | "from_name">) {
@@ -696,6 +775,7 @@ function build(): DemoData {
     clusters,
     convs,
     items: empty ? [] : items,
+    skills: empty ? { skills: [], preferences: [], runs: [] } : demoSkills(now),
     reminders: {
       enabled: !DEMO_LINK.remindersOff,
       reminders,
@@ -971,6 +1051,7 @@ const LOADED_FROM: Record<LoadPart, string> = {
   convs: "/api/conversations",
   items: "/api/items",
   reminders: "/api/reminders",
+  skills: "/api/skills",
 };
 
 export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
@@ -1148,6 +1229,20 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
       Object.assign(r, { status: "acknowledged", acked_at: now, acked_via: "web", next_at: null });
     if (r && m[2] === "snooze") Object.assign(r, { status: "scheduled", tries: 0, next_at: now + body.minutes * 60 });
     if (r && m[2] === "cancel") Object.assign(r, { status: "cancelled", next_at: null });
+    return ok;
+  }
+  if (p === "/api/skills" && method === "GET") return clone(d.skills);
+  if ((m = p.match(/^\/api\/skills\/(\d+)\/pause$/))) {
+    const sk = d.skills.skills.find(x => x.id === Number(m![1]));
+    if (sk) sk.paused = body.paused;
+    return ok;
+  }
+  if ((m = p.match(/^\/api\/skills\/(\d+)$/)) && method === "DELETE") {
+    d.skills.skills = d.skills.skills.filter(x => x.id !== Number(m![1]));
+    return ok;
+  }
+  if ((m = p.match(/^\/api\/preferences\/(\d+)$/)) && method === "DELETE") {
+    d.skills.preferences = d.skills.preferences.filter(x => x.id !== Number(m![1]));
     return ok;
   }
   if (p === "/api/models/use") {

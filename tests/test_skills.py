@@ -314,7 +314,7 @@ def test_a_trigger_is_taught_checked_against_whats_there_and_described(skills):
     co2 = {**STACEY_HOME, "event": "device", "who": None, "device": "Air Quality", "above": 1000, "reading": "CO2"}
     teach(skills, name="air", instructions="Turn on the purifier and tell me.", trigger=co2)
     note = skills.note("Alon")
-    assert "- welcome (household; runs by itself when stacey comes home, said aloud): Tell her" in note
+    assert "- welcome (household; runs by itself when Stacey comes home, said aloud): Tell her" in note
     assert "- air (Alon's; runs by itself when the air quality's co2 goes over 1000, said aloud)" in note
     assert teach(skills, name="x", instructions="y", trigger={**STACEY_HOME, "who": "bob"}).startswith(
         "error: who's home doesn't follow 'bob'"
@@ -484,3 +484,39 @@ def test_a_reading_is_checked_against_what_the_device_says_now(skills):
     house.statuses["air quality"] = status.replace("801", "1150")
     clock.look(SUNDAY)
     assert [d.why for d in clock.take()] == ["the air quality's carbon dioxide went over 1000, to 1150"]
+
+
+# The web UI's Skills page.
+
+
+def test_the_skills_page_shows_everything_taught_and_done_and_changes_it(log, client):
+    skills = Skills(log.store)
+    teach(skills, name="panda", instructions="Play it.", when="kids want calm", household=True)
+    teach(skills, name="welcome", instructions="Greet her.", trigger={**STACEY_HOME, "who": "stacey"})
+    teach(skills, action="remember", instructions="Skip esports.", about="gaming", guess=True)
+    (welcome,) = [s for s in skills.all() if s.name == "welcome"]
+    skills.ran(welcome, "Stacey just came home", "Welcome home, Stacey.")
+    page = client.get("/api/skills").json()
+    by_name = {s["name"]: s for s in page["skills"]}
+    assert by_name["panda"] | {"id": 0} == {
+        "id": 0,
+        "name": "panda",
+        "instructions": "Play it.",
+        "when": "kids want calm",
+        "owner": "household",
+        "household": True,
+        "runs_by_itself": "",
+        "say": "aloud",
+        "paused": False,
+    }
+    assert by_name["welcome"]["runs_by_itself"] == "when Stacey comes home"
+    assert [(p["person"], p["text"], p["guessed"]) for p in page["preferences"]] == [("alon", "Skip esports.", True)]
+    assert [(r["name"], r["why"]) for r in page["runs"]] == [("welcome", "Stacey just came home")]
+    panda = by_name["panda"]["id"]
+    assert client.post(f"/api/skills/{panda}/pause", json={"paused": True}).json() == {"ok": True}
+    assert [s.paused for s in skills.all() if s.name == "panda"] == [True]
+    assert client.delete(f"/api/skills/{panda}").json() == {"ok": True}
+    assert client.delete(f"/api/skills/{panda}").status_code == 404
+    pref = page["preferences"][0]["id"]
+    assert client.delete(f"/api/preferences/{pref}").json() == {"ok": True}
+    assert skills.preferences("alon") == []

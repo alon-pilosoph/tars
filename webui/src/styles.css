@@ -1050,6 +1050,24 @@ main.wide {
 .rem .btn {
   margin-top: -6px;
 }
+.skills-teach {
+  margin: -6px 0 8px;
+}
+.skill-name {
+  color: var(--ink, inherit);
+  font-weight: 600;
+}
+.skill-paused {
+  font-weight: 600;
+}
+.rem .btns {
+  display: flex;
+  gap: 6px;
+  margin-top: -6px;
+}
+.rem .btns .btn {
+  margin-top: 0;
+}
 .rem.past .says {
   color: var(--tars);
   font-size: 17px;
@@ -1711,6 +1729,12 @@ pre.cmd {
     grid-column: 1 / -1;
     padding: 0;
     margin-bottom: -10px;
+  }
+  .rem.skill {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rem.skill .btns {
+    margin-top: -4px;
   }
   .field-row {
     grid-template-columns: 1fr;

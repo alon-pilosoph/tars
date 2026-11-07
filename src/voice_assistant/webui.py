@@ -30,6 +30,7 @@ from .health import Report
 from .homenet import address, home_name
 from .recording import Sessions, public_take
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
+from .skills import Skills
 from .versions import INSTALLED, FixedPair, ModelVersions
 
 STATIC = Path(__file__).with_name("webui_static")  # the React app in webui/, built with `npm run build`
@@ -134,6 +135,10 @@ class Snooze(BaseModel):
     minutes: float
 
 
+class Paused(BaseModel):
+    paused: bool
+
+
 def allowed_host(host: str, extra: frozenset[str] = frozenset()) -> bool:
     """A name this machine is reached by at home: an IP address, localhost, a .local name, a single-label name
     (the Pi's hostname, a Tailscale MagicDNS name), *.ts.net, or one listed in [web] allowed_hosts. Anything else
@@ -226,6 +231,7 @@ def create_app(
     thread of its own, once a recording session's last prompt is done (to enroll a voice from it)."""
     app = FastAPI(title="TARS")
     convos = ConversationLog(log)
+    skills = Skills(log.store)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
     extra = frozenset(h.lower() for h in allowed_hosts)
 
@@ -580,6 +586,30 @@ def create_app(
         reminder_or_404(reminder_id)
         if not reminders_or_501().cancel(reminder_id):
             raise HTTPException(409, "it's over already")
+        return {"ok": True}
+
+    @app.get("/api/skills")
+    def list_skills():
+        """The Skills page: what TARS was taught by talking (skills and preferences) and what skills did by
+        themselves. Taught and changed by talking to TARS; here, only paused, deleted and forgotten."""
+        return skills.page()
+
+    @app.post("/api/skills/{skill_id}/pause")
+    def pause_skill(skill_id: int, body: Paused):
+        if not skills.set_paused(skill_id, body.paused):
+            raise HTTPException(404, "no such skill")
+        return {"ok": True}
+
+    @app.delete("/api/skills/{skill_id}")
+    def delete_skill(skill_id: int):
+        if not skills.delete(skill_id):
+            raise HTTPException(404, "no such skill")
+        return {"ok": True}
+
+    @app.delete("/api/preferences/{preference_id}")
+    def forget_preference(preference_id: int):
+        if not skills.forget(preference_id):
+            raise HTTPException(404, "TARS doesn't know that any more")
         return {"ok": True}
 
     def finished_with_voices(session: dict) -> None:  # enrolling changes the voices: not while they're regrouped
