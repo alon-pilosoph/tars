@@ -207,8 +207,9 @@ toggles twice.
   and off-hook lights). The PowerConf takes the computer's mute only off-hook (in a call), so TARS keeps it off-hook,
   which no light shows, and sets the mute. Without one, the remote's mute is TARS's alone: it stops listening, and
   the mic stays on. Either mute outlasts a restart: muted when TARS stopped, it starts muted (`voice_data/muted` is
-  there while it's muted). Muted, what's due is still said; one waiting for "got it" unmutes it just for the answer
-  (the light shows it), and what follows from it, then mutes it again.
+  there while it's muted). Muted, what's due is still said, after a chime; a reminder waiting for "got it", or
+  anything TARS says on its own that asks a question (a skill at its time, the TV's "Toy Story, or Toy Story 4?"),
+  unmutes it just for the answer (the light shows it), and what follows from it, then mutes it again.
 - **A remote** (`[home] remote`), through an IR receiver: the one in an Argon ONE case, or any wired to a GPIO pin.
   Any of `volume_up`, `volume_down`, `talk`, `stop` and `mute`; a button not named does nothing. The remote's power
   button is the case's own (it turns the Pi on, and shuts it down cleanly).
@@ -373,7 +374,8 @@ a voice trusted with it, so a skill can't open the door.
 
 With `at`, the voice's TARS (never a chat's) runs it by itself, local time: a turn of its own, with the skill's words
 as the request and a note that nobody asked. What the model replies is said after a chime, and TARS listens for an
-answer without the wake word. When there's nothing to do (the news is already on), it says nothing.
+answer without the wake word, even while it's muted, when what it said asks something: unmuted just for the answer,
+then muted again. When there's nothing to do (the news is already on), it says nothing.
 
 ## Setting it up
 

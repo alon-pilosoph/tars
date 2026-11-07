@@ -151,3 +151,28 @@ def test_a_skill_with_times_loads(tmp_path):
 def test_a_skill_that_cant_work_stops_at_startup(tmp_path, setup, says):
     with pytest.raises(ConfigError, match=re.escape(says)):
         config(tmp_path, f'[[home.skills]]\nname = "news"\n{setup}')
+
+
+def test_muted_a_skill_that_asks_unmutes_it_for_the_answer_then_mutes_it_again(speaker):
+    assistant, brain = make_assistant(speaker, [speech(), None], ["no thanks"], replies=["News on?", "Okay."])
+    switched = []
+
+    def button(muted):
+        switched.append(muted)
+        assistant.mute(muted)
+
+    assistant.set_muted = button
+    assistant.mute(True)
+    assistant._skill_clock = due(NEWS)
+    assistant.run_skills(follow_up_s=4.0)
+    assert brain.asked[1] == "[Follow-up, no wake word] no thanks"
+    assert switched == [False, True] and assistant.muted
+
+
+def test_muted_a_skill_that_only_tells_stays_muted(speaker):
+    assistant, _ = make_assistant(speaker, [None], [], replies=["The news is on."])
+    assistant.set_muted = lambda muted: pytest.fail("nothing to listen for")
+    assistant.mute(True)
+    assistant._skill_clock = due(NEWS)
+    assistant.run_skills(follow_up_s=4.0)
+    assert assistant.muted
