@@ -126,9 +126,11 @@ it chooses from what it sees, presses, types or opens an app, then looks again t
 after a chime, like a reminder: "Toy Story is playing.", or why not ("Stremio found no streams for Toy Story."). If the
 voice is down then, nothing plays, not even the chime: the line waits, is tried again a minute later or with the next
 one, and is dropped as old news after ten minutes. If it isn't clear which was meant, it asks ("Toy Story, or Toy Story
-4?"), and TARS listens for the answer without the wake word. Asking the TV for anything else stops the agent, and waits
+4?"), and TARS listens for the answer without the wake word; news that asks nothing ("Channel 12 is on.") doesn't
+listen after it, since what it would hear is mostly the TV it just put on. Asking the TV for anything else stops the agent, and waits
 for the step it's on (an app opening, a wait) to end first, so the two never fight over the screen. A press is never
-sent twice: one the box may have had before it stopped answering isn't tried again. A task costs a few cents of OpenAI:
+sent twice: one the box may have had before it stopped answering isn't tried again. A connection that couldn't be made
+is tried once more, since nothing went out on it: a stick asleep on the Wi-Fi often answers only the second time. A task costs a few cents of OpenAI:
 each step is one request, with a screenshot when the app's text isn't enough, and only the latest screenshot is sent
 again.
 

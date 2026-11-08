@@ -484,8 +484,9 @@ class Assistant:
         )
 
     def say_announcements(self, follow_up_s: float = 0.0) -> None:
-        """Says what's waiting to be said (the TV is playing, or why it isn't), then listens a moment, without the
-        wake word, in case it asked something ("Toy Story, or Toy Story 4?"). What's said joins the conversation."""
+        """Says what's waiting to be said (the TV is playing, or why it isn't), then, if it asked something ("Toy
+        Story, or Toy Story 4?"), listens a moment for the answer without the wake word. News that asks nothing
+        doesn't listen: what's heard next is mostly the TV it just put on. What's said joins the conversation."""
         lines = self.announcements.take() if self.announcements else []
         audio = self._made_now(lines)
         if unsaid := [line for line in lines if line not in audio]:
@@ -503,8 +504,9 @@ class Assistant:
             self._play(audio[line])
             self.journal.said(line)
         self.brain.remember_said(" ".join(said))
-        with self._open_for_answer(bool(follow_up_s) and asks(said)) as answer_s:
-            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if follow_up_s else None
+        listens = bool(follow_up_s) and asks(said)
+        with self._open_for_answer(listens) as answer_s:
+            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if listens else None
             if heard is None:
                 self.journal.nobody_spoke()
                 return

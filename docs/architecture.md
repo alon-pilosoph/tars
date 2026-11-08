@@ -72,7 +72,8 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    if you carry on talking the draft is thrown away, and it's only played, logged and allowed to send anything once
    your turn is confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
-   when what it overheard wasn't meant for it, and TARS stays quiet and forgets it. The conversation is sent to the
+   when what it overheard wasn't meant for it, or is a fragment that asks for nothing ("eight hours."), and TARS
+   stays quiet and forgets it. The conversation is sent to the
    LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new

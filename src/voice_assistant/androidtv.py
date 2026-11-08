@@ -164,13 +164,20 @@ class AndroidTV:
         """`repeatable`: running it twice does no harm (a read, waking the box), so it's tried again on a new
         connection whatever went wrong. Anything else (a press, typing) is tried again only after a connection error,
         which usually means it never went out: after a timeout the box may have done it, and twice would press twice.
-        So a connection left idle is checked first, where trying again is safe."""
+        So a connection left idle is checked first, where trying again is safe. A connection that couldn't be made is
+        always tried once more: nothing was sent on it."""
         with self._lock:
             if not repeatable and self._adb is not None and self._clock() - self._used > IDLE_S:
                 self._run("echo", repeatable=True)
             for attempt in (1, 2):
                 try:
-                    out = self._device().shell(command, read_timeout_s=timeout_s, timeout_s=timeout_s, decode=decode)
+                    device = self._device()
+                except HomeError:
+                    if attempt == 2:
+                        raise
+                    continue  # nothing went out; a box just waking from sleep often answers the second time
+                try:
+                    out = device.shell(command, read_timeout_s=timeout_s, timeout_s=timeout_s, decode=decode)
                     self._used = self._clock()
                     return out
                 except HomeError:
