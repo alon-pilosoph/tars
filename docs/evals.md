@@ -4,7 +4,7 @@ The [capability benchmark](models.md) asks the quick model one request at a time
 that Qwen *decided* to hand a turn over, not what happened next. But most of what can go wrong in TARS happens across
 models and across turns. OpenAI answers a weather question, and the follow-up comes back to Qwen with that answer in
 front of it. Qwen sets a timer and then hands the rest of the request over, and OpenAI must not set it again. A timer
-set while Groq is down has to be cancellable a turn later, by whichever model takes it.
+set while Cerebras is down has to be cancellable a turn later, by whichever model takes it.
 
 The scenario evals (`evals/`, written up in [evals/README.md](../evals/README.md)) play whole conversations through
 TARS's real brain, hand-offs followed through to OpenAI's model and the thinking model, and check every turn.
@@ -20,11 +20,8 @@ TARS's real brain, hand-offs followed through to OpenAI's model and the thinking
 - **TARS's own brain and prompts**, set up from `config.toml`: Qwen (`qwen-3.8-27b`) at low reasoning with its own
   tools, OpenAI's `gpt-6-luna` for the web and as the fallback, and the same model at high reasoning for hard
   questions.
-- **Qwen runs on Cerebras.** It's the same model TARS asks on Groq first, and Cerebras's paid tier allows 150,000
-  tokens a minute against Groq's free 7,000-8,000, so a run of the first 29 took about a minute instead of a day.
-  TARS's two services are both played there, each with its own reply cap (Groq's 500 tokens, then Cerebras's 2,000),
-  so a reply too long for Groq runs out as it would at home. Whether Groq's copy answers the same way is
-  [not yet checked](#limitations).
+- **Qwen runs on Cerebras,** as it does at home. Its paid tier allows 150,000 tokens a minute, so a run of the first
+  29 took about a minute.
 - **On request, never a check.** Evals run from the command line, or from a pull request comment (`#evals`), and
   nothing waits on them ([evals/README.md](../evals/README.md#on-a-pull-request)).
 - **Played as the assistant plays them**: prompts tagged with the speaker and how they were heard, a `<skip>`
@@ -132,8 +129,6 @@ itself after setting the reminder, instead of handing it over. (The run's line i
 
 - **No judge yet.** Fixed rules check what was done and what mustn't be said, not whether an answer is right or sounds
   like TARS. That's the next step: Claude as a judge, checked against the owner's own labels first.
-- **Cerebras, not Groq.** TARS asks Groq first. Both list the same model, but neither says how it's served, so a slow
-  run on Groq's free key, a few turns a minute over several days, should confirm the two answer alike.
 - **Three runs each** tell a problem that happens most of the time from one that doesn't, not 90% from 95%: a
   scenario is only called worse than the baseline when it drops by half its runs (`evals/report.py`).
 - **The web answers are real**, so a scenario's result can depend on the day's news and weather.

@@ -10,8 +10,7 @@ every candidate, at every reasoning effort worth trying, on the same 26 requests
 
 **The result:** Qwen at low reasoning scores 149 of 156 on Cerebras, one behind gpt-oss-120b and Claude Haiku (150)
 and three behind Luna (152), with first words in about 0.4 s; of the two fast candidates, it is the one that sounds
-like TARS. Luna, the most accurate, is 0.2-0.4 s slower to its first words. TARS runs the same Qwen on Groq first,
-where it starts sooner, and on Cerebras second.
+like TARS. Luna, the most accurate, is 0.2-0.4 s slower to its first words. TARS runs Qwen on Cerebras.
 
 ## Method
 
@@ -73,13 +72,13 @@ three (turning down "tomorrow at 7:30", speaking its reasoning instead of sendin
 instead of sending it) need the full six runs to tell the provider from chance. It is the same model, with the same
 weights, that scored 149 of 156 over six runs on Cerebras at low reasoning.
 
-### What TARS uses: Qwen at low reasoning, on Groq first
+### What TARS uses: Qwen at low reasoning, on Cerebras
 
-`groq_model = "qwen/qwen3.8-27b"` and `cerebras_model = "qwen-3.8-27b"` (the same model under each service's id),
+`cerebras_model = "qwen-3.8-27b"`,
 `quick_reasoning_effort = "low"`, `quick_tools = true`. One behind gpt-oss-120b and Claude Haiku (150) and three behind
 Luna (152) on the score, among the fastest, and of the two fast candidates, the one that sounds like TARS. Groq starts
-answering sooner and its times vary less, so it's asked first, with Cerebras as a hedge when Groq is slow to start and
-the fallback when it's rate-limited ([where Qwen runs](latency.md#where-should-qwen-and-deepgram-run)). The bench scores
+answering sooner when it answers, but on its free key it wrote few replies in real use, so it's off by default
+([where Qwen runs](latency.md#where-should-qwen-and-deepgram-run)). The bench scores
 what a model does, not how it sounds, so the two fast candidates were also asked the same everyday questions and
 compared by ear:
 
@@ -127,7 +126,7 @@ Medium is about as right, and slower on reminders. Decision: low.
 ### Does paying for Cerebras make it faster?
 
 No. Paying lifts the free tier's daily allowance, past which Cerebras answers "402" until the next day. It doesn't
-make Qwen faster. With Groq asked first, that allowance matters only on the turns Cerebras takes; with both out,
+make Qwen faster. With Cerebras out,
 OpenAI answers (slower, but it answers).
 
 ### Should a router decide first?

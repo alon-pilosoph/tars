@@ -430,7 +430,7 @@ def test_voice_messages_go_to_deepgram_then_openai_as_requests_at_home_do(tmp_pa
     pcm = np.zeros(1600, dtype=np.int16)
 
     def heard(keys: set[str], client) -> str:
-        cfg, _ = with_keys(shipped, keys | {"CARTESIA_API_KEY", "GROQ_API_KEY"})
+        cfg, _ = with_keys(shipped, keys | {"CARTESIA_API_KEY", "CEREBRAS_API_KEY"})
         return stt.transcribe_recording(make_recording_transcriber(cfg, env, client), pcm)
 
     both = {"DEEPGRAM_API_KEY", "OPENAI_API_KEY"}

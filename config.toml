@@ -71,14 +71,13 @@ language = "en"
 deepgram_host = "api.eu.deepgram.com"
 
 [llm]
-# The quick brain, the same Qwen on two services. Groq answers first (GROQ_API_KEY in .env): about 0.4 s to its first
-# sentence (at the reasoning effort and with the tools set below), served from Frankfurt. Its free key allows 8,000
-# tokens a minute, 1,000 of them written, so when it says "too many requests", Cerebras answers (CEREBRAS_API_KEY;
-# about 0.6 s, from the US) until Groq is ready again; if Groq hasn't started answering within half a second,
-# Cerebras is asked too and the first to answer is kept.
-# Anything that needs the web, or a tool it doesn't have, goes to `model` below, and so does everything while both fail.
+# The quick brain: Qwen on Cerebras (CEREBRAS_API_KEY in .env), about 0.6 s to its first sentence at the reasoning
+# effort and with the tools set below. Anything that needs the web, or a tool it doesn't have, goes to `model` below,
+# and so does everything while it fails.
+# Groq can run the same Qwen, asked first with Cerebras as its hedge: set groq_model = "qwen/qwen3.8-27b" and
+# GROQ_API_KEY. It starts sooner when it answers, but on its free key it wrote few replies in real use (docs/latency.md).
 # Empty, or no key for it = not used; neither = `model` answers everything.
-groq_model = "qwen/qwen3.8-27b"
+groq_model = ""
 cerebras_model = "qwen-3.8-27b"
 # The model above sets reminders and sends notes, lists and files itself, saving those turns the hand-off.
 # `uv run python tools/capability_bench.py` checks it gets them right.

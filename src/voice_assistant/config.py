@@ -98,7 +98,7 @@ class STTConfig:
 @dataclass
 class LLMConfig:
     model: str = "gpt-4.1-mini"
-    # Answer first, on Groq, then on Cerebras while Groq can't; turns that need the web or the TARS page go to `model`.
+    # Answer first, on Groq if it's set up, then on Cerebras; turns that need the web or the TARS page go to `model`.
     # Empty = not used; both empty = `model` answers all.
     groq_model: str = ""
     cerebras_model: str = ""

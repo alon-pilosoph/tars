@@ -8,9 +8,8 @@ until a wake is confirmed, and then only the turn itself, and only to the servic
 
 - **Deepgram,** on its EU servers: your request's audio, and a voice message sent on Telegram, for speech to text.
 - **Cartesia:** TARS's reply text, a sentence at a time, for its voice.
-- **Groq:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
-- **Cerebras:** the same conversation when Groq is being skipped, fails, or hasn't started answering within 0.5 s.
-- **OpenAI:** the same conversation for turns that need the web or the TARS page, or when neither Groq nor Cerebras
+- **Cerebras:** the conversation so far (requests tagged with who's speaking, and TARS's replies), for the answer.
+- **OpenAI:** the same conversation for turns that need the web or the TARS page, or when Cerebras
   can answer, and a request's recording (or a Telegram voice message) when Deepgram fails. With an Android TV box in
   `[home]`, the TV's agent also sends it the TV's screen, as text and screenshots, step by step, while it works a
   task in the background ([the house](home.md#what-leaves-the-house)).
@@ -28,7 +27,7 @@ Without the backup, the event log, the audio kept for learning, voiceprints and 
 ```
                  home network (Wi-Fi)                               internet
 ┌──────────────── Raspberry Pi 4 ────────────────┐
-│ voice-assistant.service                        │── request audio / text ──► Deepgram, Groq, Cerebras, OpenAI, Cartesia
+│ voice-assistant.service                        │── request audio / text ──► Deepgram, Cerebras, OpenAI, Cartesia
 │   wake → double-check → answer                 │     (only after "hey TARS")
 │   writes voice_data/events/ (SQLite + WAVs)    │
 │ voice-assistant-web.service  :8080             │◄── phone / laptop browser (http://<pi>.local:8080)
@@ -42,7 +41,7 @@ Without the backup, the event log, the audio kept for learning, voiceprints and 
 ## On the Mac, with a USB speakerphone
 
 ```bash
-uv sync --all-extras && cp .env.example .env    # then your keys in .env: OpenAI, Deepgram, Cartesia, Groq, Cerebras
+uv sync --all-extras && cp .env.example .env    # then your keys in .env: OpenAI, Deepgram, Cartesia, Cerebras
 uv run voice-assistant --list-devices
 ```
 
@@ -162,7 +161,7 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   processes opens it after the pull: the assistant, the web UI, Telegram or a backup pass.
 - **When something's wrong**, `uv run voice-assistant --check` checks everything in one go: the API keys (a warning
   with what TARS does without any that are missing), both audio devices, the local models, echo cancellation (only
-  when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Groq, Cerebras, Deepgram,
+  when it's on; it warns when the devices' delay is over 0.5 s), the voiceprints, OpenAI, Cerebras, Deepgram,
   Cartesia and Telegram (each with how long it took, Deepgram on the servers `deepgram_host` names, Telegram's bot
   token when `[telegram]` is on, and any without a key or not in use skipped), the voice (it says "TARS is ready."),
   the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant and each device in the
