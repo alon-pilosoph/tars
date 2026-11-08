@@ -594,6 +594,7 @@ class OpenAIChat:
         browser=None,
         feeds=None,
         skills=None,
+        myself=None,
     ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
         QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
@@ -602,7 +603,7 @@ class OpenAIChat:
         `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud).
         `home`: the devices in the house, when there are any. `browser`: TARS's errands in its browser
         (browser/errands.py), in a chat that has them. `feeds`: the RSS feeds people follow (feeds.py). `skills`:
-        what TARS is taught, skills and preferences (skills.py)."""
+        what TARS is taught, skills and preferences (skills.py). `myself`: TARS knowing itself (myself.py)."""
         self._clock = clock or time.monotonic
         self._channel_rules = [channel_rules] if channel_rules else []
         self._remind_tools = remind_tools or REMIND_TOOLS
@@ -613,6 +614,7 @@ class OpenAIChat:
         self._browser = browser
         self._feeds = feeds
         self._skills = skills
+        self._myself = myself
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -629,6 +631,7 @@ class OpenAIChat:
             + ([browser.tool] if browser else [])
             + ([feeds.tool] if feeds else [])
             + ([skills.tool] if skills else [])
+            + ([myself.tool] if myself else [])
         )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
         can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
@@ -637,12 +640,14 @@ class OpenAIChat:
             + ([browser.can] if browser else [])
             + ([feeds.can] if feeds else [])
             + ([skills.can] if skills else [])
+            + ([myself.can] if myself else [])
         )
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send
         rules += [self._home.rules()] if self._home else []
         rules += [browser.rules] if browser else []
         rules += [feeds.rules] if feeds else []
         rules += [skills.rules] if skills else []
+        rules += [myself.rules] if myself else []
         rules.append(abilities(can, [], self._cant()))
         self._instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         # Only send optional settings that are configured; not every model accepts them.
@@ -853,6 +858,8 @@ class OpenAIChat:
         if self._skills and call.name == "skills":
             failed = "error: couldn't reach what TARS was taught ({e!r}); nothing changed"
             return self._outside_lock(self._skills.call, args, writing, failed)
+        if self._myself and call.name == "tars":
+            return self._outside_lock(self._myself.call, args, writing, "error: couldn't look ({e!r})")
         if self._feeds and call.name == "feeds":
             # Reading feeds takes a moment: the conversation isn't held meanwhile.
             return self._outside_lock(self._feeds.call, args, writing, "error: couldn't read the feeds ({e!r})")
@@ -963,8 +970,11 @@ class QuickChat(OpenAIChat):
         browser=None,
         feeds=None,
         skills=None,
+        myself=None,
     ):
-        super().__init__(client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills)
+        super().__init__(
+            client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills, myself
+        )
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.
@@ -980,6 +990,7 @@ class QuickChat(OpenAIChat):
         look_up += [browser.needs] if browser and client is not None else []
         look_up += [feeds.needs] if feeds and client is not None else []
         look_up += [skills.needs] if skills and client is not None else []
+        look_up += [myself.needs] if myself and client is not None else []
         examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:
