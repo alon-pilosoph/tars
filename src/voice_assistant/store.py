@@ -215,6 +215,14 @@ TABLES = {
     why TEXT NOT NULL,               -- what stopped TARS, and what would make it possible
     granted REAL                     -- when someone marked it done; NULL: still wished for
 )""",
+    "settings_log": """CREATE TABLE settings_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,
+    person TEXT,                     -- who asked TARS to change it; NULL: not known
+    name TEXT NOT NULL,              -- section.key, as settings.ADJUSTABLE names it
+    old TEXT NOT NULL,               -- JSON: what it was
+    new TEXT NOT NULL                -- JSON: what it became
+)""",
     "preferences": """CREATE TABLE preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     person TEXT NOT NULL,            -- as person_key has them
@@ -341,6 +349,12 @@ MIGRATIONS = [
         (
             "CREATE TABLE wishes (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
             "via TEXT NOT NULL, asked TEXT NOT NULL, why TEXT NOT NULL, granted REAL)"
+        ),
+    ],
+    [
+        (
+            "CREATE TABLE settings_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
+            "name TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL)"
         ),
     ],
 ]
