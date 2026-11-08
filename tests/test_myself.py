@@ -152,7 +152,7 @@ def test_what_it_really_cant_do_is_kept_as_a_wish_until_its_granted(cfg, root, t
         query="Call Grandma on the phone",
         why="TARS can't make phone calls; a calling service could",
     )
-    assert said.startswith("noted as wish 1")
+    assert said.startswith("noted (1) for whoever looks after TARS") and "never that it's a wish" in said
     assert "error: wish needs" in ask(tars, "wish", stacey, query="something")
     listed = ask(tars, "wishes")
     assert (
