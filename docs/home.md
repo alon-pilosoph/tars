@@ -461,6 +461,32 @@ root in a throwaway container of Home Assistant's own image, which has git: noth
 whether Home Assistant is running or not. What a change did outside Home Assistant, a Bluetooth device unpaired or a
 cloud login revoked, isn't in these files, and a restore can't bring it back: the device may need pairing again.
 
+### Changing Home Assistant's setup
+
+The home_assistant tool also works Home Assistant's setup (`ha_setup.py`), for the people `[home] setup_people` names
+(empty: nobody; looking is for anyone):
+
+| Said | What happens |
+|---|---|
+| "Did Home Assistant find anything new?" | what it found on the network and waits to add: "your Samsung TV, as a media player" |
+| "Add the TV" | its setup, step by step: a step that only asks to confirm is confirmed once they say yes |
+| "Add a Shelly" | an integration started by name, its questions asked in conversation |
+| "Call the Switcher 'boiler' and put it in the bathroom" | the device renamed, and put in that room |
+| "Remove the AirVisual integration" | what would go said first, with any device TARS works that would stop; done on a later "yes" |
+| "Undo that" | the setup put back as it was before a change, after a "yes": Home Assistant restarts |
+
+- **No secret through a chat.** A step that asks for a password, a token or a code, or a sign-in in a browser, isn't
+  filled in by TARS: the reply is a link to that step on Home Assistant's own page (at an address a phone can reach,
+  as a camera's live link is), and a password someone types to TARS anyway isn't passed on.
+- **Twice for what's hard to take back.** Removing an integration, or undoing a change, takes two turns: the first
+  says what would happen, and only a later message from the same person, within ten minutes, does it.
+- **Every change kept.** With `[home] config_dir`, each change is committed to [Home Assistant's setup
+  history](#home-assistants-own-setup), before and after, and the reply says it can be undone; "undo" restores the
+  commit before it.
+- **Only what Home Assistant has.** An integration is added by its domain, from those Home Assistant ships with or
+  already has installed. Installing new code into it (HACS, a custom integration) isn't something TARS does: that's
+  someone else's code running in the house's hub, and it's for a person to read first.
+
 ## What leaves the house
 
 Home Assistant, the devices and the TV box are all on the home network; TARS talks to them directly. What the models

@@ -250,7 +250,12 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
     made = context.devices or context.hass is not None
-    return Built(HomeTools(cfg, dict(context.devices), context.hass) if made else None, unavailable)
+    history = None
+    if cfg.config_dir and context.hass is not None:
+        from .haconfig import HAConfig
+
+        history = HAConfig(context.root / cfg.config_dir, cfg.container)
+    return Built(HomeTools(cfg, dict(context.devices), context.hass, history) if made else None, unavailable)
 
 
 def load_plugin(module: str, root: Path):
@@ -324,15 +329,22 @@ class HomeTools:
     """The brain's side of the house: the tool, its rules for the instructions, and every call checked. What's wrong
     is said back to the model, so it can tell the person or try again."""
 
-    def __init__(self, cfg: HomeConfig, devices: dict[str, Device], hass=None):
-        """`hass`: Home Assistant (hass.HomeAssistant), for the home_assistant tool: all of it, beyond the devices."""
+    def __init__(self, cfg: HomeConfig, devices: dict[str, Device], hass=None, ha_config=None):
+        """`hass`: Home Assistant (hass.HomeAssistant), for the home_assistant tool: all of it, beyond the devices.
+        `ha_config`: its setup's history (haconfig.HAConfig), so a change TARS makes to its setup can be undone."""
+        from .ha_setup import HASetup
         from .ha_tool import HAAccess
 
         self._cfg = cfg
         self.devices = {name.strip().lower(): d for name, d in devices.items()}
         self.tool = home_tool(devices)
         self._lock = threading.Lock()
-        self.ha = HAAccess(hass, self._may_unlock, self._lock) if hass is not None else None
+        self.ha = None
+        if hass is not None:
+            listed = {str(v) for d in cfg.devices for k, v in d.items() if k in ("entity", "battery", "door")}
+            listed |= {str(e) for d in cfg.devices for e in d.get("details", [])}
+            setup = HASetup(hass, cfg.setup_people, ha_config, listed)
+            self.ha = HAAccess(hass, self._may_unlock, self._lock, setup=setup)
 
     @property
     def tools(self) -> list[dict]:

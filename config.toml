@@ -248,6 +248,10 @@ speakerphone_mute = true
 config_dir = ""
 # Home Assistant's Docker container: its image runs git as root, and undoing a change stops and starts it.
 container = "homeassistant"
+# Who may change Home Assistant's setup by asking TARS: add what it found on the network, remove an integration (asked
+# twice), rename a device or put it in a room, undo a change (docs/home.md#changing-home-assistants-setup). By their
+# names as TARS knows them, from their voice or their chat. Empty = nobody.
+setup_people = []
 # Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
 # [home.plugins.my_house]
 # module = "examples.my_house"
