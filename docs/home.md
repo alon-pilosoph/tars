@@ -435,6 +435,32 @@ About half an hour, on the Pi (or the Mac while you try it).
    `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered,
    the devices TARS started with, any that isn't connected and why, and a box or blaster found at a new address.
 
+### Home Assistant's own setup
+
+With `[home] config_dir` (on the Pi, `"deploy/home-assistant/config"`), Home Assistant's setup is kept as a git
+history on this machine (`haconfig.py`), so any change to it can be seen and undone: its YAML (automations, scripts,
+scenes), its custom integrations, and `.storage`, where it keeps its integrations, devices, entities and areas. Its
+logs, its history database and the files it rewrites every few seconds stay out (a `.gitignore` TARS writes).
+
+- **Every backup pass** (every 15 minutes) commits whatever changed since the last, "Changes made in Home Assistant":
+  what someone did in Home Assistant's own app is in the history too. The first pass starts it. Passes come from
+  [the backup](backup.md)'s timer, so `[backup]` has to be on; `--check` says when it isn't.
+- **`uv run voice-assistant --ha-config`** lists the latest changes, newest first, with the files each touched.
+- **`uv run voice-assistant --ha-config-restore <change>`** puts the setup back as it was at that change: it stops Home
+  Assistant (which writes `.storage` as it stops, and would undo the restore), puts the files back, keeps that as one
+  more change, and starts it again. Nothing in the history is rewritten, so a restore can itself be undone.
+- **In the backup, sealed.** `.storage` holds the integrations' passwords and tokens, and the keys Home Assistant signs
+  its logins with: whoever has those has the house, its lock included. So the history never leaves this machine as it
+  is. `uv run voice-assistant --ha-config-key` puts a new `HA_CONFIG_KEY` in `.env` (it doesn't print it: copy it
+  from `.env` into a password manager yourself), and each pass after seals the history with it (AES-GCM) for the
+  backup's next snapshot. Without the key, nothing goes to the bucket, and `--check` says so. A new Pi opens it with
+  `--ha-config-from-backup` ([backup.md](backup.md)); without the key it can't, so keep that copy.
+
+Home Assistant runs as root in its container and writes some files only root may read, so every git command runs as
+root in a throwaway container of Home Assistant's own image, which has git: nothing else to install, and it works
+whether Home Assistant is running or not. What a change did outside Home Assistant, a Bluetooth device unpaired or a
+cloud login revoked, isn't in these files, and a restore can't bring it back: the device may need pairing again.
+
 ## What leaves the house
 
 Home Assistant, the devices and the TV box are all on the home network; TARS talks to them directly. What the models

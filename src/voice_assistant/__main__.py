@@ -34,6 +34,8 @@ from .config import (
     load_config,
     with_keys,
 )
+from .files import atomic_write
+from .haconfig import BUNDLE as HA_BUNDLE
 from .recorder import make_recorder
 from .store import DB_FILE, Store
 from .versions import UNUSABLE, model_versions, pair_source
@@ -384,6 +386,24 @@ def main() -> None:
     backup.add_argument(
         "--restore-backup", action="store_true", help="put the bucket's latest snapshot in place on a new machine"
     )
+    backup.add_argument(
+        "--ha-config", action="store_true", help="the latest changes to Home Assistant's setup ([home] config_dir)"
+    )
+    backup.add_argument(
+        "--ha-config-key",
+        action="store_true",
+        help="make the key Home Assistant's setup is sealed with in the backup (HA_CONFIG_KEY in .env)",
+    )
+    backup.add_argument(
+        "--ha-config-from-backup",
+        action="store_true",
+        help="on a new machine, after --restore-backup: Home Assistant's setup and its history, from the snapshot",
+    )
+    backup.add_argument(
+        "--ha-config-restore",
+        metavar="CHANGE",
+        help="put Home Assistant's setup back as it was at a change --ha-config lists (stops and starts it)",
+    )
     parser.add_argument(
         "--install-models",
         type=Path,
@@ -443,6 +463,18 @@ def main() -> None:
             return
         if args.restore_backup:
             restore_backup(cfg, root)
+            return
+        if args.ha_config:
+            ha_config_history(cfg, root)
+            return
+        if args.ha_config_key:
+            ha_config_key(root)
+            return
+        if args.ha_config_from_backup:
+            ha_config_from_backup(cfg, root)
+            return
+        if args.ha_config_restore:
+            ha_config_restore(cfg, root, args.ha_config_restore)
             return
         if args.install_models:
             install_models(cfg, root, args.install_models, args.based_on)
@@ -896,6 +928,7 @@ def snapshot_files(cfg: Config, root: Path) -> dict[str, Path]:
     from .found import FOUND_FILE
 
     files = {
+        **({HA_BUNDLE: ha_bundle_path(cfg, root)} if cfg.home.config_dir else {}),
         "voiceprints.npz": root / cfg.speaker.voiceprints,
         "wake_models": root / cfg.learning.folder / "wake_models",
         "models/personal": root / "models/personal",
@@ -939,10 +972,121 @@ def make_backup(cfg: Config, root: Path, log: EventLog | None = None) -> Backup:
     return Backup(log, cfg.backup, s3, snapshot_files(cfg, root))
 
 
+def make_ha_config(cfg: Config, root: Path):
+    """Home Assistant's setup's history ([home] config_dir, haconfig.py); None if it isn't kept."""
+    from .haconfig import HAConfig
+
+    if not cfg.home.config_dir:
+        return None
+    return HAConfig(root / cfg.home.config_dir, cfg.home.container)
+
+
+def ha_bundle_path(cfg: Config, root: Path) -> Path:
+    """Where the latest bundle of Home Assistant's setup's history waits for the backup's next snapshot."""
+    return root / cfg.learning.folder / HA_BUNDLE
+
+
+def ha_config_pass(cfg: Config, root: Path) -> None:
+    """Commits what changed in Home Assistant's setup since the last pass, and seals the history for the backup's
+    snapshot when it changed, with HA_CONFIG_KEY; without the key nothing goes in the snapshot. A failure costs a
+    line, never the backup."""
+    from .haconfig import CHANGED_IN_HA, KEY_NAME, HAConfigError, seal
+
+    if (ha := make_ha_config(cfg, root)) is None:
+        return
+    bundle = ha_bundle_path(cfg, root)
+    try:
+        started = ha.start()
+        made = ha.commit(CHANGED_IN_HA)
+        if started:
+            print(f"(Home Assistant's setup: its history starts now, in {ha.folder}/.git)")
+        elif made:
+            print(f"(Home Assistant's setup: changed, kept as {made[:8]})")
+        if not (key := dotenv_values(root / ".env").get(KEY_NAME) if (root / ".env").exists() else None):
+            bundle.unlink(missing_ok=True)
+            print(f"(Home Assistant's setup: not in the backup, since there's no {KEY_NAME} to seal it with: "
+                  "voice-assistant --ha-config-key makes one)")  # fmt: skip
+        elif started or made or not bundle.exists():
+            atomic_write(bundle, seal(ha.bundle(), key))
+    except HAConfigError as e:
+        print(f"(Home Assistant's setup: couldn't keep its history: {e})")
+    except ImportError:
+        print("(Home Assistant's setup: sealing it for the backup needs the backup extra: uv sync --extra backup)")
+
+
+def ha_config_key(root: Path) -> None:
+    """--ha-config-key: a new HA_CONFIG_KEY in .env, to copy somewhere else too. Never printed."""
+    from .haconfig import KEY_NAME, new_key
+
+    env = root / ".env"
+    if KEY_NAME in env_keys(env):
+        raise SystemExit(
+            f"There's a {KEY_NAME} in .env already. A new one couldn't open the snapshots the old one sealed: keep it."
+        )
+    key = new_key()
+    with env.open("a") as f:
+        f.write("\n# Seals Home Assistant's setup in the backup (docs/home.md). Keep a copy in a password manager.\n")
+        f.write(f"{KEY_NAME}={key}\n")
+    print(
+        f"Added a new {KEY_NAME} to {env}. Copy it from there into a password manager yourself (it isn't shown here, "
+        "so it stays out of logs and terminals): without it, a new machine can't open Home Assistant's setup from the "
+        "backup. The next backup pass seals it."
+    )
+
+
+def ha_config_from_backup(cfg: Config, root: Path) -> None:
+    """--ha-config-from-backup: the sealed history --restore-backup put back, opened into [home] config_dir."""
+    from .haconfig import KEY_NAME, HAConfigError, unseal
+
+    sealed = ha_bundle_path(cfg, root)
+    if (ha := make_ha_config(cfg, root)) is None:
+        raise SystemExit("Set config_dir under [home] first: that's where Home Assistant's setup goes (docs/home.md).")
+    if not sealed.exists():
+        raise SystemExit(f"There's no {sealed.name} here: voice-assistant --restore-backup puts it back first.")
+    try:
+        ha.clone(unseal(sealed.read_bytes(), api_key(root / ".env", KEY_NAME)))
+    except (HAConfigError, ConfigError) as e:
+        raise SystemExit(f"Couldn't open Home Assistant's setup: {e}") from None
+    print(f"Home Assistant's setup is in {ha.folder}, with its history. Start Home Assistant: docker compose up -d")
+
+
+def ha_config_history(cfg: Config, root: Path) -> None:
+    """--ha-config: the latest changes, newest first."""
+    from .haconfig import HAConfigError
+
+    if (ha := make_ha_config(cfg, root)) is None:
+        raise SystemExit("Set config_dir under [home] to keep Home Assistant's setup's history (docs/home.md).")
+    if not ha.ready():
+        raise SystemExit("There's no history yet: the next backup pass starts it (or voice-assistant --backup now).")
+    try:
+        changes = ha.history()
+    except HAConfigError as e:
+        raise SystemExit(f"Couldn't read the history: {e}") from None
+    for c in changes:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(c.when))
+        files = ", ".join(c.files[:4]) + (f" and {len(c.files) - 4} more" if len(c.files) > 4 else "")
+        print(f"{c.commit[:8]}  {when}  {c.message}" + (f"\n          {files}" if files else ""))
+
+
+def ha_config_restore(cfg: Config, root: Path, change: str) -> None:
+    """--ha-config-restore: Home Assistant's setup as it was at `change`, kept as one more change."""
+    from .haconfig import HAConfigError
+
+    if (ha := make_ha_config(cfg, root)) is None or not ha.ready():
+        raise SystemExit("There's no history of Home Assistant's setup to restore from (voice-assistant --ha-config).")
+    try:
+        made = ha.restore(change)
+    except HAConfigError as e:
+        raise SystemExit(f"Couldn't restore: {e}") from None
+    print(f"Restored, kept as {made[:8]}; Home Assistant is starting again. To undo this: --ha-config-restore with "
+          "the change before it, as --ha-config lists.")  # fmt: skip
+
+
 def backup_pass(cfg: Config, root: Path, delete_anyway: bool = False) -> None:
-    """--backup: one pass, as its timer runs it."""
+    """--backup: one pass, as its timer runs it. Home Assistant's setup is committed first, so the snapshot has it."""
     from .backup import Busy
 
+    ha_config_pass(cfg, root)
     try:
         status = make_backup(cfg, root).run(delete_anyway=delete_anyway)
     except Busy as e:

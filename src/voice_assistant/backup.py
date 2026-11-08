@@ -12,7 +12,8 @@
 3. Whatever TARS no longer keeps (a conversation deleted in the web UI, old audio dropped by [learning]
    keep_audio_days) is deleted from the bucket too: the bucket holds what TARS keeps, no more.
 4. Every six hours, a snapshot: the database (through sqlite's backup API, so it's consistent while TARS writes), the
-   voiceprints, the wake models trained on the household and config.local.toml, as one .tar.gz. Never .env. Snapshots
+   voiceprints, the wake models trained on the household, config.local.toml and the history of Home Assistant's setup
+   (haconfig.py), as one .tar.gz. Never .env. Snapshots
    older than keep_snapshots_days are deleted then, but never the newest.
 5. The bucket's lifecycle rule, kept in step with [backup], moves the audio to Glacier Deep Archive after
    archive_after_days, if that's set (it's off by default).
