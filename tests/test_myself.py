@@ -57,7 +57,9 @@ def me(cfg, root, log=None, run=subprocess.run) -> Myself:
 
 
 def ask(tars: Myself, action: str, request=None, **args) -> str:
-    return tars.call({"action": action, **dict.fromkeys(("query", "since", "until")), **args}, request or Request())
+    return tars.call(
+        {"action": action, **dict.fromkeys(("query", "since", "until", "why")), **args}, request or Request()
+    )
 
 
 def test_about_says_the_version_and_whats_set_up(cfg, root):
@@ -117,7 +119,7 @@ def test_the_brain_has_it_and_knows_to_look_before_saying_it_cant(cfg, root):
 
     from .conftest import fake_openai_chat
 
-    asked = {"action": "changes", "query": None, "since": None, "until": None}
+    asked = {"action": "changes", "query": None, "since": None, "until": None, "why": None}
     first = lambda m: len(m) <= 2  # the question alone: the first round
     client = fake_openai_chat(
         lambda m: "" if first(m) else "New: all of Home Assistant.", lambda m: [("tars", asked)] * first(m)
@@ -137,3 +139,44 @@ def test_what_changed_between_two_versions_is_each_ones_title(cfg, root):
     assert new and old and tars.between(old, new).endswith("All of HA (#94)")
     assert "Feeds by talking" not in tars.between(old, new)
     assert "All of HA (#94)" in tars.between("not-a-version", new)  # a history rewritten: the latest few
+
+
+def test_what_it_really_cant_do_is_kept_as_a_wish_until_its_granted(cfg, root, tmp_path):
+    tars = me(cfg, root, EventLog(tmp_path / "events"))
+    assert ask(tars, "wishes") == "no wishes: nothing asked for lately that TARS couldn't do"
+    stacey = Request(speaker="Stacey", by_chat=True)
+    said = ask(
+        tars,
+        "wish",
+        stacey,
+        query="Call Grandma on the phone",
+        why="TARS can't make phone calls; a calling service could",
+    )
+    assert said.startswith("noted as wish 1")
+    assert "error: wish needs" in ask(tars, "wish", stacey, query="something")
+    listed = ask(tars, "wishes")
+    assert (
+        "1. " in listed
+        and "Stacey (chat): Call Grandma on the phone (stopped by: TARS can't make phone calls" in listed
+    )
+    assert ask(tars, "granted", query="1") == "wish 1 marked done"
+    assert ask(tars, "granted", query="1") == "error: there's no open wish 1"
+    assert ask(tars, "wishes").startswith("no wishes")
+
+
+def test_every_model_is_told_to_combine_what_it_has_and_its_cant_list_follows_whats_set_up(cfg, root):
+    from voice_assistant import llm
+    from voice_assistant.config import HomeConfig, LLMConfig
+    from voice_assistant.home import HomeTools
+    from voice_assistant.llm import OpenAIChat
+
+    from .conftest import fake_openai_chat
+
+    client = fake_openai_chat(lambda m: "Fine.")
+    spotify = type("Spotify", (), {"what": lambda self: "music", "rules": lambda self: "", "actions": ("play",)})()
+    house = HomeTools(HomeConfig(), {"spotify": spotify})
+    brain = OpenAIChat(client, LLMConfig(), home=house, myself=me(cfg, root))
+    "".join(brain.stream_reply("hi"))
+    told = client.requests[0]["instructions"]
+    assert llm.CANT_MUSIC not in told and llm.CANT_UNLISTED in told and llm.CANT_CALL in told
+    assert "note it there as a wish" in told
