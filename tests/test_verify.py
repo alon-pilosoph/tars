@@ -104,7 +104,8 @@ def test_tars_stop_passes_but_stop_alone_or_after_another_word_does_not(hearing,
         ("hey jarvis", IGNORE),
         ("hey tara", IGNORE),  # people do say these
         ("lars", IGNORE),
-        ("[unk] tars", IGNORE),
+        ("[unk] tars", ASK),  # the name alone: its "hey" was lost, or never said
+        ("tars", ASK),
         ("stars", IGNORE),
         ("", IGNORE),  # no clear "hey": TV fragments
     ],

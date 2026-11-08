@@ -34,7 +34,7 @@ flowchart LR
     s1 -- "0.12 ≤ score < 0.2, then quiet" --> near["Logged as a near-miss"]
     win --> s2["Stage 2: the double-check<br/>Vosk + a learned layer"]
     s2 -- "hey TARS" --> answer["Answer: listen"]
-    s2 -- "'hey' + an unlikely word<br/>(hey cars, hey Mars…)" --> ask["Ask: 'Did you call me?'"]
+    s2 -- "'hey' + an unlikely word<br/>(hey cars, hey Mars…),<br/>or the name alone" --> ask["Ask: 'Did you call me?'"]
     s2 -- "something else" --> ignore["Ignore, keep listening"]
 ```
 
@@ -52,7 +52,8 @@ to the last 3 seconds with a grammar limited to "hey tars", "hey darts" (the sof
 
 - **answer** when it's confident the phrase was "hey TARS";
 - **ask** "Did you call me?" when it heard "hey" plus a word nobody says to a speaker ("hey cars"), so a mumbled
-  "hey TARS" still gets a chance (a "no", or silence, is logged as not for TARS);
+  "hey TARS" still gets a chance (a "no", or silence, is logged as not for TARS), and when it heard the name alone,
+  its "hey" lost or never said;
 - **ignore** anything else, including plausible phrases like "hey there" or "hey Jarvis".
 
 Code: `wake.py` (stage 1), `verify.py` (stage 2 and the answer/ask/ignore decision). Settings: `[wake]` in

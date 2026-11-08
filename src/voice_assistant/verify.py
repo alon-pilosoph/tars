@@ -71,6 +71,8 @@ PHRASES = {
             "bar",
             "tar",
         ],
+        # The name alone, its "hey" lost or never said: worth a "Did you call me?" too.
+        "ask_alone": ["tars"],
     },
     "tars stop": {
         "accept": ["tars stop", "tar stop", "darts stop"],
@@ -91,6 +93,7 @@ PHRASES = {
             "stars",
         ],
         "ask_after_hey": [],
+        "ask_alone": [],
     },
 }
 
@@ -121,6 +124,7 @@ class PhraseVerifier:
         self._phrase_grammar = json.dumps(spec["accept"] + spec["lookalikes"] + ["[unk]"])
         self._accept = [a.split() for a in spec["accept"]]
         self._ask_after_hey = set(spec["ask_after_hey"])
+        self._ask_alone = set(spec["ask_alone"])
         self.last_confidence: float | None = None
         self._tuned: TunedCheck | None = None
         self.use_check(json.loads(check_path.read_text()) if check_path else None)
@@ -157,7 +161,9 @@ class PhraseVerifier:
         if ok:
             return ANSWER, heard
         words = heard.split()
-        close = any(a == "hey" and b in self._ask_after_hey for a, b in pairwise(words))
+        close = any(a == "hey" and b in self._ask_after_hey for a, b in pairwise(words)) or any(
+            w in self._ask_alone for w in words
+        )
         return (ASK if close else IGNORE), heard
 
 

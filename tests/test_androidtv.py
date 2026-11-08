@@ -153,6 +153,31 @@ def test_a_connection_left_idle_is_checked_before_a_press_so_a_dead_one_costs_no
     assert box.ran[1:] == ["echo", "echo", "input keyevent KEYCODE_DPAD_CENTER"]
 
 
+class Sleepy(Flaky):
+    """A box whose first `refusals` connections fail, as a stick waking from sleep's do."""
+
+    def __init__(self, refusals: int):
+        super().__init__()
+        self.refusals, self.tried = refusals, 0
+
+    def _device(self):
+        if self._adb is None:
+            self.tried += 1
+            if self.tried <= self.refusals:
+                raise HomeError("the TV box didn't answer at 10.0.0.8")
+        return super()._device()
+
+
+def test_a_connection_that_couldnt_be_made_is_tried_once_more_even_for_a_press():
+    # Nothing was sent on it, so a press can't go out twice; a sleeping stick often answers the second time.
+    box = Sleepy(1)
+    box.press("select")
+    assert box.tried == 2
+    assert box.ran == ["input keyevent KEYCODE_DPAD_CENTER"]
+    with pytest.raises(HomeError, match="didn't answer at"):
+        Sleepy(2).awake()
+
+
 def test_apps_are_found_by_name_or_among_whats_installed():
     box = Box()
     assert box.find_app("Stremio") == "com.stremio.one"
@@ -422,6 +447,15 @@ def test_a_reply_to_an_announcement_is_heard_without_the_wake_word(speaker):
     assistant.announcements.add("Toy Story, or Toy Story 4?")
     assistant.say_announcements(follow_up_s=4.0)
     assert brain.asked == ["[Follow-up, no wake word] the first one"]
+
+
+def test_news_that_asks_nothing_doesnt_listen_after_it(speaker):
+    # "Channel 12 is on.", then the news itself saying "eight hours." was once taken for a timer.
+    assistant, brain = make_assistant(speaker, [speech(), None], ["eight hours."], replies=["Timer set."])
+    assistant.announcements = Announcements()
+    assistant.announcements.add("Channel 12 is on.")
+    assistant.say_announcements(follow_up_s=4.0)
+    assert brain.asked == [] and brain.remembered == ["Channel 12 is on."]
 
 
 def test_play_hands_the_title_to_the_agent():

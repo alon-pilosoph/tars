@@ -46,7 +46,10 @@ SKIPS = (SKIP, _escaped(SKIP))
 SKIP_RULES = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "
-    f"conversation), reply with exactly {SKIP} and nothing else.\n"
+    f"conversation), reply with exactly {SKIP} and nothing else. A fragment that neither answers what you just "
+    f'asked nor asks you for anything ("eight hours.", a name) is overheard too, often from the TV: skip it. Never '
+    f"set a timer, change a device or do anything else on a follow-up unless it plainly asks for it, or answers "
+    f"your question.\n"
     f"Messages starting with {ASKED_TAG} answer the question you just asked because you weren't sure someone "
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
