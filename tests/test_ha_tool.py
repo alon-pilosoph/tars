@@ -33,11 +33,26 @@ class FakeHA:
             "light.hall": {"state": "off", "attributes": {"friendly_name": "Hall light"}},
             "script.goodnight": {"state": "off", "attributes": {"friendly_name": "Goodnight"}},
             "script.movie": {"state": "off", "attributes": {"friendly_name": "Movie time"}},
+            "button.front_door_unlatch": {"state": "unknown", "attributes": {"friendly_name": "Front door Unlatch"}},
+            "button.front_door_lock_n_go": {
+                "state": "unknown",
+                "attributes": {"friendly_name": "Front door Lock 'n' Go"},
+            },
+            "script.let_in": {"state": "off", "attributes": {"friendly_name": "Let them in"}},
         }
         self.configs = {
             "script/goodnight": {"sequence": [{"action": "lock.lock", "target": {"entity_id": "lock.front_door"}}]},
             "script/movie": {"sequence": [{"action": "light.turn_off", "target": {"entity_id": "light.hall"}}]},
+            "script/let_in": {
+                "sequence": [{"action": "button.press", "target": {"entity_id": "button.front_door_lock_n_go"}}]
+            },
         }
+        # The entity registry: the Nuki's buttons are on the lock's own device.
+        self.registry = [
+            {"entity_id": "lock.front_door", "device_id": "nuki"},
+            {"entity_id": "button.front_door_lock_n_go", "device_id": "nuki"},
+            {"entity_id": "light.hall", "device_id": "hue"},
+        ]
         self.calls, self.queries = [], []
         self.transport = httpx.MockTransport(self.handle)
 
@@ -112,7 +127,11 @@ class FakeHA:
 @pytest.fixture
 def ha():
     fake = FakeHA()
-    hass = HomeAssistant("http://ha.local:8123", "token", fake.transport, command=lambda m: {})
+
+    def command(message):
+        return fake.registry if message["type"] == "config/entity_registry/list" else {}
+
+    hass = HomeAssistant("http://ha.local:8123", "token", fake.transport, command=command)
     tools = HomeTools(HomeConfig(unlock_chats=["Alon"]), {}, hass)
     tools.ha._now = lambda: NOW
     tools.fake = fake
@@ -173,7 +192,8 @@ def test_home_assistant_itself_isnt_administered(ha):
         assert ask(ha, "call", service=service).startswith(f"refused: {service.split('.')[0]} administers")
     assert ha.fake.calls == []
     assert "error: data must be a JSON object" in ask(ha, "call", service="light.turn_on", data="[1]")
-    assert "not in data" in ask(ha, "call", service="light.turn_on", data='{"entity_id": "lock.front_door"}')
+    for aimed in ('{"entity_id": "lock.front_door"}', '{"device_id": "nuki"}', '{"area_id": "hall"}'):
+        assert "data can't aim it" in ask(ha, "call", service="button.press", data=aimed)
 
 
 def test_unlocking_keeps_the_home_tools_rules_however_its_asked(ha):
@@ -227,3 +247,14 @@ def test_without_home_assistant_theres_no_such_tool():
     tools = HomeTools(HomeConfig(), {})
     assert tools.ha is None and tools.tools == []
     assert HAAccess  # the module loads on its own
+
+
+def test_a_door_opened_by_a_button_on_the_lock_or_a_script_pressing_one_keeps_the_unlock_rules(ha):
+    # A Nuki's own buttons ("unlatch", "Lock 'n' Go") open the door without its lock entity: the hole found on the Pi.
+    stacey = Request(by_chat=True, speaker="Stacey", heard="press the button")
+    for button in ("button.front_door_unlatch", "button.front_door_lock_n_go"):  # by its name; by the lock's device
+        said = ask(ha, "call", stacey, service="button.press", entity_ids=[button])
+        assert said.startswith("refused") and f"{button} can open a door" in said
+    assert "it can unlock: script.let_in" in ask(ha, "call", stacey, service="script.let_in")
+    assert ha.fake.calls == []
+    assert ask(ha, "call", stacey, service="light.turn_on", entity_ids=["light.hall"]).startswith("done")

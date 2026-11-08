@@ -136,6 +136,11 @@ class HomeAssistant:
         found = self._send("GET", "/api/services").get("result")
         return found if isinstance(found, list) else []
 
+    def entity_entries(self) -> list[dict]:
+        """Home Assistant's entity registry: each entity's device, among the rest."""
+        found = self._command({"type": "config/entity_registry/list"})
+        return found if isinstance(found, list) else []
+
     def config_of(self, kind: str, key: str) -> dict:
         """How an automation, script or scene is set up (kind: automation, script or scene), by its config id."""
         return self._send("GET", f"/api/config/{kind}/config/{key}")
