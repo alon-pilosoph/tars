@@ -139,7 +139,8 @@ SKILLS_TOOL = {
             "say": {
                 "type": ["string", "null"],
                 "enum": [ALOUD, CHAT, None],
-                "description": "save, with at or a trigger: aloud at home, or in their own chat; null: aloud.",
+                "description": "save, with at or a trigger: aloud at home, or in their own chat; null: where "
+                "they asked (a chat's in their chat; a household one aloud).",
             },
             "household": {
                 "type": ["boolean", "null"],
@@ -168,12 +169,15 @@ RULES = (
     '- Using a skill: when they ask for one by name ("put on cartoons" is the skill cartoons), or what they ask is '
     "what one is for, do what its instructions say, with your tools, as if they'd asked for all of it themselves; "
     "ask only what they leave open.\n"
-    '- Teaching one ("from now on, when I say bedtime, turn off the TV"; "every day at 7:30, tell me the news"; '
-    '"when Stacey gets home, tell her what\'s waiting"; "if the CO2 goes over 1000, turn on the purifier"; "tell me '
-    'when you learn something new", which runs when TARS is updated and is told what changed): first '
-    "say it back in a sentence (the name, what it does, when it runs by itself or on what, and where), and save it "
-    "only once they say yes. Changing one is saving it again, in full. A skill about the house or the TV that anyone "
-    "might ask for is the household's; one about them is theirs. Don't save what they asked for only this once.\n"
+    '- Something to do later, again, or whenever something happens ("every day at 7:30, tell me the news"; "keep '
+    'me updated when Alon teaches you new things"; "when Stacey gets home, tell her what\'s waiting"; "if the CO2 '
+    'goes over 1000, turn on the purifier"; "from now on, when I say bedtime, turn off the TV"): just do it. '
+    "Save it with the skills tool, giving it a short name yourself, and answer the way a person agreeing would, in "
+    "plain words: what you'll do and when (\"Will do: I'll message you whenever Alon adds something new.\"). Never "
+    "say skill, trigger or saved, and never ask them to confirm what they just asked for; ask only what you can't "
+    "sensibly fill in yourself. Asked in a chat, it's said in their chat; asked aloud, aloud. One about the house or "
+    "the TV that anyone might ask for is the household's; one about them is theirs. Changing one is saving it "
+    "again, in full. Don't save what they asked for only this once.\n"
     "- Preferences: when they say what they like or don't (in the news, music, the house, anything), remember it, "
     "and say in a few words that you will. When something is clear from what they keep asking for, remember it as "
     "a guess, without making a fuss. Follow their preferences whenever they apply, and never present a guess as "
@@ -430,7 +434,7 @@ class Skills:
         name = _clean(args.get("name")).lower()
         try:
             if action == SAVE:
-                return self._save(person, name, args)
+                return self._save(person, name, args, chat=bool(getattr(request, "by_chat", False)))
             if action in (DELETE, PAUSE, RESUME):
                 return self._change(person, name, action)
             if action == REMEMBER:
@@ -439,7 +443,8 @@ class Skills:
         except ValueError as e:
             return f"error: {e}"
 
-    def _save(self, person: str, name: str, args: dict) -> str:
+    def _save(self, person: str, name: str, args: dict, chat: bool = False) -> str:
+        """`chat`: it was asked for in a chat."""
         instructions = _clean(args.get("instructions"))
         if not name or not instructions:
             raise ValueError("save needs the skill's name and its instructions, in full")
@@ -451,8 +456,10 @@ class Skills:
             raise ValueError("a skill runs at set times or on something happening, not both: two skills for both")
         if on_event and on_event["event"] == CHANGES and self.status:
             self._check_reading(on_event)
-        say = args.get("say") or ALOUD
         owner = HOUSEHOLD if args.get("household") else person
+        # Where it says what it has to: as asked, or where it was asked for (a chat's, in that chat), but a
+        # household's is said aloud.
+        say = args.get("say") or (CHAT if chat and owner != HOUSEHOLD else ALOUD)
         if owner == HOUSEHOLD and say == CHAT:
             raise ValueError("a household skill is said aloud; one posted in a chat is someone's own")
         now = self._clock()
@@ -472,8 +479,11 @@ class Skills:
                     "name, created, paused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                     (*values, owner, name, now),
                 )
-        whose = "the household's" if owner == HOUSEHOLD else f"{person}'s"
-        return f"done: {'changed' if had else 'saved'} {whose} skill {name}; say so in a few words"
+        runs = f", said {'in their chat' if say == CHAT else 'aloud at home'} when it runs" if at or on_event else ""
+        return (
+            f"done: {'changed' if had else 'kept'}{runs}; tell them in plain words what you'll do and when, as "
+            "agreeing to it, not that you saved anything"
+        )
 
     # The web UI's Skills page: everything, everyone's, and changed by id (it has no one asking).
 

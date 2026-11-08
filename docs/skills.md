@@ -26,7 +26,10 @@ the model, which carries them out with the tools it already has.
   for is the household's. Your own skill of the same name is the one you get.
 - **Each request is told** the skills and preferences of whoever is asking (the voice TARS recognized, or the chat's
   person), after the instructions that are cached. A skill taught a minute ago is known on the next request.
-- **Teaching is read back first**: the model says what it understood and saves it once you agree. Only someone TARS
+- **Asking is teaching**: nobody needs to know what a skill is. "Keep me updated when Alon teaches you new things" is
+  just done, and answered the way a person agreeing would ("Will do: I'll message you whenever Alon adds something
+  new"), never with "skill", "trigger" or "saved", and with a question only for what TARS can't sensibly fill in. One
+  asked for in a chat is said in that chat, one asked aloud aloud, and the household's always aloud. Only someone TARS
   knows can teach it (an unrecognized voice can use the household's skills, but not change them), and a reply thrown
   away, because someone kept talking, saves nothing.
 - **Preferences** are short notes, about something ("gaming news", "the AC"). Said by you, they're kept as said;
