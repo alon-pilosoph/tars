@@ -128,10 +128,16 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
 - **Send** (`[llm] send`, needs `[learning] log_events`): a strict function tool for a link, a note (short
   markdown), a list, or a text file (`.txt`, `.md`, `.csv`, `.ics`), for whoever asked or for the household. The
   assistant checks every call (links must be http(s), a file needs a known type and its text) and returns errors to
-  the model, which gets up to three rounds; the last round can't call tools, so TARS always says something. Sent
+  the model (see tool rounds below). Sent
   things appear in the web UI; TARS says "It's on the TARS page." It never reads a link aloud. The same thing (kind and
   title) sent twice in one reply is sent once, whichever model asks the second time. Something sent "for
   whoever asked" goes to the household when speaker ID didn't know who asked.
+- **Tool rounds**, for every tool: a reply gets up to ten, a backstop a model only reaches checking and acting on many
+  things in a row. The last can't call tools, so TARS always says something, and the model is told it ran out of steps,
+  so it says what it did and what's left rather than inventing a reason. A call that failed twice in one reply, the
+  same tool with the same arguments, isn't made a third time: the model is told to say what went wrong, and its next
+  round is the last. Every call and its result goes in the log, `(tool feeds {...}: error: ...)`, cut at 300
+  characters.
 - **Reminders** (`remind`, `cancel_reminder`, `snooze_reminder`): see [reminders](reminders.md).
 - **The house** (`home`, with `[[home.devices]]`): devices through Home Assistant, an Android TV box over ADB with an
   agent for tasks that take several steps on screen, and a plugin's own. A change is "done" only when the device

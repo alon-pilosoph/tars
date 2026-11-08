@@ -18,6 +18,7 @@ from voice_assistant.events import EventLog
 from voice_assistant.llm import (
     LOOK_UP,
     MAX_TOOL_ROUNDS,
+    OUT_OF_STEPS,
     SKIP,
     OpenAIChat,
     QuickChat,
@@ -292,13 +293,31 @@ def test_a_web_search_is_announced_instead_of_silence():
     assert "".join(brain.stream_reply("capital of Australia?")) == f"{llm.SEARCHING} Canberra."
 
 
-def test_a_model_that_keeps_calling_tools_is_made_to_answer_on_the_last_round():
+def test_a_model_that_keeps_repeating_a_failed_call_is_made_to_answer():
     bad = {**RECIPE, "url": "not a url"}  # it keeps retrying the same broken send
-    client = fake_openai_chat(lambda m: "I couldn't find a recipe." if len(m) >= 6 else "", lambda m: [("send", bad)])
+    client = fake_openai_chat(lambda m: "I couldn't find a recipe." if len(m) >= 8 else "", lambda m: [("send", bad)])
     brain = OpenAIChat(client, LLMConfig())
     assert "".join(brain.stream_reply("send me a recipe")) == "I couldn't find a recipe."
+    assert len(client.requests) == 4  # the call, one retry, a third try (refused, not made), then no tools
+    assert "tool_choice" not in client.requests[2] and client.requests[-1]["tool_choice"] == "none"
+    outputs = [i["output"] for i in client.requests[-1]["input"] if i.get("type") == "function_call_output"]
+    assert outputs[1].startswith("error: a link needs") and "already failed twice" in outputs[2]
+    assert OUT_OF_STEPS in client.requests[-1]["instructions"]
+
+
+def test_a_model_still_working_gets_every_round_and_is_told_why_the_last_has_no_tools(capsys):
+    # Each call different: nothing stops it before the cap. The last round says why it has no tools.
+    def calls(m):
+        return [("send", {**RECIPE, "url": f"not a url {len(m)}"})]
+
+    client = fake_openai_chat(lambda m: "I sent nothing." if len(client.requests) == MAX_TOOL_ROUNDS else "", calls)
+    brain = OpenAIChat(client, LLMConfig())
+    assert "".join(brain.stream_reply("send me ten recipes")) == "I sent nothing."
     assert len(client.requests) == MAX_TOOL_ROUNDS
-    assert "tool_choice" not in client.requests[0] and client.requests[-1]["tool_choice"] == "none"
+    assert all(OUT_OF_STEPS not in r["instructions"] for r in client.requests[:-1])
+    assert OUT_OF_STEPS in client.requests[-1]["instructions"]
+    log = capsys.readouterr().out
+    assert log.count("(tool send ") == MAX_TOOL_ROUNDS - 1 and "not a url 2" in log and "error: a link needs" in log
 
 
 @pytest.mark.parametrize(

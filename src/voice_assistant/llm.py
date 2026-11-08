@@ -256,7 +256,16 @@ SEARCHING = "Looking it up."
 # Said the moment a question goes to the thinking model, which can take a while before its first word.
 THINKING = "Let me think about that for a moment."
 FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
-MAX_TOOL_ROUNDS = 3
+# A backstop, not a budget: a request that checks and then acts on a few things (two feeds previewed, then followed)
+# takes several rounds, and a model only uses the rounds it needs. A call repeating one that failed is stopped sooner.
+MAX_TOOL_ROUNDS = 10
+# The last round has no tools, so it says something rather than leaving TARS silent: told why, so it doesn't make up
+# a reason ("I can't finish that from here").
+OUT_OF_STEPS = (
+    "You've used every round of tools this reply may take, so you can't call any more now. Say plainly what you did "
+    "and what's left undone, and that they can ask you to carry on; never give any other reason for stopping."
+)
+TOOL_LOG_CHARS = 300  # how much of a tool call and its result the log keeps
 # What the quick model replies when a turn needs OpenAI's tools; that turn is then OpenAI's to answer.
 LOOK_UP = "<look-up>"
 # What it replies when a question needs real thinking; the thinking model answers it. Not "<think>": Qwen 3 models
@@ -529,6 +538,17 @@ def _squeeze(text: str) -> str:
     return " ".join(text.lower().split())
 
 
+def _last_round(round_: int, writing: _Writing | None) -> bool:
+    """Whether this round of a reply gets no tools: the cap, or a failed call made again."""
+    return round_ == MAX_TOOL_ROUNDS - 1 or bool(writing and writing.repeated)
+
+
+def _clip(text: str) -> str:
+    """One line of the log: up to TOOL_LOG_CHARS of it."""
+    line = " ".join(text.split())
+    return line if len(line) <= TOOL_LOG_CHARS else f"{line[:TOOL_LOG_CHARS]}…"
+
+
 def _after_squeezed(text: str, n: int) -> str:
     """What's left of `text` once its start, squeezed, is `n` characters long. Short texts: a plain scan is fine."""
     for i in range(len(text) + 1):
@@ -549,6 +569,9 @@ class _Writing:
         # The quick model's tool calls and their results, as Responses API items, for a model it hands over to.
         self.quick_calls: list[dict] = []
         self.request = Request()  # the turn it answers, for the home tool
+        # Its tool calls that failed, by (name, arguments): the error, and how many times.
+        self.failed: dict[tuple[str, str], tuple[str, int]] = {}
+        self.repeated = False  # it made one that failed twice again
 
 
 class OpenAIChat:
@@ -658,12 +681,13 @@ class OpenAIChat:
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
             tools = {"tools": self._tools} if self._tools else {}
-            if tools and round_ == MAX_TOOL_ROUNDS - 1:
+            last = bool(tools) and _last_round(round_, writing)
+            if last:
                 tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
             _check(writing)
             stream = writing.stream = self._client.responses.create(
                 model=model,
-                instructions=f"{instructions}\n\n{self._now()}",
+                instructions=f"{instructions}\n\n{OUT_OF_STEPS * last}\n\n{self._now()}",
                 input=context,
                 stream=True,
                 store=False,  # nothing kept on OpenAI's side beyond the request itself
@@ -771,6 +795,25 @@ class OpenAIChat:
             self.sent.append(item)
 
     def _run_tool(self, call, no_links: str = "", writing: _Writing | None = None) -> str:
+        """A tool call, logged with its result. One that failed twice in the same reply (once, and its retry) isn't
+        made again: the model is told to say what went wrong instead, which is what MAX_TOOL_ROUNDS was first there to
+        stop."""
+        writing = writing or self._writing
+        key = (call.name, _squeeze(call.arguments or ""))
+        failed, times = writing.failed.get(key, ("", 0))
+        if times >= 2:
+            writing.repeated = True  # the next round is the last: it can't loop on one failure until the cap
+            output = (
+                f"error: this exact call already failed twice in this reply ({failed}); don't make it again: tell them"
+            )
+        else:
+            output = self._call_tool(call, no_links, writing)
+            if output.startswith("error"):
+                writing.failed[key] = (output, times + 1)
+        print(f"(tool {call.name} {_clip(call.arguments or '')}: {_clip(output)})")
+        return output
+
+    def _call_tool(self, call, no_links: str, writing: _Writing) -> str:
         """Called with the lock held. `no_links`: what this model should do instead of sending a link, which needs
         web search; empty if it can. `writing`: the reply the call is part of, whose request the home tool goes by.
         Raises ReplyFailed if that reply was stopped while the house answered."""
@@ -1039,20 +1082,23 @@ class QuickChat(OpenAIChat):
     def _quick_messages(self, context: list) -> list:
         return [{"role": "system", "content": f"{self._quick_instructions}\n\n{self._now()}"}, *context]
 
-    def _quick_tools_for(self, round_: int) -> dict:
+    def _quick_tools_for(self, round_: int, writing: _Writing | None = None) -> dict:
         tools = {"tools": self._quick_tools} if self._quick_tools else {}
-        if tools and round_ == MAX_TOOL_ROUNDS - 1:
+        if tools and _last_round(round_, writing):
             tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
         return tools
 
-    def _create(self, service: QuickService, messages: list, round_: int):
+    def _create(self, service: QuickService, messages: list, round_: int, writing: _Writing | None = None):
+        if self._quick_tools and _last_round(round_, writing):
+            system, *rest = messages
+            messages = [{**system, "content": f"{system['content']}\n\n{OUT_OF_STEPS}"}, *rest]
         return service.client.chat.completions.create(
             model=service.model,
             stream=True,
             messages=messages,
             max_completion_tokens=service.max_tokens,
             **self._quick_extra,
-            **self._quick_tools_for(round_),
+            **self._quick_tools_for(round_, writing),
         )
 
     def _open(self, service: QuickService, messages: list, streams: _Streams) -> _Opened:
@@ -1119,7 +1165,7 @@ class QuickChat(OpenAIChat):
             if round_ == 0 and opened:
                 stream, events = opened
             else:
-                stream = writing.stream = self._create(service, messages, round_)
+                stream = writing.stream = self._create(service, messages, round_, writing)
                 events = iter(stream)
             said, calls, finish = "", {}, None  # calls: index -> {"id", "name", "arguments"}, from the stream
             fresh = _NoRepeat(earlier)
@@ -1222,12 +1268,13 @@ class ResponsesQuickChat(QuickChat):
         items, said = list(context), ""
         for round_ in range(MAX_TOOL_ROUNDS):
             tools = {"tools": self._quick_tool_defs} if self._quick_tool_defs else {}
-            if tools and round_ == MAX_TOOL_ROUNDS - 1:
+            last = bool(tools) and _last_round(round_, writing)
+            if last:
                 tools["tool_choice"] = "none"  # the last round has to say something
             _check(writing)
             stream = writing.stream = service.client.responses.create(
                 model=service.model,
-                instructions=f"{self._quick_instructions}\n\n{self._now()}",
+                instructions=f"{self._quick_instructions}\n\n{OUT_OF_STEPS * last}\n\n{self._now()}",
                 input=items,
                 stream=True,
                 store=False,
@@ -1314,14 +1361,15 @@ class ClaudeQuickChat(QuickChat):
         messages, said = list(context), ""
         for round_ in range(MAX_TOOL_ROUNDS):
             tools = {"tools": self._claude_tools} if self._claude_tools else {}
-            if tools and round_ == MAX_TOOL_ROUNDS - 1:
+            last = bool(tools) and _last_round(round_, writing)
+            if last:
                 tools["tool_choice"] = {"type": "none"}  # the last round has to say something
             _check(writing)
             try:
                 with service.client.messages.stream(
                     model=service.model,
                     max_tokens=self.MAX_TOKENS,
-                    system=system,
+                    system=[*system, {"type": "text", "text": OUT_OF_STEPS}] if last else system,
                     messages=messages,
                     **self._quick_extra,
                     **tools,
