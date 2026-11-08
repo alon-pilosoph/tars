@@ -41,6 +41,7 @@ from .errors import SERVICE_FAILURES
 if TYPE_CHECKING:
     from .backup import Backup
     from .backup import Status as BackupStatus
+    from .haconfig import HAConfig
     from .volume import Mixer
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
@@ -478,6 +479,33 @@ def _ago(seconds: float) -> str:
     return f"{seconds / 3600:.1f} hours ago"
 
 
+def ha_config(
+    cfg: Config, make: Callable[[], HAConfig | None], sealed: bool = True, now: float | None = None
+) -> Result:
+    """Home Assistant's setup's history: there, how recent its last change is, and whether the backup has it
+    (`sealed`: there's a key to seal it with)."""
+    from .haconfig import KEY_NAME, HAConfigError
+
+    name = "Home Assistant's setup"
+    if (ha := make()) is None:
+        return Result(name, SKIP, "no history kept ([home] config_dir)")
+    if not cfg.backup.enabled:
+        return Result(
+            name, WARN, "nothing commits its changes: the backup's passes do", "turn on [backup] (docs/backup.md)"
+        )
+    if not ha.ready():
+        return Result(name, WARN, "no history yet", "voice-assistant --backup starts it")
+    try:
+        last = ha.history(1)[0]
+    except (HAConfigError, IndexError) as e:
+        return Result(name, FAIL, f"its history can't be read: {e}", "docs/home.md#home-assistants-own-setup")
+    ago = _ago((now or time.time()) - last.when)
+    said = f"versioned in {ha.folder}; the last change kept {ago}: {last.message}"
+    if not sealed:
+        return Result(name, WARN, f"{said}; not in the backup", f"voice-assistant --ha-config-key makes {KEY_NAME}")
+    return Result(name, OK, said)
+
+
 def backup_timer(active: Callable[[str], str | None]) -> Result:
     """The backup's timer, whose passes log under the service it starts."""
     found = systemd("voice-assistant-backup.timer", active)
@@ -803,6 +831,7 @@ def check_all(cfg: Config, root: Path) -> int:
 
     from . import __main__ as cli
     from .audio import BLOCK_SECONDS, Microphone, NoDeviceError, Speaker, device_names, find_device
+    from .haconfig import KEY_NAME
     from .health import PROCESSES, expected
 
     env = root / ".env"
@@ -937,6 +966,12 @@ def check_all(cfg: Config, root: Path) -> int:
         (BUTTONS, lambda: buttons(cfg)),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
+        (
+            "Home Assistant's setup",
+            lambda: ha_config(
+                cfg, lambda: cli.make_ha_config(cfg, root), sealed=KEY_NAME in cli.env_keys(root / ".env")
+            ),
+        ),
         ("Browser", lambda: browser(cfg)),
         ("Errands", lambda: errands_waiting(cfg, root / cfg.learning.folder)),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
