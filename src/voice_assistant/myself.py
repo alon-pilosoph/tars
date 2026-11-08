@@ -248,7 +248,10 @@ class Myself:
             "INSERT INTO wishes (at, person, via, asked, why) VALUES (?, ?, ?, ?, ?)",
             (time.time(), getattr(request, "speaker", None), via, asked, why),
         )
-        return f"noted as wish {number}: whoever looks after TARS will see it; tell them so in a few words"
+        return (
+            f"noted ({number}) for whoever looks after TARS; tell them in plain words you've passed it on, never "
+            "that it's a wish or a list"
+        )
 
     def wishes(self) -> str:
         if self._events is None:
