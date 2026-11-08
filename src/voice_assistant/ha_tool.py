@@ -17,7 +17,9 @@ What the model may do is still kept in code, not in the prompt:
 """
 
 import json
+import re
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -66,6 +68,12 @@ ADMIN = frozenset(
 # What runs other actions, and so could unlock a door: its setup is read first.
 RUNS_OTHERS = ("script", "automation", "scene")
 UNLOCKING = ("unlock", "open")  # a lock's services that let someone in
+# Besides a lock's own entity: what else opens a door. A smart lock often has buttons of its own (a Nuki's "unlatch"),
+# on the same device; and one that isn't, named so.
+DOOR_WORDS = re.compile(r"unlock|unlatch", re.IGNORECASE)
+DOORS_KEPT_S = 60.0  # how long the door entities found are trusted before they're read again
+# What in a call's data would aim it at more than the entities named (a whole device, room or label).
+TARGETS = ("entity_id", "target", "device_id", "area_id", "floor_id", "label_id")
 MAX_FOUND, MAX_CHANGES, MAX_LOGBOOK, MAX_CHARS = 80, 60, 80, 4000
 HISTORY_KEPT = timedelta(days=10)  # Home Assistant's default: older state history is gone
 
@@ -153,6 +161,7 @@ class HAAccess:
         self._hass, self._may_unlock, self._now = hass, may_unlock, now
         self._lock = lock or threading.Lock()
         self._setup = setup
+        self._doors: tuple[float, set[str]] = (-DOORS_KEPT_S, set())
 
     def call(self, args: dict, request: Request) -> str:
         args = args if isinstance(args, dict) else {}
@@ -302,8 +311,8 @@ class HAAccess:
             return "error: data must be a JSON object"
         if not isinstance(fields, dict):
             return "error: data must be a JSON object"
-        if "entity_id" in fields or "target" in fields:
-            return "error: put the entities in entity_ids, not in data"
+        if any(k in fields for k in TARGETS):
+            return "error: name the entities in entity_ids; data can't aim it at a device, a room or a label"
         if request.read_the_web:
             return "refused: this reply searched the web, so it changes nothing in the house; they can ask on its own"
         if refused := self._unlock_check(domain, name, ids, request):
@@ -323,18 +332,42 @@ class HAAccess:
 
     def _unlock_check(self, domain: str, name: str, ids: list[str], request: Request) -> str | None:
         """Why this call may not be made, if it would unlock (HomeTools.may_unlock), or None."""
-        if domain == "lock" and name in UNLOCKING:
-            return self._may_unlock(request)
-        if any(e.startswith("lock.") for e in ids) and not (domain == "lock" and name == "lock"):
-            return self._may_unlock(request)
+        if domain == "lock":
+            return None if name == "lock" else self._may_unlock(request)  # locking is never held back
+        doors = self._door_entities()
+        opening = [e for e in ids if e in doors or e.startswith("lock.")]
+        if opening and (refused := self._may_unlock(request)):
+            return f"{refused} ({', '.join(opening)} can open a door)"
         if domain in RUNS_OTHERS:
             for entity in ids or ([f"{domain}.{name}"] if domain == "script" else []):
                 if self._could_unlock(entity) and (refused := self._may_unlock(request)):
                     return f"{refused} (it can unlock: {entity})"
         return None
 
+    def _door_entities(self) -> set[str]:
+        """What can open a door: every lock, every entity on a lock's own device (a Nuki's unlatch button), and any
+        entity named for unlocking or unlatching. Read again after DOORS_KEPT_S."""
+        at, found = self._doors
+        if time.monotonic() - at < DOORS_KEPT_S:
+            return found
+        states = self._hass.states()
+        found = {s["entity_id"] for s in states if s.get("entity_id", "").startswith("lock.")}
+        for s in states:
+            name = f"{s.get('entity_id', '')} {(s.get('attributes') or {}).get('friendly_name', '')}"
+            if DOOR_WORDS.search(name):
+                found.add(s["entity_id"])
+        try:
+            registry = self._hass.entity_entries()
+        except HomeError:
+            registry = []
+        lock_devices = {r.get("device_id") for r in registry if r.get("entity_id") in found and r.get("device_id")}
+        found |= {r["entity_id"] for r in registry if r.get("device_id") in lock_devices}
+        self._doors = (time.monotonic(), found)
+        return found
+
     def _could_unlock(self, entity: str) -> bool:
-        """Whether an automation, script or scene touches a lock, from its setup; True if that can't be read."""
+        """Whether an automation, script or scene can open a door, from its setup (it names a lock, or anything else
+        that opens one); True if that can't be read."""
         kind, _, object_id = entity.partition(".")
         if kind not in RUNS_OTHERS:
             return False
@@ -347,7 +380,9 @@ class HAAccess:
             setup = json.dumps(self._hass.config_of(kind, key)).lower()
         except HomeError:
             return True
-        return "lock." in setup  # any lock it names: it may unlock it, or set it as a scene says
+        doors = self._door_entities()
+        # Any lock or door entity it names: it may unlock it, or set it as a scene says.
+        return "lock." in setup or bool(DOOR_WORDS.search(setup)) or any(e.lower() in setup for e in doors)
 
 
 def _changes(rows: list[dict], start: datetime, end: datetime) -> str:

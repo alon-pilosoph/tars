@@ -377,8 +377,10 @@ which checks a change took and knows each one's quirks; this is for the rest, an
 The same promises hold, in code: a change waits for the turn to go ahead; a reply that searched the web changes
 nothing, and doesn't read the house's past either (history, statistics and the logbook say who was home and when, and a
 page could ask for that); and unlocking follows [the same rules](#unlocking), whether it's the lock's own service,
-another service on the lock, or a script, automation or scene that touches a lock (one whose setup can't be read
-counts as if it did). It won't administer Home Assistant itself: restarting or updating it, its integrations, users,
+another service on the lock, a button on the lock's own device (a Nuki's "unlatch" and "Lock 'n' Go" open the door
+without its lock entity) or anything else named for unlocking or unlatching, or a script, automation or scene that
+names any of these (one whose setup can't be read counts as if it did). A call's data can't aim it at a whole device,
+room or label, which could take the lock in without naming it. It won't administer Home Assistant itself: restarting or updating it, its integrations, users,
 backups and recorder, or running code (`ADMIN` in `ha_tool.py`); that's for a person, in Home Assistant.
 
 ## Setting it up
