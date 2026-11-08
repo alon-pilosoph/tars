@@ -43,6 +43,8 @@ SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET = "save", "delete", "pause", "resu
 LIST, RUNS = "list", "runs"
 ACTIONS = (LIST, RUNS, SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET)
 ARRIVES, LEAVES, CHANGES = "arrives", "leaves", "device"  # what a skill can run on, besides the time
+UPDATED = "updated"  # and TARS itself being updated: someone added or changed what it can do
+SEEN_VERSION = "skill_version:{key}"  # in the meta table: the version a skill that runs on UPDATED last saw
 ANYONE, EVERYONE = "anyone", "everyone"
 
 SKILLS_TOOL = {
@@ -105,9 +107,10 @@ SKILLS_TOOL = {
                         "properties": {
                             "event": {
                                 "type": "string",
-                                "enum": [ARRIVES, LEAVES, CHANGES],
+                                "enum": [ARRIVES, LEAVES, CHANGES, UPDATED],
                                 "description": "arrives or leaves: someone comes home or goes out; device: a device "
-                                "changes.",
+                                "changes; updated: TARS itself is updated (something added to or changed in what it "
+                                "can do).",
                             },
                             "who": {
                                 "type": ["string", "null"],
@@ -166,7 +169,8 @@ RULES = (
     "what one is for, do what its instructions say, with your tools, as if they'd asked for all of it themselves; "
     "ask only what they leave open.\n"
     '- Teaching one ("from now on, when I say bedtime, turn off the TV"; "every day at 7:30, tell me the news"; '
-    '"when Stacey gets home, tell her what\'s waiting"; "if the CO2 goes over 1000, turn on the purifier"): first '
+    '"when Stacey gets home, tell her what\'s waiting"; "if the CO2 goes over 1000, turn on the purifier"; "tell me '
+    'when you learn something new", which runs when TARS is updated and is told what changed): first '
     "say it back in a sentence (the name, what it does, when it runs by itself or on what, and where), and save it "
     "only once they say yes. Changing one is saving it again, in full. A skill about the house or the TV that anyone "
     "might ask for is the household's; one about them is theirs. Don't save what they asked for only this once.\n"
@@ -254,6 +258,8 @@ def runs_by_itself(skill: Skill) -> str:
 
 def describe(trigger: dict) -> str:
     """A trigger, in words: "stacey comes home", "the front door says unlocked"."""
+    if trigger["event"] == UPDATED:
+        return "TARS is updated"
     who = trigger.get("who") or ANYONE
     who = who if who in (ANYONE, EVERYONE) else who.title()
     if trigger["event"] == ARRIVES:
@@ -274,13 +280,15 @@ def trigger(raw, devices: set[str] | None = None, people: set[str] | None = None
     if not isinstance(raw, dict):
         return None
     event = raw.get("event")
+    if event == UPDATED:
+        return {"event": UPDATED}
     if event in (ARRIVES, LEAVES):
         who = _clean(raw.get("who")).lower() or ANYONE
         if people is not None and who not in (ANYONE, EVERYONE) and who not in people:
             raise ValueError(f"who's home doesn't follow {who!r}; it follows: {', '.join(sorted(people)) or 'nobody'}")
         return {"event": event, "who": who}
     if event != CHANGES:
-        raise ValueError("a trigger's event is arrives, leaves or device")
+        raise ValueError("a trigger's event is arrives, leaves, device or updated")
     device = _clean(raw.get("device")).lower()
     if not device:
         raise ValueError("a device trigger needs the device")
@@ -340,6 +348,17 @@ class Skills:
         self.devices: Callable[[], set[str] | None] = lambda: None
         self.people: Callable[[], set[str] | None] = lambda: None
         self.status: Callable[[str], str] | None = None  # a device's status, to check a reading against
+
+    def seen_version(self, key: str) -> str | None:
+        """The version of TARS a skill that runs on its being updated last saw; None before it first looked."""
+        row = self.store.row("SELECT value FROM meta WHERE key=?", (SEEN_VERSION.format(key=key),))
+        return row["value"] if row else None
+
+    def see_version(self, key: str, version: str) -> None:
+        self.store.write(
+            "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (SEEN_VERSION.format(key=key), version),
+        )
 
     def ran(self, skill: Skill, why: str, said: str) -> None:
         """A skill ran by itself: kept, so "what did you do today?" can be answered."""
@@ -595,7 +614,9 @@ class Clock:
     devices triggers name (`status(device)`: its status), for the skills waiting for what changed since. Those are
     kept until take() hands them over. A skill that runs on something happening runs again no sooner than
     COOLDOWN_S, so one can't set itself off, or flap with a reading around its limit. What changed while TARS
-    started up is only seen, never acted on."""
+    started up is only seen, never acted on. But TARS being updated is: `version()` is the version running, and each
+    skill that runs on it keeps the one it last saw (`seen`, `see`), so one deployed while TARS was down, which
+    restarts it, is still told, once, with what changed between the two (`between(old, new)`)."""
 
     def __init__(
         self,
@@ -607,8 +628,13 @@ class Clock:
         status: Callable[[str], str] | None = None,
         record: Callable[[Skill, str, str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        version: Callable[[], str] | None = None,
+        between: Callable[[str, str], str] | None = None,
+        seen: Callable[[str], str | None] | None = None,
+        see: Callable[[str, str], None] | None = None,
     ):
         self._skills, self.say = skills, say
+        self._version, self._between, self._seen, self._see = version, between, seen, see
         self._now, self._tick_s = now, tick_s
         self._people, self._status, self._record, self._clock = people, status, record, clock
         self._ran: set = set()
@@ -673,7 +699,11 @@ class Clock:
             events += self._comings_and_goings()
         found = []
         for skill in skills:
-            why = self._matches(skill.trigger, events) if skill.trigger["event"] != CHANGES else self._changed(skill)
+            event = skill.trigger["event"]
+            if event == UPDATED:
+                why = self._updated(skill)
+            else:
+                why = self._changed(skill) if event == CHANGES else self._matches(skill.trigger, events)
             if not why:
                 continue
             key = skill.id or skill.name
@@ -721,6 +751,24 @@ class Clock:
                     return words + (" (nobody was home)" if event["event"] == ARRIVES else " (nobody's home now)")
                 return words
         return ""
+
+    def _updated(self, skill: Skill) -> str:
+        """Why a skill that runs on TARS being updated is set off now, with what changed; "" if it isn't. A skill
+        just saved only notes the version it starts from."""
+        if not (self._version and self._seen and self._see):
+            return ""
+        try:
+            now, key = self._version(), str(skill.id or skill.name)
+            if not now or (last := self._seen(key)) == now:
+                return ""
+            self._see(key, now)
+            if last is None:
+                return ""
+            changed = self._between(last, now) if self._between else ""
+        except Exception as e:  # noqa: BLE001 - the version or the table can't be read now: next tick
+            print(f"(skills: couldn't tell whether TARS was updated: {e!r})")
+            return ""
+        return f"TARS was just updated ({last} to {now}). What changed, newest first, a title each:\n{changed}"
 
     def _changed(self, skill: Skill) -> str:
         """Why a device trigger is set off now, from its status before and now; "" if it isn't."""

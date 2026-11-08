@@ -128,3 +128,12 @@ def test_the_brain_has_it_and_knows_to_look_before_saying_it_cant(cfg, root):
     output = next(i for i in client.requests[1]["input"] if i.get("type") == "function_call_output")
     assert "All of HA (#94)" in output["output"]
     assert set(ACTIONS) == set(client.requests[0]["tools"][-1]["parameters"]["properties"]["action"]["enum"])
+
+
+def test_what_changed_between_two_versions_is_each_ones_title(cfg, root):
+    tars = me(cfg, root)
+    new = tars.version()
+    old = tars._git("rev-parse", "--short", "HEAD~1")
+    assert new and old and tars.between(old, new).endswith("All of HA (#94)")
+    assert "Feeds by talking" not in tars.between(old, new)
+    assert "All of HA (#94)" in tars.between("not-a-version", new)  # a history rewritten: the latest few

@@ -235,6 +235,16 @@ class Myself:
         more = f"({len(lines) - MAX_LOG} earlier lines left out: narrow the span or the words)\n"
         return _cut((more if len(lines) > MAX_LOG else "") + "\n".join(lines[-MAX_LOG:]), MAX_CHARS)
 
+    def version(self) -> str:
+        """The commit TARS runs, short; "" outside a checkout."""
+        return self._git("rev-parse", "--short", "HEAD")
+
+    def between(self, old: str, new: str) -> str:
+        """What changed from one version to another, newest first, a PR's title each: what a skill that runs on TARS
+        being updated is told. A history rewritten since (old isn't before new) gives the latest few instead."""
+        out = self._git("log", "--first-parent", "--format=%cs %s", f"-{MAX_CHANGES}", f"{old}..{new}")
+        return out or self._git("log", "--first-parent", "--format=%cs %s", "-5", new)
+
     def _git(self, *args: str) -> str:
         try:
             done = self._run(

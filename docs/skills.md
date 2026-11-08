@@ -12,6 +12,7 @@ the model, which carries them out with the tools it already has.
 | "Every morning at 7:30, send me what's new in gaming" | one posted in your own chat instead |
 | "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out |
 | "If the CO2 goes over 1000, turn on the purifier and tell me" / "when the front door is unlocked, …" | run when a device changes |
+| "Tell me when Alon teaches you something new" | runs when TARS is updated, and is told what changed: in your chat, or aloud |
 | "What did you do today?" | what skills did by themselves, when, and why |
 | "Change the news one to 20:00" / "pause it this week" / "delete bedtime" | changed, paused or deleted |
 | "I don't care about esports" / "skip the sports news" | remembered, and followed from then on |
@@ -44,6 +45,11 @@ the model, which carries them out with the tools it already has.
   What changed while TARS was starting is seen, never acted on, and a skill set off runs again no sooner than ten
   minutes later, so it can't set itself off, or flap with a reading around its limit. A skill runs at set times or
   on something happening, not both.
+- **On TARS being updated**: a skill can run when TARS itself is updated, told what changed from the version it last
+  saw to the one running (each change's PR title, from the checkout's git history, [`tars` tool](architecture.md)),
+  so "tell me when you learn something new" is said in plain words, as what someone can now ask for. Each such skill
+  keeps the version it last saw in the database, so an update, which restarts TARS, is told once even though it
+  happened while TARS was down; one just saved only notes the version it starts from.
 - **What it did** is kept: each run by itself, when, why, and what it said (`skill_runs`), so "what did you do
   today?" has an answer.
 - **The tools keep their own rules**, whatever a skill says: unlocking needs the words said, by a voice trusted with

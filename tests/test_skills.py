@@ -530,3 +530,41 @@ def test_the_skills_page_shows_everything_taught_and_done_and_changes_it(log, cl
     pref = page["preferences"][0]["id"]
     assert client.delete(f"/api/preferences/{pref}").json() == {"ok": True}
     assert skills.preferences("alon") == []
+
+
+UPDATED = {"event": "updated", "who": None, "device": None, "says": None, "above": None, "below": None, "reading": None}
+
+
+def test_tell_me_when_you_learn_something_new_runs_once_for_each_update_with_what_changed(skills):
+    # Stacey's: "keep me updated when Alon teaches you how to do more things", in her chat.
+    said = teach(skills, speaker="Stacey", name="news of me", instructions="Tell me what's new.", trigger=UPDATED,
+                 say=CHAT)  # fmt: skip
+    assert said.startswith("done: saved")
+    assert "runs by itself when TARS is updated" in teach(skills, speaker="Stacey", action="list")
+    running = ["aaa1111"]
+    asked = []
+
+    def between(old, new):
+        asked.append((old, new))
+        return "2026-11-09 TARS knows itself (#95)"
+
+    clock = Clock(
+        skills.all, CHAT, version=lambda: running[0], between=between, seen=skills.seen_version, see=skills.see_version
+    )
+    clock.look(SUNDAY)
+    assert clock.take() == []  # just saved: it notes the version it starts from
+    clock.look(SUNDAY)
+    assert clock.take() == []  # nothing new
+    running[0] = "bbb2222"  # deployed, TARS restarted: a new clock, the same database
+    later = Clock(
+        skills.all, CHAT, version=lambda: running[0], between=between, seen=skills.seen_version, see=skills.see_version
+    )
+    later.look(SUNDAY)
+    (due,) = later.take()
+    assert due.skill.name == "news of me" and "TARS was just updated (aaa1111 to bbb2222)" in due.why
+    assert "TARS knows itself (#95)" in due.why and asked == [("aaa1111", "bbb2222")]
+    later.look(SUNDAY)
+    assert later.take() == []  # told once
+    aloud = Clock(skills.all, ALOUD, version=lambda: "ccc3333", seen=skills.seen_version, see=skills.see_version)
+    aloud.look(SUNDAY)
+    assert aloud.take() == []  # hers is said in her chat, not aloud
