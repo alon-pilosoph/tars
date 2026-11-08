@@ -1,0 +1,229 @@
+"""The home_assistant tool, against a pretend Home Assistant: any entity looked up, read, its past told, and changed,
+with the home tool's rules for unlocking, and nothing that administers Home Assistant itself."""
+
+import json
+from datetime import datetime, timedelta
+
+import httpx
+import pytest
+
+from voice_assistant.config import HomeConfig
+from voice_assistant.ha_tool import ACTIONS, HAAccess
+from voice_assistant.hass import HomeAssistant
+from voice_assistant.home import HomeTools, Request
+
+NOW = datetime(2026, 11, 8, 22, 0).astimezone()
+
+
+def stamp(hours_ago: float) -> str:
+    return (NOW - timedelta(hours=hours_ago)).isoformat()
+
+
+class FakeHA:
+    """Answers the REST calls the tool makes, and keeps every service call."""
+
+    def __init__(self):
+        self.states = {
+            "switch.boiler": {"state": "off", "attributes": {"friendly_name": "Boiler"}},
+            "sensor.ari_temp": {
+                "state": "21.5",
+                "attributes": {"friendly_name": "Ari's room temperature", "unit_of_measurement": "°C"},
+            },
+            "lock.front_door": {"state": "locked", "attributes": {"friendly_name": "Front door"}},
+            "light.hall": {"state": "off", "attributes": {"friendly_name": "Hall light"}},
+            "script.goodnight": {"state": "off", "attributes": {"friendly_name": "Goodnight"}},
+            "script.movie": {"state": "off", "attributes": {"friendly_name": "Movie time"}},
+        }
+        self.configs = {
+            "script/goodnight": {"sequence": [{"action": "lock.lock", "target": {"entity_id": "lock.front_door"}}]},
+            "script/movie": {"sequence": [{"action": "light.turn_off", "target": {"entity_id": "light.hall"}}]},
+        }
+        self.calls, self.queries = [], []
+        self.transport = httpx.MockTransport(self.handle)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        self.queries.append((path, dict(request.url.params)))
+        if path == "/api/states":
+            return httpx.Response(200, json=[{"entity_id": e, **s} for e, s in self.states.items()])
+        if path.startswith("/api/states/"):
+            entity = path.rsplit("/", 1)[1]
+            if entity not in self.states:
+                return httpx.Response(404, json={"message": "Entity not found."})
+            return httpx.Response(200, json={"entity_id": entity, "last_changed": stamp(2), **self.states[entity]})
+        if path == "/api/template":
+            return httpx.Response(200, text="sensor.ari_temp\tAri's room\nswitch.boiler\tBathroom\n")
+        if path.startswith("/api/history/period/"):
+            wanted = request.url.params["filter_entity_id"].split(",")
+            rows = []
+            if "switch.boiler" in wanted:
+                rows.append(
+                    [
+                        {"entity_id": "switch.boiler", "state": "off", "last_changed": stamp(30)},
+                        {"state": "on", "last_changed": stamp(4.5)},
+                        {"state": "off", "last_changed": stamp(3.9)},
+                        {"state": "on", "last_changed": stamp(1)},
+                    ]
+                )
+            return httpx.Response(200, json=rows)
+        if path.startswith("/api/logbook/"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "when": stamp(3),
+                        "name": "Front door",
+                        "message": "was unlocked",
+                        "entity_id": "lock.front_door",
+                        "context_service": "unlock",
+                        "context_domain": "lock",
+                    },
+                ],
+            )
+        if path == "/api/services":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "domain": "light",
+                        "services": {"turn_on": {"description": "Turn on", "fields": {"brightness_pct": {}}}},
+                    },
+                ],
+            )
+        if path.startswith("/api/config/"):
+            key = path.removeprefix("/api/config/").replace("/config/", "/")
+            if key not in self.configs:
+                return httpx.Response(404, json={"message": "not found"})
+            return httpx.Response(200, json=self.configs[key])
+        if path.startswith("/api/services/"):
+            domain, service = path.removeprefix("/api/services/").split("/")
+            data = json.loads(request.content or b"{}")
+            self.calls.append((f"{domain}.{service}", data))
+            changed = []
+            for entity in data.get("entity_id", []):
+                new = {"turn_on": "on", "turn_off": "off", "unlock": "unlocked", "lock": "locked"}.get(service)
+                if entity in self.states and new:
+                    self.states[entity]["state"] = new
+                    changed.append({"entity_id": entity, "state": new})
+            return httpx.Response(200, json=changed)
+        return httpx.Response(404, json={"message": f"no {path}"})
+
+
+@pytest.fixture
+def ha():
+    fake = FakeHA()
+    hass = HomeAssistant("http://ha.local:8123", "token", fake.transport, command=lambda m: {})
+    tools = HomeTools(HomeConfig(unlock_chats=["Alon"]), {}, hass)
+    tools.ha._now = lambda: NOW
+    tools.fake = fake
+    return tools
+
+
+def ask(tools: HomeTools, action: str, request: Request | None = None, **args) -> str:
+    keys = ("entity_ids", "query", "since", "until", "every", "service", "data")
+    return tools.call_ha({"action": action, **dict.fromkeys(keys), **args}, request or Request(by_chat=True))
+
+
+def test_with_home_assistant_and_no_devices_there_is_only_the_home_assistant_tool(ha):
+    assert ha.names == {"home_assistant"} and "home_assistant" in ha.rules()
+    assert ha.ha.tool["parameters"]["properties"]["action"]["enum"] == list(ACTIONS)
+
+
+def test_find_looks_in_names_rooms_and_ids_and_says_each_ones_state(ha):
+    found = ask(ha, "find", query="ari")
+    assert found == "sensor.ari_temp: Ari's room temperature (Ari's room): 21.5 °C"
+    assert "switch.boiler: Boiler (Bathroom): off" in ask(ha, "find", query="bathroom")
+    assert len(ask(ha, "find").splitlines()) == len(ha.fake.states)
+    assert "nothing in Home Assistant matches" in ask(ha, "find", query="garage")
+
+
+def test_how_long_the_boiler_was_on_is_in_its_history(ha):
+    said = ask(ha, "history", entity_ids=["switch.boiler"], since="2026-11-08")
+    # From midnight to 22:00: off till 17:30, on 36 minutes, off till 21:00, on for the last hour.
+    assert "time in each state: off 20 h 24 min, on 1 h 36 min" in said
+    assert "11-08 17:30 on" in said and "11-08 21:00 on" in said
+    assert "no history in that span" in ask(ha, "history", entity_ids=["light.hall"])
+
+
+def test_the_logbook_says_what_did_it(ha):
+    assert "Front door: was unlocked (by lock.unlock)" in ask(ha, "logbook")
+
+
+def test_after_a_web_search_the_past_isnt_read_and_nothing_changes(ha):
+    searched = Request(by_chat=True, read_the_web=True)
+    for action in ("history", "statistics", "logbook"):
+        assert ask(ha, action, searched, entity_ids=["switch.boiler"]).startswith("refused: this reply searched")
+    assert ask(ha, "state", searched, entity_ids=["switch.boiler"]).startswith("switch.boiler: off")
+    said = ask(ha, "call", searched, service="light.turn_on", entity_ids=["light.hall"])
+    assert said.startswith("refused") and ha.fake.calls == []
+
+
+def test_a_change_waits_for_the_turn_and_says_what_it_did(ha):
+    turned = ask(ha, "call", service="light.turn_on", entity_ids=["light.hall"], data='{"brightness_pct": 40}')
+    assert turned == "done: light.turn_on; now light.hall on"
+    assert ha.fake.calls == [("light.turn_on", {"brightness_pct": 40, "entity_id": ["light.hall"]})]
+    withdrawn = Request(by_chat=True, may_act=lambda timeout: False)
+    assert "withdrawn" in ask(ha, "call", withdrawn, service="light.turn_off", entity_ids=["light.hall"])
+    assert len(ha.fake.calls) == 1
+    assert "sent:" in ask(ha, "call", service="light.toggle", entity_ids=["light.hall"])
+
+
+def test_home_assistant_itself_isnt_administered(ha):
+    for service in ("homeassistant.restart", "recorder.purge", "update.install", "hassio.host_reboot"):
+        assert ask(ha, "call", service=service).startswith(f"refused: {service.split('.')[0]} administers")
+    assert ha.fake.calls == []
+    assert "error: data must be a JSON object" in ask(ha, "call", service="light.turn_on", data="[1]")
+    assert "not in data" in ask(ha, "call", service="light.turn_on", data='{"entity_id": "lock.front_door"}')
+
+
+def test_unlocking_keeps_the_home_tools_rules_however_its_asked(ha):
+    stranger = Request(by_chat=True, speaker="Stacey", heard="unlock the door")
+    alon = Request(by_chat=True, speaker="Alon", heard="unlock the door please")
+    assert ask(ha, "call", stranger, service="lock.unlock", entity_ids=["lock.front_door"]).startswith("refused")
+    # Not around the rules by another service on the lock, or a script that touches it.
+    assert ask(ha, "call", stranger, service="lock.open", entity_ids=["lock.front_door"]).startswith("refused")
+    assert ask(ha, "call", stranger, service="homeassistant.turn_on", entity_ids=["lock.front_door"]).startswith(
+        "refused"
+    )
+    assert "it can unlock: script.goodnight" in ask(ha, "call", stranger, service="script.goodnight")
+    assert ha.fake.calls == []
+    # A script whose setup can't be read is treated as if it could.
+    assert "it can unlock: script.mystery" in ask(ha, "call", stranger, service="script.mystery")
+    assert ask(ha, "call", stranger, service="script.movie").startswith("done")  # no lock in it
+    assert ask(ha, "call", alon, service="lock.unlock", entity_ids=["lock.front_door"]) == (
+        "done: lock.unlock; now lock.front_door unlocked"
+    )
+    # Locking is never held back.
+    assert ask(ha, "call", stranger, service="lock.lock", entity_ids=["lock.front_door"]).startswith("done")
+
+
+def test_services_lists_a_domains_with_their_fields(ha):
+    assert ask(ha, "services", query="light") == "light.turn_on: Turn on fields: brightness_pct"
+    assert "no domain 'garage'" in ask(ha, "services", query="garage")
+
+
+def test_the_brain_gets_both_tools_and_routes_each_call(ha):
+    from voice_assistant.config import LLMConfig
+    from voice_assistant.llm import OpenAIChat
+
+    from .conftest import fake_openai_chat
+
+    asked = {"action": "state", "entity_ids": ["switch.boiler"]}
+    asked |= dict.fromkeys(("query", "since", "until", "every", "service", "data"))
+    first = lambda m: len(m) <= 2  # the question alone: the first round
+    client = fake_openai_chat(
+        lambda m: "" if first(m) else "The boiler's off.", lambda m: [("home_assistant", asked)] * first(m)
+    )
+    brain = OpenAIChat(client, LLMConfig(), home=ha)
+    assert "".join(brain.stream_reply("is the boiler on?")) == "The boiler's off."
+    opening = client.requests[0]
+    assert {t["name"] for t in opening["tools"] if "name" in t} >= {"home_assistant"}
+    assert "all of Home Assistant" in opening["instructions"]
+    output = next(i for i in client.requests[1]["input"] if i.get("type") == "function_call_output")
+    assert output["output"].startswith("switch.boiler: off")
+
+
+def test_without_home_assistant_theres_no_such_tool():
+    tools = HomeTools(HomeConfig(), {})
+    assert tools.ha is None and tools.tools == []
+    assert HAAccess  # the module loads on its own

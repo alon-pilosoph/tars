@@ -102,6 +102,55 @@ class HomeAssistant:
             return False
         return True
 
+    def states(self) -> list[dict]:
+        """Every entity Home Assistant has, as /api/states lists them."""
+        found = self._send("GET", "/api/states").get("result")
+        return found if isinstance(found, list) else []
+
+    def areas(self) -> dict[str, str]:
+        """Each entity's area, by entity id, for those in one: rendered by Home Assistant's own templates."""
+        template = "{% for s in states %}{{ s.entity_id }}\t{{ area_name(s.entity_id) or '' }}\n{% endfor %}"
+        text = self._text("POST", "/api/template", {"template": template})
+        return {e: a for e, _, a in (line.partition("\t") for line in text.splitlines()) if a}
+
+    def history(self, entities: list[str], start: datetime, end: datetime) -> list[list[dict]]:
+        """Each entity's states from start to end (the one it was in at the start first): a list of
+        {"state", "last_changed"} for each, as Home Assistant's history keeps them (about ten days)."""
+        query = {
+            "filter_entity_id": ",".join(entities),
+            "end_time": end.isoformat(),
+            "minimal_response": "",
+            "no_attributes": "",
+        }
+        found = self._send("GET", f"/api/history/period/{start.isoformat()}", params=query).get("result")
+        return found if isinstance(found, list) else []
+
+    def logbook(self, start: datetime, end: datetime, entity: str | None = None) -> list[dict]:
+        """What Home Assistant's logbook has from start to end, for one entity or all: who or what did what."""
+        query = {"end_time": end.isoformat(), **({"entity": entity} if entity else {})}
+        found = self._send("GET", f"/api/logbook/{start.isoformat()}", params=query).get("result")
+        return found if isinstance(found, list) else []
+
+    def services(self) -> list[dict]:
+        """Every service Home Assistant offers, by domain, with each one's fields."""
+        found = self._send("GET", "/api/services").get("result")
+        return found if isinstance(found, list) else []
+
+    def config_of(self, kind: str, key: str) -> dict:
+        """How an automation, script or scene is set up (kind: automation, script or scene), by its config id."""
+        return self._send("GET", f"/api/config/{kind}/config/{key}")
+
+    def call_service(self, service: str, data: dict) -> list[dict] | None:
+        """Calls a service, "domain.service", with `data`: the states it changed, as Home Assistant answers them, or
+        None if it didn't answer in time (it may still be doing it)."""
+        domain, _, name = service.partition(".")
+        timeout = httpx.Timeout(HTTP_TIMEOUT_S, read=SERVICE_TIMEOUT_S)
+        try:
+            found = self._send("POST", f"/api/services/{domain}/{name}", data, timeout).get("result")
+        except NoAnswer:
+            return None
+        return found if isinstance(found, list) else []
+
     def snapshot(self, entity: str) -> bytes:
         """A still JPEG from a camera entity, as Home Assistant renders it now: its bytes, or a HomeError if the
         camera can't be reached or gives nothing back."""
@@ -178,9 +227,36 @@ class HomeAssistant:
             raise HomeError(f"Home Assistant said: {(answer.get('error') or {}).get('message', 'no')}")
         return answer.get("result")
 
-    def _send(self, method: str, path: str, data: dict | None = None, timeout: httpx.Timeout | None = None) -> dict:
+    def _send(
+        self,
+        method: str,
+        path: str,
+        data: dict | None = None,
+        timeout: httpx.Timeout | None = None,
+        params: dict | None = None,
+    ) -> dict:
+        response = self._response(method, path, data, timeout, params)
         try:
-            response = self._http.request(method, path, json=data, timeout=timeout or httpx.USE_CLIENT_DEFAULT)
+            body = response.json()
+        except ValueError:
+            return {}
+        return body if isinstance(body, dict) else {"result": body}
+
+    def _text(self, method: str, path: str, data: dict | None = None) -> str:
+        return self._response(method, path, data).text
+
+    def _response(
+        self,
+        method: str,
+        path: str,
+        data: dict | None = None,
+        timeout: httpx.Timeout | None = None,
+        params: dict | None = None,
+    ) -> httpx.Response:
+        try:
+            response = self._http.request(
+                method, path, json=data, params=params, timeout=timeout or httpx.USE_CLIENT_DEFAULT
+            )
         except httpx.ReadTimeout as e:
             raise NoAnswer(f"Home Assistant didn't answer in time ({type(e).__name__})") from e
         except httpx.HTTPError as e:
@@ -191,11 +267,7 @@ class HomeAssistant:
             raise HomeError(f"Home Assistant has no {path.rsplit('/', 1)[-1]}")
         if response.status_code >= 400:
             raise HomeError(f"Home Assistant said HTTP {response.status_code}: {response.text[:200]}")
-        try:
-            body = response.json()
-        except ValueError:
-            return {}
-        return body if isinstance(body, dict) else {"result": body}
+        return response
 
 
 class Entity(Device):
