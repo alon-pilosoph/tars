@@ -556,7 +556,7 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=Non
     `speaker` (own_speaker's) and its microphone given `mic` (a chat's), as a HomeTools, or None. Like every service,
     optional: one that can't be made (no token, a missing extra, a plugin's own problem) is left out with a line saying
     why. `announce(line)`: how TARS says something on its own, later (how a task on the TV went)."""
-    if not (cfg.home.devices or presence or speaker or mic):
+    if not (cfg.home.devices or cfg.home.url or presence or speaker or mic):
         return None
     from .androidtv import make_tv_agent
     from .home import Context, build
@@ -575,8 +575,10 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=Non
     built = build(cfg.home, context, extra)
     for name, why in built.unavailable.items():
         print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
-    if built.tools:
+    if built.tools and built.tools.devices:
         print(f"(home: the house has {', '.join(built.tools.devices)})")
+    if built.tools and built.tools.ha:
+        print("(home: and all of Home Assistant, with the home_assistant tool)")
     return built.tools
 
 
