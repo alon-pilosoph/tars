@@ -627,8 +627,10 @@ def test_both_models_are_told_what_they_cant_do_so_they_never_pretend(send):
     brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP, send=send)
     "".join(brain.stream_reply("set a timer for ten minutes"))
     for instructions in (cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]):
-        assert f"You can't {llm.CANT_REMIND}, " in instructions and llm.CANT in instructions
+        assert f"You can't {llm.CANT_REMIND}, " in instructions
+        assert llm.CANT_MUSIC in instructions and llm.CANT_HOUSE in instructions  # nothing set up for either
         assert "Never say you did something you can't do." in instructions
+        assert "Before you say you can't do anything" in instructions and "what would make it possible" in instructions
 
 
 @pytest.mark.parametrize(
@@ -665,7 +667,7 @@ def test_with_reminders_both_models_know_whats_set_and_how_to_ack_and_only_opena
     "".join(brain.stream_reply("I got the message"))
     quick, full = cerebras.requests[0]["messages"][0]["content"], openai.requests[0]["instructions"]
     for instructions in (quick, full):
-        assert llm.ACK_RULES in instructions and llm.CANT in instructions and llm.CANT_REMIND not in instructions
+        assert llm.ACK_RULES in instructions and llm.CANT_CALL in instructions and llm.CANT_REMIND not in instructions
         assert f"[{rid}] " in instructions and "Stacey, a message from Alon: dinner's at eight." in instructions
         assert "<ack N>" in instructions
     assert llm.NEEDS_REMINDING in quick and llm.REMIND_RULES not in quick

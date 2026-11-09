@@ -103,8 +103,11 @@ def _or_else(pieces: Iterable[str], default: str) -> Iterator[str]:
 
 # What TARS can't do. Without saying so, a model asked for a timer TARS can't set says "Twelve minutes, starting
 # now." and nothing ever goes off.
-CANT = "play music or sounds, call anyone, or control anything in the house"
-CANT_BUT_HOME = "play music or sounds, call anyone, or work anything in the house the home tool doesn't list"
+# What TARS can't do at all, unless what's set up says otherwise (OpenAIChat._cant).
+CANT_CALL = "make phone calls"
+CANT_MUSIC = "play music or sounds"
+CANT_HOUSE = "control anything in the house"
+CANT_UNLISTED = "work anything in the house the home tool doesn't list"
 CANT_REMIND = "set timers, alarms or reminders"
 CANT_WEB = "look anything up on the web"
 CANT_SEND = "send anything to a phone or the TARS page"
@@ -372,8 +375,11 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
             "whoever answers next sees what you did, and answers the rest."
         )
     parts.append(
-        f"You can't {', '.join(cant)}. When asked to, say plainly in one short line that you can't do that yet, and "
-        "offer what you can do instead if something fits. Never say you did something you can't do."
+        f"You can't {', '.join(cant)}. Before you say you can't do anything, these or something else, see whether "
+        "what you have does it, combined: a skill that runs at a time or when something happens, a reminder or a "
+        "message, the house, the web, what you know of yourself. Say you can't only when nothing does, and then in "
+        "one short line: exactly what stops you, and what would make it possible. If you have the tars tool, note it "
+        "there as a wish, so whoever looks after TARS sees it. Never say you did something you can't do."
     )
     return "\n\n".join(parts)
 
@@ -594,6 +600,7 @@ class OpenAIChat:
         browser=None,
         feeds=None,
         skills=None,
+        myself=None,
     ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
         QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
@@ -602,7 +609,7 @@ class OpenAIChat:
         `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud).
         `home`: the devices in the house, when there are any. `browser`: TARS's errands in its browser
         (browser/errands.py), in a chat that has them. `feeds`: the RSS feeds people follow (feeds.py). `skills`:
-        what TARS is taught, skills and preferences (skills.py)."""
+        what TARS is taught, skills and preferences (skills.py). `myself`: TARS knowing itself (myself.py)."""
         self._clock = clock or time.monotonic
         self._channel_rules = [channel_rules] if channel_rules else []
         self._remind_tools = remind_tools or REMIND_TOOLS
@@ -613,6 +620,7 @@ class OpenAIChat:
         self._browser = browser
         self._feeds = feeds
         self._skills = skills
+        self._myself = myself
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -629,6 +637,7 @@ class OpenAIChat:
             + ([browser.tool] if browser else [])
             + ([feeds.tool] if feeds else [])
             + ([skills.tool] if skills else [])
+            + ([myself.tool] if myself else [])
         )
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
         can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
@@ -638,12 +647,14 @@ class OpenAIChat:
             + ([browser.can] if browser else [])
             + ([feeds.can] if feeds else [])
             + ([skills.can] if skills else [])
+            + ([myself.can] if myself else [])
         )
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send
         rules += [self._home.rules()] if self._home else []
         rules += [browser.rules] if browser else []
         rules += [feeds.rules] if feeds else []
         rules += [skills.rules] if skills else []
+        rules += [myself.rules] if myself else []
         rules.append(abilities(can, [], self._cant()))
         self._instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         # Only send optional settings that are configured; not every model accepts them.
@@ -747,13 +758,20 @@ class OpenAIChat:
         return [ACK_RULES] + ([REMIND_RULES] if tools else [])
 
     def _cant(self) -> list[str]:
-        """What TARS can't do at all, whichever model answers."""
-        cfg = self._cfg
+        """What TARS can't do at all, whichever model answers: worked out from what's set up, so it's never told it
+        can't do what it can (play music with a Spotify device, work anything with all of Home Assistant)."""
+        cfg, home = self._cfg, self._home
+        devices = home.devices.values() if home else []
+        everything = bool(getattr(home, "ha", None))  # all of Home Assistant, not only the devices listed
+        plays = everything or any(type(d).__name__ == "Spotify" for d in devices)
+        house = [] if everything else [CANT_UNLISTED] if home else [CANT_HOUSE]
         return (
             [CANT_REMIND] * (not self._reminders)
             + [CANT_WEB] * (not cfg.web_search)
             + [CANT_SEND] * (not cfg.send)
-            + [CANT_BUT_HOME if self._home else CANT]
+            + [CANT_CALL]
+            + [CANT_MUSIC] * (not plays)
+            + house
         )
 
     def _one_moment(self, calls: list[tuple[str, str]], said: str) -> str:
@@ -857,6 +875,8 @@ class OpenAIChat:
         if self._skills and call.name == "skills":
             failed = "error: couldn't reach what TARS was taught ({e!r}); nothing changed"
             return self._outside_lock(self._skills.call, args, writing, failed)
+        if self._myself and call.name == "tars":
+            return self._outside_lock(self._myself.call, args, writing, "error: couldn't look ({e!r})")
         if self._feeds and call.name == "feeds":
             # Reading feeds takes a moment: the conversation isn't held meanwhile.
             return self._outside_lock(self._feeds.call, args, writing, "error: couldn't read the feeds ({e!r})")
@@ -967,8 +987,11 @@ class QuickChat(OpenAIChat):
         browser=None,
         feeds=None,
         skills=None,
+        myself=None,
     ):
-        super().__init__(client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills)
+        super().__init__(
+            client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills, myself
+        )
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.
@@ -987,6 +1010,7 @@ class QuickChat(OpenAIChat):
         look_up += [browser.needs] if browser and client is not None else []
         look_up += [feeds.needs] if feeds and client is not None else []
         look_up += [skills.needs] if skills and client is not None else []
+        look_up += [myself.needs] if myself and client is not None else []
         examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:

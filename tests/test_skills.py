@@ -54,7 +54,9 @@ def teach(skills, speaker="Alon", **args):
 
 def test_a_skill_taught_is_kept_and_told_to_whoever_may_use_it(skills):
     said = teach(skills, name="Bedtime", instructions="Turn the TV  off, and the AC to 24.", household=True)
-    assert said == "done: saved the household's skill bedtime; say so in a few words"
+    assert said == (
+        "done: kept; tell them in plain words what you'll do and when, as agreeing to it, not that you saved anything"
+    )
     teach(skills, name="morning", instructions="Tell me the news.", at="7:30", days="sun, Monday", say=CHAT)
     note = skills.note("Alon")
     assert note.startswith("Skills (Alon's and the household's):")
@@ -66,7 +68,7 @@ def test_a_skill_taught_is_kept_and_told_to_whoever_may_use_it(skills):
 def test_saving_one_again_changes_it(skills):
     teach(skills, name="panda", instructions="Play it.", household=True)
     said = teach(skills, name="panda", instructions="Play it on the Fire TV.", when="kids want calm", household=True)
-    assert said.startswith("done: changed the household's skill panda")
+    assert said.startswith("done: changed")
     (panda,) = skills.all()
     assert (panda.instructions, panda.when) == ("Play it on the Fire TV.", "kids want calm")
 
@@ -486,7 +488,7 @@ def test_a_reading_is_checked_against_what_the_device_says_now(skills):
     said = teach(skills, name="air", instructions="Purifier on.", trigger=co2)
     assert said == f"error: the air quality's status has no 'co2' reading; it says: {status}"
     said = teach(skills, name="air", instructions="Purifier on.", trigger={**co2, "reading": "carbon dioxide"})
-    assert said.startswith("done: saved")
+    assert said.startswith("done: kept")
     house = House()
     house.statuses["air quality"] = status
     clock = house.clock(*skills.all())
@@ -530,3 +532,63 @@ def test_the_skills_page_shows_everything_taught_and_done_and_changes_it(log, cl
     pref = page["preferences"][0]["id"]
     assert client.delete(f"/api/preferences/{pref}").json() == {"ok": True}
     assert skills.preferences("alon") == []
+
+
+UPDATED = {"event": "updated", "who": None, "device": None, "says": None, "above": None, "below": None, "reading": None}
+
+
+def test_tell_me_when_you_learn_something_new_runs_once_for_each_update_with_what_changed(skills):
+    # Stacey's: "keep me updated when Alon teaches you how to do more things", in her chat.
+    said = teach(skills, speaker="Stacey", name="news of me", instructions="Tell me what's new.", trigger=UPDATED,
+                 say=CHAT)  # fmt: skip
+    assert said.startswith("done: kept")
+    assert "runs by itself when TARS is updated" in teach(skills, speaker="Stacey", action="list")
+    running = ["aaa1111"]
+    asked = []
+
+    def between(old, new):
+        asked.append((old, new))
+        return "2026-11-09 TARS knows itself (#95)"
+
+    clock = Clock(
+        skills.all, CHAT, version=lambda: running[0], between=between, seen=skills.seen_version, see=skills.see_version
+    )
+    clock.look(SUNDAY)
+    assert clock.take() == []  # just saved: it notes the version it starts from
+    clock.look(SUNDAY)
+    assert clock.take() == []  # nothing new
+    running[0] = "bbb2222"  # deployed, TARS restarted: a new clock, the same database
+    later = Clock(
+        skills.all, CHAT, version=lambda: running[0], between=between, seen=skills.seen_version, see=skills.see_version
+    )
+    later.look(SUNDAY)
+    (due,) = later.take()
+    assert due.skill.name == "news of me" and "TARS was just updated (aaa1111 to bbb2222)" in due.why
+    assert "TARS knows itself (#95)" in due.why and asked == [("aaa1111", "bbb2222")]
+    later.look(SUNDAY)
+    assert later.take() == []  # told once
+    aloud = Clock(skills.all, ALOUD, version=lambda: "ccc3333", seen=skills.seen_version, see=skills.see_version)
+    aloud.look(SUNDAY)
+    assert aloud.take() == []  # hers is said in her chat, not aloud
+
+
+def test_asked_for_in_a_chat_it_answers_there_without_being_told_and_never_says_skill(skills):
+    # Stacey, in her chat: "keep me updated when Alon teaches you how to do more things". No say given.
+    chat = types.SimpleNamespace(speaker="Stacey", by_chat=True)
+    full = dict.fromkeys(
+        ("name", "instructions", "when", "at", "days", "trigger", "say", "household", "about", "guess")
+    )
+    said = skills.call({**full, "action": "save", "name": "news of me", "instructions": "Tell me what's new.",
+                        "trigger": UPDATED}, chat)  # fmt: skip
+    assert said.startswith("done: kept, said in their chat when it runs") and "skill" not in said.split(";")[0]
+    assert skills.all()[0].say == CHAT
+    house = skills.call({**full, "action": "save", "name": "welcome", "instructions": "Turn the AC on.",
+                         "trigger": STACEY_HOME, "household": True}, chat)  # fmt: skip
+    assert "aloud at home" in house  # the household's is said aloud, wherever it was asked for
+
+
+def test_the_model_is_told_to_just_do_it_and_answer_as_a_person_would():
+    from voice_assistant.skills import RULES
+
+    assert "just do it" in RULES and "never ask them to confirm what they just asked for" in RULES
+    assert "Never say skill, trigger or saved" in RULES and "save it only once they say yes" not in RULES
