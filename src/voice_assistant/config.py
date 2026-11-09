@@ -244,6 +244,9 @@ class HomeConfig:
     config_dir: str = ""
     # Its Docker container: its image runs git, and undoing a change stops and starts it.
     container: str = "homeassistant"
+    # Who may change Home Assistant's setup through TARS (add what it found, remove an integration, rename a device,
+    # undo a change), by their names as TARS knows them. Empty = nobody.
+    setup_people: list[str] = field(default_factory=list)
     # Code of your own for devices Home Assistant doesn't work: a name, and { module = "...", and its own settings }.
     plugins: dict[str, dict] = field(default_factory=dict)
     # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).

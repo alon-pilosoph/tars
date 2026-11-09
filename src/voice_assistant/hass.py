@@ -136,10 +136,46 @@ class HomeAssistant:
         found = self._send("GET", "/api/services").get("result")
         return found if isinstance(found, list) else []
 
+    # Its setup: integrations, what it found by itself, devices and areas.
+
+    def entries(self) -> list[dict]:
+        """Every integration set up (a config entry each): entry_id, domain, title, state."""
+        found = self._send("GET", "/api/config/config_entries/entry").get("result")
+        return found if isinstance(found, list) else []
+
+    def discovered(self) -> list[dict]:
+        """What Home Assistant found by itself on the network and waits to be told to add, and setups under way."""
+        found = self._command({"type": "config_entries/flow/progress"})
+        return found if isinstance(found, list) else []
+
+    def start_setup(self, handler: str) -> dict:
+        """Starts adding an integration by its domain ("dlna_dmr"): its first step."""
+        return self._send(
+            "POST", "/api/config/config_entries/flow", {"handler": handler, "show_advanced_options": False}
+        )
+
+    def answer_setup(self, flow_id: str, answers: dict) -> dict:
+        """Answers a setup's step (a discovered device's "confirm" is {}): its next step, or how it ended."""
+        return self._send("POST", f"/api/config/config_entries/flow/{flow_id}", answers)
+
+    def remove_entry(self, entry_id: str) -> dict:
+        return self._send("DELETE", f"/api/config/config_entries/entry/{entry_id}")
+
+    def devices(self) -> list[dict]:
+        found = self._command({"type": "config/device_registry/list"})
+        return found if isinstance(found, list) else []
+
     def entity_entries(self) -> list[dict]:
-        """Home Assistant's entity registry: each entity's device, among the rest."""
         found = self._command({"type": "config/entity_registry/list"})
         return found if isinstance(found, list) else []
+
+    def area_list(self) -> list[dict]:
+        found = self._command({"type": "config/area_registry/list"})
+        return found if isinstance(found, list) else []
+
+    def update_device(self, device_id: str, **changes) -> dict:
+        found = self._command({"type": "config/device_registry/update", "device_id": device_id, **changes})
+        return found if isinstance(found, dict) else {}
 
     def config_of(self, kind: str, key: str) -> dict:
         """How an automation, script or scene is set up (kind: automation, script or scene), by its config id."""
@@ -187,6 +223,11 @@ class HomeAssistant:
         path = result.get("path") if isinstance(result, dict) else None
         if not isinstance(path, str) or not path:
             raise HomeError(f"Home Assistant didn't sign a live link for {entity}")
+        return self.link(path)
+
+    def link(self, path: str) -> str:
+        """Home Assistant's own page at `path`, at an address a phone at home can reach: [home] url, unless that's this
+        machine (localhost), when it's this machine's reachable name on the same port."""
         split = urlsplit(self._url)
         port = f":{split.port}" if split.port else ""
         host = split.hostname or ""

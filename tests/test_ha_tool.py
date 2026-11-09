@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from voice_assistant.config import HomeConfig
+from voice_assistant.ha_setup import ACTIONS as SETUP_ACTIONS
 from voice_assistant.ha_tool import ACTIONS, HAAccess
 from voice_assistant.hass import HomeAssistant
 from voice_assistant.home import HomeTools, Request
@@ -139,13 +140,13 @@ def ha():
 
 
 def ask(tools: HomeTools, action: str, request: Request | None = None, **args) -> str:
-    keys = ("entity_ids", "query", "since", "until", "every", "service", "data")
+    keys = ("entity_ids", "query", "since", "until", "every", "service", "data", "target")
     return tools.call_ha({"action": action, **dict.fromkeys(keys), **args}, request or Request(by_chat=True))
 
 
 def test_with_home_assistant_and_no_devices_there_is_only_the_home_assistant_tool(ha):
     assert ha.names == {"home_assistant"} and "home_assistant" in ha.rules()
-    assert ha.ha.tool["parameters"]["properties"]["action"]["enum"] == list(ACTIONS)
+    assert ha.ha.tool["parameters"]["properties"]["action"]["enum"] == [*ACTIONS, *SETUP_ACTIONS]
 
 
 def test_find_looks_in_names_rooms_and_ids_and_says_each_ones_state(ha):
