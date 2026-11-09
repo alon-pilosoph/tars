@@ -4,7 +4,8 @@ The assistant and the web UI share the folder (voice_data/events/, gitignored) f
 runs in WAL mode and every multi-step change is one IMMEDIATE transaction. events.py (wakes, near-misses, voices),
 conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home),
 recording.py (recording sessions and their takes), browser/errands.py (the errands queued for TARS's browser) and
-feeds.py (the feeds each person follows) and skills.py (what TARS is taught: skills and preferences) build on this.
+feeds.py (the feeds each person follows), skills.py (what TARS is taught: skills and preferences) and myself.py (the
+wishes: what TARS was asked for and couldn't do) build on this.
 """
 
 import secrets
@@ -205,6 +206,23 @@ TABLES = {
     why TEXT NOT NULL,               -- "at 19:55", "Stacey just came home"
     said TEXT NOT NULL               -- what it said; "" when there was nothing to do
 )""",
+    "wishes": """CREATE TABLE wishes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,
+    person TEXT,                     -- who asked, as TARS knew them; NULL: not known
+    via TEXT NOT NULL,               -- voice | chat
+    asked TEXT NOT NULL,             -- what they wanted, in a sentence
+    why TEXT NOT NULL,               -- what stopped TARS, and what would make it possible
+    granted REAL                     -- when someone marked it done; NULL: still wished for
+)""",
+    "settings_log": """CREATE TABLE settings_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,
+    person TEXT,                     -- who asked TARS to change it; NULL: not known
+    name TEXT NOT NULL,              -- section.key, as settings.ADJUSTABLE names it
+    old TEXT NOT NULL,               -- JSON: what it was
+    new TEXT NOT NULL                -- JSON: what it became
+)""",
     "preferences": """CREATE TABLE preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     person TEXT NOT NULL,            -- as person_key has them
@@ -325,6 +343,18 @@ MIGRATIONS = [
         (
             "CREATE TABLE skill_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, skill_id INTEGER, name TEXT NOT NULL, "
             "owner TEXT NOT NULL, at REAL NOT NULL, why TEXT NOT NULL, said TEXT NOT NULL)"
+        ),
+    ],
+    [
+        (
+            "CREATE TABLE wishes (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
+            "via TEXT NOT NULL, asked TEXT NOT NULL, why TEXT NOT NULL, granted REAL)"
+        ),
+    ],
+    [
+        (
+            "CREATE TABLE settings_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
+            "name TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL)"
         ),
     ],
 ]

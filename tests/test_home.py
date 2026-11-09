@@ -435,7 +435,7 @@ def test_openai_alone_has_the_tool_and_is_told_what_else_it_cant_do():
     "".join(brain.stream_reply("hello"))
     request = openai.requests[0]
     assert "home" in [t.get("name") for t in request["tools"]]
-    assert llm.CANT_BUT_HOME in request["instructions"] and llm.CANT not in request["instructions"]
+    assert llm.CANT_UNLISTED in request["instructions"] and llm.CANT_HOUSE not in request["instructions"]
 
 
 def searching_brain(h, action):

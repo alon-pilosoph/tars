@@ -150,15 +150,27 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   model answered and what failed; `log`: its services' journal, every tool call and its result. A Telegram chat is only
   its own person's to read (the others are counted, not shown), what was said aloud is the household's, the log's
   chat lines are left out, and neither is read in a reply that searched the web. Its rules also tell every model to
-  look before saying it can't tell something about itself, and to combine what it has before saying something can't
-  be done.
+  look before saying it can't tell something about itself. `wish`, `wishes`, `granted`: what someone asked for that
+  TARS really couldn't do is noted, with what stopped it and what would make it possible (the `wishes` table), so
+  whoever looks after TARS sees the gaps ("what did people ask for that you couldn't do?", or a skill that tells them
+  every Sunday); one done is marked granted. `settings`, `set`: what about TARS can be changed by asking ("be less
+  jokey", "you cut me off", "remember our chats longer"; `settings.py`): only what `ADJUSTABLE` lists, each within
+  bounds (the wake threshold can't go where TARS would never wake), never who may unlock or set up the house, the keys
+  or the models. A change is written as its own line in `config.local.toml`, the rest of the file as it was, kept only
+  if the whole config still loads, logged with who asked and what it was (`settings_log`), and applied by a restart of
+  TARS's services eight seconds later (`systemd-run`), once the reply's been said. Only for someone TARS knows, or
+  someone asking aloud at home, and never in a reply that searched the web.
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.
 
 **Who does what.** Each model is told, from one list (`abilities()` in `llm.py`), what it can do itself, what it
 hands over and how, and what TARS can't do at all, so it never claims something it can't do and never hands over
-something it could have done. Turning a feature off in config changes both prompts. Qwen hands over:
+something it could have done. Turning a feature off in config changes both prompts. The "can't" list follows what's
+set up (no "can't play music" with a Spotify device, nor "can't work the house" with all of Home Assistant), and a
+model is told to combine what it has before saying it can't do something (a skill that runs when something happens, a
+reminder or message, the house, the web, what it knows of itself); when nothing does, it says exactly what stops it
+and what would make it possible, and notes it as a wish (below). Qwen hands over:
 
 | Marker | When | To | TARS says first |
 |---|---|---|---|

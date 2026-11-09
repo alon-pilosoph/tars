@@ -23,7 +23,10 @@ from .config import QUICK_PROVIDERS, Config
 from .health import PROCESSES, expected, processes
 
 ABOUT, CHANGES, DOCS, RECORDS, LOG = "about", "changes", "docs", "records", "log"
-ACTIONS = (ABOUT, CHANGES, DOCS, RECORDS, LOG)
+WISH, WISHES, GRANTED = "wish", "wishes", "granted"
+SETTINGS, SET = "settings", "set"
+ACTIONS = (ABOUT, CHANGES, DOCS, RECORDS, LOG, WISH, WISHES, GRANTED, SETTINGS, SET)
+MAX_WISHES = 40
 PRIVATE = (RECORDS, LOG)  # what was said and done: not read in a reply that read the web
 MAX_CHANGES, MAX_SECTIONS, SECTION_CHARS, MAX_TURNS, MAX_LOG, MAX_CHARS = 40, 3, 1500, 60, 80, 6000
 CHANGES_SPAN_DAYS = 14  # "what's new?" with no date: the last two weeks
@@ -41,9 +44,12 @@ RULES = (
     '- records: what was said and what you did, with errors and which model answered ("why did you do that?", '
     '"what did I ask you this morning?"); log: your service logs, every tool call and its result, for what went '
     "wrong. Someone's chats are only theirs to read.\n"
-    "If something is asked of you that you have no single feature for, combine what you have (skills that run when "
-    "something happens, reminders, messages, the house, the web) before saying it can't be done; and when it really "
-    "can't, say exactly why and what would make it possible."
+    "- wish: when you really can't do what someone asked, note it (what they wanted, in query; what stopped you and "
+    'what would make it possible, in why), so whoever looks after TARS sees it; wishes lists them ("what did people '
+    "ask for that you couldn't do?\"), granted marks one done, by its number in query.\n"
+    '- settings: what about you can be changed by asking ("be less jokey", "you cut me off", "remember our chats '
+    "longer\"), with each one's value now; set changes one (its name in query, the new value in value). Say what "
+    "changed and that you'll be back in a moment; to put one back, set it to what it was."
 )
 CAN = "know yourself: your version, what changed lately, how you work, and what you said and did, with the tars tool"
 NEEDS = "anything about TARS itself: what's new in it, how it works, what it did or why"
@@ -57,12 +63,14 @@ TOOL = {
     "parameters": {
         "type": "object",
         "additionalProperties": False,
-        "required": ["action", "query", "since", "until"],
+        "required": ["action", "query", "since", "until", "why", "value"],
         "properties": {
             "action": {"type": "string", "enum": list(ACTIONS)},
             "query": {
                 "type": ["string", "null"],
-                "description": "docs: what to look up, in a few words. records, log: words to look for; null: all.",
+                "description": "docs: what to look up, in a few words. records, log: words to look for; null: all. "
+                "wish: what they wanted, in a sentence. granted: the wish's number. set: the setting's name, as "
+                "settings lists it.",
             },
             "since": {
                 "type": ["string", "null"],
@@ -70,6 +78,11 @@ TOOL = {
                 "null: changes, the last two weeks; records and log, the last day.",
             },
             "until": {"type": ["string", "null"], "description": "records, log: until when, the same way; null: now."},
+            "value": {"type": ["string", "null"], "description": "set: the new value; null otherwise."},
+            "why": {
+                "type": ["string", "null"],
+                "description": "wish: what stopped you, and what would make it possible; null otherwise.",
+            },
         },
     },
 }
@@ -110,6 +123,16 @@ class Myself:
                 return self.records(query, args.get("since"), args.get("until"), request)
             if action == LOG:
                 return self.log(query, args.get("since"), args.get("until"))
+            if action == WISH:
+                return self.wish(query, str(args.get("why") or "").strip(), request)
+            if action == WISHES:
+                return self.wishes()
+            if action == GRANTED:
+                return self.granted(query)
+            if action == SETTINGS:
+                return self._settings().listing()
+            if action == SET:
+                return self.set(query, str(args.get("value") or ""), request)
         except when.WhenError as e:
             return f"error: {e}"
         return f"error: action is one of {', '.join(ACTIONS)}"
@@ -213,6 +236,68 @@ class Myself:
             said += shown[-MAX_TURNS:]
         return _cut("\n".join(said), MAX_CHARS)
 
+    # What it was asked for and couldn't do.
+
+    def wish(self, asked: str, why: str, request) -> str:
+        if self._events is None:
+            return "error: TARS keeps no wishes here ([learning] log_events is off)"
+        if not asked or not why:
+            return "error: wish needs what they wanted (query) and what stopped you (why)"
+        via = "chat" if getattr(request, "by_chat", False) else "voice"
+        number = self._events.store.write(
+            "INSERT INTO wishes (at, person, via, asked, why) VALUES (?, ?, ?, ?, ?)",
+            (time.time(), getattr(request, "speaker", None), via, asked, why),
+        )
+        return (
+            f"noted ({number}) for whoever looks after TARS; tell them in plain words you've passed it on, never "
+            "that it's a wish or a list"
+        )
+
+    def wishes(self) -> str:
+        if self._events is None:
+            return "error: TARS keeps no wishes here ([learning] log_events is off)"
+        rows = self._events.store.rows(
+            "SELECT * FROM wishes WHERE granted IS NULL ORDER BY id DESC LIMIT ?", (MAX_WISHES,)
+        )
+        if not rows:
+            return "no wishes: nothing asked for lately that TARS couldn't do"
+        lines = []
+        for r in rows:
+            at = time.strftime("%Y-%m-%d", time.localtime(r["at"]))
+            who = f"{r['person'] or 'someone'} ({r['via']})"
+            lines.append(f"{r['id']}. {at}, {who}: {r['asked']} (stopped by: {r['why']})")
+        return "\n".join(lines)
+
+    def granted(self, number: str) -> str:
+        if self._events is None:
+            return "error: TARS keeps no wishes here ([learning] log_events is off)"
+        if not number.strip().isdigit():
+            return "error: granted needs the wish's number, as wishes lists them"
+        with self._events.store.transaction() as db:
+            done = db.execute(
+                "UPDATE wishes SET granted=? WHERE id=? AND granted IS NULL", (time.time(), int(number))
+            ).rowcount
+        return f"wish {number} marked done" if done else f"error: there's no open wish {number}"
+
+    # Its own settings.
+
+    def _settings(self):
+        from .settings import Settings
+
+        return Settings(self._root, self._events.store if self._events is not None else None, run=self._run)
+
+    def set(self, name: str, value: str, request) -> str:
+        from .settings import SettingsError
+
+        if getattr(request, "read_the_web", False):
+            return "refused: this reply searched the web, so it changes nothing about TARS; they can ask on its own"
+        if not (getattr(request, "speaker", None) or getattr(request, "by_voice", False)):
+            return "refused: TARS changes its settings only for someone it knows, or someone at home asking aloud"
+        try:
+            return self._settings().set(name, value, getattr(request, "speaker", None))
+        except SettingsError as e:
+            return f"error: {e}"
+
     def log(self, query: str, since: str | None, until: str | None) -> str:
         if not shutil.which("journalctl"):
             return "error: there's no system log to read here (no journalctl); records has what was said and done"
@@ -234,6 +319,16 @@ class Myself:
             return "the log has nothing in that span" + (f" with {query!r}" if query else "")
         more = f"({len(lines) - MAX_LOG} earlier lines left out: narrow the span or the words)\n"
         return _cut((more if len(lines) > MAX_LOG else "") + "\n".join(lines[-MAX_LOG:]), MAX_CHARS)
+
+    def version(self) -> str:
+        """The commit TARS runs, short; "" outside a checkout."""
+        return self._git("rev-parse", "--short", "HEAD")
+
+    def between(self, old: str, new: str) -> str:
+        """What changed from one version to another, newest first, a PR's title each: what a skill that runs on TARS
+        being updated is told. A history rewritten since (old isn't before new) gives the latest few instead."""
+        out = self._git("log", "--first-parent", "--format=%cs %s", f"-{MAX_CHANGES}", f"{old}..{new}")
+        return out or self._git("log", "--first-parent", "--format=%cs %s", "-5", new)
 
     def _git(self, *args: str) -> str:
         try:

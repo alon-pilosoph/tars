@@ -589,12 +589,13 @@ def make_skills(events):
     return make(events)
 
 
-def skill_clock(skills, say: str, home=None, presence=None):
+def skill_clock(skills, say: str, home=None, presence=None, myself=None):
     """The clock for the skills that run by themselves and say what they have to `say` ("aloud": the voice's TARS;
     "chat": the Telegram service's, skills.ALOUD and CHAT), or None without skills. They're read again on every
     tick, so one taught a minute ago is kept to. With `home` (a HomeTools) and `presence`, it also watches the
     devices and who's home for the skills that run on something happening, and a trigger saved is checked against
-    the devices and people there are."""
+    the devices and people there are. With `myself` (myself.py), the skills that run on TARS being updated are told
+    when it is, and what changed."""
     from .home import Request
     from .skills import Clock
 
@@ -614,7 +615,11 @@ def skill_clock(skills, say: str, home=None, presence=None):
             return home.call({"device": device, "action": "status"}, Request())
 
         skills.devices, skills.status = (lambda: set(home.devices)), status
-    return Clock(skills.all, say, people=people, status=status, record=skills.ran).start()
+    updates = {}
+    if myself:
+        updates = {"version": myself.version, "between": myself.between}
+        updates |= {"seen": skills.seen_version, "see": skills.see_version}
+    return Clock(skills.all, say, people=people, status=status, record=skills.ran, **updates).start()
 
 
 def own_speaker(cfg: Config):
@@ -835,7 +840,7 @@ def telegram(cfg: Config, root: Path) -> None:
         home=home,
         say=functools.partial(ask_to_say, events.store.folder) if events else None,
         spotify_login=spotify_login(cfg, root, env),
-        skill_clock=skill_clock(skills, "chat", home, presence),
+        skill_clock=skill_clock(skills, "chat", home, presence, myself),
     )
     told.append(tars)
     if queue:
@@ -1294,6 +1299,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     home = make_home(cfg, root, announcements.add, presence, volume)
     browser = voice_errands(cfg, events)
     skills = make_skills(events)
+    myself = make_myself(cfg, root, events)
     transcriber, brain, voice = make_pipeline(
         cfg,
         root,
@@ -1302,7 +1308,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         browser=browser,
         feeds=make_feeds(cfg, events),
         skills=skills,
-        myself=make_myself(cfg, root, events),
+        myself=myself,
     )
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
@@ -1332,7 +1338,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=skill_clock(skills, "aloud", home, presence),
+            skill_clock=skill_clock(skills, "aloud", home, presence, myself),
         )
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
