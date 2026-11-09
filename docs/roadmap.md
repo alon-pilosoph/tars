@@ -13,8 +13,8 @@ being right.
 | 2 | [Security](#2-security) | the web UI has no accounts, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
 | 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
-| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | large |
-| 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | large |
+| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; the arrival greeting and dry runs left |
+| 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
 Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
 them; [wishes that come true](#planned-wishes-that-come-true), where something TARS couldn't do becomes a pull request
@@ -27,7 +27,13 @@ Assistant's devices, an Android TV box and the agent that works it, plugins for 
 Telegram](telegram.md) (chats and voice messages, with reminders and what TARS sends on a phone), the web UI's
 [Status page](web-ui.md#the-status-page), the [backup to S3](backup.md), [who's home](presence.md) (phones on the
 Wi-Fi, from the routers), [TARS's browser](browser.md) (errands on any website, nothing ordered without a tap) and
-[handing hard questions to a larger model](#built-handing-hard-questions-to-a-larger-model). What's left for each is
+[handing hard questions to a larger model](#built-handing-hard-questions-to-a-larger-model). Since then: [skills and
+preferences](skills.md) taught by talking, run at set times, when someone comes or goes, when a device changes or
+when TARS is updated, with a Skills page; [feeds](feeds.md) per person; Spotify, live TV channels and a camera in
+[the house](home.md); [all of Home Assistant](home.md#all-of-home-assistant) (any entity, its history and logbook,
+any service, the unlock rules kept), with [its setup versioned](home.md#home-assistants-own-setup) and sealed in the
+backup; and TARS [knowing itself](architecture.md) (its version, what's new, its docs, its records and log), changing
+its own settings when asked, combining what it has before saying "can't", and noting real gaps as wishes. What's left for each is
 in its own doc: the house's "Not yet" under [things to know](home.md#things-to-know), [Telegram's](telegram.md#not-yet),
 [who's home's](presence.md#not-yet), [the browser's](browser.md#not-yet), and the web UI's
 [limitations](web-ui.md#limitations).
@@ -82,7 +88,10 @@ home-network names and only takes changes from its own page ([web UI](web-ui.md)
 reaching it through someone's browser. Unlocking takes a trusted voice saying "unlock", never typed text. The browser
 never opens an address at home, keeps passwords out of what the model reads, and code, not the model, holds every
 button that orders or pays until the person taps Order ([browser](browser.md#never-committing-the-person)); its vault
-is encrypted, with the key beside it.
+is encrypted, with the key beside it. `.env` is for TARS's user alone, and a reply that read web search results
+changes nothing in the house, nor reads its past or TARS's records. Home Assistant's setup, with its integrations'
+passwords, goes to the backup only sealed with a key kept on the Pi. The speakerphone's own mute is TARS's: while
+it's red, the wake model doesn't run.
 
 What's open: the web UI has no accounts, so anyone on the home network (a guest, a compromised device) can play every
 recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS
@@ -98,7 +107,8 @@ The systemd services run unconfined.
    `tailscale cert` (the browser's login page too); served on the tailnet only, not the LAN, with Tailscale's access
    rules as the outer wall. A test that walks every route and fails if one answers without a session, so a new
    endpoint can't forget it. Step 5's page to edit automations needs this first.
-3. **The AI's own risks.** No text from outside (web search results, a web page the browser reads, Telegram, a sent
+3. **The AI's own risks.** Started: a reply that read the web changes nothing and reads no one's past, and a chat
+   reads only its own person's conversations. Still: no text from outside (web search results, a web page the browser reads, Telegram, a sent
    file) can lead to an unlock, turning off an alarm or sending data out; an eval set of injection attempts that
    must all fail (it calls the models: cost estimate first). No tool lets a model read the recordings, `.env` or
    someone else's conversations. Against a replayed or cloned voice: a spoken challenge (a code word or a random
@@ -119,7 +129,8 @@ The systemd services run unconfined.
    unattended): written down as an accepted risk.
 7. **Supply chain.** pip-audit (or Dependabot), bandit or semgrep, and an SBOM in CI, alongside `uv.lock`'s hashes;
    signed releases for step 4's updates.
-8. **The mic itself.** A hardware mute switch, and a light while audio is leaving the house.
+8. **The mic itself.** A hardware mute switch (built: the speakerphone's mute stops TARS listening at all), and a
+   light while audio is leaving the house.
 
 **Done when** each threat in `docs/security.md` has a defense and a passing test (or is written down as accepted),
 and a self-run pentest of the web UI and the Pi finds nothing new.
@@ -209,21 +220,20 @@ been done on the Pi without SSH, and a plugin that asks for more than it was gra
 **Goal:** "when Stacey gets home, tell her what's waiting", "turn the boiler off if nobody's home", "movie night",
 said in plain words, and done the same way every time.
 
-**Design:**
+**Built** ([skills](skills.md)): everything is a skill, plain words for the model carried out with its tools; only
+the trigger is code: a time (with days), someone coming home or going out, a device's status or reading, or TARS
+being updated. Asking for one is just done and agreed to in plain words ("Will do: I'll message you whenever Alon
+adds something new"), never called a skill, said in the chat it was asked in or aloud. Each person's preferences are
+kept the same way. "What did you do today?" is answered from the runs kept, and the web UI's Skills page lists every
+skill and preference, where it came from and what it did. Limits are in code: unlocking stays a trusted voice saying
+"unlock", an order still needs its tap.
 
-- **Everything is a skill.** An automation is a skill with a trigger: plain words for the model, carried out with
-  its tools, as skills already are ([skills](skills.md)). Only the trigger is code: a time, someone coming home or
-  leaving, a device's status (the door unlocked, CO₂ over a level), all done. Taught, changed and removed by
-  talking; "what did you do today?" answered from the runs kept.
-- **Read back before it's kept.** TARS says what it understood ("Every weekday at 7, the boiler on for 40 minutes.
-  Every time, or just tomorrow?"), and checks it against the last weeks of the event log ("that would have run 3
-  times last week").
-- **Skills** are a name and what to do, in plain words, for the model to carry out with its tools ("movie night:
-  the TV and soundbar on, Stremio open"), taught by talking, as are each person's preferences ([skills](skills.md)).
-- **A page in the web UI** lists every rule and skill, where it came from, when it last ran and what happened; each
-  can be paused, edited or deleted. It needs step 2's sign-in first.
-- **Limits held in code:** unlocking stays voice-only and in person, an order still needs its tap, and a rule can't
-  do what step 2's grants don't allow.
+**Left:**
+
+- **Dry runs.** Checked against the last weeks of the event log before it's kept, said only when it matters ("that
+  would have gone off 30 times last week"), so a trigger that's too eager is caught before it's annoying.
+- **Editing on the page.** Pausing, changing and deleting from the Skills page needs step 2's sign-in first.
+- **Habits offered**, not only asked for: [noticing routines](#planned-noticing-routines).
 
 **The first one:** the arrival greeting. The Nuki's own events say who unlocked; with who's home, TARS greets them by
 name as they come in and says what's waiting ([who's home, not yet](presence.md#not-yet)).
@@ -238,6 +248,15 @@ household rules have run for a week with no wrong run.
 9:30", "the car is a 2019 Corolla". It can offer to remember something, anyone can say "remember this" or "forget
 that", and the web UI shows exactly what it keeps, where it can be edited or deleted. Personalization is the same
 page: each person's settings, and the persona part of the system prompt.
+
+**Where it stands.** Half of it is built as preferences ([skills](skills.md)): what someone likes or doesn't, kept per
+person in the `preferences` table, said by them or noticed by the model and marked as a guess, told on every request
+of theirs, and "what do you know about me?", "forget that" answered by talking; the Skills page shows them. TARS's
+settings change by asking too (humor, how long it remembers, its voice), but for the whole household, not per
+person. Left: facts as well as likes ("the car is a 2019 Corolla"), the household's own memories, using a person's
+only when speaker ID is sure (no voiceprints are enrolled yet, so by voice nobody is), editing on the page, and
+settings per person. The design below still holds for those; the `memories` table may simply be `preferences`
+grown.
 
 **Design:**
 
