@@ -239,6 +239,11 @@ class HomeConfig:
     # The speakerphone's own mute is TARS's: while it's muted (its light red), TARS doesn't listen for its name, and
     # the remote's mute button mutes it the same way. Linux, with a speakerphone that has one.
     speakerphone_mute: bool = True
+    # Home Assistant's config folder on this machine, to keep a history of its setup that any change can be undone
+    # from (docs/home.md#home-assistants-own-setup). Empty = no history.
+    config_dir: str = ""
+    # Its Docker container: its image runs git, and undoing a change stops and starts it.
+    container: str = "homeassistant"
     # Code of your own for devices Home Assistant doesn't work: a name, and { module = "...", and its own settings }.
     plugins: dict[str, dict] = field(default_factory=dict)
     # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).

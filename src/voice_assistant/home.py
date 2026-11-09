@@ -249,7 +249,8 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         context.devices[name.lower()] = device
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
-    return Built(HomeTools(cfg, dict(context.devices)) if context.devices else None, unavailable)
+    made = context.devices or context.hass is not None
+    return Built(HomeTools(cfg, dict(context.devices), context.hass) if made else None, unavailable)
 
 
 def load_plugin(module: str, root: Path):
@@ -323,16 +324,40 @@ class HomeTools:
     """The brain's side of the house: the tool, its rules for the instructions, and every call checked. What's wrong
     is said back to the model, so it can tell the person or try again."""
 
-    def __init__(self, cfg: HomeConfig, devices: dict[str, Device]):
+    def __init__(self, cfg: HomeConfig, devices: dict[str, Device], hass=None):
+        """`hass`: Home Assistant (hass.HomeAssistant), for the home_assistant tool: all of it, beyond the devices."""
+        from .ha_tool import HAAccess
+
         self._cfg = cfg
         self.devices = {name.strip().lower(): d for name, d in devices.items()}
         self.tool = home_tool(devices)
         self._lock = threading.Lock()
+        self.ha = HAAccess(hass, self._may_unlock, self._lock) if hass is not None else None
+
+    @property
+    def tools(self) -> list[dict]:
+        """The house's tools for the brain: home, for the devices listed, and home_assistant, for all the rest."""
+        return [self.tool] * bool(self.devices) + ([self.ha.tool] if self.ha else [])
+
+    @property
+    def names(self) -> set[str]:
+        return {t["name"] for t in self.tools}
 
     def rules(self) -> str:
-        listed = "\n".join(f"- {name}: {d.what()}" for name, d in self.devices.items())
-        extra = list(dict.fromkeys(r for d in self.devices.values() if (r := d.rules())))
-        return "\n".join([HOME_RULES.format(devices=listed), *extra])
+        said = []
+        if self.devices:
+            listed = "\n".join(f"- {name}: {d.what()}" for name, d in self.devices.items())
+            said.append(HOME_RULES.format(devices=listed))
+            said += list(dict.fromkeys(r for d in self.devices.values() if (r := d.rules())))
+        if self.ha:
+            said.append(self.ha.rules)
+        return "\n".join(said)
+
+    def call_ha(self, args: dict, request: Request) -> str:
+        """The home_assistant tool. Its changes are made one at a time with the home tool's, under the same lock."""
+        if self.ha is None:
+            return "error: there's no Home Assistant to ask"
+        return self.ha.call(args, request)
 
     def slow(self, arguments: str) -> bool:
         """Whether a call, as the model wrote it, takes long enough to say ONE_MOMENT first."""

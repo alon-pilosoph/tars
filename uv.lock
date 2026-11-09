@@ -1845,6 +1845,7 @@ dependencies = [
 [package.optional-dependencies]
 backup = [
     { name = "boto3" },
+    { name = "cryptography" },
 ]
 browser = [
     { name = "cryptography" },
@@ -1889,6 +1890,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'claude'", specifier = ">=1" },
     { name = "bleak", marker = "extra == 'my-house'", specifier = ">=1" },
     { name = "boto3", marker = "extra == 'backup'", specifier = ">=1.40" },
+    { name = "cryptography", marker = "extra == 'backup'", specifier = ">=50.0.2" },
     { name = "cryptography", marker = "extra == 'browser'", specifier = ">=50.0.2" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "httpx", specifier = ">=0.28" },
