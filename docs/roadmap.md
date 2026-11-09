@@ -19,8 +19,11 @@ being right.
 Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
 them; [wishes that come true](#planned-wishes-that-come-true), where something TARS couldn't do becomes a pull request
 and, once merged, a message to whoever asked; and [noticing routines](#planned-noticing-routines), where TARS learns
-the household's habits from Home Assistant's history and offers to take them over. Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after
-the six: [working offline](#later-working-offline) and [TARS in other homes](#later-tars-in-other-homes).
+the household's habits from Home Assistant's history and offers to take them over. Benched for now: [learning from
+how conversations go](#benched-learning-from-how-conversations-go). Later, after the six: [working
+offline](#later-working-offline), [a brain anywhere, a body at home](#later-a-brain-anywhere-a-body-at-home) (TARS
+itself off the Pi, the house's own hardware a small part that can fail without losing TARS) and [TARS in other
+homes](#later-tars-in-other-homes).
 
 **Built so far, alongside step 1:** [reminders, timers and messages](reminders.md), [the house](home.md) (Home
 Assistant's devices, an Android TV box and the agent that works it, plugins for the rest), [TARS on
@@ -427,6 +430,72 @@ of a stage's services fail, TARS says it couldn't, and the Status page shows whi
 against the cloud path. **Done when** pulling the Pi's internet still leaves the lights, the door, timers and reminders
 working by voice, in under three seconds to first sound.
 
+## Later: a brain anywhere, a body at home
+
+**Goal:** TARS doesn't live on the Pi. Its brain (the models, conversations, skills, reminders, memory, Telegram, the
+web UI, the database) runs wherever is most reliable: a small cloud server, the Mac, or still the Pi. The Pi becomes
+the body: the microphone and speaker in the room, and what only works from inside the home. If the Pi or its card
+dies, the house goes quiet for a while, but TARS still chats, reminds and remembers; and a second room is a second
+body.
+
+**Where it stands.** TARS is already three processes sharing one folder: the voice, Telegram and the web UI. Telegram
+runs without the voice process, and reaches it only for `/say`, the microphone's mute and recording sessions, over a
+Unix socket (`control.py`). But all three assume the hardware and the home network are on their own machine.
+
+**The split:**
+
+| The body, at home | The brain, anywhere |
+|---|---|
+| Microphone and speaker; the wake word and its double-check, so no audio leaves until "hey TARS" is confirmed | The models, conversations and the rules of every tool (unlocking, a turn's go-ahead, nothing after a web search) |
+| Knowing when someone's turn is over, which is latency-sensitive | Skills and their clock, reminders, wishes, settings, preferences |
+| Buttons and the speakerphone's mute | Telegram and the web UI |
+| What only answers at home: the Android TV over ADB, the IR blaster, Bluetooth devices, the routers (who's home) | The database, its backup, TARS's records and knowing itself |
+| Home Assistant and Mosquitto, in Docker as now | Speech to text and the voice (cloud services either way) |
+
+The body decides nothing: it does what it's asked and says what happened.
+
+**Design:**
+
+- **The body dials out.** One long-lived connection to the brain, over Tailscale or a WebSocket with a key at each
+  end; nothing at home opens a port, as with Telegram today. Events go up (a wake confirmed, with the audio after it;
+  a button; a phone coming home; a device changing), calls come down ("play Channel 12 on the TV"), each answered as
+  the home tool's are now, and the reply's audio streams down to the speakerphone.
+- **A voice turn:** the wake word and its check on the Pi, as now; the request streamed to speech to text, from the
+  body itself to save a hop (the brain then gets words, not audio); the brain thinks and calls the house through the
+  body; the voice's audio streams back down. A hop through the brain adds tens of milliseconds, which a server near
+  the AI services may win back: it reaches them faster than a home connection does. Measured, not assumed.
+- **Secrets stay where they're used.** The house's (Home Assistant's token, the IR blaster's key, the TV's ADB key)
+  on the body; the models' and Telegram's on the brain.
+- **Unlocking is checked twice.** The brain keeps its rules, and the body checks again, on its own: a request that
+  started at home by voice, the speaker recognized on the Pi, or a trusted chat's own "unlock". So even a brain
+  that's been taken over can't open the door.
+- **When the brain can't be reached** (the internet, or the server, down): the body still hears its name, says it
+  can't reach its brain, and does what it can on its own: [house commands on the
+  Pi](#planned-house-commands-on-the-pi) from a fixed phrase list, and later [working offline](#later-working-offline).
+  **When the body is down:** the brain carries on in chats, and the house tools say plainly that the house is
+  offline.
+- **More rooms, other homes.** Each room can have a body of its own (a Pi Zero with a microphone, or an old phone);
+  the brain knows which room spoke and answers there, and a reminder can follow someone from room to room. A home is
+  its bodies and a brain, which is what [TARS in other homes](#later-tars-in-other-homes) needs.
+
+**Plan, each step shipped on its own, TARS working after each:**
+
+1. **One boundary in the code.** Everything that touches hardware or the home network goes through a body interface,
+   still in-process on the Pi. Nothing changes for anyone.
+2. **Two processes on the Pi.** The body becomes its own service, and the brain talks to it over a socket, as
+   `control.py` does now; the body's own unlock check lands here.
+3. **The brain moves.** Pointed at a server, the two joined over Tailscale; the body's fallback when the brain can't
+   be reached; the backup and `--check` follow the brain.
+4. **A second body**, in another room, to prove the split holds.
+
+**Open questions:** where the brain runs (a small server for a few dollars a month and always on; the Mac, which
+sleeps; or still the Pi); whether speech to text goes straight from the body; how much the body does while the brain
+is away; and whether Home Assistant stays on the body or moves to a box of its own.
+
+**Measure:** time to first sound and the share of house commands done right, before and after each step, on the same
+recorded requests. **Done when** the brain has run off the Pi for a week with no difference anyone noticed, pulling
+the Pi's plug left Telegram, reminders and memory working, and a second room's body answered in that room.
+
 ## Later: TARS in other homes
 
 **Goal:** someone who isn't a developer can run TARS at home: buy the parts, follow one guide, and have it working in
@@ -452,6 +521,9 @@ assume a terminal, updates (step 4), sign-in for the web UI (step 2), and the ke
    the grants it asks for shown before it's installed.
 5. **Licensing settled:** the wake models' non-commercial license, and any provider terms, checked for what a
    shared image may include; what can't ship is downloaded on first run.
+
+A home could also be only bodies, its brain hosted elsewhere ([a brain anywhere, a body at
+home](#later-a-brain-anywhere-a-body-at-home)), which makes the setup at home a small device and the rest a sign-up.
 
 **Done when** a second household, set up from the image and the guide without help, uses it for a week.
 
