@@ -110,8 +110,41 @@ By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service) (the browser's screen),
 [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
 [`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
-[`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer). A rerun with `[telegram]`,
-`[backup]` or `[browser]` off stops and disables that unit.
+[`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer), and
+[`deploy/voice-assistant-update.service`](../deploy/voice-assistant-update.service) with its timer. A rerun with
+`[telegram]`, `[backup]`, `[browser]` or `[updates]` off stops and disables that unit.
+
+### Updates
+
+With `[updates] enabled = true` (and `[household] maintainers`, who are told), TARS updates itself: what's merged into
+`[updates] branch` (`main`) is on the Pi within minutes, with no SSH. A timer runs `voice-assistant --update` every
+ten minutes ([`deploy/voice-assistant-update.timer`](../deploy/voice-assistant-update.timer)), and each pass
+(`updater.py`):
+
+1. **Fetches the branch.** Nothing new: done.
+2. **Decides whether it may install by itself.** Not when the update changes the database (a new step in
+   `store.MIGRATIONS`, which code can't take back) or the system (packages in `deploy/pi-packages.txt` not installed
+   yet, a changed device rule): the maintainers get "There's an update for me (...). It changes ..., so I'm asking
+   first." in their chats, with an **Install** button, and it waits for a tap, which installs it at once. The system's
+   part is done by `deploy/tars-system`, the one thing TARS may run as root, through a sudoers rule for it alone
+   ([security](security.md#the-services-on-the-machine)), so no password is asked. Only a change to `tars-system`
+   itself is left to a person: they're told to run `git pull && deploy/install-pi.sh`, which asks for sudo once to
+   install it.
+3. **Waits for a quiet moment:** nobody's spoken to TARS for three minutes, and no errand is running.
+4. **Keeps what it would need to go back:** the database (through SQLite's backup API) and `config.local.toml`, under
+   `voice_data/events/updates/`.
+5. **Installs:** fast-forwards the checkout and runs `deploy/install-pi.sh`, then `--check --silent` must find
+   nothing ✗ (silent: the voice is made but not said, and nothing is listened to, since it may be the middle of the
+   night), and every service must still be running a minute later.
+6. **Goes back if any of that fails:** the services stopped, the checkout back where it was, the database restored
+   (when the update had changed it) and the config, the installer run again. That version isn't tried again; a newer
+   one is.
+7. **Tells the maintainers** either way, in plain words: "I've updated myself: ...", or what failed and that it went
+   back. The update trigger then runs too, so anyone who asked to hear what's new does ([skills](skills.md)).
+
+What it can't catch is an update that starts and checks fine but behaves wrongly: what's merged still matters.
+`journalctl --user-unit voice-assistant-update` shows each pass; `systemctl --user start voice-assistant-update`
+runs one now.
 
 ### Trying it on a simulated Pi first
 

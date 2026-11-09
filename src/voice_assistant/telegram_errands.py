@@ -134,6 +134,8 @@ class TelegramErrands:
     def _take(self, update: dict) -> bool:
         """Whether `update` is this one's: a tap on one of its buttons, or a code a sign-in waits for."""
         if tap := update.get("callback_query"):
+            if str(tap.get("data", "")).partition(":")[0] not in ("order", "cancel"):
+                return False  # another's button (an update's Install)
             self._tapped(tap)
             return True
         message = update.get("message") or {}

@@ -163,3 +163,13 @@ with what they're sent is accepted: TARS can't work without them, and each one i
 TARS's systemd user services (`deploy/*.service`) run as the user who installed them, with that user's access:
 any of them can read `.env`, the vault and everything in `voice_data/`. Sandboxing each one (NoNewPrivileges,
 ProtectSystem, a web UI that can't read `.env` or reach the internet) is open.
+
+**Root.** On the Pi, that user is in the `docker` group, so Home Assistant can run in Docker beside TARS; and a member
+of the `docker` group can start a container with the whole disk in it, which makes it effectively root. That's
+accepted, and written down here because it's easy to miss: anything that runs as TARS's user could take the machine.
+Besides that, the one thing TARS runs as root is `deploy/tars-system` (installed root-owned as
+`/usr/local/sbin/tars-system`, with a sudoers rule for it alone, with no arguments): the packages
+`deploy/pi-packages.txt` lists, from the system's own signed repositories (names checked); TARS's two device rules,
+refused if one would run a program as root; and lingering. A change to it is installed only by a person running
+`deploy/install-pi.sh`, never by an update ([updates](deployment.md#updates)), so TARS can't rewrite its own root
+script.

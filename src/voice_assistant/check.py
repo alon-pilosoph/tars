@@ -2,7 +2,8 @@
 new machine (the Pi), and for when something stops working: one command instead of reading the logs.
 
 It says "TARS is ready." through the speaker and listens to the mic for a few seconds. With TARS running as a service
-the mic is shared (PipeWire), so it works either way.
+the mic is shared (PipeWire), so it works either way. `--check --silent` (as an update runs it, maybe at night) makes
+the voice without playing it and doesn't listen.
 """
 
 import functools
@@ -231,11 +232,14 @@ def within(
     return done[0]
 
 
-def voice(stream: Callable[[str], Iterable[bytes]], play: Callable[[list[bytes]], None]) -> list[Result]:
+def voice(stream: Callable[[str], Iterable[bytes]], play: Callable[[list[bytes]], None] | None) -> list[Result]:
+    """The voice made, and played through `play`; None: made only (a silent check)."""
     t = time.perf_counter()
     audio = list(stream(READY))
     took = time.perf_counter() - t
     results = [Result("Voice", OK, f'made "{READY}" in {took:.1f} s')]
+    if play is None:
+        return results
     play(audio)
     results.append(
         Result("Speaker", OK, f'played "{READY}": you should have heard it', "if not, check [audio] output_device")
@@ -826,7 +830,8 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
     )
 
 
-def check_all(cfg: Config, root: Path) -> int:
+def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
+    """`silent`: nothing played, nothing listened to: the voice is made and not said."""
     import sounddevice as sd
 
     from . import __main__ as cli
@@ -871,6 +876,8 @@ def check_all(cfg: Config, root: Path) -> int:
         if not have_keys:
             return Result("Voice", SKIP, "needs the API keys")
         _, _, tts = cli.make_pipeline(cfg, root, typed=True)
+        if silent:
+            return within(30, "Voice", lambda: voice(tts.stream, None), "no voice in time", "check the network")
 
         def say():
             try:
@@ -957,7 +964,7 @@ def check_all(cfg: Config, root: Path) -> int:
         ("Telegram", services.telegram),
         ("Telegram reminders", services.telegram_reminders),
         ("Voice", speaking),
-        ("Microphone", listen),
+        ("Microphone", (lambda: Result("Microphone", SKIP, "not listened to (a silent check)")) if silent else listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(http_status, web_port())),
         ("Home Assistant", hass_check),
