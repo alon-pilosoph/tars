@@ -143,6 +143,15 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
 - **Errands** (`browse`, with `[browser]`): an errand on a website, in TARS's own browser. It's queued, run by the
   Telegram service, and answered in the asker's chat, and aloud too if it was asked aloud; nothing is ordered until
   they tap Order on their phone ([TARS's browser](browser.md)).
+- **TARS itself** (`tars`, `myself.py`): TARS knowing itself, so "what's new?", "how do I teach you a skill?" and "why
+  did you do that?" are answered from what's true. `about`: its version, what's set up and whether each process is
+  running (the Status page's heartbeats). `changes`: what changed in it lately, from the checkout's own git history (a
+  PR's title each). `docs`: the sections of its own docs that match. `records`: what was said and done, with which
+  model answered and what failed; `log`: its services' journal, every tool call and its result. A Telegram chat is only
+  its own person's to read (the others are counted, not shown), what was said aloud is the household's, the log's
+  chat lines are left out, and neither is read in a reply that searched the web. Its rules also tell every model to
+  look before saying it can't tell something about itself, and to combine what it has before saying something can't
+  be done.
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.

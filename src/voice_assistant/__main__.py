@@ -653,13 +653,21 @@ def ask_to_say(folder: Path, text: str) -> None:
 
 
 def make_pipeline(
-    cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None, feeds=None, skills=None
+    cfg: Config,
+    root: Path,
+    typed: bool = False,
+    reminders=None,
+    home=None,
+    browser=None,
+    feeds=None,
+    skills=None,
+    myself=None,
 ):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
     can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands;
     with `feeds` (feeds.py), it reads and manages the RSS feeds people follow; with `skills` (skills.py), it's taught
-    skills and preferences, and knows them."""
+    skills and preferences, and knows them; with `myself` (myself.py), it knows itself."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -674,7 +682,15 @@ def make_pipeline(
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
     brain = make_brain(
-        client, brain_config(cfg, typed=typed), env, reminders, home=home, browser=browser, feeds=feeds, skills=skills
+        client,
+        brain_config(cfg, typed=typed),
+        env,
+        reminders,
+        home=home,
+        browser=browser,
+        feeds=feeds,
+        skills=skills,
+        myself=myself,
     )
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
@@ -714,6 +730,13 @@ def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
     return FallbackTranscriber(
         deepgram, OpenAITranscriber(client, dataclasses.replace(cfg.stt, model=OPENAI_STT_MODEL))
     )
+
+
+def make_myself(cfg: Config, root: Path, events):
+    """TARS knowing itself (myself.py): its version, changes, docs, records and log."""
+    from .myself import Myself
+
+    return Myself(cfg, root, events)
 
 
 def make_feeds(cfg: Config, events):
@@ -786,6 +809,7 @@ def telegram(cfg: Config, root: Path) -> None:
     queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
     feeds = make_feeds(cfg, events)  # one for every chat: each person's feeds are kept by person
     skills = make_skills(events)
+    myself = make_myself(cfg, root, events)
     tars = TelegramTars(
         bot,
         cfg.telegram.people,
@@ -800,6 +824,7 @@ def telegram(cfg: Config, root: Path) -> None:
             browser=browse_tool(cfg, queue, "telegram"),
             feeds=feeds,
             skills=skills,
+            myself=myself,
         ),
         ConversationLog(events) if events else None,
         tools,
@@ -1224,7 +1249,13 @@ def typed(cfg: Config, root: Path) -> None:
     presence = make_presence(cfg, root, events) if cfg.presence.enabled else None
     home = make_home(cfg, root, announce, presence, own_speaker(cfg))
     _, brain, voice = make_pipeline(
-        cfg, root, typed=True, home=home, feeds=make_feeds(cfg, events), skills=make_skills(events)
+        cfg,
+        root,
+        typed=True,
+        home=home,
+        feeds=make_feeds(cfg, events),
+        skills=make_skills(events),
+        myself=make_myself(cfg, root, events),
     )
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
@@ -1264,7 +1295,14 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     browser = voice_errands(cfg, events)
     skills = make_skills(events)
     transcriber, brain, voice = make_pipeline(
-        cfg, root, reminders=reminders, home=home, browser=browser, feeds=make_feeds(cfg, events), skills=skills
+        cfg,
+        root,
+        reminders=reminders,
+        home=home,
+        browser=browser,
+        feeds=make_feeds(cfg, events),
+        skills=skills,
+        myself=make_myself(cfg, root, events),
     )
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
