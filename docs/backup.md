@@ -29,7 +29,9 @@ month, most recordings live only in the bucket.
    writes), the voiceprints, the wake models trained on the household (the self-learning pairs and
    `models/personal/`), `config.local.toml`, and what the house has learned that only someone there could teach it
    again: the Android TV's ADB key, the devices' found addresses (`voice_data/found.json`) and each plugin's
-   `BACKUP_FILES` (my_house's AC profile and remote codes, [your own devices](home.md#your-own-devices)), as one
+   `BACKUP_FILES` (my_house's AC profile and remote codes, [your own devices](home.md#your-own-devices)), and, with
+   `[home] config_dir` and `HA_CONFIG_KEY` in `.env`, the history of [Home Assistant's own
+   setup](home.md#home-assistants-own-setup), sealed with that key (`ha-config.bundle.sealed`), as one
    `.tar.gz` under `<prefix>/snapshots/`. Never `.env`: the keys stay on the Pi. Snapshots older than
    `keep_snapshots_days` (30) are deleted then, but never the newest: a Pi that was off for longer still has one to
    restore.
@@ -112,6 +114,11 @@ flowchart LR
   `--fetch-audio` brings them back onto the Pi too. A restore puts back the database as it was at the last snapshot,
   so up to six hours of conversations can be missing; their recordings stay in the bucket, unused. Until the restore, the new Pi's backup writes nothing to the
   bucket, and `--check` says why. To start a new backup from scratch instead, set `[backup] prefix` to a new folder.
+  Home Assistant's setup comes back sealed. Put `HA_CONFIG_KEY` from your password manager in the new Pi's `.env`
+  and `[home] config_dir` in its `config.local.toml`, create Home Assistant's container without starting it (`cd
+  deploy/home-assistant && docker compose create`), then `uv run voice-assistant --ha-config-from-backup` opens it
+  into `config_dir`, history and all, and `docker compose up -d` starts it. Its history database and logs were never
+  kept, so its graphs start over.
 
 ## What it costs
 
@@ -127,7 +134,9 @@ deleting one sooner (a conversation deleted in the web UI) is charged as if it h
 
 AWS gets everything TARS keeps: the recordings, the files it sent, and in the snapshots the database, with its
 transcripts and voice embeddings, the voiceprints, the wake models, `config.local.toml` and what the house learned (the TV box's ADB key, the devices'
-addresses, a plugin's files). It's encrypted at rest,
+addresses, a plugin's files). Home Assistant's setup goes too, but only sealed (AES-GCM) with `HA_CONFIG_KEY`, which
+stays in `.env`: it holds the integrations' passwords and the keys Home Assistant signs its logins with, so the bucket
+gets nothing it could open. It's all encrypted at rest,
 in a bucket only the backup's key may read. Nothing else goes there, and `.env` never does.
 
 ## Design

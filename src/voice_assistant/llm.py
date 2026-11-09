@@ -610,7 +610,7 @@ class OpenAIChat:
         self._client = client
         self._cfg = cfg
         self._reminders = reminders
-        self._home = home if home and home.devices else None
+        self._home = home if home and home.tools else None
         self._browser = browser
         self._feeds = feeds
         self._skills = skills
@@ -627,7 +627,7 @@ class OpenAIChat:
             ([web_search_tool(cfg)] if cfg.web_search else [])
             + ([SEND_TOOL] if cfg.send else [])
             + (self._remind_tools if reminders else [])
-            + ([self._home.tool] if self._home else [])
+            + (self._home.tools if self._home else [])
             + ([browser.tool] if browser else [])
             + ([feeds.tool] if feeds else [])
             + ([skills.tool] if skills else [])
@@ -636,7 +636,8 @@ class OpenAIChat:
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
         can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
         can += (
-            [CAN_HOME] * bool(self._home)
+            [CAN_HOME] * bool(self._home and self._home.devices)
+            + ([self._home.ha.can] if self._home and self._home.ha else [])
             + ([browser.can] if browser else [])
             + ([feeds.can] if feeds else [])
             + ([skills.can] if skills else [])
@@ -847,6 +848,9 @@ class OpenAIChat:
             if change:
                 self.changes.append(change)
             return result
+        if self._home and self._home.ha and call.name == self._home.ha.tool["name"]:
+            failed = "error: couldn't reach Home Assistant ({e!r}); nothing is known to have changed"
+            return self._outside_lock(self._home.call_ha, args, writing, failed)
         if self._home and call.name == "home":
             # A device can take seconds (a bolt turning), and a change first waits for the turn to be over.
             failed = "error: couldn't reach the device ({e!r}); nothing is known to have changed"
@@ -980,13 +984,16 @@ class QuickChat(OpenAIChat):
         # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.
         own_home = (cfg.quick_tools or client is None) and bool(self._home)
         tools = self._remind_tools * own_remind + [QUICK_SEND_TOOL] * own_send
-        tools += [self._home.tool] if own_home else []
+        tools += self._home.tools if own_home else []
         self._quick_tool_defs = tools  # as the Responses API takes them
         self._quick_tools = [_chat_tool(t) for t in tools]
-        can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send + [CAN_HOME] * own_home
+        can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
+        can += [CAN_HOME] * (own_home and bool(self._home.devices))
+        can += [self._home.ha.can] if own_home and self._home.ha else []
         look_up = [NEEDS_THE_WEB] * cfg.web_search + [NEEDS_SENDING] * (cfg.send and not own_send)
         look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind and client is not None)
-        look_up += [NEEDS_HOME] * (bool(self._home) and not own_home)
+        look_up += [NEEDS_HOME] * (bool(self._home and self._home.devices) and not own_home)
+        look_up += [self._home.ha.needs] if self._home and self._home.ha and not own_home else []
         look_up += [browser.needs] if browser and client is not None else []
         look_up += [feeds.needs] if feeds and client is not None else []
         look_up += [skills.needs] if skills and client is not None else []

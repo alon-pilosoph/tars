@@ -45,6 +45,7 @@ echo = [
 # Backing up to S3 ([backup]).
 backup = [
     "boto3>=1.40",
+    "cryptography>=50.0.2",  # sealing Home Assistant's setup before it goes to the bucket
 ]
 # An Android TV box, over ADB ([[home.devices]] kind = "androidtv").
 tv = [
