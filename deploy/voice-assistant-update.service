@@ -1,0 +1,20 @@
+# systemd *user* service for one update pass ([updates] in config.toml, docs/deployment.md#updates), started by
+# voice-assistant-update.timer, and at once by a maintainer's tap on Install. deploy/install-pi.sh installs both when
+# [updates] is on. Its own unit, so it outlives the services it restarts.
+#
+#   systemctl --user start voice-assistant-update          # a pass now
+#   journalctl --user-unit voice-assistant-update          # how the passes went
+
+[Unit]
+Description=TARS update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --update
+Environment=PYTHONUNBUFFERED=1
+# Installing and checking takes minutes; a stuck one is stopped, and the next pass starts over.
+TimeoutStartSec=45min
+Nice=10

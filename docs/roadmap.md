@@ -205,11 +205,11 @@ tool of its own, nothing it reacts to, and no version. Updating is `git pull && 
    item 4); TARS loads only what's granted in config, and `--check` lists each plugin, its version and what it may
    do. Installed as a package or from a git URL, pinned.
 3. **`examples/my_house` moves onto it first,** which shows the plugin interface covers a real household.
-4. **Updates.** Tagged releases with a changelog. `voice-assistant --update` installs the newest one: checks its
-   signature, installs the locked packages, snapshots the database, restarts the services between conversations,
-   and runs `--check` and the heartbeats; if either fails, it goes back to the previous release and its snapshot.
-   The Status page and Telegram say when an update is waiting; installing it stays a tap (or a night-time setting).
-   Plugins update the same way.
+4. **Updates.** Built from the branch rather than releases ([deployment](deployment.md#updates)): what's merged into
+   `main` installs itself at a quiet moment, checked silently, and is taken back with its database and config if it
+   fails; one that changes the database waits for a maintainer's tap, and one that needs sudo is left to them. Left:
+   tagged, signed releases with a changelog, the Status page saying an update is waiting, and plugins updating the
+   same way.
 
 **Later:** TARS writing a plugin itself when asked for something it can't do, tested in a sandbox against recorded
 events and opened as a pull request for a person to review: planned now as

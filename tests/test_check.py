@@ -438,3 +438,11 @@ def test_errands_asked_aloud_waiting_while_telegram_is_off_fail(tmp_path, cfg):
     Queue(EventLog(tmp_path).store, clock=lambda: 0.0).add("Alon", "order a pizza on Wolt", VOICE)
     found = errands_waiting(cfg, tmp_path, now=1_000.0)
     assert found.status == FAIL and "Telegram isn't running" in found.detail
+
+
+def test_a_silent_check_makes_the_voice_without_playing_it():
+    played = []
+    results = check.voice(lambda text: iter([b"audio"]), None)
+    assert [r.name for r in results] == ["Voice"] and played == []
+    loud = check.voice(lambda text: iter([b"audio"]), played.append)
+    assert [r.name for r in loud] == ["Voice", "Speaker"] and played == [[b"audio"]]

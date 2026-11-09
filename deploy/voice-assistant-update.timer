@@ -1,0 +1,15 @@
+# Runs voice-assistant-update.service every ten minutes: TARS installs what's merged into [updates] branch, at a quiet
+# moment, and takes it back if it fails. A pass still running when the next is due isn't started twice.
+# docs/deployment.md#updates
+
+[Unit]
+Description=TARS updates itself, every ten minutes
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+RandomizedDelaySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

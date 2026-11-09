@@ -340,6 +340,9 @@ def main() -> None:
     parser.add_argument(
         "--check", action="store_true", help="check everything TARS needs (keys, devices, services, models) and exit"
     )
+    parser.add_argument(
+        "--silent", action="store_true", help="with --check: make the voice without playing it, and don't listen"
+    )
     parser.add_argument("--mic-test", action="store_true", help="live mic / VAD / wake-word meter (no API key)")
     parser.add_argument("--ptt", action="store_true", help="push-to-talk instead of wake word")
     parser.add_argument("--text", action="store_true", help="type questions instead of speaking them")
@@ -390,6 +393,9 @@ def main() -> None:
         "--ha-config", action="store_true", help="the latest changes to Home Assistant's setup ([home] config_dir)"
     )
     backup.add_argument(
+        "--update", action="store_true", help="install what's new on [updates] branch, once, as its timer does"
+    )
+    backup.add_argument(
         "--ha-config-key",
         action="store_true",
         help="make the key Home Assistant's setup is sealed with in the backup (HA_CONFIG_KEY in .env)",
@@ -431,7 +437,7 @@ def main() -> None:
         if args.check:
             from .check import check_all
 
-            raise SystemExit(check_all(cfg, root))
+            raise SystemExit(check_all(cfg, root, silent=args.silent))
         if args.mic_test:
             from .mic_test import mic_test
 
@@ -466,6 +472,9 @@ def main() -> None:
             return
         if args.ha_config:
             ha_config_history(cfg, root)
+            return
+        if args.update:
+            update_pass(cfg, root)
             return
         if args.ha_config_key:
             ha_config_key(root)
@@ -844,9 +853,30 @@ def telegram(cfg: Config, root: Path) -> None:
         skill_clock=skill_clock(skills, "chat", home, presence, myself),
     )
     told.append(tars)
+    if cfg.updates.enabled:
+        listen_for_update_taps(cfg, root, tars)
     if queue:
         make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
     tars.run_forever(me)
+
+
+def listen_for_update_taps(cfg: Config, root: Path, tars) -> None:
+    """A maintainer's tap on an update's Install button installs it at once (updater.py)."""
+    import subprocess
+
+    from .updater import Updater, tap_listener
+
+    chats = {name.strip().lower(): chat for name, chat in cfg.telegram.people.items()}
+    maintainers = [chats[m.strip().lower()] for m in cfg.household.maintainers if m.strip().lower() in chats]
+
+    def start() -> None:
+        # Its own unit, so the update outlives this service, which it restarts.
+        subprocess.run(
+            ["systemctl", "--user", "start", "--no-block", "voice-assistant-update.service"], check=False, timeout=10
+        )
+
+    updater = Updater(root, cfg, lambda text, buttons: tell_maintainers(cfg, root, text, buttons))
+    tars.listen_first(tap_listener(updater, maintainers, tars.bot, start))
 
 
 def spotify_login(cfg: Config, root: Path, env: Path):
@@ -1043,6 +1073,39 @@ def ha_config_pass(cfg: Config, root: Path) -> None:
         print(f"(Home Assistant's setup: couldn't keep its history: {e})")
     except ImportError:
         print("(Home Assistant's setup: sealing it for the backup needs the backup extra: uv sync --extra backup)")
+
+
+def tell_maintainers(cfg: Config, root: Path, text: str, buttons: list[tuple[str, str]] = ()) -> None:
+    """Posts `text` (with buttons, if any) to each maintainer's Telegram chat, straight through Telegram's API: the
+    Telegram service may be what's restarting. A chat that can't be reached costs a line."""
+    from .telegram import Bot, TelegramError
+
+    chats = {name.strip().lower(): chat for name, chat in cfg.telegram.people.items()}
+    targets = [chats[m.strip().lower()] for m in cfg.household.maintainers if m.strip().lower() in chats]
+    if not cfg.telegram.enabled or not targets:
+        print(f"(no maintainer's chat to tell: {text})")
+        return
+    try:
+        bot = Bot(api_key(root / ".env", TELEGRAM_KEY))
+    except ConfigError as e:
+        print(f"(can't tell the maintainers: {e})")
+        return
+    for chat in targets:
+        try:
+            bot.send_buttons(chat, text, list(buttons)) if buttons else bot.send(chat, text)
+        except TelegramError as e:
+            print(f"(couldn't tell a maintainer on Telegram: {e})")
+
+
+def update_pass(cfg: Config, root: Path) -> None:
+    """--update: one pass, as its timer runs it."""
+    from .updater import Updater
+
+    if not cfg.updates.enabled:
+        print("(updates: off; [updates] enabled = true turns them on)")
+        return
+    said = Updater(root, cfg, lambda text, buttons: tell_maintainers(cfg, root, text, buttons)).run_once()
+    print(f"(updates: {said})")
 
 
 def ha_config_key(root: Path) -> None:

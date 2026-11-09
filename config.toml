@@ -370,3 +370,11 @@ default_person = ""
 # a room, undo a change (docs/home.md#changing-home-assistants-setup). Empty = nobody in particular: wishes are only
 # kept, and nobody changes Home Assistant's setup through TARS.
 maintainers = []
+
+[updates]
+# TARS updates itself, from a timer every ten minutes (docs/deployment.md#updates): what's merged into `branch` is
+# installed at a quiet moment (nobody's spoken to it for a few minutes, no errand running), checked silently, and taken
+# back if anything fails. One that changes the database waits for a maintainer to tap Install in their chat; one that
+# needs sudo (new system packages, a device rule) is left for them to install by hand. Either way they're told.
+enabled = false
+branch = "main"

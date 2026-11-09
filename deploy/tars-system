@@ -1,0 +1,52 @@
+#!/bin/bash
+# The only thing TARS may run as root, installed as /usr/local/sbin/tars-system (root-owned) by deploy/install-pi.sh,
+# with a sudoers rule that lets TARS's user run it, with no arguments, and nothing else (docs/deployment.md#updates).
+# It does the system-level part of installing TARS from the user's checkout, so an update that needs it never waits
+# for someone to type a password:
+#
+#   1. the packages deploy/pi-packages.txt lists, from the system's own (signed) repositories, if any are missing;
+#   2. TARS's two device rules, copied into /etc/udev/rules.d if they changed, and applied; a rule that runs a
+#      program (RUN, PROGRAM, IMPORT) is refused, so nothing in the checkout can make root run something;
+#   3. lingering, so TARS's services run without anyone logged in.
+#
+# A change to this script itself is never installed by an update: install-pi.sh, run by a person, does that.
+set -euo pipefail
+
+user="${SUDO_USER:?run it through sudo}"
+repo="$(getent passwd "$user" | cut -d: -f6)/voice-assistant"
+cd "$repo"
+
+packages=()
+while read -r line; do
+  name="${line%%#*}"
+  name="$(echo "$name" | tr -d '[:space:]')"
+  [ -z "$name" ] && continue
+  if [[ ! "$name" =~ ^[a-z0-9][a-z0-9.+-]+$ ]]; then
+    echo "tars-system: refusing package name '$name'" >&2
+    exit 1
+  fi
+  dpkg -s "$name" >/dev/null 2>&1 || packages+=("$name")
+done < deploy/pi-packages.txt
+if [ "${#packages[@]}" -gt 0 ]; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+fi
+
+changed=0
+for rules in 99-tars-speakerphone.rules 99-tars-ir.rules; do
+  if grep -v '^\s*#' "deploy/$rules" | grep -q -E 'RUN|PROGRAM|IMPORT'; then
+    echo "tars-system: refusing deploy/$rules: it would run a program as root" >&2
+    exit 1
+  fi
+  if ! cmp -s "deploy/$rules" "/etc/udev/rules.d/$rules"; then
+    install -m 644 -o root -g root "deploy/$rules" "/etc/udev/rules.d/$rules"
+    changed=1
+  fi
+done
+if [ "$changed" = 1 ]; then
+  udevadm control --reload
+  udevadm trigger --action=add --subsystem-match=hidraw --subsystem-match=rc
+  udevadm settle
+fi
+
+loginctl show-user "$user" -p Linger | grep -q yes || loginctl enable-linger "$user"

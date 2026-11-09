@@ -340,6 +340,15 @@ class HouseholdConfig:
 
 
 @dataclass
+class UpdatesConfig:
+    # TARS updates itself (docs/deployment.md#updates): what's merged into `branch` is installed by itself, at a quiet
+    # moment, checked, and taken back if it fails; one that changes the database waits for a maintainer's tap, and one
+    # that needs sudo for one of them to install by hand. The maintainers ([household]) are told in their chats.
+    enabled: bool = False
+    branch: str = "main"
+
+
+@dataclass
 class Config:
     audio: AudioConfig
     wake: WakeConfig
@@ -358,6 +367,7 @@ class Config:
     browser: BrowserConfig
     feeds: FeedsConfig
     household: HouseholdConfig
+    updates: UpdatesConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
