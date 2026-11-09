@@ -10,7 +10,7 @@ import types
 import pytest
 
 import voice_assistant.assistant as assistant_module
-from voice_assistant.androidtv import AndroidTV, TvAgent, TvDevice, screen
+from voice_assistant.androidtv import CONNECT_TIMEOUT_S, SLOW_READ_S, AndroidTV, TvAgent, TvDevice, screen
 from voice_assistant.assistant import Announcements
 from voice_assistant.audio import chime
 from voice_assistant.home import HomeError, Request
@@ -48,7 +48,7 @@ class Box(AndroidTV):
         self.state = {"awake": awake, "front": front, "media": media, "ui": ui}
         self.commands: list[str] = []
 
-    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False):
+    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False, quiet_s=3.0):
         self.commands.append(command)
         s = self.state
         if command.startswith("dumpsys power"):
@@ -125,6 +125,23 @@ class Flaky(AndroidTV):
         if self.errors and (error := self.errors.pop(0)):
             raise error
         return "  mWakefulness=Awake"
+
+
+class Timed(Flaky):
+    """Keeps how long each command may go without a word from the box."""
+
+    def _shell(self, command, transport_timeout_s=None, **kw):
+        self.quiet = getattr(self, "quiet", {}) | {command.split()[0]: transport_timeout_s}
+        return super()._shell(command, **kw)
+
+
+def test_reading_the_screen_or_starting_an_app_may_go_quiet_but_a_quick_read_may_not():
+    # While live TV played, each screen read was cut off after 3 s of quiet: it takes 11 s to come back, so the
+    # channel that was on was said to have failed.
+    box = Timed()
+    box.ui(), box.open_link("https://x", "com.app"), box.awake()
+    assert box.quiet["uiautomator"] == box.quiet["am"] == SLOW_READ_S
+    assert box.quiet["dumpsys"] == CONNECT_TIMEOUT_S  # a box gone quiet on a quick read has gone
 
 
 def test_a_press_that_may_have_reached_the_box_is_never_sent_twice():

@@ -93,7 +93,10 @@ STOP_WAIT_S = 5.0
 AGENT_EFFORT = "low"
 UI_DUMP = "/sdcard/tars_ui.xml"
 KEY_FILE = "voice_data/androidtv/adbkey"  # TARS's ADB key: the box asks once whether to trust it
-CONNECT_TIMEOUT_S = 3.0
+CONNECT_TIMEOUT_S = 3.0  # also how long a command may go without a word from the box, unless it says otherwise
+# Reading the screen, or an app starting, says nothing until it's done: while video plays a read takes 10 s or more,
+# to say it couldn't; an app's first start on a Fire TV Stick, 17 s.
+SLOW_READ_S = 20.0
 # A connection unused this long may have gone (the box slept, or moved): it's checked before a press goes over it.
 IDLE_S = 30.0
 
@@ -160,12 +163,20 @@ class AndroidTV:
         self._remember()
         return adb
 
-    def _run(self, command: str, decode: bool = True, timeout_s: float = 10.0, repeatable: bool = False):
-        """`repeatable`: running it twice does no harm (a read, waking the box), so it's tried again on a new
-        connection whatever went wrong. Anything else (a press, typing) is tried again only after a connection error,
-        which usually means it never went out: after a timeout the box may have done it, and twice would press twice.
-        So a connection left idle is checked first, where trying again is safe. A connection that couldn't be made is
-        always tried once more: nothing was sent on it."""
+    def _run(
+        self,
+        command: str,
+        decode: bool = True,
+        timeout_s: float = 10.0,
+        repeatable: bool = False,
+        quiet_s: float = CONNECT_TIMEOUT_S,
+    ):
+        """`quiet_s`: how long the box may say nothing before the connection counts as gone. `repeatable`: running
+        it twice does no harm (a read, waking the box), so it's tried again on a new connection whatever went wrong.
+        Anything else (a press, typing) is tried again only after a connection error, which usually means it never
+        went out: after a timeout the box may have done it, and twice would press twice. So a connection left idle is
+        checked first, where trying again is safe. A connection that couldn't be made is always tried once more:
+        nothing was sent on it."""
         with self._lock:
             if not repeatable and self._adb is not None and self._clock() - self._used > IDLE_S:
                 self._run("echo", repeatable=True)
@@ -177,7 +188,13 @@ class AndroidTV:
                         raise
                     continue  # nothing went out; a box just waking from sleep often answers the second time
                 try:
-                    out = device.shell(command, read_timeout_s=timeout_s, timeout_s=timeout_s, decode=decode)
+                    out = device.shell(
+                        command,
+                        transport_timeout_s=quiet_s,
+                        read_timeout_s=timeout_s,
+                        timeout_s=timeout_s,
+                        decode=decode,
+                    )
                     self._used = self._clock()
                     return out
                 except HomeError:
@@ -191,8 +208,10 @@ class AndroidTV:
                         raise HomeError(why) from e
         raise AssertionError("unreachable")
 
-    def shell(self, command: str, timeout_s: float = 10.0, repeatable: bool = False) -> str:
-        return self._run(command, timeout_s=timeout_s, repeatable=repeatable) or ""
+    def shell(
+        self, command: str, timeout_s: float = 10.0, repeatable: bool = False, quiet_s: float = CONNECT_TIMEOUT_S
+    ) -> str:
+        return self._run(command, timeout_s=timeout_s, repeatable=repeatable, quiet_s=quiet_s) or ""
 
     def close(self) -> None:
         with self._lock:
@@ -240,7 +259,7 @@ class AndroidTV:
         """The text on screen, as the app describes it to accessibility tools: one line per element, the focused one
         marked. Empty if the app doesn't say (games, some video players): then only a screenshot shows it."""
         dump = f"uiautomator dump {UI_DUMP} >/dev/null 2>&1; cat {UI_DUMP}; rm -f {UI_DUMP}"
-        out = self.shell(dump, timeout_s=15, repeatable=True)
+        out = self.shell(dump, timeout_s=SLOW_READ_S, repeatable=True, quiet_s=SLOW_READ_S)
         start = out.find("<?xml")
         if start < 0:
             return ""
@@ -257,7 +276,7 @@ class AndroidTV:
         return "\n".join(dict.fromkeys(lines))[:6000]
 
     def screenshot(self) -> bytes:
-        png = self._run("screencap -p", decode=False, timeout_s=15, repeatable=True)
+        png = self._run("screencap -p", decode=False, timeout_s=SLOW_READ_S, repeatable=True, quiet_s=SLOW_READ_S)
         if not png or not png.startswith(b"\x89PNG"):
             raise HomeError("the TV box didn't give a screenshot")
         return png
@@ -297,7 +316,8 @@ class AndroidTV:
         q = shlex.quote
         parts = ["am start -W -a android.intent.action.VIEW", f"-d {q(uri)}"]
         parts += [f"-f {q(flags)}"] * bool(flags) + [f"-e {q(k)} {q(str(v))}" for k, v in (extras or {}).items()]
-        self.shell(" ".join([*parts, f"-n {q(component)}" if component else q(package)]), timeout_s=15, repeatable=True)
+        started = " ".join([*parts, f"-n {q(component)}" if component else q(package)])
+        self.shell(started, timeout_s=SLOW_READ_S, repeatable=True, quiet_s=SLOW_READ_S)  # -W: quiet till it's up
 
     def force_stop(self, package: str) -> None:
         self.shell(f"am force-stop {shlex.quote(package)}", repeatable=True)

@@ -37,7 +37,7 @@ from .control import Refused, Unavailable
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
-from .llm import REMIND_TOOLS, SEARCHING, SKIP, THINKING, Brain, split_ack, split_skip
+from .llm import PARDON, REMIND_TOOLS, SEARCHING, SKIP, THINKING, Brain, split_ack, split_skip
 from .mic_mute import DEVICE as MIC
 from .reminders import (
     ACKNOWLEDGED,
@@ -623,7 +623,12 @@ class TelegramTars:
         asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                pieces = brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True, heard=text))
+                skipped, pieces = split_skip(
+                    brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True, heard=text))
+                )
+                if skipped:  # a chat is always meant for TARS: the tag is never posted
+                    brain.forget_last()
+                    pieces = iter([PARDON])
                 if self._tools:
                     acks, pieces = split_ack(pieces)
                 reply = tidy("".join(pieces))

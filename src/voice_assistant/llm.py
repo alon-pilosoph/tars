@@ -43,6 +43,9 @@ FOLLOW_UP_TAG = "[Follow-up, no wake word]"
 ASKED_TAG = "[Reply to your 'Did you call me?']"
 SKIP = "<skip>"
 SKIPS = (SKIP, _escaped(SKIP))
+# Said instead when the model skips what was said to it by name, or written in a chat: "New zone." heard for "news on"
+# can look overheard, but someone was talking to TARS, and the tag itself is never theirs to hear.
+PARDON = "Sorry, I didn't catch that. Say it again?"
 SKIP_RULES = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "

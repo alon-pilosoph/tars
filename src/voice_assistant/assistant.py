@@ -28,7 +28,7 @@ from .echo import without_echo
 from .errors import SERVICE_FAILURES
 from .home import Request
 from .journal import Journal
-from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, SKIP, Brain, split_ack, split_skip
+from .llm import ASKED_TAG, FOLLOW_UP_TAG, PARDON, REMINDER_TAG, SKIP, Brain, split_ack, split_skip
 from .phrases import Audio, Phrases
 from .recorder import UtteranceRecorder
 from .recording import NO_SPEECH, SILENCE, TAP
@@ -1005,11 +1005,13 @@ class Assistant:
         answer.asked, answer.t_asked = True, time.perf_counter()
         try:
             pieces = self.brain.stream_reply(prompt, request)
-            if may_skip:
-                answer.skipped, pieces = split_skip(pieces)
-                if answer.skipped:
-                    self.brain.forget_last()  # overheard conversation shouldn't linger in the history
+            skipped, pieces = split_skip(pieces)
+            if skipped:
+                self.brain.forget_last()  # overheard conversation shouldn't linger in the history
+                if may_skip:
+                    answer.skipped = True
                     return answer
+                pieces = iter([PARDON])  # said to TARS by name: asked again, never gone quiet on
             if self.reminders:
                 answer.acks, pieces = split_ack(pieces)
             pieces = _tee(pieces, answer.spoken)

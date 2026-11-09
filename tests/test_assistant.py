@@ -80,10 +80,13 @@ def test_follow_ups_can_be_turned_off(speaker):
     assert assistant.recorder.timeouts == [None]
 
 
-def test_first_request_is_never_treated_as_overheard(speaker):
-    assistant, brain = make_assistant(speaker, [b"a", None], ["hi"], replies=["<skip>"])
+def test_first_request_is_never_treated_as_overheard(speaker, tmp_path):
+    # "New zone." for "news on", after the wake word: the model took it for overheard, and the tag reached the voice.
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"a", None], ["New zone."], replies=["<skip>"])
     assistant.converse(follow_up_s=4.0)
-    assert brain.forgotten == 0
+    assert assistant.brain.forgotten == 1  # the tag never stays in the history
+    assert turns_of(convos)[-1]["text"] == assistant_module.PARDON
+    assert assistant.recorder.timeouts == [None, 4.0]  # and the answer is listened for
 
 
 def failing(assistant, error):
