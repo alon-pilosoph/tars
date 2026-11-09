@@ -38,7 +38,7 @@ from voice_assistant.__main__ import api_key
 
 REPO = Path(__file__).parents[1]
 URL = "https://api.typesafe.ai/v1/systemone"
-# Where each kind of request should go, as Jev's options. Descriptions follow TARS's own (llm.NEEDS_..., llm.CANT).
+# Where each kind of request should go, as Jev's options. Descriptions follow TARS's own (llm.NEEDS_..., llm.CANT_...).
 ROUTES = {
     "answer": "A reply TARS can say from general knowledge or the conversation: a fact, a joke, arithmetic, the "
     "time, small talk, or a simple how-to.",

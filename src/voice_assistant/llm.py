@@ -103,8 +103,11 @@ def _or_else(pieces: Iterable[str], default: str) -> Iterator[str]:
 
 # What TARS can't do. Without saying so, a model asked for a timer TARS can't set says "Twelve minutes, starting
 # now." and nothing ever goes off.
-CANT = "play music or sounds, call anyone, or control anything in the house"
-CANT_BUT_HOME = "play music or sounds, call anyone, or work anything in the house the home tool doesn't list"
+# What TARS can't do at all, unless what's set up says otherwise (OpenAIChat._cant).
+CANT_CALL = "make phone calls"
+CANT_MUSIC = "play music or sounds"
+CANT_HOUSE = "control anything in the house"
+CANT_UNLISTED = "work anything in the house the home tool doesn't list"
 CANT_REMIND = "set timers, alarms or reminders"
 CANT_WEB = "look anything up on the web"
 CANT_SEND = "send anything to a phone or the TARS page"
@@ -372,8 +375,11 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
             "whoever answers next sees what you did, and answers the rest."
         )
     parts.append(
-        f"You can't {', '.join(cant)}. When asked to, say plainly in one short line that you can't do that yet, and "
-        "offer what you can do instead if something fits. Never say you did something you can't do."
+        f"You can't {', '.join(cant)}. Before you say you can't do anything, these or something else, see whether "
+        "what you have does it, combined: a skill that runs at a time or when something happens, a reminder or a "
+        "message, the house, the web, what you know of yourself. Say you can't only when nothing does, and then in "
+        "one short line: exactly what stops you, and what would make it possible. If you have the tars tool, note it "
+        "there as a wish, so whoever looks after TARS sees it. Never say you did something you can't do."
     )
     return "\n\n".join(parts)
 
@@ -752,13 +758,20 @@ class OpenAIChat:
         return [ACK_RULES] + ([REMIND_RULES] if tools else [])
 
     def _cant(self) -> list[str]:
-        """What TARS can't do at all, whichever model answers."""
-        cfg = self._cfg
+        """What TARS can't do at all, whichever model answers: worked out from what's set up, so it's never told it
+        can't do what it can (play music with a Spotify device, work anything with all of Home Assistant)."""
+        cfg, home = self._cfg, self._home
+        devices = home.devices.values() if home else []
+        everything = bool(getattr(home, "ha", None))  # all of Home Assistant, not only the devices listed
+        plays = everything or any(type(d).__name__ == "Spotify" for d in devices)
+        house = [] if everything else [CANT_UNLISTED] if home else [CANT_HOUSE]
         return (
             [CANT_REMIND] * (not self._reminders)
             + [CANT_WEB] * (not cfg.web_search)
             + [CANT_SEND] * (not cfg.send)
-            + [CANT_BUT_HOME if self._home else CANT]
+            + [CANT_CALL]
+            + [CANT_MUSIC] * (not plays)
+            + house
         )
 
     def _one_moment(self, calls: list[tuple[str, str]], said: str) -> str:
