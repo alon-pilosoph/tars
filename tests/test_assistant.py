@@ -74,6 +74,38 @@ def test_empty_transcript_ends_the_conversation(speaker):
     assert brain.asked == ["hello"]
 
 
+def test_an_answer_to_its_question_that_came_out_as_no_words_is_asked_for_again_once(speaker):
+    # "Which channel, 11 or 12?" and "twelve" said as it ended: heard, but nothing of it written down.
+    assistant, brain = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", b"c"],
+        ["turn the news on", "", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    said = []
+    assistant.say = lambda text, **kw: said.append(text)
+    assistant.converse(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON]  # once: twice in a row is noise, not an answer
+    assert brain.asked == ["turn the news on"]
+    assistant, brain = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", None],
+        ["turn the news on", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    assistant.say = lambda text, **kw: None
+    assistant.converse(follow_up_s=4.0)
+    assert brain.asked == ["turn the news on", f"{FOLLOW_UP_TAG} twelve"]
+
+
+def test_no_words_after_an_answer_that_asked_nothing_ends_the_conversation_quietly(speaker):
+    assistant, brain = make_assistant(speaker, [b"q", b"a", b"b"], ["lights on", "", "x"], replies=["Done."])
+    said = []
+    assistant.say = lambda text, **kw: said.append(text)
+    assistant.converse(follow_up_s=4.0)
+    assert said == [] and brain.asked == ["lights on"]
+
+
 def test_follow_ups_can_be_turned_off(speaker):
     assistant, _ = make_assistant(speaker, [b"a"], ["hello"])
     assistant.converse(follow_up_s=0)

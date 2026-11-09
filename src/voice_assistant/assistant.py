@@ -208,6 +208,7 @@ class Assistant:
         self._woke_at: float | None = None  # when the wake word was confirmed, for how soon TARS greeted it
         self._greet_s: float | None = None
         self._only_echo = False  # the last request heard was nothing but a trace of TARS's own greeting
+        self._last_reply = ""  # what TARS last answered in this conversation
         self._identifying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="speaker-id")
         self._thinking = threading.Lock()  # drafts take turns
         self.phrases = Phrases(voice, phrase_folder, clock)
@@ -808,7 +809,7 @@ class Assistant:
             self.journal.end_conversation()
 
     def _converse(self, follow_up_s: float, first: Utterance | None, greet_after_s: float, greet: str) -> None:
-        heard = first
+        heard, pardoned, self._last_reply = first, False, ""
         if heard is None:
             if greet == ALWAYS:
                 heard = self.greet_and_listen()
@@ -843,6 +844,16 @@ class Assistant:
             if not answered and heard.echo_of and self._only_echo:
                 # All it heard was a trace of its own greeting: the request is still to come.
                 heard = self.listen()
+                if heard is None:
+                    return
+                continue
+            if not answered and self._only_echo and heard.follow_up and asks([self._last_reply]) and not pardoned:
+                # Someone spoke after TARS asked, and no words came of it: an answer said as the question ended, its
+                # start cut off ("twelve" to "11 or 12?"). Dropped, they'd wait for something that never happens.
+                print("(heard someone after asking, but no words: asking again)")
+                pardoned = True
+                self.say(PARDON)
+                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True)
                 if heard is None:
                     return
                 continue
@@ -909,6 +920,7 @@ class Assistant:
             if self._greet_s is not None:  # the conversation's first request: how soon TARS greeted the wake word
                 self.timings["greet"], self._greet_s = self._greet_s, None
             said = self._speak(answer, t_stopped_talking)
+            self._last_reply = said.text
             heard.draft.keep()
         except BaseException as e:
             # Unheard, or only half heard: stop it, and leave the brain as if it was never asked.
