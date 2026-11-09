@@ -17,7 +17,9 @@ being right.
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | large |
 
 Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
-them. Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after
+them; [wishes that come true](#planned-wishes-that-come-true), where something TARS couldn't do becomes a pull request
+and, once merged, a message to whoever asked; and [noticing routines](#planned-noticing-routines), where TARS learns
+the household's habits from Home Assistant's history and offers to take them over. Benched for now: [learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after
 the six: [working offline](#later-working-offline) and [TARS in other homes](#later-tars-in-other-homes).
 
 **Built so far, alongside step 1:** [reminders, timers and messages](reminders.md), [the house](home.md) (Home
@@ -196,7 +198,8 @@ tool of its own, nothing it reacts to, and no version. Updating is `git pull && 
    Plugins update the same way.
 
 **Later:** TARS writing a plugin itself when asked for something it can't do, tested in a sandbox against recorded
-events and opened as a pull request for a person to review.
+events and opened as a pull request for a person to review: planned now as
+[wishes that come true](#planned-wishes-that-come-true).
 
 **Done when** `my_house` runs as a declared plugin with only the grants it needs, an update and a rollback have both
 been done on the Pi without SSH, and a plugin that asks for more than it was granted fails to load.
@@ -265,6 +268,76 @@ one person's memory never reaches another's answer.
 
 **Open question:** what TARS offers to remember. Too eager and it's a nag; the week of real use will show which
 facts come up again.
+
+## Planned: wishes that come true
+
+**Goal:** Stacey asks for something TARS can't do yet. A week later TARS tells her, unprompted: "Remember you asked me
+to read you the kindergarten's WhatsApp updates? I can now." In between, the only person who did anything was the one
+who reviewed a pull request.
+
+**What's there already:** the `tars` tool notes a real "can't" as a wish, with what stopped TARS and what would make
+it possible ([architecture](architecture.md)); skills can run when TARS is updated, told what changed
+([skills](skills.md)); and `changes` tells what's new from the checkout's own history.
+
+**Design:**
+
+1. **A wish goes to whoever looks after TARS** (`[home] setup_people`, or a `maintainers` list of its own), in their
+   chat, in plain words: "Stacey asked me to read her the kindergarten's WhatsApp updates; I can't reach WhatsApp.
+   Want me to have it built?" With a cost guess, since building isn't free. Nothing is built without that yes.
+2. **On a yes, a coding agent builds it:** a cloud Claude Code session on the repository, started by TARS with the
+   wish, what stopped it, the docs, and the rules the repository keeps (its tests, its docs, one pull request,
+   household specifics only in `examples/`). It never gets `.env`, `config.local.toml` or the database: what it knows
+   of the house is the wish's sentence. It opens a pull request and stops; it can't merge.
+3. **TARS follows the pull request,** and tells the maintainer in their chat what it does, in plain words, when CI is
+   green; a failing run is sent back to the session to fix, a few times at most.
+4. **Merged is deployed:** until step 4's updates, a timer on the Pi pulls `main` and runs `deploy/install-pi.sh`
+   between conversations when it moved, and `--check` decides whether it stays (or goes back).
+5. **Whoever asked is told.** The wish is marked granted by the pull request that answered it; the next start, which
+   is an update, runs the person's own "tell me what's new" or, without one, says it to them once, in their chat or
+   aloud: what they can now ask for, never how.
+
+**Limits held in code:** only the maintainer's yes starts a build; the session's repository access is the only
+access it has (no keys, no house); nothing merges itself; the wish text sent out is a sentence, not the chat it came
+from; a build that fails three times is reported, not retried forever; and a monthly cost cap.
+
+**Measure:** a set of wishes of different sizes (a new feed source, a new device kind, a new tool), each run through
+to a pull request on a branch, judged by whether it passes CI, follows the repository's rules, and does what was
+wished. **Done when** a real wish from the household has gone from "I can't" to "I can now" with nobody touching the
+code but the reviewer.
+
+## Planned: noticing routines
+
+**Goal:** TARS notices what the household does by habit and offers to take it over ("You put the boiler on most
+weekdays around six. Want me to just do that?"), and notices what's out of the ordinary ("The door's been unlocked
+for an hour and nobody's home"). Saying yes makes it a skill, invisibly.
+
+**The data:** Home Assistant keeps six months of every state change (`recorder: purge_keep_days`, raised from its 10
+days on 2026-11-09) and an hourly average, low and high of every numeric sensor for good (the boiler's power shows
+when it was on, for as long as it's been there); who's home is in the event database; and so is every request
+("boiler on", asked at 18:12 by Stacey). History starts on 2026-10-30; patterns need a few weeks of it.
+
+**Design:**
+
+- **Found by plain statistics, nightly, on the Pi.** For each device: its changes by weekday and time of day, and
+  each one's nearest event before it (someone arriving or leaving, another device, sunset). A routine is the same
+  change within half an hour on most days of a kind (weekdays, weekends) for three weeks or more, or within ten
+  minutes of the same event most times. No model reads the history; one only words what's found.
+- **Offered once, to whoever does it, at a good moment:** the next time they do it by hand, or in their chat; at
+  most one offer a day for the household, never in quiet hours, and never again once declined (a declined pattern is
+  kept as declined). Yes saves it as a skill, with what it was learned from.
+- **Watched after:** a skill whose change someone undoes soon after is asked about ("You turned the boiler off right
+  after I put it on. Stop doing that?"), and paused on a yes.
+- **The unusual, from the same baselines:** a door unlocked with nobody home for longer than it ever has been; the
+  boiler on far longer than usual; a room's temperature outside its usual range at night; a device that's stopped
+  answering. Said to whoever's home, or in a chat, by how much it matters, with quiet hours.
+
+**Limits held in code:** a routine that would unlock is never offered; what TARS learned stays on the Pi (the wording
+step sends the model only the pattern found, in words); and the patterns found are listed for the maintainer with
+what each came from, so a wrong one is easy to see.
+
+**Measure:** the finder run over the recorded history, its routines checked by hand against what the household
+says it does; offers made and declined, and skills undone. **Done when** three offered routines have run for two
+weeks without being undone, and the unusual has been said at least once when it mattered, and never when it didn't.
 
 ## Planned: house commands on the Pi
 
