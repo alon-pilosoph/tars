@@ -169,3 +169,30 @@ def test_recorded_clips_keep_their_numbers():
     }
     assert [p.phrase for p in PROMPTS if p.set_name == "hey_tars_lookalikes"][:4] == ["hey cars"] * 3 + ["hey bars"]
     assert len(PROMPTS) == 30 + 30 + 25 + 14 * 3
+
+
+def test_a_wake_model_file_that_came_down_broken_is_fetched_again_not_kept(tmp_path, monkeypatch, capsys):
+    # openWakeWord keeps whatever a download wrote (an error page) and never fetches a file that exists.
+    from voice_assistant import wake
+
+    broken = tmp_path / "melspectrogram.onnx"
+    broken.write_text("<html>502 Bad Gateway</html>")
+    made, fetched = [], []
+
+    def make(**kw):
+        made.append(kw)
+        if broken.exists():
+            raise RuntimeError("[ONNXRuntimeError] : 7 : INVALID_PROTOBUF")
+        return "the model"
+
+    monkeypatch.setattr(wake, "_broken_files", lambda model: [broken] if broken.exists() else [])
+    assert wake._load(make, "hey_jarvis", fetched.append) == "the model"
+    assert fetched == [["hey_jarvis"]] and len(made) == 2 and "came down broken" in capsys.readouterr().out
+
+    def fault(**kw):
+        raise RuntimeError("something else entirely")
+
+    monkeypatch.setattr(wake, "_broken_files", lambda model: [])
+    with pytest.raises(RuntimeError, match="something else"):  # nothing broken to fetch: raised at once
+        wake._load(fault, "hey_jarvis", fetched.append)
+    assert fetched == [["hey_jarvis"]]

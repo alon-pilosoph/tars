@@ -47,7 +47,7 @@ class WakeWordTrigger:
         else:
             openwakeword.utils.download_models([model])  # no-op once cached
             name = model
-        self._model = Model(wakeword_models=[model], inference_framework="onnx")
+        self._model = _load(Model, model, openwakeword.utils.download_models)
         self.threshold = threshold
         self.phrase = name.replace("_", " ")
 
@@ -152,3 +152,46 @@ class PushToTalkTrigger:
     def wait(self, mic: Microphone, due: Due | None = None) -> None:
         input("Press Enter, then speak... ")
         mic.clear()
+
+
+DOWNLOAD_TRIES = 3
+
+
+def _load(make, model: str, download):
+    """openWakeWord's model, made again after fetching its files afresh if one came down broken: its download keeps
+    whatever arrived (a failed request's error page among them) and never fetches a file that exists, so one broken
+    download would otherwise stop the wake word for good. `make`: openwakeword.model.Model; `download`: its
+    download_models."""
+    for attempt in range(1, DOWNLOAD_TRIES + 1):
+        try:
+            return make(wakeword_models=[model], inference_framework="onnx")
+        except Exception as e:  # onnxruntime's errors aren't one type; a real fault is raised below
+            broken = _broken_files(model)
+            if attempt == DOWNLOAD_TRIES or not broken:
+                raise
+            print(f"(wake: {', '.join(p.name for p in broken)} came down broken ({type(e).__name__}); fetching again)")
+            for path in broken:
+                path.unlink(missing_ok=True)
+            download([] if model.endswith(".onnx") else [model])
+    raise AssertionError("unreachable")
+
+
+def _broken_files(model: str) -> list[Path]:
+    """openWakeWord's downloaded .onnx files (its feature models, and `model` if it's one of its own) that onnxruntime
+    can't read."""
+    import onnxruntime
+    import openwakeword
+
+    folder = Path(openwakeword.__file__).parent / "resources" / "models"
+    names = [Path(m["download_url"]).with_suffix(".onnx").name for m in openwakeword.FEATURE_MODELS.values()]
+    if not model.endswith(".onnx"):
+        names += [p.name for p in folder.glob(f"{model}*.onnx")]
+    broken = []
+    for path in (folder / n for n in names):
+        if not path.exists():
+            continue
+        try:
+            onnxruntime.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        except Exception:  # noqa: BLE001 - any load failure is a broken file
+            broken.append(path)
+    return broken
