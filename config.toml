@@ -240,6 +240,14 @@ volume_keys = true
 # The speakerphone's own mute is TARS's: while it's muted (its light red), TARS doesn't listen, and the remote's
 # mute mutes it the same way. Linux, with a speakerphone that has one (deploy/99-tars-speakerphone.rules).
 speakerphone_mute = true
+# Home Assistant's config folder on this machine, relative to this one: its setup (integrations, devices, areas,
+# automations) is kept as a git history here, committed every backup pass, so any change to it can be seen and undone
+# (docs/home.md#home-assistants-own-setup). It holds Home Assistant's passwords, so it goes in the backup's snapshots
+# only sealed with HA_CONFIG_KEY from .env (voice-assistant --ha-config-key). With Home Assistant in Docker beside
+# TARS: "deploy/home-assistant/config". Empty = no history.
+config_dir = ""
+# Home Assistant's Docker container: its image runs git as root, and undoing a change stops and starts it.
+container = "homeassistant"
 # Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
 # [home.plugins.my_house]
 # module = "examples.my_house"

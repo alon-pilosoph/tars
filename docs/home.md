@@ -23,6 +23,9 @@ household's IR-only AC and TV remotes.
 | "How was the air last night?" / "Was CO₂ worse last winter?" | a sensor's history: Home Assistant's hourly record of it and its details, told in a sentence or two |
 | "Play Toy Story on Stremio" | "On it.", and the TV's agent works it out on screen; "Toy Story is playing." after a chime |
 | "Is everything off?" | every device's status at once |
+| "How long was the boiler on today?" | [all of Home Assistant](#all-of-home-assistant): its history, "1 hour 18 minutes, in three goes" |
+| "Who unlocked the door?" / "What turned the boiler on at 6?" | Home Assistant's logbook: what happened, and what did it |
+| "Dim the hall light to 40%" | any entity in Home Assistant, listed or not, through its own services |
 
 ## The promises it keeps
 
@@ -355,6 +358,31 @@ it's used. It isn't in the backup, so a restored TARS signs in again.
 Skills, named things to do, some at set times, are taught by talking to TARS, and can use the house like any other
 request: [skills and preferences](skills.md).
 
+### All of Home Assistant
+
+With `[home] url` and its token, TARS also has the `home_assistant` tool (`ha_tool.py`): everything in Home
+Assistant, not just the devices listed, the way a person with its app has it. The listed devices stay the home tool's,
+which checks a change took and knows each one's quirks; this is for the rest, and for the past.
+
+- **find**: entities by words in their name, room or id, each with its state. **state**: one entity, attributes and
+  all.
+- **history**: an entity's changes over a span, and the time it spent in each state: "how long was the boiler on
+  today?" Home Assistant keeps about ten days of this. **statistics**: a number's hourly averages, kept for good (the
+  same table as a sensor's history).
+- **logbook**: what happened and what did it ("turned on, by switch.turn_on", or nothing, when it was the device's own
+  button).
+- **services**: what a domain can do, with its fields. **call**: any of them, on any entity: "done" with the new
+  state Home Assistant answers, or "sent" when the state hasn't moved yet.
+
+The same promises hold, in code: a change waits for the turn to go ahead; a reply that searched the web changes
+nothing, and doesn't read the house's past either (history, statistics and the logbook say who was home and when, and a
+page could ask for that); and unlocking follows [the same rules](#unlocking), whether it's the lock's own service,
+another service on the lock, a button on the lock's own device (a Nuki's "unlatch" and "Lock 'n' Go" open the door
+without its lock entity) or anything else named for unlocking or unlatching, or a script, automation or scene that
+names any of these (one whose setup can't be read counts as if it did). A call's data can't aim it at a whole device,
+room or label, which could take the lock in without naming it. It won't administer Home Assistant itself: restarting or updating it, its integrations, users,
+backups and recorder, or running code (`ADMIN` in `ha_tool.py`); that's for a person, in Home Assistant.
+
 ## Setting it up
 
 About half an hour, on the Pi (or the Mac while you try it).
@@ -408,6 +436,32 @@ About half an hour, on the Pi (or the Mac while you try it).
    reads, whether it answers, and what to do if not. Then restart TARS and try each device aloud;
    `journalctl --user-unit voice-assistant | grep -E 'home:|tv:'` shows every call and what the device answered,
    the devices TARS started with, any that isn't connected and why, and a box or blaster found at a new address.
+
+### Home Assistant's own setup
+
+With `[home] config_dir` (on the Pi, `"deploy/home-assistant/config"`), Home Assistant's setup is kept as a git
+history on this machine (`haconfig.py`), so any change to it can be seen and undone: its YAML (automations, scripts,
+scenes), its custom integrations, and `.storage`, where it keeps its integrations, devices, entities and areas. Its
+logs, its history database and the files it rewrites every few seconds stay out (a `.gitignore` TARS writes).
+
+- **Every backup pass** (every 15 minutes) commits whatever changed since the last, "Changes made in Home Assistant":
+  what someone did in Home Assistant's own app is in the history too. The first pass starts it. Passes come from
+  [the backup](backup.md)'s timer, so `[backup]` has to be on; `--check` says when it isn't.
+- **`uv run voice-assistant --ha-config`** lists the latest changes, newest first, with the files each touched.
+- **`uv run voice-assistant --ha-config-restore <change>`** puts the setup back as it was at that change: it stops Home
+  Assistant (which writes `.storage` as it stops, and would undo the restore), puts the files back, keeps that as one
+  more change, and starts it again. Nothing in the history is rewritten, so a restore can itself be undone.
+- **In the backup, sealed.** `.storage` holds the integrations' passwords and tokens, and the keys Home Assistant signs
+  its logins with: whoever has those has the house, its lock included. So the history never leaves this machine as it
+  is. `uv run voice-assistant --ha-config-key` puts a new `HA_CONFIG_KEY` in `.env` (it doesn't print it: copy it
+  from `.env` into a password manager yourself), and each pass after seals the history with it (AES-GCM) for the
+  backup's next snapshot. Without the key, nothing goes to the bucket, and `--check` says so. A new Pi opens it with
+  `--ha-config-from-backup` ([backup.md](backup.md)); without the key it can't, so keep that copy.
+
+Home Assistant runs as root in its container and writes some files only root may read, so every git command runs as
+root in a throwaway container of Home Assistant's own image, which has git: nothing else to install, and it works
+whether Home Assistant is running or not. What a change did outside Home Assistant, a Bluetooth device unpaired or a
+cloud login revoked, isn't in these files, and a restore can't bring it back: the device may need pairing again.
 
 ## What leaves the house
 
