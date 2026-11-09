@@ -172,6 +172,8 @@ def _load(make, model: str, download):
             print(f"(wake: {', '.join(p.name for p in broken)} came down broken ({type(e).__name__}); fetching again)")
             for path in broken:
                 path.unlink(missing_ok=True)
+                # openWakeWord fetches a feature model again only when its .tflite is missing, and both together.
+                path.with_suffix(".tflite").unlink(missing_ok=True)
             download([] if model.endswith(".onnx") else [model])
     raise AssertionError("unreachable")
 

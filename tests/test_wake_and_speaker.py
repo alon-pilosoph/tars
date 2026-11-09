@@ -177,6 +177,8 @@ def test_a_wake_model_file_that_came_down_broken_is_fetched_again_not_kept(tmp_p
 
     broken = tmp_path / "melspectrogram.onnx"
     broken.write_text("<html>502 Bad Gateway</html>")
+    twin = tmp_path / "melspectrogram.tflite"  # its download is skipped while this is there
+    twin.write_bytes(b"fine")
     made, fetched = [], []
 
     def make(**kw):
@@ -188,6 +190,7 @@ def test_a_wake_model_file_that_came_down_broken_is_fetched_again_not_kept(tmp_p
     monkeypatch.setattr(wake, "_broken_files", lambda model: [broken] if broken.exists() else [])
     assert wake._load(make, "hey_jarvis", fetched.append) == "the model"
     assert fetched == [["hey_jarvis"]] and len(made) == 2 and "came down broken" in capsys.readouterr().out
+    assert not twin.exists()  # so openWakeWord fetches the pair again
 
     def fault(**kw):
         raise RuntimeError("something else entirely")
