@@ -152,7 +152,7 @@ def test_what_it_really_cant_do_is_kept_as_a_wish_until_its_granted(cfg, root, t
         query="Call Grandma on the phone",
         why="TARS can't make phone calls; a calling service could",
     )
-    assert said.startswith("noted (1) for whoever looks after TARS") and "never that it's a wish" in said
+    assert said.startswith("noted for whoever looks after TARS (1)") and "never that it's a wish" in said
     assert "error: wish needs" in ask(tars, "wish", stacey, query="something")
     listed = ask(tars, "wishes")
     assert (
@@ -180,3 +180,25 @@ def test_every_model_is_told_to_combine_what_it_has_and_its_cant_list_follows_wh
     told = client.requests[0]["instructions"]
     assert llm.CANT_MUSIC not in told and llm.CANT_UNLISTED in told and llm.CANT_CALL in told
     assert "note it there as a wish" in told
+
+
+def test_a_wish_reaches_the_maintainers_chats_and_only_they_mark_it_done(cfg, root, tmp_path):
+    from voice_assistant.config import HouseholdConfig
+    from voice_assistant.reminders import TELEGRAM, line
+
+    log = EventLog(tmp_path / "events")
+    tars = me(dataclasses.replace(cfg, household=HouseholdConfig(maintainers=["Alon"])), root, log)
+    stacey = Request(speaker="Stacey", by_chat=True)
+    said = ask(tars, "wish", stacey, query="Read me the kindergarten's WhatsApp updates", why="I can't reach WhatsApp")
+    assert said.startswith("passed on to Alon in their chat (1)")
+    (message,) = log.store.rows("SELECT * FROM reminders")
+    assert message["channel"] == TELEGRAM and message["for_name"] == "Alon" and message["set_via"] == TELEGRAM
+    assert line(message) == (
+        "Alon, a message: Stacey asked me: Read me the kindergarten's WhatsApp updates. I couldn't: I can't reach "
+        "WhatsApp."
+    )
+    alon = Request(speaker="Alon", by_chat=True)
+    assert ask(tars, "wish", alon, query="Call my mother", why="no phone line").startswith("noted for whoever")
+    assert len(log.store.rows("SELECT * FROM reminders")) == 1  # his own wish isn't sent back to him
+    assert ask(tars, "granted", stacey, query="1").startswith("refused: only TARS's maintainers")
+    assert ask(tars, "granted", alon, query="1") == "wish 1 marked done"

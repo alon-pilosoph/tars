@@ -3,7 +3,7 @@ removing an integration, renaming a device and putting it in a room, and undoing
 setup actions (ha_tool.py) come here.
 
 Kept in code:
-- Only the people [home] setup_people names may change the setup; empty, nobody may.
+- Only TARS's maintainers ([household] maintainers) may change the setup; with none, nobody may.
 - A setup step that asks for a password, a token or a code, or a sign-in in a browser, isn't filled in by TARS: the
   person is sent to that step on Home Assistant's own page, so a secret never goes through a chat or a model.
 - Removing an integration, or undoing a change, takes two turns: the first says what would go (and which of TARS's
@@ -50,7 +50,7 @@ RULES = (
 
 
 class HASetup:
-    """`people`: who may change the setup ([home] setup_people). `history`: Home Assistant's setup history
+    """`people`: who may change the setup ([household] maintainers). `history`: Home Assistant's setup history
     (haconfig.HAConfig), None if it isn't kept. `listed`: the entity ids of the devices [home] lists, so a removal
     can say which of them would stop working."""
 
@@ -95,9 +95,9 @@ class HASetup:
 
     def _may(self, request: Request) -> str | None:
         if not self._people:
-            return "refused: nobody may change Home Assistant's setup through TARS ([home] setup_people is empty)"
+            return "refused: nobody may change Home Assistant's setup through TARS ([household] maintainers is empty)"
         if not request.speaker or request.speaker.strip().lower() not in self._people:
-            return "refused: changing Home Assistant's setup is only for the people [home] setup_people names"
+            return "refused: changing Home Assistant's setup is only for TARS's maintainers"
         return None
 
     # Reading.

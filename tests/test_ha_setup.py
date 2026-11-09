@@ -135,13 +135,13 @@ def test_removing_takes_a_second_message_says_what_breaks_and_is_kept(setup):
     assert setup.history.commits == ["Changes made in Home Assistant", "Removed nuki (Home door), by TARS for Alon"]
 
 
-def test_someone_else_cant_confirm_a_removal_and_only_setup_people_may_change_it(setup):
+def test_someone_else_cant_confirm_a_removal_and_only_maintainers_may_change_it(setup):
     do(setup, "remove", target="e1")
     stacey = Request(speaker="Stacey", by_chat=True, heard="yes")
     assert do(setup, "remove", stacey, target="e1").startswith("refused: changing Home Assistant's setup is only")
     assert do(setup, "discovered", stacey).startswith("found")  # looking is fine
     nobody = HASetup(FakeHA(), [], None)
-    assert "setup_people is empty" in nobody.call("rename", "d1", "Front door", None, ALON)
+    assert "maintainers is empty" in nobody.call("rename", "d1", "Front door", None, ALON)
     searched = Request(speaker="Alon", by_chat=True, heard="x", read_the_web=True)
     assert do(setup, "rename", searched, target="d1", query="x").startswith("refused: this reply searched the web")
 

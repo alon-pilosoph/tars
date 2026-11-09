@@ -151,9 +151,10 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   its own person's to read (the others are counted, not shown), what was said aloud is the household's, the log's
   chat lines are left out, and neither is read in a reply that searched the web. Its rules also tell every model to
   look before saying it can't tell something about itself. `wish`, `wishes`, `granted`: what someone asked for that
-  TARS really couldn't do is noted, with what stopped it and what would make it possible (the `wishes` table), so
-  whoever looks after TARS sees the gaps ("what did people ask for that you couldn't do?", or a skill that tells them
-  every Sunday); one done is marked granted. `settings`, `set`: what about TARS can be changed by asking ("be less
+  TARS really couldn't do is noted, with what stopped it and what would make it possible (the `wishes` table), and
+  posted at once to the Telegram chat of each of TARS's maintainers (`[household] maintainers`, as a message the
+  Telegram service posts, whichever process noted it; never back to the one who asked); "what did people ask for that
+  you couldn't do?" lists them, and only a maintainer marks one granted (with none named, anyone TARS knows). `settings`, `set`: what about TARS can be changed by asking ("be less
   jokey", "you cut me off", "remember our chats longer"; `settings.py`): only what `ADJUSTABLE` lists, each within
   bounds (the wake threshold can't go where TARS would never wake), never who may unlock or set up the house, the keys
   or the models. A change is written as its own line in `config.local.toml`, the rest of the file as it was, kept only

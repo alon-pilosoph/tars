@@ -45,8 +45,8 @@ RULES = (
     '"what did I ask you this morning?"); log: your service logs, every tool call and its result, for what went '
     "wrong. Someone's chats are only theirs to read.\n"
     "- wish: when you really can't do what someone asked, note it (what they wanted, in query; what stopped you and "
-    'what would make it possible, in why), so whoever looks after TARS sees it; wishes lists them ("what did people '
-    "ask for that you couldn't do?\"), granted marks one done, by its number in query.\n"
+    "what would make it possible, in why): it goes to TARS's maintainers, in their chats; wishes lists them "
+    '("what did people ask for that you couldn\'t do?"), granted marks one done, by its number in query.\n'
     '- settings: what about you can be changed by asking ("be less jokey", "you cut me off", "remember our chats '
     "longer\"), with each one's value now; set changes one (its name in query, the new value in value). Say what "
     "changed and that you'll be back in a moment; to put one back, set it to what it was."
@@ -128,7 +128,7 @@ class Myself:
             if action == WISHES:
                 return self.wishes()
             if action == GRANTED:
-                return self.granted(query)
+                return self.granted(query, request)
             if action == SETTINGS:
                 return self._settings().listing()
             if action == SET:
@@ -244,14 +244,43 @@ class Myself:
         if not asked or not why:
             return "error: wish needs what they wanted (query) and what stopped you (why)"
         via = "chat" if getattr(request, "by_chat", False) else "voice"
+        person = getattr(request, "speaker", None)
         number = self._events.store.write(
             "INSERT INTO wishes (at, person, via, asked, why) VALUES (?, ?, ?, ?, ?)",
-            (time.time(), getattr(request, "speaker", None), via, asked, why),
+            (time.time(), person, via, asked, why),
         )
-        return (
-            f"noted ({number}) for whoever looks after TARS; tell them in plain words you've passed it on, never "
-            "that it's a wish or a list"
-        )
+        told = self._tell_maintainers(person, asked, why, by_chat=via == "chat")
+        to = f"passed on to {', '.join(told)} in their chat" if told else "noted for whoever looks after TARS"
+        return f"{to} ({number}); tell them in plain words you've passed it on, never that it's a wish or a list"
+
+    def _tell_maintainers(self, person: str | None, asked: str, why: str, by_chat: bool = False) -> list[str]:
+        """Each maintainer with a Telegram chat gets the wish there, as a message (the Telegram service posts it,
+        whichever process noted it); the one who asked isn't told their own. Who was told."""
+        from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
+
+        cfg = self._cfg
+        if not cfg.telegram.enabled:
+            return []
+        chats = {name.strip().lower(): name for name in cfg.telegram.people}
+        me = (person or "").strip().lower()
+        text = f"{person or 'Someone'} asked me: {asked.rstrip('.')}. I couldn't: {why.rstrip('.')}."
+        told = []
+        for maintainer in cfg.household.maintainers:
+            name = chats.get(maintainer.strip().lower())
+            if not name or name.lower() == me:
+                continue
+            try:
+                Reminders(self._events.store).add(
+                    NewReminder(MESSAGE, text, for_name=name, due=time.time(), needs_ack=False, max_tries=1),
+                    set_via=TELEGRAM if by_chat else VOICE,
+                    channel=TELEGRAM,
+                    phones=[name],
+                )
+            except ValueError as e:
+                print(f"(wishes: couldn't tell {name}: {e})")
+                continue
+            told.append(name)
+        return told
 
     def wishes(self) -> str:
         if self._events is None:
@@ -268,9 +297,13 @@ class Myself:
             lines.append(f"{r['id']}. {at}, {who}: {r['asked']} (stopped by: {r['why']})")
         return "\n".join(lines)
 
-    def granted(self, number: str) -> str:
+    def granted(self, number: str, request=None) -> str:
         if self._events is None:
             return "error: TARS keeps no wishes here ([learning] log_events is off)"
+        maintainers = {m.strip().lower() for m in self._cfg.household.maintainers}
+        asker = str(getattr(request, "speaker", "") or "").strip().lower()
+        if maintainers and asker not in maintainers:
+            return "refused: only TARS's maintainers mark what was asked for as done"
         if not number.strip().isdigit():
             return "error: granted needs the wish's number, as wishes lists them"
         with self._events.store.transaction() as db:

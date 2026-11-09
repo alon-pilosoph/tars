@@ -300,9 +300,10 @@ it possible ([architecture](architecture.md)); skills can run when TARS is updat
 
 **Design:**
 
-1. **A wish goes to whoever looks after TARS** (`[home] setup_people`, or a `maintainers` list of its own), in their
-   chat, in plain words: "Stacey asked me to read her the kindergarten's WhatsApp updates; I can't reach WhatsApp.
-   Want me to have it built?" With a cost guess, since building isn't free. Nothing is built without that yes.
+1. **A wish goes to TARS's maintainers** (`[household] maintainers`: built, each wish is already posted to their
+   chats as it's noted), in plain words, and asks: "Stacey asked me to read her the kindergarten's WhatsApp updates;
+   I can't reach WhatsApp. Want me to have it built?" With a cost guess, since building isn't free. Nothing is built
+   without that yes.
 2. **On a yes, a coding agent builds it:** a cloud Claude Code session on the repository, started by TARS with the
    wish, what stopped it, the docs, and the rules the repository keeps (its tests, its docs, one pull request,
    household specifics only in `examples/`). It never gets `.env`, `config.local.toml` or the database: what it knows

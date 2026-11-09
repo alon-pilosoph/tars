@@ -185,6 +185,7 @@ class Context:
     # androidtv.make_tv_agent: a box, and TvAgent's own settings (extra_rules) -> its agent, or None
     tv_agent: Callable[..., object | None] | None = None
     devices: dict[str, Device] = field(default_factory=dict)  # by name, in lower case
+    maintainers: list[str] = field(default_factory=list)  # [household] maintainers: who looks after TARS
 
 
 class Built(NamedTuple):
@@ -255,7 +256,8 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         from .haconfig import HAConfig
 
         history = HAConfig(context.root / cfg.config_dir, cfg.container)
-    return Built(HomeTools(cfg, dict(context.devices), context.hass, history) if made else None, unavailable)
+    tools = HomeTools(cfg, dict(context.devices), context.hass, history, context.maintainers) if made else None
+    return Built(tools, unavailable)
 
 
 def load_plugin(module: str, root: Path):
@@ -329,9 +331,12 @@ class HomeTools:
     """The brain's side of the house: the tool, its rules for the instructions, and every call checked. What's wrong
     is said back to the model, so it can tell the person or try again."""
 
-    def __init__(self, cfg: HomeConfig, devices: dict[str, Device], hass=None, ha_config=None):
+    def __init__(
+        self, cfg: HomeConfig, devices: dict[str, Device], hass=None, ha_config=None, maintainers: list[str] = ()
+    ):
         """`hass`: Home Assistant (hass.HomeAssistant), for the home_assistant tool: all of it, beyond the devices.
-        `ha_config`: its setup's history (haconfig.HAConfig), so a change TARS makes to its setup can be undone."""
+        `ha_config`: its setup's history (haconfig.HAConfig), so a change TARS makes to its setup can be undone.
+        `maintainers`: who looks after TARS, the only ones who may change Home Assistant's setup."""
         from .ha_setup import HASetup
         from .ha_tool import HAAccess
 
@@ -343,7 +348,7 @@ class HomeTools:
         if hass is not None:
             listed = {str(v) for d in cfg.devices for k, v in d.items() if k in ("entity", "battery", "door")}
             listed |= {str(e) for d in cfg.devices for e in d.get("details", [])}
-            setup = HASetup(hass, cfg.setup_people, ha_config, listed)
+            setup = HASetup(hass, list(maintainers), ha_config, listed)
             self.ha = HAAccess(hass, self._may_unlock, self._lock, setup=setup)
 
     @property

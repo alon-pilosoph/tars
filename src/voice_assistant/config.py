@@ -244,9 +244,6 @@ class HomeConfig:
     config_dir: str = ""
     # Its Docker container: its image runs git, and undoing a change stops and starts it.
     container: str = "homeassistant"
-    # Who may change Home Assistant's setup through TARS (add what it found, remove an integration, rename a device,
-    # undo a change), by their names as TARS knows them. Empty = nobody.
-    setup_people: list[str] = field(default_factory=list)
     # Code of your own for devices Home Assistant doesn't work: a name, and { module = "...", and its own settings }.
     plugins: dict[str, dict] = field(default_factory=dict)
     # [[home.devices]]: each thing TARS may work, by the name people call it (docs/home.md).
@@ -334,6 +331,15 @@ class FeedsConfig:
 
 
 @dataclass
+class HouseholdConfig:
+    # Who looks after TARS, by their names as TARS knows them: what someone asked for and TARS couldn't do is posted
+    # to their Telegram chats, only they mark it done, and only they may change Home Assistant's setup by asking.
+    # Empty = nobody in particular: wishes are only kept, anyone TARS knows marks them done, and nobody changes the
+    # setup.
+    maintainers: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     audio: AudioConfig
     wake: WakeConfig
@@ -351,6 +357,7 @@ class Config:
     backup: BackupConfig
     browser: BrowserConfig
     feeds: FeedsConfig
+    household: HouseholdConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's

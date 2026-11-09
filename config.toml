@@ -248,10 +248,6 @@ speakerphone_mute = true
 config_dir = ""
 # Home Assistant's Docker container: its image runs git as root, and undoing a change stops and starts it.
 container = "homeassistant"
-# Who may change Home Assistant's setup by asking TARS: add what it found on the network, remove an integration (asked
-# twice), rename a device or put it in a room, undo a change (docs/home.md#changing-home-assistants-setup). By their
-# names as TARS knows them, from their voice or their chat. Empty = nobody.
-setup_people = []
 # Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
 # [home.plugins.my_house]
 # module = "examples.my_house"
@@ -366,3 +362,11 @@ login_port = 8091
 # Each person's are their own, kept in the event database ([learning] log_events). When TARS can't tell whose voice
 # asked, they're this person's (a name as TARS knows them; "": it says it doesn't know whose).
 default_person = ""
+
+[household]
+# Who looks after TARS (names as TARS knows them, like ["Alon"]). What someone asked for that TARS really couldn't do
+# is posted to their Telegram chats as it happens, and only they mark it done; they may also change Home Assistant's
+# setup by asking: add what it found on the network, remove an integration (asked twice), rename a device or put it in
+# a room, undo a change (docs/home.md#changing-home-assistants-setup). Empty = nobody in particular: wishes are only
+# kept, and nobody changes Home Assistant's setup through TARS.
+maintainers = []
