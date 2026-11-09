@@ -465,8 +465,8 @@ cloud login revoked, isn't in these files, and a restore can't bring it back: th
 
 ### Changing Home Assistant's setup
 
-The home_assistant tool also works Home Assistant's setup (`ha_setup.py`), for the people `[home] setup_people` names
-(empty: nobody; looking is for anyone):
+The home_assistant tool also works Home Assistant's setup (`ha_setup.py`), for TARS's maintainers (`[household]
+maintainers`; none named: nobody; looking is for anyone):
 
 | Said | What happens |
 |---|---|

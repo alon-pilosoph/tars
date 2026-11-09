@@ -563,6 +563,7 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=Non
 
     env = root / ".env"
     context = Context(root, lambda name: dotenv_values(env).get(name) or None, announce=announce)
+    context.maintainers = list(cfg.household.maintainers)
     context.tv_agent = functools.partial(make_tv_agent, cfg, env, announce) if announce else None
     extra = {}
     if presence:

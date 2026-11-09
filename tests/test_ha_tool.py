@@ -259,3 +259,10 @@ def test_a_door_opened_by_a_button_on_the_lock_or_a_script_pressing_one_keeps_th
     assert "it can unlock: script.let_in" in ask(ha, "call", stacey, service="script.let_in")
     assert ha.fake.calls == []
     assert ask(ha, "call", stacey, service="light.turn_on", entity_ids=["light.hall"]).startswith("done")
+
+
+def test_only_maintainers_may_change_home_assistants_setup():
+    fake = FakeHA()
+    hass = HomeAssistant("http://ha.local:8123", "token", fake.transport, command=lambda m: {})
+    assert HomeTools(HomeConfig(), {}, hass, None, ["Alon"]).ha._setup._people == {"alon"}
+    assert HomeTools(HomeConfig(), {}, hass).ha._setup._people == set()  # none named: nobody
