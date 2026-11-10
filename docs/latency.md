@@ -67,7 +67,9 @@ Deepgram, whose Flux voices take five connections at a time on its EU servers. P
 making one, so the rest waiting their turn costs nothing, and a reply thrown away stops its sentences and frees their
 connections. The speaker (`audio.Speaker`) skips any silence a voice starts a reply on (James starts within about 0.15
 s of it; Zeus, the voice before it, after 0.2-0.5 s) and hands the mic back at the last sound, so a short "Yes?" frees
-the mic 0.9 s after it starts, of which 0.3 s is a margin for the room's echo.
+the mic 0.7 s after it starts, of which 0.1 s is a margin for the room's echo. Measured in the room on the
+PowerConf, nothing of TARS reaches the mic once its last sound has played, and an answer to a question it asked
+starts 0.25-0.35 s after that: a 0.3 s margin cut the start off "twelve" two times in four ("well", "hello?").
 
 ### The greeting and the open mic
 
