@@ -151,7 +151,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         if not (context.background and context.tell):
             return Purifier(spec["name"], link)
         # The voice assistant's watches its Bluetooth, and tells the maintainers when it goes quiet.
-        watch = Watch(spec["name"], link.heard, context.tell).start()
+        watch = Watch(spec["name"], link.heard, context.tell, restart=link.restart).start()
         return Purifier(spec["name"], link, answered=watch.answered)
 
     return {"ac": ac, "remote": remote, "firetv": firetv, "purifier": purifier}

@@ -173,3 +173,39 @@ def test_only_the_voice_assistants_house_watches_it(tmp_path, monkeypatch):
     voice_side = Context(tmp_path, lambda name: None, tell=print, background=True)
     plugin.setup({}, voice_side)["purifier"](spec)
     assert started == ["air purifier"]
+
+
+def test_when_this_machine_cant_listen_its_bluetooth_is_restarted_before_anyone_is_told():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told, restarts = [0.0], [], []
+    answers = iter([None, None, True])  # it can't listen twice; restarted, it hears the purifier
+    watch = Watch(
+        "air purifier", lambda s: next(answers), told.append, clock=lambda: now[0], restart=lambda: restarts.append(1)
+    )
+    now[0] = GONE_AFTER_S * 2
+    watch.look()
+    assert restarts == [] and told == []  # one failure: not yet
+    watch.look()
+    assert restarts == [1] and told == []  # restarted, and that fixed it: nothing to tell
+    assert not watch.stuck
+
+
+def test_a_restart_that_doesnt_help_is_told_once_and_never_as_the_purifier_gone():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told, can_listen = [0.0], [], [False]
+    watch = Watch(
+        "air purifier",
+        lambda s: True if can_listen[0] else None,
+        told.append,
+        clock=lambda: now[0],
+        restart=lambda: True,
+    )
+    now[0] = GONE_AFTER_S * 3
+    for _ in range(4):
+        watch.look()
+    assert len(told) == 1 and "My Bluetooth has stopped working" in told[0] and not watch.gone
+    can_listen[0] = True
+    watch.look()
+    assert told[-1] == "My Bluetooth works again." and not watch.stuck

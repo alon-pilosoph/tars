@@ -163,7 +163,10 @@ Its Bluetooth can also be switched off at its own panel, and then nothing reache
 "disappear" in November 2026; being turned off doesn't do it, a night's watch showed). So the voice assistant watches
 it: every five minutes it listens ten seconds for its broadcast, never connecting, and when it's gone unheard for a
 quarter of an hour, TARS's maintainers are told once, in their chats ("press its Bluetooth button, or unplug it for ten
-seconds"), and again when it's back. A request it answers counts as heard. Two of them in range show as `AC500` with
+seconds"), and again when it's back. A request it answers counts as heard. When it's the Pi that can't listen at all
+(its Bluetooth stuck, which a Pi's sometimes is), twice running, TARS switches the Pi's Bluetooth off and on
+(`bluetoothctl`, allowed to the `bluetooth` group) and listens again; only if that doesn't fix it are the maintainers
+told, and never as the purifier being gone. Two of them in range show as `AC500` with
 different addresses: the one in a room away is faint (around -88 dBm) and may not answer at all from there.
 
 ## Setting it up
