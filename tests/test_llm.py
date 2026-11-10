@@ -1058,6 +1058,12 @@ def test_a_line_said_without_the_hand_off_still_goes_to_openai():
     assert brain.answered_by == llm.LOOKED_UP and len(openai.requests) == 1
 
 
+def test_a_line_said_after_the_quick_models_own_tools_is_its_whole_reply(tmp_path):
+    brain, openai, _, _ = quick_with_tools(tmp_path, [("remind", REMIND)], then="On it.")
+    assert "".join(brain.stream_reply("pasta timer")) == "On it."
+    assert openai.requests == [] and brain.answered_by == llm.QUICK and len(brain.changes) == 1
+
+
 def test_the_quick_model_is_told_the_lines_it_may_start_a_hand_off_with():
     brain, _, cerebras = cerebras_brain(lambda m: "ok")
     "".join(brain.stream_reply("hi"))

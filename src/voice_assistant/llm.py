@@ -1096,7 +1096,8 @@ class QuickChat(OpenAIChat):
                 print(f"({service.name} said nothing)")
                 writing.quick_service = None
             break
-        if not handed_off and answer.strip() in FILLERS and LOOK_UP in self._markers:
+        # Only when it did nothing itself: "On it." is the whole reply once it has started the TV on a film.
+        if not handed_off and answer.strip() in FILLERS and LOOK_UP in self._markers and not writing.quick_calls:
             print(f"({writing.quick_service} said {answer.strip()!r} and stopped; OpenAI answers)")
             handed_off, writing.answered_by = LOOK_UP, LOOKED_UP  # "Let me check." alone would leave them hanging
             if not answer[-1].isspace():
