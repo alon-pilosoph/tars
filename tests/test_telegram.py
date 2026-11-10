@@ -496,6 +496,7 @@ def test_the_real_brain_sets_a_reminder_and_sends_a_note_from_a_chat(convos):
 
 def test_tidy_takes_out_the_lines_said_while_waiting():
     assert tidy(f"{SEARCHING} It's 24 degrees.") == "It's 24 degrees."
+    assert tidy("Let me check. The door is locked.") == "The door is locked."
     assert tidy(f"Timer set. {THINKING} Rome first.") == "Timer set. Rome first."
     assert tidy("Line one.\n\nLine two.") == "Line one.\n\nLine two."
 

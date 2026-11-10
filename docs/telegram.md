@@ -146,7 +146,7 @@ anything written there: speaker ID isn't asked, and a voice message never trains
 instructions, so it wins: this is in writing, reply as in a text message, plain text, links are fine, what you send is
 posted here, a `[Voice message]` may have a word misheard (say what you heard and ask), and who's on Telegram (so a
 reminder for someone without a chat is said aloud). The lines TARS says while
-a slow answer comes ("Looking it up.", "Let me think about that for a moment.") are taken out: the chat shows
+a slow answer comes ("Let's see.", "Looking it up.", "Let me think about that for a moment.") are taken out: the chat shows
 "typing..." instead.
 
 **Done once it's delivered.** As by voice, what a reply asks for (a reminder set, something sent) happens only once

@@ -261,6 +261,11 @@ QUICK_SEND_TOOL = {
 SEARCHING = "Looking it up."
 # Said the moment a question goes to the thinking model, which can take a while before its first word.
 THINKING = "Let me think about that for a moment."
+# What TARS says the moment a question is handed to OpenAI: the news, a feed or the house can take several seconds
+# before its first word, and silence leaves the person wondering whether TARS heard them at all. The quick model picks
+# the one that fits; a fixed few, so each is made ahead and plays at once. LETS_SEE when it picks none.
+LETS_SEE = "Let's see."
+FILLERS = (LETS_SEE, "Let me check.", SEARCHING, "On it.")
 FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
 # A backstop, not a budget: a request that checks and then acts on a few things (two feeds previewed, then followed)
 # takes several rounds, and a model only uses the rounds it needs. A call repeating one that failed is stopped sooner.
@@ -356,9 +361,16 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
     parts = [f"What you can do yourself: {'; '.join(can)}."] if can else []
     for marker, intro, needs, examples in hand_offs:
         quoted = " or ".join(f'"{e}"' for e in examples)
+        reply = f"reply with exactly {marker} and nothing else"
+        if marker == LOOK_UP:
+            lines = ", ".join(f'"{f}"' for f in FILLERS)
+            reply = (
+                f"reply with exactly one of these lines, whichever fits, then {marker}, and nothing else: {lines} "
+                f'(like "Let me check. {marker}" for whether the door is locked, or "Let\'s see. {marker}" for '
+                "what's new)"
+            )
         parts.append(
-            f"{intro} When a message needs any of them, reply with exactly {marker} and nothing else, and it "
-            "answers instead:\n"
+            f"{intro} When a message needs any of them, {reply}, and it answers instead:\n"
             + "\n".join(f"- {n}" for n in needs)
             + f"\nFor example, {quoted} get{'s' * (len(examples) == 1)} {marker}."
         )
@@ -366,6 +378,8 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
         parts.append(
             "Never say you can't do something you can hand over, or that you'll look it up or think it over: hand it "
             "over. Answer everything else yourself."
+            + " The line before a hand-off is the only exception."
+            * (LOOK_UP in [m for m, *_ in hand_offs])
         )
     if hand_offs and can:
         markers = " or ".join(marker for marker, *_ in hand_offs)
@@ -1082,6 +1096,12 @@ class QuickChat(OpenAIChat):
                 print(f"({service.name} said nothing)")
                 writing.quick_service = None
             break
+        if not handed_off and answer.strip() in FILLERS and LOOK_UP in self._markers:
+            print(f"({writing.quick_service} said {answer.strip()!r} and stopped; OpenAI answers)")
+            handed_off, writing.answered_by = LOOK_UP, LOOKED_UP  # "Let me check." alone would leave them hanging
+            if not answer[-1].isspace():
+                answer += " "
+                yield " "
         if not handed_off and answer.strip() and not cut_off:
             self._remember(answer, writing)
             return
@@ -1099,6 +1119,9 @@ class QuickChat(OpenAIChat):
             thinking = f"{' ' * bool(answer.strip() and not answer[-1].isspace())}{THINKING} "
             answer += thinking
             yield thinking
+        elif handed_off == LOOK_UP and writing.answered_by == LOOKED_UP and not answer.strip():
+            answer += f"{LETS_SEE} "  # the quick model picked no line; and so no "One moment." after it either
+            yield f"{LETS_SEE} "
         if answer.strip():  # OpenAI carries on from what TARS already said, rather than repeating it
             context.append({"role": "assistant", "content": answer.strip()})
         if handed_off != PONDER:

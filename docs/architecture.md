@@ -120,7 +120,7 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
 ### The LLM's tools
 
 - **Web search** (OpenAI's built-in tool, `[llm] web_search`): for current questions and real links. When the
-  model starts a search, TARS says "Looking it up." so the wait isn't silent.
+  model starts a search with nothing said yet, TARS says "Looking it up." so the wait isn't silent.
 - **Send** (`[llm] send`, needs `[learning] log_events`): a strict function tool for a link, a note (short
   markdown), a list, or a text file (`.txt`, `.md`, `.csv`, `.ics`), for whoever asked or for the household. The
   assistant checks every call (links must be http(s), a file needs a known type and its text) and returns errors to
@@ -175,7 +175,7 @@ and what would make it possible, and notes it as a wish (below). Qwen hands over
 
 | Marker | When | To | TARS says first |
 |---|---|---|---|
-| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
+| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | a line Qwen picks as it hands over ("Let's see.", "Let me check.", "Looking it up.", "On it."), or "Let's see." if it picks none |
 | `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links, which

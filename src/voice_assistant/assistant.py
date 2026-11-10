@@ -26,9 +26,9 @@ from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .echo import without_echo
 from .errors import SERVICE_FAILURES
-from .home import Request
+from .home import ONE_MOMENT, Request
 from .journal import Journal
-from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, SKIP, Brain, split_ack, split_skip
+from .llm import ASKED_TAG, FILLERS, FOLLOW_UP_TAG, REMINDER_TAG, SKIP, THINKING, Brain, split_ack, split_skip
 from .phrases import Audio, Phrases
 from .recorder import UtteranceRecorder
 from .recording import NO_SPEECH, SILENCE, TAP
@@ -414,7 +414,8 @@ class Assistant:
         """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
         people enrolled since and retry lines that failed."""
         names = list(self.speaker_id.voiceprints) if self.speaker_id else []
-        for line in [ASK_PHRASE, greeting(None), *self.error_lines] + [greeting(n) for n in names]:
+        lines = [ASK_PHRASE, greeting(None), *self.error_lines, *FILLERS, THINKING, ONE_MOMENT]
+        for line in lines + [greeting(n) for n in names]:
             self.phrases.get(line, ahead=True)
 
     def say(
@@ -1018,7 +1019,10 @@ class Assistant:
             mark_failed_at(e, LLM)
             raise
         answer.reply = StreamedReply(
-            pieces, self.voice, lambda sentence: answer.sentences.append((time.perf_counter(), sentence))
+            pieces,
+            self.voice,
+            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+            self.phrases.made_ahead,
         )
         return answer
 

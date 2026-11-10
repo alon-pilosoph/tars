@@ -173,7 +173,7 @@ def test_cited_sources_are_checked_as_heard_not_as_written():
     turn = {"say": "weather?", "route": "look-up"}
     result, _ = run([turn], lambda m: "<look-up>", "Sunny. ([BBC](https://bbc.co.uk/weather))")
     assert result.ok, result.turns[0].wrong
-    assert result.turns[0].said == "Sunny."
+    assert result.turns[0].said == "Let's see. Sunny."
 
 
 def test_a_failure_sends_the_turn_to_openai_and_the_service_sits_out_its_cooldown():
