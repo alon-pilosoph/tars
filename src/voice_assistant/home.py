@@ -186,6 +186,11 @@ class Context:
     tv_agent: Callable[..., object | None] | None = None
     devices: dict[str, Device] = field(default_factory=dict)  # by name, in lower case
     maintainers: list[str] = field(default_factory=list)  # [household] maintainers: who looks after TARS
+    # Tells the maintainers something, in their chats (maintainers.tell): a device that's stopped answering.
+    tell: Callable[[str], None] | None = None
+    # This process does the house's background work (the voice assistant's): watching a device. Only one may, or
+    # its maintainers would be told everything twice.
+    background: bool = False
 
 
 class Built(NamedTuple):

@@ -123,3 +123,89 @@ def test_a_dropped_connection_is_tried_again_then_said():
         call(p, "on")
     p, _ = purifier(fails=3)
     assert p.check()[0].status == "warn"
+
+
+def test_its_watch_tells_the_maintainers_once_when_it_goes_quiet_and_once_when_its_back():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, on, told = [0.0], [True], []
+    watch = Watch("living room air purifier", lambda seconds: on[0], told.append, clock=lambda: now[0])
+    watch.look()
+    on[0] = False  # its Bluetooth switched off at its panel
+    now[0] = GONE_AFTER_S - 1
+    watch.look()
+    assert told == []  # not yet: a quarter of an hour unheard first
+    now[0] = GONE_AFTER_S + 60
+    watch.look()
+    watch.look()
+    assert len(told) == 1 and "living room air purifier's Bluetooth has gone quiet" in told[0]
+    assert "press its Bluetooth button" in told[0]
+    on[0] = True
+    watch.look()
+    assert told[-1] == "The living room air purifier is back on Bluetooth: I can work it again." and not watch.gone
+
+
+def test_a_request_it_answers_counts_as_heard():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told = [0.0], []
+    watch = Watch("air purifier", lambda seconds: False, told.append, clock=lambda: now[0])
+    link = Pretend()
+    p = Purifier("air purifier", link, sleep=lambda _: None, answered=watch.answered)
+    now[0] = GONE_AFTER_S - 10
+    p.status()  # it answered: on, whatever the listening missed
+    now[0] = GONE_AFTER_S + 30
+    watch.look()
+    assert told == []
+
+
+def test_only_the_voice_assistants_house_watches_it(tmp_path, monkeypatch):
+    pytest.importorskip("bleak")
+    import examples.my_house as plugin
+    from voice_assistant.home import Context
+
+    started = []
+    monkeypatch.setattr(plugin.Watch, "start", lambda self, *a: started.append(self.name) or self)
+    spec = {"name": "air purifier", "address": "48:87:2D:1F:FC:9B"}
+    chat_side = Context(tmp_path, lambda name: None)
+    plugin.setup({}, chat_side)["purifier"](spec)
+    assert started == []  # the Telegram service's house, or --check's: no second watch
+    voice_side = Context(tmp_path, lambda name: None, tell=print, background=True)
+    plugin.setup({}, voice_side)["purifier"](spec)
+    assert started == ["air purifier"]
+
+
+def test_when_this_machine_cant_listen_its_bluetooth_is_restarted_before_anyone_is_told():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told, restarts = [0.0], [], []
+    answers = iter([None, None, True])  # it can't listen twice; restarted, it hears the purifier
+    watch = Watch(
+        "air purifier", lambda s: next(answers), told.append, clock=lambda: now[0], restart=lambda: restarts.append(1)
+    )
+    now[0] = GONE_AFTER_S * 2
+    watch.look()
+    assert restarts == [] and told == []  # one failure: not yet
+    watch.look()
+    assert restarts == [1] and told == []  # restarted, and that fixed it: nothing to tell
+    assert not watch.stuck
+
+
+def test_a_restart_that_doesnt_help_is_told_once_and_never_as_the_purifier_gone():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told, can_listen = [0.0], [], [False]
+    watch = Watch(
+        "air purifier",
+        lambda s: True if can_listen[0] else None,
+        told.append,
+        clock=lambda: now[0],
+        restart=lambda: True,
+    )
+    now[0] = GONE_AFTER_S * 3
+    for _ in range(4):
+        watch.look()
+    assert len(told) == 1 and "My Bluetooth has stopped working" in told[0] and not watch.gone
+    can_listen[0] = True
+    watch.look()
+    assert told[-1] == "My Bluetooth works again." and not watch.stuck

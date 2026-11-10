@@ -6,9 +6,16 @@ Each request is one short connection, since a connection held open would keep th
 and then, so each is tried a few times. A change is "done" only when the purifier's own status shows it.
 
 Left unplugged for days, it comes back sending a status of another kind (a0 20) and ignores what it's sent, until it's
-turned on once at its panel. Nothing remote gets it out of that, so TARS says so instead of trying."""
+turned on once at its panel. Nothing remote gets it out of that, so TARS says so instead of trying.
+
+Its Bluetooth can be switched off at its own panel, and then nothing can reach it. So the voice assistant watches it
+(Watch): every few minutes it listens for the purifier's broadcast for a few seconds, never connecting, and when it's
+gone quiet for a quarter of an hour, TARS's maintainers are told once, in their chats, and again when it's back.
+Being turned off doesn't do it: a night's watch on 2026-11-09, off for 14 hours, heard it in every scan."""
 
 import asyncio
+import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -99,13 +106,37 @@ class Link(Protocol):
 
 
 class Bluetooth:
-    """The link: bleak, a connection a request."""
+    """The link: bleak, a connection a request. One thing at a time on the adapter: a request, or the watch's
+    listening."""
 
     def __init__(self, address: str):
         self.address = address
+        self._lock = threading.Lock()
 
     def talk(self, commands: list[bytes], done: Callable[[Status], bool]) -> Status:
-        return asyncio.run(self._talk(commands, done))
+        with self._lock:
+            return asyncio.run(self._talk(commands, done))
+
+    def heard(self, seconds: float) -> bool | None:
+        """Whether its broadcast is heard within `seconds`: a listen, never a connection. None: this machine couldn't
+        listen at all (its adapter), which says nothing about the purifier."""
+        from bleak import BleakScanner
+        from bleak.exc import BleakError
+
+        with self._lock:
+            try:
+                return asyncio.run(BleakScanner.find_device_by_address(self.address, timeout=seconds)) is not None
+            except (BleakError, OSError) as e:
+                print(f"(purifier watch: couldn't listen: {e})")
+                return None
+
+    def restart(self) -> bool:
+        """This machine's Bluetooth switched off and on again, as a Pi's sometimes needs to come unstuck (bluetoothctl,
+        which its users in the bluetooth group may run). Whether it came back on."""
+        with self._lock:
+            power("off")
+            time.sleep(2)
+            return power("on")
 
     async def _talk(self, commands: list[bytes], done: Callable[[Status], bool]) -> Status:
         from bleak import BleakClient
@@ -140,14 +171,30 @@ class Bluetooth:
             raise OSError(f"{type(e).__name__}: {e}") from e
 
 
+def power(state: str) -> bool:
+    """This machine's Bluetooth `state`, "on" or "off": whether bluetoothctl did it."""
+    try:
+        done = subprocess.run(["bluetoothctl", "power", state], capture_output=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"(purifier watch: couldn't switch Bluetooth {state}: {e})")
+        return False
+    return done.returncode == 0
+
+
 class Purifier(Device):
-    """The home tool's air purifier."""
+    """The home tool's air purifier. `answered()`: told each time it answers (its watch, if it has one)."""
 
     actions = (STATUS, ON, OFF, SET, PRESS)
 
-    def __init__(self, name: str, link: Link, sleep: Callable[[float], None] = time.sleep):
+    def __init__(
+        self,
+        name: str,
+        link: Link,
+        sleep: Callable[[float], None] = time.sleep,
+        answered: Callable[[], None] | None = None,
+    ):
         super().__init__(name)
-        self._link, self._sleep = link, sleep
+        self._link, self._sleep, self._answered = link, sleep, answered
 
     def what(self) -> str:
         return f"an air purifier: status, on, off, set (fan: {', '.join(FANS)}; mode: {', '.join(MODES)}), press"
@@ -230,9 +277,13 @@ class Purifier(Device):
             if attempt:
                 self._sleep(1.0)
             try:
-                return self._link.talk(commands, done)
+                found = self._link.talk(commands, done)
             except OSError as e:
                 why = str(e)
+                continue
+            if self._answered:
+                self._answered()
+            return found
         raise HomeError(f"the {self.name} didn't answer over Bluetooth ({why})")
 
 
@@ -244,3 +295,99 @@ def _said(s: Status) -> str:
     timer = [f"timer {s.timer_hours} hours"] if s.timer_hours else []
     parts = ["on" if s.on else "off", f"fan {s.fan}", *modes, *timer]
     return ", ".join([*parts, f"PM2.5 {s.pm25:.0f}", f"{s.temperature:.0f} °C", f"filter {s.filter_percent:.0f}%"])
+
+
+WATCH_EVERY_S = 300.0  # how often the watch listens
+LISTEN_S = 10.0  # for how long: it broadcasts several times a second when its Bluetooth is on
+GONE_AFTER_S = 900.0  # unheard this long, and its maintainers are told
+STUCK_AFTER = 2  # listens in a row this machine couldn't make before its Bluetooth is restarted
+
+
+class Watch:
+    """Whether the purifier's Bluetooth is still on, for TARS's maintainers. `heard(seconds)`: whether its broadcast
+    is heard, None if this machine couldn't listen (Bluetooth.heard). `tell(text)`: to the maintainers' chats.
+    `restart()`: this machine's Bluetooth off and on (Bluetooth.restart). Told once when it's gone quiet for
+    GONE_AFTER_S, and once when it's back; anything that reaches it (a request it answered) counts as heard. When
+    it's this machine that can't listen, STUCK_AFTER times running, its Bluetooth is restarted first; told only if
+    that doesn't fix it, and never as the purifier being gone."""
+
+    def __init__(
+        self,
+        name: str,
+        heard: Callable[[float], bool | None],
+        tell: Callable[[str], None],
+        clock: Callable[[], float] = time.monotonic,
+        restart: Callable[[], bool] | None = None,
+    ):
+        self.name, self._heard, self._tell, self._clock, self._restart = name, heard, tell, clock, restart
+        self._last = clock()
+        self.gone = False  # told it's gone, and not yet that it's back
+        self.stuck = False  # told this machine's Bluetooth won't listen, and not yet that it does
+        self._failed = 0  # listens in a row this machine couldn't make
+
+    def answered(self) -> None:
+        """It answered a request: plainly on."""
+        self._back()
+
+    def look(self) -> None:
+        """One listen; tells the maintainers when that changes what they know."""
+        heard = self._listen()
+        if heard is None:
+            return  # this machine's trouble: nothing known about the purifier
+        if heard:
+            self._back()
+        elif not self.gone and self._clock() - self._last >= GONE_AFTER_S:
+            self.gone = True
+            minutes = round((self._clock() - self._last) / 60)
+            self._tell(
+                f"The {self.name}'s Bluetooth has gone quiet: I haven't heard it for {minutes} minutes, so I can't "
+                "work it. It's probably been switched off at its panel: press its Bluetooth button, or unplug it for "
+                "ten seconds."
+            )
+
+    def _listen(self) -> bool | None:
+        """A listen, with this machine's Bluetooth restarted first when it's failed STUCK_AFTER times running."""
+        heard = self._heard(LISTEN_S)
+        if heard is not None:
+            self._adapter_works()
+            return heard
+        self._failed += 1
+        if self._failed < STUCK_AFTER or self._restart is None:
+            return None
+        print("(purifier watch: this machine's Bluetooth can't listen; restarting it)")
+        self._restart()
+        heard = self._heard(LISTEN_S)
+        if heard is not None:
+            self._adapter_works()
+            return heard
+        if not self.stuck:
+            self.stuck = True
+            self._tell(
+                f"My Bluetooth has stopped working, so I can't reach the {self.name}. I restarted it and it still "
+                "can't listen; restarting me (the Pi) usually fixes it."
+            )
+        return None
+
+    def _adapter_works(self) -> None:
+        self._failed = 0
+        if self.stuck:
+            self.stuck = False
+            self._tell("My Bluetooth works again.")
+
+    def _back(self) -> None:
+        self._last = self._clock()
+        if self.gone:
+            self.gone = False
+            self._tell(f"The {self.name} is back on Bluetooth: I can work it again.")
+
+    def start(self, every_s: float = WATCH_EVERY_S) -> Watch:
+        def keep() -> None:
+            while True:
+                time.sleep(every_s)
+                try:
+                    self.look()
+                except Exception as e:  # noqa: BLE001 - a watch that fails once tries again next time
+                    print(f"(purifier watch: {e!r})")
+
+        threading.Thread(target=keep, daemon=True, name=f"watch {self.name}").start()
+        return self

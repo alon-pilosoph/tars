@@ -560,7 +560,9 @@ def make_chat_when_out(cfg: Config, presence, reminders):
     return ChatWhenOut(reminders.reminders, presence.board.is_out, cfg.telegram.people)
 
 
-def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=None, mic=None):
+def make_home(
+    cfg: Config, root: Path, announce=None, presence=None, speaker=None, mic=None, events=None, background=False
+):
     """The devices in the house, as [home] lists them, with "who's home" given `presence`, TARS's own speaker given
     `speaker` (own_speaker's) and its microphone given `mic` (a chat's), as a HomeTools, or None. Like every service,
     optional: one that can't be made (no token, a missing extra, a plugin's own problem) is left out with a line saying
@@ -573,6 +575,16 @@ def make_home(cfg: Config, root: Path, announce=None, presence=None, speaker=Non
     env = root / ".env"
     context = Context(root, lambda name: dotenv_values(env).get(name) or None, announce=announce)
     context.maintainers = list(cfg.household.maintainers)
+    # `background`: this process (the voice assistant's) watches devices, and tells the maintainers through `events`.
+    context.background = background
+    if events is not None:
+        from .maintainers import tell
+
+        def tell_maintainers(text: str) -> None:
+            if not tell(cfg, events.store, text):
+                print(f"(no maintainer's chat to tell: {text})")
+
+        context.tell = tell_maintainers
     context.tv_agent = functools.partial(make_tv_agent, cfg, env, announce) if announce else None
     extra = {}
     if presence:
@@ -1360,7 +1372,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     start_presence(presence, reminders)
     announcements = Announcements()
     volume = own_speaker(cfg)
-    home = make_home(cfg, root, announcements.add, presence, volume)
+    home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
     browser = voice_errands(cfg, events)
     skills = make_skills(events)
     myself = make_myself(cfg, root, events)
