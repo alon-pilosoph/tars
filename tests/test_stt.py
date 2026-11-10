@@ -130,7 +130,7 @@ def test_a_quiet_stream_is_kept_open(deepgram, monkeypatch):
 
 
 class BrokenStream:
-    def session(self):
+    def session(self, expect=()):
         return self
 
     def feed(self, pcm):
@@ -152,7 +152,7 @@ def test_a_dropped_stream_is_transcribed_by_the_backup_from_the_same_audio():
     heard = []
 
     class Backup:
-        def session(self):
+        def session(self, expect=()):
             return BufferedSession(lambda pcm: heard.append(pcm) or "from the backup")
 
     session = FallbackTranscriber(BrokenStream(), Backup()).session()
@@ -315,8 +315,8 @@ def test_flux_failing_hands_over_to_the_recorder_and_the_backup(flux):
 
 def with_backup(session, backup_text):
     """`session` with a backup that transcribes the recording as `backup_text`."""
-    main = types.SimpleNamespace(session=lambda: session)
-    backup = types.SimpleNamespace(session=lambda: BufferedSession(lambda pcm: backup_text))
+    main = types.SimpleNamespace(session=lambda expect=(): session)
+    backup = types.SimpleNamespace(session=lambda expect=(): BufferedSession(lambda pcm: backup_text))
     return FallbackTranscriber(main, backup).session()
 
 
@@ -440,3 +440,33 @@ def test_voice_messages_go_to_deepgram_then_openai_as_requests_at_home_do(tmp_pa
     assert heard({"OPENAI_API_KEY"}, openai) == "by OpenAI" and asked[-1] == "openai"
     deepgram_up[0] = True
     assert heard({"DEEPGRAM_API_KEY"}, None) == "by Deepgram"
+
+
+def test_the_choices_just_offered_go_to_deepgram_as_keyterms(monkeypatch):
+    # "11 or 12?" answered at once loses its first sound: "twelve" comes through as "well" unless Deepgram expects it.
+    from urllib.parse import parse_qs, urlsplit
+
+    from voice_assistant.config import STTConfig
+
+    urls = []
+    monkeypatch.setattr(stt, "FluxSession", lambda url, key, has_backup=False: urls.append(url))
+    monkeypatch.setattr(stt, "DeepgramSession", lambda url, key: urls.append(url))
+    stt.FluxTranscriber("k", STTConfig(provider="flux")).session(("12", "twelve"))
+    stt.FluxTranscriber("k", STTConfig(provider="flux")).session()
+    stt.DeepgramTranscriber("k", STTConfig(provider="deepgram", model="nova-2")).session(("12",))
+    keyterms = [parse_qs(urlsplit(url).query).get("keyterm") for url in urls]
+    assert keyterms == [["12", "twelve"], None, None]  # Nova-2 doesn't take them
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"results": {"channels": [{"alternatives": [{"transcript": "twelve"}]}]}})
+
+    assert stt.transcribe_recording(recorded(handler), np.zeros(1600, np.int16)) == "twelve"
+    session = recorded(handler).session(("eleven", "living room"))
+    session.feed(np.zeros(1600, np.int16).tobytes())
+    session.finish()
+    session.transcript()
+    assert seen[0].url.params.get_list("keyterm") == []
+    assert seen[1].url.params.get_list("keyterm") == ["eleven", "living room"]

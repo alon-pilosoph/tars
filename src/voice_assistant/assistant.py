@@ -6,6 +6,7 @@ and kept on disk, so they play at once, even offline.
 """
 
 import random
+import re
 import threading
 import time
 import traceback
@@ -89,6 +90,48 @@ NOBODY = Identified(None, None, None)
 def asks(lines: list[str]) -> bool:
     """Whether what TARS said on its own asks something, so it waits for an answer: even muted, it's heard."""
     return any("?" in line for line in lines)
+
+
+# fmt: off
+ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+        "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+TENS = ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+# Not choices, though they stand next to "or": "the kitchen or the bedroom?", "is that all, or is there more?"
+NOT_CHOICES = {"a", "an", "the", "is", "are", "was", "do", "does", "did", "you", "i", "it", "that", "this", "there",
+               "my", "your", "me", "not", "something", "else"}
+# fmt: on
+MOST_EXPECTED = 12
+
+
+def _spoken(number: int) -> str:
+    if number < 20:
+        return ONES[number]
+    tens, ones = divmod(number, 10)
+    return TENS[tens - 2] + (f"-{ONES[ones]}" if ones else "")
+
+
+def offered(said: str) -> tuple[str, ...]:
+    """The choices TARS's last question offered, for speech to text to lean towards: an answer to it comes quickly,
+    and its first sound is easily lost ("twelve" heard as "well"). "Which channel, 11 or 12?" -> 11, eleven, 12,
+    twelve. Empty unless it ended on an either-or."""
+    question = re.search(r"[^.?!]*\?\s*$", said)
+    if not question or not re.search(r"\bor\b", question[0], re.IGNORECASE):
+        return ()
+    words = re.findall(r"[\w'-]+", question[0])
+    found: list[str] = []
+    for i, word in enumerate(words):
+        if word.lower() != "or":
+            continue
+        before = [w for w in words[:i] if w.lower() not in NOT_CHOICES][-1:]
+        after = [w for w in words[i + 1 :] if w.lower() not in NOT_CHOICES][:1]
+        found += before + after
+    found += [w for w in words if w.isdigit()]  # "11, 12 or 13": the numbers before the last "or" too
+    terms = []
+    for word in found:
+        terms.append(word)
+        if word.isdigit() and int(word) < 100:
+            terms.append(_spoken(int(word)))
+    return tuple(dict.fromkeys(terms))[:MOST_EXPECTED]
 
 
 class Announcements:
@@ -507,7 +550,11 @@ class Assistant:
         self.brain.remember_said(" ".join(said))
         listens = bool(follow_up_s) and asks(said)
         with self._open_for_answer(listens) as answer_s:
-            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if listens else None
+            heard = (
+                self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(" ".join(said)))
+                if listens
+                else None
+            )
             if heard is None:
                 self.journal.nobody_spoke()
                 return
@@ -546,7 +593,9 @@ class Assistant:
             self.journal.said(text)
             with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
                 heard = (
-                    self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if follow_up_s else None
+                    self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(text))
+                    if follow_up_s
+                    else None
                 )
                 if heard is None:
                     self.journal.nobody_spoke()
@@ -741,10 +790,12 @@ class Assistant:
         tag: str | None = None,
         echo_of: str | None = None,
         max_s: float | None = None,
+        expect: tuple[str, ...] = (),
     ) -> Utterance | None:
         """Records one utterance, transcribing it as it comes, and starts answering at each pause in case it's the
-        end. `max_s`: the longest it records, instead of the configured longest."""
-        session = self.transcriber.session()
+        end. `max_s`: the longest it records, instead of the configured longest. `expect`: words likely said, the
+        choices TARS just offered."""
+        session = self.transcriber.session(expect)
         draft: Draft[Answer] | None = None
 
         def paused(pcm: bytes) -> None:
@@ -853,7 +904,7 @@ class Assistant:
                 print("(heard someone after asking, but no words: asking again)")
                 pardoned = True
                 self.say(PARDON)
-                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True)
+                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, expect=offered(self._last_reply))
                 if heard is None:
                     return
                 continue
@@ -866,7 +917,7 @@ class Assistant:
                 return
             else:
                 print(f"(listening {follow_up_s:.0f}s for a follow-up)")
-                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True)
+                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, expect=offered(self._last_reply))
             if heard is None:
                 return
 

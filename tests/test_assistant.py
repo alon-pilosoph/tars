@@ -106,6 +106,28 @@ def test_no_words_after_an_answer_that_asked_nothing_ends_the_conversation_quiet
     assert said == [] and brain.asked == ["lights on"]
 
 
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("Which channel, 11 or 12?", ("11", "eleven", "12", "twelve")),
+        ("Sure. The kitchen or the living room?", ("kitchen", "living")),
+        ("11, 12 or 13?", ("12", "twelve", "13", "thirteen", "11", "eleven")),
+        ("Done. Anything else?", ()),  # no choice offered
+        ("Kitchen or bedroom? Never mind, done.", ()),  # it's no question once it's moved on
+    ],
+)
+def test_the_choices_a_question_offered_are_what_the_answer_is_expected_to_say(said, expected):
+    assert assistant_module.offered(said) == expected
+
+
+def test_the_answer_to_a_choice_is_heard_expecting_the_choices(speaker):
+    assistant, _ = make_assistant(
+        speaker, [b"q", b"a", None], ["turn the news on", "twelve"], replies=["Which channel, 11 or 12?", "On it."]
+    )
+    assistant.converse(follow_up_s=4.0)
+    assert assistant.transcriber.expected == [(), ("11", "eleven", "12", "twelve"), ()]
+
+
 def test_follow_ups_can_be_turned_off(speaker):
     assistant, _ = make_assistant(speaker, [b"a"], ["hello"])
     assistant.converse(follow_up_s=0)
@@ -577,7 +599,7 @@ def test_a_failed_answer_is_kept_with_where_it_failed(speaker, tmp_path, monkeyp
     playing(speaker)
     down = OpenAIError(f"{stage} is down")
     if stage == "stt":
-        assistant.transcriber = types.SimpleNamespace(session=lambda: BufferedSession(raising(down)))
+        assistant.transcriber = types.SimpleNamespace(session=lambda expect=(): BufferedSession(raising(down)))
     elif stage == "llm":
         assistant.brain.stream_reply = raising(down)
     else:

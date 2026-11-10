@@ -171,8 +171,10 @@ class ScriptedTranscriber:
     def __init__(self, texts):
         self.texts = iter(texts)
         self.heard: list[bytes] = []
+        self.expected: list[tuple[str, ...]] = []  # what each session was told to expect
 
-    def session(self):
+    def session(self, expect=()):
+        self.expected.append(expect)
         return BufferedSession(self._transcribe)
 
     def _transcribe(self, pcm: bytes) -> str:

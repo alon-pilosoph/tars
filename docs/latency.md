@@ -58,6 +58,15 @@ silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (a small local m
 words sounded) may extend the wait to 1.6 s, and a draft starts a quarter second into a pause. `[stt] provider =
 "deepgram"` makes the local rules the only ones.
 
+### Answering a choice
+
+An answer to a choice TARS just offered ("Which channel, 11 or 12?") comes fast, and its first sound is the easiest
+to lose. So the next recording's speech to text is told what to expect: the choices, numbers also as words, go to
+Deepgram as keyterms (`assistant.offered`, `stt.with_keyterms`; Flux and Nova-3). The brain is told that a short reply
+there is the pick, first sound cut off or not ("well" is twelve), where a wrong pick is harmless; for a door or a
+purchase it asks again. A reply to a question that comes out as no words at all gets "Sorry, I didn't catch that",
+once.
+
 ### The voice
 
 A warm connection to Cartesia sends a sentence's first audio in about 0.2 s, and opening one takes about 0.6 s (0.8 s
