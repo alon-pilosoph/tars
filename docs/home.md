@@ -290,7 +290,9 @@ def setup(settings: dict, context: Context) -> dict:
   what `--check` should, as `Check(status, detail, fix)` lines.
 - **`context`** has the project's folder (`root`, for files under `voice_data/`), `secret(name)` for a key in `.env`,
   Home Assistant (`hass`), `announce(line)` to say something later on its own, `tv_agent(box)`, and `devices`, every
-  device made so far (Home Assistant's and the Android TVs first). The TV agent knows no app of its own:
+  device made so far (Home Assistant's and the Android TVs first). `tell(text)` tells TARS's maintainers something in
+  their chats (a device that's stopped answering), and `background` is true only in the voice assistant's process,
+  the one that runs a device's background work (a watch), so nothing is watched, or told, twice. The TV agent knows no app of its own:
   `tv_agent(box, extra_rules=...)` tells it how one of the household's works (my_house: how Stremio lists streams).
 - **`stop()`** ends anything the device still does in the background, as TARS shuts down or someone takes over; the
   base class's does nothing.

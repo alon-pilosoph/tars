@@ -159,6 +159,13 @@ the machine TARS runs on.
 Left unplugged for days it stops taking commands until it's turned on once at its panel. TARS says so rather than
 trying. Coming back from a short power cut it stays in standby and still listens.
 
+Its Bluetooth can also be switched off at its own panel, and then nothing reaches it at all (it's what made it
+"disappear" in November 2026; being turned off doesn't do it, a night's watch showed). So the voice assistant watches
+it: every five minutes it listens ten seconds for its broadcast, never connecting, and when it's gone unheard for a
+quarter of an hour, TARS's maintainers are told once, in their chats ("press its Bluetooth button, or unplug it for ten
+seconds"), and again when it's back. A request it answers counts as heard. Two of them in range show as `AC500` with
+different addresses: the one in a room away is faint (around -88 dBm) and may not answer at all from there.
+
 ## Setting it up
 
 The house's Home Assistant runs on the Pi ([setting it up](../../docs/home.md#setting-it-up)), with the MQTT broker

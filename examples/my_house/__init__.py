@@ -43,7 +43,7 @@ from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, TESTED, Remote, tested_path
-from .purifier import Bluetooth, Purifier
+from .purifier import Bluetooth, Purifier, Watch
 from .screen import Screen
 
 # What this house has learned, kept in the backup's snapshot: the AC's profile, its presses and what it was last sent,
@@ -147,7 +147,12 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
             import bleak  # noqa: F401 - only whether it's there
         except ImportError:
             raise ValueError('it needs the optional extra "my-house": uv sync --all-extras') from None
-        return Purifier(spec["name"], Bluetooth(spec["address"].strip()))
+        link = Bluetooth(spec["address"].strip())
+        if not (context.background and context.tell):
+            return Purifier(spec["name"], link)
+        # The voice assistant's watches its Bluetooth, and tells the maintainers when it goes quiet.
+        watch = Watch(spec["name"], link.heard, context.tell).start()
+        return Purifier(spec["name"], link, answered=watch.answered)
 
     return {"ac": ac, "remote": remote, "firetv": firetv, "purifier": purifier}
 

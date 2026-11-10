@@ -254,33 +254,12 @@ class Myself:
         return f"{to} ({number}); tell them in plain words you've passed it on, never that it's a wish or a list"
 
     def _tell_maintainers(self, person: str | None, asked: str, why: str, by_chat: bool = False) -> list[str]:
-        """Each maintainer with a Telegram chat gets the wish there, as a message (the Telegram service posts it,
-        whichever process noted it); the one who asked isn't told their own. Who was told."""
-        from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
+        """Each maintainer with a Telegram chat gets the wish there (maintainers.tell); the one who asked isn't told
+        their own. Who was told."""
+        from .maintainers import tell
 
-        cfg = self._cfg
-        if not cfg.telegram.enabled:
-            return []
-        chats = {name.strip().lower(): name for name in cfg.telegram.people}
-        me = (person or "").strip().lower()
         text = f"{person or 'Someone'} asked me: {asked.rstrip('.')}. I couldn't: {why.rstrip('.')}."
-        told = []
-        for maintainer in cfg.household.maintainers:
-            name = chats.get(maintainer.strip().lower())
-            if not name or name.lower() == me:
-                continue
-            try:
-                Reminders(self._events.store).add(
-                    NewReminder(MESSAGE, text, for_name=name, due=time.time(), needs_ack=False, max_tries=1),
-                    set_via=TELEGRAM if by_chat else VOICE,
-                    channel=TELEGRAM,
-                    phones=[name],
-                )
-            except ValueError as e:
-                print(f"(wishes: couldn't tell {name}: {e})")
-                continue
-            told.append(name)
-        return told
+        return tell(self._cfg, self._events.store, text, by_chat=by_chat, besides=person)
 
     def wishes(self) -> str:
         if self._events is None:
