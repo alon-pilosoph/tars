@@ -382,11 +382,10 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
             * (LOOK_UP in [m for m, *_ in hand_offs])
         )
     if hand_offs and can:
-        markers = " or ".join(marker for marker, *_ in hand_offs)
         parts.append(
             "When one message asks for something you can do and something you hand over, do your part first, with your "
-            f"tools, then reply with exactly {markers} and nothing else, without starting on the rest yourself: "
-            "whoever answers next sees what you did, and answers the rest."
+            "tools, then hand the rest over as above, without starting on it yourself, however much of it you could "
+            "answer: whoever answers next sees what you did, and answers the rest."
         )
     parts.append(
         f"You can't {', '.join(cant)}. Before you say you can't do anything, these or something else, see whether "

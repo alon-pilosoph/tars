@@ -263,8 +263,11 @@ def make_house(house: dict, unlock_voices=("alon",), unlock_chats=()) -> House:
     call = tools.call
 
     def kept(args: dict, request: Request) -> str:
+        asked = len(ha.calls)
         said = call(args, request)
-        if isinstance(args, dict) and args.get("action") not in READS and said.startswith(CHANGED):
+        # Done, or tried: a lock that jams was still asked to lock.
+        tried = said.startswith(CHANGED) or len(ha.calls) > asked
+        if isinstance(args, dict) and args.get("action") not in READS and tried:
             result.changes.append({**args, "device": str(args.get("device", "")).lower(), "result": said})
         return said
 

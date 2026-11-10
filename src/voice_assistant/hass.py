@@ -570,7 +570,7 @@ class Climate(Entity):
         if bad:
             return bad[0]
         if all(r.startswith("sent") for r in results):
-            asked = _said_settings(action, mode, temperature, fan)
+            asked = _said_settings(ON if turn_on else action, mode, temperature, fan)
             return f"sent: asked the {self.name} to {asked}; it can't report back, so nothing can tell if it did"
         return f"done: {self.status()} (it says so itself)"
 

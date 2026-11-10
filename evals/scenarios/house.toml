@@ -117,13 +117,14 @@ reminders = []
 
 [[scenario]]
 id = "ac-on-at-22"
-about = """"AC on at 22" turns it on at 22, and says it's sent: an IR AC can't report back."""
+about = """"AC on at 22" turns it on at 22 (on, or set, which turns on an IR AC that's off), and says it's sent: an IR
+AC can't report back."""
 tags = ["house", "ac"]
 house = { ac = "off" }
 
 [[scenario.turn]]
 say = "turn on the AC at twenty two degrees"
-home = [{ device = "ac", action = "on", temperature = 22 }]
+home = [{ device = "ac", action = "on|set", temperature = 22 }]  # set turns on an IR AC that's off
 never_says = ["\\bit's on\\b"]
 
 [[scenario]]
@@ -182,7 +183,7 @@ house = {}
 [[scenario.turn]]
 say = "how warm is it in the living room?"
 home = []
-says = ["23"]
+says = ["23|twenty[- ]three"]
 
 [[scenario]]
 id = "play-on-stremio"

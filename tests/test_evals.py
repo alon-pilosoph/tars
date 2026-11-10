@@ -481,6 +481,29 @@ def test_a_house_change_nobody_asked_for_is_caught():
     assert t.changes == ["home: turn on the boiler"]
 
 
+def test_a_lock_that_jams_still_counts_as_asked_to_lock():
+    def qwen(messages):
+        if after_tool(messages):
+            return "The door jammed."
+        return [("home", HOME_CALL | {"device": "front door", "action": "lock"})]
+
+    turn = {"say": "lock the door", "home": [{"device": "front door", "action": "lock"}], "says": ["jam"]}
+    result, _ = run([turn], qwen, house={"lock": "unlocked", "jams": True})
+    assert result.ok, [t.wrong for t in result.turns]
+
+
+@pytest.mark.parametrize("action", ["on", "set"])
+def test_a_scenario_can_take_either_of_two_actions(action):
+    def qwen(messages):
+        if after_tool(messages):
+            return "Sent."
+        return [("home", HOME_CALL | {"device": "ac", "action": action, "temperature": 22})]
+
+    turn = {"say": "AC on at 22", "home": [{"device": "ac", "action": "on|set", "temperature": 22}]}
+    result, _ = run([turn], qwen, house={"ac": "off"})
+    assert result.ok, [t.wrong for t in result.turns]
+
+
 def test_a_scenario_that_checks_the_house_needs_one(tmp_path):
     (tmp_path / "x.toml").write_text(
         '[[scenario]]\nid = "x"\nabout = "x"\ntags = ["x"]\n[[scenario.turn]]\nsay = "lock it"\nhome = []\n'

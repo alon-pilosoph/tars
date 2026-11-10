@@ -821,7 +821,7 @@ def test_with_its_own_tools_qwen_is_told_to_do_its_part_of_a_mixed_request_then_
     brain, _, cerebras, _ = quick_with_tools(tmp_path, [], think_effort="high")
     "".join(brain.stream_reply("hi"))
     system = cerebras.requests[0]["messages"][0]["content"]
-    assert "do your part first, with your tools, then reply with exactly <look-up> or <ponder>" in system
+    assert "do your part first, with your tools, then hand the rest over as above" in system
 
 
 def test_with_nothing_of_its_own_to_do_qwen_isnt_told_about_mixed_requests():
