@@ -208,6 +208,7 @@ class AC(Device):
     """The home tool's AC: on, off and set send codes; is_on and is_off correct what TARS thinks, sending nothing."""
 
     actions = (STATUS, ON, OFF, SET, IS_ON, IS_OFF)
+    takes_temperature = True
 
     def __init__(
         self,

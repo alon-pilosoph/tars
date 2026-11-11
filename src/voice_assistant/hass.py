@@ -508,6 +508,7 @@ class Climate(Entity):
     """A thermostat or an AC: on (in a mode), off, and its temperature, mode and fan speed, from those it lists."""
 
     actions = (STATUS, ON, OFF, SET)
+    takes_temperature = True
 
     def what(self) -> str:
         found = self._attributes()

@@ -145,3 +145,30 @@ def test_every_reply_sentence_is_made_ahead(speaker):
     assistant.phrases.drain()
     assert "Front door's locked." in assistant.phrases and "Fort Knox has nothing on us." in assistant.phrases
     assert sentences("Locked. Fort Knox has nothing on us.") == ["Locked.", "Fort Knox has nothing on us."]
+
+
+def test_the_house_says_which_devices_take_a_temperature(tmp_path):
+    import dataclasses
+    import types
+    from pathlib import Path
+
+    from voice_assistant.__main__ import house_commands
+    from voice_assistant.config import load_config
+    from voice_assistant.home import Device
+
+    class AC(Device):
+        actions = (STATUS, ON, OFF, SET)
+        takes_temperature = True
+
+        def what(self):
+            return "an AC: on, off, set (16 to 30 degrees)"  # no "temperature" in it
+
+    class Purifier(Device):
+        actions = (STATUS, ON, OFF, SET)  # set: its fan
+
+    shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    cfg = dataclasses.replace(shipped, home=dataclasses.replace(shipped.home, commands_on_pi=True))
+    home = types.SimpleNamespace(devices={"ac": AC("ac"), "purifier": Purifier("purifier")}, call=lambda a, r: "")
+    made = house_commands(cfg, tmp_path, home)
+    assert made.commands.match("AC to 23") == Command("ac", SET, 23)
+    assert made.commands.match("purifier to 23") is None
