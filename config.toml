@@ -248,9 +248,11 @@ speakerphone_mute = true
 config_dir = ""
 # Home Assistant's Docker container: its image runs git as root, and undoing a change stops and starts it.
 container = "homeassistant"
-# Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
+# Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices). grant is what it may
+# use, and has to cover what it declares it needs, or it doesn't load (docs/home.md#plugins):
 # [home.plugins.my_house]
 # module = "examples.my_house"
+# grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
 
 # One [[home.devices]] for each thing TARS may work, by the name people call it. Home Assistant's entity ids are in
 # Settings > Devices & services > Entities; TARS works locks, switches, lights, fans, toggle helpers (input_boolean),

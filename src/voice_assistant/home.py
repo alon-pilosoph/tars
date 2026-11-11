@@ -196,6 +196,7 @@ class Context:
 class Built(NamedTuple):
     tools: HomeTools | None
     unavailable: dict[str, str]  # a device in config.toml that couldn't be made, by its name there: why
+    plugins: dict | None = None  # each plugin in [home.plugins], as it loaded (plugins.Loaded), by its name
 
 
 def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = None) -> Built:
@@ -203,6 +204,7 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     already (TARS's own, like who's home). Like every service, optional: a device that can't be made (no token, a
     missing extra, a plugin's own problem) is left out with why, and TARS starts without it."""
     from . import androidtv, hass
+    from .plugins import Loaded, admit, provided
 
     unavailable: dict[str, str] = {}
     # As people call them ("AC", "front door"), and without label, which is how each is written, the same for all.
@@ -211,13 +213,19 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     if context.hass is None and cfg.url and context.secret(TOKEN_KEY):
         context.hass = hass.HomeAssistant(cfg.url, context.secret(TOKEN_KEY))
     makers: dict[str, Callable[[dict], Device]] = {}
+    plugin_tools, loaded = [], {}
     for plugin, settings in cfg.plugins.items():
         try:
-            kinds = load_plugin(settings["module"], context.root).setup(
-                {k: v for k, v in settings.items() if k != "module"}, context
+            module = load_plugin(settings["module"], context.root)
+            given, loaded[plugin] = admit(plugin, module, settings.get("grant"), context)
+            made = provided(
+                module.setup({k: v for k, v in settings.items() if k not in ("module", "grant")}, given), plugin
             )
-            makers |= {f"{plugin}.{kind}": make for kind, make in kinds.items()}
+            makers |= {f"{plugin}.{kind}": make for kind, make in made.kinds.items()}
+            plugin_tools += made.tools
         except Exception as e:  # noqa: BLE001 - a plugin that won't load costs its devices, not TARS
+            had = loaded.get(plugin)
+            loaded[plugin] = Loaded(plugin, had.version if had else "", had.needs if had else (), None, str(e))
             for name, d in specs:
                 if str(d.get("kind", "")).startswith(f"{plugin}."):
                     unavailable[name] = f"the plugin {plugin} didn't load: {e}"
@@ -255,14 +263,18 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         context.devices[name.lower()] = device
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
-    made = context.devices or context.hass is not None
+    made = context.devices or context.hass is not None or plugin_tools
     history = None
     if cfg.config_dir and context.hass is not None:
         from .haconfig import HAConfig
 
         history = HAConfig(context.root / cfg.config_dir, cfg.container)
-    tools = HomeTools(cfg, dict(context.devices), context.hass, history, context.maintainers) if made else None
-    return Built(tools, unavailable)
+    tools = (
+        HomeTools(cfg, dict(context.devices), context.hass, history, context.maintainers, plugin_tools)
+        if made
+        else None
+    )
+    return Built(tools, unavailable, loaded)
 
 
 def load_plugin(module: str, root: Path):
@@ -337,7 +349,13 @@ class HomeTools:
     is said back to the model, so it can tell the person or try again."""
 
     def __init__(
-        self, cfg: HomeConfig, devices: dict[str, Device], hass=None, ha_config=None, maintainers: list[str] = ()
+        self,
+        cfg: HomeConfig,
+        devices: dict[str, Device],
+        hass=None,
+        ha_config=None,
+        maintainers: list[str] = (),
+        plugin_tools: list = (),
     ):
         """`hass`: Home Assistant (hass.HomeAssistant), for the home_assistant tool: all of it, beyond the devices.
         `ha_config`: its setup's history (haconfig.HAConfig), so a change TARS makes to its setup can be undone.
@@ -346,6 +364,7 @@ class HomeTools:
         from .ha_tool import HAAccess
 
         self._cfg = cfg
+        self.plugin_tools = {t.name: t for t in plugin_tools}  # plugins.PluginTool, by name
         self.devices = {name.strip().lower(): d for name, d in devices.items()}
         self.tool = home_tool(devices)
         self._lock = threading.Lock()
@@ -359,7 +378,8 @@ class HomeTools:
     @property
     def tools(self) -> list[dict]:
         """The house's tools for the brain: home, for the devices listed, and home_assistant, for all the rest."""
-        return [self.tool] * bool(self.devices) + ([self.ha.tool] if self.ha else [])
+        own = [t.spec for t in self.plugin_tools.values()]
+        return [self.tool] * bool(self.devices) + ([self.ha.tool] if self.ha else []) + own
 
     @property
     def names(self) -> set[str]:
@@ -373,7 +393,21 @@ class HomeTools:
             said += list(dict.fromkeys(r for d in self.devices.values() if (r := d.rules())))
         if self.ha:
             said.append(self.ha.rules)
+        said += [t.rules for t in self.plugin_tools.values() if t.rules]
         return "\n".join(said)
+
+    def call_plugin(self, name: str, args: dict, request: Request) -> str:
+        """A plugin's own tool. One that changes something waits for the turn to be over, and isn't called by a
+        reply that read the web; the changes are made one at a time with the house's, under the same lock."""
+        tool = self.plugin_tools[name]
+        if not tool.changes:
+            return tool.call(args, request)
+        if request.read_the_web:
+            return "refused: this reply read the web, so it changes nothing; they can ask again on its own"
+        if not request.go_ahead():
+            return "error: the request was withdrawn before anything was done; nothing changed"
+        with self._lock:
+            return tool.call(args, request)
 
     def call_ha(self, args: dict, request: Request) -> str:
         """The home_assistant tool. Its changes are made one at a time with the home tool's, under the same lock."""

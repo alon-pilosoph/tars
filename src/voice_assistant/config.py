@@ -665,6 +665,9 @@ def _home_problems(home: HomeConfig) -> list[str]:
             problems.append(f"[home.plugins] {name!r}: a name is lowercase letters, digits and _")
         if not (isinstance(plugin.get("module"), str) and _MODULE.fullmatch(plugin["module"])):
             problems.append(f'[home.plugins.{name}] needs module, the Python module to load, like "my_house"')
+        grant = plugin.get("grant")
+        if grant is not None and not (isinstance(grant, list) and all(isinstance(g, str) and g.strip() for g in grant)):
+            problems.append(f'[home.plugins.{name}] grant is a list of what it may use, like ["home_assistant"]')
     names: set[str] = set()
     for i, d in enumerate(home.devices, 1):
         name = d.get("name")

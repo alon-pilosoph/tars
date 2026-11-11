@@ -250,6 +250,7 @@ project's folder (`examples.my_house`) or among those installed.
 ```toml
 [home.plugins.my_house]
 module = "examples.my_house"
+grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]   # what it may use
 blaster = { id = "bf0123456789abcdef", address = "192.168.1.50" }   # anything else here is the plugin's own
 
 [[home.devices]]
@@ -257,8 +258,8 @@ name = "AC"
 kind = "my_house.ac"          # the plugin's name, and one of its kinds
 ```
 
-The module has `setup(settings, context)`, which returns its kinds of device, each a function that makes one from
-its `[[home.devices]]` entry:
+The module declares itself, its version and what it needs, and has `setup(settings, context)`, which returns its
+kinds of device, each a function that makes one from its `[[home.devices]]` entry:
 
 ```python
 from voice_assistant.home import Check, Context, Device, ON, OFF, STATUS
@@ -278,9 +279,33 @@ class Kettle(Device):
         return f"done: {self.name} reports boiling"
 
 
+PLUGIN = Manifest(version="1.0.0", needs=("KETTLE_KEY",))  # from voice_assistant.plugins
+
+
 def setup(settings: dict, context: Context) -> dict:
-    return {"kettle": lambda spec: Kettle(spec["name"])}
+    return {"kettle": lambda spec: Kettle(spec["name"], context.secret("KETTLE_KEY"))}
 ```
+
+<a id="plugins"></a>**Declared and granted.** `needs` lists what the plugin uses: a key in `.env` by its name, or
+`home_assistant` (reading it and calling its services), `unlock` (Home Assistant's unlock, open and disarm services,
+never otherwise), `announce`, `tell`, `tv_agent` and `devices` (the house's other devices). `grant` under its
+`[home.plugins.<name>]` says what it gets:
+
+- A plugin that needs anything its grant doesn't give it **doesn't load**: its devices are left out, and `--check`
+  says what's missing. One that declares nothing can't be granted at all.
+- Its `context` has **only what was granted**: `secret()` refuses any other key (`plugins.Refused`), `hass`,
+  `announce`, `tell` and `tv_agent` are `None` unless granted, `devices` is empty unless granted, and Home Assistant's
+  `call` refuses `lock.unlock`, `lock.open` and `alarm_control_panel.alarm_disarm` without `unlock`.
+- **Without `grant`**, a plugin loads as it did before grants, with everything, and `--check` warns, with the exact
+  line to pin it (`grant = [...]`). `--check` lists each plugin with its version and what it was granted.
+- Grants hold at the interface TARS hands a plugin. A plugin is still Python running in TARS's process, so it's code
+  someone has read, not a sandbox: don't install one you haven't.
+
+**Tools of its own.** `setup` may return `Provides(kinds, tools)` instead, with `PluginTool`s: a name, a description
+and parameters (a JSON schema) as the model sees them, and `call(args, request)` that answers in the tool's words, as
+a device's `call` does. One with `changes=True` waits for the turn to be over, is called one change at a time with
+the house's, and isn't called at all by a reply that read the web. `rules` adds a line to the model's instructions.
+A tool can't take a name TARS already has.
 
 - **`call`** answers in the tool's words: `done:` only when the device itself reports it, `sent:` when nothing can
   tell, `started:`, `not confirmed:` or `error:` otherwise. Raising `HomeError` is said as an error. It's called only

@@ -114,11 +114,17 @@ instructions and…". A model may believe them, so what matters is what code all
 
 ### A plugin
 
-- **Defenses:** a plugin is code someone chose to name in `[home.plugins]`; one that fails to load costs only its own
-  devices.
-- **Tests:** none for what it may do.
-- **Open:** a plugin runs inside TARS with everything TARS has. `context.secret(name)` gives it any key in `.env`, and
-  nothing declares or limits what it touches. Today the only plugin is the household's own (`examples/my_house`).
+- **Defenses:** a plugin is code someone chose to name in `[home.plugins]`, and declares what it needs; with `grant`
+  set, one that needs more doesn't load, and its context holds only what was granted: other keys in `.env` are
+  refused, Home Assistant, speaking and telling are absent unless granted, and Home Assistant's unlock, open and
+  disarm services refuse it without the `unlock` grant. A plugin tool that changes something waits for the turn and
+  isn't called by a reply that read the web ([plugins](home.md#plugins)).
+- **Tests:** `tests/test_plugins.py`: a plugin needing more than its grant doesn't load; an ungranted key is refused;
+  unlock, open and disarm are refused without `unlock`; the client's private methods aren't handed over; a changing
+  tool waits for the turn and refuses a reply that read the web.
+- **Open:** grants hold at the interface, not in a sandbox: a plugin is Python in TARS's process and could reach
+  around them, so one is installed only after being read. A plugin with no `grant` set loads with everything (as
+  before grants), with a `--check` warning. Network access isn't limited.
 
 ### A stolen Pi, or its SD card
 
