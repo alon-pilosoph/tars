@@ -20,6 +20,9 @@ from collections.abc import Callable
 from pathlib import Path
 from xml.etree import ElementTree
 
+from defusedxml import DefusedXmlException
+from defusedxml.ElementTree import fromstring
+
 from .found import FOUND_FILE, Seen, find_by_mac, mac_of, reachable
 from .home import DO, OFF, ON, OPEN, PLAY, PRESS, STATUS, Check, Context, Device, HomeError, Request, button, presses
 
@@ -245,8 +248,8 @@ class AndroidTV:
         if start < 0:
             return ""
         try:
-            root = ElementTree.fromstring(out[start:])
-        except ElementTree.ParseError:
+            root = fromstring(out[start:])  # an app's own text is in it
+        except ElementTree.ParseError, DefusedXmlException:
             return ""
         lines = []
         for node in root.iter("node"):

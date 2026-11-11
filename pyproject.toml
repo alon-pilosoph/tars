@@ -26,6 +26,7 @@ dependencies = [
     "psutil>=7",  # the Status page's CPU, memory, temperature and uptime
     "soundfile>=0.14.0",  # reading voice messages (Opus in Ogg)
     "httpx>=0.28",  # Home Assistant, Telegram, Deepgram's endpoint for whole recordings, and the status pages
+    "defusedxml>=0.7.1",
 ]
 
 [project.urls]

@@ -43,3 +43,24 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test -c checks/e2e.config.ts
+
+  # Supply chain and code (docs/security.md#supply-chain): known vulnerabilities in what's locked, bandit over the
+  # code, and a CycloneDX bill of materials kept with each run.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv export --frozen --all-extras --no-hashes --no-emit-project -o requirements.txt
+      - run: uvx pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off
+      - run: uvx bandit -r src -q --severity-level medium --confidence-level medium
+      - run: uvx --from cyclonedx-bom cyclonedx-py requirements requirements.txt -o sbom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: webui

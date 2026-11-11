@@ -9,12 +9,14 @@ DOWNLOAD_TIMEOUT_S = 30.0
 
 
 def fetch(path: Path, url: str, what: str) -> Path:
+    if not url.startswith("https://"):
+        raise ValueError(f"{what} is only downloaded over HTTPS, not from {url}")
     if not path.exists():
         print(f"Downloading {what} to {path}...")
         path.parent.mkdir(parents=True, exist_ok=True)
         partial = path.with_suffix(path.suffix + ".part")
         try:
-            with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_S) as response, partial.open("wb") as out:
+            with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_S) as response, partial.open("wb") as out:  # nosec B310 - https, above
                 shutil.copyfileobj(response, out)
         except BaseException:
             partial.unlink(missing_ok=True)

@@ -130,8 +130,9 @@ The systemd services run unconfined.
    overwritten files for a while, and a key that can't delete old versions or change that rule, so a stolen key
    can't wipe the backup. Disk encryption on a Pi with no secure key store is weak (the key has to be on it to boot
    unattended): written down as an accepted risk.
-7. **Supply chain.** pip-audit (or Dependabot), bandit or semgrep, and an SBOM in CI, alongside `uv.lock`'s hashes;
-   signed releases for step 4's updates.
+7. **Supply chain.** Built: pip-audit, `npm audit` and bandit fail CI, and each run keeps an SBOM, alongside
+   `uv.lock`'s hashes ([security](security.md#the-code-tars-runs-its-dependencies)). Left: a scheduled audit between
+   pushes, and signed releases for step 4's updates.
 8. **The mic itself.** A hardware mute switch (built: the speakerphone's mute stops TARS listening at all), and a
    light while audio is leaving the house.
 

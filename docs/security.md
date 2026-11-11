@@ -146,9 +146,15 @@ instructions and…". A model may believe them, so what matters is what code all
 
 - **Defenses:** every Python package is pinned with hashes in `uv.lock` and installed `--frozen`, in CI and on the Pi;
   the web UI's packages are pinned in `package-lock.json`.
-- **Tests:** CI installs from the lock files only.
-- **Open:** nothing checks the pinned versions for known vulnerabilities (pip-audit or Dependabot), and nothing scans
-  TARS's own code (bandit or semgrep).
+- **Checked on every push** (CI's `security` job): pip-audit against every locked Python package (all extras), `npm
+  audit` against the web UI's runtime packages (high and above), and bandit over TARS's own code (medium and above).
+  A known vulnerability, or a new finding, fails CI. Each run keeps a CycloneDX bill of materials (`sbom.json`) of what
+  it checked. Feeds and the TV's screen dumps are read with `defusedxml` (XML from outside: no entities, no expansion
+  bombs), and the local models download only over HTTPS. Bandit's false positives (fixed table and column names in SQL,
+  Chrome's debugging port on localhost) are marked one by one with `# nosec` and why, never skipped wholesale.
+- **Tests:** CI installs from the lock files only, and its `security` job fails on a known vulnerability or finding.
+- **Open:** a vulnerability published after a release is only caught on the next push (no scheduled audit), and
+  releases aren't signed yet (roadmap step 4).
 
 ### The services TARS uses
 
