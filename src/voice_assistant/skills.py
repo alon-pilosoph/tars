@@ -15,6 +15,7 @@ All of it is taught, changed and removed in conversation, through the skills too
 skills and preferences of whoever is asking (note()). Nothing here does a step: the tools keep their own rules, so a
 skill can't unlock (that needs the words said by a voice trusted with it), and an order still waits for its tap."""
 
+import itertools
 import json
 import re
 import sys
@@ -35,6 +36,7 @@ HOUSEHOLD = "household"  # a skill's owner when it's everyone's
 ALOUD, CHAT = "aloud", "chat"  # where a skill that runs by itself says what it has to say
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 TICK_S = 10.0  # how often a clock looks for a skill that's due, or something happening one waits for
+DRY_RUN_DAYS = 7  # a device trigger is replayed over this much of the device's history before it's kept
 COOLDOWN_S = 600.0  # a skill that runs when something happens runs again no sooner: no loops, no flapping
 MOST_RUNS = 20  # told when asked what TARS did
 TIME = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
@@ -327,6 +329,48 @@ def says(status: str, word: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(word)}(?!\w)", status, re.IGNORECASE) is not None
 
 
+def fired(trigger: dict, before: str, now: str) -> str:
+    """Why a device trigger is set off by its device's status going from `before` to `now`; "" if it isn't."""
+    device = trigger["device"]
+    if trigger.get("says"):
+        if says(now, trigger["says"]) and not says(before, trigger["says"]):
+            return f"the {device} now says {trigger['says']} ({now})"
+        return ""
+    was, is_ = reading(before, trigger.get("reading")), reading(now, trigger.get("reading"))
+    if was is None or is_ is None:
+        return ""
+    what = trigger.get("reading") or "reading"
+    if trigger.get("above") is not None and was <= trigger["above"] < is_:
+        return f"the {device}'s {what} went over {trigger['above']:g}, to {is_:g}"
+    if trigger.get("below") is not None and was >= trigger["below"] > is_:
+        return f"the {device}'s {what} went under {trigger['below']:g}, to {is_:g}"
+    return ""
+
+
+def dry_run(trigger: dict, past: list[tuple[float, str]]) -> list[float]:
+    """When a device trigger would have run over its device's past statuses ((when, status), in order): each change
+    it's set off by, no sooner than COOLDOWN_S after the last, as the clock runs it."""
+    ran: list[float] = []
+    for (_, before), (at, now) in itertools.pairwise(past):
+        if fired(trigger, before, now) and (not ran or at - ran[-1] >= COOLDOWN_S):
+            ran.append(at)
+    return ran
+
+
+def dry_run_note(trigger: dict, ran: list[float], days: int = DRY_RUN_DAYS) -> str:
+    """What the model is told a dry run found: how often, and when, with when to bring it up."""
+    if not ran:
+        times = "it never would have"
+    else:
+        hours = [datetime.fromtimestamp(t).astimezone().hour for t in ran]
+        busiest = max(set(hours), key=hours.count)
+        times = f"it would have run {len(ran)} time{'s' * (len(ran) != 1)} (most often around {busiest:02d}:00)"
+    return (
+        f"checked against the last {days} days of the {trigger['device']}'s history: {times}. Say so only if that's "
+        "clearly more often than they'd want, or never, and offer to change it; otherwise don't mention it"
+    )
+
+
 def on_its_own(skill: Skill, when: datetime, skip: str, why: str = "") -> str:
     """The request a skill's own turn starts with. `why`: what happened, for one that runs on something happening."""
     return ON_ITS_OWN.format(
@@ -352,6 +396,8 @@ class Skills:
         self.devices: Callable[[], set[str] | None] = lambda: None
         self.people: Callable[[], set[str] | None] = lambda: None
         self.status: Callable[[str], str] | None = None  # a device's status, to check a reading against
+        # A device's past statuses, (when, status) in order, from start to end: a device trigger's dry run.
+        self.past: Callable[[str, float, float], list[tuple[float, str]]] | None = None
 
     def seen_version(self, key: str) -> str | None:
         """The version of TARS a skill that runs on its being updated last saw; None before it first looked."""
@@ -456,6 +502,7 @@ class Skills:
             raise ValueError("a skill runs at set times or on something happening, not both: two skills for both")
         if on_event and on_event["event"] == CHANGES and self.status:
             self._check_reading(on_event)
+        tried = self._dry_run(on_event) if on_event and on_event["event"] == CHANGES else ""
         owner = HOUSEHOLD if args.get("household") else person
         # Where it says what it has to: as asked, or where it was asked for (a chat's, in that chat), but a
         # household's is said aloud.
@@ -482,8 +529,21 @@ class Skills:
         runs = f", said {'in their chat' if say == CHAT else 'aloud at home'} when it runs" if at or on_event else ""
         return (
             f"done: {'changed' if had else 'kept'}{runs}; tell them in plain words what you'll do and when, as "
-            "agreeing to it, not that you saved anything"
+            f"agreeing to it, not that you saved anything{f'. Dry run: {tried}' if tried else ''}"
         )
+
+    def _dry_run(self, on_event: dict) -> str:
+        """A device trigger replayed over the device's last DRY_RUN_DAYS (self.past), as a note; "" when its history
+        can't be read (a device Home Assistant doesn't keep, or one that doesn't answer)."""
+        if not self.past:
+            return ""
+        end = self._clock()
+        try:
+            past = self.past(on_event["device"], end - DRY_RUN_DAYS * 86400, end)
+        except Exception as e:  # noqa: BLE001 - kept without one
+            print(f"(skills: no dry run for the {on_event['device']}: {e!r})")
+            return ""
+        return dry_run_note(on_event, dry_run(on_event, past)) if len(past) > 1 else ""
 
     # The web UI's Skills page: everything, everyone's, and changed by id (it has no one asking).
 
@@ -782,24 +842,9 @@ class Clock:
 
     def _changed(self, skill: Skill) -> str:
         """Why a device trigger is set off now, from its status before and now; "" if it isn't."""
-        trigger, device = skill.trigger, skill.trigger["device"]
-        now = self._read(device)
-        before = self._statuses.get(device)
-        if now is None or before is None:
-            return ""
-        if trigger.get("says"):
-            if says(now, trigger["says"]) and not says(before, trigger["says"]):
-                return f"the {device} now says {trigger['says']} ({now})"
-            return ""
-        was, is_ = reading(before, trigger.get("reading")), reading(now, trigger.get("reading"))
-        if was is None or is_ is None:
-            return ""
-        what = trigger.get("reading") or "reading"
-        if trigger.get("above") is not None and was <= trigger["above"] < is_:
-            return f"the {device}'s {what} went over {trigger['above']:g}, to {is_:g}"
-        if trigger.get("below") is not None and was >= trigger["below"] > is_:
-            return f"the {device}'s {what} went under {trigger['below']:g}, to {is_:g}"
-        return ""
+        device = skill.trigger["device"]
+        now, before = self._read(device), self._statuses.get(device)
+        return fired(skill.trigger, before, now) if now is not None and before is not None else ""
 
     def _read(self, device: str) -> str | None:
         if device not in self._reading:

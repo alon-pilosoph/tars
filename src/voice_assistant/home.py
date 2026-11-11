@@ -137,6 +137,10 @@ class Device:
         """Its past readings, for the `history` action, over `args`' since, until and every (history.py)."""
         raise HomeError(f"the {self.name} keeps no history")
 
+    def past(self, start: float, end: float) -> list[tuple[float, str]]:
+        """Its status after each change from start to end, (when, status), for a skill's dry run (skills.py)."""
+        raise HomeError(f"the {self.name} keeps no history of its status")
+
     def rules(self) -> str:
         """Anything the model must know to use this kind of device well; the same text is given once."""
         return ""

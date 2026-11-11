@@ -13,7 +13,7 @@ being right.
 | 2 | [Security](#2-security) | the web UI has no accounts, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
 | 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
-| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; the arrival greeting and dry runs left |
+| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting left |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
 Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
@@ -233,8 +233,9 @@ skill and preference, where it came from and what it did. Limits are in code: un
 
 **Left:**
 
-- **Dry runs.** Checked against the last weeks of the event log before it's kept, said only when it matters ("that
-  would have gone off 30 times last week"), so a trigger that's too eager is caught before it's annoying.
+- **Dry runs.** Built for device triggers: replayed over the device's last week of Home Assistant history before
+  it's kept, and said only when it matters ("that would have gone off 30 times last week")
+  ([skills](skills.md)). Left: who's home keeps no history yet, so coming-and-going triggers aren't dry-run.
 - **Editing on the page.** Pausing, changing and deleting from the Skills page needs step 2's sign-in first.
 - **Habits offered**, not only asked for: [noticing routines](#planned-noticing-routines).
 

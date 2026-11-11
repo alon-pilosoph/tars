@@ -48,6 +48,11 @@ the model, which carries them out with the tools it already has.
   What changed while TARS was starting is seen, never acted on, and a skill set off runs again no sooner than ten
   minutes later, so it can't set itself off, or flap with a reading around its limit. A skill runs at set times or
   on something happening, not both.
+- **Dry runs**: a skill that waits on a device is replayed over the device's last 7 days before it's kept. Its Home
+  Assistant history is worded as its status is now (`Entity.past`), and the same rule the clock uses, cooldown and
+  all, counts when it would have run. The model is told ("it would have run 41 times, most often around 16:00") and
+  says so only when it matters: far more often than wanted, or never, offering to change it. A device Home Assistant
+  doesn't keep a history of (an Android TV, a plugin's) is kept without one.
 - **On TARS being updated**: a skill can run when TARS itself is updated, told what changed from the version it last
   saw to the one running (each change's PR title, from the checkout's git history, [`tars` tool](architecture.md)),
   so "tell me when you learn something new" is said in plain words, as what someone can now ask for. Each such skill
