@@ -371,6 +371,21 @@ default_person = ""
 # kept, and nobody changes Home Assistant's setup through TARS.
 maintainers = []
 
+[wishes]
+# Wishes that come true (docs/wishes.md): something TARS was asked for and couldn't do goes to the maintainers
+# ([household]) with a Build it button. A tap opens an issue on `repo`, labelled `label`, which the repository's
+# .github/workflows/wish.yml hands to Claude Code; it opens a pull request, which TARS follows: CI green, the
+# maintainers are told what it does; red, it's sent back to be fixed, `tries` times at most. Once it's merged and
+# installed (see [updates]), whoever asked is told. The GitHub token (a fine-grained one, for `repo` only, that may
+# write issues and pull requests) is in .env, under the name `secret`.
+enabled = false
+repo = ""
+secret = "GITHUB_TOKEN"
+label = "wish"
+tries = 3
+# The most builds started in 30 days.
+monthly = 4
+
 [updates]
 # TARS updates itself, from a timer every ten minutes (docs/deployment.md#updates): what's merged into `branch` is
 # installed at a quiet moment (nobody's spoken to it for a few minutes, no errand running), checked silently, and taken

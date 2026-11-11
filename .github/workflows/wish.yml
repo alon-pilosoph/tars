@@ -1,0 +1,60 @@
+# Wishes that come true (docs/wishes.md). When a maintainer taps Build it, TARS opens an issue labelled "wish", and
+# Claude Code builds it on a branch of its own and opens a pull request. TARS's "CI fails" comment on that pull request,
+# starting with @claude, sends it back to work. Only the repository's owner (whose token TARS uses) sets either off: on
+# a public repository, anyone else's issue or comment could otherwise spend the key. It has the repository and nothing
+# else: no .env, no config.local.toml, no database. It can't merge; a person reviews and merges.
+name: Wish
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+
+jobs:
+  build:
+    if: github.event_name == 'issues' && github.event.label.name == 'wish' && github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --all-extras
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Build what issue #${{ github.event.issue.number }} in this repository asks for, following .github/wish.md.
+            Read the issue first (gh issue view ${{ github.event.issue.number }}). Work on a new branch named
+            claude/issue-${{ github.event.issue.number }}-<a few words>, and finish by opening one pull request with
+            gh pr create, whose body starts with "Closes #${{ github.event.issue.number }}." and then says, in plain
+            words, what someone can now ask TARS for.
+          claude_args: >-
+            --max-turns 200
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(uv run:*),Bash(uv sync:*),Bash(git:*),Bash(gh issue view:*),Bash(gh pr create:*),Bash(npm ci),Bash(npm run:*)"
+
+  fix:
+    if: >-
+      github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '@claude') && github.event.comment.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --all-extras
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: >-
+            --max-turns 120
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(uv run:*),Bash(uv sync:*),Bash(git:*),Bash(gh run view:*),Bash(gh pr view:*),Bash(npm ci),Bash(npm run:*)"

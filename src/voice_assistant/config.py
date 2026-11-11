@@ -340,6 +340,22 @@ class HouseholdConfig:
 
 
 @dataclass
+class WishesConfig:
+    # Wishes that come true (docs/wishes.md): what TARS was asked for and couldn't do, built by Claude Code on GitHub
+    # once a maintainer taps Build it, and told to whoever asked once it's installed. Needs [household] maintainers on
+    # Telegram, and a GitHub token that may open issues and comment on `repo`, in .env under `secret`.
+    enabled: bool = False
+    # The repository to build in, as owner/name; its .github/workflows/wish.yml hands a labelled issue to Claude Code.
+    repo: str = ""
+    secret: str = "GITHUB_TOKEN"
+    label: str = "wish"
+    # How many times a pull request whose CI fails is sent back to be fixed, before the wish is given up on.
+    tries: int = 3
+    # The most builds started in 30 days: TARS can't see what a run costs, so it caps how many there are.
+    monthly: int = 4
+
+
+@dataclass
 class UpdatesConfig:
     # TARS updates itself (docs/deployment.md#updates): what's merged into `branch` is installed by itself, at a quiet
     # moment, checked, and taken back if it fails; one that changes the database waits for a maintainer's tap, and one
@@ -368,6 +384,7 @@ class Config:
     feeds: FeedsConfig
     household: HouseholdConfig
     updates: UpdatesConfig
+    wishes: WishesConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
@@ -590,7 +607,25 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
-    return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence)
+    return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence) + _wishes_problems(cfg)
+
+
+def _wishes_problems(cfg: Config) -> list[str]:
+    """What's wrong with [wishes]."""
+    w, problems = cfg.wishes, []
+    if w.enabled and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", w.repo):
+        problems.append('[wishes] repo must be the repository to build in, as owner/name, like "alon-pilosoph/tars"')
+    if w.enabled and not cfg.household.maintainers:
+        problems.append("[wishes] needs [household] maintainers: only they say what gets built")
+    if not _SECRET.fullmatch(w.secret):
+        problems.append('[wishes] secret must be the name of the GitHub token in .env, like "GITHUB_TOKEN"')
+    if not re.fullmatch(r"[A-Za-z0-9_. -]+", w.label):
+        problems.append('[wishes] label must be the issue label the workflow builds on, like "wish"')
+    if not 0 <= w.tries <= 10:
+        problems.append("[wishes] tries must be between 0 and 10")
+    if not 0 <= w.monthly <= 50:
+        problems.append("[wishes] monthly must be between 0 and 50")
+    return problems
 
 
 def _presence_problems(p: PresenceConfig) -> list[str]:

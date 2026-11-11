@@ -154,7 +154,9 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   TARS really couldn't do is noted, with what stopped it and what would make it possible (the `wishes` table), and
   posted at once to the Telegram chat of each of TARS's maintainers (`[household] maintainers`, as a message the
   Telegram service posts, whichever process noted it; never back to the one who asked); "what did people ask for that
-  you couldn't do?" lists them, and only a maintainer marks one granted (with none named, anyone TARS knows). `settings`, `set`: what about TARS can be changed by asking ("be less
+  you couldn't do?" lists them, and only a maintainer marks one granted (with none named, anyone TARS knows). With
+  `[wishes]` on, the maintainers get a Build it button instead, which has Claude Code build it on GitHub; TARS follows
+  the pull request and tells whoever asked once it's installed (`wishes.py`, [wishes that come true](wishes.md)). `settings`, `set`: what about TARS can be changed by asking ("be less
   jokey", "you cut me off", "remember our chats longer"; `settings.py`): only what `ADJUSTABLE` lists, each within
   bounds (the wake threshold can't go where TARS would never wake), never who may unlock or set up the house, the keys
   or the models. A change is written as its own line in `config.local.toml`, the rest of the file as it was, kept only

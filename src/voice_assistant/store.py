@@ -213,7 +213,14 @@ TABLES = {
     via TEXT NOT NULL,               -- voice | chat
     asked TEXT NOT NULL,             -- what they wanted, in a sentence
     why TEXT NOT NULL,               -- what stopped TARS, and what would make it possible
-    granted REAL                     -- when someone marked it done; NULL: still wished for
+    granted REAL,                    -- when it was done (marked, or its build installed); NULL: still wished for
+    build TEXT,                      -- having it built (wishes.py): offered, building, ready, merged, failed, granted
+    issue INTEGER,                   -- the GitHub issue asking for it
+    pr INTEGER,                      -- the pull request that builds it
+    sha TEXT,                        -- the pull request's merge commit
+    tries INTEGER NOT NULL DEFAULT 0,  -- times its CI failed and it was sent back to be fixed
+    checked TEXT,                    -- the commit it was last sent back for
+    built_at REAL                    -- when a maintainer said to build it
 )""",
     "settings_log": """CREATE TABLE settings_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -356,6 +363,15 @@ MIGRATIONS = [
             "CREATE TABLE settings_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
             "name TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL)"
         ),
+    ],
+    [
+        "ALTER TABLE wishes ADD COLUMN build TEXT",
+        "ALTER TABLE wishes ADD COLUMN issue INTEGER",
+        "ALTER TABLE wishes ADD COLUMN pr INTEGER",
+        "ALTER TABLE wishes ADD COLUMN sha TEXT",
+        "ALTER TABLE wishes ADD COLUMN tries INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE wishes ADD COLUMN checked TEXT",
+        "ALTER TABLE wishes ADD COLUMN built_at REAL",
     ],
 ]
 

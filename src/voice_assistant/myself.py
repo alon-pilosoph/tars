@@ -69,7 +69,8 @@ TOOL = {
             "query": {
                 "type": ["string", "null"],
                 "description": "docs: what to look up, in a few words. records, log: words to look for; null: all. "
-                "wish: what they wanted, in a sentence. granted: the wish's number. set: the setting's name, as "
+                "wish: what they wanted, in a sentence, without anyone's name (it may be posted publicly, to have "
+                "it built). granted: the wish's number. set: the setting's name, as "
                 "settings lists it.",
             },
             "since": {
@@ -101,10 +102,14 @@ class Myself:
         run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         unit_state: Callable[[str], str | None] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+        offer: Callable[[int, str], None] | None = None,
     ):
+        """`offer(wish, text)`: with [wishes], tells the maintainers a wish with a Build it button (wishes.py), in
+        place of the plain message."""
         from .check import systemd_state
 
         self._cfg, self._root, self._events, self._run, self._now = cfg, root, events, run, now
+        self._offer = offer
         self._unit_state = unit_state or systemd_state
 
     def call(self, args: dict, request) -> str:
@@ -249,7 +254,15 @@ class Myself:
             "INSERT INTO wishes (at, person, via, asked, why) VALUES (?, ?, ?, ?, ?)",
             (time.time(), person, via, asked, why),
         )
-        told = self._tell_maintainers(person, asked, why, by_chat=via == "chat")
+        if self._offer:
+            try:
+                self._offer(number, self._wish_text(person, asked, why))
+                told = list(self._cfg.household.maintainers)
+            except Exception as e:  # noqa: BLE001 - it's still kept, and told the plain way
+                print(f"(wishes: couldn't offer to build it: {e!r})")
+                told = self._tell_maintainers(person, asked, why, by_chat=via == "chat")
+        else:
+            told = self._tell_maintainers(person, asked, why, by_chat=via == "chat")
         to = f"passed on to {', '.join(told)} in their chat" if told else "noted for whoever looks after TARS"
         return f"{to} ({number}); tell them in plain words you've passed it on, never that it's a wish or a list"
 
@@ -258,8 +271,11 @@ class Myself:
         their own. Who was told."""
         from .maintainers import tell
 
-        text = f"{person or 'Someone'} asked me: {asked.rstrip('.')}. I couldn't: {why.rstrip('.')}."
-        return tell(self._cfg, self._events.store, text, by_chat=by_chat, besides=person)
+        return tell(self._cfg, self._events.store, self._wish_text(person, asked, why), by_chat=by_chat, besides=person)
+
+    @staticmethod
+    def _wish_text(person: str | None, asked: str, why: str) -> str:
+        return f"{person or 'Someone'} asked me: {asked.rstrip('.')}. I couldn't: {why.rstrip('.')}."
 
     def wishes(self) -> str:
         if self._events is None:

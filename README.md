@@ -111,6 +111,7 @@ assistant, edit the system prompt.
 | [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
 | [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
 | [Who's home](docs/presence.md) | phones on the Wi-Fi, asking the routers, the rules, where it's used |
+| [Wishes that come true](docs/wishes.md) | what TARS couldn't do, built by Claude Code once a maintainer taps Build it, and told to whoever asked |
 | [Skills and preferences](docs/skills.md) | taught by talking: "when I say bedtime…", "every day at 19:55, ask me…", "when Stacey gets home…", "skip the sports news" |
 | [Feeds](docs/feeds.md) | RSS feeds found, followed and summed up by talking: "find me feeds about gaming", "what's new in gaming?" |
 | [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person |

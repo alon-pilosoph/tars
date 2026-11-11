@@ -763,7 +763,34 @@ def make_myself(cfg: Config, root: Path, events):
     """TARS knowing itself (myself.py): its version, changes, docs, records and log."""
     from .myself import Myself
 
-    return Myself(cfg, root, events)
+    wishes = make_wishes(cfg, root, events)
+    return Myself(cfg, root, events, offer=wishes.offer if wishes else None)
+
+
+def make_wishes(cfg: Config, root: Path, events):
+    """Wishes that come true (wishes.py), with [wishes] on and a database; None otherwise."""
+    if not cfg.wishes.enabled or events is None:
+        return None
+    from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
+    from .wishes import GitHub, GitHubError, Told, Wishes, running_has
+
+    env = root / ".env"
+
+    def github() -> GitHub:
+        try:
+            return GitHub(cfg.wishes.repo, api_key(env, cfg.wishes.secret))
+        except ConfigError as e:
+            raise GitHubError(str(e)) from None
+
+    def person(name: str, via: str, text: str) -> None:
+        # In their chat if they asked in one; otherwise the next time they're heard, never into an empty room.
+        chat = via == "chat" and name in cfg.telegram.people
+        new = NewReminder(MESSAGE, text, for_name=name, due=time.time() if chat else None, needs_ack=False, max_tries=1)
+        channel = TELEGRAM if chat else VOICE
+        Reminders(events.store).add(new, set_via=channel, voices=[name], phones=[name], channel=channel)
+
+    told = Told(lambda text, buttons: tell_maintainers(cfg, root, text, buttons), person)
+    return Wishes(events.store, cfg.wishes, github, told, running_has(root))
 
 
 def make_feeds(cfg: Config, events):
@@ -867,6 +894,13 @@ def telegram(cfg: Config, root: Path) -> None:
     told.append(tars)
     if cfg.updates.enabled:
         listen_for_update_taps(cfg, root, tars)
+    if wishes := make_wishes(cfg, root, events):
+        from .wishes import tap_listener
+
+        chats = {name.strip().lower(): chat for name, chat in cfg.telegram.people.items()}
+        maintainers = [chats[m.strip().lower()] for m in cfg.household.maintainers if m.strip().lower() in chats]
+        tars.listen_first(tap_listener(wishes, maintainers, tars.bot))
+        wishes.start()
     if queue:
         make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
     tars.run_forever(me)
