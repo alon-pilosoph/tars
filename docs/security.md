@@ -160,9 +160,26 @@ with what they're sent is accepted: TARS can't work without them, and each one i
 
 ## The services on the machine
 
-TARS's systemd user services (`deploy/*.service`) run as the user who installed them, with that user's access:
-any of them can read `.env`, the vault and everything in `voice_data/`. Sandboxing each one (NoNewPrivileges,
-ProtectSystem, a web UI that can't read `.env` or reach the internet) is open.
+<a id="the-pi"></a>TARS's systemd user services (`deploy/*.service`) run as the user who installed them, and each is
+sandboxed:
+
+| Service | What it may do | Exposure (`systemd-analyze security`) |
+|---|---|---|
+| The voice assistant | write only its own folder and caches; a `/tmp` of its own; no new privileges (no `sudo`); local, IPv4 and IPv6 sockets only; no kernel tunables, modules, logs, cgroups, clock or hostname; no capabilities; system calls a service makes, and no others. Keeps the sound card, the IR remote's input device and Bluetooth (over D-Bus) | 9.6 → 3.4 |
+| The web UI, the backup | the same, and no devices at all | 9.6 → 3.1 |
+| Telegram | the first half: its own folder, its own `/tmp`, no new privileges, those sockets. Chromium's own sandbox, for errands, needs the namespaces and system calls the rest would take away | 9.6 → 8.3 |
+| The browser's screen (Xvfb) | only its socket under `/tmp`, no home, no network but a local socket, no devices, the same kernel and system-call limits | 9.6 → 2.9 |
+| The updater | not sandboxed: it runs `deploy/tars-system` through `sudo` and rewrites the checkout and these units | unchanged |
+
+How it was checked: on the Pi (systemd 257), `voice-assistant --check` run inside the voice assistant's sandbox
+passes the same 35 checks as outside it (Home Assistant and every device, Telegram, the backup's bucket, the routers);
+the web UI serves its pages inside its own; Chromium launches inside Telegram's, and reaches the screen; and the screen
+makes its socket inside its own. A system call outside the filter fails with an error rather than killing the service.
+
+Still open: a user service can't filter addresses (`IPAddressDeny` needs a system service), so the web UI can still
+reach the internet (it reads recordings from the bucket, too); and every service can read `.env`, the vault and
+`voice_data/`, since they all run as one user. A web UI as its own user, which can't, needs the services moved to the
+system manager.
 
 **Root.** On the Pi, that user is in the `docker` group, so Home Assistant can run in Docker beside TARS; and a member
 of the `docker` group can start a container with the whole disk in it, which makes it effectively root. That's

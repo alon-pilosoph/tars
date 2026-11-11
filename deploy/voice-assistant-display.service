@@ -13,6 +13,25 @@ Description=TARS browser's virtual screen
 
 [Service]
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x1000x24 -nolisten tcp
+# Sandboxed: nothing but its socket under the shared /tmp, where the browser finds the screen.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/tmp
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+SystemCallArchitectures=native
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+PrivateDevices=yes
 Restart=always
 RestartSec=3
 

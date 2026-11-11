@@ -18,6 +18,29 @@ Type=oneshot
 WorkingDirectory=%h/voice-assistant
 ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --backup
 Environment=PYTHONUNBUFFERED=1
+# Sandboxed (docs/security.md#the-pi): the system and home read-only but TARS's own folder (and caches), a /tmp of
+# its own, no new privileges (no sudo), only local, IPv4 and IPv6 sockets. Checked on the Pi with --check inside it.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/voice-assistant -%h/.cache -%h/.config
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+# A call outside the filter fails with an error rather than killing TARS.
+SystemCallErrorNumber=EPERM
+PrivateDevices=yes
 # Below the voice: a pass reads every new recording and compresses the database, and must never slow a reply.
 Nice=15
 IOSchedulingClass=idle

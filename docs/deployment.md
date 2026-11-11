@@ -104,6 +104,10 @@ over-current on all four ports at once is a damaged cable (try another, with a d
 cable that only charges. A speakerphone that's heard but silent (`--check` says "very quiet") may have its own mute
 on: the PowerConf's light is red then.
 
+Each service is sandboxed ([the services](security.md#the-pi)): it writes only to the project's folder and its
+caches, can't use `sudo`, and keeps its own `/tmp`. Something of your own that writes elsewhere (a plugin's files
+outside `voice_data/`) gets "Read-only file system": keep it under the project's folder.
+
 By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service),

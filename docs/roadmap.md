@@ -99,7 +99,7 @@ it's red, the wake model doesn't run.
 What's open: the web UI has no accounts, so anyone on the home network (a guest, a compromised device) can play every
 recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS
 with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins are trusted.
-The systemd services run unconfined.
+The systemd services are sandboxed, but as one user, so each can read `.env`.
 
 **Plan, most worth it first:**
 
@@ -120,9 +120,9 @@ The systemd services run unconfined.
    access) and gets only that from `context`; the actions that matter most (unlock, send something out of the house,
    order) are never theirs unless granted by name. Step 4 builds on this; step 5's rules go through the same checks.
 5. **The Pi.** SSH only over Tailscale, keys only; a firewall that drops anything incoming by default; automatic
-   security updates. systemd sandboxing for each service (NoNewPrivileges, ProtectSystem=strict, PrivateTmp,
-   RestrictAddressFamilies, IPAddressDeny for the web UI), the web UI as its own user that can't read `.env` or reach
-   the internet. `.env` mode 600; each key as narrow as its service allows, with spending caps; a Home Assistant user
+   security updates. Built: systemd sandboxing for each service, checked on the Pi (exposure 9.6 → about 3 for the
+   voice assistant, web UI and backup; [the services](security.md#the-pi)). Left: the web UI as its own user that
+   can't read `.env` or reach the internet, which needs system services (a user service can't filter addresses). `.env` mode 600; each key as narrow as its service allows, with spending caps; a Home Assistant user
    limited to the listed devices.
 6. **Data.** A shorter `keep_audio_days`; backups encrypted before they leave. The Pi's key has to read the bucket
    (the web UI plays recordings that only the bucket still has, and a restore reads it) and delete from it (the
