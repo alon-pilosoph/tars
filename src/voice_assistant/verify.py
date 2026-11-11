@@ -6,9 +6,11 @@ phrases, has to pick which one it heard, so it can.
 
 import json
 import tempfile
+import threading
 import zipfile
 from collections import deque
 from collections.abc import Callable
+from concurrent.futures import Future
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -136,6 +138,16 @@ class PhraseVerifier:
     def heard(self, pcm: np.ndarray) -> str:
         return self._recognize(pcm, alternatives=0)["text"]
 
+    def name_end_s(self, pcm: np.ndarray) -> float | None:
+        """Where the name ends in `pcm`, in seconds; None if it can't tell. A pass of its own: asking for word times
+        changes the check's alternatives, and so its confidence."""
+        from vosk import KaldiRecognizer
+
+        recognizer = KaldiRecognizer(self._model, SAMPLE_RATE, self._grammar)
+        recognizer.SetWords(True)
+        recognizer.AcceptWaveform(np.asarray(pcm, dtype=np.int16).tobytes())
+        return end_of_name(json.loads(recognizer.FinalResult()).get("result", []))
+
     def _recognize(self, pcm: np.ndarray, alternatives: int) -> dict:
         from vosk import KaldiRecognizer
 
@@ -165,6 +177,24 @@ class PhraseVerifier:
             w in self._ask_alone for w in words
         )
         return (ASK if close else IGNORE), heard
+
+
+def end_of_name(words: list[dict]) -> float | None:
+    """Where the name ends, in seconds into the audio: the end of the word after the last "hey", else of the last word
+    recognized. None if no word was."""
+    known = [w for w in words if w.get("word") != "[unk]"]
+    for a, b in reversed(list(pairwise(known))):
+        if a["word"] == "hey":
+            return b["end"]
+    return known[-1]["end"] if known else None
+
+
+def after_name(audio: np.ndarray, end_s: float | None) -> np.ndarray:
+    """What the wake window holds after the name: "hey TARS, what's new" said in one breath has "what" there, read
+    off the mic before the wake fired. Nothing if the name's end isn't known."""
+    if end_s is None:
+        return np.zeros(0, dtype=np.int16)
+    return audio[min(len(audio), round(end_s * SAMPLE_RATE)) :]
 
 
 class TunedCheck:
@@ -244,6 +274,8 @@ class NearMisses:
 
 class VerifiedTrigger:
     last_audio: np.ndarray | None = None  # what woke it, for speaker ID
+    # On a confirmed wake, what followed the name in the wake window: found while TARS gets on with it.
+    after_name: Future[np.ndarray] | None = None
     pair: Pair
 
     def __init__(
@@ -303,8 +335,24 @@ class VerifiedTrigger:
                 )
             if outcome != IGNORE:
                 self.last_audio = audio
+                self.after_name = self._find_after_name(audio) if outcome == ANSWER else None
                 return outcome
             print(f"(heard '{heard}', not '{self.phrase}'; still listening)")
+
+    def _find_after_name(self, audio: np.ndarray) -> Future[np.ndarray]:
+        """Where the name ends takes a recognizer pass (about 0.25 s on a Pi 4): made on the side, so the greeting
+        doesn't wait for it. The mic keeps what's said meanwhile."""
+        found: Future[np.ndarray] = Future()
+        verifier = self._verifier
+
+        def find() -> None:
+            try:
+                found.set_result(after_name(audio, verifier.name_end_s(audio)))
+            except Exception as e:  # noqa: BLE001 - the request is heard from the mic alone
+                found.set_exception(e)
+
+        threading.Thread(target=find, daemon=True, name="after-name").start()
+        return found
 
     def _follow_versions(self, quiet: bool = False) -> bool:
         """Switches to the pair in use if it changed; True if it did. A pair that won't load gives way to the

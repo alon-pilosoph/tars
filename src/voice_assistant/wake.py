@@ -1,6 +1,7 @@
 """What starts a conversation: a wake-word model listening all the time, or Enter for push-to-talk."""
 
 from collections.abc import Callable
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Protocol
 
@@ -16,6 +17,7 @@ Due = Callable[[], bool]
 
 class Trigger(Protocol):
     last_audio: np.ndarray | None  # what woke it, for speaker ID; None when there's nothing to go on
+    after_name: Future[np.ndarray] | None  # what followed the name before the wake fired; None when it isn't known
 
     def wait(self, mic: Microphone, due: Due | None = None) -> str | None:
         """Block until the user wants to talk (a double-checked trigger says how sure it is: verify.ANSWER or ASK),
@@ -32,7 +34,7 @@ class WakeModel(Protocol):
 
 
 class WakeWordTrigger:
-    last_audio = None
+    last_audio = after_name = None
 
     def __init__(self, model: str, threshold: float):
         """`model` is a pretrained openWakeWord name ("hey_jarvis") or a path to a custom .onnx file."""
@@ -77,7 +79,7 @@ class MicroWakeWordTrigger:
 
     STEP_BYTES = 160 * 2  # 10 ms of 16-bit audio
     PRIMER = np.random.default_rng(0).normal(0, 40, 3 * BLOCK_SAMPLES).astype(np.int16)
-    last_audio = None
+    last_audio = after_name = None
 
     def __init__(self, model: str, threshold: float):
         path = Path(model)
@@ -147,7 +149,7 @@ def wake_word_trigger(model: str, threshold: float) -> WakeWordTrigger | MicroWa
 
 
 class PushToTalkTrigger:
-    last_audio = None
+    last_audio = after_name = None
 
     def wait(self, mic: Microphone, due: Due | None = None) -> None:
         input("Press Enter, then speak... ")

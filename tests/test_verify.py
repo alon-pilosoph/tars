@@ -20,6 +20,8 @@ from voice_assistant.verify import (
     RecentAudio,
     TunedCheck,
     VerifiedTrigger,
+    after_name,
+    end_of_name,
     ensure_model,
 )
 from voice_assistant.versions import INSTALLED, FixedPair, Pair
@@ -41,6 +43,7 @@ def hearing(monkeypatch, tmp_path):
     def verifier(text: str, phrase: str = "hey tars") -> PhraseVerifier:
         v = PhraseVerifier(phrase, tmp_path)
         v.heard = lambda pcm: text
+        v.name_end_s = lambda pcm: None
         return v
 
     return verifier
@@ -205,3 +208,53 @@ def test_a_reminder_coming_due_ends_the_wait(hearing):
 def test_a_wake_in_the_same_block_as_a_due_reminder_wins(hearing):
     trigger = FakeTrigger(fire_at=[1])
     assert listening(trigger, hearing("hey tars")).wait(SilentMic(20), due=lambda: True) == ANSWER
+
+
+def words(*timed):
+    return [{"word": w, "start": start, "end": end} for w, start, end in timed]
+
+
+@pytest.mark.parametrize(
+    "heard, end",
+    [
+        (words(("hey", 2.28, 2.46), ("tars", 2.46, 2.88)), 2.88),
+        (words(("hey", 2.28, 2.46), ("tars", 2.46, 2.88), ("[unk]", 2.88, 3.0)), 2.88),  # "what" said straight on
+        (words(("tars", 1.0, 1.4), ("stop", 1.4, 1.7)), 1.7),
+        (words(("[unk]", 0.2, 0.5)), None),
+        ([], None),
+    ],
+)
+def test_the_name_ends_after_the_word_that_follows_hey(heard, end):
+    assert end_of_name(heard) == end
+
+
+def test_what_followed_the_name_is_the_wake_window_after_it():
+    audio = np.arange(3 * 16000, dtype=np.int16)
+    assert len(after_name(audio, 2.88)) == round(0.12 * 16000)
+    assert after_name(audio, 2.88)[0] == audio[round(2.88 * 16000)]
+    assert len(after_name(audio, None)) == 0
+    assert len(after_name(audio, 5.0)) == 0
+
+
+def test_a_confirmed_wake_finds_what_followed_the_name_on_the_side(hearing):
+    trigger = FakeTrigger(fire_at=[40])
+    verifier = hearing("hey tars")
+    verifier.name_end_s = lambda pcm: 2.0
+    woke = listening(trigger, verifier)
+    assert woke.wait(SilentMic(50)) == ANSWER
+    window = round(2.5 * 16000 / BLOCK_SAMPLES) * BLOCK_SAMPLES  # the pair's check window, in whole blocks
+    assert len(woke.after_name.result(timeout=5)) == window - 2.0 * 16000
+
+
+def test_when_the_name_cant_be_timed_the_wake_still_stands(hearing):
+    verifier = hearing("hey tars")
+    verifier.name_end_s = lambda pcm: (_ for _ in ()).throw(RuntimeError("recognizer failed"))
+    woke = listening(FakeTrigger(fire_at=[3]), verifier)
+    assert woke.wait(SilentMic(20)) == ANSWER
+    with pytest.raises(RuntimeError):
+        woke.after_name.result(timeout=5)
+
+
+def test_a_close_call_keeps_nothing_after_the_name(hearing):
+    woke = listening(FakeTrigger(fire_at=[3]), hearing("hey cars"))
+    assert woke.wait(SilentMic(20)) == ASK and woke.after_name is None

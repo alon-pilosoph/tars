@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from voice_assistant.audio import BLOCK_SAMPLES
@@ -213,3 +214,36 @@ def test_a_stop_button_ends_the_wait_for_speech_and_the_speech_with_nothing():
     assert waiting.reads == 5  # stopped at once, not at the end of the wait
     said = iter([False] * 30 + [True])
     assert recorder("." * 5 + "S" * 100).record(listening, stop=lambda: next(said)) is None
+
+
+def lead(n, samples=BLOCK_SAMPLES * 0):
+    """`n` whole blocks of what followed the wake word, plus `samples` more at its start."""
+    return np.zeros(samples + n * BLOCK_SAMPLES, np.int16)
+
+
+def test_a_request_said_in_one_breath_with_the_name_starts_after_it():
+    """'hey TARS, what's new': "what" was in the wake window, "'s new" comes from the mic straight after."""
+    pcm = recorder("SS" + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(2, 300))
+    assert len(pcm) // 2 >= 300 + 8 * BLOCK_SAMPLES  # the lead, its odd start included, then the mic's speech
+    whole = recorder("S" + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(1))
+    assert blocks_in(whole) >= 7  # a single voiced block of lead still counts once the mic carries on
+
+
+def test_a_lead_that_is_already_speech_starts_the_recording_at_once():
+    m = mic()
+    pcm = recorder("SSS" + "S" * 4 + "." * 30, end_silence_s=0.4).record(m, lead=lead(3))
+    assert blocks_in(pcm) >= 7 and m.reads >= 4
+
+
+def test_a_pause_after_the_name_lets_the_lead_go():
+    """'hey TARS ... what's new': the request starts where the mic hears it, with its usual preroll."""
+    # The tail of the name's own last sound may be in the lead: a block of it, then quiet.
+    with_lead = recorder("S" + "." * 10 + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(1))
+    without = recorder("." * 10 + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic())
+    assert blocks_in(with_lead) == blocks_in(without)
+
+
+def test_a_quiet_lead_changes_nothing():
+    with_lead = recorder("." * 3 + "." * 10 + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(3))
+    without = recorder("." * 10 + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic())
+    assert blocks_in(with_lead) == blocks_in(without)

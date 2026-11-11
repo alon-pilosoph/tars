@@ -148,10 +148,12 @@ class ScriptedRecorder:
         self.script = list(script)
         self.timeouts = []
         self.longest = []  # each record()'s max_s: None for the configured longest
+        self.leads = []  # each record()'s lead: what followed the wake word, or None
 
     def record(self, mic, start_timeout_s=None, on_pause=None, on_resume=None, max_s=None, **kw):
         self.timeouts.append(start_timeout_s)
         self.longest.append(max_s)
+        self.leads.append(kw.get("lead"))
         entry = self.script.pop(0)
         if not isinstance(entry, list):
             return entry
@@ -236,7 +238,7 @@ def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, c
     voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
     recorder = ScriptedRecorder(utterances)
-    trigger = types.SimpleNamespace(last_audio=None)
+    trigger = types.SimpleNamespace(last_audio=None, after_name=None)
     assistant = Assistant(
         FakeMic(),
         speaker,

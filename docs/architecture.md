@@ -51,7 +51,7 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
 2. **Stage 2** (Vosk with a grammar plus a learned layer, local) decides: answer, ask "Did you call me?", or ignore.
    See [hearing "hey TARS"](wake-word.md).
 3. **Recording** runs until you've finished. [Silero VAD](https://github.com/snakers4/silero-vad) (local, 2 MB)
-   hears you start; Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
+   hears you start, from straight after the name when you said it all in one breath ("hey TARS, what's new"); Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
    decides when you're done, from your words as well as the pause. If Flux fails, the local rules take over: after
    `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (local, 8 MB) may keep
    waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes, Alon?" (speaker ID from the

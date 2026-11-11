@@ -10,7 +10,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from .audio import BLOCK_SECONDS, Microphone
+from .audio import BLOCK_SAMPLES, BLOCK_SECONDS, Microphone
 from .config import Config, RecorderConfig
 from .stt import TurnState
 from .turn import SmartTurn
@@ -67,6 +67,7 @@ class UtteranceRecorder:
         turn_state: Callable[[], TurnState] | None = None,
         stop: Callable[[], bool] | None = None,
         max_s: float | None = None,
+        lead: np.ndarray | None = None,
     ) -> bytes | None:
         """Returns 16 kHz mono int16 PCM, or None if nobody spoke before the timeout.
 
@@ -77,12 +78,14 @@ class UtteranceRecorder:
         With `turn_state` (a service that decides the turn, like stt.FluxSession), the service ends the turn and says
         when to call on_pause and on_resume; the silence rule is only a backstop. `stop()`, asked every block, ends
         it at once with None, as if nobody spoke (a stop button). `max_s` overrides the configured longest utterance:
-        what's still said after it isn't recorded.
+        what's still said after it isn't recorded. `lead` is audio from just before listening began (what followed the
+        wake word, already read off the mic): if speech runs on from it into the mic's audio, it's where the utterance
+        starts.
         """
         cfg = self._cfg
         timeout_s = cfg.start_timeout_s if start_timeout_s is None else start_timeout_s
         stopped = stop or (lambda: False)
-        blocks = self._wait_for_speech(mic, max(preroll_blocks, START_BLOCKS), timeout_s, stopped)
+        blocks = self._wait_for_speech(mic, max(preroll_blocks, START_BLOCKS), timeout_s, stopped, lead)
         if blocks is None:
             return None
         send = on_audio or (lambda pcm: None)
@@ -154,20 +157,42 @@ class UtteranceRecorder:
         return _pcm(blocks[: last_voiced + 1 + tail_blocks])
 
     def _wait_for_speech(
-        self, mic: Microphone, keep: int, timeout_s: float, stopped: Callable[[], bool] = lambda: False
+        self,
+        mic: Microphone,
+        keep: int,
+        timeout_s: float,
+        stopped: Callable[[], bool] = lambda: False,
+        lead: np.ndarray | None = None,
     ) -> list[np.ndarray] | None:
         self._vad.reset()
         preroll: deque[np.ndarray] = deque(maxlen=keep)
+        # The lead, kept whole while speech runs on from its end; a quiet block lets it go.
+        carried = _blocks(lead) if lead is not None else []
         streak = 0
+        for block in carried:
+            streak = streak + 1 if self.is_speech(block) else 0
+        if not streak:
+            carried = []
+        if streak >= START_BLOCKS:
+            return carried
         for _ in range(int(timeout_s / BLOCK_SECONDS)):
             if stopped():
                 return None
             block = mic.read()
             preroll.append(block)
             streak = streak + 1 if self.is_speech(block) else 0
+            carried = carried + [block] if carried and streak else []
             if streak >= START_BLOCKS:
-                return list(preroll)
+                return carried or list(preroll)
         return None
+
+
+def _blocks(pcm: np.ndarray) -> list[np.ndarray]:
+    """`pcm` in blocks as the mic hands them out, the odd remainder first, so the last ends where the mic's audio
+    starts."""
+    first = len(pcm) % BLOCK_SAMPLES
+    head = [pcm[:first]] if first else []
+    return head + [pcm[i : i + BLOCK_SAMPLES] for i in range(first, len(pcm), BLOCK_SAMPLES)]
 
 
 def make_recorder(cfg: Config, root: Path, turn_model: bool = True) -> UtteranceRecorder:
