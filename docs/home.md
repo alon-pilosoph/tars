@@ -309,6 +309,8 @@ def setup(settings: dict, context: Context) -> dict:
 - **`call`** answers in the tool's words: `done:` only when the device itself reports it, `sent:` when nothing can
   tell, `started:`, `not confirmed:` or `error:` otherwise. Raising `HomeError` is said as an error. It's called only
   once the turn is over, one device at a time.
+- **`takes_temperature`**: true for a device whose `set` takes a temperature (an AC), so "AC to 23" is one of the
+  [house commands on the Pi](#house-commands-on-the-pi).
 - **`actions`** may include the plugin's own ("boil"); the tool offers them. **`rules()`** adds anything the model
   needs to use the kind well, once however many there are. **`slow()`** says "One moment." first. **`check()`** says
   what `--check` should, as `Check(status, detail, fix)` lines.

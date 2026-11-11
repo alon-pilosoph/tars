@@ -534,7 +534,7 @@ def house_commands(cfg: Config, root: Path, home):
     from .home import SET
 
     found = [
-        (name, d.display, tuple(d.actions), SET in d.actions and "temperature" in d.what().lower())
+        (name, d.display, tuple(d.actions), SET in d.actions and d.takes_temperature)
         for name, d in home.devices.items()
     ]
     commands = Commands(found)

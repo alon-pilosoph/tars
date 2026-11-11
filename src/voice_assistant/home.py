@@ -112,6 +112,7 @@ class Device:
 
     actions: tuple[str, ...] = (STATUS,)
     label: str | None = None  # [[home.devices]] label: how it's written for people, "Fire TV" for "fire tv"
+    takes_temperature = False  # set takes a temperature (an AC, a thermostat): "AC to 23" (commands.py)
 
     def __init__(self, name: str):
         self.name = name
