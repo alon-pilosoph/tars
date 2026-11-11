@@ -113,7 +113,10 @@ class Commands:
         return None
 
     def grammar(self) -> list[str]:
-        """Every phrase as Vosk is told to listen for it, numbers in words, and "[unk]" for everything else."""
+        """Every phrase as Vosk is told to listen for it, numbers in words, and "[unk]" for everything else: also
+        before and after each phrase, so words around a command ("don't ... yet") are heard as something else rather
+        than squeezed into the command. hear() refuses anything with "[unk]" in it. Without the padding, Vosk heard
+        "Don't turn on the fire TV yet" as "turn on the fire t v" (on the Pi, from a house recording session)."""
         spoken = set()
         for phrase, command in self.phrases.items():
             if command is None:
@@ -127,7 +130,8 @@ class Commands:
                 for acronym in self._acronyms:  # Vosk knows words: "AC" is said "a c"
                     words = re.sub(rf"\b{acronym}\b", " ".join(acronym), words)
                 spoken |= {f"{b}{words}{a}".strip() for b in POLITE_BEFORE for a in POLITE_AFTER}
-        return sorted(spoken) + ["[unk]"]
+        padded = {f"[unk] {s}" for s in spoken} | {f"{s} [unk]" for s in spoken} | {f"[unk] {s} [unk]" for s in spoken}
+        return sorted(spoken | padded) + ["[unk]"]
 
 
 class Replies:

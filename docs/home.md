@@ -175,10 +175,12 @@ text wrote it, is done at once:
 - **With the cloud out of reach**, Vosk on the Pi listens to the recording for the same phrases alone (spoken forms,
   "a c" for AC), and a command it hears is done the same way: the door locks with the internet down.
 
-Measured so far on the Pi, with the household's own devices (51 phrases) and a synthetic voice: Vosk heard 7 of 8
-test sentences right in 99 to 181 ms each; the eighth ("set the AC to twenty-three") came out garbled and matched
-nothing, which sends it to the model, and a weather question and "turn the boiler on for forty minutes" matched
-nothing, as they should. It's off by default until a week of the household's own voices has no wrong match.
+Measured so far on the Pi, with the household's own devices and a synthetic voice (21 takes of a house recording
+session): Vosk, limited to the phrases alone, heard "Don't turn on the fire TV yet" as
+"turn on the fire t v", a wrong match. Each phrase is now also listened for with unknown words around it, and anything
+with an unknown word in it is refused: 0 wrong of 21, all 12 near-misses and plain requests refused, at the cost of 5
+of 9 commands missed (a miss goes to the model, or with the cloud out of reach isn't done). About 140 ms a take. It's
+off by default until the household's own voices, recorded, have no wrong match.
 
 ### TARS's own speaker
 
