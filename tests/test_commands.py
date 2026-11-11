@@ -61,7 +61,9 @@ def test_vosk_is_told_every_phrase_in_words_and_unk_for_anything_else():
     grammar = COMMANDS.grammar()
     assert "set a c to twenty three" in grammar and "please lock front door" in grammar
     assert grammar[-1] == "[unk]" and not any(ch.isdigit() for phrase in grammar for ch in phrase)
-    assert all(COMMANDS.match(phrase) for phrase in grammar[:-1])  # what Vosk can say, the matcher takes
+    assert "[unk] turn on boiler" in grammar and "turn on boiler [unk]" in grammar  # words around it aren't squeezed in
+    whole = [phrase for phrase in grammar if "[unk]" not in phrase]
+    assert all(COMMANDS.match(phrase) for phrase in whole)  # what Vosk can say, the matcher takes
 
 
 def test_numbers_and_the_little_words_are_evened_out():
