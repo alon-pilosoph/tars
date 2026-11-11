@@ -81,6 +81,7 @@ const ANSWERED_BY: Record<AnsweredBy, string> = {
   ponder: "Handed over to the thinking model, to work it through.",
   fallback: "Answered by OpenAI, as a backup.",
   openai: "Answered by OpenAI.",
+  pi: "A house command, done on the Pi with no model.",
 };
 const FAILED_AT: Record<FailedAt, string> = {
   stt: "Failed while hearing what was said.",

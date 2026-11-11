@@ -20,6 +20,7 @@ from typing import NamedTuple
 import numpy as np
 
 from .audio import AudioDeviceError, Microphone, Speaker, chime
+from .commands import ON_PI, Command, HouseCommands, sentences
 from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
 from .control import Op, Refused
 from .conversations import LLM, STT, SentItem
@@ -163,6 +164,25 @@ class Answer:
     error: Exception | None = None  # the brain failed to start the reply; raised once what was heard is written down
     acks: list[int] | None = None  # the reply acknowledged reminders: these, or [] for the ones just said
     sentences: list[tuple[float, str]] = field(default_factory=list)  # (when it was written, the sentence)
+    on_pi: bool = False  # a house command, done without the model (commands.py)
+
+
+class _MadeAhead:
+    """The voice, but a sentence made ahead (a house command's reply) plays from what was kept: at once, and with
+    the network down."""
+
+    def __init__(self, voice: Voice, phrases: Phrases):
+        self._voice, self._phrases = voice, phrases
+        self.sample_rate = voice.sample_rate
+
+    def stream(self, text: str) -> Iterator[bytes]:
+        if text.strip() in self._phrases:
+            yield from self._phrases.get(text.strip()).result(timeout=PHRASE_WAIT_S)
+            return
+        yield from self._voice.stream(text)
+
+    def warm(self) -> None:
+        self._voice.warm()
 
 
 class Assistant:
@@ -188,6 +208,7 @@ class Assistant:
         clock: Callable[[], float] = time.monotonic,
         elsewhere: Callable[[dict], bool] | None = None,
         skill_clock: SkillClock | None = None,
+        commands: HouseCommands | None = None,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
         `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
@@ -215,6 +236,7 @@ class Assistant:
         self.announcements = announcements
         self._elsewhere = elsewhere
         self._skill_clock = skill_clock
+        self.commands = commands
         self.reminder_tools: ReminderTools | None = None
         self._reminder_clock: Clock | None = None
         self.use_reminders(reminders)
@@ -415,6 +437,8 @@ class Assistant:
         people enrolled since and retry lines that failed."""
         names = list(self.speaker_id.voiceprints) if self.speaker_id else []
         for line in [ASK_PHRASE, greeting(None), *self.error_lines] + [greeting(n) for n in names]:
+            self.phrases.get(line, ahead=True)
+        for line in self.commands.lines() if self.commands else []:
             self.phrases.get(line, ahead=True)
 
     def say(
@@ -975,20 +999,57 @@ class Assistant:
         try:
             text = without_echo(session.transcript(), echo_of)
         except Exception as e:
-            mark_failed_at(e, STT)
-            raise
+            # With the cloud out of reach, a house command can still be heard on the Pi.
+            text = "" if draft.cancelled else self._heard_on_pi(pcm)
+            if not text:
+                mark_failed_at(e, STT)
+                raise
+            print(f"(speech to text didn't answer ({e!r}); heard a house command on the Pi)")
         stt_s = time.perf_counter() - t
         answer = Answer(text, self._who(identifying), stt_s)
         if not text or draft.cancelled:
             return answer
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
         request = Request(answer.who.name, answer.who.score, by_voice=True, heard=text, may_act=draft.may_act)
+        if self.commands and tag is None and (command := self.commands.commands.match(text)):
+            return self._command_reply(answer, command, prompt, request)
         try:
             # A follow-up, or a reply to "Did you call me?" (maybe a "no"), may not be meant for TARS at all.
             return self._start_reply(answer, prompt, may_skip=follow_up or tag is not None, request=request)
         except Exception as e:  # noqa: BLE001 - raised again in handle(), after what was heard is kept
             answer.asked, answer.error = False, e  # already forgotten
             return answer
+
+    def _heard_on_pi(self, pcm: bytes) -> str:
+        """A house command Vosk heard in the recording, or ""."""
+        if not (self.commands and self.commands.hear):
+            return ""
+        try:
+            heard = self.commands.hear(pcm)
+        except Exception as e:  # noqa: BLE001 - the cloud's failure is what's said
+            print(f"(couldn't listen for a house command on the Pi: {e!r})")
+            return ""
+        return heard if self.commands.commands.match(heard) else ""
+
+    def _command_reply(self, answer: Answer, command: Command, prompt: str, request: Request) -> Answer:
+        """A house command, done with the home tool once the turn is over and answered from lines made ahead, with no
+        model; the exchange joins the conversation."""
+        answer.on_pi, answer.t_asked = True, time.perf_counter()
+        commands = self.commands
+
+        def pieces() -> Iterator[str]:
+            result = commands.call(command.args, request)
+            print(f"(house command on the Pi: {command.device} {command.action}: {result})")
+            said = commands.replies.say(command, result)
+            self.brain.remember_exchange(prompt, said)
+            yield from (f"{s} " for s in sentences(said))
+
+        answer.reply = StreamedReply(
+            _tee(pieces(), answer.spoken),
+            _MadeAhead(self.voice, self.phrases),
+            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+        )
+        return answer
 
     @staticmethod
     def _who(identifying: Future[tuple[str | None, float | None, np.ndarray | None]] | None) -> Identified:
@@ -1065,11 +1126,13 @@ class Assistant:
             )
         for _, sentence in answer.sentences[printed:]:
             print(f"Bot:  {sentence}")
-        sent = list(self.brain.sent)
+        sent = [] if answer.on_pi else list(self.brain.sent)
         for item in sent:
             print(f"(sent to the TARS page: {item.kind} '{item.title}')")
         self._measure(answer, t_start, first_audio[0] if first_audio else None)
         self._report()
+        if answer.on_pi:
+            return Said("".join(answer.spoken).strip(), sent, ON_PI, None)
         return Said("".join(answer.spoken).strip(), sent, self.brain.answered_by, self.brain.quick_service)
 
     def _measure(self, answer: Answer, t_start: float, t_sound: float | None) -> None:

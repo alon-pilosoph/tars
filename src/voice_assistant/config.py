@@ -231,6 +231,9 @@ class HomeConfig:
     tv_model: str = ""
     # TARS's own speaker as a device, for the voice: "how loud are you?", "turn yourself down" (docs/home.md).
     own_speaker: bool = False
+    # House commands handled on the Pi (docs/home.md#house-commands-on-the-pi): "lock the door", "AC to 23" done at
+    # once with no model, from lines made ahead, and heard by Vosk when the cloud's speech to text is out of reach.
+    commands_on_pi: bool = False
     # With own_speaker, its volume keys turn it a step a press: the speakerphone's own + and -, a keyboard's.
     volume_keys: bool = True
     # A remote's buttons, through an IR receiver: the codes of any of volume_up and volume_down (with own_speaker),

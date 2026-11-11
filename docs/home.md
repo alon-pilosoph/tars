@@ -156,6 +156,30 @@ asked, on the page and in the chat, never said aloud. A camera that Home Assista
 picture, costs a sentence, like any other device. Getting the camera itself into Home Assistant is Home Assistant's
 job (an integration for its make); TARS only shows what Home Assistant already has.
 
+### House commands on the Pi
+
+With `[home] commands_on_pi`, the plainest requests skip the model: "lock the front door", "turn off the boiler",
+"switch the TV on", "set the AC to 23". The phrases are made from the house's own devices (`commands.py`): verbs ("turn
+on", "switch off", "put on", "lock"), each device by its name and its label, 16 to 30 degrees for one that takes a
+temperature, and the polite bits ("please", "can you", "hey TARS"). A request that's exactly one of them, as speech to
+text wrote it, is done at once:
+
+- **The home tool's own call**, with its checks: done only when the device says so, after the turn is over. Unlocking
+  is never one of them: it stays with the model and [its challenge](#unlocking). Anything with more in it ("for forty
+  minutes", "and the AC", "don't") goes to the model as ever, and so does a phrase two devices share.
+- **A reply in TARS's voice**, from a few lines for each outcome, made ahead and kept on disk, never the same one twice
+  running ("Front door's locked.", "Locked. Fort Knox has nothing on us."; plainer below 50% humor). A device that
+  doesn't confirm gets "The boiler didn't confirm it."
+- **The exchange joins the conversation**, so "and the boiler too" can follow; the web UI marks the turn as done on
+  the Pi.
+- **With the cloud out of reach**, Vosk on the Pi listens to the recording for the same phrases alone (spoken forms,
+  "a c" for AC), and a command it hears is done the same way: the door locks with the internet down.
+
+Measured so far on the Pi, with the household's own devices (51 phrases) and a synthetic voice: Vosk heard 7 of 8
+test sentences right in 99 to 181 ms each; the eighth ("set the AC to twenty-three") came out garbled and matched
+nothing, which sends it to the model, and a weather question and "turn the boiler on for forty minutes" matched
+nothing, as they should. It's off by default until a week of the household's own voices has no wrong match.
+
 ### TARS's own speaker
 
 With `[home] own_speaker = true`, TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which

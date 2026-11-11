@@ -212,6 +212,9 @@ class RecordingBrain:
     def remember_said(self, text):
         self.remembered.append(text)
 
+    def remember_exchange(self, asked, said):
+        self.remembered.append((asked, said))
+
 
 class SilentReply:
     """A StreamedReply that reads the whole reply at once and makes no audio."""
