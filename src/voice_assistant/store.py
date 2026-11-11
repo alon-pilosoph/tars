@@ -195,7 +195,8 @@ TABLES = {
     created REAL NOT NULL,
     updated REAL NOT NULL,
     updated_by TEXT NOT NULL,        -- who taught it, or last changed it
-    trigger TEXT                     -- JSON: something happening it runs on (skills.trigger); NULL: none
+    trigger TEXT,                    -- JSON: something happening it runs on (skills.trigger); NULL: none
+    once REAL                        -- when it runs, the one time, then it's gone; NULL: not a one-off
 )""",
     "skill_runs": """CREATE TABLE skill_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,6 +358,7 @@ MIGRATIONS = [
             "name TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL)"
         ),
     ],
+    ["ALTER TABLE skills ADD COLUMN once REAL"],
 ]
 
 

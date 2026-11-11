@@ -592,3 +592,83 @@ def test_the_model_is_told_to_just_do_it_and_answer_as_a_person_would():
 
     assert "just do it" in RULES and "never ask them to confirm what they just asked for" in RULES
     assert "Never say skill, trigger or saved" in RULES and "save it only once they say yes" not in RULES
+
+
+# Once, later: "turn the AC off now, and back on at 5am".
+
+TEN_PAST_TEN = datetime(2026, 11, 11, 22, 9).astimezone()  # local, as TARS keeps time
+
+
+@pytest.fixture
+def tonight(tmp_path):
+    return Skills(Store(tmp_path / "db"), clock=TEN_PAST_TEN.timestamp)
+
+
+def test_something_to_do_once_later_is_kept_for_its_time_and_said_where_it_was_asked(tonight):
+    chat = types.SimpleNamespace(speaker="Alon", by_chat=True)
+    said = tonight.call(
+        {"action": "save", "name": "ac back on", "instructions": "Turn the AC back on: cool, 23°.", "at": "5:00",
+         "once": {"day": "tomorrow", "in_minutes": None}},
+        chat,
+    )  # fmt: skip
+    assert said.startswith("done: kept, once, tomorrow at 5:00 AM, said in their chat when it's done")
+    (skill,) = tonight.all()
+    five = datetime(2026, 11, 12, 5, 0).astimezone()
+    assert skill.once == five.timestamp() and skill.at == () and skill.say == CHAT
+    assert "runs by itself once, Thu 2026-11-12 05:00, in their chat" in tonight.note("Alon")
+    assert tonight.page()["skills"][0]["runs_by_itself"] == "once, Thu Nov 12 at 05:00"
+
+
+def test_no_day_said_is_the_next_time_the_clock_shows_it_and_in_minutes_is_from_now(tonight):
+    teach(tonight, name="ac", instructions="Turn the AC on.", at="05:00", once={"day": None, "in_minutes": None})
+    teach(tonight, name="tv", instructions="Turn the TV off.", once={"day": None, "in_minutes": 120})
+    once = {s.name: s.once for s in tonight.all()}
+    assert once["ac"] == datetime(2026, 11, 12, 5, 0).astimezone().timestamp()
+    assert once["tv"] == TEN_PAST_TEN.timestamp() + 7200
+
+
+@pytest.mark.parametrize(
+    ("args", "says"),
+    [
+        ({"at": "21:00", "once": {"day": "today", "in_minutes": None}}, "error: that's already past: it's Wed 22:09"),
+        ({"at": "5:00", "once": {"day": None, "in_minutes": 10}}, "error: once takes in_minutes or at, not both"),
+        ({"once": {"day": "tomorrow", "in_minutes": None}}, "error: a one-off needs one time"),
+        ({"at": "5:00, 6:00", "once": {"day": None, "in_minutes": None}}, "error: a one-off needs one time"),
+        ({"at": "5:00", "days": "sun", "once": {"day": None, "in_minutes": None}}, "error: a one-off runs once"),
+        ({"once": {"day": None, "in_minutes": 0}}, "error: in_minutes must be more than 0"),
+        ({"once": {"day": None, "in_minutes": 60 * 24 * 400}}, "error: a one-off can be at most a year ahead"),
+    ],
+)
+def test_a_one_off_that_cant_be_kept_says_why(tonight, args, says):
+    assert teach(tonight, name="x", instructions="y", **args).startswith(says)
+    assert tonight.all() == []
+
+
+def test_a_one_off_runs_once_from_its_time_on_and_is_gone_once_its_done(tonight):
+    teach(tonight, name="ac", instructions="Turn the AC on.", at="05:00", once={"day": "tomorrow", "in_minutes": None})
+    clock = Clock(tonight.all, ALOUD, record=tonight.ran)
+    five = datetime(2026, 11, 12, 5, 0, 20).astimezone()
+    clock.look(five.replace(hour=4, minute=59))
+    assert not clock.is_due()
+    clock.look(five)
+    clock.look(five.replace(second=50))
+    (due,) = clock.take()
+    assert due.skill.name == "ac" and due.why == ""  # on time
+    assert on_its_own(due.skill, five, SKIP).count("It was asked for once") == 1
+    clock.record(due, "Done: the AC's back on, cool at 23°.")
+    assert tonight.all() == [] and "ac (at 05:00): Done: the AC's back on" in teach(tonight, action="runs")
+
+
+def test_a_one_off_tars_was_off_for_runs_when_its_back_told_how_late_it_is(tonight):
+    teach(tonight, name="ac", instructions="Turn the AC on.", at="05:00", once={"day": "tomorrow", "in_minutes": None})
+    clock = Clock(tonight.all, ALOUD)
+    clock.look(datetime(2026, 11, 12, 7, 12).astimezone())
+    (due,) = clock.take()
+    assert due.why.startswith("it was meant for 05:00, but TARS couldn't until now; if it no longer makes sense")
+
+
+def test_the_model_is_told_to_do_it_later_itself_not_remind_them_and_put_back_what_was_there():
+    from voice_assistant.skills import RULES, SKILLS_TOOL
+
+    assert "not a reminder for them to do it themselves" in RULES and "look at how it is first" in RULES
+    assert "once" in SKILLS_TOOL["parameters"]["required"]

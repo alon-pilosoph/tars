@@ -1,7 +1,7 @@
 # Skills and preferences
 
-TARS is taught by talking to it, aloud or in a chat: skills (what to do when someone says a name, or at set times),
-and what each person likes. Nothing is written in a config file, and nothing new is coded: a skill is plain words for
+TARS is taught by talking to it, aloud or in a chat: skills (what to do when someone says a name, at set times, or
+once, later), and what each person likes. Nothing is written in a config file, and nothing new is coded: a skill is plain words for
 the model, which carries them out with the tools it already has.
 
 | Said | What happens |
@@ -9,6 +9,7 @@ the model, which carries them out with the tools it already has.
 | "From now on, when I say bedtime, turn off the TV and put the AC on 24" | TARS says it back, and saves it once you say yes |
 | "Bedtime" / "the kids want something calm to watch" | the skill it names, or the one that's for that, done |
 | "Every day at 19:55, ask me if I want the news on" | a skill that runs by itself, said aloud at home |
+| "Turn off the AC now and back on at 5am" / "in two hours, turn off the TV" | done now, and done once at that time, by TARS itself, then gone |
 | "Every morning at 7:30, send me what's new in gaming" | one posted in your own chat instead |
 | "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out |
 | "If the CO2 goes over 1000, turn on the purifier and tell me" / "when the front door is unlocked, …" | run when a device changes |
@@ -48,6 +49,13 @@ the model, which carries them out with the tools it already has.
   What changed while TARS was starting is seen, never acted on, and a skill set off runs again no sooner than ten
   minutes later, so it can't set itself off, or flap with a reading around its limit. A skill runs at set times or
   on something happening, not both.
+- **Once, later**: "turn the AC back on at 5am" is a one-off, not a reminder: TARS does it at its time, and says
+  what it did ("Done: the AC's back on, cool at 23°"), where it was asked. The model gives the time the way
+  reminders take it (a time and the day as said, or minutes from now) and the code works out the date. When it puts
+  something back, the model looks at how it is first and writes that into the instructions, so it comes back as it
+  was. It runs on its time, or as soon as TARS is back if it was off then, told how late it is so it can leave
+  what no longer makes sense; once it has run it's gone, and its run is kept like any other. A reminder is only for
+  what someone asked to be reminded of.
 - **On TARS being updated**: a skill can run when TARS itself is updated, told what changed from the version it last
   saw to the one running (each change's PR title, from the checkout's git history, [`tars` tool](architecture.md)),
   so "tell me when you learn something new" is said in plain words, as what someone can now ask for. Each such skill

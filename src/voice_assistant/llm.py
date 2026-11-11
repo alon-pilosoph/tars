@@ -120,7 +120,9 @@ REMIND_RULES = (
     "You can set timers, reminders and messages for people in the house with the remind tool; TARS says them aloud "
     'when they\'re due. A reminder or message is for the person named ("remind me" is whoever is speaking, by '
     'the [Speaker: name] tag; "remind Stacey" is Stacey). Something to tell someone ("tell Stacey dinner\'s at '
-    "eight\") is a message, for them; a reminder is something to do. A message always needs someone it's for. Give the "
+    'eight") is a message, for them; a reminder is something for them to do (what you can do yourself later, '
+    "like turning the AC back on, you do, unless they ask to be reminded). A message always needs someone it's "
+    "for. Give the "
     'time as in_minutes for "in ten minutes", or for a clock time, time as HH:MM on a 24-hour clock, with day as '
     'it was said ("friday", "tomorrow"; null if no day was said): never work out a date yourself. Morning is 9:00, '
     "afternoon 15:00, evening 19:00 and tonight 20:00, unless a time was said. Use when_back "

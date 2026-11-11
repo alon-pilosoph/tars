@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .events import person_key
+from .reminders import MAX_AHEAD_S, due_at
+from .reminders import when as said_when
 from .store import Store
 
 DEVICE = "skills"  # the tool's name
@@ -39,6 +41,7 @@ COOLDOWN_S = 600.0  # a skill that runs when something happens runs again no soo
 MOST_RUNS = 20  # told when asked what TARS did
 TIME = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
 MOST_NOTES = 40  # a person's preferences told to the model, newest first
+LATE_S = 90.0  # a one-off run later than this after its time (TARS was off) is told it's late
 SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET = "save", "delete", "pause", "resume", "remember", "forget"
 LIST, RUNS = "list", "runs"
 ACTIONS = (LIST, RUNS, SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET)
@@ -50,8 +53,8 @@ ANYONE, EVERYONE = "anyone", "everyone"
 SKILLS_TOOL = {
     "type": "function",
     "name": "skills",
-    "description": "Teach TARS: save, change, pause or delete a skill (what to do when someone says its name, or at "
-    "set times), and remember or forget what someone likes.",
+    "description": "Teach TARS: save, change, pause or delete a skill (what to do when someone says its name, at "
+    "set times, or once, later), and remember or forget what someone likes.",
     "strict": True,
     "parameters": {
         "type": "object",
@@ -63,6 +66,7 @@ SKILLS_TOOL = {
             "when",
             "at",
             "days",
+            "once",
             "trigger",
             "say",
             "household",
@@ -97,6 +101,29 @@ SKILLS_TOOL = {
             "days": {
                 "type": ["string", "null"],
                 "description": "save, with at: the days, comma-separated ('sun, mon'); null: every day.",
+            },
+            "once": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["day", "in_minutes"],
+                        "properties": {
+                            "day": {
+                                "type": ["string", "null"],
+                                "description": "with at (one time): the day as said ('tomorrow', 'friday'); null "
+                                "if no day was said: the next time the clock shows it. Never work out a date.",
+                            },
+                            "in_minutes": {
+                                "type": ["number", "null"],
+                                "description": "instead of at: 'in two hours' is 120.",
+                            },
+                        },
+                    },
+                    {"type": "null"},
+                ],
+                "description": "save: it runs by itself once, then it's done ('turn the AC back on at 5'); null: "
+                "it isn't a one-off.",
             },
             "trigger": {
                 "anyOf": [
@@ -159,10 +186,12 @@ SKILLS_TOOL = {
     },
 }
 CAN_SKILLS = (
-    "be taught by them: skills (named things to do, maybe at set times) and what each person likes, with the skills "
-    "tool"
+    "be taught by them: skills (named things to do, maybe at set times) and what each person likes, and do things "
+    "later (once, at a time), with the skills tool"
 )
-NEEDS_SKILLS = "teaching TARS a skill, changing or removing one, or telling it what they like or don't"
+NEEDS_SKILLS = (
+    "doing something later, teaching TARS a skill, changing or removing one, or telling it what they like or don't"
+)
 RULES = (
     "Skills and preferences: you're taught them by talking, with the skills tool, and each request lists those of "
     "whoever is asking.\n"
@@ -177,7 +206,13 @@ RULES = (
     "say skill, trigger or saved, and never ask them to confirm what they just asked for; ask only what you can't "
     "sensibly fill in yourself. Asked in a chat, it's said in their chat; asked aloud, aloud. One about the house or "
     "the TV that anyone might ask for is the household's; one about them is theirs. Changing one is saving it "
-    "again, in full. Don't save what they asked for only this once.\n"
+    "again, in full. Don't save what they asked for only this once, now.\n"
+    '- Something to do once, later ("turn the AC back on at 5am"; "in two hours, turn off the TV"): that\'s a '
+    "one-off, saved the same way with once, and carried out by you at its time, not a reminder for them to do it "
+    "themselves (a reminder only when they ask to be reminded). Do now whatever they asked for now. When it puts "
+    'something back ("back on", "back to how it was"), look at how it is first and write that into its '
+    'instructions ("turn the AC back on: cool, 23°, fan auto"), so it comes back as it was. Answer in plain '
+    "words with when it'll happen: \"Done, the AC's off. I'll turn it back on at 5:00, cool at 23°.\"\n"
     "- Preferences: when they say what they like or don't (in the news, music, the house, anything), remember it, "
     "and say in a few words that you will. When something is clear from what they keep asking for, remember it as "
     "a guess, without making a fuss. Follow their preferences whenever they apply, and never present a guess as "
@@ -188,11 +223,12 @@ RULES = (
 # heard by whoever is in the room, or read in the chat.
 ON_ITS_OWN = (
     "(Nobody said this: {why}, when the skill {name} runs by itself{whose}. Do what its instructions say now. "
-    "{where} If the instructions say there's nothing to do now, reply with exactly {skip} and nothing else.)\n"
+    "{where}{once} If the instructions say there's nothing to do now, reply with exactly {skip} and nothing else.)\n"
     "Instructions: {instructions}"
 )
 ALOUD_NOTE = "Whatever you reply is said aloud, unprompted, to whoever is in the room, and you'll hear their answer."
 CHAT_NOTE = "Whatever you reply is posted in their chat, unprompted, and they may answer there."
+ONCE_NOTE = " It was asked for once, so say in a few words what you did, as done."
 
 
 @dataclass(frozen=True)
@@ -207,6 +243,7 @@ class Skill:
     paused: bool = False
     id: int | None = None
     trigger: dict | None = None  # something happening that it runs on (trigger())
+    once: float | None = None  # the Unix time a one-off runs, after which it's gone; None: not a one-off
 
     @property
     def household(self) -> bool:
@@ -243,6 +280,11 @@ def line(skill: Skill) -> str:
         parts.append(
             f"runs by itself at {', '.join(skill.at)}{on}, {'said aloud' if skill.say == ALOUD else 'in their chat'}"
         )
+    if skill.once is not None:
+        at = datetime.fromtimestamp(skill.once).astimezone()
+        parts.append(
+            f"runs by itself once, {at:%a %Y-%m-%d %H:%M}, {'said aloud' if skill.say == ALOUD else 'in their chat'}"
+        )
     if skill.trigger:
         where = "said aloud" if skill.say == ALOUD else "in their chat"
         parts.append(f"runs by itself when {describe(skill.trigger)}, {where}")
@@ -257,6 +299,8 @@ def runs_by_itself(skill: Skill) -> str:
     if skill.at:
         on = f" on {', '.join(d.title() for d in skill.days)}" if skill.days else " every day"
         return f"at {', '.join(skill.at)}{on}"
+    if skill.once is not None:
+        return f"once, {datetime.fromtimestamp(skill.once).astimezone():%a %b %-d at %H:%M}"
     return f"when {describe(skill.trigger)}" if skill.trigger else ""
 
 
@@ -334,6 +378,7 @@ def on_its_own(skill: Skill, when: datetime, skip: str, why: str = "") -> str:
         name=skill.name,
         whose="" if skill.household else f", for {skill.owner}",
         where=ALOUD_NOTE if skill.say == ALOUD else CHAT_NOTE,
+        once=ONCE_NOTE if skill.once is not None else "",
         instructions=skill.instructions,
         skip=skip,
     )
@@ -370,6 +415,8 @@ class Skills:
             "INSERT INTO skill_runs (skill_id, name, owner, at, why, said) VALUES (?, ?, ?, ?, ?, ?)",
             (skill.id, skill.name, skill.owner, self._clock(), why, said),
         )
+        if skill.once is not None and skill.id is not None:  # a one-off is done
+            self._by_id("DELETE FROM skills WHERE id=? AND once=?", (skill.id, skill.once))
 
     def runs(self, person: str | None) -> str:
         mine = person_key(person)
@@ -450,6 +497,9 @@ class Skills:
             raise ValueError("save needs the skill's name and its instructions, in full")
         at, on = times(args.get("at")), days(args.get("days"))
         on_event = trigger(args.get("trigger"), self.devices(), self.people())
+        once = self._once(args.get("once"), at, on, on_event)
+        if once is not None:
+            at = ()
         if on and not at:
             raise ValueError("days are for a skill that runs by itself: it needs at")
         if at and on_event:
@@ -464,26 +514,55 @@ class Skills:
             raise ValueError("a household skill is said aloud; one posted in a chat is someone's own")
         now = self._clock()
         happens = json.dumps(on_event) if on_event else None
-        values = (instructions, _clean(args.get("when")), json.dumps(at), json.dumps(on), happens, say, now, person)
+        values = (
+            instructions, _clean(args.get("when")), json.dumps(at), json.dumps(on), happens, once, say, now, person
+        )  # fmt: skip
         with self.store.transaction() as db:
             had = self._find(db, owner, name)
             if had:
                 db.execute(
-                    "UPDATE skills SET instructions=?, purpose=?, at=?, days=?, trigger=?, say=?, updated=?, "
+                    "UPDATE skills SET instructions=?, purpose=?, at=?, days=?, trigger=?, once=?, say=?, updated=?, "
                     "updated_by=?, paused=0 WHERE id=?",
                     (*values, had["id"]),
                 )
             else:
                 db.execute(
-                    "INSERT INTO skills (instructions, purpose, at, days, trigger, say, updated, updated_by, owner, "
-                    "name, created, paused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                    "INSERT INTO skills (instructions, purpose, at, days, trigger, once, say, updated, updated_by, "
+                    "owner, name, created, paused) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
                     (*values, owner, name, now),
                 )
-        runs = f", said {'in their chat' if say == CHAT else 'aloud at home'} when it runs" if at or on_event else ""
+        where = "in their chat" if say == CHAT else "aloud at home"
+        if once is not None:
+            runs = f", once, {said_when(once, now)}, said {where} when it's done"
+        else:
+            runs = f", said {where} when it runs" if at or on_event else ""
         return (
             f"done: {'changed' if had else 'kept'}{runs}; tell them in plain words what you'll do and when, as "
             "agreeing to it, not that you saved anything"
         )
+
+    def _once(self, raw, at: tuple[str, ...], on: tuple[str, ...], on_event: dict | None) -> float | None:
+        """When a one-off runs, as a Unix time; None if it isn't one; ValueError saying what's wrong."""
+        if not isinstance(raw, dict):
+            return None
+        if on or on_event:
+            raise ValueError("a one-off runs once, at its time: no days, and no trigger")
+        now, minutes = self._clock(), raw.get("in_minutes")
+        if minutes is not None:
+            if at:
+                raise ValueError("once takes in_minutes or at, not both")
+            if not isinstance(minutes, int | float) or minutes <= 0:
+                raise ValueError("in_minutes must be more than 0")
+            due = now + minutes * 60
+        else:
+            if len(at) != 1:
+                raise ValueError("a one-off needs one time, in at, or in_minutes; two one-offs for two times")
+            due = due_at(raw.get("day"), at[0], now)
+        if due <= now:
+            raise ValueError(f"that's already past: it's {datetime.fromtimestamp(now).astimezone():%a %H:%M} now")
+        if due - now > MAX_AHEAD_S:
+            raise ValueError("a one-off can be at most a year ahead")
+        return due
 
     # The web UI's Skills page: everything, everyone's, and changed by id (it has no one asking).
 
@@ -599,6 +678,7 @@ class Skills:
             bool(row["paused"]),
             row["id"],
             json.loads(row["trigger"]) if row["trigger"] else None,
+            row["once"],
         )
 
 
@@ -609,6 +689,18 @@ def _pref_line(p: dict) -> str:
 
 def _clean(value) -> str:
     return " ".join(str(value).split()) if isinstance(value, str) else ""
+
+
+def _late(once: float, when: datetime) -> str:
+    """For a one-off run late (TARS was off at its time), when it was meant for; "" if it isn't late."""
+    if when.timestamp() - once <= LATE_S:
+        return ""
+    meant = datetime.fromtimestamp(once, when.tzinfo)
+    day = "" if meant.date() == when.date() else f" on {meant:%a %b %-d}"
+    return (
+        f"it was meant for {meant:%H:%M}{day}, but TARS couldn't until now; if it no longer makes sense this late, "
+        "don't do it, and say so"
+    )
 
 
 class Due(NamedTuple):
@@ -696,6 +788,12 @@ class Clock:
     def _timed(self, skills: list[Skill], when: datetime) -> list[Due]:
         hhmm, found = when.strftime("%H:%M"), []
         for skill in skills:
+            if skill.once is not None:  # due from its time on, once: a TARS that was off then runs it when it's back
+                key = (skill.id or skill.name, skill.once)
+                if when.timestamp() >= skill.once and key not in self._ran:
+                    self._ran.add(key)
+                    found.append(Due(skill, when, _late(skill.once, when)))
+                continue
             key = (skill.id or skill.name, when.date(), hhmm)
             if hhmm in skill.at and (not skill.days or DAYS[when.weekday()] in skill.days) and key not in self._ran:
                 self._ran.add(key)
