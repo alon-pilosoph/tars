@@ -92,13 +92,13 @@ def test_quiet_is_fine_when_the_prompt_asks_for_it():
 
 # ---------- Scripts ----------
 
-DEVICES = [
-    {"name": "front door", "entity": "lock.front_door"},
-    {"name": "AC", "kind": "my_house.ac"},
-    {"name": "bedroom AC", "entity": "climate.bedroom"},
-    {"name": "TV", "kind": "androidtv", "address": "10.0.0.5"},
-    {"name": "boiler", "entity": "switch.boiler"},
-    {"name": "temperature", "entity": "sensor.temperature"},
+DEVICES = [  # as the house made them: name, what it does, whether it takes a temperature
+    ("front door", ("status", "lock", "unlock"), False),
+    ("AC", ("status", "on", "off", "set"), True),  # a plugin's, which says it takes a temperature
+    ("bedroom AC", ("status", "on", "off", "set"), True),
+    ("TV", ("status", "on", "off", "do"), False),
+    ("boiler", ("status", "on", "off"), False),
+    ("temperature", ("status", "history"), False),
 ]
 
 
@@ -108,7 +108,7 @@ def test_the_house_script_asks_for_everything_each_device_does_and_mixes_in_what
     means = {p.means.split(":")[0] for p in commands}
     assert means == {
         "front door|lock", "front door|unlock", "front door|locked",
-        "AC|on", "AC|off",
+        "AC|on", "AC|off", "AC|set",
         "bedroom AC|on", "bedroom AC|off", "bedroom AC|set",
         "TV|on", "TV|off",
         "boiler|on", "boiler|off",
@@ -118,12 +118,12 @@ def test_the_house_script_asks_for_everything_each_device_does_and_mixes_in_what
         assert name.lower() in p.say.lower()
     assert len({p.id for p in prompts}) == len(prompts)
     not_commands = [p for p in prompts if p.means == ""]
-    assert len(not_commands) == 6  # three that name a device without asking, three of plain chatter
+    assert len(not_commands) == 9  # three that name a device without asking, six plain requests
     assert any(p.how for p in commands) and all(p.quiet == (p.how.startswith(("Quietly", "From"))) for p in prompts)
 
 
 def test_a_big_house_is_sampled_not_recorded_whole():
-    devices = [{"name": f"light {n}", "entity": f"light.l{n}"} for n in range(40)]
+    devices = [(f"light {n}", ("status", "on", "off"), False) for n in range(40)]
     assert len([p for p in house_script(devices, random.Random(2)) if p.means]) == MOST_COMMANDS
 
 

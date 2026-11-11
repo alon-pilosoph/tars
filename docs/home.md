@@ -182,6 +182,13 @@ with an unknown word in it is refused: 0 wrong of 21, all 12 near-misses and pla
 of 9 commands missed (a miss goes to the model, or with the cloud out of reach isn't done). About 140 ms a take. It's
 off by default until the household's own voices, recorded, have no wrong match.
 
+To measure it: `voice-assistant --record-session house --for Alon` sends a link to a [recording
+session](web-ui.md#recording-sessions) made from the house's own devices (about 6 minutes), and
+`uv run python tools/commands_bench.py` plays every house session's takes to Vosk, as the Pi would hear them, and
+scores each against what it means: right, missed or wrong, with the time each took. `--cloud` also times the cloud's
+speech to text for whole recordings (what `local_first` adds for a plain request) and matches its transcripts (about
+$0.004 a minute of takes). Each run is kept in `voice_data/bench/commands/`, and one with a wrong match exits 1.
+
 <a id="local-first"></a>**Local first** (`[home] local_first`, with `commands_on_pi`): nothing goes to the cloud's speech
 to text until the request is over and Vosk has heard it isn't a house command. TARS's own rules say when the turn is
 over (Flux isn't listening), no answer is started in a pause, and Vosk listens to the whole recording: a command is

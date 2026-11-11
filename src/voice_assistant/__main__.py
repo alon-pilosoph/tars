@@ -273,7 +273,7 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
         raise ConfigError("Recording sessions keep their takes in the event log: set [learning] log_events = true.")
     if kind == HOUSE and not cfg.home.devices:
         raise ConfigError("There are no [[home.devices]] in config.toml to make house commands from.")
-    prompts = house_script(cfg.home.devices, random.Random()) if kind == HOUSE else voice_script()
+    prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
     token = Sessions(log.store).create(kind, person, prompts)
     url = f"{cfg.web.link.rstrip('/') or f'http://{reachable_address()}:{port}'}/?session={token}"
     minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
@@ -292,6 +292,17 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
         print(f"(couldn't send it on Telegram: {e})")
         return
     print(f"Sent to {person} on Telegram.")
+
+
+def house_actions(cfg: Config, root: Path, events) -> list[tuple[str, tuple[str, ...], bool]]:
+    """Each device's name, what it does and whether it takes a temperature, as the house makes them: what a house
+    recording session asks for."""
+    from .home import SET
+
+    home = make_home(cfg, root, events=events)
+    if home is None or not home.devices:
+        raise ConfigError("There are no devices in the house to make house commands from (docs/home.md).")
+    return [(d.display, tuple(d.actions), SET in d.actions and d.takes_temperature) for d in home.devices.values()]
 
 
 def enroll_from_session(speaker_id, store: Store, session: dict) -> None:

@@ -34,7 +34,9 @@ Every page, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo
 
 A page of its own, opened from a link TARS sends, that has one person say a list of phrases into TARS's own
 speakerphone, one at a time: their voice, so speaker ID knows them from the start, or the house's commands, for
-testing offline recognizers on them ([roadmap](roadmap.md)). `voice-assistant --record-session voice|house --for NAME`
+measuring [house commands on the Pi](home.md#house-commands-on-the-pi) on the household's own voices: each thing each
+device does, asked the way people ask, from across the room and quietly too, words that name a device without asking
+for anything, and plain requests. `voice-assistant --record-session voice|house --for NAME`
 makes one and sends its link to NAME's Telegram chat (or prints it). The link is the session's only key, and works for
 a day or until the last phrase is done.
 

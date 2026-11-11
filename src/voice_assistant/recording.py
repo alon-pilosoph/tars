@@ -39,8 +39,8 @@ ABOUT = {
     ),
     HOUSE: (
         "House commands",
-        "To test which offline recognizer hears the house commands best, before TARS relies on one.",
-        "They're kept on the Pi for comparing the recognizers.",
+        "To measure TARS doing the house's commands on the Pi, and hearing them offline, before it's turned on.",
+        "They're kept on the Pi, and played back to TARS to check it never mistakes one for another.",
     ),
 }
 
@@ -97,13 +97,6 @@ PHRASINGS = {
     "open": ["open the {n}", "raise the {n}"],
     "close": ["close the {n}", "lower the {n}"],
 }
-ACTIONS = {
-    "lock": ["lock", "unlock", "locked"],
-    "climate": ["on", "off", "set"],
-    "cover": ["open", "close"],
-    "sensor": [],
-    "binary_sensor": [],
-}
 OPENINGS = ["", "", "hey TARS, ", "can you ", "please "]
 # Words that name a device and an action but ask for neither: the ones a wrong match would come from.
 NOT_COMMANDS = [
@@ -111,27 +104,35 @@ NOT_COMMANDS = [
     "I'll {c} myself later",
     "don't {c} yet",
 ]
+# Plain requests, which go on to the model: for how long they take when nothing is sent until the turn is over.
 CHATTER = [
     "what's the weather like tomorrow",
     "how long is left on the timer",
     "tell me a joke about robots",
+    "remind me to call my mother at six",
+    "what's on my shopping list",
+    "who's home",
 ]
 HOUSE_HOWS = ["", FAR, "", SOFTLY, FAST, ""]
 MOST_COMMANDS = 36
 
 
-def house_script(devices: list[dict], rng: random.Random) -> list[Prompt]:
+def house_script(devices: list[tuple[str, tuple[str, ...], bool]], rng: random.Random) -> list[Prompt]:
     """Each thing each device does, in one of the ways people ask, from a few places and voices; then words that
-    name devices without asking for anything, which must not count. At most MOST_COMMANDS commands."""
+    name devices without asking for anything, which must not count, and plain requests. `devices`: each one's name,
+    what it does (Device.actions) and whether it takes a temperature, as the house made them. At most MOST_COMMANDS
+    commands."""
     commands: list[tuple[str, str, str]] = []  # (how it opens, the words, what they mean)
-    for device in devices:
-        name = str(device.get("name", "")).strip()
+    for name, actions, warm in devices:
+        name = name.strip()
         if not name:
             continue
-        domain = str(device.get("entity", "")).partition(".")[0] or str(device.get("kind", ""))
-        for action in ACTIONS.get(domain, ["on", "off"]):
+        said = name if name.isupper() else name.lower()  # "the AC", "the front door"
+        asked = [a for a in ("on", "off", "lock", "unlock", "open", "close") if a in actions]
+        asked += ["locked"] * ("lock" in actions) + ["set"] * (warm and "set" in actions)
+        for action in asked:
             t = rng.choice([21, 22, 23, 24, 25]) if action == "set" else None
-            words = rng.choice(PHRASINGS[action]).format(n=name, t=t)
+            words = rng.choice(PHRASINGS[action]).format(n=said, t=t)
             commands.append((rng.choice(OPENINGS), words, f"{name}|{action}" + (f":{t}" if t else "")))
     rng.shuffle(commands)
     commands = commands[:MOST_COMMANDS]
