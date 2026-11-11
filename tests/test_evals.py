@@ -442,14 +442,16 @@ HOME_CALL = dict.fromkeys(SETTINGS)
 
 
 def test_a_house_scenario_plays_the_real_home_tool_and_checks_what_changed():
-    # Asked to unlock, Qwen unlocks: the real tool's rules let a trusted voice, heard asking, through.
+    # Asked to unlock, Qwen asks for the challenge's digits, and saying them unlocks: the real tool's rules let a
+    # trusted voice, heard asking, then heard saying the digits, through.
     def qwen(messages):
         if after_tool(messages):
-            return "It's unlocked."
+            return "Say four, seven, two." if "challenge:" in str(messages[-1]) else "It's unlocked."
         return [("home", HOME_CALL | {"device": "front door", "action": "unlock"})]
 
-    turn = {"say": "unlock the front door", "home": [{"device": "front door", "action": "unlock"}]}
-    result, _ = run([turn], qwen, house={"lock": "locked"})
+    asked = {"say": "unlock the front door", "home": [], "says": ["four, seven, two"]}
+    answered = {"say": "four seven two", "home": [{"device": "front door", "action": "unlock"}]}
+    result, _ = run([asked, answered], qwen, house={"lock": "locked"})
     assert result.ok, [t.wrong for t in result.turns]
 
 

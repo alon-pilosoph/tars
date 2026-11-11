@@ -99,10 +99,15 @@ instructions and…". A model may believe them, so what matters is what code all
 ### Someone in the room, or a recorded or cloned voice
 
 - **Defenses:** anyone in the room can ask TARS anything, by design; only unlocking is held back, for a trusted voice
-  that's recognised surely and says "unlock". Locking is anyone's.
-- **Tests:** `tests/test_home.py::test_nothing_else_unlocks`, `::test_nobody_unlocks_by_voice_unless_someone_is_named`.
-- **Open:** speaker ID can't tell a recording or a cloned voice from the person: a replay of "unlock the front door"
-  in a trusted voice would unlock it. A spoken challenge (a random number to repeat) is the planned defense.
+  that's recognised surely and says "unlock", and then says back three random digits, recognised as the same voice,
+  within 30 seconds, in one try ([unlocking](home.md#unlocking)). A replayed recording can't answer digits it's never
+  heard. Locking is anyone's.
+- **Tests:** `tests/test_home.py::test_nothing_else_unlocks`, `::test_nobody_unlocks_by_voice_unless_someone_is_named`,
+  `::test_the_digits_must_be_right_and_said_by_the_same_trusted_voice`, `::test_a_challenge_gets_one_try`,
+  `::test_a_challenge_waits_half_a_minute`.
+- **Open:** a voice cloned live, by someone who hears the digits and can make the clone say them within half a
+  minute, still gets through; so does a recording that happens to hold the right digits in that voice. The challenge
+  raises the cost from replaying one sentence to running a clone in the room.
 
 ### A model that gets it wrong
 

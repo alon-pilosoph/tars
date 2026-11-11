@@ -72,13 +72,20 @@ Unlocking is the one change that needs more than a request. When someone says "u
    - **sure enough**: speaker ID's score is at least `unlock_threshold` (0.6, against 0.5 to greet someone by name);
    - **asked for**: the words heard in that turn include "unlock". The model can't unlock on its own reading of
      something else: "is the door unlocked?", a note, or a web page that says to let someone in.
-4. It waits for the turn to be over, then unlocks, and reads the lock until it reports unlocked.
+4. **The challenge** (`[home] unlock_challenge`, on by default): the tool answers with three random digits instead
+   of unlocking ("ask them to say: four, seven, two"), and TARS asks for them. The next turn, the tool checks it
+   again: the same trusted voice, recognised surely on the answer's own recording, saying those digits (as speech to
+   text wrote them: "four, seven, 2" counts), within 30 seconds. One try: other digits leave it locked, and a new
+   "unlock" gets new digits. A recording of someone saying "unlock the front door" can't answer digits it's never
+   heard.
+5. It waits for the turn to be over, then unlocks, and reads the lock until it reports unlocked.
 
 If any check fails, nothing is sent, and the model says why in a sentence ("I'm not sure enough that's you; say it
 again, a little longer"). Locking needs none of this: anyone can lock.
 
-Speaker ID is judged on the request itself, not on a "yes" afterwards: "unlock the front door" is long enough to
-recognise a voice, and a bare "yes" usually isn't.
+Speaker ID is judged on the request itself, and again on the digits, never on a "yes": "unlock the front door" and
+three digits are long enough to recognise a voice, and a bare "yes" usually isn't. A short answer can fall under
+`unlock_threshold`; then TARS asks them to ask again. The challenge is for the voice only: a chat has its own rule.
 
 ## The devices
 
