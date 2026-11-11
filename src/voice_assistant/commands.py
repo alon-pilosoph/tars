@@ -168,6 +168,7 @@ class HouseCommands:
     replies: Replies
     call: Callable[[dict, object], str]
     hear: Callable[[bytes], str] | None = None
+    local_first: bool = False  # [home] local_first: the turn's speech to text is LocalFirstSession
 
     def lines(self) -> list[str]:
         """Every sentence a reply may have, to make ahead."""
@@ -194,3 +195,50 @@ def vosk_hearing(grammar: list[str], models_dir) -> Callable[[bytes], str]:
         return "" if "[unk]" in text else text
 
     return hear
+
+
+class LocalFirstSession:
+    """[home] local_first: the recording stays on the Pi until it's over. Then Vosk listens for a house command;
+    only anything else is sent, whole, to the cloud's speech to text. With no service deciding when the speaker is
+    done (turn_state is None), TARS's own rules do (recorder.py)."""
+
+    turn_state = None
+
+    def __init__(self, hear: Callable[[bytes], str], match: Callable[[str], object], whole):
+        self._hear, self._match, self._whole = hear, match, whole
+        self._audio = bytearray()
+        self.local: bool | None = None  # after transcript(): whether it was heard on the Pi alone
+
+    def feed(self, pcm: bytes) -> None:
+        self._audio += pcm
+
+    def transcript(self) -> str:
+        heard = self._hear(bytes(self._audio))
+        if heard and self._match(heard):
+            self.local = True
+            return heard
+        self.local = False
+        session = self._whole.session()
+        session.feed(bytes(self._audio))
+        session.finish()
+        try:
+            return session.transcript()
+        finally:
+            session.close()
+
+    def finish(self) -> None:
+        pass
+
+    def close(self) -> None:
+        self._audio.clear()
+
+
+class LocalFirstTranscriber:
+    """Sessions that hear house commands on the Pi before anything goes to the cloud (LocalFirstSession); `whole`
+    transcribes a finished recording (stt.DeepgramFileTranscriber, with its backup)."""
+
+    def __init__(self, hear: Callable[[bytes], str], match: Callable[[str], object], whole):
+        self._hear, self._match, self._whole = hear, match, whole
+
+    def session(self) -> LocalFirstSession:
+        return LocalFirstSession(self._hear, self._match, self._whole)

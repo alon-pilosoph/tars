@@ -234,6 +234,9 @@ class HomeConfig:
     # House commands handled on the Pi (docs/home.md#house-commands-on-the-pi): "lock the door", "AC to 23" done at
     # once with no model, from lines made ahead, and heard by Vosk when the cloud's speech to text is out of reach.
     commands_on_pi: bool = False
+    # With commands_on_pi: nothing goes to the cloud's speech to text until the request is over and Vosk has found
+    # it isn't a house command. A command is then free and works offline; anything else loses the streaming head start.
+    local_first: bool = False
     # With own_speaker, its volume keys turn it a step a press: the speakerphone's own + and -, a keyboard's.
     volume_keys: bool = True
     # A remote's buttons, through an IR receiver: the codes of any of volume_up and volume_down (with own_speaker),
@@ -593,6 +596,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
+    if cfg.home.local_first and not cfg.home.commands_on_pi:
+        problems.append("[home] local_first hears house commands first: it needs commands_on_pi = true")
     return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence)
 
 

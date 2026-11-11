@@ -548,6 +548,21 @@ def house_commands(cfg: Config, root: Path, home):
     return HouseCommands(commands, replies, home.call, hear)
 
 
+def local_first(cfg: Config, root: Path, commands):
+    """[home] local_first: speech to text that hears a house command on the Pi before sending anything to the cloud;
+    the cloud's endpoint for whole recordings takes the rest. Without Vosk, there's nothing to hear it with first."""
+    from .commands import LocalFirstTranscriber
+
+    if commands.hear is None:
+        raise ConfigError("[home] local_first needs Vosk on this machine to hear house commands (see the log above).")
+    env = root / ".env"
+    client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
+    whole = make_recording_transcriber(cfg, env, client)
+    commands.local_first = True
+    print("(house commands: heard on the Pi first; the cloud hears only what isn't one)")
+    return LocalFirstTranscriber(commands.hear, commands.commands.match, whole)
+
+
 def make_presence(cfg: Config, root: Path, events):
     """[presence] (presence.Presence), when it's on and there's an event log to keep who's home in; None otherwise.
     It only reads the board until the assistant's watch() asks the routers."""
@@ -1409,6 +1424,9 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         skills=skills,
         myself=myself,
     )
+    commands = house_commands(cfg, root, home)
+    if commands and cfg.home.local_first:
+        transcriber = local_first(cfg, root, commands)
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
     speaker = Speaker(
@@ -1438,7 +1456,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
             skill_clock=skill_clock(skills, "aloud", home, presence, myself),
-            commands=house_commands(cfg, root, home),
+            commands=commands,
         )
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:

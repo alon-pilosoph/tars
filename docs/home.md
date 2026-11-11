@@ -180,6 +180,15 @@ test sentences right in 99 to 181 ms each; the eighth ("set the AC to twenty-thr
 nothing, which sends it to the model, and a weather question and "turn the boiler on for forty minutes" matched
 nothing, as they should. It's off by default until a week of the household's own voices has no wrong match.
 
+<a id="local-first"></a>**Local first** (`[home] local_first`, with `commands_on_pi`): nothing goes to the cloud's speech
+to text until the request is over and Vosk has heard it isn't a house command. TARS's own rules say when the turn is
+over (Flux isn't listening), no answer is started in a pause, and Vosk listens to the whole recording: a command is
+done on the Pi, free and offline; anything else is sent, whole, to Deepgram's endpoint for recordings (OpenAI's as
+its backup), and goes on as ever. The cost is the streaming head start for everything that isn't a command, and a
+later end of turn: TARS's own rules wait 0.8 s of silence, and longer when Smart Turn thinks you're mid-sentence. How
+much that is, against the cloud seconds a command saves, is to be measured on the household's own recorded takes; it
+hasn't been yet.
+
 ### TARS's own speaker
 
 With `[home] own_speaker = true`, TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which

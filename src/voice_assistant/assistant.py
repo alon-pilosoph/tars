@@ -788,7 +788,8 @@ class Assistant:
                 self.mic,
                 start_timeout_s=start_timeout_s,
                 on_audio=session.feed,
-                on_pause=paused,
+                # Local first, nothing is heard until the turn is over: no answer is started in a pause.
+                on_pause=None if self.commands and self.commands.local_first else paused,
                 on_resume=resumed,
                 turn_state=session.turn_state,
                 stop=self._stop.is_set,
