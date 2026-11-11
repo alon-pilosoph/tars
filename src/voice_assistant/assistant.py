@@ -880,7 +880,8 @@ class Assistant:
     def handle(self, heard: Utterance) -> bool:
         """Returns False if there was nothing meant for TARS to answer."""
         # Latency counts from when the speaker actually stopped, including the silence waited through.
-        t_stopped_talking = time.perf_counter() - heard.silence_s
+        t_over = time.perf_counter()
+        t_stopped_talking = t_over - heard.silence_s
         self.timings = {}
         answer: Answer | None = None
         try:
@@ -906,6 +907,8 @@ class Assistant:
                 heard.draft.keep()
                 return False
             self.timings = {"end_of_speech": heard.silence_s, "stt": answer.stt_s}
+            if answer.t_asked:  # how long before the turn was over the brain was asked, by an early draft
+                self.timings["head_start"] = max(0.0, t_over - answer.t_asked)
             if self._greet_s is not None:  # the conversation's first request: how soon TARS greeted the wake word
                 self.timings["greet"], self._greet_s = self._greet_s, None
             said = self._speak(answer, t_stopped_talking)
@@ -1084,6 +1087,7 @@ class Assistant:
         labels = {
             "greet": "greeted",
             "end_of_speech": "waited",
+            "head_start": "answer started early by",
             "stt": "stt",
             "llm": "llm first sentence",
             "tts": "tts first audio",

@@ -1,7 +1,8 @@
 # Response time
 
 How long TARS takes to answer, from the moment you stop talking to its first sound: where that time goes, how the
-pipeline is built to overlap it, and the measured steps that took it from about 3.5 s to 1.2-1.5 s.
+pipeline is built to overlap it, and the measured steps that took a benchmark from about 3.5 s to 1.2-1.5 s. In use on
+the Pi, half the answers come within 2.2 s ([in use](#in-use-on-the-pi)).
 
 The constraints shape every choice below. A voice assistant feels slow well before it feels wrong, so every stage is
 streamed and started as early as possible. But cutting someone off mid-sentence is worse than a slow answer, so
@@ -22,6 +23,32 @@ Median over 8 spoken questions, three runs, on the development Mac ([method](#ho
 
 A turn that needs the web adds Qwen's hand-off (about 0.3 s) and a web search, and TARS says "Looking it up." as it
 starts.
+
+## In use on the Pi
+
+Median over the 21 spoken requests answered on the Pi from 5 to 10 November 2026, with Qwen on Cerebras alone and
+Cartesia's James, from `timings` in the `turns` table ([timings on every answer](#timings-on-every-answer)):
+
+| Stage | On the Pi, in use | The benchmark, on the development Mac |
+|---|---|---|
+| Waiting to be sure you're done | 0.88 s | 0.52 s |
+| The brain's first sentence | 1.01 s | 0.42 s (Qwen on Groq) |
+| The voice's first audio | 0.29 s | 0.39 s |
+| **From you stopping to TARS's first sound** | **2.2 s** (90% within 2.9 s) | **1.32-1.41 s** |
+
+Three things account for most of the second:
+
+- **Most requests worked the house** ("put the news on", "is the boiler on?"), so the first sentence waits for Qwen to
+  ask a device and the device to answer. The benchmark's questions need no tool.
+- **Short replies take longer to call over.** Many requests were a word or two ("twelve", "yeah"), and Flux waits
+  longer to be sure of those than of a whole sentence.
+- **The stages added up.** In 19 of the 21 turns the total was at least the sum of the three stages, give or take a
+  tenth of a second, and so was the benchmark's. An answer started during the pause should come in under that sum. Each turn now
+  keeps how long before the turn was over its answer was started (`head_start`), which tells whether Flux's "maybe
+  done" comes too late to help or the early start isn't happening.
+
+Groq made no difference to these numbers: it had written 3 of 27 quick replies before it was turned off, and the median
+before (2.5 s over 23 turns) is within the spread of the one after.
 
 ## How the stages overlap
 
@@ -115,7 +142,8 @@ and Home shows it.
 
 ### Timings on every answer
 
-Each of TARS's turns keeps the same stages as the log line (`timings` in the `turns` table, in seconds), which model
+Each of TARS's turns keeps the same stages as the log line (`timings` in the `turns` table, in seconds, with
+`head_start`: how long before the turn was over its answer was started), which model
 wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed the turn over, `ponder` when it went to the
 thinking model, `fallback` when Qwen couldn't answer on any service or ran into its cap, `openai` with no quick service
 set up), and where Qwen's reply came from (`quick_service`, hand-offs included). Home shows the
@@ -305,8 +333,9 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 
 ## Limitations
 
-- **Measured on the development Mac**; the numbers move by a few tenths between runs, and the four-setup comparison
-  ran while the Mac was also training models.
+- **The benchmark is the development Mac's**; the numbers move by a few tenths between runs, and the four-setup
+  comparison ran while the Mac was also training models. [In use on the Pi](#in-use-on-the-pi) is a first week of
+  mostly testing, 21 requests.
 - **Spliced pauses aren't real hesitations** (no "um", no stretched last word), which may flatter Flux in the
   cut-off test.
 - **Starting early costs brain calls.** Flux's early "maybe done", where a draft starts, came 0.65 s after the end of

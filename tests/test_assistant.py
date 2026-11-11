@@ -535,6 +535,22 @@ def test_each_answer_is_kept_with_how_long_it_took_and_who_wrote_it(speaker, tmp
     assert set(tars["timings"]) == set(TIMINGS) - {"greet"} and tars["timings"]["total"] >= 0  # no greeting here
 
 
+def test_an_answer_started_during_the_pause_keeps_how_early_it_started(speaker, tmp_path, monkeypatch):
+    monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
+    assistant, convos = logged_assistant(speaker, tmp_path, [["pause", b"q"], None], ["what time is it"], ["Late."])
+    playing(speaker)
+    record = assistant.recorder.record
+
+    def still_quiet(*args, **kw):
+        pcm = record(*args, **kw)
+        time.sleep(0.2)  # the silence goes on after the draft started, until the turn is called over
+        return pcm
+
+    assistant.recorder.record = still_quiet
+    assistant.converse(follow_up_s=4.0)
+    assert 0.15 < turns_of(convos)[-1]["timings"]["head_start"] < 1.0
+
+
 @pytest.mark.parametrize("stage", ["stt", "llm", "tts"])
 def test_a_failed_answer_is_kept_with_where_it_failed(speaker, tmp_path, monkeypatch, stage):
     monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
