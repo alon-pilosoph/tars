@@ -505,7 +505,7 @@ and expires on its own. The models never see the picture.
 ## Things to know
 
 - **The token is a key to the house.** It lives in `.env`, which never leaves the machine.
-- **The web UI has no accounts**, and TARS can lock the door and run the boiler from what it hears. Unlocking is the
+- **The web UI needs a passkey only once [sign-in](web-ui.md#signing-in) is on**, and TARS can lock the door and run the boiler from what it hears. Unlocking is the
   one change it won't make without a voice it knows, sure, asking for it.
 - **"Sent" is honest, and an IR device's status is a guess.** An IR device can't report back: TARS says it sent the
   command, and its status says it's Home Assistant's guess. So asked to change one, TARS does even when the status

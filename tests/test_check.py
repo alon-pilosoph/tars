@@ -11,7 +11,7 @@ import pytest
 from voice_assistant import check
 from voice_assistant.audio import NoDeviceError
 from voice_assistant.check import FAIL, OK, SKIP, WARN, Result
-from voice_assistant.config import ConfigError, load_config
+from voice_assistant.config import ConfigError, WebConfig, load_config
 
 from .conftest import raising
 from .test_presence import FakeHomeware, FakeXiaomi, presence_config
@@ -108,8 +108,24 @@ def test_voiceprints_web_ui_and_services(tmp_path):
     assert check.voiceprints([]).status == WARN and check.voiceprints(["alon"]).detail == "alon"
     assert check.web(lambda url: 200).status == OK
     assert check.web(raising(ConnectionRefusedError())).status == WARN
+    assert check.web(lambda url: 401).status == OK  # it asks for a session: it's running
     assert check.systemd("voice-assistant", lambda u: None).status == SKIP
     assert check.systemd("voice-assistant", lambda u: "failed").status == WARN
+
+
+@pytest.mark.parametrize(
+    "web, scheme, status",
+    [
+        (WebConfig(), "http", WARN),
+        (WebConfig(sign_in=True), "http", FAIL),
+        (WebConfig(sign_in=True, tls_cert="c.pem", tls_key="k.pem"), "https", OK),
+    ],
+)
+def test_check_says_whether_the_web_ui_asks_anyone_to_sign_in(web, scheme, status):
+    asked = []
+    cfg = dataclasses.replace(cfg_(), web=web)
+    running, signing = check.web(lambda url: asked.append(url) or 401, 8080, cfg)
+    assert asked == [f"{scheme}://127.0.0.1:8080/api/status"] and running.status == OK and signing.status == status
 
 
 def test_the_web_ui_is_looked_for_on_the_port_its_unit_serves_on(tmp_path):

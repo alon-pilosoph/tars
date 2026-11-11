@@ -82,7 +82,8 @@ uv run voice-assistant --web           # in a second terminal: the web UI at htt
 ```
 
 Also `--ptt` (press Enter instead of the wake word), `--text` (type, hear answers) and `--list-devices`. On a Pi,
-`deploy/install-pi.sh` does it all ([at home](docs/deployment.md)). The web UI has no accounts: keep it on your network.
+`deploy/install-pi.sh` does it all ([at home](docs/deployment.md)). Keep the web UI on your network, and turn on its
+passkey sign-in ([signing in](docs/web-ui.md#signing-in)).
 
 ## Configure
 

@@ -1,4 +1,4 @@
-import { DEMO } from "./params";
+import { DEMO, PARAMS } from "./params";
 
 export interface Opts {
   method?: string;
@@ -34,6 +34,10 @@ async function request<T>(path: string, { timeoutMs = TIMEOUT_MS, ...opts }: Opt
   } catch (e) {
     if (e instanceof DOMException && e.name === "TimeoutError") throw new Error("TARS didn't answer in time");
     throw e;
+  }
+  if (r.status === 401 && !PARAMS.has("session")) {
+    // [web] sign_in, and no session (or an old one): sign in, then come back here.
+    location.assign(`/sign-in?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
   }
   if (!r.ok) throw new Error(await reason(r));
   return r.json();

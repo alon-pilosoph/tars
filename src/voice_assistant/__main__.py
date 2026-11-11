@@ -220,6 +220,7 @@ def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
 
 def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .clustering import regroup
+    from .signin import Accounts
     from .webui import serve
 
     log = make_event_log(cfg, root)
@@ -256,6 +257,8 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         health=make_health(cfg, root, log),
         bucket=bucket,
         finished=functools.partial(enroll_from_session, speaker_id, log.store),
+        accounts=Accounts(log.store) if cfg.web.sign_in else None,
+        tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
     )
 
 
@@ -292,6 +295,48 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
         print(f"(couldn't send it on Telegram: {e})")
         return
     print(f"Sent to {person} on Telegram.")
+
+
+def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
+    """--web-invite: a one-time link for `person` to make a passkey with, printed and sent to their Telegram chat if
+    they have one."""
+    from .browser.login_page import reachable_address
+    from .signin import Accounts
+    from .telegram import Bot, TelegramError
+
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
+    if not person.strip():
+        raise ConfigError("--web-invite needs the person's name.")
+    if not cfg.web.sign_in:
+        print("(sign-in is off: the link works, but the web UI won't ask for it until [web] sign_in = true)")
+    scheme = "https" if cfg.web.tls_cert else "http"
+    url = f"{cfg.web.link.rstrip('/') or f'{scheme}://{reachable_address()}:{port}'}/sign-in/invite/"
+    url += Accounts(log.store).invite(person)
+    print(f"A link for {person} to make a passkey for the web UI, good for a day:\n{url}")
+    chat = next((chat for name, chat in cfg.telegram.people.items() if name.lower() == person.strip().lower()), None)
+    if not (cfg.telegram.enabled and chat):
+        print(f"({person} has no Telegram chat in [telegram] people: open the link on their phone or computer.)")
+        return
+    text = f"A link to sign in to TARS's web page: it makes a passkey on your phone. It works once, for a day.\n{url}"
+    try:
+        Bot(api_key(root / ".env", TELEGRAM_KEY)).call("sendMessage", chat_id=chat, text=text)
+    except TelegramError as e:
+        print(f"(couldn't send it on Telegram: {e})")
+        return
+    print(f"Sent to {person} on Telegram.")
+
+
+def web_sign_out(cfg: Config, root: Path, person: str) -> None:
+    """--web-sign-out: `person` signed out of the web UI everywhere, their passkeys forgotten (a lost phone)."""
+    from .signin import Accounts
+
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
+    gone = Accounts(log.store).remove(person.strip())
+    print(f"{person} is signed out everywhere, and {gone} passkey(s) forgotten: --web-invite makes a new one.")
 
 
 def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
@@ -360,6 +405,12 @@ def main() -> None:
         help="send a link to a recording session on TARS's speakerphone: someone's voice, or the house's commands",
     )
     parser.add_argument("--for", dest="person", metavar="NAME", help="whose --record-session it is")
+    parser.add_argument(
+        "--web-invite", metavar="NAME", help="a one-time link for NAME to make a passkey for the web UI ([web] sign_in)"
+    )
+    parser.add_argument(
+        "--web-sign-out", metavar="NAME", help="sign NAME out of the web UI everywhere, and forget their passkeys"
+    )
     parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
@@ -457,6 +508,12 @@ def main() -> None:
             return
         if args.record_session:
             record_session(cfg, root, args.record_session, args.person, args.port)
+            return
+        if args.web_invite:
+            web_invite(cfg, root, args.web_invite, args.port)
+            return
+        if args.web_sign_out:
+            web_sign_out(cfg, root, args.web_sign_out)
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)

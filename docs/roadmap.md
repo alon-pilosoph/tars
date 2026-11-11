@@ -1,8 +1,9 @@
 # What's next
 
 Six steps, in this order. Real use comes first because it costs no code, runs alongside the rest, and everything
-after learns from it. Security is next: the web UI has no accounts, and the steps after it widen what TARS does with
-nobody watching (plugins run others' code, automations act on their own), so what they may do is settled first.
+after learns from it. Security is next: the web UI's sign-in is built but not yet on at home, and the steps after it
+widen what TARS does with nobody watching (plugins run others' code, automations act on their own), so what they may
+do is settled first.
 Interrupting starts with one measurement on the speakerphone, which decides how big it is. Plugins and updates come
 before automations and skills, which hook into the events plugins bring. Memory is last, and leans on speaker ID
 being right.
@@ -10,7 +11,7 @@ being right.
 | | Step | Why now | Size |
 |---|---|---|---|
 | 1 | [A week of real use](#1-a-week-of-real-use) | the first real wakes, voices and conversations; everything after learns from them | no code, a checklist |
-| 2 | [Security](#2-security) | the web UI has no accounts, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts |
+| 2 | [Security](#2-security) | anyone at home can open the web UI until sign-in is on, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts; passkey sign-in built |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
 | 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; the arrival greeting and dry runs left |
@@ -96,7 +97,7 @@ changes nothing in the house, nor reads its past or TARS's records. Home Assista
 passwords, goes to the backup only sealed with a key kept on the Pi. The speakerphone's own mute is TARS's: while
 it's red, the wake model doesn't run.
 
-What's open: the web UI has no accounts, so anyone on the home network (a guest, a compromised device) can play every
+What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device) can play every
 recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS
 with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins are trusted.
 The systemd services run unconfined.
@@ -106,10 +107,10 @@ The systemd services run unconfined.
 1. **The threat model.** Written: [security](security.md) lists who might attack, the defense and test for each,
    and what's open, and [SECURITY.md](../SECURITY.md) says how to report a vulnerability. It's kept current as each
    item below lands.
-2. **The web UI.** Passkey sign-in per household member, with HttpOnly, SameSite=Strict session cookies; HTTPS from
-   `tailscale cert` (the browser's login page too); served on the tailnet only, not the LAN, with Tailscale's access
-   rules as the outer wall. A test that walks every route and fails if one answers without a session, so a new
-   endpoint can't forget it. Step 5's page to edit automations needs this first.
+2. **The web UI.** Built: passkey sign-in per household member from one-time invites, HttpOnly, SameSite=Strict
+   session cookies, HTTPS from `tailscale cert`, and a test that walks every route and fails if one answers without a
+   session ([signing in](web-ui.md#signing-in)). Left: turning it on at home, the browser's login page on HTTPS too,
+   and serving on the tailnet only, not the LAN, with Tailscale's access rules as the outer wall.
 3. **The AI's own risks.** Started: a reply that read the web changes nothing and reads no one's past, and a chat
    reads only its own person's conversations. Still: no text from outside (web search results, a web page the browser reads, Telegram, a sent
    file) can lead to an unlock, turning off an alarm or sending data out; an eval set of injection attempts that
