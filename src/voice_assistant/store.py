@@ -145,7 +145,25 @@ TABLES = {
     home INTEGER,                    -- 1 home, 0 out; NULL until the routers have said (presence.py)
     since REAL,                      -- when they came home or went out, as far as the routers can tell
     last_seen REAL,                  -- when a router last saw their phone
-    updated REAL NOT NULL            -- when the assistant last wrote this row
+    updated REAL NOT NULL,           -- when the assistant last wrote this row
+    via TEXT                         -- home: the door they opened from outside to come in (doors.py); NULL: by phone
+)""",
+    "door_events": """CREATE TABLE door_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,
+    door TEXT NOT NULL,              -- as [[presence.doors]] names it
+    action INTEGER NOT NULL,         -- the lock's: 1 unlock, 2 lock, 3 unlatch, 4 Lock 'n' Go... (doors.ACTIONS)
+    trigger INTEGER NOT NULL,        -- 0 an app (Auto Unlock too), 1 by hand, 2 its button, 6 auto lock, 172 MQTT...
+    key TEXT NOT NULL,               -- key:<the app's auth id> or code:<the keypad code's id>
+    auto_unlock INTEGER NOT NULL,    -- 1: the phone's Auto Unlock did it
+    person TEXT,                     -- whose key it is (person_key), as known then; NULL: nobody's named it
+    guess TEXT,                      -- an unnamed key's opening: whose phone came home around then, if just one did
+    settled INTEGER NOT NULL DEFAULT 0  -- 1: compared with who came home (guess is final)
+)""",
+    "door_keys": """CREATE TABLE door_keys (
+    key TEXT PRIMARY KEY,            -- as door_events.key
+    person TEXT NOT NULL,            -- person_key, learned from their phone coming home as the door opened
+    learned REAL NOT NULL
 )""",
     "sessions": """CREATE TABLE sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,6 +261,7 @@ INDEXES = [
     "CREATE INDEX takes_session ON takes(session_id)",
     "CREATE UNIQUE INDEX feeds_person_url ON feeds(person, url)",
     "CREATE INDEX preferences_person ON preferences(person)",
+    "CREATE INDEX door_events_key ON door_events(key)",
 ]
 # Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
 # version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
@@ -356,6 +375,16 @@ MIGRATIONS = [
             "CREATE TABLE settings_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
             "name TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL)"
         ),
+    ],
+    [
+        "ALTER TABLE presence ADD COLUMN via TEXT",
+        (
+            "CREATE TABLE door_events (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, door TEXT NOT NULL, "
+            "action INTEGER NOT NULL, trigger INTEGER NOT NULL, key TEXT NOT NULL, auto_unlock INTEGER NOT NULL, "
+            "person TEXT, guess TEXT, settled INTEGER NOT NULL DEFAULT 0)"
+        ),
+        "CREATE TABLE door_keys (key TEXT PRIMARY KEY, person TEXT NOT NULL, learned REAL NOT NULL)",
+        "CREATE INDEX door_events_key ON door_events(key)",
     ],
 ]
 

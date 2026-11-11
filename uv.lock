@@ -1033,6 +1033,15 @@ wheels = [
 ]
 
 [[package]]
+name = "paho-mqtt"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/66/bba39edaac853235385c59e1e30600cd104b8779164c181780742d8095fc/paho_mqtt-2.2.0.tar.gz", hash = "sha256:bcf706f03f1f49e0fc3ae166dc7b67ee35463496f8bdfd7c9c36181f6ba635c9", size = 133751, upload-time = "2026-11-04T20:10:51.405Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/af/fea4b0ee14cee6149f18d180430a14be0963b9a4fbc7875421a7de75f831/paho_mqtt-2.2.0-py3-none-any.whl", hash = "sha256:3243630f7c2b05f71d1de8c6f59865eb04d3a59ae8c866e92377faed6753db4d", size = 77202, upload-time = "2026-11-04T20:10:50.148Z" },
+]
+
+[[package]]
 name = "playwright"
 version = "1.64.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1856,6 +1865,9 @@ browser = [
 claude = [
     { name = "anthropic" },
 ]
+door = [
+    { name = "paho-mqtt" },
+]
 echo = [
     { name = "livekit" },
 ]
@@ -1872,6 +1884,7 @@ dev = [
     { name = "anthropic" },
     { name = "cryptography" },
     { name = "livekit" },
+    { name = "paho-mqtt" },
     { name = "playwright" },
     { name = "publicsuffixlist" },
     { name = "pytest" },
@@ -1901,6 +1914,7 @@ requires-dist = [
     { name = "onnxruntime", specifier = ">=1.20" },
     { name = "openai", specifier = ">=1.60" },
     { name = "openwakeword", specifier = ">=0.6.0" },
+    { name = "paho-mqtt", marker = "extra == 'door'", specifier = ">=2.1" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.64.1" },
     { name = "psutil", specifier = ">=7" },
     { name = "publicsuffixlist", marker = "extra == 'browser'", specifier = ">=1.0" },
@@ -1915,13 +1929,14 @@ requires-dist = [
     { name = "vosk", specifier = "==0.3.44" },
     { name = "websockets", specifier = ">=14" },
 ]
-provides-extras = ["claude", "echo", "backup", "tv", "my-house", "browser"]
+provides-extras = ["claude", "echo", "backup", "tv", "door", "my-house", "browser"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "anthropic", specifier = ">=1" },
     { name = "cryptography", specifier = ">=50.0.2" },
     { name = "livekit", specifier = ">=1.1" },
+    { name = "paho-mqtt", specifier = ">=2.1" },
     { name = "playwright", specifier = ">=1.64.1" },
     { name = "publicsuffixlist", specifier = ">=1.0" },
     { name = "pytest", specifier = ">=9.1.1" },

@@ -10,7 +10,7 @@ the model, which carries them out with the tools it already has.
 | "Bedtime" / "the kids want something calm to watch" | the skill it names, or the one that's for that, done |
 | "Every day at 19:55, ask me if I want the news on" | a skill that runs by itself, said aloud at home |
 | "Every morning at 7:30, send me what's new in gaming" | one posted in your own chat instead |
-| "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out |
+| "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out; as they walk in, when they open the front door ([the front door](presence.md#the-front-door)) |
 | "If the CO2 goes over 1000, turn on the purifier and tell me" / "when the front door is unlocked, …" | run when a device changes |
 | "Tell me when Alon teaches you something new" | runs when TARS is updated, and is told what changed: in your chat, or aloud |
 | "What did you do today?" | what skills did by themselves, when, and why |

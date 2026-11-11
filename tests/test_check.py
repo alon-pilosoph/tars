@@ -365,6 +365,26 @@ def test_check_signs_into_each_router_and_says_whose_phone_it_sees(tmp_path):
     assert check.routers_now(cfg_(), {}.get).status == SKIP
 
 
+DOOR = '[[presence.doors]]\nname = "front door"\ntopic = "nuki/4224E764"\n'
+BROKER = '[presence.mqtt]\naddress = "localhost"\nuser = "tars"\nsecret = "MQTT_PASSWORD"\n'
+
+
+@pytest.mark.parametrize("problem, status", [("", OK), ("it refused TARS: Not authorized", FAIL)])
+def test_check_connects_to_the_broker_the_doors_locks_publish_to(tmp_path, problem, status):
+    asked = []
+    cfg = presence_config(
+        tmp_path, TWO_ROUTERS.replace("[[presence.routers]]", DOOR + BROKER + "[[presence.routers]]", 1)
+    )
+    results = check.routers_now(
+        cfg,
+        {"MQTT_PASSWORD": "hunter2"}.get,
+        None,  # no router's password is in .env: none is signed into
+        lambda mqtt, password: asked.append((mqtt["address"], password)) or problem,
+    )
+    assert asked == [("localhost", "hunter2")] and results[-1].name == "Doors" and results[-1].status == status
+    assert ("front door" in results[-1].detail) if status == OK else (problem in results[-1].detail)
+
+
 def cfg_():
     return load_config(Path(__file__).parents[1] / "config.toml", local=False)
 

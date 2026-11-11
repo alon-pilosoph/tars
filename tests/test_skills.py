@@ -343,6 +343,7 @@ class House:
 
     def __init__(self):
         self.home = {"Alon": True, "Stacey": False}
+        self.doors: dict[str, str] = {}  # who came home by opening a door, and which
         self.statuses = {"front door": "front door: locked", "air quality": "air quality: CO2 800 ppm, PM2.5 4"}
 
     def clock(self, *skills, now=None):
@@ -351,6 +352,7 @@ class House:
             lambda: list(skills),
             ALOUD,
             people=lambda: dict(self.home),
+            came_by=lambda person: self.doors.get(person),
             status=lambda d: self.statuses[d],
             clock=lambda: ticks[0],
         )
@@ -376,6 +378,15 @@ def test_someone_coming_home_sets_off_the_skills_waiting_for_them():
         ("a", "Stacey just came home"),
         ("b", "Stacey just came home"),
     ]
+
+
+def test_someone_who_came_home_by_opening_the_door_is_said_to_have():
+    house = House()
+    clock = house.clock(on({"event": "arrives", "who": "stacey"}, "welcome"))
+    clock.look(SUNDAY)
+    house.home["Stacey"], house.doors["Stacey"] = True, "front door"
+    clock.look(SUNDAY)
+    assert [d.why for d in clock.take()] == ["Stacey just came home, opening the front door"]
 
 
 def test_everyone_is_the_last_one_out_and_the_first_one_home():

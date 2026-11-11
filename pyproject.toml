@@ -51,6 +51,10 @@ backup = [
 tv = [
     "adb-shell>=0.4.4",
 ]
+# Doors whose locks say who opened them ([[presence.doors]]): a Nuki's events, over MQTT.
+door = [
+    "paho-mqtt>=2.1",
+]
 # examples/my_house: its Tuya IR blaster, and Bluetooth for its air purifier.
 my-house = [
     "bleak>=1",
@@ -78,6 +82,7 @@ dev = [
     "livekit>=1.1",
     "playwright>=1.64.1",
     "publicsuffixlist>=1.0",
+    "paho-mqtt>=2.1",
     "pytest>=9.1.1",
     "ruff==0.16.10",
 ]

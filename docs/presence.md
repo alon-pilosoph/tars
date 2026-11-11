@@ -8,7 +8,8 @@ routers already know which phones are connected, and TARS signs into them and as
 | "Who's home?" (aloud or in a chat) | "Alon's home, and Stacey's been out since about two." |
 | A reminder due for Stacey while she's out | it goes to her Telegram chat instead of being said to an empty room |
 | "Tell Stacey dinner's at eight when she's back" | said soon after her phone comes home, or as soon as she next speaks to TARS, whichever is first |
-| `voice-assistant --check` | signs into each router and says whose phone it sees |
+| Stacey's phone opens the Nuki by Auto Unlock | she's home at once, and a skill waiting for her is told "Stacey just came home, opening the front door" ([the front door](#the-front-door)) |
+| `voice-assistant --check` | signs into each router and says whose phone it sees, and connects to the locks' MQTT broker |
 | The web UI's Status page | how each router last answered, and who's home |
 
 ## Setting it up
@@ -94,6 +95,50 @@ They lean towards "still home", never towards a false "gone":
 So it goes by phones: someone home without theirs shows as out, and someone who just left shows as home for up to ten
 minutes. The model is told so, and says it's going by their phone when that matters.
 
+## The front door
+
+A phone joins the Wi-Fi somewhere near the door, and not always first. A Nuki smart lock knows exactly: with its MQTT
+API turned on, it publishes every lock action as `action,trigger,auth id,code id,auto unlock` to
+`<topic>/lockActionEvent`, saying which app's authorization (the auth id) or keypad code (the code id) did it, and
+whether the phone's Auto Unlock did. TARS listens (`doors.py`), keeps each action in the `door_events` table, and:
+
+- **Someone who opens the door from outside is home at once**, before their phone has found the Wi-Fi, and comes
+  home "by the front door": "who's home?" says so, and a skill waiting for them is told "Stacey just came home,
+  opening the front door". From outside means Auto Unlock or the keypad. Opening it in the app doesn't count, since
+  that can be done from anywhere; nor do the lock's own button and knob, which are inside, or TARS and Home Assistant
+  opening it over MQTT. Leaving is still by the phone: a door that's opened from inside says nothing about who left.
+- **Whose key is whose is learned.** A key nobody's named, that opens the door from outside while exactly one
+  person's phone comes home (within ten minutes either way), is a guess that it's theirs; two such guesses, and none
+  for anyone else, and it is. The maintainers are told in their chats ("I can tell when Stacey opens the front door
+  now..."). Two people coming home together guess nothing. Keys can also be named in `[presence] people`, beside the
+  phone: `"key:<auth id>"` for an app, `"code:<code id>"` for a keypad code. The ids are in `door_events`, and in
+  Nuki Web's list of authorizations.
+
+Setting it up:
+
+1. In the Nuki app, turn on MQTT for the lock (Settings > Features & Configuration > MQTT) and point it at the
+   household's broker (`deploy/home-assistant` runs Mosquitto for Home Assistant). Home Assistant finds it as the
+   lock it works.
+2. Give TARS its own user on the broker, `tars`, the way [the house](home.md) adds a device's (the `docker run ...
+   mosquitto_passwd` command, with just `tars`, then `docker restart mosquitto`), and put its password in `.env` as
+   `MQTT_PASSWORD`.
+3. Say which door and which broker, in `config.local.toml`:
+
+   ```toml
+   [[presence.doors]]
+   name = "front door"
+   topic = "nuki/4224E764"     # the lock's ID in hex, as the Nuki app and Home Assistant show it
+
+   [presence.mqtt]
+   address = "localhost"
+   user = "tars"
+   secret = "MQTT_PASSWORD"
+   ```
+
+4. Install the door extra (`uv sync --extra door`; `deploy/install-pi.sh` installs every extra), and check it:
+   `--check` connects to the broker, and TARS's log says `(doors: listening to the front door ...)`, then
+   `(doors: the front door unlocked by Auto Unlock, by Stacey)` as it happens.
+
 ## Where it's used
 
 **"Who's home?"** is a device in the [home tool](home.md), `who's home`, with only a status: the model asks it, and
@@ -122,8 +167,8 @@ opened would be the same again.
 out) and so would Google's or Apple's location sharing; the routers know only home or not, which is what TARS needs,
 and they're already there. Nothing leaves the house.
 
-**Detected, not how.** The rules (`Tracker`) take the set of people detected in a round, not router answers, so a
-door or a lock can feed them as well as a phone. Minutes are counted on a monotonic clock: a Pi has no clock of its own
+**Detected, not how.** The rules (`Tracker`) take the set of people detected in a round, not router answers, and a
+door's lock feeds them too (`Watcher.at_door`, from the MQTT client's thread, under the same lock as the rounds). Minutes are counted on a monotonic clock: a Pi has no clock of its own
 while it's off, and its time of day jumps when it sets itself after a boot. After a restart, the rules start from what
 was last written, if it's fresh, so someone out when TARS restarted who comes home soon after has come home.
 
@@ -137,7 +182,7 @@ marked out for it, and the watching goes on. A device page with no devices on it
 - **A door sensor** (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) to tell a phone that went to
   sleep from someone who left: the door opening, then a phone dropping off, is someone leaving now, not ten minutes
   later.
-- **The Nuki lock's own events**, which say who unlocked it, so TARS can greet them by name as they come in, and say
-  what's waiting for them.
+- **Leaving by the door.** The lock's actions from inside, then a phone dropping off, could say someone left now;
+  for now it's the phone's ten minutes.
 - **Phones on a second access point show on the main router as wired devices**, counted present while it gives them
   an IP address. It's been seen to clear that for a device that's gone, but not yet watched as someone leaves.

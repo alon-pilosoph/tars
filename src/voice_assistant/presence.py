@@ -14,7 +14,8 @@ The rules lean towards "still home", never towards a false "gone":
 - When TARS starts, what was last known is where it starts from, if it's fresh; otherwise nobody is known, and
   "not known" is never "out".
 
-The rules take who was detected, not how: a phone on the Wi-Fi now, a door or a lock later.
+The rules take who was detected, not how: a phone on the Wi-Fi, or someone opening the front door from outside
+(doors.py), who is home at once, before their phone has found the Wi-Fi.
 """
 
 import json
@@ -48,11 +49,20 @@ def identifier(i: str) -> str:
 
 
 class People:
-    """Whose phone is whose: each person's hardware addresses and the names routers list their phone under."""
+    """Whose phone is whose: each person's hardware addresses and the names routers list their phone under; and
+    whose key a door lock knows (doors.py)."""
 
     def __init__(self, people: dict[str, list[str]]):
         self.names = {person_key(n): n.strip() for n in people}
         self._ids = {person_key(n): {identifier(i) for i in ids} for n, ids in people.items()}
+
+    def key_of(self, name: str) -> str:
+        return person_key(name)
+
+    def whose_key(self, key: str) -> str | None:
+        """The person (as person_key) a door's key is, as [presence] people names it."""
+        key = identifier(key)
+        return next((person for person, ids in self._ids.items() if key in ids), None)
 
     def whose(self, seen: Iterable[Seen]) -> set[str]:
         """The people (as person_key) one of whose phones is among `seen`."""
@@ -69,6 +79,7 @@ class State:
     home: bool | None = None  # None: not known
     since: float | None = None  # when they came home or went out; None: before TARS was watching
     last_seen: float | None = None
+    via: str | None = None  # home: the door they were let in by, as doors.py heard it; None: by their phone
 
 
 class Tracker:
@@ -96,7 +107,7 @@ class Tracker:
                 self._detected_at[person] = now
                 if s.home is False:
                     changes.append((person, True))
-                    s.since = wall
+                    s.since, s.via = wall, None
                 s.home, s.last_seen = True, wall
                 continue
             unseen_since = max(self._detected_at.get(person, 0.0), self._watching_since)
@@ -105,6 +116,16 @@ class Tracker:
                     changes.append((person, False))
                 s.home, s.since = False, s.last_seen
         return changes
+
+    def arrived(self, person: str, door: str, now: float, wall: float) -> bool:
+        """`person` opened `door` from outside: home now, and counted as seen. True if they'd been out."""
+        s = self.states[person]
+        self._detected_at[person] = now
+        came = s.home is False
+        if came:
+            s.since, s.via = wall, door
+        s.home = True
+        return came
 
 
 @dataclass
@@ -130,10 +151,10 @@ class Board:
         with self.store.transaction() as db:
             for person, s in states.items():
                 db.execute(
-                    "INSERT INTO presence (person, home, since, last_seen, updated) VALUES (?, ?, ?, ?, ?) "
+                    "INSERT INTO presence (person, home, since, last_seen, via, updated) VALUES (?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(person) DO UPDATE SET home=excluded.home, since=excluded.since, "
-                    "last_seen=excluded.last_seen, updated=excluded.updated",
-                    (person, None if s.home is None else int(s.home), s.since, s.last_seen, now),
+                    "last_seen=excluded.last_seen, via=excluded.via, updated=excluded.updated",
+                    (person, None if s.home is None else int(s.home), s.since, s.last_seen, s.via, now),
                 )
             db.execute(
                 "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -144,7 +165,7 @@ class Board:
         """Everyone's, as last written; not known for anyone the assistant hasn't written about lately."""
         now = self._clock()
         fresh = {
-            r["person"]: State(None if r["home"] is None else bool(r["home"]), r["since"], r["last_seen"])
+            r["person"]: State(None if r["home"] is None else bool(r["home"]), r["since"], r["last_seen"], r["via"])
             for r in self.store.rows("SELECT * FROM presence")
             if now - r["updated"] < STALE_AFTER_S
         }
@@ -170,7 +191,8 @@ class Board:
             if s.home is None:
                 lines.append(f"{who}: not known yet")
             elif s.home:
-                lines.append(f"{who}: home{_since(s.since, now, 'since')}")
+                by = f", let in by the {s.via}" if s.via else ""
+                lines.append(f"{who}: home{_since(s.since, now, 'since', by)}")
             else:
                 lines.append(f"{who}: out{_since(s.since, now, 'since about')}")
         return "; ".join(lines) or "nobody is set up to be followed"
@@ -180,13 +202,13 @@ def _and(names: list[str]) -> str:
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def _since(at: float | None, now: float, words: str) -> str:
+def _since(at: float | None, now: float, words: str, more: str = "") -> str:
     if at is None:
-        return ""
+        return f" ({more[2:]})" if more else ""
     t, today = datetime.fromtimestamp(at).astimezone(), datetime.fromtimestamp(now).astimezone().date()
     days = (today - t.date()).days
     day = "" if days == 0 else " yesterday" if days == 1 else f" {t:%A}"
-    return f" ({words} {twelve_hour(t)}{day})"
+    return f" ({words} {twelve_hour(t)}{day}{more})"
 
 
 class Watcher:
@@ -211,6 +233,7 @@ class Watcher:
         self.every_s, self.on_change, self.left_out = every_s, on_change, left_out
         self._clock, self._monotonic = clock, monotonic
         self.statuses = {r.address: RouterStatus(r.address, r.kind) for r in routers}
+        self._lock = threading.Lock()  # the tracker and the board: rounds here, doors on the MQTT thread
 
     def start(self) -> None:
         def loop():
@@ -240,20 +263,38 @@ class Watcher:
                 print(f"(presence: the router at {router.address} answers again)")
             self.statuses[router.address] = replace(status, ok_at=wall, connected=len(found), error="", error_at=None)
             seen += found
-        changes = self.tracker.update(self.people.whose(seen), complete, now, wall)
-        for person, home in changes:
-            print(f"(presence: {self.people.names[person]} {'came home' if home else 'went out'})")
+        with self._lock:
+            changes = self.tracker.update(self.people.whose(seen), complete, now, wall)
+            for person, home in changes:
+                print(f"(presence: {self.people.names[person]} {'came home' if home else 'went out'})")
+            self._write(wall)
+        self._tell(changes)
+        return changes
+
+    def at_door(self, person: str, door: str) -> bool:
+        """`person` (as person_key) just opened `door` from outside (doors.py): home now. True if they'd been out."""
+        wall, now = self._clock(), self._monotonic()
+        with self._lock:
+            came = self.tracker.arrived(person, door, now, wall)
+            if came:
+                print(f"(presence: {self.people.names[person]} came home, by the {door})")
+                self._write(wall)
+        self._tell([(person, True)] if came else [])
+        return came
+
+    def _write(self, wall: float) -> None:
         try:
             self.board.write(self.tracker.states, self.statuses.values(), wall)
         except Exception as e:  # noqa: BLE001 - a locked or full database: written next round
             print(f"(presence: couldn't write who's home: {e!r})")
+
+    def _tell(self, changes: list[tuple[str, bool]]) -> None:
         for person, home in changes:
             if self.on_change:
                 try:
                     self.on_change(self.people.names[person], home)
                 except Exception as e:  # noqa: BLE001 - what's done about one change never stops the watching
                     print(f"(presence: couldn't act on {self.people.names[person]} coming or going: {e!r})")
-        return changes
 
     def _failed(self, router: Router, e: Exception | str, wall: float) -> None:
         status = self.statuses[router.address]
@@ -270,7 +311,7 @@ class WhoIsHome(Device):
         self.board, self.away_after_min = board, away_after_min
 
     def what(self) -> str:
-        return "who's home now, from whose phone is on the home Wi-Fi: status only"
+        return "who's home now, from whose phone is on the home Wi-Fi and who let themselves in: status only"
 
     def status(self) -> str:
         try:
@@ -294,7 +335,8 @@ class WhoIsHome(Device):
 
     def rules(self) -> str:
         return (
-            f"{DEVICE} goes by whose phone is on the home Wi-Fi: someone home without their phone shows as out, and "
+            f"{DEVICE} goes by whose phone is on the home Wi-Fi, and whoever opens a door's lock from outside is "
+            "home at once: someone home without their phone shows as out, and "
             f"someone who just left shows as home for up to {self.away_after_min:.0f} minutes. When it matters, say "
             "it's going by their phone."
         )

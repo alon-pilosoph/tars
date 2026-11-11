@@ -635,6 +635,7 @@ class Clock:
         now: Callable[[], datetime] = datetime.now,
         tick_s: float = TICK_S,
         people: Callable[[], dict[str, bool | None]] | None = None,
+        came_by: Callable[[str], str | None] | None = None,
         status: Callable[[str], str] | None = None,
         record: Callable[[Skill, str, str], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -647,6 +648,7 @@ class Clock:
         self._version, self._between, self._seen, self._see = version, between, seen, see
         self._now, self._tick_s = now, tick_s
         self._people, self._status, self._record, self._clock = people, status, record, clock
+        self._came_by = came_by or (lambda person: None)  # the door someone just came home by, if they opened it
         self._ran: set = set()
         self._fired: dict = {}  # skill: when it last ran on something happening (self._clock)
         self._home: dict[str, bool | None] | None = None  # who was home last time; None before the first look
@@ -746,7 +748,13 @@ class Clock:
                 "who": person.lower(),
                 "all": nobody_before if home else nobody_now,
             }
-            events.append((event, f"{person} just {'came home' if home else 'went out'}"))
+            door = self._came_by(person) if home else None
+            words = (
+                f"{person} just came home{f', opening the {door}' if door else ''}"
+                if home
+                else f"{person} just went out"
+            )
+            events.append((event, words))
         return events
 
     @staticmethod
