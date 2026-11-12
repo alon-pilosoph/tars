@@ -28,8 +28,6 @@ from voice_assistant.verify import ANSWER, ASK, IGNORE, NEAR_QUIET_S
 from .conftest import AUDIO, FakeTrigger, SilentMic, make_assistant, speech
 from .test_verify import listening
 
-pytestmark = pytest.mark.usefixtures("no_tts")
-
 
 def test_automatic_labels_follow_what_happened_next(log):
     asked = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9)
@@ -374,33 +372,33 @@ def test_a_broken_event_log_never_stops_the_trigger(log, monkeypatch):
     assert trigger.wait(SilentMic(5)) == ANSWER
 
 
-def woken_assistant(log, speaker, utterances, transcripts, replies=(), outcome=ANSWER):
+def woken_assistant(log, utterances, transcripts, replies=(), outcome=ANSWER):
     journal = Journal(log)
-    assistant, _ = make_assistant(speaker, utterances, transcripts, replies, journal=journal)
+    assistant, _ = make_assistant(utterances, transcripts, replies, journal=journal)
     journal.wake(AUDIO, 0.9, outcome, "hey tars", 0.9, "", "")
     return assistant, journal, log.events(limit=1)[0]["id"]
 
 
-def test_assistant_records_what_followed_each_wake(log, speaker):
-    assistant, journal, event = woken_assistant(log, speaker, [speech(), None], ["what time is it"])
+def test_assistant_records_what_followed_each_wake(log):
+    assistant, journal, event = woken_assistant(log, [speech(), None], ["what time is it"])
     assistant.converse(follow_up_s=4.0)
     journal.flush()
     row = log.get(event)
     assert row["follow"] == ASKED and row["transcript"] == "what time is it"
 
-    assistant, journal, ask = woken_assistant(log, speaker, [None], [], outcome=ASK)
+    assistant, journal, ask = woken_assistant(log, [None], [], outcome=ASK)
     assistant.say = lambda text: True
     assistant.ask_if_called(follow_up_s=4.0)
     journal.flush()
     assert log.get(ask)["follow"] == SAID_NOTHING
 
-    assistant, journal, no = woken_assistant(log, speaker, [speech()], ["no"], replies=["<skip>"], outcome=ASK)
+    assistant, journal, no = woken_assistant(log, [speech()], ["no"], replies=["<skip>"], outcome=ASK)
     assistant.say = lambda text: True
     assistant.ask_if_called(follow_up_s=4.0)
     journal.flush()
     assert log.get(no)["follow"] == NOT_FOR_US
 
-    assistant, journal, noise = woken_assistant(log, speaker, [speech()], [""])
+    assistant, journal, noise = woken_assistant(log, [speech()], [""])
     assistant.converse(follow_up_s=4.0)
     journal.flush()
     assert log.get(noise)["follow"] == SAID_NOTHING and log.get(noise)["utterance_audio"]

@@ -3,37 +3,27 @@ name does; stop cuts what it's saying and ends the conversation, quietly, with n
 
 import threading
 import time
-import types
 
 import pytest
 
 import voice_assistant.assistant as assistant_module
 from voice_assistant.assistant import ALWAYS, PAUSE
 from voice_assistant.audio import MicrophoneError
+from voice_assistant.body import Wake
 from voice_assistant.wake import DUE
 
-from .conftest import make_assistant
-
-
-class Done(Exception):
-    """Ends run_forever, which never returns on its own."""
+from .conftest import Asleep, make_assistant
 
 
 def waking(assistant, *steps):
-    """A trigger whose waits do `steps` in turn: "talk" presses the talk button and waits on `due` as the wake word's
-    wait does; "name" is TARS's name heard. Then Done."""
-    left = list(steps)
+    """Its body's waits do `steps` in turn: "talk" presses the talk button and waits on `due` as the wake word's wait
+    does; "name" is TARS's name heard. Then Asleep."""
 
-    def wait(mic, due=None):
-        if not left:
-            raise Done
-        step = left.pop(0)
-        if step == "name":
-            return None
+    def talk(due):
         assistant.talk()
-        return DUE if due and due() else None
+        return Wake(DUE if due() else None)
 
-    return types.SimpleNamespace(wait=wait, last_audio=None, after_name=None)
+    assistant.body.wakes = [Wake() if step == "name" else talk for step in steps]
 
 
 @pytest.fixture
@@ -42,39 +32,33 @@ def conversations(monkeypatch):
         started = []
         monkeypatch.setattr(assistant, "converse", lambda follow_up_s, **kw: started.append(kw.get("greet")))
         monkeypatch.setattr(assistant, "prepare_phrases", lambda: None)
-        with pytest.raises(Done):
+        with pytest.raises(Asleep):
             assistant.run_forever("Say 'hey tars'...")
         return started
 
     return run
 
 
-def test_the_talk_button_wakes_it_and_it_greets_at_once(speaker, conversations):
-    assistant, _ = make_assistant(speaker, [], [])
-    assistant.trigger = waking(assistant, "talk", "name")
+def test_the_talk_button_wakes_it_and_it_greets_at_once(conversations):
+    assistant, _ = make_assistant([], [])
+    waking(assistant, "talk", "name")
     assert conversations(assistant) == [ALWAYS, PAUSE]  # the button, then its name as usual
 
 
-def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(speaker, conversations):
-    assistant, _ = make_assistant(speaker, [], [])
-    assistant.mic.clear = assistant.mic.discard = lambda: None
+def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(conversations):
+    assistant, _ = make_assistant([], [])
     assistant.mute(True)
     assert assistant.talk().startswith("ignored: muted")
-    waits = []
-    trigger = waking(assistant, "name")
-    assistant.trigger = types.SimpleNamespace(
-        wait=lambda mic, due=None: waits.append(1) or trigger.wait(mic, due), last_audio=None, after_name=None
-    )
+    waking(assistant, "name")
     threading.Timer(0.3, assistant.mute, [False]).start()  # the speakerphone unmuted, a moment later
     started = time.monotonic()
     assert conversations(assistant) == [PAUSE]  # then its name woke it, as usual
-    assert waits == [1, 1]  # the wake model was asked only once unmuted: its name, then Done
+    assert assistant.body.waits == 2  # the wake model was asked only once unmuted: its name, then Asleep
     assert 0.3 <= time.monotonic() - started < 1.0  # back at once, not at the next look
 
 
-def test_muted_what_s_due_is_still_said(speaker, monkeypatch):
-    assistant, _ = make_assistant(speaker, [], [])
-    assistant.mic.clear = assistant.mic.discard = lambda: None
+def test_muted_what_s_due_is_still_said(monkeypatch):
+    assistant, _ = make_assistant([], [])
     assistant.mute(True)
     due = iter([False, False, True])
     monkeypatch.setattr(assistant, "_due", lambda: next(due, False))
@@ -82,38 +66,38 @@ def test_muted_what_s_due_is_still_said(speaker, monkeypatch):
     assert assistant._wait_muted() == DUE
 
 
-def test_muted_a_microphone_that_s_gone_still_ends_tars(speaker, monkeypatch):
+def test_muted_a_microphone_that_s_gone_still_ends_tars(monkeypatch):
     """So systemd restarts it on the device that came back, not left deaf and mute until someone looks."""
-    assistant, _ = make_assistant(speaker, [], [])
+    assistant, _ = make_assistant([], [])
     assistant.mute(True)
     monkeypatch.setattr(assistant, "_due", lambda: False)
 
     def gone():
         raise MicrophoneError("gone")
 
-    assistant.mic.discard = gone
+    assistant.body.discard = gone
     with pytest.raises(MicrophoneError):
         assistant._wait_muted()
 
 
-def test_muting_while_it_listens_for_its_name_stops_the_listening(speaker):
-    assistant, _ = make_assistant(speaker, [], [])
+def test_muting_while_it_listens_for_its_name_stops_the_listening():
+    assistant, _ = make_assistant([], [])
     assistant.mute(True)
     assert assistant._woken()  # the wake wait asks this every block: it ends, and the muted wait takes over
 
 
-def test_stop_while_it_answers_ends_the_conversation_with_no_follow_up_and_no_error(speaker):
-    assistant, brain = make_assistant(speaker, [b"a", b"b", None], ["tell me a long story", "and another"])
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: (list(chunks), assistant.stop())
+def test_stop_while_it_answers_ends_the_conversation_with_no_follow_up_and_no_error():
+    assistant, brain = make_assistant([b"a", b"b", None], ["tell me a long story", "and another"])
+    assistant.body.on_play = lambda chunks: assistant.stop()
     assistant.converse(follow_up_s=4.0)
     assert brain.asked == ["tell me a long story"]
-    assert assistant.recorder.timeouts == [None]  # no follow-up was listened for
-    assert speaker.stops == 1
+    assert assistant.body.timeouts == [None]  # no follow-up was listened for
+    assert assistant.body.stops == 1
 
 
-def test_stop_pressed_while_idle_stops_nothing_later(speaker, conversations):
-    assistant, _ = make_assistant(speaker, [], [])
+def test_stop_pressed_while_idle_stops_nothing_later(conversations):
+    assistant, _ = make_assistant([], [])
     assistant.stop()
-    assistant.trigger = waking(assistant, "name")
+    waking(assistant, "name")
     conversations(assistant)
     assert not assistant._stop.is_set()  # cleared when it woke: the conversation that follows isn't cut short

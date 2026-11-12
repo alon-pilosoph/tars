@@ -28,6 +28,7 @@ from voice_assistant.audio import (
     SAMPLE_RATE,
     silent_bytes,
 )
+from voice_assistant.body import LocalBody
 from voice_assistant.config import RecorderConfig, load_config
 from voice_assistant.recorder import make_recorder
 from voice_assistant.vad import SileroVAD
@@ -202,11 +203,12 @@ def main() -> None:
     transcriber, brain, voice = make_pipeline(cfg, root)
     speaker = SilentSpeaker(voice.sample_rate, cfg.audio.playback_prebuffer_s)
     room = RoomTone(root, cfg.recorder, np.random.default_rng(0))
-    assistant = Assistant(None, speaker, None, make_recorder(cfg, root), transcriber, brain, voice)
+    body = LocalBody(None, speaker, None, make_recorder(cfg, root))
+    assistant = Assistant(body, transcriber, brain, voice)
     rows = []
     for clip in clips:
         lead = room(int(LEAD_S * SAMPLE_RATE))
-        mic = assistant.mic = RealtimeMic(np.concatenate([lead, clip, room(int(TAIL_S * SAMPLE_RATE))]), room)
+        mic = body.mic = RealtimeMic(np.concatenate([lead, clip, room(int(TAIL_S * SAMPLE_RATE))]), room)
         stopped = mic.t0 + (len(lead) + speech_end(clip)) / SAMPLE_RATE
         speaker.first_sound, assistant.timings = None, {}
         assistant.converse(follow_up_s=0)

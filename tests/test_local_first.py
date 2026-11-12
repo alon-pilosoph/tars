@@ -97,24 +97,24 @@ def test_the_words_tars_expects_reach_the_cloud():
     assert said(local("", cloud, ("eleven", "twelve"))) == "eleven" and cloud.expected == [("eleven", "twelve")]
 
 
-def local_assistant(speaker, hear, cloud, calls):
-    assistant, brain = make_assistant(speaker, [b"\1\0" * 800, None], [])
+def local_assistant(hear, cloud, calls):
+    assistant, brain = make_assistant([b"\1\0" * 800, None], [])
     assistant.commands = dataclasses.replace(house(calls, "done: front door reports locked", hear), local_first=True)
     assistant.transcriber = LocalFirstTranscriber(hear, COMMANDS.match, cloud)
     return assistant, brain
 
 
-def test_a_command_heard_on_the_pi_is_done_with_no_cloud_and_no_model(speaker):
+def test_a_command_heard_on_the_pi_is_done_with_no_cloud_and_no_model():
     calls, cloud = [], Cloud()
-    assistant, brain = local_assistant(speaker, lambda pcm: "lock front door", cloud, calls)
+    assistant, brain = local_assistant(lambda pcm: "lock front door", cloud, calls)
     assistant.converse(follow_up_s=4.0)
     assert calls[0][0] == {"device": "front door", "action": LOCK} and cloud.sent == [] and brain.asked == []
 
 
-def test_when_the_cloud_fails_local_first_vosk_isnt_asked_twice(speaker, capsys):
+def test_when_the_cloud_fails_local_first_vosk_isnt_asked_twice(capsys):
     calls, heard = [], []
     cloud = Cloud(ServiceError("Deepgram speech to text: timed out"))
-    assistant, _ = local_assistant(speaker, lambda pcm: heard.append(pcm) or "", cloud, calls)
+    assistant, _ = local_assistant(lambda pcm: heard.append(pcm) or "", cloud, calls)
     assistant.converse(follow_up_s=4.0)
     assert len(heard) == 1 and calls == [] and "ServiceError" in capsys.readouterr().out
 
@@ -145,12 +145,12 @@ def test_a_spoken_request_waits_for_the_cloud_as_a_spoken_turn_does(tmp_path):
     assert message._transcriber._http.timeout.read == FILE_TIMEOUT_S and options[1] == {"timeout": FILE_TIMEOUT_S}
 
 
-def test_local_first_starts_no_answer_in_a_pause(speaker):
-    assistant, brain = make_assistant(speaker, [["pause", b"q"], None], ["what time is it"])
+def test_local_first_starts_no_answer_in_a_pause():
+    assistant, brain = make_assistant([["pause", b"q"], None], ["what time is it"])
     assistant.commands = dataclasses.replace(house([]), local_first=True)
     paused = []
-    record = assistant.recorder.record
-    assistant.recorder.record = lambda *a, **kw: paused.append(kw.get("on_pause")) or record(*a, **kw)
+    record = assistant.body.record
+    assistant.body.record = lambda **kw: paused.append(kw.get("on_pause")) or record(**kw)
     assistant.converse(follow_up_s=4.0)
     assert paused[0] is None and brain.asked == ["what time is it"]
 

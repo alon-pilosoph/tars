@@ -92,13 +92,13 @@ def house(calls, result="done: boiler reports on", hear=None):
     return HouseCommands(COMMANDS, Replies({d[0]: d[1] for d in DEVICES}, choose=lambda o: o[0]), call, hear)
 
 
-def test_a_command_is_done_with_the_home_tool_and_answered_without_the_model(speaker, tmp_path):
+def test_a_command_is_done_with_the_home_tool_and_answered_without_the_model(tmp_path):
     from voice_assistant.events import EventLog
     from voice_assistant.journal import Journal
 
     journal = Journal(EventLog(tmp_path / "events"))
     journal.wake(b"\0\0" * 1600, 0.9, "answer", "hey tars", 0.9, "", "")
-    assistant, brain = make_assistant(speaker, [b"q", None], ["Turn the boiler on, please."], journal=journal)
+    assistant, brain = make_assistant([b"q", None], ["Turn the boiler on, please."], journal=journal)
     calls = []
     assistant.commands = house(calls)
     assistant.converse(follow_up_s=4.0)
@@ -110,18 +110,18 @@ def test_a_command_is_done_with_the_home_tool_and_answered_without_the_model(spe
     assert turns[-1]["text"] == "Boiler's on." and turns[-1]["answered_by"] == ON_PI
 
 
-def test_anything_else_still_goes_to_the_model(speaker):
-    assistant, brain = make_assistant(speaker, [b"q", None], ["what's the weather like"])
+def test_anything_else_still_goes_to_the_model():
+    assistant, brain = make_assistant([b"q", None], ["what's the weather like"])
     calls = []
     assistant.commands = house(calls)
     assistant.converse(follow_up_s=4.0)
     assert calls == [] and brain.asked == ["what's the weather like"]
 
 
-def test_with_the_cloud_out_of_reach_a_command_is_heard_on_the_pi(speaker):
+def test_with_the_cloud_out_of_reach_a_command_is_heard_on_the_pi():
     from voice_assistant.errors import ServiceError
 
-    assistant, brain = make_assistant(speaker, [b"q", None], [ServiceError("Flux: no route to host")])
+    assistant, brain = make_assistant([b"q", None], [ServiceError("Flux: no route to host")])
     calls, heard = [], []
     assistant.commands = house(
         calls, "done: front door reports locked", hear=lambda pcm: heard.append(pcm) or "lock front door"
@@ -130,18 +130,18 @@ def test_with_the_cloud_out_of_reach_a_command_is_heard_on_the_pi(speaker):
     assert heard and calls[0][0] == {"device": "front door", "action": LOCK} and brain.asked == []
 
 
-def test_with_the_cloud_out_of_reach_anything_but_a_command_fails_as_before(speaker, capsys):
+def test_with_the_cloud_out_of_reach_anything_but_a_command_fails_as_before(capsys):
     from voice_assistant.errors import ServiceError
 
-    assistant, _ = make_assistant(speaker, [b"q", None], [ServiceError("Flux: no route to host")])
+    assistant, _ = make_assistant([b"q", None], [ServiceError("Flux: no route to host")])
     calls = []
     assistant.commands = house(calls, hear=lambda pcm: "")
     assistant.converse(follow_up_s=4.0)
     assert calls == [] and "ServiceError" in capsys.readouterr().out
 
 
-def test_every_reply_sentence_is_made_ahead(speaker):
-    assistant, _ = make_assistant(speaker, [], [])
+def test_every_reply_sentence_is_made_ahead():
+    assistant, _ = make_assistant([], [])
     assistant.commands = house([])
     assistant.prepare_phrases()
     assistant.phrases.drain()
@@ -210,8 +210,8 @@ def test_every_all_caps_word_of_a_label_is_spelled_out_for_vosk():
     assert "turn on the fire t v" in grammar and not any("fire tv" in phrase for phrase in grammar)
 
 
-def test_a_follow_up_goes_to_the_model_which_may_skip_it(speaker):
-    assistant, brain = make_assistant(speaker, [b"q", b"f", None], ["what time is it", "turn on the boiler"])
+def test_a_follow_up_goes_to_the_model_which_may_skip_it():
+    assistant, brain = make_assistant([b"q", b"f", None], ["what time is it", "turn on the boiler"])
     calls = []
     assistant.commands = house(calls)
     assistant.converse(follow_up_s=4.0)
@@ -228,10 +228,10 @@ def _prepared(assistant, text, may_act):
     return answer
 
 
-def test_a_thrown_away_draft_says_and_remembers_nothing(speaker):
+def test_a_thrown_away_draft_says_and_remembers_nothing():
     from voice_assistant.home import Request
 
-    assistant, brain = make_assistant(speaker, [], [])
+    assistant, brain = make_assistant([], [])
     replies = Replies({"boiler": "Boiler"}, choose=lambda o: o[0])
 
     def call(args, request: Request):
@@ -244,8 +244,8 @@ def test_a_thrown_away_draft_says_and_remembers_nothing(speaker):
     assert answer.spoken == [] and brain.remembered == [] and replies._last is None
 
 
-def test_a_call_that_raises_is_said_as_couldnt(speaker):
-    assistant, brain = make_assistant(speaker, [], [])
+def test_a_call_that_raises_is_said_as_couldnt():
+    assistant, brain = make_assistant([], [])
 
     def call(args, request):
         raise RuntimeError("the plugin broke")
