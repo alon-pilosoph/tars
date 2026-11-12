@@ -664,17 +664,24 @@ def make_presence(cfg: Config, root: Path, events):
     return presence_from(cfg.presence, events.store, lambda name: dotenv_values(env).get(name) or None)
 
 
-def start_presence(cfg: Config, root: Path, presence, reminders=None, announce=None) -> None:
-    """The assistant's: asks the routers from now on, listens to the doors' locks and sensors, says waiting messages
-    once their person is home, and, with `announce` (said aloud at home), welcomes whoever lets themselves in."""
+def start_presence(cfg: Config, root: Path, presence, reminders=None, came_in=None) -> None:
+    """The assistant's: asks the routers from now on, listens to the doors' locks and sensors, and says waiting
+    messages once their person is home, or as they come in by a door. `came_in(names, door)`: told then too (the
+    skills' clock, so a "welcome home" runs at once)."""
     if presence is None:
         return
-    from .reminders import on_arrival, welcome
+    from .reminders import came_in as messages_on_coming_in
+    from .reminders import on_arrival
 
     for line in presence.left_out:
         print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
-    greet = welcome(reminders and reminders.reminders, announce) if announce and cfg.presence.greet else None
-    doors = make_doors(cfg, presence, greet)
+    told = [c for c in (reminders and messages_on_coming_in(reminders.reminders, cfg.presence.quiet), came_in) if c]
+
+    def tell_came_in(names: list[str], door: str) -> None:
+        for one in told:
+            one(names, door)
+
+    doors = make_doors(cfg, presence, tell_came_in)
     arrival = on_arrival(reminders.reminders, quiet=cfg.presence.quiet) if reminders else None
     changes = [c for c in (arrival, doors and doors.phone_came_home) if c]
 
@@ -693,7 +700,7 @@ def start_presence(cfg: Config, root: Path, presence, reminders=None, announce=N
         follow_door_sensors(cfg, root, doors)
 
 
-def make_doors(cfg: Config, presence, greet=None):
+def make_doors(cfg: Config, presence, came_in=None):
     """[[presence.doors]]: what their locks say is kept, and learned from; None without any."""
     if not cfg.presence.doors:
         return None
@@ -705,8 +712,7 @@ def make_doors(cfg: Config, presence, greet=None):
         DoorLog(store, presence.people),
         None,
         lambda text: maintainers.tell(cfg, store, text),
-        greet=greet,
-        quiet=cfg.presence.quiet,
+        came_in=came_in,
     )
 
 
@@ -931,12 +937,30 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
 
         skills.devices, skills.status = (lambda: set(home.devices)), status
         skills.past = lambda device, start, end: home.devices[device].past(start, end)
+    came_in = {}
+    if presence:
+        from .doors import DoorLog
+
+        log = DoorLog(presence.board.store, presence.people)
+
+        def since(after_id: int) -> list[dict]:
+            return [r | {"person": names.get(r["person"], r["person"])} for r in log.came_in_since(after_id)]
+
+        came_in = {"came_in": since, "last_came_in": log.last_id}
     updates = {}
     if myself:
         updates = {"version": myself.version, "between": myself.between}
         updates |= {"seen": skills.seen_version, "see": skills.see_version}
     clock = Clock(
-        skills.all, say, people=people, came_by=came_by, status=status, record=skills.ran, one_offs=one_offs, **updates
+        skills.all,
+        say,
+        people=people,
+        came_by=came_by,
+        status=status,
+        record=skills.ran,
+        one_offs=one_offs,
+        **updates,
+        **came_in,
     )
     return clock.start()
 
@@ -1731,12 +1755,17 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     presence = make_presence(cfg, root, events)
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
     announcements = Announcements()
-    start_presence(cfg, root, presence, reminders, announcements.add)
+    clocks: list = []  # the skills' clock, once made: someone coming in by a door wakes it, for a "welcome home"
+    start_presence(cfg, root, presence, reminders, lambda names, door: [c.nudge() for c in clocks])
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
     start_auto_locks(cfg, root, announcements.add, presence, events)
     browser = voice_errands(cfg, events)
     skills = make_skills(events)
+    if skills and any(d.get("sensor") for d in cfg.presence.doors):
+        from .skills import offer_welcome
+
+        offer_welcome(skills)
     myself = make_myself(cfg, root, events)
     transcriber, brain, voice = make_pipeline(
         cfg,
@@ -1781,9 +1810,10 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=skill_clock(skills, "aloud", home, presence, myself),
+            skill_clock=(clock := skill_clock(skills, "aloud", home, presence, myself)),
             commands=commands,
         )
+        clocks += [clock] if clock else []
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
             from .control import Server

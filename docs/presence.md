@@ -9,7 +9,7 @@ routers already know which phones are connected, and TARS signs into them and as
 | A reminder due for Stacey while she's out | it goes to her Telegram chat instead of being said to an empty room |
 | "Tell Stacey dinner's at eight when she's back" | said soon after her phone comes home, or as soon as she next speaks to TARS, whichever is first |
 | Stacey's phone opens the Nuki by Auto Unlock | she's home at once, and a skill waiting for her is told "Stacey just came home, opening the front door" ([the front door](#the-front-door)) |
-| ...and she comes in and the door shuts behind her | "Welcome home, Stacey", then her waiting messages; nothing aloud between 22:00 and 07:00 ([the door sensor](#the-door-sensor)) |
+| ...and she comes in and the door shuts behind her | she's come in: the household's "welcome home" skill greets her, then her waiting messages are said ([the door sensor](#the-door-sensor)) |
 | Alon opens the door from inside and his phone drops off the Wi-Fi | he's out a minute and a half later, not ten ([the door sensor](#the-door-sensor)) |
 | `voice-assistant --check` | signs into each router and says whose phone it sees, and connects to the locks' MQTT broker and checks it keeps their topics to them |
 | The locks' broker gone for ten minutes | the maintainers are told in their chats what to check, and again when it's back |
@@ -170,13 +170,18 @@ needs lines of its own there.
 A sensor on the door itself (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) says when it opens and
 shuts. TARS follows it in Home Assistant as it changes (`hass.follow`, over the websocket API) and, in `doors.py`:
 
-- **Welcomes whoever let themselves in.** Someone the lock let in from outside (Auto Unlock or the keypad, as above)
-  within two minutes of the door opening, or while it's open, is welcomed as it shuts behind them: "Welcome home,
-  Stacey", aloud after a chime, then her messages waiting until she's back, brought forward if her phone had already
-  set them for a minute later. Two let in together are welcomed together. Nobody is welcomed twice in half an hour
-  (out with the rubbish and back), nor between [presence] `quiet`'s hours, 22:00 to 07:00 unless set otherwise; then
-  their messages, even ones their phone's coming home would have said, wait until they next speak to TARS. Someone
-  let in by a person inside, or by the app, isn't welcomed: the lock can't say who they are.
+- **Says who came in.** Someone the lock let in from outside (Auto Unlock or the keypad, as above) within two
+  minutes of the door opening, or while it's open, has come in once it shuts behind them. That's an event of its
+  own, "Stacey just came in by the front door", kept in `door_events` (action 100), and what happens then is up to
+  [skills](skills.md) that run on it (`comes_in`), not code. Two let in together come in together. Someone let in by
+  a person inside, or by the app, hasn't "come in": the lock can't say who they are.
+- **Starts the household with a "welcome home" skill**, once, when the first door with a sensor is set up: "Welcome
+  them home by name, in a few warm words. Between 22:00 and 07:00 say nothing: people may be asleep." Change it,
+  pause it or delete it by talking to TARS like any skill ("don't welcome Alon", "mention the weather too");
+  deleted, it isn't put back. Being set off by the door, it reads the house but changes nothing in it.
+- **Says their waiting messages** a few seconds after they come in, after the welcome, brought forward if their
+  phone had set them for later; between [presence] `quiet`'s hours (22:00 to 07:00 unless set otherwise) they wait
+  until the person next speaks to TARS, even ones their phone's coming home would have said.
 - **Asks the routers at once** each time the door moves, then every 10 seconds for three minutes, so whoever's phone
   comes or goes with it is seen in seconds, not at the next round.
 - **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it: a phone
@@ -198,7 +203,8 @@ sensor = "binary_sensor.front_door_window"
 ```
 
 TARS's log then says `(home: following binary_sensor.front_door_window)`, and `(doors: the front door opened)` and
-`(doors: welcomed Stacey home)` as it happens. The same sensor can go on the lock in [the house](home.md) too
+`(doors: Stacey came in by the front door)`, then `(skill welcome home: Stacey just came in by the front door)`, as
+it happens. The same sensor can go on the lock in [the house](home.md) too
 (`door = ...` on its [[home.devices]]), so "is the front door open?" is answered and it won't lock an open door.
 
 ## Where it's used

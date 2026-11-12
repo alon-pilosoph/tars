@@ -13,11 +13,11 @@ lock says only ever puts someone at home: it never works the house (a skill it s
 nothing in it, home.Request.by_door), and TARS publishes nothing to the broker.
 
 A door can have a sensor too (Home Assistant's binary_sensor for a Shelly BLU Door/Window, followed by hass.follow):
-whoever let themselves in from outside is greeted as the door shuts behind them, "Welcome home, Stacey", and their
-messages waiting until they're back are said right after (Doors.sensed). Not between [presence] quiet's hours, and not
-twice in GREETED_S. Each time it moves the routers are asked at once, and every few seconds for a while
-(Watcher.hurry), and the door opened without anyone being let in is someone inside using it: a phone that drops off
-then has left by it (presence.Tracker.door_used).
+whoever the lock let in from outside has come in once the door shuts behind them, and that's an event of its own,
+kept in door_events (CAME_IN) and handed on (`came_in`): skills run on it (skills.COMES_IN: the household's
+"welcome home" is one), and their messages waiting until they're back are said then. Each time it moves the routers
+are asked at once, and every few seconds for a while (Watcher.hurry), and the door opened without anyone being let
+in is someone inside using it: a phone that drops off then has left by it (presence.Tracker.door_used).
 
 Whether TARS can hear the locks is watched too (Link): the broker not answering, refusing TARS, or lost, is logged
 when it starts, and the maintainers are told once it's lasted TELL_AFTER_S, and again when it's back.
@@ -28,7 +28,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .config import is_quiet
 from .events import person_key
 from .presence import People, Watcher
 from .store import Store
@@ -54,7 +53,7 @@ SETTLE_EVERY_S = 30.0
 TELL_AFTER_S = 10 * 60.0
 # A lock opened from outside this near the door sensor's opening (before it, or while it's open) let that person in.
 LET_IN_S = 2 * 60.0
-GREETED_S = 30 * 60.0  # someone greeted isn't greeted again this soon (out with the rubbish and back)
+CAME_IN = 100  # door_events.action for someone the lock let in coming in, the sensor saying the door shut behind them
 PROBE = "tars-check"  # --check's: a topic beside a lock's own, which TARS may write only on a broker without an ACL
 
 
@@ -120,6 +119,25 @@ class DoorLog:
             (e.at, e.door, e.action, e.trigger, e.key, int(e.auto_unlock), person),
         )
 
+    def came_in(self, door: str, people: list[str], at: float) -> None:
+        """`people` (person_key) came in by `door` at `at`: one row each, settled (nothing to learn from it)."""
+        for person in people:
+            self.store.write(
+                "INSERT INTO door_events (at, door, action, trigger, key, auto_unlock, person, settled) "
+                "VALUES (?, ?, ?, 0, 'sensor', 0, ?, 1)",
+                (at, door, CAME_IN, person),
+            )
+
+    def came_in_since(self, after_id: int) -> list[dict]:
+        """Who came in after the event `after_id`, in order: id, at, door, person (person_key)."""
+        return self.store.rows(
+            "SELECT id, at, door, person FROM door_events WHERE action = ? AND id > ? ORDER BY id", (CAME_IN, after_id)
+        )
+
+    def last_id(self) -> int:
+        row = self.store.row("SELECT MAX(id) AS id FROM door_events")
+        return (row or {}).get("id") or 0
+
     def unsettled(self, before: float) -> list[dict]:
         """Openings from outside by a key nobody's named, from before `before`, not yet compared with who came home.
         key:0 is the lock's own button or knob, nobody's key."""
@@ -158,18 +176,15 @@ class Doors:
         watcher: Watcher | None,
         tell: Callable[[str], None] = lambda text: None,
         clock: Callable[[], float] = time.time,
-        greet: Callable[[list[str]], None] | None = None,
-        quiet: str = "",
+        came_in: Callable[[list[str], str], None] | None = None,
     ):
-        """`greet(names)`: welcomes them home aloud, as [presence] people names them (None: nobody is greeted).
-        `quiet`: [presence] quiet, the hours nobody is."""
+        """`came_in(names, door)`: told when people the lock let in have come in, as [presence] people names them."""
         self.log, self.watcher, self.tell, self._clock = log, watcher, tell, clock
-        self.greet, self.quiet = greet, quiet
+        self.on_came_in = came_in
         self.link: Link | None = None  # the broker, once listening: looked at with each settle
         self._arrivals: list[tuple[str, float]] = []  # (person, when) their phone came home, while TARS runs
         self._let_in: dict[str, list[tuple[str, float]]] = {}  # door: (person, when) its lock let them in from outside
         self._opened: dict[str, float] = {}  # door: when its sensor said it opened, while it's open
-        self._greeted: dict[str, float] = {}  # person: when they were last greeted
         self._lock = threading.Lock()
 
     def heard(self, e: DoorEvent) -> None:
@@ -186,11 +201,11 @@ class Doors:
 
     def sensed(self, door: str, is_open: bool) -> None:
         """The door's sensor: it opened, or shut. The routers are asked at once; whoever its lock let in from
-        outside is greeted as it shuts; opened with nobody let in, it's someone inside using it."""
-        now, inside, welcome = self._clock(), False, []
+        outside has come in as it shuts; opened with nobody let in, it's someone inside using it."""
+        now, inside, came = self._clock(), False, []
         print(f"(doors: the {door} {'opened' if is_open else 'shut'})")
         with self._lock:
-            let_in = [(p, at) for p, at in self._let_in.get(door, []) if now - at <= LET_IN_S + GREETED_S]
+            let_in = [(p, at) for p, at in self._let_in.get(door, []) if now - at <= 2 * LET_IN_S]
             self._let_in[door] = let_in
             if is_open:
                 self._opened[door] = now
@@ -198,19 +213,20 @@ class Doors:
             else:
                 opened = self._opened.pop(door, None)
                 came = [] if opened is None else [p for p, at in let_in if opened - LET_IN_S <= at <= now]
+                came = list(dict.fromkeys(came))
                 self._let_in[door] = [(p, at) for p, at in let_in if p not in came]
-                welcome = [p for p in dict.fromkeys(came) if now - self._greeted.get(p, -GREETED_S) >= GREETED_S]
-                for person in welcome:
-                    self._greeted[person] = now
         if self.watcher:
             self.watcher.hurry(inside=inside)
-        if not welcome:
+        if not came:
             return
-        names = [self.log.people.names[p] for p in welcome]
-        if is_quiet(self.quiet, now):
-            print(f"(doors: {', '.join(names)} came home in the quiet hours ({self.quiet}): not greeted aloud)")
-        elif self.greet:
-            self.greet(names)
+        names = [self.log.people.names[p] for p in came]
+        print(f"(doors: {', '.join(names)} came in by the {door})")
+        try:
+            self.log.came_in(door, came, now)
+        except Exception as e:  # noqa: BLE001 - kept or not, they're in: what's waiting for them is still told
+            print(f"(doors: couldn't keep that {', '.join(names)} came in: {e!r})")
+        if self.on_came_in:
+            self.on_came_in(names, door)
 
     def phone_came_home(self, name: str, home: bool) -> None:
         """presence.Watcher's on_change, for learning keys: who came home by their phone, and when."""

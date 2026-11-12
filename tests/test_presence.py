@@ -681,17 +681,15 @@ def test_coming_home_in_the_quiet_hours_leaves_their_messages_for_when_they_spea
     assert reminders.get(rid)["next_at"] == NOW + 60
 
 
-def test_a_welcome_home_is_said_and_their_messages_right_after_even_ones_their_phone_set_for_later(reminders):
-    from voice_assistant.reminders import WELCOME_GAP_S, welcome
+def test_coming_in_by_the_door_brings_their_messages_forward_after_a_welcome_but_not_in_the_quiet_hours(reminders):
+    from voice_assistant.reminders import CAME_IN_GAP_S, came_in
 
     rid = message_for_when_back(reminders)
     on_arrival(reminders, grace_s=60, clock=lambda: NOW)("Stacey", True)  # her phone, on the stairs
-    said = []
-    welcome(reminders, said.append, clock=lambda: NOW + 20)(["Stacey", "Alon"])
-    assert said == ["Welcome home, Stacey and Alon."]
-    assert reminders.get(rid)["next_at"] == NOW + 20 + WELCOME_GAP_S
-    welcome(None, said.append)(["Alon"])
-    assert said[-1] == "Welcome home, Alon."
+    came_in(reminders, quiet=quiet_now(), clock=lambda: NOW + 20)(["Stacey"], "front door")
+    assert reminders.get(rid)["next_at"] == NOW + 60  # night: left as it was
+    came_in(reminders, clock=lambda: NOW + 20)(["Stacey", "Alon"], "front door")
+    assert reminders.get(rid)["next_at"] == NOW + 20 + CAME_IN_GAP_S
 
 
 def test_someone_known_only_by_their_phone_can_be_left_a_message_for_when_theyre_back(reminders):

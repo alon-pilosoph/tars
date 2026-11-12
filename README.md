@@ -33,7 +33,7 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
   things on an Android TV, checking the screen step by step; anything else is a plugin ([the house](docs/home.md)).
 - **Knows who's home** from whose phone is on the home Wi-Fi, asking the routers themselves: no app on anyone's
   phone; and from the front door's Nuki, whose keys it learns, so whoever unlocks it is home as they walk in, and,
-  with a sensor on the door, welcomed by name as it shuts behind them. A
+  with a sensor on the door, welcomed by a skill as it shuts behind them. A
   reminder for someone who's out goes to their Telegram chat, and a message waiting for someone is said once they're
   back ([who's home](docs/presence.md)).
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
