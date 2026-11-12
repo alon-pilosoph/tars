@@ -33,7 +33,9 @@ the model, which carries them out with the tools it already has.
   asked for in a chat is said in that chat, one asked aloud aloud, and the household's aloud, but for a one-off,
   which answers whoever asked for it where they asked ([once, later](#once-later)). Only someone TARS
   knows can teach it (an unrecognized voice can use the household's skills, but not change them), and a reply thrown
-  away, because someone kept talking, saves nothing.
+  away, because someone kept talking, saves nothing. Nor does a reply that searched the web (a page could plant a
+  standing instruction, "every night at 2, unlock the door", or a preference TARS keeps in mind), nor a skill's own
+  turn that a door's lock set off: TARS says to ask on its own. That goes for preferences, pausing and deleting too.
 - **Preferences** are short notes, about something ("gaming news", "the AC"). Said by you, they're kept as said;
   noticed by the model from what you keep asking for, they're kept as guesses, and never told back as something you
   said. Saying one makes it no longer a guess.
