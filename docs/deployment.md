@@ -65,11 +65,11 @@ uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:808
 ```
 
 The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
-(8 MB) and the speaker model (25 MB) into `models/`. Expect about 1.2 to 1.5 seconds from when you stop talking to
-TARS's first sound, a little more when you sounded mid-thought: Deepgram's Flux decides when you're done, and TARS
-prepares the answer meanwhile ([response time](latency.md)). A question TARS hands to OpenAI (the web, the news)
-starts with a short "Let's see." or the like. macOS asks for microphone access the first time; if TARS hears nothing,
-check System Settings → Privacy & Security → Microphone for your terminal.
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 2 seconds from when you stop talking to TARS's first
+sound, as on the Pi in use (a benchmark gets 1.2-1.5 s), a little more when you sounded mid-thought: Deepgram's Flux
+decides when you're done, and TARS prepares the answer meanwhile ([response time](latency.md)). A question TARS hands
+to OpenAI (the web, the news) starts with a short "Let's see." or the like. macOS asks for microphone access the first
+time; if TARS hears nothing, check System Settings → Privacy & Security → Microphone for your terminal.
 
 ## Install on the Pi
 
