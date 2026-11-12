@@ -129,9 +129,11 @@ class BrowseTool:
         self.rules = VOICE_RULES if via == VOICE else CHAT_RULES
 
     def toolset(self) -> toolbox.Toolset:
-        """The browse tool for the brain (toolbox.py). An errand is queued only once the turn goes ahead, as a change
-        to the house is, so a draft thrown away queues nothing (call); what it would order, pay or send waits for a
-        tap (gate.py)."""
+        """The browse tool for the brain (toolbox.py). Starting an errand is held back as a change to the house is
+        (toolbox.held_back, in call): queued only once the turn goes ahead, so a draft thrown away queues nothing, and
+        never in a reply that read the web (a page's words would be what sends the browser off, in someone's own
+        accounts) nor in a turn a door's lock set off. What a started errand would order, pay or send still waits for
+        a tap (gate.py)."""
         return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't start the errand ({e!r}); nothing was started")
 
     def call(self, args: dict, request) -> str:
@@ -143,8 +145,11 @@ class BrowseTool:
         goal = str(args.get("errand", "")).strip() if isinstance(args, dict) else ""
         if len(goal) < 8:
             return "error: say the errand in full: the site, what, how many, and any limit"
-        if not request.go_ahead():  # a draft thrown away, or a turn withdrawn: nothing is queued
+        refused = toolbox.held_back(request)
+        if refused == toolbox.WITHDRAWN:  # a draft thrown away, or a turn withdrawn: nothing is queued
             return "error: the request was withdrawn before anything was done; nothing was started"
+        if refused:  # words from a page, or a lock saying someone came in, never send the browser off
+            return f"{refused}; nothing was started"
         person = self._people[person_key(person)]
         ahead = self.queue.ahead()
         self.queue.add(person, goal, self.via)

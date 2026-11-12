@@ -17,6 +17,13 @@ It's asked for aloud at home or in a Telegram chat, with `[browser]` on
 code) comes to the asker's phone, and the answer comes there, and is said aloud too when it was asked aloud. It also
 runs from a terminal (below) and from its evals.
 
+An errand is started only once the turn that asks for it is over (a reply thrown away, because someone kept talking,
+starts none), and never by a reply that searched the web, nor by a skill's turn a door's lock set off. Starting one
+is acting on what the request says, in the person's own accounts: a search result saying "…and order the deluxe
+one" mustn't be what sends the browser off. Looking something up and then doing it is two turns: ask, hear what TARS
+found, and send it on the errand in so many words (an errand that needs the web looks things up in the browser
+itself). What a started errand would order, book or pay for still waits for their tap.
+
 ## How it works
 
 The code is `src/voice_assistant/browser/`.
