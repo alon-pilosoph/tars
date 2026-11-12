@@ -24,7 +24,7 @@ class House:
     def __init__(self, tmp_path, door="off", lock="locked", anyone_home=True, settings=None):
         self.t, self.states = 0.0, {LOCK: lock, DOOR: door}
         self.locked, self.said, self.posted, self.told, self.reads = 0, [], [], [], []
-        self.home, self.jammed = anyone_home, False
+        self.home, self.jammed, self.failing, self.call_s, self.answer = anyone_home, False, 0, 0.0, None
         self.off = Off(tmp_path, LOCK, clock=lambda: 1_800_000_000.0 + self.t)
         self.auto = AutoLock(
             "front door", LOCK, DOOR, settings or Settings(), self.off, self.read, self.lock, self.said.append,
@@ -40,9 +40,16 @@ class House:
         return state
 
     def lock(self):
+        """Home Assistant's lock.lock: refused `failing` more times, taking `call_s` (the clock moves on as it's
+        waited for), answering `answer`."""
+        self.t += self.call_s
+        if self.failing:
+            self.failing -= 1
+            raise HomeError("Home Assistant said HTTP 500")
         self.locked += 1
         if not self.jammed:
             self.set(LOCK, "locked")
+        return self.answer
 
     def set(self, entity, state):
         self.states[entity] = state
@@ -110,7 +117,7 @@ def test_a_lock_that_doesnt_lock_is_told_once_and_not_tried_again_until_its_next
     h.jammed = True
     h.set(LOCK, "unlocked")
     h.wait(60 + LOCK_SETTLE_S + 5)
-    assert h.locked == 1 and len(h.told) == 1 and "still unlocked" in h.told[0]
+    assert h.locked == 1 and len(h.told) == 1 and "still says unlocked" in h.told[0] and "bolt" in h.told[0]
     h.wait(600)
     assert h.locked == 1 and len(h.told) == 1
     h.set(LOCK, "locked")  # by hand
@@ -118,6 +125,74 @@ def test_a_lock_that_doesnt_lock_is_told_once_and_not_tried_again_until_its_next
     h.set(LOCK, "unlocked")
     h.wait(60)
     assert h.locked == 2
+
+
+def test_a_call_to_lock_home_assistant_didnt_take_is_tried_again_reading_the_door_first(tmp_path):
+    h = House(tmp_path)
+    h.failing = 1
+    h.set(LOCK, "unlocked")
+    h.wait(60)
+    assert h.locked == 0 and h.reads == [DOOR]
+    h.wait(RETRY_S[0])
+    assert h.locked == 1 and h.reads == [DOOR] * 2 and h.states[LOCK] == "locked" and h.told == []
+
+
+def test_a_call_to_lock_that_keeps_failing_is_tried_max_tries_times_then_told_what_failed(tmp_path):
+    h = House(tmp_path)
+    h.failing = 99
+    h.set(LOCK, "unlocked")
+    h.wait(60 + sum(RETRY_S) + 600)
+    assert h.reads == [DOOR] * MAX_TRIES and len(h.told) == 1
+    assert "Home Assistant didn't take the call to lock it (Home Assistant said HTTP 500)" in h.told[0]
+    assert "bolt" not in h.told[0] and "own auto-lock" in h.told[0]
+
+
+def test_a_retry_finds_the_door_opened_meanwhile_and_waits_for_it_to_shut(tmp_path):
+    h = House(tmp_path)
+    h.failing = 1
+    h.set(LOCK, "unlocked")
+    h.wait(60)
+    h.states[DOOR] = "on"  # opened, and Home Assistant's word on it hasn't come yet
+    h.wait(RETRY_S[0])
+    assert h.locked == 0 and h.auto.door_state == "on"
+    h.set(DOOR, "off")
+    h.wait(10)
+    assert h.locked == 1
+
+
+def test_a_slow_call_to_lock_is_given_its_settling_time_from_when_it_returns(tmp_path):
+    """The call can take SERVICE_TIMEOUT_S (30 s), longer than LOCK_SETTLE_S: a lock that says locked soon after
+    it returns isn't told as one that didn't lock."""
+    h = House(tmp_path)
+    h.jammed, h.call_s, h.answer = True, 25.0, False  # Home Assistant didn't answer in time
+    h.set(LOCK, "unlocked")
+    h.wait(60)
+    h.wait(3)
+    h.set(LOCK, "locked")
+    h.wait(LOCK_SETTLE_S * 2)
+    assert h.locked == 1 and h.told == []
+
+
+def test_a_slow_call_to_a_lock_that_never_locks_says_home_assistant_didnt_answer(tmp_path):
+    h = House(tmp_path)
+    h.jammed, h.call_s, h.answer = True, 30.0, False
+    h.set(LOCK, "unlocked")
+    h.wait(60 + LOCK_SETTLE_S - 1)
+    assert h.told == []
+    h.wait(1)
+    assert len(h.told) == 1 and "still says unlocked (Home Assistant hadn't answered the call in time)" in h.told[0]
+
+
+def test_a_lock_that_says_it_jammed_is_told_at_once_and_not_tried_again(tmp_path):
+    h = House(tmp_path)
+    h.jammed = True
+    h.set(LOCK, "unlocked")
+    h.wait(60)
+    h.set(LOCK, "jammed")
+    h.wait(1)
+    assert len(h.told) == 1 and "the lock says it jammed" in h.told[0]
+    h.wait(600)
+    assert h.locked == 1 and len(h.told) == 1
 
 
 def test_a_door_left_open_is_said_aloud_once_or_posted_when_nobodys_home(tmp_path):

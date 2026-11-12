@@ -102,9 +102,9 @@ voice assistant):
 | Unlocked, the door opened, then shut | locks it 10 s after it shut (`after_shut_s`); opened again meanwhile, the count starts over |
 | Unlocked, and the door never opened (Auto Unlock as someone walks past) | locks it after a minute (`unopened_s`) |
 | The door open | never locks it; reads the door again just before locking, and locks only if that says shut |
-| The lock doesn't lock (jammed, the door not quite shut) | tells the maintainers, once; tries again only when it's next unlocked |
+| The lock doesn't lock (jammed, the door not quite shut) | tells the maintainers, once, if it isn't locked 20 s after the call returned; tries again only when it's next unlocked |
 | The door open for 2 minutes (`open_alert_min`, 0 for never) | says so aloud, at night too; if nobody's home, posts it to everyone's chat instead |
-| The door can't be read just before locking (Home Assistant not answering) | doesn't lock; tries again 5 s and 30 s later, then tells the maintainers it couldn't read the sensor, and leaves it to the lock's own timer |
+| The door can't be read just before locking, or Home Assistant doesn't take the call to lock | doesn't lock; tries again 5 s and 30 s later, reading the door again each time, then tells the maintainers which it was, and leaves it to the lock's own timer |
 | The sensor not answering (unknown or unavailable) | locks nothing until it's back, whatever it said last; tells the maintainers once it's been out a minute, and once it's back. Back and shut, it counts as just shut: locked 10 s later |
 | "Turn off the front door's auto-lock for half an hour" | the home tool's `front door auto-lock`: off for that long (an hour if not said; at most 12), then back on by itself; nothing is locked, or said about the door, meanwhile |
 
