@@ -984,6 +984,9 @@ def follow(
                 ws.send(json.dumps({"type": "auth", "access_token": token}))
                 if json.loads(ws.recv(timeout=HTTP_TIMEOUT_S)).get("type") != "auth_ok":
                     raise HomeError(f"Home Assistant refused the token ({TOKEN_KEY} in .env)")
+                # Every state change, filtered here: subscribe_trigger, which filters in Home Assistant, needs an
+                # administrator's token, and TARS's user shouldn't be one (docs/home.md); subscribe_entities is the
+                # frontend's own compressed format.
                 ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
                 print(f"(home: {'following' if not down else 'following again'} {', '.join(sorted(wanted))})")
                 down = ""
