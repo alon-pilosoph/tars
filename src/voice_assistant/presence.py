@@ -293,13 +293,15 @@ class Watcher:
 
         threading.Thread(target=loop, daemon=True, name="presence").start()
 
-    def hurry(self, inside: bool = False) -> None:
+    def hurry(self, inside: bool = False, opened: float | None = None) -> None:
         """A door moved (doors.py): a round now, and every HURRY_EVERY_S for HURRY_S. `inside`: it was opened from
-        inside, so a phone that drops off now has left by it (Tracker.door_used)."""
+        inside, at `opened` (the time of day; now if None), so a phone that drops off just after has left by it
+        (Tracker.door_used)."""
         now = self._monotonic()
         with self._lock:
             if inside:
-                self.tracker.door_used(now)
+                ago = 0.0 if opened is None else max(0.0, self._clock() - opened)
+                self.tracker.door_used(now - ago)
             self._hurry_until = now + HURRY_S
         self._wake.set()
 

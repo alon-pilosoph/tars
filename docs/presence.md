@@ -186,8 +186,11 @@ shuts. TARS follows it in Home Assistant as it changes (`hass.follow`, over the 
   until the person next speaks to TARS, even ones their phone's coming home would have said.
 - **Asks the routers at once** each time the door moves, then every 10 seconds for three minutes, so whoever's phone
   comes or goes with it is seen in seconds, not at the next round.
-- **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it. Someone
-  has left by it when all of these hold (`Tracker._left_by_door`):
+- **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it. That's
+  decided as it shuts, not as it opens, since the lock's event can come a moment after the sensor's: nobody the lock
+  let in from two minutes before it opened until it shut, and it wasn't opened within a minute of someone coming in
+  by it (the door bouncing off the frame, back out to the car for the shopping). Someone who really does leave in
+  that minute waits `away_after_min`. Someone has left by it when all of these hold (`Tracker._left_by_door`):
   - a router last saw their phone no earlier than one round (`every_s`) before the door opened, and no later than a
     minute after: a phone already asleep when the door opened, or still seen more than a minute after it, is still
     in the house;

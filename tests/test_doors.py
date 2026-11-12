@@ -486,8 +486,9 @@ class Hurried:
     def __init__(self):
         self.calls = []
 
-    def hurry(self, inside=False):
+    def hurry(self, inside=False, opened=None):
         self.calls.append(inside)
+        self.opened = opened
 
     def at_door(self, person, door):
         return True
@@ -523,8 +524,10 @@ def test_the_door_opened_with_nobody_let_in_is_someone_inside_using_it_and_nobod
     doors, came, watcher = sensing(log, clock)
     doors.heard(event("1,0,111,0,0"))  # the app: from anywhere
     doors.sensed("front door", True)
+    clock.t += 6
     doors.sensed("front door", False)
-    assert came == [] and watcher.calls == [True, False]
+    assert came == [] and watcher.calls == [False, True]  # told at the shut: by then a late lock would be heard
+    assert watcher.opened == NOW  # someone left from when it opened
 
 
 def test_a_lock_opened_long_before_the_door_lets_nobody_in_by_it(log):
@@ -534,7 +537,7 @@ def test_a_lock_opened_long_before_the_door_lets_nobody_in_by_it(log):
     clock.t += 10 * MIN  # Auto Unlock, and then nobody came through
     doors.sensed("front door", True)
     doors.sensed("front door", False)
-    assert came == [] and watcher.calls[0] is True
+    assert came == [] and watcher.calls == [False, True]
 
 
 def test_two_let_in_together_come_in_together_and_each_time_they_come_in_counts(log):
@@ -554,15 +557,72 @@ def test_two_let_in_together_come_in_together_and_each_time_they_come_in_counts(
     assert came == [["Alon", "Stacey"], ["Alon"]]
 
 
-def test_the_lock_heard_while_the_door_is_already_open_still_lets_them_in(log):
+def test_the_lock_heard_while_the_door_is_already_open_still_lets_them_in_and_nobody_left(log):
     clock = Clock()
-    doors, came, _ = sensing(log, clock)
+    doors, came, watcher = sensing(log, clock)
     doors.sensed("front door", True)
     clock.t += 2
-    doors.heard(event("3,0,111,0,1", at=clock.t))  # the broker a moment behind the sensor
+    doors.heard(event("3,0,111,0,1", at=clock.t))  # the lock publishes once its motor has finished
     clock.t += 5
     doors.sensed("front door", False)
-    assert came == [["Alon"]]
+    assert came == [["Alon"]] and True not in watcher.calls
+
+
+def test_the_door_bouncing_or_opened_again_just_after_someone_came_in_isnt_anyone_leaving(log):
+    clock = Clock()
+    doors, came, watcher = sensing(log, clock)
+    doors.heard(event("1,0,111,0,1"))
+    doors.sensed("front door", True)
+    clock.t += 5
+    doors.sensed("front door", False)
+    clock.t += 1
+    doors.sensed("front door", True)  # it bounced off the frame
+    doors.sensed("front door", False)
+    clock.t += 30
+    doors.sensed("front door", True)  # back out to the car for the shopping
+    clock.t += 20
+    doors.sensed("front door", False)
+    assert came == [["Alon"]] and True not in watcher.calls
+    clock.t += 2 * MIN
+    doors.sensed("front door", True)  # a while later: someone inside using it
+    doors.sensed("front door", False)
+    assert watcher.calls[-1] is True
+
+
+def test_someone_let_in_before_their_phone_is_on_the_wifi_isnt_out_when_the_door_is_opened_again(log):
+    """Alon let in by Auto Unlock, his phone not on the Wi-Fi yet, and the door opened again 30 s later."""
+    clock, changes = Clock(), []
+    w = watching(log, clock, changes, alon=(False, NOW - 60 * MIN), stacey=(True, NOW - 60 * MIN))
+    doors = Doors(DoorLog(log.store, PEOPLE), w, clock=clock)
+    w.tracker.update({"stacey"}, True, 0.0, NOW)
+    doors.heard(event("1,0,111,0,1"))
+    doors.sensed("front door", True)
+    clock.t += 5
+    doors.sensed("front door", False)
+    clock.t += 30
+    doors.sensed("front door", True)
+    clock.t += 5
+    doors.sensed("front door", False)
+    while clock.t < NOW + 5 * MIN:
+        clock.t += 10
+        changes += w.tracker.update({"stacey"}, True, clock.t - NOW, clock.t)
+    assert changes == [("Alon", True)] and w.tracker.states["alon"].home is True
+
+
+def test_someone_opening_the_door_from_inside_and_going_is_out_a_minute_and_a_half_after_the_door(log):
+    clock, changes = Clock(), []
+    w = watching(log, clock, changes, alon=(True, NOW - 60 * MIN), stacey=(True, NOW - 60 * MIN))
+    doors = Doors(DoorLog(log.store, PEOPLE), w, clock=clock)
+    w.tracker.update({"alon", "stacey"}, True, 0.0, NOW)
+    clock.t += 3
+    doors.sensed("front door", True)
+    clock.t += 8
+    doors.sensed("front door", False)  # decided now, counted from when it opened
+    assert w.tracker._doors_used == [3.0]
+    while not changes and clock.t < NOW + 5 * MIN:
+        clock.t += 10
+        changes += w.tracker.update({"stacey"}, True, clock.t - NOW, clock.t)
+    assert changes == [("alon", False)] and clock.t == NOW + 101  # 90 s from the door, the first round after
 
 
 def test_a_door_sensor_is_a_binary_sensor_and_needs_home_assistant(tmp_path):
