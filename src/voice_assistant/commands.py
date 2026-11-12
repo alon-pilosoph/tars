@@ -16,14 +16,21 @@ import random
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .home import LOCK, OFF, ON, SET, Request
+
+if TYPE_CHECKING:
+    from .stt import Session, Transcriber
 
 WITTY_FROM_HUMOR = 50  # [llm] humor, percent: the replies with a joke in them, from here on
 ON_PI = "pi"  # answered_by for a turn handled here, as the turns table keeps it
 # A fixed range, not each device's own: anything else goes to the model, and a device that can't take one of these
 # answers with an error, said as "couldn't".
 TEMPERATURES = range(16, 31)
+# [home] local_first: a recording longer than this, its end-of-turn silence included, is no house command; it goes
+# straight to the cloud.
+LONGEST_COMMAND_S = 8.0
 NUMBER_WORDS = {
     16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty", 21: "twenty one",
     22: "twenty two", 23: "twenty three", 24: "twenty four", 25: "twenty five", 26: "twenty six",
@@ -215,7 +222,7 @@ class HouseCommands:
     replies: Replies
     call: Callable[[dict, Request], str]
     hear: Callable[[bytes], str] | None = None
-    local_first: bool = False  # [home] local_first: the turn's speech to text is LocalFirstSession
+    local_first: bool = False  # [home] local_first: the turn's speech to text is LocalFirstTranscriber's
 
     def lines(self) -> list[str]:
         """Every sentence a reply may have, to make ahead."""
@@ -244,48 +251,35 @@ def vosk_hearing(grammar: list[str], models_dir) -> Callable[[bytes], str]:
     return hear
 
 
-class LocalFirstSession:
-    """[home] local_first: the recording stays on the Pi until it's over. Then Vosk listens for a house command;
-    only anything else is sent, whole, to the cloud's speech to text. With no service deciding when the speaker is
-    done (turn_state is None), TARS's own rules do (recorder.py)."""
+class LocalFirstTranscriber:
+    """[home] local_first: the recording stays on the Pi until it's over. Then Vosk listens for a house command; only
+    anything else is sent, whole, to `whole`, the cloud's speech to text for a finished recording. With no service
+    deciding when the speaker is done (turn_state is None), TARS's own rules do (recorder.py)."""
 
-    turn_state = None
-
-    def __init__(self, hear: Callable[[bytes], str], match: Callable[[str], object], whole):
+    def __init__(self, hear: Callable[[bytes], str], match: Callable[[str], object], whole: Transcriber):
         self._hear, self._match, self._whole = hear, match, whole
-        self._audio = bytearray()
-        self.local: bool | None = None  # after transcript(): whether it was heard on the Pi alone
 
-    def feed(self, pcm: bytes) -> None:
-        self._audio += pcm
+    def session(self, expect: tuple[str, ...] = ()) -> Session:
+        from .stt import BufferedSession
 
-    def transcript(self) -> str:
-        heard = self._hear(bytes(self._audio))
-        if heard and self._match(heard):
-            self.local = True
-            return heard
-        self.local = False
-        session = self._whole.session()
-        session.feed(bytes(self._audio))
-        session.finish()
+        return BufferedSession(lambda pcm: self._transcribe(pcm, expect))
+
+    def _transcribe(self, pcm: bytes, expect: tuple[str, ...]) -> str:
+        from .audio import SAMPLE_RATE
+
+        if len(pcm) <= LONGEST_COMMAND_S * SAMPLE_RATE * 2:
+            try:
+                heard = self._hear(pcm)
+            except Exception as e:  # noqa: BLE001 - the cloud can still hear it
+                print(f"(couldn't listen for a house command on the Pi: {e!r})")
+                heard = ""
+            if heard and self._match(heard):
+                return heard
+        # `expect`: the words TARS expects to hear (the choices it just offered), for a cloud that takes them.
+        session = self._whole.session(expect) if expect else self._whole.session()
         try:
+            session.feed(pcm)
+            session.finish()
             return session.transcript()
         finally:
             session.close()
-
-    def finish(self) -> None:
-        pass
-
-    def close(self) -> None:
-        self._audio.clear()
-
-
-class LocalFirstTranscriber:
-    """Sessions that hear house commands on the Pi before anything goes to the cloud (LocalFirstSession); `whole`
-    transcribes a finished recording (stt.DeepgramFileTranscriber, with its backup)."""
-
-    def __init__(self, hear: Callable[[bytes], str], match: Callable[[str], object], whole):
-        self._hear, self._match, self._whole = hear, match, whole
-
-    def session(self) -> LocalFirstSession:
-        return LocalFirstSession(self._hear, self._match, self._whole)

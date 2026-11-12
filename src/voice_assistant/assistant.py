@@ -1032,8 +1032,8 @@ class Assistant:
             return answer
 
     def _heard_on_pi(self, pcm: bytes) -> str:
-        """A house command Vosk heard in the recording, or ""."""
-        if not (self.commands and self.commands.hear):
+        """A house command Vosk heard in the recording, or "". Local first, Vosk has listened already."""
+        if not (self.commands and self.commands.hear) or self.commands.local_first:
             return ""
         try:
             heard = self.commands.hear(pcm)
