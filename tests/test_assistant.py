@@ -74,16 +74,112 @@ def test_empty_transcript_ends_the_conversation(speaker):
     assert brain.asked == ["hello"]
 
 
+def test_an_answer_to_its_question_that_came_out_as_no_words_is_asked_for_again_once(speaker):
+    # "Which channel, 11 or 12?" and "twelve" said as it ended: heard, but nothing of it written down.
+    assistant, brain = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", b"c"],
+        ["turn the news on", "", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    said = []
+    assistant.say = lambda text, **kw: said.append(text)
+    assistant.converse(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON]  # once: twice in a row is noise, not an answer
+    assert brain.asked == ["turn the news on"]
+    assistant, brain = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", None],
+        ["turn the news on", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    assistant.say = lambda text, **kw: None
+    assistant.converse(follow_up_s=4.0)
+    assert brain.asked == ["turn the news on", f"{FOLLOW_UP_TAG} twelve"]
+
+
+def test_each_question_that_gets_no_words_back_is_asked_again(speaker):
+    assistant, _ = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", b"c", None],
+        ["turn the news on", "", "twelve", ""],
+        replies=["Which channel, 11 or 12?", "The kitchen or the bedroom TV?"],
+    )
+    said = []
+    assistant.say = lambda text, **kw: said.append(text) or True
+    assistant.converse(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON, assistant_module.PARDON]
+
+
+def test_asking_again_is_kept_in_the_conversation(speaker, tmp_path):
+    assistant, convos = logged_assistant(
+        speaker,
+        tmp_path,
+        [b"q", b"a", b"b", None],
+        ["turn the news on", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    assistant.converse(follow_up_s=4.0)
+    assert [t["text"] for t in turns_of(convos)] == [
+        "turn the news on",
+        "Which channel, 11 or 12?",
+        assistant_module.PARDON,
+        "twelve",
+        "On it.",
+    ]
+
+
+def test_asking_again_is_made_ahead(speaker):
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.prepare_phrases()
+    assert assistant.phrases.made_ahead(assistant_module.PARDON)
+
+
+def test_no_words_after_an_answer_that_asked_nothing_ends_the_conversation_quietly(speaker):
+    assistant, brain = make_assistant(speaker, [b"q", b"a", b"b"], ["lights on", "", "x"], replies=["Done."])
+    said = []
+    assistant.say = lambda text, **kw: said.append(text)
+    assistant.converse(follow_up_s=4.0)
+    assert said == [] and brain.asked == ["lights on"]
+
+
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("Which channel, 11 or 12?", ("11", "eleven", "12", "twelve")),
+        ("Sure. The kitchen or the living room?", ("kitchen", "living")),
+        ("11, 12 or 13?", ("12", "twelve", "13", "thirteen", "11", "eleven")),
+        ("Done. Anything else?", ()),  # no choice offered
+        ("Kitchen or bedroom? Never mind, done.", ()),  # it's no question once it's moved on
+    ],
+)
+def test_the_choices_a_question_offered_are_what_the_answer_is_expected_to_say(said, expected):
+    assert assistant_module.offered(said) == expected
+
+
+def test_the_answer_to_a_choice_is_heard_expecting_the_choices(speaker):
+    assistant, _ = make_assistant(
+        speaker, [b"q", b"a", None], ["turn the news on", "twelve"], replies=["Which channel, 11 or 12?", "On it."]
+    )
+    assistant.converse(follow_up_s=4.0)
+    assert assistant.transcriber.expected == [(), ("11", "eleven", "12", "twelve"), ()]
+
+
 def test_follow_ups_can_be_turned_off(speaker):
     assistant, _ = make_assistant(speaker, [b"a"], ["hello"])
     assistant.converse(follow_up_s=0)
     assert assistant.recorder.timeouts == [None]
 
 
-def test_first_request_is_never_treated_as_overheard(speaker):
-    assistant, brain = make_assistant(speaker, [b"a", None], ["hi"], replies=["<skip>"])
+def test_first_request_is_never_treated_as_overheard(speaker, tmp_path):
+    # "New zone." for "news on", after the wake word: the model took it for overheard, and the tag reached the voice.
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"a", None], ["New zone."], replies=["<skip>"])
     assistant.converse(follow_up_s=4.0)
-    assert brain.forgotten == 0
+    assert assistant.brain.forgotten == 1  # the tag never stays in the history
+    assert turns_of(convos)[-1]["text"] == assistant_module.PARDON
+    assert assistant.brain.remembered == [assistant_module.PARDON]  # what's said next answers it, not skipped
+    assert assistant.recorder.timeouts == [None, 4.0]  # and the answer is listened for
 
 
 def failing(assistant, error):
@@ -568,7 +664,7 @@ def test_a_failed_answer_is_kept_with_where_it_failed(speaker, tmp_path, monkeyp
     playing(speaker)
     down = OpenAIError(f"{stage} is down")
     if stage == "stt":
-        assistant.transcriber = types.SimpleNamespace(session=lambda: BufferedSession(raising(down)))
+        assistant.transcriber = types.SimpleNamespace(session=lambda expect=(): BufferedSession(raising(down)))
     elif stage == "llm":
         assistant.brain.stream_reply = raising(down)
     else:

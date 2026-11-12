@@ -170,7 +170,7 @@ def test_a_learned_check_that_doesnt_fit_its_phrases_is_refused():
 
 
 def test_the_recognizer_is_unpacked_all_at_once(tmp_path, monkeypatch):
-    def download(path, url, what):
+    def download(path, url, what, sha256):
         with zipfile.ZipFile(path, "w") as z:
             z.writestr(f"{MODEL_NAME}/conf/model.conf", "x")
         return path

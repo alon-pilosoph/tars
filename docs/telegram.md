@@ -115,6 +115,9 @@ nobody's waiting on a first word) and with a little thinking (`reasoning_effort 
 with `brain = "quick"`, Qwen answers first as by voice. There's no backup the other way: if OpenAI fails, the chat
 says so.
 
+**A chat is always meant for TARS.** Nothing in it is overheard, so a `<skip>` from the model is never posted and
+never kept: the chat gets "Sorry, I didn't catch that. Say it again?".
+
 **One thread, many conversations.** In Telegram a chat is one long thread; TARS splits it by time, as by voice.
 Each person has their own brain, so their own history: everything said since the conversation started (up to its
 last 50 exchanges), sent with each message, and nothing older. A conversation ends once the chat has been quiet for
@@ -145,9 +148,9 @@ anything written there: speaker ID isn't asked, and a voice message never trains
 **Writing, not speaking.** The system prompt is written for the ear. For a chat, a rule goes last in the
 instructions, so it wins: this is in writing, reply as in a text message, plain text, links are fine, what you send is
 posted here, a `[Voice message]` may have a word misheard (say what you heard and ask), and who's on Telegram (so a
-reminder for someone without a chat is said aloud). The lines TARS says while
-a slow answer comes ("Looking it up.", "Let me think about that for a moment.") are taken out: the chat shows
-"typing..." instead.
+reminder for someone without a chat is said aloud). The line TARS says while a slow answer comes ("Let's see.",
+"Looking it up.", "Let me think about that for a moment.") is taken out, and the chat shows "typing..." instead; a
+reply that is only that line ("On it.", once a film is playing) is kept.
 
 **Done once it's delivered.** As by voice, what a reply asks for (a reminder set, something sent) happens only once
 the reply has reached the person: a reply that can't be sent, after three tries, is forgotten, so a reminder they

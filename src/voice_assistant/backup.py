@@ -586,7 +586,7 @@ def _has_history(db: Path) -> bool:
     with closing(sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro&immutable=1", uri=True)) as found:
         tables = {r[0] for r in found.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         return any(
-            found.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+            found.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()  # nosec B608  # names from the tuple below
             for table in ("events", "conversations")
             if table in tables
         )
