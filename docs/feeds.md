@@ -9,6 +9,7 @@ talking to it, aloud or in a chat:
 | "What's the latest from Eurogamer?" | that feed's newest few stories, told, before deciding to follow it |
 | "Follow the first two, under gaming" / "add ynet.co.il to the news" | followed; a site is enough, TARS finds its feed |
 | "What's new in gaming?" / "what's new?" | the few stories that matter from that category (or all of them), each in a sentence or two; on Telegram, with links |
+| "What else?" | the stories not told yet: the rest stay new until they are |
 | "Tell me more about the Zelda one" | looked up on the web |
 | "What am I following?" / "drop Kotaku" / "stop following cooking" | listed, or unfollowed; a whole category only once you've said yes |
 
@@ -21,8 +22,11 @@ talking to it, aloud or in a chat:
 - **Finding a feed from a site**: the page's own `<link rel="alternate">` to RSS or Atom, else where feeds usually
   are (`/feed`, `/rss`, `/rss.xml` and the like).
 - **What's new** is the last three days' stories, ten at most from each feed and thirty in all, newest first, that
-  haven't been handed to the model for this person before. The model picks and tells the few that matter; the same
-  story in several feeds is a bigger one. Nothing new: it says so, and offers the latest again.
+  haven't been told to this person before, numbered. The model picks and tells the few that matter; the same story
+  in several feeds is a bigger one. Nothing new: it says so, and offers the latest again.
+- **Told is what was told**: the model ends that reply with a marker of the stories it told, `<told 2 5>`, which is
+  taken out before anyone hears or reads it, and only those count as told. The rest stay new, for "what else?" or the
+  next time. A reply with no marker counts as all of them told, so a model that forgets never repeats the news.
 - **Each person's own**: who's asking is the voice TARS recognized, or the chat's person. When the voice wasn't
   recognized, `[feeds] default_person`'s; without one, TARS says it doesn't know whose. Previewing is anyone's.
 - **Following is held back as any change is.** Following or dropping a feed waits for the turn to be over, so a

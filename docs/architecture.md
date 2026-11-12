@@ -157,8 +157,11 @@ Home Assistant's, an errand, a feed followed, a skill taught, TARS's settings an
 what](security.md#what-each-tool-may-change)). Only a
 `COLLECTS` tool is called holding the conversation; the rest may wait, so it's released meanwhile. Web search isn't
 in the toolbox: it's OpenAI's own, run on its side, and the brain marks the reply that used it
-(`Request.read_the_web`) for every tool to go by. A new tool is a provider with a `toolset()`, given to the brain
-(`tools=`), with nothing in `llm.py` to change.
+(`Request.read_the_web`) for every tool to go by; a `Tool` whose answers are words from anywhere (`outside`: the
+feeds) marks it too, once it's answered. A toolset may have `markers`: something the model writes for its provider
+(the feeds' `<told 2 5>`, the stories it told), taken out of the words as they stream, held back only while they could
+still be one, and handed to the provider once the reply is over. A new tool is a provider with a `toolset()`, given to
+the brain (`tools=`), with nothing in `llm.py` to change.
 
 - **Web search** (OpenAI's built-in tool, `[llm] web_search`): for current questions and real links. When the
   model starts a search with nothing said yet, TARS says "Looking it up." so the wait isn't silent.

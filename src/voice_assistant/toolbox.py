@@ -18,9 +18,14 @@ Every tool says what calling it may change (`does`), and there's no default, so 
   hands over its toolset; every change at least as held_back does.
 
 Web search isn't one of them: it's OpenAI's own tool, run on its side, and the brain marks the reply that used it
-(Request.read_the_web) for every tool here to go by.
+(Request.read_the_web) for every tool here to go by. A tool whose answers are words from anywhere (`outside`: a
+feed's stories) marks its reply the same way once it's answered.
+
+A toolset may also have markers: something the model writes in its reply for the provider (the feeds' <told 2 5>, the
+stories it told), which the brain takes out of what's said or posted and hands to the provider once the reply is over.
 """
 
+import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
@@ -57,13 +62,15 @@ class Tool:
     arguments as the model wrote them, decoded (an object, unless the model got it wrong), answering in words for the
     model. `does`: what calling it may change (READS, CHANGES, COLLECTS or ITS_OWN). `failed`: what the model is told
     when the call raises, with {e!r}. `slow(arguments)`, with the arguments as written: whether it takes long enough
-    that TARS says "One moment." first."""
+    that TARS says "One moment." first. `outside`: its answers are words from anywhere (a feed's stories), so the
+    reply that's read one changes nothing after it, as one that searched the web."""
 
     spec: Mapping
     does: str
     call: Callable[[object, Turn], str]
     failed: str = "error: it failed ({e!r}); nothing is known to have changed"
     slow: Callable[[str], bool] | None = None
+    outside: bool = False
 
     def __post_init__(self):
         if self.does not in DOES:
@@ -74,16 +81,29 @@ class Tool:
         return self.spec["name"]
 
 
+@dataclass(frozen=True)
+class Marker:
+    """Something the model writes in a reply for a provider, never said or posted: `pattern` (what group 1 of it
+    carries is the provider's), `starts` (how it begins, as written and HTML-escaped: words that may yet become one are
+    held back until it's known), and `heard(request, found)`, once the reply is over, with what each one in it
+    carried, in order: [] when it had none."""
+
+    pattern: re.Pattern
+    starts: tuple[str, ...]
+    heard: Callable[[Request | None, list[str]], None]
+
+
 @dataclass(frozen=True, eq=False)
 class Toolset:
     """What a provider gives the brain: its `tools`, in the order they're offered; its `rules`, each given in the
-    instructions as it is; and, for abilities(), what they let a model do (`can`) and what a model without them hands
-    over (`needs`)."""
+    instructions as it is; for abilities(), what they let a model do (`can`) and what a model without them hands
+    over (`needs`); and its `markers`, taken out of every reply and handed back to it."""
 
     tools: Sequence[Tool] = ()
     rules: Sequence[str] = ()
     can: Sequence[str] = ()
     needs: Sequence[str] = ()
+    markers: Sequence[Marker] = ()
 
 
 def held_back(request: Request | None) -> str:
@@ -107,11 +127,11 @@ class Provider(Protocol):
         """Its tools, as they are when a brain is made."""
 
 
-def one_tool(provider, does: str, failed: str) -> Toolset:
+def one_tool(provider, does: str, failed: str, outside: bool = False, markers: Sequence[Marker] = ()) -> Toolset:
     """The toolset of a provider with one tool, as the browser's errands, the feeds, the skills and TARS itself have
     theirs: `tool`, `rules`, `can`, `needs`, and call(args, request)."""
-    tool = Tool(provider.tool, does, lambda args, turn: provider.call(args, turn.request), failed)
-    return Toolset([tool], [provider.rules], [provider.can], [provider.needs])
+    tool = Tool(provider.tool, does, lambda args, turn: provider.call(args, turn.request), failed, outside=outside)
+    return Toolset([tool], [provider.rules], [provider.can], [provider.needs], markers)
 
 
 class Toolbox:
@@ -140,6 +160,10 @@ class Toolbox:
     @property
     def needs(self) -> list[str]:
         return [need for toolset in self.toolsets for need in toolset.needs]
+
+    @property
+    def markers(self) -> list[Marker]:
+        return [marker for toolset in self.toolsets for marker in toolset.markers]
 
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
