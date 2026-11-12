@@ -17,7 +17,7 @@ Due = Callable[[], bool]
 
 class Trigger(Protocol):
     last_audio: np.ndarray | None  # what woke it, for speaker ID; None when there's nothing to go on
-    after_name: Future[np.ndarray] | None  # what followed the name before the wake fired; None when it isn't known
+    after_name: Future[np.ndarray] | None  # what followed the name, for the wait that just ended; None if unknown
 
     def wait(self, mic: Microphone, due: Due | None = None) -> str | None:
         """Block until the user wants to talk (a double-checked trigger says how sure it is: verify.ANSWER or ASK),

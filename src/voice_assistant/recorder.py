@@ -174,7 +174,7 @@ class UtteranceRecorder:
         if not streak:
             carried = []
         if streak >= START_BLOCKS:
-            return carried
+            return None if stopped() else carried
         for _ in range(int(timeout_s / BLOCK_SECONDS)):
             if stopped():
                 return None

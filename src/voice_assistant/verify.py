@@ -9,7 +9,7 @@ import tempfile
 import threading
 import zipfile
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from concurrent.futures import Future
 from itertools import pairwise
 from pathlib import Path
@@ -127,6 +127,12 @@ class PhraseVerifier:
         self._accept = [a.split() for a in spec["accept"]]
         self._ask_after_hey = set(spec["ask_after_hey"])
         self._ask_alone = set(spec["ask_alone"])
+        # What may follow "hey" as the name, where the name ends; None for a phrase without "hey".
+        self._names = (
+            {a[1] for a in self._accept if a[0] == "hey" and len(a) > 1} | self._ask_after_hey
+            if any(a[0] == "hey" for a in self._accept)
+            else None
+        )
         self.last_confidence: float | None = None
         self._tuned: TunedCheck | None = None
         self.use_check(json.loads(check_path.read_text()) if check_path else None)
@@ -146,7 +152,7 @@ class PhraseVerifier:
         recognizer = KaldiRecognizer(self._model, SAMPLE_RATE, self._grammar)
         recognizer.SetWords(True)
         recognizer.AcceptWaveform(np.asarray(pcm, dtype=np.int16).tobytes())
-        return end_of_name(json.loads(recognizer.FinalResult()).get("result", []))
+        return end_of_name(json.loads(recognizer.FinalResult()).get("result", []), self._names)
 
     def _recognize(self, pcm: np.ndarray, alternatives: int) -> dict:
         from vosk import KaldiRecognizer
@@ -179,14 +185,17 @@ class PhraseVerifier:
         return (ASK if close else IGNORE), heard
 
 
-def end_of_name(words: list[dict]) -> float | None:
-    """Where the name ends, in seconds into the audio: the end of the word after the last "hey", else of the last word
-    recognized. None if no word was."""
-    known = [w for w in words if w.get("word") != "[unk]"]
-    for a, b in reversed(list(pairwise(known))):
-        if a["word"] == "hey":
-            return b["end"]
-    return known[-1]["end"] if known else None
+def end_of_name(words: list[dict], names: Collection[str] | None = None) -> float | None:
+    """Where the name ends, in seconds into the audio. With `names` (a phrase that starts with "hey"): the end of the
+    word straight after the last "hey", if it's one of them; anything else there may be the request itself. Without:
+    the end of the last word recognized. None when it can't tell."""
+    if names is None:
+        known = [w for w in words if w.get("word") != "[unk]"]
+        return known[-1]["end"] if known else None
+    heys = [i for i, w in enumerate(words) if w.get("word") == "hey"]
+    if not heys or heys[-1] + 1 == len(words) or (name := words[heys[-1] + 1])["word"] not in names:
+        return None
+    return name["end"]
 
 
 def after_name(audio: np.ndarray, end_s: float | None) -> np.ndarray:
@@ -297,6 +306,7 @@ class VerifiedTrigger:
     def wait(self, mic: Microphone, due: Due | None = None) -> str:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite, DUE when `due` says a
         reminder is due."""
+        self.after_name = None
         mic.clear()
 
         def fresh() -> tuple[RecentAudio, NearMisses, None]:

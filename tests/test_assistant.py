@@ -362,13 +362,35 @@ def test_what_followed_the_name_goes_to_the_first_request_only(speaker):
     assert leads[0] is what and leads[1:] == [None, None]  # follow-ups come after TARS spoke: nothing to carry
 
 
-@pytest.mark.parametrize("greet, heard", [("always", [b"q", None]), ("pause", [None, b"q", None])])
-def test_what_followed_the_name_is_heard_whether_or_not_it_greets(speaker, greet, heard):
-    assistant, _, _ = greeting_at_once(speaker, heard, ["what's new"])
+@pytest.mark.parametrize(
+    "greet, echo, heard",
+    [("always", True, [b"q", None]), ("pause", False, [None, b"q", None]), ("never", False, [b"q", None])],
+)
+def test_what_followed_the_name_is_heard_while_the_mic_stays_open(speaker, greet, echo, heard):
+    transcript = "Yes, Alon? What's new" if echo else "what's new"
+    assistant, _, _ = greeting_at_once(speaker, heard, [transcript], echo=echo)
     what = np.ones(1920, np.int16)
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet, after_name=found(what))
     assert assistant.recorder.leads[0] is what
     assert all(lead is None for lead in assistant.recorder.leads[1:])  # after a greeting, the mic starts afresh
+
+
+def test_a_greeting_said_with_the_mic_closed_drops_what_followed_the_name(speaker):
+    """Without echo cancellation the mic is cleared for "Yes, Alon?": what's heard after it doesn't run on from it."""
+    assistant, _, _ = greeting_at_once(speaker, [b"q", None], ["what's new"])
+    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(np.ones(1920, np.int16)))
+    assert assistant.recorder.leads == [None, None] and assistant.mic.pauses >= 1
+
+
+def test_if_the_greeting_cant_be_said_what_followed_the_name_is_still_heard(speaker, capsys):
+    assistant, _, _ = greeting_at_once(speaker, [b"q", None], ["what's new"], echo=True)
+    unsaid = Future()
+    unsaid.set_exception(RuntimeError("no voice"))
+    assistant.phrases.get = lambda text, **kw: unsaid
+    what = np.ones(1920, np.int16)
+    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(what))
+    assert assistant.recorder.leads[0] is what
+    assert "couldn't say 'Yes, Alon?'" in capsys.readouterr().out
 
 
 def test_if_the_name_couldnt_be_timed_the_request_is_heard_from_the_mic(speaker, capsys):

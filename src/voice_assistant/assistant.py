@@ -686,10 +686,10 @@ class Assistant:
         """Says "Yes, <name>?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
         waits for the greeting, as for anything TARS says. `after_name`: what followed the wake word before listening
-        began."""
+        began; dropped when the mic waits for the greeting, as what's heard after it doesn't run on from the name."""
         if not (self.mic and self.mic.echo and self.mic.echo.working):
             self.greet()
-            return self.listen(after_name=after_name)
+            return self.listen()
         text = greeting(self.wake_speaker())
         print(f"Bot:  {text}  (listening while it's said)")
         try:

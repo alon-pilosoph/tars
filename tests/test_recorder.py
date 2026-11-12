@@ -216,23 +216,30 @@ def test_a_stop_button_ends_the_wait_for_speech_and_the_speech_with_nothing():
     assert recorder("." * 5 + "S" * 100).record(listening, stop=lambda: next(said)) is None
 
 
-def lead(n, samples=BLOCK_SAMPLES * 0):
-    """`n` whole blocks of what followed the wake word, plus `samples` more at its start."""
+def lead(n, samples=0):
+    """`n` whole blocks of what followed the wake word, plus `samples` more at its start (a block of their own)."""
     return np.zeros(samples + n * BLOCK_SAMPLES, np.int16)
 
 
 def test_a_request_said_in_one_breath_with_the_name_starts_after_it():
     """'hey TARS, what's new': "what" was in the wake window, "'s new" comes from the mic straight after."""
-    pcm = recorder("SS" + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(2, 300))
-    assert len(pcm) // 2 >= 300 + 8 * BLOCK_SAMPLES  # the lead, its odd start included, then the mic's speech
+    # The lead's odd start is quiet, its block is speech; the mic's 6 speech blocks finish it, then a tail of 2.
+    pcm = recorder("." + "S" + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(1, 300))
+    assert len(pcm) // 2 == 300 + (1 + 6 + 2) * BLOCK_SAMPLES  # every block once, the seam neither lost nor doubled
     whole = recorder("S" + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(1))
-    assert blocks_in(whole) >= 7  # a single voiced block of lead still counts once the mic carries on
+    assert len(whole) // 2 == (1 + 6 + 2) * BLOCK_SAMPLES  # a single voiced block of lead counts once the mic goes on
 
 
 def test_a_lead_that_is_already_speech_starts_the_recording_at_once():
     m = mic()
     pcm = recorder("SSS" + "S" * 4 + "." * 30, end_silence_s=0.4).record(m, lead=lead(3))
-    assert blocks_in(pcm) >= 7 and m.reads >= 4
+    assert len(pcm) // 2 == (3 + 4 + 2) * BLOCK_SAMPLES and m.reads == 4 + 5  # 5 quiet blocks end it
+
+
+def test_a_stop_button_pressed_by_then_drops_a_lead_that_is_already_speech():
+    m, sent = mic(), []
+    assert recorder("SSS" + "S" * 10).record(m, lead=lead(3), stop=lambda: True, on_audio=sent.append) is None
+    assert m.reads == 0 and sent == []  # nothing goes to transcription
 
 
 def test_a_pause_after_the_name_lets_the_lead_go():
