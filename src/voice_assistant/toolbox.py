@@ -89,15 +89,17 @@ class Toolset:
 def held_back(request: Request | None) -> str:
     """Why a change asked for in `request`'s turn isn't made, or "" when it may be: refused in a reply that read the
     web (Request.read_the_web), then in a turn a door's lock set off (Request.by_door), and otherwise waiting for the
-    turn to go ahead (Request.go_ahead), withdrawn if it doesn't. None: a turn from nobody in particular, over already
-    (typed). What the toolbox holds a CHANGES tool to, and an ITS_OWN tool each of its changes."""
+    turn to go ahead (Request.go_ahead), withdrawn if it doesn't. None, or one with no go_ahead: a turn from nobody in
+    particular, over already (typed). What the toolbox holds a CHANGES tool to, and an ITS_OWN tool each of its
+    changes."""
     if request is None:
         return ""
     if getattr(request, "read_the_web", False):
         return READ_THE_WEB
     if door := getattr(request, "by_door", ""):
         return BY_DOOR.format(door=door)
-    return "" if request.go_ahead() else WITHDRAWN
+    go_ahead = getattr(request, "go_ahead", None)
+    return "" if not callable(go_ahead) or go_ahead() else WITHDRAWN
 
 
 class Provider(Protocol):

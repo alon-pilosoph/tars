@@ -6,7 +6,8 @@ summary of their own (a headline and a link to a paywalled article tells nothing
 in a category in their words. "What's new in gaming?" reads that category's feeds, all at once, and hands the model
 what it hasn't handed them before, for it to tell the few that matter. Each person's feeds are their own (the
 event database's feeds table), and so is what they've been told (feed_seen): who's asking is the voice TARS knows,
-or the chat, else [feeds] default_person."""
+or the chat, else [feeds] default_person. Following and unfollowing wait for the turn, and aren't done in a reply
+that read the web, nor in a turn a door's lock set off (toolbox.held_back)."""
 
 import html
 import re
@@ -246,8 +247,10 @@ class Feeds:
         self._cache: dict[str, tuple[float, Page]] = {}
 
     def toolset(self) -> toolbox.Toolset:
-        """The feeds tool for the brain (toolbox.py). Following and unfollowing are made at once: nothing holds them
-        back."""
+        """The feeds tool for the brain (toolbox.py). Reading and previewing go through at once; following and
+        unfollowing are held back as any change is (toolbox.held_back, in call): refused in a reply that read the web,
+        whose pages could name a feed to follow, and in a turn a door's lock set off, and made only once the turn goes
+        ahead."""
         return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't read the feeds ({e!r})")
 
     def call(self, args: dict, request=None) -> str:
@@ -266,6 +269,8 @@ class Feeds:
             return self.listing(person)
         if action == READ:
             return self.read(person, category, bool(args.get("everything")))
+        if action in (FOLLOW, UNFOLLOW) and (refused := toolbox.held_back(request)):
+            return refused
         if action == FOLLOW:
             return self.follow(person, category, url, name)
         if action == UNFOLLOW:

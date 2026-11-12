@@ -254,3 +254,24 @@ EXTERNAL = (
 def test_a_feed_with_entities_is_refused_not_expanded(body):
     with pytest.raises(NotAFeed, match="not a feed"):
         parse("https://example.com/feed", body)
+
+
+def test_following_waits_for_the_turn_and_isnt_done_after_the_web_or_on_a_doors_turn_but_reading_is(feeds):
+    """A page the model read could say which feeds to follow, and a lock saying someone came in asks for nothing."""
+    ask(feeds, action="follow", url="https://ynet/rss", category="news")
+    held = [
+        (Request(speaker="Alon", read_the_web=True), "refused: this reply read the web"),
+        (Request(speaker="Alon", by_door="front door"), "refused: this ran because the front door's lock"),
+        (Request(speaker="Alon", may_act=lambda timeout: False), "error: the request was withdrawn"),
+    ]
+    full = {"action": None, "category": "news", "url": None, "name": None, "everything": None}
+    for request, said in held:
+        follow = full | {"action": "follow", "url": "https://games/feed", "category": "gaming"}
+        assert feeds.call(follow, request).startswith(said)
+        assert feeds.call(full | {"action": "unfollow", "name": "ynet"}, request).startswith(said)
+        assert "Ynet" in feeds.call(full | {"action": "list"}, request)
+        assert "Storm floods" in feeds.call(full | {"action": "read", "everything": True}, request)
+        assert feeds.call(full | {"action": "preview", "url": "https://games/feed"}, request).startswith("Eurogamer")
+    assert [f["name"] for f in feeds.followed("alon")] == ["Ynet"]
+    kept = Request(speaker="Alon", may_act=lambda timeout: True)
+    assert feeds.call(full | {"action": "unfollow", "name": "ynet"}, kept) == "done: no longer following Ynet"
