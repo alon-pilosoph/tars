@@ -1,20 +1,20 @@
 """How TARS's parts are made from config.toml (the clients, the event log, who's home, the house, the brain and the
-rest, each optional), and what each of `voice-assistant`'s options runs with them; __main__.py is the command line.
-Heavy dependencies are imported lazily, so each command loads only its own."""
+rest, each optional, each saying why when it's left out). entrypoints.py puts them together for each of
+`voice-assistant`'s options, and check.py asks them whether they can be made. Heavy dependencies are imported lazily,
+so each is loaded only by what uses it."""
 
 import dataclasses
 import functools
 import hashlib
 import json
 import platform
-import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dotenv import dotenv_values
 
-from .audio import SAMPLE_RATE, AudioDeviceError, Microphone, Speaker, find_device
+from .audio import SAMPLE_RATE
 from .config import (
     AWS_KEY_ID,
     AWS_SECRET,
@@ -31,18 +31,14 @@ from .config import (
     QuickProvider,
     with_keys,
 )
-from .files import atomic_write
 from .haconfig import BUNDLE as HA_BUNDLE
-from .recorder import make_recorder
-from .store import DB_FILE, Store
-from .versions import UNUSABLE, model_versions, pair_source
+from .versions import pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .backup import S3, Backup
-    from .commands import DeviceWords
     from .events import EventLog
     from .health import Report
     from .llm import QuickService
@@ -174,203 +170,10 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
     return trigger, f"Say '{trigger.phrase}'..."
 
 
-def record_voice_session(cfg: Config, person: str, mic_name: str, root: Path) -> None:
-    from .enroll import record_voice
-
-    print(
-        f"Recording {person}'s voice on the {mic_name} mic. After each chime, say the prompt. "
-        "Ctrl+C to stop; rerun to resume."
-    )
-    speaker = Speaker(find_device(cfg.audio.output_device, "output"), SAMPLE_RATE, cfg.audio.playback_prebuffer_s)
-    with Microphone(find_device(cfg.audio.input_device, "input")) as mic, speaker:
-        record_voice(person, mic_name, mic, speaker, make_recorder(cfg, root, turn_model=False), root / "voice_data")
-
-
 def make_speaker_id(cfg: Config, root: Path):
     from .speaker import SpeakerID
 
     return SpeakerID(root / cfg.speaker.model, root / cfg.speaker.voiceprints, cfg.speaker.threshold)
-
-
-def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
-    from .audio import read_wav
-
-    # Enroll from the mic the assistant will listen with: voiceprints don't transfer perfectly between mics.
-    clips = sorted((root / "voice_data" / person / mic_name / "speech").glob("*.wav"))
-    if len(clips) < 5:
-        raise SystemExit(
-            f"Need at least 5 sentences for {person} on the {mic_name} mic; "
-            f"run --record-voice {person} --mic {mic_name} first."
-        )
-    speaker_id = make_speaker_id(cfg, root)
-    speaker_id.enroll(person, [read_wav(c) for c in clips])
-    print(
-        f"Enrolled {person} from {len(clips)} sentences ({mic_name} mic). "
-        f"Everyone enrolled: {', '.join(speaker_id.voiceprints)}"
-    )
-    if not cfg.speaker.enabled:
-        print("Set enabled = true under [speaker] in config.toml to use it.")
-
-
-def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
-    from .clustering import regroup
-    from .signin import Accounts
-    from .webui import serve
-
-    log = make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("The web UI shows the event log: set log_events = true under [learning] in config.toml.")
-    speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
-    try:
-        pairs = pair_source(cfg, root)
-    except (FileNotFoundError, ValueError) as e:
-        raise ConfigError(str(e)) from None
-    from .reminders import Reminders
-
-    reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
-    names = speaker_id.names if speaker_id else list
-    presence = make_presence(cfg, root, log)
-    # Someone known by their phone can be left a message for when they're back, here too.
-    voices = (lambda: [*names(), *presence.phones]) if presence else names
-    start_heartbeat(log, "web", root)
-    bucket = None
-    if cfg.backup.enabled:
-        try:
-            bucket = make_backup(cfg, root, log).read
-        except ConfigError as e:
-            print(f"(the web UI plays only what's on this machine: {e.code})")
-    serve(
-        log,
-        host,
-        port,
-        recluster=functools.partial(regroup, log, speaker_id),
-        pairs=pairs,
-        allowed_hosts=frozenset(cfg.web.allowed_hosts),
-        reminders=reminders,
-        voice_names=voices,
-        health=make_health(cfg, root, log),
-        bucket=bucket,
-        finished=functools.partial(enroll_from_session, speaker_id, log.store),
-        accounts=Accounts(log.store) if cfg.web.sign_in else None,
-        tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
-    )
-
-
-def record_session(cfg: Config, root: Path, kind: str, person: str, port: int, cloud: bool = False) -> None:
-    """--record-session: a recording session for `person` (recording.py), its link printed and sent to their
-    Telegram chat if they have one. `cloud` (--cloud): a house session whose takes may also be sent to Deepgram when
-    they're measured, as its page and the message say."""
-    import random
-
-    from .recording import ABOUT, HOUSE, SECONDS_A_PROMPT, Sessions, house_script, voice_script
-
-    log = make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("Recording sessions keep their takes in the event log: set [learning] log_events = true.")
-    prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
-    token = Sessions(log.store).create(kind, person, prompts, cloud)
-    url = f"{web_link(cfg, port)}/?session={token}"
-    minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
-    print(f"{ABOUT[kind][0]} for {person}, {len(prompts)} phrases (about {minutes} minutes):\n{url}")
-    if cloud:
-        print("(its takes may also go to Deepgram, when tools/commands_bench.py --cloud measures them)")
-    where = " Its recordings are kept on TARS, and also sent to Deepgram, in the cloud, when they're measured."
-    where = where if cloud else ""
-    text = (
-        f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes."
-        f"{where} Open it when you're near TARS; the link works for a day.\n{url}"
-    )
-    send_link(cfg, root, person, text, "their phone")
-
-
-def web_link(cfg: Config, port: int) -> str:
-    """Where someone's phone reaches the web UI: [web] link, else this machine's address."""
-    from .browser.login_page import reachable_address
-
-    return cfg.web.link.rstrip("/") or f"{'https' if cfg.web.tls_cert else 'http'}://{reachable_address()}:{port}"
-
-
-def send_link(cfg: Config, root: Path, person: str, text: str, open_on: str) -> None:
-    """`text`, with a link in it, sent to `person`'s Telegram chat if they have one."""
-    from .events import person_key
-    from .telegram import Bot, TelegramError
-
-    chat = next((c for name, c in cfg.telegram.people.items() if person_key(name) == person_key(person)), None)
-    if not (cfg.telegram.enabled and chat):
-        print(f"({person} has no Telegram chat in [telegram] people: open the link on {open_on}.)")
-        return
-    try:
-        Bot(api_key(root / ".env", TELEGRAM_KEY)).call("sendMessage", chat_id=chat, text=text)
-    except TelegramError as e:
-        print(f"(couldn't send it on Telegram: {e})")
-        return
-    print(f"Sent to {person} on Telegram.")
-
-
-def house_actions(cfg: Config, root: Path, events: EventLog | None) -> list[DeviceWords]:
-    """The house's devices as it makes them: what a house recording session asks for."""
-    from .commands import device_words
-
-    home = make_home(cfg, root, events=events)
-    if home is None or not home.devices:
-        raise ConfigError("There are no devices in the house to make house commands from (docs/home.md).")
-    return device_words(home.devices)
-
-
-def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
-    """--web-invite: a one-time link for `person` to make a passkey with, printed and sent to their Telegram chat if
-    they have one."""
-    from .signin import Accounts
-
-    log = make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
-    if not person.strip():
-        raise ConfigError("--web-invite needs the person's name.")
-    if cfg.web.tls_cert and not cfg.web.link:
-        raise ConfigError(
-            "Set [web] link to the web UI's name, e.g. https://<pi-name>.<tailnet>.ts.net:8080: passkeys belong to a "
-            "name, and browsers won't make one for an address (docs/web-ui.md#signing-in)."
-        )
-    if not cfg.web.sign_in:
-        print("(sign-in is off: the link works, but the web UI won't ask for it until [web] sign_in = true)")
-    url = f"{web_link(cfg, port)}/sign-in/invite/{Accounts(log.store).invite(person)}"
-    print(f"A link for {person} to make a passkey for the web UI, good for a day:\n{url}")
-    text = f"A link to sign in to TARS's web page: it makes a passkey on your phone. It works once, for a day.\n{url}"
-    send_link(cfg, root, person, text, "their phone or computer")
-
-
-def web_sign_out(cfg: Config, root: Path, person: str) -> None:
-    """--web-sign-out: `person` signed out of the web UI everywhere, their passkeys forgotten and unused invites voided
-    (a lost phone)."""
-    from .signin import Accounts
-
-    log = make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
-    passkeys, sessions, invites = Accounts(log.store).remove(person)
-    if not (passkeys or sessions or invites):
-        print(f"Nobody called {person} has a passkey, a session or an invite for the web UI.")
-        return
-    print(
-        f"{person} is signed out everywhere: {passkeys} passkey(s) forgotten, {sessions} session(s) ended and "
-        f"{invites} unused invite(s) voided. --web-invite makes a new one."
-    )
-
-
-def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
-    """A voice session's takes become its person's voiceprint (speaker ID), as --enroll does with --record-voice's."""
-    from .audio import read_wav
-    from .recording import MIN_ENROLL_TAKES, VOICE, Sessions
-
-    if session["kind"] != VOICE or speaker_id is None:
-        return
-    takes = [t for t in Sessions(store).takes(session["id"]) if t["audio"] and not t["problem"]]
-    if len(takes) < MIN_ENROLL_TAKES:
-        print(f"(only {len(takes)} good takes from {session['person']}'s session: not enough to enroll)")
-        return
-    speaker_id.enroll(session["person"], [read_wav(store.folder / t["audio"]) for t in takes])
-    print(f"Enrolled {session['person']} from {len(takes)} takes of their recording session.")
 
 
 def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
@@ -380,21 +183,6 @@ def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
 
     services = Services(lambda: service_checks(cfg, root).listed())
     return Health(log, expected(cfg), services, systemd_state, backup_enabled=cfg.backup.enabled).report
-
-
-def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) -> None:
-    """Adds a pair training.household made and puts it in use; a running assistant switches within seconds."""
-    versions = model_versions(cfg, root)
-    if versions is None:
-        raise ConfigError(
-            "Trained wake models need a microWakeWord model (.tflite) with a learned double-check: set "
-            "[wake] model, verify and check_model in config.toml."
-        )
-    try:
-        name = versions.install(folder, based_on)
-    except UNUSABLE as e:
-        raise SystemExit(f"Not installed: {e}") from None
-    print(f"Installed {folder} as {name}; it's in use now. The web UI's Models page can switch back.")
 
 
 def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None, presence=None):
@@ -826,93 +614,6 @@ def chat_brain_config(cfg: Config, has_openai: bool) -> LLMConfig:
     return dataclasses.replace(llm, service_tier=tg.service_tier, reasoning_effort=tg.reasoning_effort, **quick_off)
 
 
-def telegram(cfg: Config, root: Path) -> None:
-    """--telegram: TARS in the household's Telegram chats, a process of its own, like the web UI."""
-    from .conversations import ConversationLog
-    from .reminders import Reminders
-    from .speaker import voiceprint_names
-    from .telegram import CHAT_REMIND_TOOLS, Bot, TelegramError, TelegramTars, channel_rules, refused_token_error
-
-    if not cfg.telegram.enabled:
-        raise ConfigError(
-            "Set enabled = true under [telegram] in config.toml, and say who may chat in people (docs/telegram.md)."
-        )
-    env = root / ".env"
-    bot = Bot(api_key(env, TELEGRAM_KEY))
-    try:
-        me = bot.me()
-    except TelegramError as e:
-        if e.refused:
-            raise refused_token_error(env) from None
-        raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
-    events = make_event_log(cfg, root)
-    start_heartbeat(events, "telegram", root)
-    presence = make_presence(cfg, root, events)
-    tools = None
-    if cfg.reminders.enabled and events:
-        voiceprints = root / cfg.speaker.voiceprints
-        names = (lambda: voiceprint_names(voiceprints)) if cfg.speaker.enabled else list
-        tools = reminder_tools(Reminders.from_config(events.store, cfg.reminders), names, presence)
-    told: list = []  # the TelegramTars, once made: how a task on the TV went is posted through it
-
-    def announce(line: str) -> None:
-        if told:
-            told[0].announce(line)
-
-    home = chat_home(cfg, root, presence, events, announce)
-    client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
-    llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
-    who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
-    print(f"(chats are answered by {who})")
-    queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
-    feeds = make_feeds(cfg, events)  # one for every chat: each person's feeds are kept by person
-    skills = make_skills(events)
-    wishes = make_wishes(cfg, root, events)  # one, with one GitHub client, for the offers, the taps and following
-    myself = make_myself(cfg, root, events, wishes)
-    tars = TelegramTars(
-        bot,
-        cfg.telegram.people,
-        lambda: make_brain(
-            client,
-            llm,
-            env,
-            tools,
-            channel_rules=rules,
-            remind_tools=CHAT_REMIND_TOOLS,
-            home=home,
-            browser=browse_tool(cfg, queue, "telegram"),
-            feeds=feeds,
-            skills=skills,
-            myself=myself,
-        ),
-        ConversationLog(events) if events else None,
-        tools,
-        memory_s=llm.memory_minutes * 60,
-        send_items=cfg.telegram.send_items,
-        transcriber=make_recording_transcriber(cfg, env, client),
-        env=env,
-        home=home,
-        say=functools.partial(ask_to_say, events.store.folder) if events else None,
-        spotify_login=spotify_login(cfg, root, env),
-        skill_clock=skill_clock(skills, "chat", home, presence, myself),
-    )
-    told.append(tars)
-    if cfg.updates.enabled:
-        listen_for_update_taps(cfg, root, tars)
-    if wishes:
-        from .wishes import tap_listener
-
-        tars.listen_first(tap_listener(wishes, list(maintainer_chats(cfg).values()), tars.bot))
-        wishes.start()
-    if queue:
-        make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
-    try:
-        tars.run_forever(me)
-    finally:
-        if wishes:
-            wishes.close()
-
-
 def listen_for_update_taps(cfg: Config, root: Path, tars) -> None:
     """A maintainer's tap on an update's Install button installs it at once (updater.py)."""
     import subprocess
@@ -1099,34 +800,6 @@ def ha_bundle_path(cfg: Config, root: Path) -> Path:
     return root / cfg.learning.folder / HA_BUNDLE
 
 
-def ha_config_pass(cfg: Config, root: Path) -> None:
-    """Commits what changed in Home Assistant's setup since the last pass, and seals the history for the backup's
-    snapshot when it changed, with HA_CONFIG_KEY; without the key nothing goes in the snapshot. A failure costs a
-    line, never the backup."""
-    from .haconfig import CHANGED_IN_HA, KEY_NAME, HAConfigError, seal
-
-    if (ha := make_ha_config(cfg, root)) is None:
-        return
-    bundle = ha_bundle_path(cfg, root)
-    try:
-        started = ha.start()
-        made = ha.commit(CHANGED_IN_HA)
-        if started:
-            print(f"(Home Assistant's setup: its history starts now, in {ha.folder}/.git)")
-        elif made:
-            print(f"(Home Assistant's setup: changed, kept as {made[:8]})")
-        if not (key := dotenv_values(root / ".env").get(KEY_NAME) if (root / ".env").exists() else None):
-            bundle.unlink(missing_ok=True)
-            print(f"(Home Assistant's setup: not in the backup, since there's no {KEY_NAME} to seal it with: "
-                  "voice-assistant --ha-config-key makes one)")  # fmt: skip
-        elif started or made or not bundle.exists():
-            atomic_write(bundle, seal(ha.bundle(), key))
-    except HAConfigError as e:
-        print(f"(Home Assistant's setup: couldn't keep its history: {e})")
-    except ImportError:
-        print("(Home Assistant's setup: sealing it for the backup needs the backup extra: uv sync --extra backup)")
-
-
 def chat_of(cfg: Config, person: str) -> int | None:
     """`person`'s Telegram chat in [telegram] people, whatever the case of their name."""
     me = person.strip().lower()
@@ -1162,151 +835,6 @@ def tell_maintainers(cfg: Config, root: Path, text: str, buttons: list[tuple[str
             continue
         reached.append(name)
     return reached
-
-
-def update_pass(cfg: Config, root: Path) -> None:
-    """--update: one pass, as its timer runs it."""
-    from .updater import Updater
-
-    if not cfg.updates.enabled:
-        print("(updates: off; [updates] enabled = true turns them on)")
-        return
-    said = Updater(root, cfg, lambda text, buttons: tell_maintainers(cfg, root, text, buttons)).run_once()
-    print(f"(updates: {said})")
-
-
-def ha_config_key(root: Path) -> None:
-    """--ha-config-key: a new HA_CONFIG_KEY in .env, to copy somewhere else too. Never printed."""
-    from .haconfig import KEY_NAME, new_key
-
-    env = root / ".env"
-    if KEY_NAME in env_keys(env):
-        raise SystemExit(
-            f"There's a {KEY_NAME} in .env already. A new one couldn't open the snapshots the old one sealed: keep it."
-        )
-    key = new_key()
-    with env.open("a") as f:
-        f.write("\n# Seals Home Assistant's setup in the backup (docs/home.md). Keep a copy in a password manager.\n")
-        f.write(f"{KEY_NAME}={key}\n")
-    print(
-        f"Added a new {KEY_NAME} to {env}. Copy it from there into a password manager yourself (it isn't shown here, "
-        "so it stays out of logs and terminals): without it, a new machine can't open Home Assistant's setup from the "
-        "backup. The next backup pass seals it."
-    )
-
-
-def ha_config_from_backup(cfg: Config, root: Path) -> None:
-    """--ha-config-from-backup: the sealed history --restore-backup put back, opened into [home] config_dir."""
-    from .haconfig import KEY_NAME, HAConfigError, unseal
-
-    sealed = ha_bundle_path(cfg, root)
-    if (ha := make_ha_config(cfg, root)) is None:
-        raise SystemExit("Set config_dir under [home] first: that's where Home Assistant's setup goes (docs/home.md).")
-    if not sealed.exists():
-        raise SystemExit(f"There's no {sealed.name} here: voice-assistant --restore-backup puts it back first.")
-    try:
-        ha.clone(unseal(sealed.read_bytes(), api_key(root / ".env", KEY_NAME)))
-    except (HAConfigError, ConfigError) as e:
-        raise SystemExit(f"Couldn't open Home Assistant's setup: {e}") from None
-    print(f"Home Assistant's setup is in {ha.folder}, with its history. Start Home Assistant: docker compose up -d")
-
-
-def ha_config_history(cfg: Config, root: Path) -> None:
-    """--ha-config: the latest changes, newest first."""
-    from .haconfig import HAConfigError
-
-    if (ha := make_ha_config(cfg, root)) is None:
-        raise SystemExit("Set config_dir under [home] to keep Home Assistant's setup's history (docs/home.md).")
-    if not ha.ready():
-        raise SystemExit("There's no history yet: the next backup pass starts it (or voice-assistant --backup now).")
-    try:
-        changes = ha.history()
-    except HAConfigError as e:
-        raise SystemExit(f"Couldn't read the history: {e}") from None
-    for c in changes:
-        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(c.when))
-        files = ", ".join(c.files[:4]) + (f" and {len(c.files) - 4} more" if len(c.files) > 4 else "")
-        print(f"{c.commit[:8]}  {when}  {c.message}" + (f"\n          {files}" if files else ""))
-
-
-def ha_config_restore(cfg: Config, root: Path, change: str) -> None:
-    """--ha-config-restore: Home Assistant's setup as it was at `change`, kept as one more change."""
-    from .haconfig import HAConfigError
-
-    if (ha := make_ha_config(cfg, root)) is None or not ha.ready():
-        raise SystemExit("There's no history of Home Assistant's setup to restore from (voice-assistant --ha-config).")
-    try:
-        made = ha.restore(change)
-    except HAConfigError as e:
-        raise SystemExit(f"Couldn't restore: {e}") from None
-    print(f"Restored, kept as {made[:8]}; Home Assistant is starting again. To undo this: --ha-config-restore with "
-          "the change before it, as --ha-config lists.")  # fmt: skip
-
-
-def backup_pass(cfg: Config, root: Path, delete_anyway: bool = False) -> None:
-    """--backup: one pass, as its timer runs it. Home Assistant's setup is committed first, so the snapshot has it."""
-    from .backup import Busy
-
-    ha_config_pass(cfg, root)
-    try:
-        status = make_backup(cfg, root).run(delete_anyway=delete_anyway)
-    except Busy as e:
-        print(f"(backup: {e}; this pass is skipped)")
-        return
-    print(
-        f"(backup: {status.uploaded} uploaded, {status.offloaded} removed from this machine, {status.brought_back} "
-        f"brought back, {status.deleted} deleted from the bucket; {status.in_bucket} files in it, "
-        f"{status.only_in_bucket} only there)"
-    )
-    for note in status.notes:
-        print(f"({note})")
-    if status.error:
-        raise SystemExit(f"The backup didn't finish: {status.error}")
-
-
-def fetch_audio(cfg: Config, root: Path, restore_archived: bool = False) -> None:
-    """--fetch-audio: brings back onto this machine every recording that's only in the bucket."""
-    from .backup import BackupError, Busy
-
-    try:
-        done = make_backup(cfg, root).fetch(restore=restore_archived)
-    except (BackupError, Busy) as e:
-        raise SystemExit(f"Couldn't fetch the audio: {e}") from None
-    said = [f"Fetched {done.fetched} files."]
-    if done.restoring:
-        said.append(f"{done.restoring} archived ones are being restored: run this again in up to 48 hours.")
-    if done.archived:
-        said.append(f"{done.archived} are archived: add --restore-archived to bring them back.")
-    if done.missing:
-        said.append(f"{done.missing} weren't in the bucket any more.")
-    print(" ".join(said))
-
-
-def restore_backup(cfg: Config, root: Path) -> None:
-    """--restore-backup: the bucket's latest snapshot, put in place on a new machine, with TARS stopped."""
-    from .backup import SNAPSHOT_DB, BackupError, Busy, restore_snapshot
-    from .check import systemd_state
-
-    units = [
-        "voice-assistant",
-        "voice-assistant-web",
-        "voice-assistant-telegram",
-        "voice-assistant-backup.timer",
-        "voice-assistant-backup.service",
-    ]
-    # Anything but stopped counts as running: "activating" is a backup pass under way.
-    running = [u for u in units if systemd_state(u) not in (None, "inactive", "failed")]
-    if running:
-        raise SystemExit(f"Stop TARS first: systemctl --user stop {' '.join(running)}")
-    places = {SNAPSHOT_DB: root / cfg.learning.folder / DB_FILE, **snapshot_files(cfg, root)}
-    try:
-        key = restore_snapshot(make_s3(cfg, root), cfg.backup, places)
-    except (ValueError, BackupError, Busy) as e:
-        raise SystemExit(f"Couldn't restore: {e}") from None
-    print(
-        f"Restored {key}. Start TARS again: the first backup pass (within 15 minutes, or --backup now) brings back "
-        "what has to be on this machine; the other recordings play from the bucket, and --fetch-audio brings them here."
-    )
 
 
 def phrase_folder(cfg: Config, root: Path) -> Path:
@@ -1364,128 +892,3 @@ def start_buttons(cfg: Config, volume, assistant, root: Path):
     which = (["the volume keys"] if keys else []) + ([f"the remote's {', '.join(remote)}"] if remote else [])
     print(f"(buttons: {' and '.join(which)})")
     return set_muted
-
-
-def typed(cfg: Config, root: Path) -> None:
-    """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
-    from .assistant import UNPROMPTED_WAIT_S, Assistant
-
-    made: list = []  # the assistant, once made: what the TV agent says when it's done is said through it
-    # One at a time: the agent's line, from its own thread, never over a reply or in the middle of one.
-    speaking = threading.Lock()
-
-    def announce(line: str) -> None:
-        print(f"\nTARS:  {line}\n\nYou:  ", end="", flush=True)
-        if made:
-            with speaking:
-                if made[0].say(line, keep=False, wait_s=UNPROMPTED_WAIT_S):
-                    made[0].brain.remember_said(line)
-
-    events = make_event_log(cfg, root)
-    presence = make_presence(cfg, root, events) if cfg.presence.enabled else None
-    home = make_home(cfg, root, announce, presence, own_speaker(cfg))
-    _, brain, voice = make_pipeline(
-        cfg,
-        root,
-        typed=True,
-        home=home,
-        feeds=make_feeds(cfg, events),
-        skills=make_skills(events),
-        myself=make_myself(cfg, root, events),
-    )
-    with Speaker(
-        find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
-    ) as speaker:
-        assistant = Assistant(None, speaker, None, None, None, brain, voice)
-        made.append(assistant)
-        while True:
-            try:
-                text = input("\nYou:  ").strip()
-            except EOFError:
-                print()
-                return
-            if not text:
-                continue
-            try:
-                with speaking:
-                    assistant.answer_text(text)
-            except AudioDeviceError:
-                raise
-            except Exception as e:  # noqa: BLE001 - a failed question shouldn't end the session
-                print(f"Error: {e!r}")
-
-
-def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
-    from .assistant import Announcements, Assistant
-    from .journal import Journal
-
-    events = make_event_log(cfg, root)
-    start_heartbeat(events, "assistant", root)
-    speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
-    presence = make_presence(cfg, root, events)
-    reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
-    start_presence(cfg, root, presence, reminders)
-    announcements = Announcements()
-    volume = own_speaker(cfg)
-    home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
-    browser = voice_errands(cfg, events)
-    skills = make_skills(events)
-    myself = make_myself(cfg, root, events)
-    transcriber, brain, voice = make_pipeline(
-        cfg,
-        root,
-        reminders=reminders,
-        home=home,
-        browser=browser,
-        feeds=make_feeds(cfg, events),
-        skills=skills,
-        myself=myself,
-    )
-    commands = house_commands(cfg, root, home)
-    if commands and cfg.home.local_first:
-        transcriber = local_first(cfg, root, commands)
-    elif cfg.home.local_first:
-        print("(house commands: none, with no devices in the house; local_first is off, the cloud hears every request)")
-    recorder = make_recorder(cfg, root)
-    echo = make_echo_canceller(cfg)
-    speaker = Speaker(
-        find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s, echo
-    )
-    with Microphone(find_device(cfg.audio.input_device, "input"), echo) as mic, speaker:
-        if echo:
-            echo.set_delay(mic.latency + speaker.latency)
-        journal = Journal(events)
-        journal.keep_pruning(cfg.learning.keep_audio_days)
-        trigger, idle_message = make_trigger(cfg, push_to_talk, root, journal)
-        assistant = Assistant(
-            mic,
-            speaker,
-            trigger,
-            recorder,
-            transcriber,
-            brain,
-            voice,
-            speaker_id,
-            name_threshold=cfg.speaker.wake_threshold,
-            journal=journal,
-            humor=cfg.llm.humor,
-            phrase_folder=phrase_folder(cfg, root),
-            reminders=reminders,
-            ack_window_s=cfg.reminders.ack_window_s,
-            announcements=announcements,
-            elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=skill_clock(skills, "aloud", home, presence, myself),
-            commands=commands,
-        )
-        set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
-        if events and not push_to_talk:
-            from .control import Server
-
-            # Recording sessions, from the web UI; muting and unmuting, from a chat.
-            Server(events.store.folder, assistant.control_ops(set_muted))
-        assistant.run_forever(
-            idle_message,
-            follow_up_s=cfg.recorder.follow_up_s,
-            greet_after_s=cfg.recorder.greet_after_s,
-            greet=cfg.recorder.greet,
-        )

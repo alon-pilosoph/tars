@@ -14,6 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from voice_assistant import entrypoints
 from voice_assistant import wiring as cli
 from voice_assistant.audio import SAMPLE_RATE
 from voice_assistant.backup import (
@@ -529,7 +530,7 @@ def test_a_restore_waits_for_tars_to_be_stopped(tmp_path, monkeypatch, unit, sta
     monkeypatch.setattr(check, "systemd_state", lambda u: state if u == unit else "inactive")
     cfg = dataclasses.replace(load_config(REPO_CONFIG, local=False), backup=config())
     with pytest.raises(SystemExit, match=f"systemctl --user stop {unit}"):
-        cli.restore_backup(cfg, tmp_path)
+        entrypoints.restore_backup(cfg, tmp_path)
 
 
 # The lifecycle rules.

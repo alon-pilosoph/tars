@@ -1,6 +1,6 @@
 """The command line: `voice-assistant` runs TARS; its options record voices, enroll speakers, test the mic, serve the
-web UI and install trained wake models (wiring.py makes what each runs). Heavy dependencies are imported lazily, so
-each command loads only its own."""
+web UI and install trained wake models (entrypoints.py has what each runs). Heavy dependencies are imported lazily,
+so each command loads only its own."""
 
 import argparse
 import sys
@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .audio import AudioDeviceError, NoDeviceError, list_devices
 from .config import WEB_PORT, ConfigError, load_config
-from .wiring import (
+from .entrypoints import (
     backup_pass,
     enroll_speaker,
     fetch_audio,
@@ -17,7 +17,6 @@ from .wiring import (
     ha_config_key,
     ha_config_restore,
     install_models,
-    keyed,
     record_session,
     record_voice_session,
     restore_backup,
@@ -29,6 +28,7 @@ from .wiring import (
     web_sign_out,
     web_ui,
 )
+from .wiring import keyed
 
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
 EX_CONFIG = 78

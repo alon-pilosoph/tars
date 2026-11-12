@@ -920,6 +920,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
     from .audio import BLOCK_SECONDS, Microphone, NoDeviceError, Speaker, device_names, find_device
     from .haconfig import KEY_NAME
     from .health import PROCESSES, expected
+    from .recorder import make_recorder
 
     env = root / ".env"
     asked = cfg
@@ -1003,7 +1004,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         def load():
             t = time.perf_counter()
             wiring.make_trigger(cfg, False, root)
-            wiring.make_recorder(cfg, root)
+            make_recorder(cfg, root)
             took = time.perf_counter() - t
             return Result("Local models", OK, f"wake word, double-check and speech detectors loaded ({took:.0f} s)")
 
