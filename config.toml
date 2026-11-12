@@ -284,6 +284,8 @@ container = "homeassistant"
 # entity = "lock.front_door"
 # door = "binary_sensor.front_door_door"            # optional: TARS won't lock an open door
 # auto_lock = true                                  # optional, with door: TARS locks it once it's shut (docs/home.md)
+# Or auto_lock = { after_shut_s = 10, unopened_s = 60, open_alert_min = 2 }: after_shut_s is 3 at least, as a door
+# pulled to can bounce off the frame, its sensor saying shut for a moment as it swings open again.
 #
 # [[home.devices]]
 # name = "boiler"

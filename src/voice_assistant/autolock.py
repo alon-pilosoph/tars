@@ -76,7 +76,10 @@ class Settings:
         return None
 
 
-RANGES = {"after_shut_s": (0, 300), "unopened_s": (10, 600), "open_alert_min": (0, 60)}
+# after_shut_s is MIN_AFTER_SHUT_S at least: a door pulled to can bounce off the frame, its contact saying shut
+# for a moment as it swings open again, and the bolt thrown then would hit the frame.
+MIN_AFTER_SHUT_S = 3
+RANGES = {"after_shut_s": (MIN_AFTER_SHUT_S, 300), "unopened_s": (10, 600), "open_alert_min": (0, 60)}
 
 
 def problems(value, where: str) -> list[str]:

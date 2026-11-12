@@ -90,6 +90,21 @@ def test_opened_again_before_the_time_starts_the_count_over(tmp_path):
     assert h.locked == 1
 
 
+def test_at_its_least_a_door_bouncing_off_the_frame_is_locked_three_seconds_after_it_last_shut(tmp_path):
+    h = House(tmp_path, settings=Settings(after_shut_s=3))
+    h.set(LOCK, "unlocked")
+    h.set(DOOR, "on")
+    h.wait(5)
+    h.set(DOOR, "off")  # pulled to: it hits the frame, swings open a crack, and shuts
+    h.set(DOOR, "on")
+    h.wait(1)
+    h.set(DOOR, "off")
+    h.wait(2)
+    assert h.locked == 0
+    h.wait(1)
+    assert h.locked == 1
+
+
 def test_unlocked_and_never_opened_is_locked_after_a_minute(tmp_path):
     h = House(tmp_path)
     h.set(LOCK, "unlocked")  # Auto Unlock as someone walks past
@@ -482,7 +497,9 @@ def test_the_device_turns_it_off_for_a_while_and_back_on_and_a_doors_lock_cant(t
 @pytest.mark.parametrize(
     "value, says",
     [(True, None), ({"after_shut_s": 5, "open_alert_min": 0}, None), ("yes", "must be true, or a table"),
-     ({"after_shut_s": 900}, "after_shut_s must be between"), ({"pin": 1}, "has no setting pin")],
+     ({"after_shut_s": 900}, "after_shut_s must be between"), ({"after_shut_s": 0}, "between 3 and 300"),
+     ({"after_shut_s": 2.5}, "between 3 and 300"), ({"after_shut_s": 3}, None),
+     ({"no_sensor_s": 30}, "has no setting no_sensor_s"), ({"pin": 1}, "has no setting pin")],
 )  # fmt: skip
 def test_the_settings_are_checked(value, says):
     found = problems(value, "[[home.devices]] #1")

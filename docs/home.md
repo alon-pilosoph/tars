@@ -99,7 +99,7 @@ voice assistant):
 
 | What happens | What TARS does |
 |---|---|
-| Unlocked, the door opened, then shut | locks it 10 s after it shut (`after_shut_s`); opened again meanwhile, the count starts over |
+| Unlocked, the door opened, then shut | locks it 10 s after it shut (`after_shut_s`, 3 at least: a door pulled to can bounce off the frame); opened again meanwhile, the count starts over |
 | Unlocked, and the door never opened (Auto Unlock as someone walks past) | locks it after a minute (`unopened_s`) |
 | The door open | never locks it; reads the door again just before locking, and locks only if that says shut |
 | The lock doesn't lock (jammed, the door not quite shut) | tells the maintainers, once, if it isn't locked 20 s after the call returned; tries again only when it's next unlocked |
