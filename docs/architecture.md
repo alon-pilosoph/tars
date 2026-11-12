@@ -131,7 +131,7 @@ the rest of the code only sees the setup that runs:
 | Cerebras | OpenAI's model answers everything |
 | Deepgram | OpenAI transcribes once you've stopped (the local rules decide when). Cartesia still speaks; with `[tts] provider = "deepgram"`, OpenAI's voice speaks instead |
 | Cartesia | Deepgram's Flux voice Wes speaks, or OpenAI's without Deepgram |
-| OpenAI | Deepgram hears (Flux) and Cartesia speaks; Qwen answers everything itself, hard questions included, with no web search or speech-to-text backup; it's told it can't look things up, so asked to, it says so |
+| OpenAI | Deepgram hears (Flux) and Cartesia speaks; Qwen answers everything itself, hard questions included, with no web search or speech-to-text backup; it's told it can't look things up, nor set reminders or send without its own tools (`quick_tools`), so asked to, it says so |
 
 Each change prints one line at startup ("no OPENAI_API_KEY: Qwen answers everything, with no web search, thinking
 model or backup"). TARS stops, naming the keys, only when hearing, thinking or speaking has no service left. `--check`
