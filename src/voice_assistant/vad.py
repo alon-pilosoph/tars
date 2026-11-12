@@ -8,12 +8,13 @@ from .audio import SAMPLE_RATE
 from .models import onnx_session
 
 MODEL_URL = "https://github.com/snakers4/silero-vad/raw/v6.2.3/src/silero_vad/data/silero_vad.onnx"
+MODEL_SHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"  # 2,327,524 bytes
 WINDOW, CONTEXT = 512, 64  # the model's step at 16 kHz, and how many samples of the previous step it sees again
 
 
 class SileroVAD:
     def __init__(self, model_path: Path):
-        self._session = onnx_session(model_path, MODEL_URL, "the speech detector")
+        self._session = onnx_session(model_path, MODEL_URL, "the speech detector", MODEL_SHA256)
         self.reset()
 
     def reset(self) -> None:

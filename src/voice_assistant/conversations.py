@@ -144,7 +144,7 @@ class ConversationLog:
         marks = ", ".join("?" * (4 + len(columns)))
         with closing(self.store.connect()) as db:
             cursor = db.execute(
-                f"INSERT INTO turns ({names}) SELECT {marks} WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)",
+                f"INSERT INTO turns ({names}) SELECT {marks} WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)",  # nosec B608  # column names are the code's
                 (conversation_id, ts, role, text, *columns.values(), conversation_id),
             )
             return cursor.lastrowid if cursor.rowcount else None

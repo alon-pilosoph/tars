@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from voice_assistant.config import LLMConfig
-from voice_assistant.feeds import Feeds, Page, feed_links, parse, quality, told
+from voice_assistant.feeds import Feeds, NotAFeed, Page, feed_links, parse, quality, told
 from voice_assistant.home import Request
 from voice_assistant.llm import OpenAIChat
 from voice_assistant.store import Store
@@ -238,3 +238,19 @@ def test_the_brain_has_the_feeds_tool_and_its_rules(feeds):
     assert any(t.get("name") == "feeds" for t in client.requests[0]["tools"])
     assert "Feeds: each person follows RSS feeds" in client.requests[0]["instructions"]
     assert "Storm floods the Sharon" in client.requests[1]["input"][-1]["output"]
+
+
+BOMB = (
+    b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>'
+    b"<rss><channel><title>&b;</title></channel></rss>"
+)
+EXTERNAL = (
+    b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]><rss><channel><title>&x;'
+    b"</title></channel></rss>"
+)
+
+
+@pytest.mark.parametrize("body", [BOMB, EXTERNAL])
+def test_a_feed_with_entities_is_refused_not_expanded(body):
+    with pytest.raises(NotAFeed, match="not a feed"):
+        parse("https://example.com/feed", body)

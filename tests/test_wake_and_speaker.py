@@ -101,7 +101,7 @@ def no_speaker_model(monkeypatch):
     """SpeakerIDs whose "embedding" is the clip's first samples, so voiceprint files can be tested offline."""
     import onnxruntime
 
-    monkeypatch.setattr(speaker, "fetch", lambda path, url, what: path)
+    monkeypatch.setattr(speaker, "fetch", lambda path, url, what, sha256: path)
     monkeypatch.setattr(onnxruntime, "InferenceSession", lambda *a, **kw: None)
     monkeypatch.setattr(
         SpeakerID, "embed", lambda self, pcm: (v := np.asarray(pcm[:4], np.float32)) / np.linalg.norm(v)

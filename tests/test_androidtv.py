@@ -92,6 +92,21 @@ def test_what_the_stick_says_is_read():
     assert "app: com.stremio.one\nplaying: Toy Story" in screen(box)
 
 
+SCREEN_BOMB = (
+    'UI hierchary dumped to: /sdcard/tars_ui.xml\n<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaaaaaaaa">'
+    '<!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]><hierarchy><node text="&b;" focused="true" /></hierarchy>'
+)
+SCREEN_EXTERNAL = (
+    'UI hierchary dumped to: /sdcard/tars_ui.xml\n<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM '
+    '"file:///etc/passwd">]><hierarchy><node text="&x;" focused="true" /></hierarchy>'
+)
+
+
+@pytest.mark.parametrize("dump", [SCREEN_BOMB, SCREEN_EXTERNAL])
+def test_a_screen_dump_with_entities_is_read_as_nothing_not_expanded(dump):
+    assert Box(front="com.stremio.one", ui=dump).ui() == ""
+
+
 def test_typing_goes_as_one_word_with_quotes_kept():
     box = Box()
     box.type("it's toy story")

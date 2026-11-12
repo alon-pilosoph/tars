@@ -15,7 +15,11 @@ from .events import person_key
 from .files import atomic_write
 from .models import fetch
 
-MODEL_URL = "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx"
+MODEL_URL = (
+    "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/"
+    "f0c48c298fd835726c27956a5d617bad7115627e/voxceleb_resnet34_LM.onnx"
+)
+MODEL_SHA256 = "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"  # 26,530,309 bytes
 MIN_SPEECH_S = 0.8
 
 
@@ -36,7 +40,7 @@ class SpeakerID:
     def __init__(self, model_path: Path, voiceprints_path: Path, threshold: float):
         import onnxruntime
 
-        model_path = fetch(model_path, MODEL_URL, "the speaker model")
+        model_path = fetch(model_path, MODEL_URL, "the speaker model", MODEL_SHA256)
         # All cores, unlike the per-block models in models.onnx_session: this runs once per request, while TARS waits.
         self._session = onnxruntime.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         self._voiceprints_path = voiceprints_path

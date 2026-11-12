@@ -43,3 +43,50 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test -c checks/e2e.config.ts
+
+  # Supply chain and code (docs/security.md#the-code-tars-runs-its-dependencies): known vulnerabilities in what's
+  # locked, bandit over the code, and CycloneDX bills of materials kept with each run. Separate jobs, so one failing
+  # doesn't hide the others. The tools are pinned in pyproject's security group; what's audited is the export without it.
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv export --frozen --all-extras --no-group security --no-hashes --no-emit-project -o requirements.txt
+      - run: uv run --frozen --only-group security pip-audit -r requirements.txt --no-deps --disable-pip --progress-spinner off
+
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv run --frozen --only-group security bandit -r src examples tools -q --severity-level medium --confidence-level medium
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv export --frozen --all-extras --no-group security --no-hashes --no-emit-project -o requirements.txt
+      - run: uv run --frozen --only-group security cyclonedx-py requirements requirements.txt -o sbom.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm sbom --sbom-format cyclonedx --omit=dev --package-lock-only > ../sbom-webui.json
+        working-directory: webui
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.json
+            sbom-webui.json
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: webui
