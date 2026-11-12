@@ -67,7 +67,7 @@ SAME_TIME_S = 60.0
 # A phone joins the Wi-Fi a little before its person is through the door ([presence]): a message waiting for them is
 # said this long after their phone comes home, unless they speak to TARS first.
 ARRIVAL_GRACE_S = 60.0
-WELCOME_GAP_S = 2.0  # after "Welcome home", their waiting messages
+CAME_IN_GAP_S = 8.0  # after someone comes in, their waiting messages: a "welcome home" skill speaks first
 
 
 @dataclass
@@ -754,17 +754,19 @@ def on_arrival(
     return changed
 
 
-def welcome(
-    reminders: Reminders | None, announce: Callable[[str], None], clock: Callable[[], float] = time.time
-) -> Callable[[list[str]], None]:
-    """doors.Doors' greet: "Welcome home, Stacey." aloud, then each one's messages waiting until they're back."""
+def came_in(
+    reminders: Reminders, quiet: str = "", clock: Callable[[], float] = time.time
+) -> Callable[[list[str], str], None]:
+    """doors.Doors' came_in: each one's messages waiting until they're back are said now that they're through the
+    door, brought forward if their phone had set them for later, a moment after anything set off by them coming in
+    (a "welcome home"). Not in [presence] quiet's hours: they wait for them to speak."""
 
-    def greet(names: list[str]) -> None:
-        both = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
-        announce(f"Welcome home, {both}.")
-        print(f"(doors: welcomed {both} home)")
-        for name in names if reminders else []:
-            if ids := reminders.arrived(name, clock() + WELCOME_GAP_S, sooner=True):
-                print(f"(reminders: {name} was welcomed home: their waiting messages {ids} are said next)")
+    def told(names: list[str], door: str) -> None:
+        now = clock()
+        if is_quiet(quiet, now):
+            return
+        for name in names:
+            if ids := reminders.arrived(name, now + CAME_IN_GAP_S, sooner=True):
+                print(f"(reminders: {name} came in: their waiting messages {ids} are said next)")
 
-    return greet
+    return told

@@ -66,6 +66,9 @@ SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET = "save", "delete", "pause", "resu
 LIST, RUNS = "list", "runs"
 ACTIONS = (LIST, RUNS, SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET)
 ARRIVES, LEAVES, CHANGES = "arrives", "leaves", "device"  # what a skill can run on, besides the time
+# Someone the door's lock let in, through the door: its sensor says it shut behind them (doors.py). Later than
+# ARRIVES, which is mostly their phone finding the Wi-Fi on the way up: this is them walking in.
+COMES_IN = "comes_in"
 UPDATED = "updated"  # and TARS itself being updated: someone added or changed what it can do
 SEEN_VERSION = "skill_version:{key}"  # in the meta table: the version a skill that runs on UPDATED last saw
 ANYONE, EVERYONE = "anyone", "everyone"
@@ -154,15 +157,17 @@ SKILLS_TOOL = {
                         "properties": {
                             "event": {
                                 "type": "string",
-                                "enum": [ARRIVES, LEAVES, CHANGES, UPDATED],
-                                "description": "arrives or leaves: someone comes home or goes out; device: a device "
+                                "enum": [ARRIVES, LEAVES, COMES_IN, CHANGES, UPDATED],
+                                "description": "arrives or leaves: someone comes home or goes out (by their phone, "
+                                "often before they're at the door); comes_in: someone lets themselves in by the door "
+                                "and it shuts behind them (for greeting them as they walk in); device: a device "
                                 "changes; updated: TARS itself is updated (something added to or changed in what it "
                                 "can do).",
                             },
                             "who": {
                                 "type": ["string", "null"],
-                                "description": "arrives, leaves: a person, as who's home names them; 'everyone' for "
-                                "the last one out, or the first one home; null: anyone.",
+                                "description": "arrives, leaves, comes_in: a person, as who's home names them; "
+                                "'everyone' for the last one out, or the first one home; null: anyone.",
                             },
                             "device": {"type": ["string", "null"], "description": "device: as the home tool names it."},
                             "says": {
@@ -337,6 +342,8 @@ def describe(trigger: dict) -> str:
     who = who if who in (ANYONE, EVERYONE) else who.title()
     if trigger["event"] == ARRIVES:
         return "the first one comes home" if who == EVERYONE else f"{who} comes home"
+    if trigger["event"] == COMES_IN:
+        return "someone comes in by the door" if who == ANYONE else f"{who} comes in by the door"
     if trigger["event"] == LEAVES:
         return "the last one goes out" if who == EVERYONE else f"{who} goes out"
     what = trigger.get("reading") or "reading"
@@ -355,13 +362,15 @@ def trigger(raw, devices: set[str] | None = None, people: set[str] | None = None
     event = raw.get("event")
     if event == UPDATED:
         return {"event": UPDATED}
-    if event in (ARRIVES, LEAVES):
+    if event in (ARRIVES, LEAVES, COMES_IN):
         who = _clean(raw.get("who")).lower() or ANYONE
+        if event == COMES_IN and who == EVERYONE:
+            raise ValueError("comes_in is for someone, or anyone: who is a person, or null")
         if people is not None and who not in (ANYONE, EVERYONE) and who not in people:
             raise ValueError(f"who's home doesn't follow {who!r}; it follows: {', '.join(sorted(people)) or 'nobody'}")
         return {"event": event, "who": who}
     if event != CHANGES:
-        raise ValueError("a trigger's event is arrives, leaves, device or updated")
+        raise ValueError("a trigger's event is arrives, leaves, comes_in, device or updated")
     device = _clean(raw.get("device")).lower()
     if not device:
         raise ValueError("a device trigger needs the device")
@@ -999,8 +1008,14 @@ class Clock:
         seen: Callable[[str], str | None] | None = None,
         see: Callable[[str, str], None] | None = None,
         one_offs: OneOffs | None = None,
+        came_in: Callable[[int], list[dict]] | None = None,
+        last_came_in: Callable[[], int] | None = None,
     ):
+        """`came_in(after_id)`: who came in by a door since that event (doors.DoorLog.came_in_since: id, at, door,
+        person as people() names them); `last_came_in()`: the newest event's id, where watching starts."""
         self._skills, self.say = skills, say
+        self._came_in, self._last_came_in = came_in, last_came_in
+        self._came_in_id: int | None = None  # the last came-in event seen; None before the first look
         self._version, self._between, self._seen, self._see = version, between, seen, see
         self._now, self._tick_s = now, tick_s
         self._people, self._status, self._record, self._clock = people, status, record, clock
@@ -1014,6 +1029,11 @@ class Clock:
         self._due: list[Due] = []
         self._lock = threading.Lock()
         self._closing = threading.Event()
+        self._wake = threading.Event()
+
+    def nudge(self) -> None:
+        """Look now, not at the next tick: someone just came in (doors.py, in this process)."""
+        self._wake.set()
 
     def start(self) -> Clock:
         threading.Thread(target=self._keep, daemon=True, name=f"skill clock ({self.say})").start()
@@ -1125,6 +1145,8 @@ class Clock:
         events: list[tuple[dict, str]] = []  # (what happened, as a trigger matches it; in words)
         if self._people and any(s.trigger["event"] in (ARRIVES, LEAVES) for s in skills):
             events += self._comings_and_goings()
+        if self._came_in and any(s.trigger["event"] == COMES_IN for s in skills):
+            events += self._comings_in()
         found = []
         for skill in skills:
             event, door = skill.trigger["event"], ""
@@ -1137,6 +1159,8 @@ class Clock:
             if not why:
                 continue
             key = skill.id or skill.name
+            if event == COMES_IN:  # each one coming in is welcomed, not only the first in ten minutes
+                key = (key, why)
             if self._clock() - self._fired.get(key, -COOLDOWN_S) < COOLDOWN_S:
                 print(f"(skill {skill.name}: {why}, but it ran less than {COOLDOWN_S / 60:.0f} minutes ago)")
                 continue
@@ -1174,6 +1198,31 @@ class Clock:
                 else f"{person} just went out"
             )
             events.append((event, words))
+        return events
+
+    def _comings_in(self) -> list[tuple[dict, str]]:
+        """Who came in by a door since the last look, as events: one each, said together with whoever came in with
+        them. What happened before the first look is only seen."""
+        try:
+            if self._came_in_id is None:
+                self._came_in_id = self._last_came_in() if self._last_came_in else 0
+                return []
+            rows = self._came_in(self._came_in_id)
+        except Exception as e:  # noqa: BLE001 - the table can't be read now: next tick
+            print(f"(skills: couldn't read who came in: {e!r})")
+            return []
+        if not rows:
+            return []
+        self._came_in_id = rows[-1]["id"]
+        together: dict[tuple, list[str]] = {}
+        for r in rows:
+            together.setdefault((r["at"], r["door"]), []).append(r["person"])
+        events = []
+        for (_, door), people in together.items():
+            names = people[0] if len(people) == 1 else f"{', '.join(people[:-1])} and {people[-1]}"
+            words = f"{names} just came in by the {door}"
+            for person in people:
+                events.append(({"event": COMES_IN, "who": person.lower(), "all": False, "door": door}, words))
         return events
 
     @staticmethod
@@ -1235,8 +1284,38 @@ class Clock:
         self._reading = {}
 
     def _keep(self) -> None:
-        while not self._closing.wait(self._tick_s):
-            self.look()
+        while not self._closing.is_set():
+            self._wake.wait(self._tick_s)
+            self._wake.clear()
+            if not self._closing.is_set():
+                self.look()
+
+
+WELCOME = "welcome home"  # the household skill a door sensor starts TARS with (offer_welcome)
+WELCOME_INSTRUCTIONS = (
+    "Welcome them home by name, in a few warm words. Between 22:00 and 07:00 say nothing: people may be asleep."
+)
+OFFERED = "skill_offered:{name}"  # in the meta table: a skill TARS started with, once; deleted, it stays deleted
+
+
+def offer_welcome(skills: Skills) -> bool:
+    """The household's "welcome home", saved once when the first door with a sensor is set up: a skill like any
+    other, changed or deleted by talking to TARS, and never put back once it's gone. Whether it was saved now."""
+    key = OFFERED.format(name=WELCOME)
+    if skills.store.row("SELECT 1 FROM meta WHERE key=?", (key,)):
+        return False
+    if WELCOME not in {s.name for s in skills.all() if s.household}:
+        args = {
+            "instructions": WELCOME_INSTRUCTIONS,
+            "when": "someone comes in by the front door",
+            "trigger": {"event": COMES_IN, "who": None},
+            "say": ALOUD,
+            "household": True,
+        }
+        skills._save("TARS", WELCOME, args)
+    skills.store.write("INSERT INTO meta (key, value) VALUES (?, ?)", (key, str(skills._clock())))
+    print(f'(skills: the household has "{WELCOME}": {WELCOME_INSTRUCTIONS})')
+    return True
 
 
 def make(events) -> Skills | None:

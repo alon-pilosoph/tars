@@ -303,13 +303,12 @@ class PresenceConfig:
     # [[presence.doors]]: each door whose lock says who opened it, { name = "front door", topic = "nuki/4224E764" },
     # topic being a Nuki's MQTT topic (its ID in hex). Someone opening it from outside is home at once. With sensor,
     # a Home Assistant binary_sensor that's on while the door is open (a Shelly BLU Door/Window): whoever let
-    # themselves in is greeted as the door shuts behind them, and the routers are asked at once whenever it moves, so
-    # someone leaving by it is out in a minute or two (docs/presence.md#the-door-sensor). Needs [home] url.
+    # themselves in has come in as the door shuts behind them, which skills run on (the household's "welcome home"
+    # is one), and the routers are asked at once whenever it moves, so someone leaving by it is out in a minute or two
+    # (docs/presence.md#the-door-sensor). Needs [home] url.
     doors: list[dict] = field(default_factory=list)
-    # Say "Welcome home, <name>" when someone lets themselves in by a door with a sensor, then their waiting messages.
-    greet: bool = True
-    # When nothing is said aloud for someone coming home, "22:00-07:00" (the house's local time; "" for never): no
-    # greeting, and their waiting messages wait for them to speak to TARS.
+    # When waiting messages aren't said aloud as someone comes home, "22:00-07:00" (the house's local time; "" for
+    # never): they wait for them to speak to TARS. A skill's own hours are in its instructions.
     quiet: str = "22:00-07:00"
     # [presence.mqtt]: the MQTT broker the locks publish to, { address = "localhost", port = 1883, user, secret },
     # TARS's own user there, and secret the name of its password in .env; both needed with doors. Needs the door
