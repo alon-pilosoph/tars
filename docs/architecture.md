@@ -189,7 +189,8 @@ in the toolbox: it's OpenAI's own, run on its side, and the brain marks the repl
   its own person's to read (the others are counted, not shown), what was said aloud is the household's, the log's
   chat lines are left out, and neither is read in a reply that searched the web. Its rules also tell every model to
   look before saying it can't tell something about itself. `wish`, `wishes`, `granted`: what someone asked for that
-  TARS really couldn't do is noted, with what stopped it and what would make it possible (the `wishes` table), and
+  TARS really couldn't do is noted (once the turn is over, and never in a reply that searched the web nor in a turn
+  a door's lock set off, as for a change), with what stopped it and what would make it possible (the `wishes` table), and
   posted at once to the Telegram chat of each of TARS's maintainers (`[household] maintainers`, as a message the
   Telegram service posts, whichever process noted it; never back to the one who asked); "what did people ask for that
   you couldn't do?" lists them, and only a maintainer marks one granted (with none named, anyone TARS knows). With
@@ -200,7 +201,8 @@ in the toolbox: it's OpenAI's own, run on its side, and the brain marks the repl
   or the models. A change is written as its own line in `config.local.toml`, the rest of the file as it was, kept only
   if the whole config still loads, logged with who asked and what it was (`settings_log`), and applied by a restart of
   TARS's services eight seconds later (`systemd-run`), once the reply's been said. Only for someone TARS knows, or
-  someone asking aloud at home, and never in a reply that searched the web.
+  someone asking aloud at home, only once the turn is over, and never in a reply that searched the web nor in a turn
+  a door's lock set off.
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.

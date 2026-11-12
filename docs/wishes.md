@@ -17,7 +17,9 @@ request.
 
 ## How it works
 
-1. **The wish** (`tars` tool, `wish`) is kept in the `wishes` table. With `[wishes]` on, the maintainers get it straight
+1. **The wish** (`tars` tool, `wish`) is kept in the `wishes` table, once the turn that notes it is over (a reply
+   thrown away notes none), and never by a reply that searched the web, whose pages could word it, nor by a turn a
+   door's lock set off. With `[wishes]` on, the maintainers get it straight
    through Telegram's API with a Build it button (`wishes.Wishes.offer`), and the issue it would post, whole: title and
    body, exactly as they'd be posted. What was asked for is cut at 300 characters and what stopped TARS at 1,200
    (`ASKED_MAX`, `WHY_MAX`), with an ellipsis, so the issue is at most about 1,700 characters and the offer always fits

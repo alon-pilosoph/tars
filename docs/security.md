@@ -180,6 +180,9 @@ or message it read, may have steered ("…and while you're there, let the workfl
 what's merged is installed on the Pi by the updater.
 
 - **Defenses:**
+  - **Words from outside never note one.** A reply that searched the web notes no wish, nor does a turn a door's lock
+    set off, and a wish waits for the turn to be over, so a draft thrown away notes none (`myself.py`,
+    `toolbox.held_back`). What a person says, or a chat writes, still can: the next defense is for that.
   - **Only a maintainer's tap posts it, after seeing it whole.** The offer in the maintainers' chats shows the issue's
     title and body exactly as they'd be posted, and the tap posts that same text (`wishes.py`, `Wishes.offer`,
     `Wishes.build`). What was asked for is capped at 300 characters and what stopped TARS at 1,200 (`ASKED_MAX`,
@@ -209,7 +212,8 @@ what's merged is installed on the Pi by the updater.
   - **A person merges.** `main` must carry a branch ruleset (required, in [setting it up](wishes.md#setting-it-up)):
     a pull request with one approval, CI and `wish fence` passing, no force pushes, and only the repository admin may
     bypass.
-- **Tests:** `tests/test_wishes.py::test_what_a_maintainer_is_shown_is_all_of_what_is_posted_however_long_the_wish`,
+- **Tests:** `tests/test_myself.py::test_a_wish_isnt_noted_nor_granted_after_the_web_on_a_doors_turn_or_in_a_draft_thrown_away`;
+  `tests/test_wishes.py::test_what_a_maintainer_is_shown_is_all_of_what_is_posted_however_long_the_wish`,
   `::test_whats_posted_names_nobody_and_says_what_stopped_tars`, `::test_only_a_maintainers_tap_builds_it`,
   `::test_no_more_builds_than_monthly_allows_in_30_days`,
   `::test_only_claude_codes_own_pull_request_for_the_issue_is_followed`,
