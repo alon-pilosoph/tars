@@ -13,7 +13,7 @@ import traceback
 from collections import deque
 from collections.abc import Callable, Collection, Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
@@ -342,9 +342,15 @@ class Assistant:
         """The stop button: what TARS is saying stops now, the reply being written with it; it doesn't wait for a
         follow-up; and a reminder it just said counts as acknowledged."""
         self._stop.set()
-        self.speaker.stop()
+        self.body.stop()
         self.brain.interrupt()
         return "stopped"
+
+    def _cut_short(self, cut: bool) -> None:
+        """A play the body cut short itself, not for the stop button (someone said "stop" over TARS): taken as the
+        stop button."""
+        if cut and not self._stop.is_set():
+            self.stop()
 
     def mute(self, muted: bool) -> None:
         """While muted, TARS doesn't wake: not to its name, nor to the talk button. It doesn't even listen for its
@@ -526,8 +532,7 @@ class Assistant:
         return True
 
     def _play(self, audio: list[bytes], on_first_audio: Callable[[], None] | None = None) -> None:
-        with self._mic_paused():
-            self.speaker.play_pcm_stream(iter(audio), self.voice.sample_rate, on_first_audio=on_first_audio)
+        self._cut_short(self.body.play(iter(audio), self.voice.sample_rate, on_first_audio))
 
     def _made_now(self, lines: list[str]) -> dict[str, list[bytes]]:
         """The audio of each of `lines` that could be made within UNPROMPTED_WAIT_S."""
@@ -542,9 +547,6 @@ class Assistant:
 
     def _chime(self) -> None:
         self._play([chime(self.voice.sample_rate)])
-
-    def _mic_paused(self):
-        return self.mic.paused() if self.mic else nullcontext()
 
     def say_error(self) -> None:
         # One still being made gets a moment: it's quicker than asking again.
@@ -813,7 +815,7 @@ class Assistant:
 
         def play() -> None:
             try:
-                self.speaker.play_pcm_stream(iter(audio), self.voice.sample_rate, on_first_audio=self._greeted)
+                self.body.play(iter(audio), self.voice.sample_rate, self._greeted, listening=True)
             except BaseException as e:  # noqa: BLE001 - raised again once listening is over
                 failed.append(e)
 
@@ -1255,10 +1257,7 @@ class Assistant:
                 printed = len(answer.sentences)
                 yield chunk
 
-        with self._mic_paused():
-            self.speaker.play_pcm_stream(
-                audio(), self.voice.sample_rate, on_first_audio=lambda: first_audio.append(time.perf_counter())
-            )
+        cut = self.body.play(audio(), self.voice.sample_rate, lambda: first_audio.append(time.perf_counter()))
         for _, sentence in answer.sentences[printed:]:
             print(f"Bot:  {sentence}")
         sent = [] if answer.on_pi else list(self.brain.sent)
@@ -1266,6 +1265,7 @@ class Assistant:
             print(f"(sent to the TARS page: {item.kind} '{item.title}')")
         self._measure(answer, t_start, first_audio[0] if first_audio else None)
         self._report()
+        self._cut_short(cut)
         if answer.on_pi:
             return Said("".join(answer.spoken).strip(), sent, ON_PI, None)
         return Said("".join(answer.spoken).strip(), sent, self.brain.answered_by, self.brain.quick_service)

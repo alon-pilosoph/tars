@@ -71,6 +71,10 @@ class FakeSpeaker:
 
     stops = 0
 
+    def play_pcm_stream(self, chunks, sample_rate, on_first_audio=None):
+        list(chunks)
+        return False
+
     def stop(self):
         self.stops += 1
 
@@ -239,7 +243,6 @@ def no_tts(monkeypatch):
 
 
 def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, clock=time.monotonic, elsewhere=None):
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: list(chunks)
     voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
     recorder = ScriptedRecorder(utterances)
