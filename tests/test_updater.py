@@ -216,6 +216,16 @@ def test_only_a_maintainers_tap_installs_and_the_errands_leave_it_alone(pi):
     assert take({"callback_query": {"id": "t", "data": version, "from": {"id": 1}, "message": {"message_id": 9}}})
     assert started == [True] and ("dropped", 1) in bot.said and State.load(updater._state_path).approved
 
+    from voice_assistant.updater import STALE
+
+    pi.commit("Wishes answered (#105)", store_py(len(MIGRATIONS) + 2))
+    updater.run_once()  # a newer update: asked again, and the first ask's button is stale
+    newer = pi.told[-1][1][0][1]
+    assert newer != version
+    assert take({"callback_query": {"id": "t", "data": version, "from": {"id": 1}, "message": {"message_id": 8}}})
+    assert bot.said[-2:] == [("dropped", 1), (1, STALE)] and started == [True]
+    assert State.load(updater._state_path).approved == version.removeprefix(TAP)  # the newer one isn't approved
+
     from voice_assistant.telegram_errands import TelegramErrands
 
     errands = TelegramErrands.__new__(TelegramErrands)

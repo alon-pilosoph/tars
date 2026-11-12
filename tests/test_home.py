@@ -142,6 +142,25 @@ def test_asking_again_gets_a_new_challenge():
     assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
 
 
+def test_an_unlock_tells_auto_lock_before_and_after_and_nothing_else_does():
+    h = make_house({"lock": "locked"}, unlock_challenge=False)
+    told = []
+    h.tools.unlock_asked = told.append
+    assert h.tools.call(args("front door", "unlock"), Request("stacey", 0.9, True, heard="unlock it")).startswith(
+        "refused"
+    )
+    assert told == []
+    assert h.tools.call(args("front door", "unlock"), ALON).startswith("done")
+    assert told == ["lock.front_door", "lock.front_door"]
+    assert h.tools.call(args("front door", "lock"), ALON).startswith("done") and len(told) == 2
+
+
+def test_auto_lock_failing_to_be_told_never_stops_an_unlock():
+    h = make_house({"lock": "locked"}, unlock_challenge=False)
+    h.tools.unlock_asked = lambda entity: 1 / 0
+    assert h.tools.call(args("front door", "unlock"), ALON) == "done: front door reports unlocked"
+
+
 def test_with_the_challenge_off_a_trusted_voice_unlocks_at_once():
     h = make_house({"lock": "locked"}, unlock_challenge=False)
     assert h.tools.call(args("front door", "unlock"), ALON) == "done: front door reports unlocked"

@@ -241,6 +241,19 @@ def test_unlocking_keeps_the_home_tools_rules_however_its_asked(ha):
     assert ask(ha, "call", stranger, service="lock.lock", entity_ids=["lock.front_door"]).startswith("done")
 
 
+def test_a_lock_unlocked_through_home_assistant_tells_auto_lock_and_one_locked_doesnt(ha):
+    told = []
+    ha.unlock_asked = told.append
+    stranger = Request(by_chat=True, speaker="Stacey", heard="unlock the door")
+    alon = Request(by_chat=True, speaker="Alon", heard="unlock the door please")
+    assert ask(ha, "call", stranger, service="lock.unlock", entity_ids=["lock.front_door"]).startswith("refused")
+    assert told == []
+    assert ask(ha, "call", alon, service="lock.unlock", entity_ids=["lock.front_door"]).startswith("done")
+    assert told == ["lock.front_door", "lock.front_door"]
+    assert ask(ha, "call", stranger, service="lock.lock", entity_ids=["lock.front_door"]).startswith("done")
+    assert len(told) == 2
+
+
 def test_services_lists_a_domains_with_their_fields(ha):
     assert ask(ha, "services", query="light") == "light.turn_on: Turn on fields: brightness_pct"
     assert "no domain 'garage'" in ask(ha, "services", query="garage")

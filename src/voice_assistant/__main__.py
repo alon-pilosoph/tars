@@ -664,19 +664,26 @@ def make_presence(cfg: Config, root: Path, events):
     return presence_from(cfg.presence, events.store, lambda name: dotenv_values(env).get(name) or None)
 
 
-def start_presence(cfg: Config, root: Path, presence, reminders=None) -> None:
-    """The assistant's: asks the routers from now on, listens to the doors' locks, and says waiting messages once
-    their person is home."""
+def start_presence(cfg: Config, root: Path, presence, reminders=None, came_in=None) -> None:
+    """The assistant's: asks the routers from now on, listens to the doors' locks and sensors, and says waiting
+    messages once their person is home, or as they come in by a door. `came_in(names, door)`: told then too (the
+    skills' clock, so a "welcome home" runs at once)."""
     if presence is None:
         return
+    from .reminders import came_in as messages_on_coming_in
     from .reminders import on_arrival
 
     for line in presence.left_out:
         print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
-    doors = make_doors(cfg, presence)
-    changes = [
-        c for c in (on_arrival(reminders.reminders) if reminders else None, doors and doors.phone_came_home) if c
-    ]
+    told = [c for c in (reminders and messages_on_coming_in(reminders.reminders, cfg.presence.quiet), came_in) if c]
+
+    def tell_came_in(names: list[str], door: str) -> None:
+        for one in told:
+            one(names, door)
+
+    doors = make_doors(cfg, presence, tell_came_in)
+    arrival = on_arrival(reminders.reminders, quiet=cfg.presence.quiet) if reminders else None
+    changes = [c for c in (arrival, doors and doors.phone_came_home) if c]
 
     def changed(person: str, home: bool) -> None:
         for change in changes:
@@ -690,9 +697,10 @@ def start_presence(cfg: Config, root: Path, presence, reminders=None) -> None:
         if watcher is None:
             print("(doors: no router to watch, so the doors are only recorded: nobody is marked home by them)")
         listen_to_doors(cfg, root, doors)
+        follow_door_sensors(cfg, root, doors)
 
 
-def make_doors(cfg: Config, presence):
+def make_doors(cfg: Config, presence, came_in=None):
     """[[presence.doors]]: what their locks say is kept, and learned from; None without any."""
     if not cfg.presence.doors:
         return None
@@ -700,7 +708,34 @@ def make_doors(cfg: Config, presence):
     from .doors import DoorLog, Doors
 
     store = presence.board.store
-    return Doors(DoorLog(store, presence.people), None, lambda text: maintainers.tell(cfg, store, text))
+    return Doors(
+        DoorLog(store, presence.people),
+        None,
+        lambda text: maintainers.tell(cfg, store, text),
+        came_in=came_in,
+    )
+
+
+def follow_door_sensors(cfg: Config, root: Path, doors) -> None:
+    """Each [[presence.doors]] sensor, followed in Home Assistant from now on (doors.Doors.sensed)."""
+    sensors = {d["sensor"]: d["name"] for d in cfg.presence.doors if d.get("sensor")}
+    if not sensors:
+        return
+    from .hass import follow
+    from .home import TOKEN_KEY
+
+    token = dotenv_values(root / ".env").get(TOKEN_KEY)
+    if not (cfg.home.url and token):
+        print(f"(doors: the door sensors are read from Home Assistant: set [home] url, and {TOKEN_KEY} in .env)")
+        return
+
+    def changed(entity: str, state: str) -> None:
+        if state in ("on", "off"):
+            doors.sensed(sensors[entity], state == "on")
+
+    # moves_only: Home Assistant restarting, or the sensor heard again after a while, isn't the door moving.
+    run = functools.partial(follow, cfg.home.url, token, list(sensors), changed, moves_only=True)
+    threading.Thread(target=run, daemon=True, name="door-sensors").start()
 
 
 def listen_to_doors(cfg: Config, root: Path, doors) -> None:
@@ -770,7 +805,11 @@ def make_home(
     for own in (speaker, mic):
         if own:
             extra[own.name] = own
+    for device in auto_lock_devices(cfg, root):
+        extra[device.name] = device
     built = build(cfg.home, context, extra)
+    if built.tools and (asked := {d["entity"]: a for d, _, _, a in auto_locks(cfg, root)}):
+        built.tools.unlock_asked = lambda entity: asked[entity].mark() if entity in asked else None
     for name, why in built.unavailable.items():
         print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
     if built.tools and built.tools.devices:
@@ -778,6 +817,92 @@ def make_home(
     if built.tools and built.tools.ha:
         print("(home: and all of Home Assistant, with the home_assistant tool)")
     return built.tools
+
+
+def auto_locks(cfg: Config, root: Path) -> list[tuple[dict, object, object, object]]:
+    """Each lock in [home] with auto_lock and its door sensor: (its [[home.devices]], autolock.Settings,
+    autolock.Off, autolock.Asked)."""
+    from .autolock import Asked, Off, Settings
+
+    found = []
+    for d in cfg.home.devices:
+        settings = Settings.of(d.get("auto_lock"))
+        if settings and d.get("door") and str(d.get("entity", "")).startswith("lock."):
+            folder = root / cfg.learning.folder
+            found.append((d, settings, Off(folder, d["entity"]), Asked(folder, d["entity"])))
+    return found
+
+
+def auto_lock_devices(cfg: Config, root: Path) -> list:
+    """The home tool's "<door> auto-lock" for each lock with one: on, or off for a while."""
+    from .autolock import AutoLockDevice
+
+    return [AutoLockDevice(d["name"].strip(), settings, off) for d, settings, off, _ in auto_locks(cfg, root)]
+
+
+def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, home=None) -> None:
+    """The assistant's: locks each lock with auto_lock once its door is shut (autolock.py). `say(text)`: aloud at
+    home. `home`: the house's tools (HomeTools), whose lock it holds to lock, as they do to change anything."""
+    locks = auto_locks(cfg, root)
+    if not locks:
+        return
+    from .autolock import AutoLock
+    from .hass import HomeAssistant, follow
+    from .home import TOKEN_KEY
+    from .maintainers import tell
+    from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
+
+    token = dotenv_values(root / ".env").get(TOKEN_KEY)
+    if not (cfg.home.url and token):
+        print(f"(auto-lock: off: it works the lock through Home Assistant: set [home] url, and {TOKEN_KEY} in .env)")
+        return
+    store = events.store if events else None
+
+    def post(text: str) -> None:
+        """To everyone's Telegram chat."""
+        for name in cfg.telegram.people if cfg.telegram.enabled and store else []:
+            try:
+                Reminders(store).add(
+                    NewReminder(MESSAGE, text, for_name=name, due=time.time(), needs_ack=False, max_tries=1),
+                    set_via=VOICE,
+                    channel=TELEGRAM,
+                    phones=[name],
+                )
+            except ValueError as e:
+                print(f"(auto-lock: couldn't post to {name}: {e})")
+        if not (cfg.telegram.enabled and store):
+            say(text)
+
+    def tell_maintainers(text: str) -> None:
+        if not (store and tell(cfg, store, text)):
+            print(f"(auto-lock: no maintainer's chat to tell: {text})")
+
+    def anyone_home() -> bool | None:
+        if not presence:
+            return None
+        states = [s.home for s in presence.board.states().values()]
+        return True if any(states) else False if states and all(h is False for h in states) else None
+
+    changing = home.changing if home else None
+    for d, settings, off, asked in locks:
+        hass = HomeAssistant(cfg.home.url, token)
+        entity = d["entity"]
+
+        def read(e: str, hass=hass) -> str:
+            return str(hass.state(e).get("state", ""))
+
+        def lock(hass=hass, entity=entity) -> bool:
+            return hass.call("lock.lock", {"entity_id": entity})
+
+        auto = AutoLock(
+            d["name"].strip(), entity, d["door"], settings, off, read, lock, say, post, tell_maintainers, anyone_home,
+            asked=asked, changing=changing,
+        )  # fmt: skip
+        auto.start(
+            lambda entities, changed, subscribed: follow(
+                cfg.home.url, token, entities, changed, unknown_too=True, on_subscribed=subscribed
+            )
+        )
 
 
 def make_skills(events):
@@ -823,12 +948,30 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
 
         skills.devices, skills.status = (lambda: set(home.devices)), status
         skills.past = lambda device, start, end: home.devices[device].past(start, end)
+    came_in = {}
+    if presence:
+        from .doors import DoorLog
+
+        log = DoorLog(presence.board.store, presence.people)
+
+        def since(after_id: int) -> list[dict]:
+            return [r | {"person": names.get(r["person"], r["person"])} for r in log.came_in_since(after_id)]
+
+        came_in = {"came_in": since, "last_came_in": log.last_id}
     updates = {}
     if myself:
         updates = {"version": myself.version, "between": myself.between}
         updates |= {"seen": skills.seen_version, "see": skills.see_version}
     clock = Clock(
-        skills.all, say, people=people, came_by=came_by, status=status, record=skills.ran, one_offs=one_offs, **updates
+        skills.all,
+        say,
+        people=people,
+        came_by=came_by,
+        status=status,
+        record=skills.ran,
+        one_offs=one_offs,
+        **updates,
+        **came_in,
     )
     return clock.start()
 
@@ -1622,12 +1765,18 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     presence = make_presence(cfg, root, events)
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
-    start_presence(cfg, root, presence, reminders)
     announcements = Announcements()
+    clocks: list = []  # the skills' clock, once made: someone coming in by a door wakes it, for a "welcome home"
+    start_presence(cfg, root, presence, reminders, lambda names, door: [c.nudge() for c in clocks])
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
+    start_auto_locks(cfg, root, announcements.add, presence, events, home)
     browser = voice_errands(cfg, events)
     skills = make_skills(events)
+    if skills and any(d.get("sensor") for d in cfg.presence.doors):
+        from .skills import offer_welcome
+
+        offer_welcome(skills)
     myself = make_myself(cfg, root, events)
     transcriber, brain, voice = make_pipeline(
         cfg,
@@ -1672,9 +1821,10 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=skill_clock(skills, "aloud", home, presence, myself),
+            skill_clock=(clock := skill_clock(skills, "aloud", home, presence, myself)),
             commands=commands,
         )
+        clocks += [clock] if clock else []
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
             from .control import Server
