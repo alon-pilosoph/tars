@@ -230,6 +230,9 @@ url = ""
 unlock_voices = []
 # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
 unlock_threshold = 0.6
+# Before unlocking by voice, TARS asks for three random digits, said back by the same voice within 30 seconds: a
+# recording of someone saying "unlock" can't answer them (docs/home.md#unlocking).
+unlock_challenge = true
 # Who may unlock from their own Telegram chat, by their names in [telegram] people: only when their own message (or
 # voice message) says "unlock". Whoever holds their phone can, so it's off unless named. Empty = nobody.
 unlock_chats = []

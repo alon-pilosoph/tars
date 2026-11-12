@@ -12,7 +12,7 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 | Part | Result |
 |---|---|
 | [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 97% of the owner's (never heard), 1 false answer in an hour of TV |
-| [Response time](docs/latency.md) | 1.2-1.5 s from you stopping to the first sound, down from about 3.5 s |
+| [Response time](docs/latency.md) | 2.2 s from you stopping to the first sound in use on the Pi; 1.2-1.5 s on a benchmark, down from about 3.5 s |
 | [Quick model](docs/models.md) | Qwen on Cerebras, then OpenAI; 149/156 on the capability benchmark at low reasoning |
 | [Whole conversations](docs/evals.md) | 48 scenarios played through the real brain, hand-offs followed through: 143/145 runs right on the 29 measured so far (from 76/87); run on request from a pull request comment |
 | [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |
@@ -28,8 +28,8 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **Reminders, timers and messages** that repeat until someone says "got it" ([reminders](docs/reminders.md)).
 - **Works the house** through Home Assistant: locks, switches, lights, covers, the AC, the TV, and sensors with their
   history ("how was the air last night?"). A change is "done" only when the device reports it, nothing is done by a
-  draft, and the door unlocks only for a trusted voice that asked. An agent plays things on an Android TV, checking
-  the screen step by step; anything else is a plugin ([the house](docs/home.md)).
+  draft, and the door unlocks only for a trusted voice that asked, then said back three random digits. An agent plays
+  things on an Android TV, checking the screen step by step; anything else is a plugin ([the house](docs/home.md)).
 - **Knows who's home** from whose phone is on the home Wi-Fi, asking the routers themselves: no app on anyone's
   phone. A reminder for someone who's out goes to their Telegram chat, and a message waiting for someone is said once
   they're back ([who's home](docs/presence.md)).

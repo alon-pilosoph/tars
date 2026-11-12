@@ -33,7 +33,7 @@ def waking(assistant, *steps):
         assistant.talk()
         return DUE if due and due() else None
 
-    return types.SimpleNamespace(wait=wait, last_audio=None)
+    return types.SimpleNamespace(wait=wait, last_audio=None, after_name=None)
 
 
 @pytest.fixture
@@ -62,7 +62,9 @@ def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(sp
     assert assistant.talk().startswith("ignored: muted")
     waits = []
     trigger = waking(assistant, "name")
-    assistant.trigger = types.SimpleNamespace(wait=lambda mic, due=None: waits.append(1) or trigger.wait(mic, due))
+    assistant.trigger = types.SimpleNamespace(
+        wait=lambda mic, due=None: waits.append(1) or trigger.wait(mic, due), after_name=None
+    )
     threading.Timer(0.3, assistant.mute, [False]).start()  # the speakerphone unmuted, a moment later
     started = time.monotonic()
     assert conversations(assistant) == [PAUSE]  # then its name woke it, as usual

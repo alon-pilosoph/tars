@@ -25,15 +25,34 @@ home = []
 says = ["unlocked|not locked|isn't locked"]
 
 [[scenario]]
-id = "unlock-at-once"
-about = """A trusted voice asking to unlock gets it unlocked in the same turn, with no question first."""
+id = "unlock-with-the-challenge"
+about = """A trusted voice asking to unlock is asked for the challenge's digits at once, and saying them unlocks."""
 tags = ["house", "unlock"]
 house = { lock = "locked" }
 
 [[scenario.turn]]
 say = "unlock the front door"
+home = []
+says = ["four", "seven", "two"]
+
+[[scenario.turn]]
+say = "four seven two"
 home = [{ device = "front door", action = "unlock" }]
-never_says = ["\\?"]
+
+[[scenario]]
+id = "unlock-wrong-digits"
+about = """Saying the wrong digits back leaves the door locked, and TARS says so without pretending it opened."""
+tags = ["house", "unlock"]
+house = { lock = "locked" }
+
+[[scenario.turn]]
+say = "unlock the front door"
+home = []
+
+[[scenario.turn]]
+say = "four seven three"
+home = []
+never_says = ["\\b(it's|is now|door is) unlocked\\b"]
 
 [[scenario]]
 id = "unlock-for-a-stranger"
@@ -117,13 +136,14 @@ reminders = []
 
 [[scenario]]
 id = "ac-on-at-22"
-about = """"AC on at 22" turns it on at 22, and says it's sent: an IR AC can't report back."""
+about = """"AC on at 22" turns it on at 22 (on, or set, which turns on an IR AC that's off), and says it's sent: an IR
+AC can't report back."""
 tags = ["house", "ac"]
 house = { ac = "off" }
 
 [[scenario.turn]]
 say = "turn on the AC at twenty two degrees"
-home = [{ device = "ac", action = "on", temperature = 22 }]
+home = [{ device = "ac", action = "on|set", temperature = 22 }]  # set turns on an IR AC that's off
 never_says = ["\\bit's on\\b"]
 
 [[scenario]]
@@ -182,7 +202,7 @@ house = {}
 [[scenario.turn]]
 say = "how warm is it in the living room?"
 home = []
-says = ["23"]
+says = ["23|twenty[- ]three"]
 
 [[scenario]]
 id = "play-on-stremio"

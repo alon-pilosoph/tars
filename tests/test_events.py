@@ -336,7 +336,9 @@ class ScriptedTrigger(FakeTrigger):
 
 def verifier_saying(*outcomes):
     answers = iter(outcomes)
-    return types.SimpleNamespace(decide=lambda pcm: next(answers), last_confidence=0.5, use_check=lambda spec: None)
+    return types.SimpleNamespace(
+        decide=lambda pcm: next(answers), last_confidence=0.5, name_end_s=lambda pcm: None, use_check=lambda spec: None
+    )
 
 
 def test_trigger_logs_near_misses_and_every_wake(log):
