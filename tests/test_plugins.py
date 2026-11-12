@@ -545,7 +545,7 @@ def test_two_plugins_cant_add_tools_of_the_same_name(garden):
 def test_every_tool_the_brain_has_of_its_own_is_kept_from_plugins(garden):
     import types
 
-    from voice_assistant import feeds, myself, skills
+    from voice_assistant import feeds, myself, pages, skills
     from voice_assistant.browser import errands
     from voice_assistant.llm import LLMConfig, OpenAIChat
     from voice_assistant.telegram import CHAT_REMIND_TOOLS
@@ -568,6 +568,7 @@ def test_every_tool_the_brain_has_of_its_own_is_kept_from_plugins(garden):
             feeds=part(feeds.FEEDS_TOOL),
             skills=part(skills.SKILLS_TOOL),
             myself=part(myself.TOOL),
+            tools=[part(pages.PAGES_TOOL)],
         )
         names = {t.get("name") or t["type"] for t in brain._tools} - own
         assert names <= BUILT_IN_TOOLS and len(names) == len(BUILT_IN_TOOLS)

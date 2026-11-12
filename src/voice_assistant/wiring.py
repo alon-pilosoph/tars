@@ -651,12 +651,14 @@ def make_pipeline(
     feeds=None,
     skills=None,
     myself=None,
+    pages=None,
 ):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
     can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands;
     with `feeds` (feeds.py), it reads and manages the RSS feeds people follow; with `skills` (skills.py), it's taught
-    skills and preferences, and knows them; with `myself` (myself.py), it knows itself."""
+    skills and preferences, and knows them; with `myself` (myself.py), it knows itself; with `pages` (pages.py), it
+    reads the page a link goes to."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -680,6 +682,7 @@ def make_pipeline(
         feeds=feeds,
         skills=skills,
         myself=myself,
+        tools=[pages] if pages else [],
     )
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
@@ -773,6 +776,15 @@ def make_feeds(cfg: Config, events):
     from .feeds import make
 
     return make(cfg.feeds, events)
+
+
+def make_pages(cfg: Config, events, browse=None):
+    """The read_page tool (pages.py), in the event database, or None without one. `browse`: the brain's browse tool,
+    for the pages the quick way can't read; never the house's own names (homenet.py)."""
+    from .homenet import configured
+    from .pages import make
+
+    return make(events, browse, configured(cfg.web.allowed_hosts, cfg.home.url))
 
 
 def make_brain(client, llm: LLMConfig, env: Path, reminders=None, **channel):

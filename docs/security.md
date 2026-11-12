@@ -232,9 +232,9 @@ instructions and…". A model may believe them, so what matters is what code all
     applied or made with the lock in it, a script handed the lock, a script running one that unlocks), and counts
     what it can't see into as if it would: a room, a floor or a label, a template, a setup it can't read, code,
     `rest_command`, a raw command to a device (`ha_tool.py`).
-  - **A reply that searched the web, or read the feeds, changes nothing.** From the moment a search starts, or a
-    feed's stories are read (a tool that says its answers are from `outside`), the house tool only reads devices for
-    the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in `home.py`), and no other
+  - **A reply that searched the web, or read the feeds or a page, changes nothing.** From the moment a search
+    starts, or a feed's stories or a page's words are read (a tool that says its answers are from `outside`), the
+    house tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in `home.py`), and no other
     tool changes anything either: no errand is started, no feed followed, no skill or preference taught, no setting
     set and no wish noted ([what each tool may change](#what-each-tool-may-change)).
   - **A Telegram chat works the house as the voice does** (`wiring.py`, `chat_home()`): only people in
@@ -518,6 +518,7 @@ and holds each change at least as `held_back` does. Reading is never held back, 
 | `feeds` | a feed followed or dropped (reading marks what was told, by the reply's `<told>` marker) | yes | yes | yes | each person's own; reading marks the reply as having read the web |
 | `skills` | a skill saved, changed, paused, resumed or deleted; a preference remembered or forgotten | yes | yes | yes | only someone TARS knows; a skill does each step through the tools above, under their rules |
 | `tars` | a setting set (`config.local.toml`, then a restart); a wish noted (to the maintainers, maybe a GitHub issue) or granted | yes | yes; nor are the records or the log read | yes | a setting only for someone known or asking aloud, only what `ADJUSTABLE` lists, within bounds; granting only for maintainers; a wish's issue posted only on a maintainer's tap |
+| `read_page` | whether the person subscribes to a site, saved; an errand to read a page, started through `browse` | yes | yes | yes | a page read only off the home network, at every redirect; reading it marks the reply as having read the web; the errand under `browse`'s rules, started before anything of the page reaches the model |
 | `send` | an item on the TARS page and the asker's chat | made only once the reply is kept | no: links come from the web | no | a link must be http(s), a file a known type |
 | `remind`, `cancel_reminder`, `snooze_reminder` | a reminder, timer or message set, cancelled or put off | made only once the reply is kept | no | no | checked when asked; for whom, by the names TARS knows |
 | web search | nothing here: it's OpenAI's, run on its side | | | | marks the reply as having read the web, for every tool above |

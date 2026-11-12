@@ -4,8 +4,8 @@ The assistant and the web UI share the folder (voice_data/events/, gitignored) f
 runs in WAL mode and every multi-step change is one IMMEDIATE transaction. events.py (wakes, near-misses, voices),
 conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home),
 recording.py (recording sessions and their takes), browser/errands.py (the errands queued for TARS's browser) and
-feeds.py (the feeds each person follows), skills.py (what TARS is taught: skills and preferences) and myself.py (the
-wishes: what TARS was asked for and couldn't do) build on this.
+feeds.py (the feeds each person follows), pages.py (how each site's pages are read), skills.py (what TARS is
+taught: skills and preferences) and myself.py (the wishes: what TARS was asked for and couldn't do) build on this.
 """
 
 import secrets
@@ -225,6 +225,19 @@ TABLES = {
     link TEXT NOT NULL,              -- a story handed to the model for them: "what's new" is what isn't here
     at REAL NOT NULL,
     PRIMARY KEY (person, link)
+)""",
+    "page_sites": """CREATE TABLE page_sites (
+    site TEXT PRIMARY KEY,           -- its host, without www: "haaretz.co.il" (pages.py)
+    way TEXT NOT NULL,               -- quick | browser: how its pages are read
+    paywalled INTEGER NOT NULL,      -- its pages say they're for subscribers
+    learned REAL NOT NULL            -- tried the quick way again thirty days after
+)""",
+    "page_subscriptions": """CREATE TABLE page_subscriptions (
+    person TEXT NOT NULL,            -- as person_key has them
+    site TEXT NOT NULL,
+    subscribes INTEGER NOT NULL,     -- what they said, yes or no: never asked again
+    at REAL NOT NULL,
+    PRIMARY KEY (person, site)
 )""",
     "skills": """CREATE TABLE skills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -500,6 +513,16 @@ MIGRATIONS = [
     at REAL NOT NULL,
     PRIMARY KEY (month, share)
 )""",
+    ],
+    [
+        (
+            "CREATE TABLE page_sites (site TEXT PRIMARY KEY, way TEXT NOT NULL, paywalled INTEGER NOT NULL, "
+            "learned REAL NOT NULL)"
+        ),
+        (
+            "CREATE TABLE page_subscriptions (person TEXT NOT NULL, site TEXT NOT NULL, subscribes INTEGER NOT NULL, "
+            "at REAL NOT NULL, PRIMARY KEY (person, site))"
+        ),
     ],
 ]
 

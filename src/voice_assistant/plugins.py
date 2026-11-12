@@ -51,7 +51,7 @@ HASS_READS = ("ping", "state", "states", "areas", "history", "logbook", "service
               "devices", "entity_entries", "area_list", "config_of", "snapshot", "statistics", "link")  # fmt: skip
 # Every tool the brain has of its own: a plugin's tool can't take one's name (test_plugins checks it's every one).
 BUILT_IN_TOOLS = {"home", "home_assistant", "send", "remind", "cancel_reminder", "snooze_reminder", "browse",
-                  "skills", "tars", "feeds", "web_search"}  # fmt: skip
+                  "skills", "tars", "feeds", "read_page", "web_search"}  # fmt: skip
 
 
 @dataclass(frozen=True)

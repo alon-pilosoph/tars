@@ -10,7 +10,7 @@ talking to it, aloud or in a chat:
 | "Follow the first two, under gaming" / "add ynet.co.il to the news" | followed; a site is enough, TARS finds its feed |
 | "What's new in gaming?" / "what's new?" | the few stories that matter from that category (or all of them), each in a sentence or two; on Telegram, with links |
 | "What else?" | the stories not told yet: the rest stay new until they are |
-| "Tell me more about the Zelda one" | looked up on the web |
+| "Tell me more about the Zelda one" | its page is read ([reading pages](pages.md)), or looked up on the web |
 | "What am I following?" / "drop Kotaku" / "stop following cooking" | listed, or unfollowed; a whole category only once you've said yes |
 
 ## How it works
