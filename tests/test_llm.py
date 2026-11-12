@@ -16,13 +16,16 @@ from voice_assistant.config import LLMConfig
 from voice_assistant.conversations import SentItem
 from voice_assistant.events import EventLog
 from voice_assistant.llm import (
+    GOT_IT,
     LOOK_UP,
     MAX_TOOL_ROUNDS,
     OUT_OF_STEPS,
+    PARDON,
     SKIP,
     OpenAIChat,
     QuickChat,
     QuickService,
+    Reply,
     ReplyFailed,
     split_skip,
 )
@@ -177,6 +180,103 @@ def test_a_stopped_reply_that_finishes_late_leaves_the_next_one_alone():
         list(stale)
     "".join(brain.stream_reply("next"))
     assert asked(client) == ["the whole question", "An answer.", "next"]
+
+
+def chat_brain(reply_for=lambda messages: "An answer."):
+    client = fake_openai_chat(reply_for)
+    return client, OpenAIChat(client, LLMConfig(web_search=False, send=False))
+
+
+def test_a_reply_is_said_as_it_is_written_and_stays_in_the_conversation():
+    client, brain = chat_brain()
+    reply = Reply(brain, "what's new?")
+    assert "".join(reply) == "An answer." and not (reply.skipped or reply.pardoned) and reply.acks is None
+    Reply(brain, "and then?").read()
+    assert asked(client) == ["what's new?", "An answer.", "and then?"]
+
+
+def test_a_skip_is_nothing_to_say_and_forgotten_at_once():
+    client, brain = chat_brain(lambda messages: SKIP if "overheard" in messages[-1]["content"] else "Yes.")
+    Reply(brain, "kept").read()
+    reply = Reply(brain, "overheard")
+    assert reply.skipped and not reply.pardoned and reply.read() == ""
+    Reply(brain, "next").read()
+    assert asked(client) == ["kept", "Yes.", "next"]
+
+
+def test_a_skip_of_what_was_said_to_tars_is_asked_again_and_forgotten():
+    client, brain = chat_brain(lambda messages: SKIP if messages[-1]["content"] == "New zone." else "Yes.")
+    reply = Reply(brain, "New zone.", may_skip=False)
+    assert reply.pardoned and not reply.skipped and reply.read() == PARDON
+    Reply(brain, "next").read()
+    assert asked(client) == ["next"]
+
+
+def test_a_reply_that_acknowledges_says_which_and_only_the_rest_is_said():
+    _, brain = chat_brain(lambda messages: "<ack 12> Snoozed the other one.")
+    reply = Reply(brain, "got it", acks=True)
+    assert reply.acks == [12] and reply.read() == "Snoozed the other one."
+    bare = Reply(chat_brain(lambda messages: "<ack>")[1], "thanks", acks=True)
+    assert bare.acks == [] and bare.read() == GOT_IT
+    unread = Reply(chat_brain(lambda messages: "<ack 3>")[1], "thanks")  # a turn no reminder was said in
+    assert unread.acks is None
+
+
+def test_a_reply_that_fails_to_start_is_forgotten_and_raises():
+    def reply_for(messages):
+        if messages[-1]["content"] == "broken":
+            raise ReplyFailed("down")
+        return "Yes."
+
+    client, brain = chat_brain(reply_for)
+    Reply(brain, "kept").read()
+    with pytest.raises(ReplyFailed):
+        Reply(brain, "broken")
+    Reply(brain, "next").read()
+    assert asked(client) == ["kept", "Yes.", "next"]
+
+
+class HalfBrain:
+    """Says its first words, then fails."""
+
+    def __init__(self):
+        self.forgotten = 0
+
+    def stream_reply(self, text, request=None):
+        yield "It's "
+        raise ReplyFailed("cut off")
+
+    def forget_last(self):
+        self.forgotten += 1
+
+
+def test_a_reply_that_fails_while_it_is_read_whole_is_dropped():
+    brain = HalfBrain()
+    reply = Reply(brain, "what time is it?")
+    with pytest.raises(ReplyFailed):
+        reply.read()
+    reply.drop()
+    assert brain.forgotten == 1
+
+
+def test_a_reply_that_fails_while_it_streams_is_left_to_whoever_said_it():
+    # Its first words may have been heard, and the stop button ends a reply this way: what's kept is theirs to say.
+    brain = HalfBrain()
+    with pytest.raises(ReplyFailed):
+        list(Reply(brain, "what time is it?"))
+    assert brain.forgotten == 0
+
+
+def test_a_reply_dropped_twice_never_forgets_the_turn_after_it():
+    client, brain = chat_brain()
+    Reply(brain, "kept").read()
+    thrown_away = Reply(brain, "thrown away")
+    thrown_away.read()
+    thrown_away.drop()
+    Reply(brain, "next").read()
+    thrown_away.drop()  # its draft settled late, from another thread
+    Reply(brain, "after").read()
+    assert asked(client) == ["kept", "An answer.", "next", "An answer.", "after"]
 
 
 def test_the_humor_setting_goes_into_the_system_prompt():

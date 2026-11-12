@@ -37,7 +37,7 @@ from .control import Refused, Unavailable
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
-from .llm import FILLERS, PARDON, REMIND_TOOLS, SKIP, THINKING, Brain, split_ack, split_skip
+from .llm import FILLERS, REMIND_TOOLS, SKIP, THINKING, Brain, Reply
 from .mic_mute import DEVICE as MIC
 from .reminders import (
     ACKNOWLEDGED,
@@ -624,24 +624,20 @@ class TelegramTars:
         conversation = self._current_conversation(chat, now)
         if conversation is not None:
             self._log(self._conversations.add_person_turn, conversation, text, recording, speaker=chat.person, ts=now)
-        brain, acks = chat.brain, None
+        brain, written = chat.brain, None
         self._last_asked = chat
         asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
+        request = Request(speaker=chat.person, by_chat=True, heard=text)
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                skipped, pieces = split_skip(
-                    brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True, heard=text))
-                )
-                if skipped:  # a chat is always meant for TARS: the tag is never posted
-                    brain.forget_last()
-                    pieces = iter([PARDON])
-                if self._tools:
-                    acks, pieces = split_ack(pieces)
-                reply = tidy("".join(pieces))
+                # A chat is always meant for TARS: a skip is answered, and the tag never posted.
+                written = Reply(brain, asked, request, may_skip=False, acks=bool(self._tools))
+                reply = tidy(written.read())
             if reply:
                 self._send(chat.chat_id, reply, tries=SEND_TRIES)
         except Exception as e:  # noqa: BLE001 - said in the chat, kept in the log, and forgotten by the brain
-            brain.forget_last()
+            if written:  # posting it failed: one that failed before is forgotten already
+                written.drop()
             stage = OTHER if isinstance(e, TelegramError) else LLM
             print(f"(Telegram: couldn't answer {chat.person}: {e!r})", flush=True)
             self._log_turn(conversation, "", brain, failed_at=stage, error=f"{type(e).__name__}: {e}")
@@ -655,8 +651,8 @@ class TelegramTars:
             delivered = self._post_item(chat.chat_id, item)
             if self._conversations:  # kept even without a conversation, like those sent by voice
                 self._log(self._conversations.add_item, conversation, turn, item, chat.person, delivered=delivered)
-        if acks is not None and self._tools:
-            self._ack(acks, chat.person, changed={c.id for c in changes if c.id is not None})
+        if written.acks is not None and self._tools:
+            self._ack(written.acks, chat.person, changed={c.id for c in changes if c.id is not None})
         for change in changes:
             self._apply(change, chat, conversation)
 
@@ -727,22 +723,20 @@ class TelegramTars:
             brain, where = self._make_brain(), "to be said aloud"
         print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, {where})", flush=True)
         try:
-            asked = on_its_own(skill, due.when, SKIP, due.why)
-            skipped, pieces = split_skip(brain.stream_reply(asked, request))
-            reply = tidy("".join(pieces))
+            written = Reply(brain, on_its_own(skill, due.when, SKIP, due.why), request)
+            reply = tidy(written.read())
         except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
-            brain.forget_last()
             print(f"(skill {skill.name} didn't run: {e!r})", flush=True)
             if skill.once is not None:
                 clock.settle(due, house, e)
             return
         if skill.once is not None and happened(house)[0]:
-            brain.forget_last()
+            written.drop()
             print(f"(skill {skill.name}: not posted, since it didn't happen: {reply!r})", flush=True)
             clock.settle(due, house)
             return
-        if skipped or not reply:
-            brain.forget_last()
+        if not reply:  # skipped, or nothing at all
+            written.drop()
             print(f"(skill {skill.name}: nothing to do now)", flush=True)
             clock.record(due, "")
             return
@@ -752,7 +746,7 @@ class TelegramTars:
         try:
             self._send(chat.chat_id, reply, tries=SEND_TRIES)
         except TelegramError as e:
-            brain.forget_last()
+            written.drop()
             print(f"(skill {skill.name}: couldn't post it: {e})", flush=True)
             if skill.once is not None:  # done all the same: posted with the reminders, once Telegram takes it
                 clock.hand_over(due, reply)

@@ -39,8 +39,7 @@ from .llm import (
     SKIP,
     THINKING,
     Brain,
-    split_ack,
-    split_skip,
+    Reply,
 )
 from .phrases import Audio, Phrases
 from .recorder import UtteranceRecorder
@@ -211,14 +210,11 @@ class Answer:
     text: str
     who: Identified
     stt_s: float
-    asked: bool = False  # the brain was asked, so a discarded answer must be forgotten
     t_asked: float = 0.0
-    reply: StreamedReply | None = None  # None: nothing to say (no words, or not meant for TARS)
-    skipped: bool = False  # an overheard follow-up the brain chose not to answer
-    pardon: bool = False  # the brain skipped a request said to TARS: the reply is PARDON
+    written: Reply | None = None  # the brain's reply, as it's written; None: the brain wasn't asked
+    reply: StreamedReply | None = None  # its audio; None: nothing to say (no words, or not meant for TARS)
     spoken: list[str] = field(default_factory=list)
     error: Exception | None = None  # the brain failed to start the reply; raised once what was heard is written down
-    acks: list[int] | None = None  # the reply acknowledged reminders: these, or [] for the ones just said
     sentences: list[tuple[float, str]] = field(default_factory=list)  # (when it was written, the sentence)
     on_pi: bool = False  # a house command, done without the model (commands.py)
 
@@ -622,27 +618,25 @@ class Assistant:
             # lock set off changes nothing in the house.
             whose = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
             try:
-                asked = on_its_own(skill, due.when, SKIP, due.why)
-                skipped, pieces = split_skip(self.brain.stream_reply(asked, whose))
-                text = "".join(pieces).strip()
+                written = Reply(self.brain, on_its_own(skill, due.when, SKIP, due.why), whose)
+                text = written.read()
             except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
                 print(f"(skill {skill.name} didn't run: {e!r})")
-                self.brain.forget_last()
                 if skill.once is not None:
                     clock.settle(due, house, e)
                 continue
             if skill.once is not None and happened(house)[0]:
                 print(f"(skill {skill.name}: not said, since it didn't happen: {text!r})")
-                self.brain.forget_last()
+                written.drop()
                 clock.settle(due, house)
                 continue
-            if skipped or not text:
+            if not text:  # skipped, or nothing at all
                 print(f"(skill {skill.name}: nothing to do now)")
-                self.brain.forget_last()
+                written.drop()
                 clock.record(due, "")
                 continue
             if skill.say != ALOUD:  # not the room's to hear, nor part of its conversation
-                self.brain.forget_last()
+                written.drop()
                 clock.hand_over(due, text)
                 continue
             audio = self._made_now([text])
@@ -1053,7 +1047,7 @@ class Assistant:
                 return False
             if answer.error:
                 raise answer.error
-            if answer.skipped:
+            if answer.written and answer.written.skipped:
                 print("(not meant for me, going quiet)")
                 self.journal.not_for_tars()
                 heard.draft.keep()
@@ -1065,7 +1059,7 @@ class Assistant:
                 self.timings["greet"], self._greet_s = self._greet_s, None
             said = self._speak(answer, t_stopped_talking)
             self._last_reply = said.text
-            if answer.pardon:  # the repeat answers it: not an untethered follow-up to skip
+            if answer.written and answer.written.pardoned:  # the repeat answers it: not an untethered follow-up to skip
                 self.brain.remember_said(PARDON)
             heard.draft.keep()
         except BaseException as e:
@@ -1084,9 +1078,10 @@ class Assistant:
             answered_by=said.answered_by,
             quick_service=said.quick_service,
         )
-        if answer.acks is not None and self.reminders:
+        acks = answer.written.acks if answer.written else None
+        if acks is not None and self.reminders:
             # One the reply also put off or cancelled is that change's: acknowledged, it couldn't be put off.
-            self._ack(answer.acks, name, changed={c.id for c in self.brain.changes if c.id is not None})
+            self._ack(acks, name, changed={c.id for c in self.brain.changes if c.id is not None})
         self._change_reminders(self.brain.changes, name)
         return True
 
@@ -1152,7 +1147,7 @@ class Assistant:
             # A follow-up, or a reply to "Did you call me?" (maybe a "no"), may not be meant for TARS at all.
             return self._start_reply(answer, prompt, may_skip=follow_up or tag is not None, request=request)
         except Exception as e:  # noqa: BLE001 - raised again in handle(), after what was heard is kept
-            answer.asked, answer.error = False, e  # already forgotten
+            answer.error = e  # already forgotten
             return answer
 
     def _heard_on_pi(self, pcm: bytes) -> str:
@@ -1203,25 +1198,16 @@ class Assistant:
             return NOBODY
 
     def _start_reply(self, answer: Answer, prompt: str, may_skip: bool, request: Request | None = None) -> Answer:
-        answer.asked, answer.t_asked = True, time.perf_counter()
+        answer.t_asked = time.perf_counter()
         try:
-            pieces = self.brain.stream_reply(prompt, request)
-            skipped, pieces = split_skip(pieces)
-            if skipped:
-                self.brain.forget_last()  # overheard conversation shouldn't linger in the history
-                if may_skip:
-                    answer.skipped = True
-                    return answer
-                pieces, answer.pardon = iter([PARDON]), True  # said to TARS by name: asked again, never gone quiet on
-            if self.reminders:
-                answer.acks, pieces = split_ack(pieces)
-            pieces = _tee(pieces, answer.spoken)
+            answer.written = Reply(self.brain, prompt, request, may_skip=may_skip, acks=bool(self.reminders))
         except BaseException as e:
-            self.brain.forget_last()  # a question that got no answer shouldn't linger either
             mark_failed_at(e, LLM)
             raise
+        if answer.written.skipped:
+            return answer
         answer.reply = StreamedReply(
-            pieces,
+            _tee(answer.written, answer.spoken),
             self.voice,
             lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
             self.phrases.made_ahead,
@@ -1232,8 +1218,8 @@ class Assistant:
         if answer.reply:
             self.brain.interrupt()
             answer.reply.stop()
-        if answer.asked:
-            self.brain.forget_last()
+        if answer.written:
+            answer.written.drop()
 
     def _prompt(self, text: str, name: str | None, follow_up: bool, tag: str | None) -> str:
         if self.speaker_id:

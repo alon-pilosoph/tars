@@ -80,7 +80,11 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
-class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
+class and a config change. Every turn the brain answers, by voice, in a chat or a skill's own, is a `Reply`
+(`llm.py`): it reads the start of the reply for `<skip>` and `<ack>`, forgets a skip at once (or answers it with
+"Sorry, I didn't catch that", when it was said to TARS), forgets a reply that fails to start, and is streamed as it's
+written. A reply stays in the conversation unless it's dropped, once: when it fails, is thrown away as a draft, or
+isn't said (a skill with nothing to say, a one-off that didn't happen, a post that didn't arrive). Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
 to end. When TARS wakes, it connects to Cerebras, OpenAI and the voice while you're still talking.
 
 ### When something fails
@@ -328,7 +332,7 @@ The assistant is `src/voice_assistant/`:
 | Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
-| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
+| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model, and `Reply`, a turn's reply and its markers), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API, an errand's approvals, login links and codes) |
 | The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` (the loop), `brain.py`, `openai_brain.py` and `anthropic_brain.py` (its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `money.py` (amounts, however written), `tools.py`, `login.py`, `login_page.py`, `codes.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `trace.py`, `run.py`, `chrome.py` (TARS's own Chrome), `mcp_server.py` and `claude.py` (Claude Code as its brain); `telegram_errands.py` (an errand's questions and answer in a chat); `homenet.py` (what's at home, for the browser and the web UI) |
