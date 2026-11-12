@@ -186,8 +186,10 @@ in `doors.py`:
 - **Says their waiting messages** a few seconds after they come in, after the welcome, brought forward if their
   phone had set them for later; between [presence] `quiet`'s hours (22:00 to 07:00 unless set otherwise) they wait
   until the person next speaks to TARS, even ones their phone's coming home would have said.
-- **Asks the routers at once** each time the door moves, then every 10 seconds for three minutes, so whoever's phone
-  comes or goes with it is seen in seconds, not at the next round.
+- **Asks the routers at once** each time the door moves (or 10 seconds after the last time, if that was just now),
+  then every 10 seconds for three minutes, so whoever's phone comes or goes with it is seen in seconds, not at the
+  next round. Never more often than that however often it moves, and for no more than a quarter of any hour: a
+  sensor that never stops (a fault, or forged) has them asked every 30 seconds the rest of the time, as ever.
 - **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it. That's
   decided as it shuts, not as it opens, since the lock's event can come a moment after the sensor's: nobody the lock
   let in from two minutes before it opened until it shut, and it wasn't opened within a minute of someone coming in

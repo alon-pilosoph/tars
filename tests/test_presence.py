@@ -523,6 +523,64 @@ def test_a_door_moving_asks_the_routers_at_once_and_often_for_a_while():
     assert HURRY_EVERY_S < 30
     w.hurry()
     assert w.tracker._doors_used == [0.0]  # shut, or opened to let someone in: not someone leaving
+    now[0] = 100.0
+    w.hurry(inside=True, opened=w._clock() - 20)  # decided as it shut, 20 s after it opened
+    assert w.tracker._doors_used == [0.0, 80.0]
+
+
+def rounds_while(
+    w: Watcher, now: list[float], until: float, moving_every_s: float | None = None, last: float | None = None
+) -> list[float]:
+    """When the watching thread's rounds come (Watcher._round_due) until `until`, the last having been at `last` (now
+    if None), and the door moving every `moving_every_s`."""
+    rounds, moved = [], now[0]
+    last = now[0] if last is None else last
+    while now[0] < until:
+        if moving_every_s and now[0] >= moved:
+            w.hurry()
+            moved += moving_every_s
+        wait = w._round_due(last)
+        if wait > 0:
+            now[0] += min(wait, max(moved - now[0], 0.001) if moving_every_s else wait)
+            continue
+        rounds.append(now[0])
+        last = now[0]
+    return rounds
+
+
+def test_a_door_moving_asks_the_routers_soon_and_then_every_ten_seconds_for_three_minutes():
+    from voice_assistant.presence import HURRY_EVERY_S, HURRY_S
+
+    now = [0.0]
+    w = Watcher([], PEOPLE, tracker(), Board.__new__(Board), 30, monotonic=lambda: now[0])
+    assert rounds_while(w, now, 95.0) == [30.0, 60.0, 90.0]
+    now[0] = 100.0
+    w.hurry()
+    assert w._round_due(90.0) == 0  # a round at once
+    now[0] = 92.0
+    assert w._round_due(90.0) == 8.0  # just after one: ten seconds after it, not at once
+    now[0] = 100.0
+    rounds = rounds_while(w, now, 100 + HURRY_S + 60, last=90.0)
+    assert rounds[:3] == [100.0, 110.0, 120.0] and rounds[-3:] == [270.0, 300.0, 330.0]  # then every_s again
+    assert HURRY_EVERY_S == 10.0
+
+
+def test_a_door_that_never_stops_moving_hurries_the_routers_for_a_quarter_of_each_hour_at_most():
+    """A sensor saying "open" over and over (a fault, or forged) doesn't have the routers asked every 10 s forever."""
+    import itertools
+
+    from voice_assistant.presence import HURRY_MAX_S
+
+    now = [0.0]
+    w = Watcher([], PEOPLE, tracker(), Board.__new__(Board), 30, monotonic=lambda: now[0])
+    rounds = rounds_while(w, now, 3 * 3600, moving_every_s=1.0)
+    for hour in range(3):
+        start = hour * 3600
+        in_it = [r for r in rounds if start <= r < start + 3600]
+        sooner = sum(1 for a, b in itertools.pairwise(in_it) if b - a < 30)
+        assert HURRY_MAX_S / 10 - 1 <= sooner <= HURRY_MAX_S / 10 + 1  # hurried still, a quarter of the hour
+        assert len(in_it) <= 3600 / 30 + HURRY_MAX_S / 10 + 1
+    assert HURRY_MAX_S == 15 * 60
 
 
 # The board: what the assistant writes, and every process reads.

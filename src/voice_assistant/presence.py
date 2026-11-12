@@ -43,8 +43,9 @@ ROUTERS_KEY = "presence_routers"  # the meta row with how each router last answe
 # than [presence] every_s can be, plus a round of routers that don't answer.
 STALE_AFTER_S = 5 * 60.0
 # A door sensor moving (doors.py): the routers are asked every HURRY_EVERY_S for HURRY_S, so whoever's phone comes or
-# goes with it is seen within seconds, not at the next round.
-HURRY_S, HURRY_EVERY_S = 3 * 60.0, 10.0
+# goes with it is seen within seconds, not at the next round; never more often, however often it moves, and for no
+# more than HURRY_MAX_S of any hour, so a sensor that never stops (a fault, or forged) can't keep them at it.
+HURRY_S, HURRY_EVERY_S, HURRY_MAX_S = 3 * 60.0, 10.0, 15 * 60.0
 # Leaving by the door (Tracker._left_by_door): a phone last seen between a round before the door was opened from
 # inside and LEFT_GONE_BY_S after, then by no router for LEFT_AFTER_S from whichever was later, all within
 # LEFT_WINDOW_S of the door, has left by it: out now, not away_after_min later. A phone seen later than LEFT_GONE_BY_S
@@ -279,22 +280,25 @@ class Watcher:
         self._lock = threading.Lock()  # the tracker and the board: rounds here, doors on the MQTT thread
         self._wake = threading.Event()  # set by hurry(): a round now
         self._hurry_until = 0.0  # monotonic: rounds every HURRY_EVERY_S until then
+        self._hurried: list[float] = []  # monotonic: the rounds in the last hour that came sooner for a hurry
 
     def start(self) -> None:
         def loop():
             while True:
+                last = self._monotonic()
                 try:
                     self.round()
                 except Exception as e:  # noqa: BLE001 - nothing stops the watching thread; the next round tries again
                     print(f"(presence: a round failed: {e!r})")
-                hurried = self._monotonic() < self._hurry_until
-                self._wake.wait(min(self.every_s, HURRY_EVERY_S) if hurried else self.every_s)
-                self._wake.clear()
+                while (wait := self._round_due(last)) > 0:
+                    self._wake.wait(wait)
+                    self._wake.clear()
 
         threading.Thread(target=loop, daemon=True, name="presence").start()
 
     def hurry(self, inside: bool = False, opened: float | None = None) -> None:
-        """A door moved (doors.py): a round now, and every HURRY_EVERY_S for HURRY_S. `inside`: it was opened from
+        """A door moved (doors.py): a round now (or HURRY_EVERY_S after the last), and every HURRY_EVERY_S for
+        HURRY_S. `inside`: it was opened from
         inside, at `opened` (the time of day; now if None), so a phone that drops off just after has left by it
         (Tracker.door_used)."""
         now = self._monotonic()
@@ -304,6 +308,19 @@ class Watcher:
                 self.tracker.door_used(now - ago)
             self._hurry_until = now + HURRY_S
         self._wake.set()
+
+    def _round_due(self, last: float) -> float:
+        """How long until the next round, the last one having started at `last` (monotonic): every_s after it, or
+        HURRY_EVERY_S while hurried, for HURRY_MAX_S' worth of rounds an hour at most. 0 or less: now, and a round
+        that's sooner for a hurry is counted."""
+        now = self._monotonic()
+        with self._lock:
+            self._hurried = [t for t in self._hurried if now - t < 3600]
+            hurried = now < self._hurry_until and len(self._hurried) < HURRY_MAX_S / HURRY_EVERY_S
+            wait = last + (min(self.every_s, HURRY_EVERY_S) if hurried else self.every_s) - now
+            if wait <= 0 and hurried and now - last < self.every_s:
+                self._hurried.append(now)
+        return wait
 
     def round(self) -> list[tuple[str, bool]]:
         """Asks every router once, and says who came home or went out. A router that fails is noted, never raised."""
