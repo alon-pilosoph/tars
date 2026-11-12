@@ -317,13 +317,12 @@ class Reminders:
         like any reminder, unless they're heard first. `sooner`: ones already due later (their phone came home a
         moment ago) are brought forward to `at` too. The ids scheduled now."""
         scheduled = []
-        later = " OR next_at > ?" if sooner else ""
         with self.store.transaction() as db:
             for r in self.held_for(name):
                 changed = db.execute(
                     "UPDATE reminders SET next_at=? WHERE id=? AND status=? AND due IS NULL "
-                    f"AND (next_at IS NULL{later})",
-                    (at, r["id"], SCHEDULED, *([at] if sooner else [])),
+                    "AND (next_at IS NULL OR (? AND next_at > ?))",
+                    (at, r["id"], SCHEDULED, int(sooner), at),
                 ).rowcount
                 scheduled += [r["id"]] * changed
         return scheduled
