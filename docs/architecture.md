@@ -51,7 +51,7 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
 2. **Stage 2** (Vosk with a grammar plus a learned layer, local) decides: answer, ask "Did you call me?", or ignore.
    See [hearing "hey TARS"](wake-word.md).
 3. **Recording** runs until you've finished. [Silero VAD](https://github.com/snakers4/silero-vad) (local, 2 MB)
-   hears you start; Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
+   hears you start, from straight after the name when you said it all in one breath ("hey TARS, what's new"); Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
    decides when you're done, from your words as well as the pause. If Flux fails, the local rules take over: after
    `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (local, 8 MB) may keep
    waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes, Alon?" (speaker ID from the
@@ -71,8 +71,9 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    your turn is confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, or is a fragment that asks for nothing ("eight hours."), and TARS
-   stays quiet and forgets it. The conversation is sent to the
-   LLM until it's been quiet for `memory_minutes`.
+   stays quiet and forgets it. A `<skip>` for a request said by name, or a chat message, is forgotten too, but
+   answered with "Sorry, I didn't catch that. Say it again?", and so is an answer to TARS's question that comes out
+   as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
 class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
@@ -120,7 +121,7 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
 ### The LLM's tools
 
 - **Web search** (OpenAI's built-in tool, `[llm] web_search`): for current questions and real links. When the
-  model starts a search, TARS says "Looking it up." so the wait isn't silent.
+  model starts a search with nothing said yet, TARS says "Looking it up." so the wait isn't silent.
 - **Send** (`[llm] send`, needs `[learning] log_events`): a strict function tool for a link, a note (short
   markdown), a list, or a text file (`.txt`, `.md`, `.csv`, `.ics`), for whoever asked or for the household. The
   assistant checks every call (links must be http(s), a file needs a known type and its text) and returns errors to
@@ -175,8 +176,8 @@ and what would make it possible, and notes it as a wish (below). Qwen hands over
 
 | Marker | When | To | TARS says first |
 |---|---|---|---|
-| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
-| `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
+| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | a line Qwen picks as it hands over ("Let's see.", "Let me check.", "Looking it up.", "On it."), or "Let's see." if it picks none |
+| `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment.", unless Qwen already said a line |
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links, which
 need web search) and uses them itself, saving those turns the hand-off. A request with a part of each ("set a timer, and
@@ -264,8 +265,9 @@ the web UI's Status page reads them: a process whose heartbeat is older than thr
 frozen whole, on a Mac as on the Pi ([the Status page](web-ui.md#the-status-page)). It's written from a thread of
 its own, never touches the database, and one that can't be written costs a line in the log.
 
-**It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
-elsewhere could reach it through someone's browser:
+**With `[web] sign_in`, it needs a passkey** (`signin.py`, [signing in](web-ui.md#signing-in)); without it, it's
+meant for the home network. Either way, it protects itself against the two ways a web page elsewhere could reach it
+through someone's browser:
 
 - **Host allow-list:** it only answers requests addressed to an IP address, `localhost`, `*.local`, `*.ts.net`, a
   single-label name (`tars`, the Pi's hostname) or a name in `[web] allowed_hosts`. Anything else gets 421, which

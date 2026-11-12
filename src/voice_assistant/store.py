@@ -234,6 +234,27 @@ TABLES = {
     why TEXT NOT NULL,               -- what stopped TARS, and what would make it possible
     granted REAL                     -- when someone marked it done; NULL: still wished for
 )""",
+    "web_invites": """CREATE TABLE web_invites (
+    token TEXT PRIMARY KEY,          -- sha256 of the one-time token in the link (signin.py)
+    person TEXT NOT NULL,
+    expires REAL NOT NULL,
+    used REAL                        -- when a passkey was made with it; NULL: not yet
+)""",
+    "passkeys": """CREATE TABLE passkeys (
+    id TEXT PRIMARY KEY,             -- the credential's id, base64url
+    person TEXT NOT NULL,
+    public_key BLOB NOT NULL,        -- COSE
+    sign_count INTEGER NOT NULL,
+    created REAL NOT NULL,
+    last_used REAL,
+    device TEXT                      -- the browser it was made in, as it said (its user agent)
+)""",
+    "web_sessions": """CREATE TABLE web_sessions (
+    token TEXT PRIMARY KEY,          -- sha256 of the session cookie
+    person TEXT NOT NULL,
+    created REAL NOT NULL,
+    expires REAL NOT NULL
+)""",
     "settings_log": """CREATE TABLE settings_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at REAL NOT NULL,
@@ -375,6 +396,17 @@ MIGRATIONS = [
         (
             "CREATE TABLE settings_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
             "name TEXT NOT NULL, old TEXT NOT NULL, new TEXT NOT NULL)"
+        ),
+    ],
+    [
+        "CREATE TABLE web_invites (token TEXT PRIMARY KEY, person TEXT NOT NULL, expires REAL NOT NULL, used REAL)",
+        (
+            "CREATE TABLE passkeys (id TEXT PRIMARY KEY, person TEXT NOT NULL, public_key BLOB NOT NULL, "
+            "sign_count INTEGER NOT NULL, created REAL NOT NULL, last_used REAL, device TEXT)"
+        ),
+        (
+            "CREATE TABLE web_sessions (token TEXT PRIMARY KEY, person TEXT NOT NULL, created REAL NOT NULL, "
+            "expires REAL NOT NULL)"
         ),
     ],
     [

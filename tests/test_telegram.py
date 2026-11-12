@@ -170,6 +170,14 @@ def test_a_message_from_someone_in_people_is_answered_with_their_name_on_it():
     assert bot.said() == ["Nine o'clock."]
 
 
+def test_a_skip_in_a_chat_is_never_posted_and_asks_again():
+    from voice_assistant.llm import PARDON, SKIP
+
+    bot, brain = FakeBot(), ScriptedBrain([SKIP])
+    tars(bot, [brain]).handle(message("new zone"))
+    assert bot.said() == [PARDON] and brain.forgotten == 1
+
+
 @pytest.mark.parametrize(
     "update",
     [
@@ -497,8 +505,15 @@ def test_the_real_brain_sets_a_reminder_and_sends_a_note_from_a_chat(convos):
 
 def test_tidy_takes_out_the_lines_said_while_waiting():
     assert tidy(f"{SEARCHING} It's 24 degrees.") == "It's 24 degrees."
+    assert tidy("Let me check. The door is locked.") == "The door is locked."
     assert tidy(f"Timer set. {THINKING} Rome first.") == "Timer set. Rome first."
     assert tidy("Line one.\n\nLine two.") == "Line one.\n\nLine two."
+
+
+def test_tidy_keeps_a_waiting_line_that_is_the_whole_reply():
+    assert tidy("On it.") == "On it."  # the quick model started the film itself
+    assert tidy("Let's see. The answer") == "The answer"
+    assert tidy("Let's see. Let me check. The answer") == "Let me check. The answer"  # one line, not every one
 
 
 def test_a_long_reply_that_arrived_in_part_counts_as_sent(convos):

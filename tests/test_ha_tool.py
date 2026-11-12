@@ -270,6 +270,15 @@ def test_a_door_opened_by_a_button_on_the_lock_or_a_script_pressing_one_keeps_th
     assert ask(ha, "call", stacey, service="light.turn_on", entity_ids=["light.hall"]).startswith("done")
 
 
+def test_a_call_that_unlocks_two_ways_is_one_answer_to_the_challenge(ha):
+    tools = HomeTools(HomeConfig(unlock_voices=["alon"]), {}, ha.ha._hass, digits=lambda: "472")
+    alon = Request("alon", 0.8, by_voice=True, heard="unlock the door")
+    letting_in = {"service": "script.turn_on", "entity_ids": ["button.front_door_unlatch", "script.let_in"]}
+    assert ask(tools, "call", alon, **letting_in).startswith("challenge:")
+    answer = Request("alon", 0.8, by_voice=True, heard="four seven two")
+    assert ask(tools, "call", answer, **letting_in).startswith("done")
+
+
 def test_only_maintainers_may_change_home_assistants_setup():
     fake = FakeHA()
     hass = HomeAssistant("http://ha.local:8123", "token", fake.transport, command=lambda m: {})

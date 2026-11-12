@@ -3,9 +3,9 @@
     voice-assistant --web                 # http://127.0.0.1:8080, this machine only
     voice-assistant --web --host 0.0.0.0  # reachable from the home network (e.g. on the Pi)
 
-No accounts, no cloud: everything it shows and edits lives in voice_data/events/. Only requests addressed to this
-machine by a home-network name are answered (see allowed_host), so a page elsewhere can't read or change anything
-through the browser of someone at home.
+No cloud: everything it shows and edits lives in voice_data/events/. Only requests addressed to this machine by a
+home-network name are answered (see allowed_host), so a page elsewhere can't read or change anything through the
+browser of someone at home; with [web] sign_in, only to someone signed in with a passkey (signin.py).
 """
 
 import base64
@@ -219,6 +219,7 @@ def create_app(
     bucket: Callable[[str], bytes | None] | None = None,
     ask: Callable[..., dict] | None = None,
     finished: Callable[[dict], None] | None = None,
+    accounts=None,
 ) -> FastAPI:
     """`recluster` regroups the voices (see clustering.regroup); None hides the button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
@@ -228,8 +229,13 @@ def create_app(
     Status page shows (health.py); None hides it. `bucket`: a recording that's only in the backup's bucket now, by
     its path ([backup], Backup.read); None if it isn't there either. `ask` asks the assistant for something over
     control.py (by default, at the event log's folder): recording sessions' takes. `finished(session)` is called, in a
-    thread of its own, once a recording session's last prompt is done (to enroll a voice from it)."""
+    thread of its own, once a recording session's last prompt is done (to enroll a voice from it). `accounts`
+    (signin.Accounts): with [web] sign_in, everything but the sign-in pages needs a session; None: no sign-in."""
     app = FastAPI(title="TARS")
+    if accounts is not None:
+        from .signin import add_sign_in
+
+        add_sign_in(app, accounts)  # first, so the check below runs before it
     convos = ConversationLog(log)
     skills = Skills(log.store)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
@@ -771,8 +777,11 @@ def _recording_sessions(
         return recording(take["audio"], request)
 
 
-def serve(log: EventLog, host: str, port: int, **options) -> None:
+def serve(log: EventLog, host: str, port: int, tls: tuple[Path, Path] | None = None, **options) -> None:
+    """`tls`: the certificate and its key, to serve over HTTPS."""
     import uvicorn
 
-    print(f"TARS web UI on http://{host}:{port}  (Ctrl+C to stop)")
-    uvicorn.run(create_app(log, **options), host=host, port=port, log_level="warning")
+    scheme = "https" if tls else "http"
+    print(f"TARS web UI on {scheme}://{host}:{port}  (Ctrl+C to stop)")
+    certs = {"ssl_certfile": str(tls[0]), "ssl_keyfile": str(tls[1])} if tls else {}
+    uvicorn.run(create_app(log, **options), host=host, port=port, log_level="warning", **certs)

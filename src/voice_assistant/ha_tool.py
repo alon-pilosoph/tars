@@ -16,6 +16,7 @@ What the model may do is still kept in code, not in the prompt:
   recorder, or running code (ADMIN). That's for a person, in Home Assistant.
 """
 
+import functools
 import json
 import re
 import threading
@@ -144,8 +145,9 @@ TOOL = {
 
 
 class HAAccess:
-    """`may_unlock(request)`: why this turn may not unlock, or None if it may (HomeTools'). `lock`: held while a
-    change is made, the home tool's, so the two never change the house at once."""
+    """`may_unlock(request)`: why this turn may not unlock, or None if it may (HomeTools'); asked once a call, as an
+    answer to an unlock challenge uses it up. `lock`: held while a change is made, the home tool's, so the two never
+    change the house at once."""
 
     tool, rules, can, needs = TOOL, RULES, CAN, NEEDS
 
@@ -333,16 +335,18 @@ class HAAccess:
         return f"sent: Home Assistant took {service}, but {', '.join(ids)} didn't change state yet"
 
     def _unlock_check(self, domain: str, name: str, ids: list[str], request: Request) -> str | None:
-        """Why this call may not be made, if it would unlock (HomeTools.may_unlock), or None."""
+        """Why this call may not be made, if it would unlock (HomeTools.may_unlock), or None. The rules are asked once a
+        call: answering an unlock challenge uses it up."""
+        may_unlock = functools.cache(lambda: self._may_unlock(request))
         if domain == "lock":
-            return None if name == "lock" else self._may_unlock(request)  # locking is never held back
+            return None if name == "lock" else may_unlock()  # locking is never held back
         doors = self._door_entities()
         opening = [e for e in ids if e in doors or e.startswith("lock.")]
-        if opening and (refused := self._may_unlock(request)):
+        if opening and (refused := may_unlock()):
             return f"{refused} ({', '.join(opening)} can open a door)"
         if domain in RUNS_OTHERS:
             for entity in ids or ([f"{domain}.{name}"] if domain == "script" else []):
-                if self._could_unlock(entity) and (refused := self._may_unlock(request)):
+                if self._could_unlock(entity) and (refused := may_unlock()):
                     return f"{refused} (it can unlock: {entity})"
         return None
 

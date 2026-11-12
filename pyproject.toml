@@ -26,6 +26,8 @@ dependencies = [
     "psutil>=7",  # the Status page's CPU, memory, temperature and uptime
     "soundfile>=0.14.0",  # reading voice messages (Opus in Ogg)
     "httpx>=0.28",  # Home Assistant, Telegram, Deepgram's endpoint for whole recordings, and the status pages
+    "defusedxml>=0.7.1",  # feeds and the TV's screen dumps: XML from outside, read without entities
+    "webauthn>=3.0.1",  # passkey sign-in for the web UI
 ]
 
 [project.urls]
@@ -91,6 +93,12 @@ training = [
     "huggingface-hub>=1.0",
     "scikit-learn>=1.5",
     "soundfile>=0.14.0",
+]
+# CI's security jobs (docs/security.md): uv run --frozen --only-group security ...
+security = [
+    "bandit==1.9.4",
+    "cyclonedx-bom==8.0.1",
+    "pip-audit==2.10.1",
 ]
 
 # openWakeWord's metadata pulls in tflite-runtime on Linux, which has no wheels for Python 3.12. TARS runs it through

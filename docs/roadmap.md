@@ -1,8 +1,9 @@
 # What's next
 
 Six steps, in this order. Real use comes first because it costs no code, runs alongside the rest, and everything
-after learns from it. Security is next: the web UI has no accounts, and the steps after it widen what TARS does with
-nobody watching (plugins run others' code, automations act on their own), so what they may do is settled first.
+after learns from it. Security is next: the web UI's sign-in is built but not yet on at home, and the steps after it
+widen what TARS does with nobody watching (plugins run others' code, automations act on their own), so what they may
+do is settled first.
 Interrupting starts with one measurement on the speakerphone, which decides how big it is. Plugins and updates come
 before automations and skills, which hook into the events plugins bring. Memory is last, and leans on speaker ID
 being right.
@@ -10,10 +11,10 @@ being right.
 | | Step | Why now | Size |
 |---|---|---|---|
 | 1 | [A week of real use](#1-a-week-of-real-use) | the first real wakes, voices and conversations; everything after learns from them | no code, a checklist |
-| 2 | [Security](#2-security) | the web UI has no accounts, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts |
+| 2 | [Security](#2-security) | anyone at home can open the web UI until sign-in is on, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts; passkey sign-in built |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
 | 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
-| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs left, and the arrival greeting to try for a week |
+| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting to try for a week |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
 Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
@@ -60,7 +61,7 @@ requests, or records a [voice session](web-ui.md#recording-sessions) on the spea
 | False wakes (TV, talk) | Review | at most one or two a day, none answered |
 | Wrong names | Home, a conversation's "who was talking" | rare once voiceprints come from the speakerphone |
 | Cut off mid-sentence | your notes | never |
-| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 1.2-1.5 s ([response time](latency.md)) |
+| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 2 s in use on the Pi (1.2-1.5 s on a benchmark; [response time](latency.md)) |
 | Turns Cerebras couldn't take | `answered_by = 'fallback'` in the `turns` table | rare |
 | Hard questions handed over | `answered_by = 'ponder'` in the `turns` table, and the time to "Let me think" | rare, never for a simple question, and "Let me think" as quick as any first sound |
 | Failed answers | Home, in red: where it failed (speech to text, the answer, the voice) and why | rare, and no one stage over and over |
@@ -97,26 +98,26 @@ passwords, goes to the backup only sealed with a key kept on the Pi. The speaker
 it's red, the wake model doesn't run. The doors' MQTT broker lets in only users with a password, and its ACL keeps the
 locks' topics to the locks; what a lock says only ever puts someone at home, and changes nothing in it.
 
-What's open: the web UI has no accounts, so anyone on the home network (a guest, a compromised device) can play every
-recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS
-with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins are trusted.
-The systemd services run unconfined.
+What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device)
+can play every recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs
+inside TARS with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins
+are trusted. The systemd services run unconfined.
 
 **Plan, most worth it first:**
 
 1. **The threat model.** Written: [security](security.md) lists who might attack, the defense and test for each,
    and what's open, and [SECURITY.md](../SECURITY.md) says how to report a vulnerability. It's kept current as each
    item below lands.
-2. **The web UI.** Passkey sign-in per household member, with HttpOnly, SameSite=Strict session cookies; HTTPS from
-   `tailscale cert` (the browser's login page too); served on the tailnet only, not the LAN, with Tailscale's access
-   rules as the outer wall. A test that walks every route and fails if one answers without a session, so a new
-   endpoint can't forget it. Step 5's page to edit automations needs this first.
+2. **The web UI.** Built: passkey sign-in per household member from one-time invites, HttpOnly, SameSite=Strict
+   session cookies, HTTPS from `tailscale cert`, and a test that walks every route and fails if one answers without a
+   session ([signing in](web-ui.md#signing-in)). Left: turning it on at home, the browser's login page on HTTPS too,
+   and serving on the tailnet only, not the LAN, with Tailscale's access rules as the outer wall.
 3. **The AI's own risks.** Started: a reply that read the web changes nothing and reads no one's past, and a chat
    reads only its own person's conversations. Still: no text from outside (web search results, a web page the browser reads, Telegram, a sent
    file) can lead to an unlock, turning off an alarm or sending data out; an eval set of injection attempts that
    must all fail (it calls the models: cost estimate first). No tool lets a model read the recordings, `.env` or
-   someone else's conversations. Against a replayed or cloned voice: a spoken challenge (a code word or a random
-   number) before unlocking.
+   someone else's conversations. Against a replayed or cloned voice: built, three random digits said back by the same
+   voice before unlocking ([unlocking](home.md#unlocking)).
 4. **What plugins and automations may do.** Each declares what it needs (the secrets by name, the devices, network
    access) and gets only that from `context`; the actions that matter most (unlock, send something out of the house,
    order) are never theirs unless granted by name. Step 4 builds on this; step 5's rules go through the same checks.
@@ -131,8 +132,9 @@ The systemd services run unconfined.
    overwritten files for a while, and a key that can't delete old versions or change that rule, so a stolen key
    can't wipe the backup. Disk encryption on a Pi with no secure key store is weak (the key has to be on it to boot
    unattended): written down as an accepted risk.
-7. **Supply chain.** pip-audit (or Dependabot), bandit or semgrep, and an SBOM in CI, alongside `uv.lock`'s hashes;
-   signed releases for step 4's updates.
+7. **Supply chain.** Built: pip-audit, `npm audit` and bandit fail CI, and each run keeps SBOMs (Python and web
+   UI), alongside `uv.lock`'s hashes ([security](security.md#the-code-tars-runs-its-dependencies)). Left: a scheduled
+   audit between pushes, and signed releases for step 4's updates.
 8. **The mic itself.** A hardware mute switch (built: the speakerphone's mute stops TARS listening at all), and a
    light while audio is leaving the house.
 
@@ -234,8 +236,9 @@ skill and preference, where it came from and what it did. Limits are in code: un
 
 **Left:**
 
-- **Dry runs.** Checked against the last weeks of the event log before it's kept, said only when it matters ("that
-  would have gone off 30 times last week"), so a trigger that's too eager is caught before it's annoying.
+- **Dry runs.** Built for device triggers: replayed over the device's last week of Home Assistant history before
+  it's kept, and said only when it matters ("that would have gone off 30 times last week")
+  ([skills](skills.md)). Left: who's home keeps no history yet, so coming-and-going triggers aren't dry-run.
 - **Editing on the page.** Pausing, changing and deleting from the Skills page needs step 2's sign-in first.
 - **Habits offered**, not only asked for: [noticing routines](#planned-noticing-routines).
 

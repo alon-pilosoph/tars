@@ -162,9 +162,17 @@ class WebConfig:
     # More names the web UI may be reached by, besides IP addresses, localhost, *.local, *.ts.net and single-label
     # names (which always work). Requests to any other name are refused.
     allowed_hosts: list[str] = field(default_factory=list)
-    # Where a phone opens the web UI, for the links TARS sends (recording sessions): "http://homepi.local:8080".
-    # "": this machine's Tailscale address if it has one, else its address at home, on the web UI's port.
+    # Where a phone opens the web UI, for the links TARS sends (recording sessions, sign-in invites):
+    # "https://homepi.tailnet.ts.net:8080". "": this machine's Tailscale address if it has one, else its address at
+    # home, on the web UI's port.
     link: str = ""
+    # Signing in with a passkey (docs/web-ui.md#signing-in): every page and API needs a session, made with a passkey
+    # from a one-time invite (voice-assistant --web-invite NAME). Passkeys need HTTPS: tls_cert and tls_key.
+    sign_in: bool = False
+    # Serve the web UI over HTTPS with this certificate and its key, paths from the project folder (a Tailscale one:
+    # tailscale cert). "": plain HTTP.
+    tls_cert: str = ""
+    tls_key: str = ""
 
 
 @dataclass
@@ -224,6 +232,9 @@ class HomeConfig:
     unlock_voices: list[str] = field(default_factory=list)
     # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
     unlock_threshold: float = 0.6
+    # Before unlocking by voice, TARS asks for a few random digits, said back by the same voice within half a minute:
+    # a recording of someone saying "unlock" can't answer a number it's never heard (docs/home.md#unlocking).
+    unlock_challenge: bool = True
     # Who may unlock from their own Telegram chat, by their names in [telegram] people, when their own message says
     # "unlock". Empty = nobody.
     unlock_chats: list[str] = field(default_factory=list)
@@ -602,6 +613,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
+    if bool(cfg.web.tls_cert) != bool(cfg.web.tls_key):
+        problems.append("[web] tls_cert and tls_key go together: the certificate and its key")
     return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence)
 
 

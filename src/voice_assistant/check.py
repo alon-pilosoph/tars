@@ -7,6 +7,7 @@ the voice without playing it and doesn't listen.
 """
 
 import functools
+import ipaddress
 import os
 import platform
 import re
@@ -19,6 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import numpy as np
 from dotenv import dotenv_values
@@ -329,12 +331,16 @@ def unit_exec_start(unit: str) -> str:
         return ""
 
 
-def web(get: Callable[[str], int], port: int = WEB_PORT) -> Result:
+def web(get: Callable[[str], int], port: int = WEB_PORT, cfg: Config | None = None) -> Result | list[Result]:
+    """Whether the web UI answers, and, with `cfg`, whether it asks anyone to sign in ([web] sign_in)."""
+    https = bool(cfg and cfg.web.tls_cert)
     try:
-        status = get(f"http://127.0.0.1:{port}/api/status")
+        status = get(f"{'https' if https else 'http'}://127.0.0.1:{port}/api/status")
     except Exception:  # noqa: BLE001 - refused, timed out, not HTTP: not running, as far as TARS can tell
         status = None
-    if status != 200:
+    if cfg is not None:
+        return [web(lambda url: status, port), sign_in(cfg, https)]
+    if status not in (200, 401):  # 401: it's running, and asks for a session
         return Result(
             "Web UI",
             WARN,
@@ -342,6 +348,41 @@ def web(get: Callable[[str], int], port: int = WEB_PORT) -> Result:
             "systemctl --user start voice-assistant-web on the Pi, or voice-assistant --web",
         )
     return Result("Web UI", OK, f"running on port {port}")
+
+
+def sign_in(cfg: Config, https: bool) -> Result:
+    name = "Web UI sign-in"
+    if not cfg.web.sign_in:
+        return Result(
+            name,
+            WARN,
+            "off: anyone on the home network can play the recordings and read the conversations",
+            "[web] sign_in = true, with tls_cert and tls_key (docs/web-ui.md#signing-in)",
+        )
+    if not https:
+        return Result(
+            name,
+            FAIL,
+            "on, without HTTPS: browsers make and use passkeys only over HTTPS (or on localhost)",
+            "[web] tls_cert and tls_key, from tailscale cert (docs/web-ui.md#signing-in)",
+        )
+    if problem := link_problem(cfg.web.link):
+        return Result(name, FAIL, f"on, but {problem}", '[web] link = "https://<its name>.ts.net:8080"')
+    return Result(name, OK, "a passkey and a session for every page")
+
+
+def link_problem(link: str) -> str | None:
+    """Why invite links made from [web] link can't make a passkey; None if they can."""
+    if not link:
+        return "[web] link is empty: invite links would use an address, and passkeys need a name"
+    parts = urlsplit(link)
+    if parts.scheme != "https":
+        return "[web] link isn't https://: browsers make passkeys only over HTTPS"
+    try:
+        ipaddress.ip_address(parts.hostname or "")
+    except ValueError:
+        return None
+    return "[web] link is an address: passkeys need a name"
 
 
 def telegram(cfg: Config, token: str | None, me: Callable[[str], dict]) -> Result:
@@ -543,11 +584,12 @@ def systemd_state(unit: str) -> str | None:
     return out.stdout.strip() or "unknown"
 
 
-def http_status(url: str, headers: dict | None = None) -> int:
-    """The HTTP status, whatever it is; httpx.TransportError if nothing answered."""
+def http_status(url: str, headers: dict | None = None, verify: bool = True) -> int:
+    """The HTTP status, whatever it is; httpx.TransportError if nothing answered. `verify`: False for this machine's
+    own web UI, asked at 127.0.0.1, which its certificate (made for its name) doesn't cover."""
     import httpx
 
-    return httpx.get(url, headers=headers, timeout=5, follow_redirects=True).status_code
+    return httpx.get(url, headers=headers, timeout=5, follow_redirects=True, verify=verify).status_code
 
 
 def service_status(name: str, key: str, status: int, took: float) -> Result:
@@ -985,7 +1027,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ("Voice", speaking),
         ("Microphone", (lambda: Result("Microphone", SKIP, "not listened to (a silent check)")) if silent else listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
-        ("Web UI", lambda: web(http_status, web_port())),
+        ("Web UI", lambda: web(functools.partial(http_status, verify=False), web_port(), cfg)),
         ("Home Assistant", hass_check),
         ("The house", devices),
         ("TARS's speaker", speaker_volume),

@@ -3,6 +3,8 @@
     uv run python tools/webui_demo.py build /tmp/tars_demo       # the demo log: wakes, voices, conversations, items
     uv run python tools/webui_demo.py serve /tmp/tars_demo 8099  # serve it, with a trained pair to switch back from
     uv run python tools/webui_demo.py serve /tmp/tars_empty 8098 # an empty one, for the empty states
+    uv run python tools/webui_demo.py serve /tmp/tars_demo 8099 --sign-in  # with [web] sign_in: passkeys only
+    uv run python tools/webui_demo.py invite /tmp/tars_demo Stacey         # a one-time invite token for it
 
 Its audio is tools/demo_audio/ (synthetic voices, committed), so it builds the same on any machine.
 """
@@ -42,6 +44,7 @@ from voice_assistant.events import (
 from voice_assistant.health import Health, Heartbeat, Services
 from voice_assistant.llm import FALLBACK, LOOKED_UP, QUICK
 from voice_assistant.reminders import MESSAGE, REMINDER, TIMER, VOICE, WEB, NewReminder, Reminders
+from voice_assistant.signin import Accounts
 from voice_assistant.speaker import SpeakerID
 from voice_assistant.verify import ANSWER, ASK, IGNORE
 from voice_assistant.versions import ABOUT, CHECK, MODEL, ModelVersions
@@ -450,11 +453,18 @@ def main() -> None:
     serve_it = commands.add_parser("serve", help="serve a demo log")
     serve_it.add_argument("folder", type=Path)
     serve_it.add_argument("port", type=int)
+    serve_it.add_argument("--sign-in", action="store_true", help="every route needs a passkey's session")
+    invite = commands.add_parser("invite", help="print a one-time invite token, for --sign-in")
+    invite.add_argument("folder", type=Path)
+    invite.add_argument("person")
     args = parser.parse_args()
     if args.command == "build":
         build(args.folder)
         return
     log = EventLog(args.folder / "events")
+    if args.command == "invite":
+        print(Accounts(log.store).invite(args.person))
+        return
     cfg = load_config(REPO / "config.toml")
     Heartbeat(log.folder, "web", REPO).start()  # the assistant's is never seen: it isn't running
     serve(
@@ -466,6 +476,7 @@ def main() -> None:
         reminders=Reminders(log.store),
         voice_names=lambda: ["alon"],  # the demo's voiceprints
         health=Health(log, ["assistant", "web"], Services(demo_services, demo_page), lambda unit: None).report,
+        accounts=Accounts(log.store) if args.sign_in else None,
     )
 
 
