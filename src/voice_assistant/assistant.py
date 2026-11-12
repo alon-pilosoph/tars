@@ -6,6 +6,7 @@ and kept on disk, so they play at once, even offline.
 """
 
 import random
+import re
 import threading
 import time
 import traceback
@@ -26,9 +27,20 @@ from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .echo import without_echo
 from .errors import SERVICE_FAILURES
-from .home import Request
+from .home import ONE_MOMENT, Request
 from .journal import Journal
-from .llm import ASKED_TAG, FOLLOW_UP_TAG, REMINDER_TAG, SKIP, Brain, split_ack, split_skip
+from .llm import (
+    ASKED_TAG,
+    FILLERS,
+    FOLLOW_UP_TAG,
+    PARDON,
+    REMINDER_TAG,
+    SKIP,
+    THINKING,
+    Brain,
+    split_ack,
+    split_skip,
+)
 from .phrases import Audio, Phrases
 from .recorder import UtteranceRecorder
 from .recording import NO_SPEECH, SILENCE, TAP
@@ -62,6 +74,7 @@ PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes, <name>?" after the wake word
 ANSWER_ONLY_S = 6.0
 MUTED_POLL_S = 0.25  # muted, how often what's due is looked for (unmuting ends the wait at once)
 ERROR_LINE_WAIT_S = 1.0
+AFTER_NAME_WAIT_S = 1.0  # the longest the first request waits to know what followed the name (about 0.25 s)
 PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes, Alon?")
 UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
 VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
@@ -89,6 +102,48 @@ NOBODY = Identified(None, None, None)
 def asks(lines: list[str]) -> bool:
     """Whether what TARS said on its own asks something, so it waits for an answer: even muted, it's heard."""
     return any("?" in line for line in lines)
+
+
+# fmt: off
+ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+        "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+TENS = ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+# Not choices, though they stand next to "or": "the kitchen or the bedroom?", "is that all, or is there more?"
+NOT_CHOICES = {"a", "an", "the", "is", "are", "was", "do", "does", "did", "you", "i", "it", "that", "this", "there",
+               "my", "your", "me", "not", "something", "else"}
+# fmt: on
+MOST_EXPECTED = 12
+
+
+def _spoken(number: int) -> str:
+    if number < 20:
+        return ONES[number]
+    tens, ones = divmod(number, 10)
+    return TENS[tens - 2] + (f"-{ONES[ones]}" if ones else "")
+
+
+def offered(said: str) -> tuple[str, ...]:
+    """The choices TARS's last question offered, for speech to text to lean towards: an answer to it comes quickly,
+    and its first sound is easily lost ("twelve" heard as "well"). "Which channel, 11 or 12?" -> 11, eleven, 12,
+    twelve. Empty unless it ended on an either-or."""
+    question = re.search(r"[^.?!]*\?\s*$", said)
+    if not question or not re.search(r"\bor\b", question[0], re.IGNORECASE):
+        return ()
+    words = re.findall(r"[\w'-]+", question[0])
+    found: list[str] = []
+    for i, word in enumerate(words):
+        if word.lower() != "or":
+            continue
+        before = [w for w in words[:i] if w.lower() not in NOT_CHOICES][-1:]
+        after = [w for w in words[i + 1 :] if w.lower() not in NOT_CHOICES][:1]
+        found += before + after
+    found += [w for w in words if w.isdigit()]  # "11, 12 or 13": the numbers before the last "or" too
+    terms = []
+    for word in found:
+        terms.append(word)
+        if word.isdigit() and int(word) < 100:
+            terms.append(_spoken(int(word)))
+    return tuple(dict.fromkeys(terms))[:MOST_EXPECTED]
 
 
 class Announcements:
@@ -159,6 +214,7 @@ class Answer:
     t_asked: float = 0.0
     reply: StreamedReply | None = None  # None: nothing to say (no words, or not meant for TARS)
     skipped: bool = False  # an overheard follow-up the brain chose not to answer
+    pardon: bool = False  # the brain skipped a request said to TARS: the reply is PARDON
     spoken: list[str] = field(default_factory=list)
     error: Exception | None = None  # the brain failed to start the reply; raised once what was heard is written down
     acks: list[int] | None = None  # the reply acknowledged reminders: these, or [] for the ones just said
@@ -208,6 +264,7 @@ class Assistant:
         self._woke_at: float | None = None  # when the wake word was confirmed, for how soon TARS greeted it
         self._greet_s: float | None = None
         self._only_echo = False  # the last request heard was nothing but a trace of TARS's own greeting
+        self._last_reply = ""  # what TARS last answered in this conversation
         self._identifying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="speaker-id")
         self._thinking = threading.Lock()  # drafts take turns
         self.phrases = Phrases(voice, phrase_folder, clock)
@@ -408,13 +465,14 @@ class Assistant:
                 continue
             self._woke_at, self._greet_s = time.monotonic(), None
             print("Listening...")
-            self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet)
+            self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet, after_name=self.trigger.after_name)
 
     def prepare_phrases(self) -> None:
         """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
         people enrolled since and retry lines that failed."""
         names = list(self.speaker_id.voiceprints) if self.speaker_id else []
-        for line in [ASK_PHRASE, greeting(None), *self.error_lines] + [greeting(n) for n in names]:
+        lines = [ASK_PHRASE, PARDON, greeting(None), *self.error_lines, *FILLERS, THINKING, ONE_MOMENT]
+        for line in lines + [greeting(n) for n in names]:
             self.phrases.get(line, ahead=True)
 
     def say(
@@ -506,11 +564,15 @@ class Assistant:
         self.brain.remember_said(" ".join(said))
         listens = bool(follow_up_s) and asks(said)
         with self._open_for_answer(listens) as answer_s:
-            heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if listens else None
+            heard = (
+                self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(" ".join(said)))
+                if listens
+                else None
+            )
             if heard is None:
                 self.journal.nobody_spoke()
                 return
-            self.converse(0.0 if answer_s else follow_up_s, first=heard)
+            self.converse(0.0 if answer_s else follow_up_s, first=heard, asked=" ".join(said))
 
     def run_skills(self, follow_up_s: float = 0.0) -> None:
         """Each skill whose time has come, or that something happening set off: a turn of its own, with its
@@ -523,8 +585,9 @@ class Assistant:
         for due in clock.take() if clock else []:
             skill, house = due.skill, Answers()
             print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'})")
-            # Their feeds and preferences; and what the house answers, for whether a one-off happened.
-            whose = Request(speaker=None if skill.household else skill.owner, changed=house)
+            # Their feeds and preferences; what the house answers, for whether a one-off happened; and one a door's
+            # lock set off changes nothing in the house.
+            whose = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
             try:
                 asked = on_its_own(skill, due.when, SKIP, due.why)
                 skipped, pieces = split_skip(self.brain.stream_reply(asked, whose))
@@ -562,12 +625,14 @@ class Assistant:
             self.journal.said(text)
             with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
                 heard = (
-                    self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s) if follow_up_s else None
+                    self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(text))
+                    if follow_up_s
+                    else None
                 )
                 if heard is None:
                     self.journal.nobody_spoke()
                     continue
-                self.converse(0.0 if answer_s else follow_up_s, first=heard)
+                self.converse(0.0 if answer_s else follow_up_s, first=heard, asked=text)
 
     def say_reminders(self, follow_up_s: float = 0.0) -> None:
         """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""
@@ -698,10 +763,11 @@ class Assistant:
         if self.say(text, on_first_audio=self._greeted):
             self.journal.said(text)
 
-    def greet_and_listen(self) -> Utterance | None:
+    def greet_and_listen(self, after_name: Future[np.ndarray] | None = None) -> Utterance | None:
         """Says "Yes, <name>?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
-        waits for the greeting, as for anything TARS says."""
+        waits for the greeting, as for anything TARS says. `after_name`: what followed the wake word before listening
+        began; dropped when the mic waits for the greeting, as what's heard after it doesn't run on from the name."""
         if not (self.mic and self.mic.echo and self.mic.echo.working):
             self.greet()
             return self.listen()
@@ -711,7 +777,7 @@ class Assistant:
             audio = self.phrases.get(text).result(timeout=PHRASE_WAIT_S)
         except Exception as e:  # noqa: BLE001 - no greeting, but still listening
             print(f"(couldn't say {text!r}: {e!r})")
-            return self.listen()
+            return self.listen(after_name=after_name)
         failed: list[BaseException] = []
 
         def play() -> None:
@@ -723,7 +789,7 @@ class Assistant:
         playing = threading.Thread(target=play, daemon=True, name="greeting")
         playing.start()
         try:
-            heard = self.listen(echo_of=text)
+            heard = self.listen(echo_of=text, after_name=after_name)
         finally:
             playing.join()
         if failed:
@@ -757,10 +823,14 @@ class Assistant:
         tag: str | None = None,
         echo_of: str | None = None,
         max_s: float | None = None,
+        after_name: Future[np.ndarray] | None = None,
+        expect: tuple[str, ...] = (),
     ) -> Utterance | None:
         """Records one utterance, transcribing it as it comes, and starts answering at each pause in case it's the
-        end. `max_s`: the longest it records, instead of the configured longest."""
-        session = self.transcriber.session()
+        end. `max_s`: the longest it records, instead of the configured longest. `after_name`: what followed the wake
+        word in the wake window: a request said in one breath with the name starts there. `expect`: words likely
+        said, the choices TARS just offered."""
+        session = self.transcriber.session(expect)
         draft: Draft[Answer] | None = None
 
         def paused(pcm: bytes) -> None:
@@ -786,6 +856,7 @@ class Assistant:
                 turn_state=session.turn_state,
                 stop=self._stop.is_set,
                 max_s=max_s,
+                lead=_found(after_name),
             )
         except BaseException:
             # Every draft must be settled, or the next one would wait behind it.
@@ -807,35 +878,51 @@ class Assistant:
         )
 
     def converse(
-        self, follow_up_s: float, first: Utterance | None = None, greet_after_s: float = 0.0, greet: str = PAUSE
+        self,
+        follow_up_s: float,
+        first: Utterance | None = None,
+        greet_after_s: float = 0.0,
+        greet: str = PAUSE,
+        after_name: Future[np.ndarray] | None = None,
+        asked: str = "",
     ) -> None:
         """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
 
         `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes, <name>?":
-        ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER.
+        ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER. `after_name`: what
+        followed the wake word before listening began, where the request starts if it was said in one breath. `asked`:
+        what TARS said on its own that `first` answers, so an answer that comes out as no words is asked for again.
         """
         # While they're still talking, get the reply's connections ready.
         threading.Thread(target=self.brain.warm, daemon=True, name="brain-warm").start()
         self.voice.warm()
         self.prepare_phrases()
         try:
-            self._converse(follow_up_s, first, greet_after_s, greet)
+            self._converse(follow_up_s, first, greet_after_s, greet, after_name, asked)
         finally:
             self._just_said = []
             self.journal.end_conversation()
 
-    def _converse(self, follow_up_s: float, first: Utterance | None, greet_after_s: float, greet: str) -> None:
-        heard = first
+    def _converse(
+        self,
+        follow_up_s: float,
+        first: Utterance | None,
+        greet_after_s: float,
+        greet: str,
+        after_name: Future[np.ndarray] | None,
+        asked: str,
+    ) -> None:
+        heard, pardoned, self._last_reply = first, False, asked
         if heard is None:
             if greet == ALWAYS:
-                heard = self.greet_and_listen()
+                heard = self.greet_and_listen(after_name)
             elif greet == PAUSE and greet_after_s:
-                heard = self.listen(start_timeout_s=greet_after_s)
+                heard = self.listen(start_timeout_s=greet_after_s, after_name=after_name)
                 if heard is None:
                     self.greet()
                     heard = self.listen()
             else:
-                heard = self.listen()
+                heard = self.listen(after_name=after_name)
         if heard is None:
             print("(didn't hear anything)")
             self.journal.nobody_spoke()
@@ -863,6 +950,20 @@ class Assistant:
                 if heard is None:
                     return
                 continue
+            if not answered and self._only_echo and heard.follow_up and asks([self._last_reply]) and not pardoned:
+                # Someone spoke after TARS asked, and no words came of it: an answer said as the question ended, its
+                # start cut off ("twelve" to "11 or 12?"). Dropped, they'd wait for something that never happens.
+                print("(heard someone after asking, but no words: asking again)")
+                pardoned = True
+                print(f"Bot:  {PARDON}")
+                if self.say(PARDON):
+                    self.journal.tars_said(PARDON)
+                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, expect=offered(self._last_reply))
+                if heard is None:
+                    return
+                continue
+            if answered:
+                pardoned = False
             held = answered and self._say_held(self._last_who)
             if held:  # what's said next may well be about the message: listen for it, at least the ack window
                 heard = self.listen(
@@ -872,7 +973,7 @@ class Assistant:
                 return
             else:
                 print(f"(listening {follow_up_s:.0f}s for a follow-up)")
-                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True)
+                heard = self.listen(start_timeout_s=follow_up_s, follow_up=True, expect=offered(self._last_reply))
             if heard is None:
                 return
 
@@ -897,7 +998,8 @@ class Assistant:
     def handle(self, heard: Utterance) -> bool:
         """Returns False if there was nothing meant for TARS to answer."""
         # Latency counts from when the speaker actually stopped, including the silence waited through.
-        t_stopped_talking = time.perf_counter() - heard.silence_s
+        t_over = time.perf_counter()
+        t_stopped_talking = t_over - heard.silence_s
         self.timings = {}
         answer: Answer | None = None
         try:
@@ -923,9 +1025,14 @@ class Assistant:
                 heard.draft.keep()
                 return False
             self.timings = {"end_of_speech": heard.silence_s, "stt": answer.stt_s}
+            if answer.t_asked:  # how long before the turn was over the brain was asked; 0: only after it was over
+                self.timings["head_start"] = max(0.0, t_over - answer.t_asked)
             if self._greet_s is not None:  # the conversation's first request: how soon TARS greeted the wake word
                 self.timings["greet"], self._greet_s = self._greet_s, None
             said = self._speak(answer, t_stopped_talking)
+            self._last_reply = said.text
+            if answer.pardon:  # the repeat answers it: not an untethered follow-up to skip
+                self.brain.remember_said(PARDON)
             heard.draft.keep()
         except BaseException as e:
             # Unheard, or only half heard: stop it, and leave the brain as if it was never asked.
@@ -1022,11 +1129,13 @@ class Assistant:
         answer.asked, answer.t_asked = True, time.perf_counter()
         try:
             pieces = self.brain.stream_reply(prompt, request)
-            if may_skip:
-                answer.skipped, pieces = split_skip(pieces)
-                if answer.skipped:
-                    self.brain.forget_last()  # overheard conversation shouldn't linger in the history
+            skipped, pieces = split_skip(pieces)
+            if skipped:
+                self.brain.forget_last()  # overheard conversation shouldn't linger in the history
+                if may_skip:
+                    answer.skipped = True
                     return answer
+                pieces, answer.pardon = iter([PARDON]), True  # said to TARS by name: asked again, never gone quiet on
             if self.reminders:
                 answer.acks, pieces = split_ack(pieces)
             pieces = _tee(pieces, answer.spoken)
@@ -1035,7 +1144,10 @@ class Assistant:
             mark_failed_at(e, LLM)
             raise
         answer.reply = StreamedReply(
-            pieces, self.voice, lambda sentence: answer.sentences.append((time.perf_counter(), sentence))
+            pieces,
+            self.voice,
+            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+            self.phrases.made_ahead,
         )
         return answer
 
@@ -1101,15 +1213,31 @@ class Assistant:
         labels = {
             "greet": "greeted",
             "end_of_speech": "waited",
+            "head_start": "answer started early by",
             "stt": "stt",
             "llm": "llm first sentence",
             "tts": "tts first audio",
         }
-        parts = [f"{labels[k]} {v:.2f}s" for k, v in self.timings.items() if k in labels]
+        parts = [
+            f"{labels[k]} {v:.2f}s"
+            for k, v in self.timings.items()
+            if k in labels and not (k == "head_start" and round(v, 2) == 0)
+        ]
         if "total" in self.timings:
             # With the answer started during the pause, the stages overlap the wait instead of adding to it.
             parts.append(f"TOTAL to first sound {self.timings['total']:.2f}s")
         print(f"[{' | '.join(parts)}]")
+
+
+def _found(after_name: Future[np.ndarray] | None) -> np.ndarray | None:
+    """What followed the name, once it's been found; None if it couldn't be, and the request is heard from the mic."""
+    if after_name is None:
+        return None
+    try:
+        return after_name.result(timeout=AFTER_NAME_WAIT_S)
+    except Exception as e:  # noqa: BLE001 - only what came before listening is lost, as it always was
+        print(f"(couldn't tell where the name ended: {e!r})")
+        return None
 
 
 def _tee(pieces: Iterator[str], into: list[str]) -> Iterator[str]:

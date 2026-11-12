@@ -65,7 +65,7 @@ class ExpectedHome:
     """A change a turn should make in the house: the device and action, and any of the settings, if given."""
 
     device: str
-    action: str
+    action: str  # a regular expression, for when either of two will do: "on|set"
     minutes: float | None = None
     temperature: int | None = None
     mode: str | None = None
@@ -76,7 +76,7 @@ class ExpectedHome:
     goal: str | None = None  # a regular expression the goal has to match (any case)
 
     def matches(self, call: dict) -> bool:
-        if (self.device, self.action) != (call.get("device"), call.get("action")):
+        if self.device != call.get("device") or not re.fullmatch(self.action, str(call.get("action"))):
             return False
         loose = ("goal", "title")
         wanted = {k: v for k, v in vars(self).items() if k not in ("device", "action", *loose) and v is not None}
@@ -233,7 +233,7 @@ def _turn(raw: dict, where: str) -> Turn:
                 {"device", "action", "minutes", "temperature", "mode", "fan", "button", "app", "title", "goal"},
                 f"{where}, home",
             )
-            if h.get("action") not in ACTIONS or h["action"] in READS:
+            if any(a not in ACTIONS or a in READS for a in str(h.get("action")).split("|")):
                 raise ValueError(f"{where}, home: action must be one of {[a for a in ACTIONS if a not in READS]}")
             home.append(ExpectedHome(**{**h, "device": str(h["device"]).lower()}))
     return Turn(

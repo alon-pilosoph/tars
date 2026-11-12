@@ -11,7 +11,7 @@ the model, which carries them out with the tools it already has.
 | "Every day at 19:55, ask me if I want the news on" | a skill that runs by itself, said aloud at home |
 | "Turn off the AC now and back on at 5am" / "in two hours, turn off the TV" | done now, and done once at that time, by TARS itself, then gone |
 | "Every morning at 7:30, send me what's new in gaming" | one posted in your own chat instead |
-| "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out |
+| "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out; as they walk in, when they open the front door, though then it only greets and reads the house, changing nothing ([the front door](presence.md#the-front-door)) |
 | "If the CO2 goes over 1000, turn on the purifier and tell me" / "when the front door is unlocked, …" | run when a device changes |
 | "Tell me when Alon teaches you something new" | runs when TARS is updated, and is told what changed: in your chat, or aloud |
 | "What did you do today?" | what skills did by themselves, when, and why |
@@ -54,6 +54,12 @@ the model, which carries them out with the tools it already has.
   what it did ("Done: the AC's back on, cool at 23°"), where it was asked; if it didn't happen, it's tried again,
   and then whoever asked is told. See [once, later](#once-later). A reminder is only for what someone asked to be
   reminded of.
+- **Dry runs**: a skill that waits on a device is replayed over the device's last 7 days before it's kept. Its Home
+  Assistant history is worded as its status is now (`Entity.past`), and the same rule the clock uses, cooldown and
+  all, counts when it would have run; a status gone again within the clock's 10 seconds isn't counted, as the clock
+  could miss it. The model is told ("it would have run 41 times, most often around 16:00", the hour only from three
+  runs) and says so only when it matters: far more often than wanted, or never, offering to change it. A device Home
+  Assistant doesn't keep a history of (an Android TV, a plugin's without `past`) is kept without one.
 - **On TARS being updated**: a skill can run when TARS itself is updated, told what changed from the version it last
   saw to the one running (each change's PR title, from the checkout's git history, [`tars` tool](architecture.md)),
   so "tell me when you learn something new" is said in plain words, as what someone can now ask for. Each such skill
@@ -62,7 +68,10 @@ the model, which carries them out with the tools it already has.
 - **What it did** is kept: each run by itself, when, why, and what it said (`skill_runs`), so "what did you do
   today?" has an answer; a one-off that didn't happen is kept as failed, with what its asker was told.
 - **The tools keep their own rules**, whatever a skill says: unlocking needs the words said, by a voice trusted with
-  it, so no skill opens the door; an order still waits for its tap on Telegram.
+  it, so no skill opens the door; an order still waits for its tap on Telegram. A skill set off by someone opening
+  the front door's lock ("Stacey just came home, opening the front door") reads the house but changes nothing in it,
+  whatever it says: what a lock says over MQTT is only ever who came in
+  ([the front door](presence.md#the-front-door)).
 
 The web UI's **Skills** page shows all of it, and what skills did by themselves lately; a skill can be paused,
 resumed or deleted there, and a preference forgotten ([the web UI](web-ui.md)).

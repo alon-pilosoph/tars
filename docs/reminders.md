@@ -68,9 +68,9 @@ Anyone can acknowledge anything; the status records who.
 The **Reminders** page sets them (kind, text, for whom, from whom, when, whether to say it again until someone says
 got it, and how often), and shows each one's status: due, ringing, said 2 of 4 times, acknowledged (by whom, how,
 when), missed, or stopped; with Got it (Turn off for a ringing timer), Again in 10 min, and Stop. Away from home the
-page is reachable over Tailscale, so that's how they're set remotely. It has no accounts, so a message set there asks
-who it's from, and an acknowledgement made there shows as "on this page". A reminder that was said, and what was said
-back, show on Home like any conversation.
+page is reachable over Tailscale, so that's how they're set remotely. A message set there asks who it's from (a
+session says who's signed in, but the page is the household's), and an acknowledgement made there shows as "on this
+page". A reminder that was said, and what was said back, show on Home like any conversation.
 
 ### On Telegram
 

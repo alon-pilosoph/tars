@@ -99,7 +99,9 @@ Followed through to OpenAI (`capability_bench --follow`), a web question's first
 request, from home and from the US alike: Qwen hands over in about 0.4 s, OpenAI starts searching about a second
 later, and the search takes 1-3 s more. What's slow is the search, not the hand-off. TARS says "Looking it up." the
 moment a search starts, but didn't when Qwen's hand-off began with a blank line, which it often does. With that
-fixed, the first words come after 1.5 s (median), and the answer itself after 4.3 s.
+fixed, the first words come after 1.5 s (median), and the answer itself after 4.3 s. Now every `<look-up>` hand-off
+starts with a line of Qwen's choosing ("Let's see."), said the moment it hands over, before OpenAI has started; a
+`<ponder>` hand-off starts with "Let me think about that for a moment." instead.
 
 ## Alternatives evaluated
 

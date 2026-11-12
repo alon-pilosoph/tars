@@ -12,7 +12,7 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 | Part | Result |
 |---|---|
 | [Wake word](docs/wake-word.md) | Two stages, on the device: 97% of held-out voices in quiet, 97% of the owner's (never heard), 1 false answer in an hour of TV |
-| [Response time](docs/latency.md) | 1.2-1.5 s from you stopping to the first sound, down from about 3.5 s |
+| [Response time](docs/latency.md) | 2.2 s from you stopping to the first sound in use on the Pi; 1.2-1.5 s on a benchmark, down from about 3.5 s |
 | [Quick model](docs/models.md) | Qwen on Cerebras, then OpenAI; 149/156 on the capability benchmark at low reasoning |
 | [Whole conversations](docs/evals.md) | 48 scenarios played through the real brain, hand-offs followed through: 143/145 runs right on the 29 measured so far (from 76/87); run on request from a pull request comment |
 | [Self-learning](docs/self-learning.md) | Retrains its wake models from the household's use, installs them only if better |
@@ -28,11 +28,12 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **Reminders, timers and messages** that repeat until someone says "got it" ([reminders](docs/reminders.md)).
 - **Works the house** through Home Assistant: locks, switches, lights, covers, the AC, the TV, and sensors with their
   history ("how was the air last night?"). A change is "done" only when the device reports it, nothing is done by a
-  draft, and the door unlocks only for a trusted voice that asked. An agent plays things on an Android TV, checking
-  the screen step by step; anything else is a plugin ([the house](docs/home.md)).
+  draft, and the door unlocks only for a trusted voice that asked, then said back three random digits. An agent plays
+  things on an Android TV, checking the screen step by step; anything else is a plugin ([the house](docs/home.md)).
 - **Knows who's home** from whose phone is on the home Wi-Fi, asking the routers themselves: no app on anyone's
-  phone. A reminder for someone who's out goes to their Telegram chat, and a message waiting for someone is said once
-  they're back ([who's home](docs/presence.md)).
+  phone; and from the front door's Nuki, whose keys it learns, so whoever unlocks it is home as they walk in. A
+  reminder for someone who's out goes to their Telegram chat, and a message waiting for someone is said once they're
+  back ([who's home](docs/presence.md)).
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
   To know someone from the start, TARS sends them a link to a short recording session on its own speakerphone
   ([recording sessions](docs/web-ui.md#recording-sessions)).
@@ -82,7 +83,8 @@ uv run voice-assistant --web           # in a second terminal: the web UI at htt
 ```
 
 Also `--ptt` (press Enter instead of the wake word), `--text` (type, hear answers) and `--list-devices`. On a Pi,
-`deploy/install-pi.sh` does it all ([at home](docs/deployment.md)). The web UI has no accounts: keep it on your network.
+`deploy/install-pi.sh` does it all ([at home](docs/deployment.md)). Keep the web UI on your network, and turn on its
+passkey sign-in ([signing in](docs/web-ui.md#signing-in)).
 
 ## Configure
 
@@ -110,7 +112,7 @@ assistant, edit the system prompt.
 | [The web UI](docs/web-ui.md) | pages, the Refresh rule, the API, checks |
 | [TARS on Telegram](docs/telegram.md) | setting it up, what it does, where reminders go, what Telegram gets |
 | [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
-| [Who's home](docs/presence.md) | phones on the Wi-Fi, asking the routers, the rules, where it's used |
+| [Who's home](docs/presence.md) | phones on the Wi-Fi, asking the routers, the front door's lock, the rules, where it's used |
 | [Skills and preferences](docs/skills.md) | taught by talking: "when I say bedtime…", "every day at 19:55, ask me…", "turn the AC back on at 5am", "when Stacey gets home…", "skip the sports news" |
 | [Feeds](docs/feeds.md) | RSS feeds found, followed and summed up by talking: "find me feeds about gaming", "what's new in gaming?" |
 | [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person |

@@ -13,7 +13,7 @@ household's IR-only AC and TV remotes.
 |---|---|
 | "Is the front door locked?" | the lock's state, read from Home Assistant: "It's locked, and the door's closed." |
 | "Lock the front door" | "One moment." while the bolt turns, then "Locked." once the lock reports it |
-| "Unlock the front door" | unlocked at once, if the voice is one trusted with it ([unlocking](#unlocking)); refused otherwise |
+| "Unlock the front door" | three random digits to say back, then unlocked, if the voice is one trusted with it ([unlocking](#unlocking)); refused otherwise |
 | "Boiler on for 40 minutes" | on, with the device's own timer, so it goes off even if TARS doesn't |
 | "Turn the AC on at 22" | the mode and temperature set; "sent" if Home Assistant can't see the AC (an IR one) |
 | "Close the blinds" | "They're closing.": a cover takes a while, so on its way is enough |
@@ -72,13 +72,23 @@ Unlocking is the one change that needs more than a request. When someone says "u
    - **sure enough**: speaker ID's score is at least `unlock_threshold` (0.6, against 0.5 to greet someone by name);
    - **asked for**: the words heard in that turn include "unlock". The model can't unlock on its own reading of
      something else: "is the door unlocked?", a note, or a web page that says to let someone in.
-4. It waits for the turn to be over, then unlocks, and reads the lock until it reports unlocked.
+4. **The challenge** (`[home] unlock_challenge`, on by default): the tool answers with three random digits instead
+   of unlocking ("ask them to say: four, seven, two"), and TARS asks for them. The next turn, the tool checks it
+   again: the same trusted voice, recognised surely on the answer's own recording, saying those digits and no others
+   (as speech to text wrote them: "four, seven, 2, thanks" counts), within 30 seconds. One try, and only a turn TARS
+   answers counts, not a draft thrown away when they kept talking: other digits, or digits too short to recognise the
+   voice surely, leave it locked. Another voice can't answer someone's digits, or use up their try. A turn that says
+   "unlock" again is a new request, and gets new digits. A recording of someone saying "unlock the front door" can't
+   answer digits it's never heard.
+5. It waits for the turn to be over, then unlocks, and reads the lock until it reports unlocked.
 
 If any check fails, nothing is sent, and the model says why in a sentence ("I'm not sure enough that's you; say it
 again, a little longer"). Locking needs none of this: anyone can lock.
 
-Speaker ID is judged on the request itself, not on a "yes" afterwards: "unlock the front door" is long enough to
-recognise a voice, and a bare "yes" usually isn't.
+Speaker ID is judged on the request itself, and again on the digits, never on a "yes": "unlock the front door" and
+three digits are long enough to recognise a voice, and a bare "yes" usually isn't. A short answer can fall under
+`unlock_threshold`; that uses up the try, and TARS asks them to ask again. The challenge is for the voice only: a chat
+has its own rule.
 
 ## The devices
 
@@ -294,6 +304,9 @@ def setup(settings: dict, context: Context) -> dict:
   their chats (a device that's stopped answering), and `background` is true only in the voice assistant's process,
   the one that runs a device's background work (a watch), so nothing is watched, or told, twice. The TV agent knows no app of its own:
   `tv_agent(box, extra_rules=...)` tells it how one of the household's works (my_house: how Stremio lists streams).
+- **`past(start, end)`** gives its status after each change between two times (Unix seconds), as `(when, status)`
+  in order, worded as `status()` words it, so a skill waiting on it is dry-run over its last week before it's kept
+  ([skills](skills.md)). Without it, or when it raises `HomeError`, the skill is kept without a dry run.
 - **`stop()`** ends anything the device still does in the background, as TARS shuts down or someone takes over; the
   base class's does nothing.
 - **`button(args)`** and **`presses(args)`** read a press as every device does: "volume up" is `volume_up`, and
@@ -406,7 +419,11 @@ About half an hour, on the Pi (or the Mac while you try it).
    ```
 
    It asks for each one's password. A device added later: the same command with just its user, then
-   `docker restart mosquitto`. Then `docker compose --profile mqtt up -d`, and add the MQTT integration.
+   `docker restart mosquitto`. Then `docker compose --profile mqtt up -d`, and add the MQTT integration. Each user
+   may only read and write what [`mosquitto/acl`](../deploy/home-assistant/mosquitto/acl) says: Home Assistant
+   everything; a device only the topics under its own user's name (so name the Nuki's user `nuki`, as its topics are
+   `nuki/...`), and Home Assistant's discovery. A device whose topics are under another name needs its own lines
+   there. TARS's own user, for [the front door](presence.md#the-front-door), is added by `deploy/install-pi.sh`.
 2. **A token for TARS.** In Home Assistant: your profile, Security, Long-lived access tokens, Create token. Put it in
    `.env` as `HOME_ASSISTANT_TOKEN`. A separate Home Assistant user for TARS, not an administrator, limits what the
    token can do.
@@ -419,6 +436,7 @@ About half an hour, on the Pi (or the Mac while you try it).
    url = "http://127.0.0.1:8123"
    unlock_voices = ["alon"]          # names from the web UI's Voices page; empty: nobody unlocks by voice
    unlock_chats = ["Alon"]           # names from [telegram] people; empty: nobody unlocks from a chat
+   unlock_challenge = true           # a voice says back three random digits before it unlocks
 
    [[home.devices]]
    name = "front door"
@@ -505,8 +523,9 @@ and expires on its own. The models never see the picture.
 ## Things to know
 
 - **The token is a key to the house.** It lives in `.env`, which never leaves the machine.
-- **The web UI has no accounts**, and TARS can lock the door and run the boiler from what it hears. Unlocking is the
-  one change it won't make without a voice it knows, sure, asking for it.
+- **The web UI needs a passkey only once [sign-in](web-ui.md#signing-in) is on**, and TARS can lock the door and run
+  the boiler from what it hears. Unlocking is the one change it won't make without a voice it knows, sure, asking for
+  it.
 - **"Sent" is honest, and an IR device's status is a guess.** An IR device can't report back: TARS says it sent the
   command, and its status says it's Home Assistant's guess. So asked to change one, TARS does even when the status
   says it's already that way ("turn off the AC" when it says off): someone may have used its remote since. Asked to
