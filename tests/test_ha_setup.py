@@ -144,6 +144,8 @@ def test_someone_else_cant_confirm_a_removal_and_only_maintainers_may_change_it(
     assert "maintainers is empty" in nobody.call("rename", "d1", "Front door", None, ALON)
     searched = Request(speaker="Alon", by_chat=True, heard="x", read_the_web=True)
     assert do(setup, "rename", searched, target="d1", query="x").startswith("refused: this reply searched the web")
+    by_door = Request(speaker="Alon", by_chat=True, heard="x", by_door="front door")
+    assert do(setup, "rename", by_door, target="d1", query="x").startswith("refused: this ran because the front door")
 
 
 def test_a_device_is_renamed_and_put_in_a_room_by_name(setup):

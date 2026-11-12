@@ -148,10 +148,12 @@ class ScriptedRecorder:
         self.script = list(script)
         self.timeouts = []
         self.longest = []  # each record()'s max_s: None for the configured longest
+        self.leads = []  # each record()'s lead: what followed the wake word, or None
 
     def record(self, mic, start_timeout_s=None, on_pause=None, on_resume=None, max_s=None, **kw):
         self.timeouts.append(start_timeout_s)
         self.longest.append(max_s)
+        self.leads.append(kw.get("lead"))
         entry = self.script.pop(0)
         if not isinstance(entry, list):
             return entry
@@ -171,8 +173,10 @@ class ScriptedTranscriber:
     def __init__(self, texts):
         self.texts = iter(texts)
         self.heard: list[bytes] = []
+        self.expected: list[tuple[str, ...]] = []  # what each session was told to expect
 
-    def session(self):
+    def session(self, expect=()):
+        self.expected.append(expect)
         return BufferedSession(self._transcribe)
 
     def _transcribe(self, pcm: bytes) -> str:
@@ -219,7 +223,7 @@ class RecordingBrain:
 class SilentReply:
     """A StreamedReply that reads the whole reply at once and makes no audio."""
 
-    def __init__(self, pieces, voice, on_sentence):
+    def __init__(self, pieces, voice, on_sentence, made_ahead=None):
         list(pieces)
 
     def __iter__(self):
@@ -239,7 +243,7 @@ def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, c
     voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
     recorder = ScriptedRecorder(utterances)
-    trigger = types.SimpleNamespace(last_audio=None)
+    trigger = types.SimpleNamespace(last_audio=None, after_name=None)
     assistant = Assistant(
         FakeMic(),
         speaker,

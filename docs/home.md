@@ -13,7 +13,7 @@ household's IR-only AC and TV remotes.
 |---|---|
 | "Is the front door locked?" | the lock's state, read from Home Assistant: "It's locked, and the door's closed." |
 | "Lock the front door" | "One moment." while the bolt turns, then "Locked." once the lock reports it |
-| "Unlock the front door" | unlocked at once, if the voice is one trusted with it ([unlocking](#unlocking)); refused otherwise |
+| "Unlock the front door" | three random digits to say back, then unlocked, if the voice is one trusted with it ([unlocking](#unlocking)); refused otherwise |
 | "Boiler on for 40 minutes" | on, with the device's own timer, so it goes off even if TARS doesn't |
 | "Turn the AC on at 22" | the mode and temperature set; "sent" if Home Assistant can't see the AC (an IR one) |
 | "Close the blinds" | "They're closing.": a cover takes a while, so on its way is enough |
@@ -72,13 +72,23 @@ Unlocking is the one change that needs more than a request. When someone says "u
    - **sure enough**: speaker ID's score is at least `unlock_threshold` (0.6, against 0.5 to greet someone by name);
    - **asked for**: the words heard in that turn include "unlock". The model can't unlock on its own reading of
      something else: "is the door unlocked?", a note, or a web page that says to let someone in.
-4. It waits for the turn to be over, then unlocks, and reads the lock until it reports unlocked.
+4. **The challenge** (`[home] unlock_challenge`, on by default): the tool answers with three random digits instead
+   of unlocking ("ask them to say: four, seven, two"), and TARS asks for them. The next turn, the tool checks it
+   again: the same trusted voice, recognised surely on the answer's own recording, saying those digits and no others
+   (as speech to text wrote them: "four, seven, 2, thanks" counts), within 30 seconds. One try, and only a turn TARS
+   answers counts, not a draft thrown away when they kept talking: other digits, or digits too short to recognise the
+   voice surely, leave it locked. Another voice can't answer someone's digits, or use up their try. A turn that says
+   "unlock" again is a new request, and gets new digits. A recording of someone saying "unlock the front door" can't
+   answer digits it's never heard.
+5. It waits for the turn to be over, then unlocks, and reads the lock until it reports unlocked.
 
 If any check fails, nothing is sent, and the model says why in a sentence ("I'm not sure enough that's you; say it
 again, a little longer"). Locking needs none of this: anyone can lock.
 
-Speaker ID is judged on the request itself, not on a "yes" afterwards: "unlock the front door" is long enough to
-recognise a voice, and a bare "yes" usually isn't.
+Speaker ID is judged on the request itself, and again on the digits, never on a "yes": "unlock the front door" and
+three digits are long enough to recognise a voice, and a bare "yes" usually isn't. A short answer can fall under
+`unlock_threshold`; that uses up the try, and TARS asks them to ask again. The challenge is for the voice only: a chat
+has its own rule.
 
 ## The devices
 
@@ -300,6 +310,7 @@ project's folder (`examples.my_house`) or among those installed.
 ```toml
 [home.plugins.my_house]
 module = "examples.my_house"
+grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]   # what it may use
 blaster = { id = "bf0123456789abcdef", address = "192.168.1.50" }   # anything else here is the plugin's own
 
 [[home.devices]]
@@ -307,8 +318,8 @@ name = "AC"
 kind = "my_house.ac"          # the plugin's name, and one of its kinds
 ```
 
-The module has `setup(settings, context)`, which returns its kinds of device, each a function that makes one from
-its `[[home.devices]]` entry:
+The module declares itself, its version and what it needs, and has `setup(settings, context)`, which returns its
+kinds of device, each a function that makes one from its `[[home.devices]]` entry:
 
 ```python
 from voice_assistant.home import Check, Context, Device, ON, OFF, STATUS
@@ -328,9 +339,51 @@ class Kettle(Device):
         return f"done: {self.name} reports boiling"
 
 
+PLUGIN = Manifest(version="1.0.0", needs=("KETTLE_KEY",))  # from voice_assistant.plugins
+
+
 def setup(settings: dict, context: Context) -> dict:
-    return {"kettle": lambda spec: Kettle(spec["name"])}
+    return {"kettle": lambda spec: Kettle(spec["name"], context.secret("KETTLE_KEY"))}
 ```
+
+<a id="plugins"></a>**Declared and granted.** `needs` lists what the plugin uses: a key in `.env` by its name, or
+`home_assistant` (reading it and calling its services), `unlock` (whatever could open the house, never otherwise),
+`ha_admin` (administering Home Assistant), `announce`, `tell`, `tv_agent` and `devices` (the house's other devices).
+`grant` under its `[home.plugins.<name>]` says what it gets, each a key's name in `.env` or one of those
+(`config.toml` is checked for it):
+
+- A plugin that needs anything its grant doesn't give it **doesn't load**: its devices are left out, and `--check`
+  says what's missing. One that declares nothing can't be granted at all.
+- Its `context` has **only what was granted**: `secret()` refuses any other key (`plugins.Refused`), `hass`,
+  `announce`, `tell` and `tv_agent` are `None` unless granted, and `devices` is empty unless granted. `maintainers` is
+  a copy it can't change.
+- **Home Assistant**, granted, is its reading methods and `call`/`call_service`, never the client itself or its setup
+  (adding or removing integrations). A service is only ever a plain `domain.service` and its data a dict. Each grant
+  is checked on its own, and neither brings the other:
+  - **Without `unlock`**, a call is refused if it [could open a door](#what-opens-a-door) as the `home_assistant`
+    tool reads it, at any depth of its data, including what can't be seen into (a room, a floor or a label, a
+    template, a setup that can't be read, `rest_command`, `mqtt` and the rest of `OPAQUE`). A garage, door or gate
+    cover counts as a door too, opened by anything but closing or stopping it, and so does disarming an alarm.
+  - **Without `ha_admin`**, a service that administers Home Assistant (`ADMIN` in `ha_tool.py`: restarting or
+    updating it, its add-ons, backups, users and recorder, running code) is refused, whatever else was granted.
+  - So `unlock` alone opens the door but never restarts Home Assistant, `ha_admin` alone restarts it but never
+    calls `homeassistant.turn_on` on the lock, and running code there (`shell_command`, `python_script`) needs both.
+- **The other devices**, granted, are read-only views: their status, what they are, their actions. Unlock and open
+  need `unlock` too, and then go only as the home tool's rules allow for the request they answer. The plugin's own
+  devices are its own, as they are.
+- **Without `grant`**, a plugin loads as it did before grants, with everything: TARS's own context, any key in `.env`,
+  all of Home Assistant. `--check` warns, with the exact line to pin it (`grant = [...]`). It lists each plugin with
+  its version and what it was granted, and warns too when a grant gives it one of TARS's own keys (its OpenAI key, the
+  Home Assistant token).
+- Grants hold at the interface TARS hands a plugin. A plugin is still Python running in TARS's process, and every
+  plugin keeps `root`, the project's folder, so it can read the files there, `.env` included: it's code someone has
+  read, not a sandbox. Don't install one you haven't.
+
+**Tools of its own.** `setup` may return `Provides(kinds, tools)` instead, with `PluginTool`s: a name, a description and
+parameters (a JSON schema) as the model sees them, and `call(args, request)` that answers in the tool's words, as a
+device's `call` does. One with `changes=True` waits for the turn to be over, is called one change at a time with the
+house's, and isn't called at all by a reply that read the web. `rules` adds a line to the model's instructions. A tool
+can't take a name TARS or another plugin already has: the plugin that comes second doesn't load.
 
 - **`call`** answers in the tool's words: `done:` only when the device itself reports it, `sent:` when nothing can
   tell, `started:`, `not confirmed:` or `error:` otherwise. Raising `HomeError` is said as an error. It's called only
@@ -346,6 +399,9 @@ def setup(settings: dict, context: Context) -> dict:
   their chats (a device that's stopped answering), and `background` is true only in the voice assistant's process,
   the one that runs a device's background work (a watch), so nothing is watched, or told, twice. The TV agent knows no app of its own:
   `tv_agent(box, extra_rules=...)` tells it how one of the household's works (my_house: how Stremio lists streams).
+- **`past(start, end)`** gives its status after each change between two times (Unix seconds), as `(when, status)`
+  in order, worded as `status()` words it, so a skill waiting on it is dry-run over its last week before it's kept
+  ([skills](skills.md)). Without it, or when it raises `HomeError`, the skill is kept without a dry run.
 - **`stop()`** ends anything the device still does in the background, as TARS shuts down or someone takes over; the
   base class's does nothing.
 - **`button(args)`** and **`presses(args)`** read a press as every device does: "volume up" is `volume_up`, and
@@ -430,12 +486,39 @@ which checks a change took and knows each one's quirks; this is for the rest, an
 
 The same promises hold, in code: a change waits for the turn to go ahead; a reply that searched the web changes
 nothing, and doesn't read the house's past either (history, statistics and the logbook say who was home and when, and a
-page could ask for that); and unlocking follows [the same rules](#unlocking), whether it's the lock's own service,
-another service on the lock, a button on the lock's own device (a Nuki's "unlatch" and "Lock 'n' Go" open the door
-without its lock entity) or anything else named for unlocking or unlatching, or a script, automation or scene that
-names any of these (one whose setup can't be read counts as if it did). A call's data can't aim it at a whole device,
-room or label, which could take the lock in without naming it. It won't administer Home Assistant itself: restarting or updating it, its integrations, users,
-backups and recorder, or running code (`ADMIN` in `ha_tool.py`); that's for a person, in Home Assistant.
+page could ask for that); and a call that [could open a door](#what-opens-a-door) is made only as
+[unlocking](#unlocking) allows. A call's own data can't aim it at a whole device, room or label, which could take the
+lock in without naming it. It won't administer Home Assistant itself: restarting or updating it, its integrations,
+users, backups and recorder, or running code (`ADMIN` in `ha_tool.py`); that's for a person, in Home Assistant.
+
+<a id="what-opens-a-door"></a>**What could open a door** (`Doors` in `ha_tool.py`) is read from the service and
+everything in its data, at any depth: `entity_id`, `target`, a key (`scene.apply` and `scene.create` take
+`entities` as `{"lock.front_door": "unlocked"}` or `{"lock.front_door": {"state": "unlocked"}}`),
+`snapshot_entities`, a script's `variables`. A call could open a door if it is or names:
+
+- a lock's service other than `lock` (locking is never held back);
+- a door entity: a lock, anything on a lock's own device (a Nuki's "unlatch" and "Lock 'n' Go" buttons open the door
+  without its lock entity), anything named for unlocking or unlatching, or a group or a scene with one of those among
+  its entities (its `entity_id` attribute), as a scene made on the spot by `scene.create` has;
+- a device (`device_id`) with a door entity on it;
+- a script, automation or scene (named, or a script run by its own service, `script.<name>`) whose setup names any
+  of these, or runs one that does, read up to five deep;
+- `entity_id: all` for a domain with a door entity in it: every button includes the unlatch one, every light doesn't.
+
+**What can't be seen into counts as if it would open one**: a room, a floor or a label (`area_id`, `floor_id`,
+`label_id`), whose entities aren't read; a template where the target or the service is; a script, automation or
+scene whose setup can't be read (one made by `scene.create` has none) or is nested deeper than five; `entity_id: all`
+for scripts, automations or scenes, or through `homeassistant.turn_on` and its like (every entity); a device when the entity registry can't be read; and a service that runs what
+TARS can't read (`OPAQUE` in `ha_tool.py`): code (`shell_command`, `python_script`, `pyscript`, `command_line`),
+`rest_command`, an add-on's input (`hassio.addon_stdin`), and the integrations that send a device a raw command
+(`mqtt`, `zwave_js`, `zha`, `deconz`, `esphome`, `knx`, `modbus`). Each of these is made only for a voice or chat
+that may unlock; for a plugin, only with the `unlock` grant ([plugins](#plugins)).
+
+**Not caught**, because nothing in the call names them: an automation that a change sets off by itself (an
+`input_boolean` turned on that an automation watches, to unlock), a template entity or helper whose own action unlocks
+(its setup is YAML Home Assistant doesn't show), anything outside Home Assistant listening for a change (Node-RED),
+and an integration's own service that isn't in `OPAQUE`. Keep those out of reach, or name them for unlocking (an
+entity named so counts as a door).
 
 ## Setting it up
 
@@ -458,7 +541,11 @@ About half an hour, on the Pi (or the Mac while you try it).
    ```
 
    It asks for each one's password. A device added later: the same command with just its user, then
-   `docker restart mosquitto`. Then `docker compose --profile mqtt up -d`, and add the MQTT integration.
+   `docker restart mosquitto`. Then `docker compose --profile mqtt up -d`, and add the MQTT integration. Each user
+   may only read and write what [`mosquitto/acl`](../deploy/home-assistant/mosquitto/acl) says: Home Assistant
+   everything; a device only the topics under its own user's name (so name the Nuki's user `nuki`, as its topics are
+   `nuki/...`), and Home Assistant's discovery. A device whose topics are under another name needs its own lines
+   there. TARS's own user, for [the front door](presence.md#the-front-door), is added by `deploy/install-pi.sh`.
 2. **A token for TARS.** In Home Assistant: your profile, Security, Long-lived access tokens, Create token. Put it in
    `.env` as `HOME_ASSISTANT_TOKEN`. A separate Home Assistant user for TARS, not an administrator, limits what the
    token can do.
@@ -471,6 +558,7 @@ About half an hour, on the Pi (or the Mac while you try it).
    url = "http://127.0.0.1:8123"
    unlock_voices = ["alon"]          # names from the web UI's Voices page; empty: nobody unlocks by voice
    unlock_chats = ["Alon"]           # names from [telegram] people; empty: nobody unlocks from a chat
+   unlock_challenge = true           # a voice says back three random digits before it unlocks
 
    [[home.devices]]
    name = "front door"
@@ -563,8 +651,9 @@ and only a request that isn't one is sent, whole, once it's over
 ## Things to know
 
 - **The token is a key to the house.** It lives in `.env`, which never leaves the machine.
-- **The web UI has no accounts**, and TARS can lock the door and run the boiler from what it hears. Unlocking is the
-  one change it won't make without a voice it knows, sure, asking for it.
+- **The web UI needs a passkey only once [sign-in](web-ui.md#signing-in) is on**, and TARS can lock the door and run
+  the boiler from what it hears. Unlocking is the one change it won't make without a voice it knows, sure, asking for
+  it.
 - **"Sent" is honest, and an IR device's status is a guess.** An IR device can't report back: TARS says it sent the
   command, and its status says it's Home Assistant's guess. So asked to change one, TARS does even when the status
   says it's already that way ("turn off the AC" when it says off): someone may have used its remote since. Asked to

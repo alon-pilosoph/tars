@@ -6,6 +6,7 @@ In config.toml (or config.local.toml):
 
     [home.plugins.my_house]
     module = "examples.my_house"
+    grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
     blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.5", control_type = 2 }
 
     [[home.devices]]
@@ -38,6 +39,7 @@ from collections.abc import Callable
 from voice_assistant.androidtv import KEY_FILE, AndroidTV
 from voice_assistant.found import FOUND_FILE, Seen
 from voice_assistant.home import Context, Device, HomeError
+from voice_assistant.plugins import Manifest
 
 from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
@@ -45,6 +47,11 @@ from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, TESTED, Remote, tested_path
 from .purifier import Bluetooth, Purifier, Watch
 from .screen import Screen
+
+# What it needs, to be granted under [home.plugins.my_house] grant: the blaster's key, Home Assistant (the AC's light
+# sensor), the Android TV agent, the other devices (a remote asks the Fire TV whether the TV is on), saying aloud
+# what the Fire TV did, and telling the maintainers when the purifier stops answering. Never unlock.
+PLUGIN = Manifest(version="1.0.0", needs=(TUYA_KEY, "home_assistant", "tv_agent", "devices", "announce", "tell"))
 
 # What this house has learned, kept in the backup's snapshot: the AC's profile, its presses and what it was last sent,
 # and which power codes each remote's set answered to.
