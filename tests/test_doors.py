@@ -685,3 +685,13 @@ def test_quiet_hours_are_off_unless_set_so_messages_waiting_are_said_on_coming_h
     assert PresenceConfig().quiet == ""
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     assert cfg.presence.quiet == ""
+
+
+def test_two_doors_cant_have_the_same_sensor():
+    """Followed by entity, two doors on one sensor would be one door: the second would never open or shut."""
+    sensor = "binary_sensor.front_door"
+    doors = [{"name": "front door", "topic": "nuki/1", "sensor": sensor}, {"name": "back door", "topic": "nuki/2"}]
+    assert not any("sensor" in p for p in _presence_problems(PresenceConfig(doors=doors)))
+    doors[1]["sensor"] = sensor
+    problems = _presence_problems(PresenceConfig(doors=doors))
+    assert "[[presence.doors]] #2: the front door already has the sensor binary_sensor.front_door" in problems

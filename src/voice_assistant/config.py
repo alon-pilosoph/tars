@@ -712,6 +712,7 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
             problems.append(f"{where}: user must be the admin's name, like admin")
         problems += [f"{where} has no setting {k}" for k in r if k not in ("kind", "address", "user", "secret")]
     names: set[str] = set()
+    sensors: dict[str, str] = {}  # each door's sensor, and the door
     for i, d in enumerate(p.doors, 1):
         where = f"[[presence.doors]] #{i}"
         if not (isinstance(d.get("name"), str) and d["name"].strip()):
@@ -726,6 +727,11 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
             isinstance(d["sensor"], str) and _ENTITY.fullmatch(d["sensor"]) and d["sensor"].startswith("binary_sensor.")
         ):
             problems.append(f"{where}: sensor must be its door sensor's binary_sensor.* entity, not {d['sensor']!r}")
+        elif "sensor" in d and d["sensor"] in sensors:
+            # Followed by entity, two doors on one sensor would be one: the second would never open or shut.
+            problems.append(f"{where}: the {sensors[d['sensor']]} already has the sensor {d['sensor']}")
+        elif "sensor" in d:
+            sensors[d["sensor"]] = str(d.get("name", "")).strip() or "door before it"
         problems += [f"{where} has no setting {k}" for k in d if k not in ("name", "topic", "sensor")]
     if p.doors and not (isinstance(p.mqtt.get("address"), str) and p.mqtt["address"].strip()):
         problems.append('[presence] doors need [presence.mqtt] address, the locks\' MQTT broker, like "localhost"')

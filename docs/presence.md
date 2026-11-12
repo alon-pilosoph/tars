@@ -230,7 +230,8 @@ Setting it up:
    ([security](security.md#a-door-sensor-that-says-the-door-moved-when-it-didnt)).
 2. **Pair it with Home Assistant**: its Bluetooth integration, then BTHome finds it (a Shelly BLU pairs for a minute
    after four presses of its button) and asks for the bindkey.
-3. **Name its binary_sensor on the door**:
+3. **Name its binary_sensor on the door** (each door its own: two naming the same sensor is a mistake in the
+   config):
 
    ```toml
    [[presence.doors]]
