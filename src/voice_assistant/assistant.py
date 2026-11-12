@@ -472,7 +472,9 @@ class Assistant:
                 if not self.muted:
                     self._woke_at, self._greet_s = time.monotonic(), None
                     print("Listening...  (the talk button)")
-                    self.converse(follow_up_s, greet=ALWAYS, wake=Wake(audio=wake.audio))  # greeted as who woke it last
+                    # A press carries no voice: the wake's audio is the last time its name was said, maybe by someone
+                    # else, so it's greeted without a name; who's asking is told from what's said next.
+                    self.converse(follow_up_s, greet=ALWAYS)
                 if woke != DUE:
                     continue
             if self.muted and woke != DUE:

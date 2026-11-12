@@ -253,7 +253,7 @@ in the voice's log, with what it did.
 | Button | Does |
 |---|---|
 | **Volume up and down** | Turn TARS's speaker 10% a press (with `own_speaker`), by the same rules as asking: never muted, never below 10%. Held, a step every 0.3 s. |
-| **Talk** | TARS listens, as if called by name, and says "Yes?" at once. |
+| **Talk** | TARS listens, as if called by name, and says "Yes?" at once: never a name, since a press is nobody's voice (who's asking is told from what they say next). |
 | **Stop** | What TARS is saying stops now, the reply being written with it, and it doesn't wait for a follow-up. A reminder whose line had begun counts as acknowledged, and a timer ringing on goes off; one stopped before its line is said again later, never acknowledged unheard. |
 | **Mute** | The speakerphone's own mute (below): its mic off, its light red. Again, on. |
 
