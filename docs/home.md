@@ -166,6 +166,34 @@ asked, on the page and in the chat, never said aloud. A camera that Home Assista
 picture, costs a sentence, like any other device. Getting the camera itself into Home Assistant is Home Assistant's
 job (an integration for its make); TARS only shows what Home Assistant already has.
 
+### House commands on the Pi
+
+With `[home] commands_on_pi`, the plainest requests skip the model: "lock the front door", "turn off the boiler",
+"switch the TV on", "set the AC to 23". The phrases are made from the house's own devices (`commands.py`): verbs ("turn
+on", "switch off", "put on", "lock"), each device by its name and its label, 16 to 30 degrees for one that takes a
+temperature (a fixed range: a device that doesn't go that far says it couldn't), and the polite bits ("please", "can
+you", "hey TARS"). A request that's exactly one of them, as speech to text wrote it, is done at once:
+
+- **The home tool's own call**, with its checks: done only when the device says so, after the turn is over. Unlocking
+  is never one of them: it stays with the model and [its challenge](#unlocking). Anything with more in it ("for forty
+  minutes", "and the AC", "don't") goes to the model as ever, and so does a phrase two devices share.
+- **A reply in TARS's voice**, from a few lines for each outcome, made ahead and kept on disk, never the same one twice
+  running when there's another ("Front door's locked.", "Locked. Fort Knox has nothing on us."; one plain line below
+  50% humor). Each outcome is said as it is: done ("Front door's locked."), on its way ("Front door's locking."), sent
+  to a device that can't report back ("Sent it to the AC."), not confirmed ("The boiler didn't confirm it.") and an
+  error or a refusal ("Couldn't do that with the AC.").
+- **The exchange joins the conversation**, so "and the boiler too" can follow; the web UI marks the turn as done on
+  the Pi. A follow-up (said without the wake word) goes to the model, which can tell it wasn't meant for TARS.
+- **With the cloud out of reach**, Vosk on the Pi listens to the recording for the same phrases alone (spoken forms,
+  "a c" for AC), and a command it hears is done the same way: the door locks with the internet down.
+
+Measured so far on the Pi, with the household's own devices and a synthetic voice (21 takes of a house recording
+session): Vosk, limited to the phrases alone, heard "Don't turn on the fire TV yet" as
+"turn on the fire t v", a wrong match. Each phrase is now also listened for with unknown words around it, and anything
+with an unknown word in it is refused: 0 wrong of 21, all 12 near-misses and plain requests refused, at the cost of 5
+of 9 commands missed (a miss goes to the model, or with the cloud out of reach isn't done). About 140 ms a take. It's
+off by default until the household's own voices, recorded, have no wrong match.
+
 ### TARS's own speaker
 
 With `[home] own_speaker = true`, TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which
@@ -338,6 +366,8 @@ can't take a name TARS or another plugin already has: the plugin that comes seco
 - **`call`** answers in the tool's words: `done:` only when the device itself reports it, `sent:` when nothing can
   tell, `started:`, `not confirmed:` or `error:` otherwise. Raising `HomeError` is said as an error. It's called only
   once the turn is over, one device at a time.
+- **`takes_temperature`**: true for a device whose `set` takes a temperature (an AC), so "AC to 23" is one of the
+  [house commands on the Pi](#house-commands-on-the-pi).
 - **`actions`** may include the plugin's own ("boil"); the tool offers them. **`rules()`** adds anything the model
   needs to use the kind well, once however many there are. **`slow()`** says "One moment." first. **`check()`** says
   what `--check` should, as `Check(status, detail, fix)` lines.

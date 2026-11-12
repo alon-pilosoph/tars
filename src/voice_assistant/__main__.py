@@ -594,6 +594,24 @@ def reminder_tools(reminders, voices, presence=None):
     return ReminderTools(reminders, voices=voices, phones=lambda: presence.phones, is_home=presence.board.is_home)
 
 
+def house_commands(cfg: Config, root: Path, home):
+    """[home] commands_on_pi: the house's devices as phrases, their replies, and Vosk to hear them offline; None when
+    it's off or there's nothing to command."""
+    if not (cfg.home.commands_on_pi and home and home.devices):
+        return None
+    from .commands import WITTY_FROM_HUMOR, Commands, HouseCommands, Replies, vosk_hearing
+
+    commands = Commands([(name, d.display, tuple(d.actions), d.takes_temperature) for name, d in home.devices.items()])
+    replies = Replies({name: d.display for name, d in home.devices.items()}, cfg.llm.humor >= WITTY_FROM_HUMOR)
+    try:
+        hear = vosk_hearing(commands.grammar(), root / "models")
+    except Exception as e:  # noqa: BLE001 - commands still work from the cloud's transcript
+        print(f"(house commands: no listening on the Pi without the cloud: {e!r})")
+        hear = None
+    print(f"(house commands: {sum(c is not None for c in commands.phrases.values())} phrases, handled on the Pi)")
+    return HouseCommands(commands, replies, home.call, hear)
+
+
 def make_presence(cfg: Config, root: Path, events):
     """[presence] (presence.Presence), when it's on and there's an event log to keep who's home in; None otherwise.
     It only reads the board until the assistant's watch() asks the routers."""
@@ -1600,6 +1618,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
             skill_clock=skill_clock(skills, "aloud", home, presence, myself),
+            commands=house_commands(cfg, root, home),
         )
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:

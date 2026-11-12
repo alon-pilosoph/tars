@@ -492,6 +492,9 @@ class Brain(Protocol):
     def remember_said(self, text: str) -> None:
         """TARS said `text` without being asked (a reminder posted in a chat): part of the conversation from now."""
 
+    def remember_exchange(self, asked: str, said: str) -> None:
+        """Someone asked and TARS answered without the model (a house command on the Pi): part of the conversation."""
+
     def start_over(self) -> None:
         """Forget the whole conversation: the next question starts a new one."""
 
@@ -955,6 +958,13 @@ class OpenAIChat:
             self._history.append({"role": "assistant", "content": text})
             self._history = self._history[-MAX_TURNS * 2 :]
             # Both: forget_last() for a question asked before this goes back to when this was said, not before.
+            self._previous_turn_at = self._last_turn_at = self._clock()
+
+    def remember_exchange(self, asked: str, said: str) -> None:
+        with self._lock:
+            self._forget_if_quiet()
+            self._history += [{"role": "user", "content": asked}, {"role": "assistant", "content": said}]
+            self._history = self._history[-MAX_TURNS * 2 :]
             self._previous_turn_at = self._last_turn_at = self._clock()
 
     def start_over(self) -> None:

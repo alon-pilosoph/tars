@@ -17,11 +17,11 @@ being right.
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting to try for a week |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
-Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
-them; [wishes that come true](#built-wishes-that-come-true) (built), where something TARS couldn't do becomes a pull
-request and, once merged, a message to whoever asked; and [noticing routines](#planned-noticing-routines), where TARS learns
-the household's habits from Home Assistant's history and offers to take them over. Benched for now: [learning from
-how conversations go](#benched-learning-from-how-conversations-go). Later, after the six: [working
+Alongside the steps, built: [house commands on the Pi](#built-house-commands-on-the-pi), small and independent of
+them; and [wishes that come true](#built-wishes-that-come-true), where something TARS couldn't do becomes a pull
+request and, once merged, a message to whoever asked. Planned: [noticing routines](#planned-noticing-routines), where
+TARS learns the household's habits from Home Assistant's history and offers to take them over. Benched for now:
+[learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after the six: [working
 offline](#later-working-offline), [a brain anywhere, a body at home](#later-a-brain-anywhere-a-body-at-home) (TARS
 itself off the Pi, the house's own hardware a small part that can fail without losing TARS) and [TARS in other
 homes](#later-tars-in-other-homes).
@@ -347,7 +347,13 @@ what each came from, so a wrong one is easy to see.
 says it does; offers made and declined, and skills undone. **Done when** three offered routines have run for two
 weeks without being undone, and the unusual has been said at least once when it mattered, and never when it didn't.
 
-## Planned: house commands on the Pi
+## Built: house commands on the Pi
+
+**Built** ([house commands on the Pi](home.md#house-commands-on-the-pi), `[home] commands_on_pi`, off by default):
+phrases made from the house's devices, a request that's exactly one done with the home tool and no model, replies made
+ahead in TARS's voice, and Vosk hearing them when the cloud is out of reach. **Left:** hanging up the cloud stream
+early once Vosk is sure (today the transcript is the cloud's when it's there), `local_first`, and the measurement
+below on the household's own recorded voices.
 
 **Goal:** "lock the door", "AC to 23", "turn off the TV" handled on the Pi itself: answered at once, nearly free, and
 still working when the internet is down. Anything else goes on to the cloud as it does today. It's the house part
@@ -404,7 +410,7 @@ of a stage's services fail, TARS says it couldn't, and the Status page shows whi
    model, a voice from Piper (whose voices the wake word was already trained with), and a small local model for the
    brain, limited to the house tool, timers and reminders, with web search, sending and the browser turned off and
    said so. House commands may already work offline by then, from [house commands on the
-   Pi](#planned-house-commands-on-the-pi).
+   Pi](#built-house-commands-on-the-pi).
 2. **Where it runs.** A Pi 4 is too slow for a useful local model. Either a Pi 5 with an AI accelerator, or a small
    home server on the network (an old laptop, a mini PC), which the Pi calls the way it calls a provider today. The
    choice is measured: time to first sound and how often it picks the right device, on step 1's recorded requests.
@@ -456,7 +462,7 @@ The body decides nothing: it does what it's asked and says what happened.
   that's been taken over can't open the door.
 - **When the brain can't be reached** (the internet, or the server, down): the body still hears its name, says it
   can't reach its brain, and does what it can on its own: [house commands on the
-  Pi](#planned-house-commands-on-the-pi) from a fixed phrase list, and later [working offline](#later-working-offline).
+  Pi](#built-house-commands-on-the-pi) from a fixed phrase list, and later [working offline](#later-working-offline).
   **When the body is down:** the brain carries on in chats, and the house tools say plainly that the house is
   offline.
 - **More rooms, other homes.** Each room can have a body of its own (a Pi Zero with a microphone, or an old phone);

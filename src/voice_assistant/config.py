@@ -250,6 +250,9 @@ class HomeConfig:
     # The speakerphone's own mute is TARS's: while it's muted (its light red), TARS doesn't listen for its name, and
     # the remote's mute button mutes it the same way. Linux, with a speakerphone that has one.
     speakerphone_mute: bool = True
+    # House commands handled on the Pi (docs/home.md#house-commands-on-the-pi): "lock the door", "AC to 23" done at
+    # once with no model, from lines made ahead, and heard by Vosk when the cloud's speech to text is out of reach.
+    commands_on_pi: bool = False
     # Home Assistant's config folder on this machine, to keep a history of its setup that any change can be undone
     # from (docs/home.md#home-assistants-own-setup). Empty = no history.
     config_dir: str = ""
