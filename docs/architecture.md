@@ -176,7 +176,7 @@ and what would make it possible, and notes it as a wish (below). Qwen hands over
 | Marker | When | To | TARS says first |
 |---|---|---|---|
 | `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | a line Qwen picks as it hands over ("Let's see.", "Let me check.", "Looking it up.", "On it."), or "Let's see." if it picks none |
-| `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
+| `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment.", unless Qwen already said a line |
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links, which
 need web search) and uses them itself, saving those turns the hand-off. A request with a part of each ("set a timer, and

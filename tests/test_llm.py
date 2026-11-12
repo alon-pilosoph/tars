@@ -1058,6 +1058,19 @@ def test_a_line_said_without_the_hand_off_still_goes_to_openai():
     assert brain.answered_by == llm.LOOKED_UP and len(openai.requests) == 1
 
 
+@pytest.mark.parametrize("line", ["Let me check", "Let me check...", "let me check…"])
+def test_a_line_said_without_its_full_stop_still_goes_to_openai(line):
+    brain, openai, _ = cerebras_brain(lambda m: line)
+    assert "".join(brain.stream_reply("is the door locked?")) == f"{line} From OpenAI."
+    assert brain.answered_by == llm.LOOKED_UP and len(openai.requests) == 1
+
+
+def test_a_line_before_a_ponder_hand_off_is_the_only_one_said():
+    brain, _, _ = cerebras_brain(lambda m: f"Let me check. {llm.PONDER}")
+    said = "".join(brain.stream_reply("should I refinance?"))
+    assert said.startswith("Let me check. From OpenAI.") and llm.THINKING not in said
+
+
 def test_a_line_said_after_the_quick_models_own_tools_is_its_whole_reply(tmp_path):
     brain, openai, _, _ = quick_with_tools(tmp_path, [("remind", REMIND)], then="On it.")
     assert "".join(brain.stream_reply("pasta timer")) == "On it."
@@ -1219,8 +1232,7 @@ def test_after_a_hand_off_openai_is_told_what_tars_already_said():
 
 
 def test_with_nothing_said_yet_openai_isnt_told_to_carry_on():
-    brain, openai, _ = cerebras_brain(lambda m: "Hello.")
-    brain._quick[0].back_at = float("inf")  # cooling down: OpenAI answers from the start
+    brain, openai, _ = cerebras_brain(lambda m: OpenAIError("down"))  # nothing from Cerebras: OpenAI answers
     "".join(brain.stream_reply("hi"))
     assert "already begun" not in openai.requests[0]["instructions"]
 

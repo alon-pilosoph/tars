@@ -501,6 +501,12 @@ def test_tidy_takes_out_the_lines_said_while_waiting():
     assert tidy("Line one.\n\nLine two.") == "Line one.\n\nLine two."
 
 
+def test_tidy_keeps_a_waiting_line_that_is_the_whole_reply():
+    assert tidy("On it.") == "On it."  # the quick model started the film itself
+    assert tidy("Let's see. The answer") == "The answer"
+    assert tidy("Let's see. Let me check. The answer") == "Let me check. The answer"  # one line, not every one
+
+
 def test_a_long_reply_that_arrived_in_part_counts_as_sent(convos):
     # They read "Set for 5pm." in its first part: the reminder is set, though the rest never came.
     bot, brain = FakeBot(), ScriptedBrain(["Set for 5pm. " + "a" * 4090 + "\n\n" + "b" * 100])

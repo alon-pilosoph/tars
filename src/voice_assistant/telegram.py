@@ -319,9 +319,12 @@ def tidy(reply: str) -> str:
     """A reply written to be heard, for reading: without the lines said while a slow answer comes ("Looking it
     up."), which a chat shows as "typing..." instead."""
     text = reply.strip()
-    for filler in FILLERS:  # "Looking it up." among them
-        text = text.removeprefix(filler)
-    text = text.replace(THINKING, "", 1)
+    # Only with more after them: "On it." can be the whole reply.
+    filler = next((f for f in FILLERS if text.startswith(f)), "")
+    if text[len(filler) :].strip():
+        text = text[len(filler) :]
+    if text.replace(THINKING, "", 1).strip():
+        text = text.replace(THINKING, "", 1)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 

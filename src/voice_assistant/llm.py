@@ -266,6 +266,14 @@ THINKING = "Let me think about that for a moment."
 # the one that fits; a fixed few, so each is made ahead and plays at once. LETS_SEE when it picks none.
 LETS_SEE = "Let's see."
 FILLERS = (LETS_SEE, "Let me check.", SEARCHING, "On it.")
+_FILLER_WORDS = {f.rstrip(".").lower() for f in FILLERS}
+
+
+def only_filler(text: str) -> bool:
+    """Whether `text` is just one of the FILLERS, however it ends ("Let me check", "Let me check...")."""
+    return text.strip().rstrip(".…!").lower() in _FILLER_WORDS
+
+
 FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
 # A backstop, not a budget: a request that checks and then acts on a few things (two feeds previewed, then followed)
 # takes several rounds, and a model only uses the rounds it needs. A call repeating one that failed is stopped sooner.
@@ -1096,7 +1104,7 @@ class QuickChat(OpenAIChat):
                 writing.quick_service = None
             break
         # Only when it did nothing itself: "On it." is the whole reply once it has started the TV on a film.
-        if not handed_off and answer.strip() in FILLERS and LOOK_UP in self._markers and not writing.quick_calls:
+        if not handed_off and only_filler(answer) and LOOK_UP in self._markers and not writing.quick_calls:
             print(f"({writing.quick_service} said {answer.strip()!r} and stopped; OpenAI answers)")
             handed_off, writing.answered_by = LOOK_UP, LOOKED_UP  # "Let me check." alone would leave them hanging
             if not answer[-1].isspace():
@@ -1115,7 +1123,7 @@ class QuickChat(OpenAIChat):
         if not handed_off:
             handed_off, writing.answered_by = LOOK_UP, FALLBACK
         context.extend(writing.quick_calls)  # what Qwen's tools already did, so it isn't done twice
-        if handed_off == PONDER:
+        if handed_off == PONDER and not only_filler(answer):  # one waiting line, not two
             thinking = f"{' ' * bool(answer.strip() and not answer[-1].isspace())}{THINKING} "
             answer += thinking
             yield thinking
