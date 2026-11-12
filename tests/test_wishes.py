@@ -407,6 +407,21 @@ def test_github_errors_while_following_are_a_line_not_a_crash(log, github, capsy
     assert row(log, n)["build"] == BUILDING and "couldn't follow wish" in capsys.readouterr().out
 
 
+def test_a_malformed_answer_about_one_wish_doesnt_stop_the_rest_of_the_pass(log, github, capsys):
+    wishes, said, _, _, first = building(log, github)
+    second = wish(log, asked="turn the porch light on at sunset")
+    wishes.offer(second, "x")
+    wishes.build(second)
+    said.clear()
+    del github.open_pull(100)["state"]  # GitHub's answer about the first, missing what's always there
+    github.open_pull(101, sha="bbb2")
+    github.ci("bbb2", "success")
+    wishes.follow()
+    assert row(log, second)["build"] == READY and "turn the porch light on" in said[0][0]
+    assert row(log, first)["build"] == BUILDING  # tried again on the next pass
+    assert f"couldn't follow wish {first}" in capsys.readouterr().out
+
+
 def test_one_github_client_serves_every_tap_and_pass_and_is_closed_with_tars(log, github):
     made: list[GitHub] = []
 
