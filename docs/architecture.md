@@ -12,7 +12,8 @@ the design:
   Nothing leaves it before a wake is confirmed ([what leaves the machine](#what-leaves-the-machine)), but for the
   backup, when it's on, which copies everything TARS keeps to the household's own S3 bucket later. After a wake,
   Deepgram's Flux, in the cloud, decides when you're done by default; the local end of turn (silence, then Smart
-  Turn) is the fallback.
+  Turn) is the fallback. With `[home] local_first`, the local end of turn always decides, and a house command Vosk
+  hears on the machine goes to no speech to text or model when it's said ([local first](home.md#local-first)).
 - **Streamed and overlapped.** Speech to text runs while you talk, the answer is drafted before your turn is
   confirmed over, and the voice speaks a sentence at a time ([response time](latency.md)).
 - **Every stage behind a small interface**, so a provider or a local model is one class and a config change.
@@ -58,7 +59,10 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    wake alone) and waits.
 4. **Speech to text** is Flux too, streamed while you talk, so the words come with its decision; if the stream
    fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX, local) runs at the same
-   time, so knowing who's talking adds no latency. The request reaches the LLM tagged `[Speaker: Alon]`.
+   time, so knowing who's talking adds no latency. The request reaches the LLM tagged `[Speaker: Alon]`. With
+   `[home] local_first`, nothing is streamed: the local rules end the turn, Vosk listens to the recording for a house
+   command, and only anything else is sent, whole, to Deepgram's endpoint for recordings, with OpenAI's behind it
+   ([local first](home.md#local-first)).
 5. **The LLM** answers in TARS's voice, streamed: Qwen on Cerebras (about 0.6 s to its first sentence, at low
    reasoning with its tools). When the answer needs the
    web or the TARS page, Qwen replies `<look-up>`, and that turn goes to OpenAI's model (the Responses API, with web
@@ -84,6 +88,7 @@ to end. When TARS wakes, it connects to Cerebras, OpenAI and the voice while you
 |---|---|
 | Deepgram's speech-to-text stream, or Flux never sending a turn's last words | OpenAI transcribes the same recording, and the rest of that request, so a stalled stream costs its timeout once |
 | Flux's end of turn | the local rules (Silero VAD, then Smart Turn) take over for that turn |
+| With `[home] local_first`: Deepgram's endpoint for recordings, within 10 s | OpenAI transcribes the same recording, within 15 s and with no retry; Vosk failing to listen sends the recording to the cloud as if it were no command |
 | Cerebras: an error, or "too many requests" | OpenAI's model answers, and Cerebras is skipped for two minutes, or for as long as it asks after "too many requests" |
 | Qwen's reply runs into its cap (2,000 tokens) | OpenAI's model carries on, told what was already said, so nothing is said twice |
 | Qwen writes a tool call out as text (`<toolcall>`, `<function=`, also HTML-escaped) | the reply is cut off there, unsaid, and OpenAI takes the turn |
@@ -215,7 +220,8 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
 - **After it,** five services each get part of the turn (with the default `config.toml`); one with no key in `.env`
   gets nothing:
   - **Deepgram**, on its EU servers (`deepgram_host`), gets your request's audio, streamed for speech to text from
-    when you start speaking after a wake.
+    when you start speaking after a wake. With `[home] local_first`, it gets it only once the turn is over, whole,
+    and not at all for a house command (below).
   - **Cartesia** gets TARS's reply text, a sentence at a time, to speak it.
   - **Cerebras** gets the conversation so far (its text, with each request's `[Speaker: name]` tag and TARS's replies)
     and answers first.
@@ -226,6 +232,27 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
     key, it gets the audio instead of Deepgram. It gets the reply text, to speak it, with `[tts] provider =
     "openai"`, with `provider = "deepgram"` and no Deepgram key, or with neither a Cartesia nor a Deepgram key.
     Without a Cartesia key but with Deepgram's, Deepgram gets the reply text instead.
+- **With `[home] commands_on_pi`,** a request that's exactly a house command, as speech to text wrote it, goes to no
+  model: it's done through Home Assistant on the home network and answered from a line made ahead. Its words and the
+  reply join the conversation, so the models get them as text with the next request in that conversation that goes to
+  them (until it's been quiet for `memory_minutes`). The audio still goes to Deepgram as above.
+- **With `[home] local_first` too,** the request's audio stays on the machine while you talk: it's kept in memory,
+  TARS's own rules (Silero VAD, then Smart Turn) say when the turn is over, and Vosk listens to the recording on the
+  machine. Then:
+  - **A house command Vosk hears** (in a recording of 8 s or less, the silence at its end included) sends nothing to
+    any speech to text service: neither its audio nor its words. Done and answered as above, its words reach the
+    models only as part of the conversation, later, if a request after it goes to them. Said as a follow-up or as the
+    answer to "Did you call me?", it's no house command (the model decides those): its audio still stays on the
+    machine, and the words Vosk heard go to the models as the request.
+  - **Anything else** (not a command, longer than 8 s, or a recording Vosk couldn't listen to) is sent whole once the
+    turn is over, the silence at its end included, to Deepgram's endpoint for recordings on `deepgram_host`; if
+    Deepgram fails, to OpenAI's. With `[stt] provider = "openai"`, or no Deepgram key, it goes to OpenAI alone. From
+    there the turn goes on as above: the models get the conversation, the voice the reply.
+  - **What still goes out for a house command:** the voice (Cartesia) makes the reply lines from their text (the
+    devices' names and each outcome, nothing anyone said) when they aren't on disk yet, at startup or on a wake, and a
+    line missing from disk is said live, its text sent to the voice then. On the wake itself, before anything is
+    heard, TARS connects to the models and the voice as it always does, sending nothing of the request. With
+    `[backup]` on, the recording goes to the bucket like any request's.
 - **With `[telegram]` on,** Telegram gets what's written and said in the household's chats with TARS, its replies
   there, and the reminders and things TARS sends to them ([TARS on Telegram](telegram.md#what-it-sends-telegram)).
   A voice message there goes to Deepgram (or OpenAI) to be written down, as a request at home does. TARS asks
