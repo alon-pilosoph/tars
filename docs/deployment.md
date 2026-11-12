@@ -176,8 +176,9 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
 
 ## Things to know
 
-- **Reaching it.** Open `http://<pi-name>.local:8080` on the home network. It has no accounts, so don't forward the
-  port to the internet; to use it away from home, put the Pi and the phone on
+- **Reaching it.** Open `http://<pi-name>.local:8080` on the home network. Until sign-in is on
+  ([signing in](web-ui.md#signing-in): passkeys, over HTTPS from a Tailscale certificate), anyone there can use it, so
+  never forward the port to the internet; to use it away from home, put the Pi and the phone on
   [Tailscale](https://tailscale.com) and open `http://<pi-name>:8080`. It only answers to IP addresses, `localhost`,
   `*.local`, `*.ts.net` and single-label names; add any other name to `[web] allowed_hosts`. For a name of your
   own, such as `home.example.com`, point its DNS A record at the Pi's Tailscale address (`100.x.y.z`): it resolves
@@ -253,7 +254,8 @@ household, the Pi-only setup is simpler and private, which is why TARS is built 
 
 ## Limitations
 
-- **No accounts.** The web UI is for the home network, or a tailnet away from home; never forward its port.
+- **The web UI is for the home network, or a tailnet away from home**; never forward its port. Turn on sign-in
+  ([passkeys](web-ui.md#signing-in)) so being on the Wi-Fi isn't enough.
 - **The backup is AWS's.** It needs an S3 bucket and an IAM key ([backing up to S3](backup.md)); without them,
   nothing leaves the Pi but the turns themselves.
 - **Measured on the development Mac.** The wake stages' cost and the response times come from the Mac; the Pi should

@@ -265,8 +265,9 @@ the web UI's Status page reads them: a process whose heartbeat is older than thr
 frozen whole, on a Mac as on the Pi ([the Status page](web-ui.md#the-status-page)). It's written from a thread of
 its own, never touches the database, and one that can't be written costs a line in the log.
 
-**It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
-elsewhere could reach it through someone's browser:
+**With `[web] sign_in`, it needs a passkey** (`signin.py`, [signing in](web-ui.md#signing-in)); without it, it's
+meant for the home network. Either way, it protects itself against the two ways a web page elsewhere could reach it
+through someone's browser:
 
 - **Host allow-list:** it only answers requests addressed to an IP address, `localhost`, `*.local`, `*.ts.net`, a
   single-label name (`tars`, the Pi's hostname) or a name in `[web] allowed_hosts`. Anything else gets 421, which

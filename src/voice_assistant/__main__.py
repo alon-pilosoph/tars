@@ -220,6 +220,7 @@ def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
 
 def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .clustering import regroup
+    from .signin import Accounts
     from .webui import serve
 
     log = make_event_log(cfg, root)
@@ -256,6 +257,8 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         health=make_health(cfg, root, log),
         bucket=bucket,
         finished=functools.partial(enroll_from_session, speaker_id, log.store),
+        accounts=Accounts(log.store) if cfg.web.sign_in else None,
+        tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
     )
 
 
@@ -264,9 +267,7 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
     Telegram chat if they have one."""
     import random
 
-    from .browser.login_page import reachable_address
     from .recording import ABOUT, HOUSE, SECONDS_A_PROMPT, Sessions, house_script, voice_script
-    from .telegram import Bot, TelegramError
 
     log = make_event_log(cfg, root)
     if log is None:
@@ -275,23 +276,79 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
         raise ConfigError("There are no [[home.devices]] in config.toml to make house commands from.")
     prompts = house_script(cfg.home.devices, random.Random()) if kind == HOUSE else voice_script()
     token = Sessions(log.store).create(kind, person, prompts)
-    url = f"{cfg.web.link.rstrip('/') or f'http://{reachable_address()}:{port}'}/?session={token}"
+    url = f"{web_link(cfg, port)}/?session={token}"
     minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
     print(f"{ABOUT[kind][0]} for {person}, {len(prompts)} phrases (about {minutes} minutes):\n{url}")
-    chat = next((chat for name, chat in cfg.telegram.people.items() if name.lower() == person.lower()), None)
-    if not (cfg.telegram.enabled and chat):
-        print(f"({person} has no Telegram chat in [telegram] people: open the link on their phone.)")
-        return
     text = (
         f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes. "
         f"Open it when you're near TARS; the link works for a day.\n{url}"
     )
+    send_link(cfg, root, person, text, "their phone")
+
+
+def web_link(cfg: Config, port: int) -> str:
+    """Where someone's phone reaches the web UI: [web] link, else this machine's address."""
+    from .browser.login_page import reachable_address
+
+    return cfg.web.link.rstrip("/") or f"{'https' if cfg.web.tls_cert else 'http'}://{reachable_address()}:{port}"
+
+
+def send_link(cfg: Config, root: Path, person: str, text: str, open_on: str) -> None:
+    """`text`, with a link in it, sent to `person`'s Telegram chat if they have one."""
+    from .events import person_key
+    from .telegram import Bot, TelegramError
+
+    chat = next((c for name, c in cfg.telegram.people.items() if person_key(name) == person_key(person)), None)
+    if not (cfg.telegram.enabled and chat):
+        print(f"({person} has no Telegram chat in [telegram] people: open the link on {open_on}.)")
+        return
     try:
         Bot(api_key(root / ".env", TELEGRAM_KEY)).call("sendMessage", chat_id=chat, text=text)
     except TelegramError as e:
         print(f"(couldn't send it on Telegram: {e})")
         return
     print(f"Sent to {person} on Telegram.")
+
+
+def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
+    """--web-invite: a one-time link for `person` to make a passkey with, printed and sent to their Telegram chat if
+    they have one."""
+    from .signin import Accounts
+
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
+    if not person.strip():
+        raise ConfigError("--web-invite needs the person's name.")
+    if cfg.web.tls_cert and not cfg.web.link:
+        raise ConfigError(
+            "Set [web] link to the web UI's name, e.g. https://<pi-name>.<tailnet>.ts.net:8080: passkeys belong to a "
+            "name, and browsers won't make one for an address (docs/web-ui.md#signing-in)."
+        )
+    if not cfg.web.sign_in:
+        print("(sign-in is off: the link works, but the web UI won't ask for it until [web] sign_in = true)")
+    url = f"{web_link(cfg, port)}/sign-in/invite/{Accounts(log.store).invite(person)}"
+    print(f"A link for {person} to make a passkey for the web UI, good for a day:\n{url}")
+    text = f"A link to sign in to TARS's web page: it makes a passkey on your phone. It works once, for a day.\n{url}"
+    send_link(cfg, root, person, text, "their phone or computer")
+
+
+def web_sign_out(cfg: Config, root: Path, person: str) -> None:
+    """--web-sign-out: `person` signed out of the web UI everywhere, their passkeys forgotten and unused invites voided
+    (a lost phone)."""
+    from .signin import Accounts
+
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
+    passkeys, sessions, invites = Accounts(log.store).remove(person)
+    if not (passkeys or sessions or invites):
+        print(f"Nobody called {person} has a passkey, a session or an invite for the web UI.")
+        return
+    print(
+        f"{person} is signed out everywhere: {passkeys} passkey(s) forgotten, {sessions} session(s) ended and "
+        f"{invites} unused invite(s) voided. --web-invite makes a new one."
+    )
 
 
 def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
@@ -360,6 +417,12 @@ def main() -> None:
         help="send a link to a recording session on TARS's speakerphone: someone's voice, or the house's commands",
     )
     parser.add_argument("--for", dest="person", metavar="NAME", help="whose --record-session it is")
+    parser.add_argument(
+        "--web-invite", metavar="NAME", help="a one-time link for NAME to make a passkey for the web UI ([web] sign_in)"
+    )
+    parser.add_argument(
+        "--web-sign-out", metavar="NAME", help="sign NAME out of the web UI everywhere, and forget their passkeys"
+    )
     parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
@@ -457,6 +520,12 @@ def main() -> None:
             return
         if args.record_session:
             record_session(cfg, root, args.record_session, args.person, args.port)
+            return
+        if args.web_invite:
+            web_invite(cfg, root, args.web_invite, args.port)
+            return
+        if args.web_sign_out:
+            web_sign_out(cfg, root, args.web_sign_out)
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)
