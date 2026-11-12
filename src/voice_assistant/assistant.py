@@ -368,11 +368,11 @@ class Assistant:
         away (its stream stays open, so unmuting is instant), and what's due looked for. DUE when something is;
         None once unmuted. A mic that's gone raises, as it does while listening."""
         while self.muted:
-            self.mic.discard()
+            self.body.discard()
             if self._due():
                 return DUE
             self._unmuted.wait(MUTED_POLL_S)
-        self.mic.clear()  # what it heard while muted is old
+        self.body.clear()  # what it heard while muted is old
         return None
 
     def control_ops(self, mute: Callable[[bool], None] | None = None) -> dict[str, Op]:
@@ -427,8 +427,8 @@ class Assistant:
             if take:
                 self._take(take)
             else:
-                self.mic.discard()
-        self.mic.clear()
+                self.body.discard()
+        self.body.clear()
         return None
 
     def _take(self, take: Take) -> None:
@@ -442,20 +442,19 @@ class Assistant:
             heard.append(pcm)
             take.level = level(pcm)
 
-        pcm = self.recorder.record(
-            self.mic,
+        recorded = self.body.record(
             preroll_blocks=TAKE_PAD_BLOCKS,
             tail_blocks=TAKE_PAD_BLOCKS,
             start_timeout_s=TAKE_START_S,
             on_audio=hearing,
             stop=take.stop.is_set,
         )
-        if pcm is not None:
-            stopped = SILENCE
+        if recorded is not None:
+            pcm, stopped = recorded.pcm, SILENCE
         elif heard:  # tapped while speaking: what was said so far is the take
             pcm, stopped = b"".join(heard), TAP
         else:
-            stopped = TAP if take.stop.is_set() else NO_SPEECH
+            pcm, stopped = None, TAP if take.stop.is_set() else NO_SPEECH
         self.takes.ended(take, pcm, stopped)
 
     def run_forever(
@@ -801,7 +800,7 @@ class Assistant:
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
         waits for the greeting, as for anything TARS says. `after_name`: what followed the wake word before listening
         began; dropped when the mic waits for the greeting, as what's heard after it doesn't run on from the name."""
-        if not (self.mic and self.mic.echo and self.mic.echo.working):
+        if not self.body.hears_while_speaking:
             self.greet()
             return self.listen()
         text = greeting(self.wake_speaker())
@@ -880,8 +879,7 @@ class Assistant:
                 draft = None
 
         try:
-            pcm = self.recorder.record(
-                self.mic,
+            recorded = self.body.record(
                 start_timeout_s=start_timeout_s,
                 on_audio=session.feed,
                 # Local first, nothing is heard until the turn is over: no answer is started in a pause.
@@ -897,16 +895,17 @@ class Assistant:
             resumed()
             session.close()
             raise
-        if pcm is None:
+        if recorded is None:
             resumed()
             session.close()
             return None
         session.finish()
+        pcm = recorded.pcm
         return Utterance(
             pcm,
             session,
             draft or self._draft(pcm, session, follow_up, tag, echo_of),
-            self.recorder.trailing_silence_s,
+            recorded.silence_s,
             follow_up,
             echo_of,
         )
