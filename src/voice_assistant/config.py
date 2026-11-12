@@ -343,7 +343,8 @@ class HouseholdConfig:
 class WishesConfig:
     # Wishes that come true (docs/wishes.md): what TARS was asked for and couldn't do, built by Claude Code on GitHub
     # once a maintainer taps Build it, and told to whoever asked once it's installed. Needs [household] maintainers on
-    # Telegram, [updates] on, and a GitHub token that may open issues and comment on `repo`, in .env under `secret`.
+    # Telegram, [updates] on, and a fine-grained GitHub token for `repo` only (Issues read and write, Pull requests
+    # read-only, Metadata read-only; nothing else), in .env under `secret`.
     enabled: bool = False
     # The repository to build in, as owner/name; its .github/workflows/wish.yml hands a labelled issue to Claude Code.
     repo: str = ""

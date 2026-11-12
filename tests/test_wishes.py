@@ -14,6 +14,7 @@ from voice_assistant.events import EventLog
 from voice_assistant.home import Request
 from voice_assistant.myself import Myself
 from voice_assistant.wishes import (
+    ASKED_MAX,
     BUILDING,
     FAILED,
     GRANTED,
@@ -22,6 +23,7 @@ from voice_assistant.wishes import (
     OFFERED,
     READY,
     STALLED_AFTER_S,
+    WHY_MAX,
     GitHub,
     GitHubError,
     Told,
@@ -150,6 +152,39 @@ def test_a_wish_is_offered_to_the_maintainers_with_a_build_button_and_what_would
     (text, buttons), = said  # fmt: skip
     assert text.startswith("Stacey asked me") and "Want me to have it built?" in text and issue(row(log, n))[1] in text
     assert buttons == [("Build it", f"wish:{n}")] and row(log, n)["build"] == OFFERED
+
+
+@pytest.mark.parametrize("asked, why", [("a" * 10_000, "b" * 10_000), ("word " * 2000, "why " * 2000)])
+def test_what_a_maintainer_is_shown_is_all_of_what_is_posted_however_long_the_wish(log, github, asked, why):
+    from voice_assistant import telegram
+
+    sent = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content)["text"])
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 7}})
+
+    bot = telegram.Bot("t", http=httpx.Client(transport=httpx.MockTransport(answer)))
+    wishes, _, _, _ = wishing(log, github)
+    wishes.told.maintainers = lambda text, buttons: [bot.send_buttons(1, text, buttons) and "Alon"]
+    n = log.store.write(
+        "INSERT INTO wishes (at, person, via, asked, why) VALUES (?, ?, ?, ?, ?)", (NOW, "S" * 5000, "chat", asked, why)
+    )
+    lead = Myself._wish_text("S" * 5000, asked, why)
+    assert wishes.offer(n, lead) == ["Alon"]
+    wishes.build(n)
+    (shown,), (posted,) = sent, github.issues
+    assert len(shown) <= telegram.MAX_TEXT and shown.endswith(f"\n\n{posted['title']}\n{posted['body']}")
+    assert shown.startswith("SSS") and "Want me to have it built?" in shown
+    assert (
+        f"{asked[: ASKED_MAX - 1].rstrip()}…." in posted["body"]
+        and f"{why[: WHY_MAX - 1].rstrip()}…." in posted["body"]
+    )
+
+
+def test_a_short_wish_is_posted_whole(log):
+    title, body = issue({"id": 3, "asked": "read the updates.", "why": "no WhatsApp."})
+    assert (title, "…" in body) == ("Read the updates", False) and "**What stopped it:** no WhatsApp." in body
 
 
 def test_a_tap_opens_a_labelled_issue_once(log, github):
@@ -372,6 +407,61 @@ def test_github_errors_while_following_are_a_line_not_a_crash(log, github, capsy
     assert row(log, n)["build"] == BUILDING and "couldn't follow wish" in capsys.readouterr().out
 
 
+def test_one_github_client_serves_every_tap_and_pass_and_is_closed_with_tars(log, github):
+    made: list[GitHub] = []
+
+    def make() -> GitHub:
+        made.append(GitHub(REPO, "ghp_secret", transport=github))
+        return made[-1]
+
+    wishes, _, _, _ = wishing(log, github)
+    wishes._github = make
+    n = wish(log)
+    wishes.offer(n, "x")
+    wishes.build(n)
+    github.open_pull(100)
+    for _ in range(3):
+        wishes.follow()
+    assert len(made) == 1 and row(log, n)["pr"] == 200
+    wishes.close()
+    assert made[0]._http.is_closed
+    with pytest.raises(GitHubError, match="TARS is stopping"):
+        wishes._gh()
+
+
+def test_a_client_that_couldnt_be_made_is_tried_again_next_time(log, github, capsys):
+    wishes, _, _, _ = wishing(log, github)
+    n = wish(log)
+    wishes.offer(n, "x")
+    tries = []
+
+    def make() -> GitHub:
+        tries.append(None)
+        if len(tries) == 1:
+            raise GitHubError("no GITHUB_TOKEN in .env")
+        return GitHub(REPO, "ghp_secret", transport=github)
+
+    wishes._github = make
+    assert wishes.build(n) == "I couldn't ask for it on GitHub: no GITHUB_TOKEN in .env"
+    assert wishes.build(n).startswith("Asked for it") and len(tries) == 2
+
+
+def test_closing_stops_the_following(log, github, monkeypatch):
+    import threading
+
+    from voice_assistant import wishes as module
+
+    monkeypatch.setattr(module, "FOLLOW_EVERY_S", 0.01)
+    wishes, _, _, _, _ = building(log, github)
+    passes = []
+    wishes.follow = lambda: passes.append(None)
+    wishes.start()
+    (thread,) = [t for t in threading.enumerate() if t.name == "wishes"]
+    wishes.close()
+    thread.join(timeout=2)
+    assert not thread.is_alive() and passes
+
+
 @pytest.mark.parametrize(
     "answer, said",
     [
@@ -534,3 +624,39 @@ def test_whoever_asked_is_told_in_their_chat_or_the_next_time_theyre_heard(log, 
         channel,
         due_now,
     )
+
+
+ROOT = Path(__file__).parents[1]
+FENCED_IN_WISH_MD = [
+    ".github/wish.md",
+    ".github/workflows/ci.yml",
+    ".github/workflows/wish.yml",
+    "deploy/install-pi.sh",
+    "deploy/tars-system",
+    "deploy/voice-assistant-telegram.service",
+    "src/voice_assistant/updater.py",
+    "src/voice_assistant/wishes.py",
+    "src/voice_assistant/draft.py",
+    "src/voice_assistant/homenet.py",
+    "src/voice_assistant/browser/gate.py",
+    "src/voice_assistant/browser/money.py",
+    "src/voice_assistant/browser/vault.py",
+]
+
+
+def test_ci_fences_off_what_wish_md_tells_the_agent_not_to_change():
+    import re
+
+    ci = (ROOT / ".github/workflows/ci.yml").read_text()
+    (fenced,) = re.findall(r"^\s+FENCED: '(.+)'$", ci, re.MULTILINE)
+    fence = re.compile(fenced)
+    for path in FENCED_IN_WISH_MD:
+        assert (ROOT / path).is_file() and fence.search(path), path  # moved, it'd no longer be fenced
+    for path in ["src/voice_assistant/home.py", "src/voice_assistant/browser/errands.py", "tests/test_wishes.py",
+                 "docs/wishes.md", "src/voice_assistant/wishes_more.py", "examples/deploy/x.py"]:  # fmt: skip
+        assert not fence.search(path), path
+    told = (ROOT / ".github/wish.md").read_text()
+    for name in ["`.github/`", "`deploy/`", "`updater.py`", "`wishes.py`", "`draft.py`", "`homenet.py`",
+                 "`browser/gate.py`", "`browser/money.py`", "`browser/vault.py`", "`wish fence`"]:  # fmt: skip
+        assert name in told, name
+    assert "startsWith(github.head_ref, 'claude/issue-')" in ci and "--no-renames" in ci

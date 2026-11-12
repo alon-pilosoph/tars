@@ -12,11 +12,13 @@ maintainer says yes, and told to whoever asked once it's installed.
 4. Merged is installed by the updater (updater.py). Once the running checkout has it, the wish is granted and the one
    who asked is told, once: in their chat, or the next time they speak to TARS.
 
-Held in code: only a maintainer's tap starts a build, at most [wishes] monthly in 30 days; nothing here merges.
+Held in code: only a maintainer's tap starts a build, at most [wishes] monthly in 30 days; what's posted is capped so
+the offer always fits one Telegram message, so what a maintainer approves is all of what's posted; nothing here merges.
 """
 
 import re
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,6 +38,10 @@ MONTH_S = 30 * 86400.0
 PASSED = {"success", "neutral", "skipped"}
 API = "https://api.github.com"
 BOT = "claude[bot]"  # who Claude Code's GitHub App opens pull requests as
+# The most of what was asked for, and of what stopped TARS, that's posted: with them, the issue's body is at most about
+# 1,700 characters, so the offer, which shows it whole, always fits one Telegram message (telegram.MAX_TEXT).
+ASKED_MAX, WHY_MAX = 300, 1200
+TITLE_MAX = 120
 
 
 class GitHubError(Exception):
@@ -43,8 +49,10 @@ class GitHubError(Exception):
 
 
 class GitHub:
-    """The few calls of GitHub's REST API a wish needs, with a token that may open issues and comment on [wishes]
-    repo. The token never leaves this class."""
+    """The few calls of GitHub's REST API a wish needs, on [wishes] repo, with a fine-grained token for it alone:
+    Issues read and write (the issue, a comment), Pull requests read-only, Metadata read-only; nothing else. Check runs
+    have no fine-grained permission: they're read as a public repository's. The token never leaves this class. One
+    client, kept for as long as TARS runs, and closed by close()."""
 
     def __init__(self, repo: str, token: str, transport: httpx.BaseTransport | None = None):
         self.repo = repo
@@ -54,6 +62,9 @@ class GitHub:
             timeout=20,
             transport=transport,
         )
+
+    def close(self) -> None:
+        self._http.close()
 
     def _call(self, method: str, path: str, **kw) -> dict | list:
         try:
@@ -129,14 +140,21 @@ class Told:
 
 def issue(wish: dict) -> tuple[str, str]:
     """What's posted to GitHub for a wish: its title and body. Not who asked, nor the chat it came from; the model is
-    told to write the wish without names too."""
-    asked, why = wish["asked"].strip().rstrip("."), wish["why"].strip().rstrip(".")
+    told to write the wish without names too. What was asked for and what stopped TARS are cut at ASKED_MAX and
+    WHY_MAX, so the offer can show all of it."""
+    asked = _clip(wish["asked"].strip().rstrip("."), ASKED_MAX)
+    why = _clip(wish["why"].strip().rstrip("."), WHY_MAX)
     title = asked[:1].upper() + asked[1:]
     body = (
         f"TARS was asked for this and couldn't do it.\n\n**Asked for:** {asked}.\n\n**What stopped it:** {why}.\n\n"
-        f"Build it as [.github/wish.md](../blob/main/.github/wish.md) says. (TARS's wish {wish['id']}.)"
+        f"Build it as [.github/wish.md](../blob/main/.github/wish.md) says. (TARS's wish {int(wish['id'])}.)"
     )
-    return title[:120], body
+    return _clip(title, TITLE_MAX), body
+
+
+def _clip(text: str, most: int) -> str:
+    """`text`, or as much of it as fits in `most` characters with an ellipsis to show it was cut."""
+    return text if len(text) <= most else text[: most - 1].rstrip() + "…"
 
 
 class Wishes:
@@ -149,7 +167,8 @@ class Wishes:
         running: Callable[[str], bool],
         clock: Callable[[], float] = time.time,
     ):
-        """`running(sha)`: whether the checkout TARS runs from has that commit."""
+        """`github()` makes the GitHub client, once, the first time it's needed (GitHubError if it can't: no token,
+        say), and again only after that failed. `running(sha)`: whether the checkout TARS runs from has that commit."""
         self.store, self.cfg, self._github, self.told, self._running, self._clock = (
             store,
             cfg,
@@ -158,20 +177,25 @@ class Wishes:
             running,
             clock,
         )
+        self._client: GitHub | None = None
+        self._lock = threading.Lock()  # a tap (the Telegram service's thread) and follow() (its own) share the client
+        self._closing = threading.Event()
 
     def offer(self, wish_id: int, text: str) -> list[str]:
         """Tells the maintainers about a wish just noted (`text`), asking whether to have it built. The maintainers
-        reached."""
+        reached. The issue is shown whole, as it would be posted: should the message be too long for Telegram, it's
+        `text` that's cut, never the issue."""
+        from .telegram import MAX_TEXT
+
         wish = self._wish(wish_id)
         title, body = issue(wish)
         self.store.write("UPDATE wishes SET build=? WHERE id=?", (OFFERED, wish_id))
+        posted = (
+            "\n\nWant me to have it built? Claude Code would build it from this, posted on GitHub as an issue, and "
+            f"open a pull request for you to review:\n\n{title}\n{body}"
+        )
         return (
-            self.told.maintainers(
-                f"{text}\n\nWant me to have it built? Claude Code would build it from this, posted on GitHub as "
-                f"an issue, and open a pull request for you to review:\n\n{title}\n{body}",
-                [("Build it", f"{TAP}{wish_id}")],
-            )
-            or []
+            self.told.maintainers(_clip(text, MAX_TEXT - len(posted)) + posted, [("Build it", f"{TAP}{wish_id}")]) or []
         )
 
     def build(self, wish_id: int) -> str:
@@ -185,7 +209,7 @@ class Wishes:
             return f"I've had {built} built in the last 30 days, the most I'm set to ([wishes] monthly). Ask me later."
         title, body = issue(wish)
         try:
-            number, url = self._github().open_issue(title, body, self.cfg.label)
+            number, url = self._gh().open_issue(title, body, self.cfg.label)
         except GitHubError as e:
             return f"I couldn't ask for it on GitHub: {e}"
         self.store.write(
@@ -207,7 +231,7 @@ class Wishes:
                 print(f"(wishes: couldn't follow wish {wish['id']}: {e})")
 
     def _watch(self, wish: dict) -> None:
-        github, now = self._github(), self._clock()
+        github, now = self._gh(), self._clock()
         pull = github.pull_for(wish["issue"]) if wish["pr"] is None else github.pull(wish["pr"])
         if pull is None:
             if now - wish["built_at"] > NO_PULL_AFTER_S:
@@ -291,18 +315,33 @@ class Wishes:
     def _wish(self, wish_id: int) -> dict | None:
         return self.store.row("SELECT * FROM wishes WHERE id=?", (wish_id,))
 
-    def start(self) -> None:
-        import threading
+    def _gh(self) -> GitHub:
+        """The one GitHub client, made the first time it's needed."""
+        with self._lock:
+            if self._closing.is_set():
+                raise GitHubError("TARS is stopping")
+            if self._client is None:
+                self._client = self._github()
+            return self._client
 
+    def start(self) -> None:
         def loop():
-            while True:
+            while not self._closing.is_set():
                 try:
                     self.follow()
                 except Exception as e:  # noqa: BLE001 - the next pass tries again
                     print(f"(wishes: a pass failed: {e!r})")
-                time.sleep(FOLLOW_EVERY_S)
+                self._closing.wait(FOLLOW_EVERY_S)
 
         threading.Thread(target=loop, daemon=True, name="wishes").start()
+
+    def close(self) -> None:
+        """Stops following, and closes the GitHub client's connections. Nothing reaches GitHub after it."""
+        self._closing.set()
+        with self._lock:
+            if self._client is not None:
+                self._client.close()
+                self._client = None
 
 
 def _first_paragraph(text: str) -> str:

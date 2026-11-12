@@ -18,7 +18,10 @@ request.
 ## How it works
 
 1. **The wish** (`tars` tool, `wish`) is kept in the `wishes` table. With `[wishes]` on, the maintainers get it straight
-   through Telegram's API with a Build it button (`wishes.Wishes.offer`), and the issue text it would post.
+   through Telegram's API with a Build it button (`wishes.Wishes.offer`), and the issue it would post, whole: title and
+   body, exactly as they'd be posted. What was asked for is cut at 300 characters and what stopped TARS at 1,200
+   (`ASKED_MAX`, `WHY_MAX`), with an ellipsis, so the issue is at most about 1,700 characters and the offer always fits
+   one Telegram message (4,096); if anything is cut to fit, it's the line above the issue, never the issue.
 2. **A maintainer's tap** (`wishes.tap_listener`, in the Telegram service) opens the issue on `[wishes] repo` with the
    GitHub token in `.env`. Only a tap from a maintainer's own chat counts; anyone else's is acknowledged and ignored.
 3. **The workflow** (`.github/workflows/wish.yml`) hands the issue to
@@ -41,6 +44,8 @@ request.
 
 - **Nothing is built without a maintainer's tap**, and at most `[wishes] monthly` builds start in 30 days. TARS can't
   see what a run costs, so the cap is a count, not dollars.
+- **What a maintainer approves is all of what's posted.** The issue's text is capped so the offer shows it whole, and
+  the tap posts that same text; no part of it goes to GitHub unseen.
 - **The coding agent has the repository, and no more of the house than the issue.** It runs on GitHub's machines: no
   `.env`, no `config.local.toml`, no database. Its reach there is real, though: the Anthropic key, and the Claude
   app's token, which may push branches, open pull requests and comment on issues. The workflow scrubs both from the
@@ -52,24 +57,51 @@ request.
   devices; that's asked of it, not checked, so the maintainer sees the exact text before tapping.
 - **Only the repository's owner sets the workflow off**, by labelling an issue or commenting `@claude` on a pull
   request: on a public repository, anyone else's issue or comment could otherwise spend the key.
-- **Nothing merges itself.** `main` must be protected so that a reviewed pull request is the only way in (on TARS's
-  own repository: pull requests with one approval, which only the owner may bypass); the workflow's token can push
-  branches, so without that it could push to `main`.
+- **What builds a wish is fenced off from it.** The issue's text came from a conversation, so it's outside-influenced,
+  and it ends up instructing an agent that can push to the repository. `.github/wish.md` tells the agent never to
+  change `.github/` (the workflows, CI, those instructions), `deploy/` (units, the installer, the root helper), how
+  TARS updates and builds itself, how secrets are kept, or the safety guards (unlocking, drafts, orders), and to stop
+  and say so when a wish would need it. CI holds the plainest of these in code: its `wish fence` check fails a pull
+  request from a `claude/issue-` branch that changes anything under `.github/` or `deploy/`, or `updater.py`,
+  `wishes.py`, `draft.py`, `homenet.py`, `browser/gate.py`, `browser/money.py` or `browser/vault.py`. The check can't
+  be edited away from inside the pull request: GitHub refuses a push that changes a workflow from the Claude app
+  without the Workflows permission, or from a workflow's own token.
+- **Nothing merges itself**, once `main` is protected (step 3 of [setting it up](#setting-it-up), **required**): then
+  a reviewed pull request, with CI and the `wish fence` check passing, is the only way in. Without it, the workflow's
+  tokens, which can push branches, could push to `main`. TARS doesn't check that it's set up.
 - **A build that stops moving stops**: after `[wishes] tries` fixes, with no pull request after three hours, or with
   CI never finishing on its latest commit, or no fix pushed after it was sent back, for three hours. A pull request
   that's built and waiting for review waits as long as it takes.
 
 ## Setting it up
 
-1. **A GitHub token for TARS**: a fine-grained personal access token for the repository only, with Issues read and
-   write (it opens the issue, and comments on the pull request), Pull requests read, Checks read (CI on a commit) and
-   Metadata read; nothing else. Put it in `.env` as `GITHUB_TOKEN`. It's the owner's: the workflow only answers the
-   owner.
+1. **A GitHub token for TARS**: a fine-grained personal access token, the owner's (the workflow only answers the
+   owner), with repository access to this repository only, and these permissions, nothing else:
+
+   | Permission | Access | For |
+   |---|---|---|
+   | Issues | Read and write | opening the labelled issue (`POST /repos/…/issues`), and the `@claude` comment on a pull request (`POST /repos/…/issues/N/comments`) |
+   | Pull requests | Read-only | finding and reading Claude Code's pull request (`GET /repos/…/pulls`, `/pulls/N`) |
+   | Metadata | Read-only | mandatory: GitHub adds it to every fine-grained token |
+
+   CI on a pull request's latest commit (`GET /repos/…/commits/SHA/check-runs`) has no fine-grained permission at all:
+   GitHub answers it for a public repository whatever the token may do, which is why the repository must be public
+   (see [limitations](#limitations)).
+   Put it in `.env` as `GITHUB_TOKEN`. TARS reads it the first time it needs GitHub and keeps the one connection: a new
+   token takes effect when the Telegram service restarts.
 2. **Claude Code on the repository**: install the Claude GitHub App on it (`/install-github-app` in Claude Code does
    both), and add an Anthropic API key as the repository secret `ANTHROPIC_API_KEY`. Pushes the app makes run CI, so
-   TARS has something to follow.
-3. **Protect `main`**: pull requests only, with an approval (and CI) required. Without it, the workflow's token could
-   push to `main`.
+   TARS has something to follow. Don't give the app's installation the Workflows permission: without it, GitHub
+   refuses the app's pushes that change `.github/workflows/`, which is what keeps the `wish fence` check in place.
+3. **Required: protect `main` with a branch ruleset.** Nothing else stops a push to `main`, and TARS doesn't check it.
+   In the repository's Settings, Rules, Rulesets, a new branch ruleset:
+   - Enforcement status **Active**, targeting the default branch.
+   - **Restrict deletions** and **Block force pushes**.
+   - **Require a pull request before merging**, with **1** required approval.
+   - **Require status checks to pass**: `python`, `web` and `wish fence` (CI's jobs; `wish fence` is skipped, and
+     passes, on every pull request that isn't a wish's).
+   - Bypass list: only the **Repository admin** role, so the owner can still merge their own pull requests; never the
+     Claude app or GitHub Actions.
 4. **Turn on `[updates]`**, so a merge is installed and the wish granted.
 5. **Turn it on** in `config.local.toml`, with `[household] maintainers` on Telegram:
 
@@ -89,3 +121,11 @@ request.
 - **Big wishes may not fit.** One that needs an account, hardware or a household decision can't be built by an agent
   alone; `.github/wish.md` asks it to open the pull request saying what's needed instead of building half of it.
 - **The maintainer hears what the pull request says it does**, its first paragraph: a review is still the review.
+- **The repository must be public.** Reading CI on a commit (check runs) isn't something a fine-grained token can be
+  given; GitHub shows it for a public repository to anyone. On a private one, every pass would fail to read CI
+  ("couldn't follow wish", in the Telegram service's log) and the wish would wait as building; only a classic token
+  with the whole `repo` scope could read it, which is far more than TARS should hold.
+- **Only some of the fence is code.** The `wish fence` check covers whole files; unlocking (in `home.py`), the Order
+  tap (in `browser/errands.py`) and the web-search rule (`llm.py`, `home.py`) live in files a wish may well need to
+  change, so there it's `.github/wish.md`, the tests that pin each guard ([security](security.md)) and the review that
+  hold them.

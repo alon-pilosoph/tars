@@ -6,8 +6,10 @@
 #
 # Its reach: the Anthropic key, and the Claude app's token, which may push branches, open pull requests and comment on
 # issues; no .env, no config.local.toml, no database. The key and tokens are scrubbed from the commands it runs, as far
-# as the action manages. It can't merge: main is protected (pull requests with one approval, only the owner bypasses),
-# so a person reviews and merges. What it reads of the house is the issue, which the maintainer saw before tapping.
+# as the action manages. What it reads of the house is the issue, which the maintainer saw whole before tapping, and
+# .github/wish.md fences off what it mustn't change (CI's wish fence check holds the plainest of it). It can't merge
+# only once main has the branch ruleset docs/wishes.md#setting-it-up requires (a pull request with an approval, CI and
+# the wish fence passing); without it, these tokens could push to main. Nothing here checks that it's set.
 name: Wish
 
 on:

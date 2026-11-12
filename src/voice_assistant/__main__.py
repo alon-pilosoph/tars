@@ -759,11 +759,12 @@ def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
     )
 
 
-def make_myself(cfg: Config, root: Path, events):
-    """TARS knowing itself (myself.py): its version, changes, docs, records and log."""
+def make_myself(cfg: Config, root: Path, events, wishes=None):
+    """TARS knowing itself (myself.py): its version, changes, docs, records and log. `wishes`: the process's own
+    Wishes, if it has one; otherwise one is made for offering them."""
     from .myself import Myself
 
-    wishes = make_wishes(cfg, root, events)
+    wishes = wishes or make_wishes(cfg, root, events)
     return Myself(cfg, root, events, offer=wishes.offer if wishes else None)
 
 
@@ -863,7 +864,8 @@ def telegram(cfg: Config, root: Path) -> None:
     queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
     feeds = make_feeds(cfg, events)  # one for every chat: each person's feeds are kept by person
     skills = make_skills(events)
-    myself = make_myself(cfg, root, events)
+    wishes = make_wishes(cfg, root, events)  # one, with one GitHub client, for the offers, the taps and following
+    myself = make_myself(cfg, root, events, wishes)
     tars = TelegramTars(
         bot,
         cfg.telegram.people,
@@ -894,14 +896,18 @@ def telegram(cfg: Config, root: Path) -> None:
     told.append(tars)
     if cfg.updates.enabled:
         listen_for_update_taps(cfg, root, tars)
-    if wishes := make_wishes(cfg, root, events):
+    if wishes:
         from .wishes import tap_listener
 
         tars.listen_first(tap_listener(wishes, list(maintainer_chats(cfg).values()), tars.bot))
         wishes.start()
     if queue:
         make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
-    tars.run_forever(me)
+    try:
+        tars.run_forever(me)
+    finally:
+        if wishes:
+            wishes.close()
 
 
 def listen_for_update_taps(cfg: Config, root: Path, tars) -> None:

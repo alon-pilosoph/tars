@@ -295,8 +295,8 @@ facts come up again.
 
 Something TARS couldn't do goes to the maintainers with a Build it button; a tap has Claude Code build it on GitHub
 and open a pull request, which TARS follows through CI; once it's merged and installed, whoever asked is told "I can
-do it now" ([wishes that come true](wishes.md)). Left: the GitHub token, the Claude GitHub App and branch protection
-on the household's repository, and the first real wish through it.
+do it now" ([wishes that come true](wishes.md)). Left: the GitHub token, the Claude GitHub App and the branch ruleset
+on `main` that setting it up requires, and the first real wish through it.
 
 ## Planned: noticing routines
 
