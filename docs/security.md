@@ -116,15 +116,21 @@ instructions and…". A model may believe them, so what matters is what code all
 
 - **Defenses:** a plugin is code someone chose to name in `[home.plugins]`, and declares what it needs; with `grant`
   set, one that needs more doesn't load, and its context holds only what was granted: other keys in `.env` are
-  refused, Home Assistant, speaking and telling are absent unless granted, and Home Assistant's unlock, open and
-  disarm services refuse it without the `unlock` grant. A plugin tool that changes something waits for the turn and
-  isn't called by a reply that read the web ([plugins](home.md#plugins)).
+  refused, Home Assistant, speaking and telling are absent unless granted. Without the `unlock` grant, Home
+  Assistant refuses it whatever could open the house, by the same check as the `home_assistant` tool (a lock, its
+  unlatch button, a script, automation or scene that unlocks), and opening a garage or disarming; it never
+  administers Home Assistant, and gets its reading methods, not the client. The other devices are read-only views
+  that unlock only with `unlock`, and then only as the home tool allows. A plugin tool that changes something waits
+  for the turn and isn't called by a reply that read the web, and can't take another tool's name
+  ([plugins](home.md#plugins)).
 - **Tests:** `tests/test_plugins.py`: a plugin needing more than its grant doesn't load; an ungranted key is refused;
-  unlock, open and disarm are refused without `unlock`; the client's private methods aren't handed over; a changing
-  tool waits for the turn and refuses a reply that read the web.
+  every route that opens the house is refused without `unlock`, and a service is only ever a plain name; the client
+  and its setup aren't handed over; another device can't be unlocked through its view; a changing tool waits for the
+  turn and refuses a reply that read the web; `--check` warns on a grant of TARS's own keys.
 - **Open:** grants hold at the interface, not in a sandbox: a plugin is Python in TARS's process and could reach
-  around them, so one is installed only after being read. A plugin with no `grant` set loads with everything (as
-  before grants), with a `--check` warning. Network access isn't limited.
+  around them, and every plugin keeps `root`, so it can read the project's files, `.env` included. One is installed
+  only after being read. A plugin with no `grant` set loads with everything (as before grants), with a `--check`
+  warning. Network access isn't limited.
 
 ### A stolen Pi, or its SD card
 

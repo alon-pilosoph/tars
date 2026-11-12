@@ -38,6 +38,7 @@ from .config import (
 )
 from .echo import MAX_DELAY_S
 from .errors import SERVICE_FAILURES
+from .plugins import TARS_KEYS, Loaded
 
 if TYPE_CHECKING:
     from .backup import Backup
@@ -595,8 +596,8 @@ def house(built, hass_ok: bool) -> list[Result]:
     return results
 
 
-def plugin_result(p) -> Result:
-    """A plugin, as it loaded (plugins.Loaded): its version and what it was granted."""
+def plugin_result(p: Loaded) -> Result:
+    """A plugin, as it loaded: its version and what it was granted."""
     name, fix = f"Plugin {p.name}", "docs/home.md#plugins"
     if p.error:
         return Result(name, FAIL, f"{p.version + ': ' if p.version else ''}didn't load: {p.error}", fix)
@@ -608,7 +609,10 @@ def plugin_result(p) -> Result:
             f"{p.version}: given everything, since no grant is set",
             f"pin what it may use: grant = [{needs}] under [home.plugins.{p.name}]" if p.needs else fix,
         )
-    return Result(name, OK, f"{p.version}: granted {', '.join(p.granted) or 'nothing'}")
+    granted = f"{p.version}: granted {', '.join(p.granted) or 'nothing'}"
+    if own := sorted(TARS_KEYS.intersection(p.granted)):
+        return Result(name, WARN, f"{granted}; {', '.join(own)} is TARS's own", "give it a key of its own in .env")
+    return Result(name, OK, granted)
 
 
 def own_speaker(cfg: Config, mixer: Callable[[str], Mixer]) -> Result | list[Result]:

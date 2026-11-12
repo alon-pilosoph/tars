@@ -20,12 +20,15 @@ import json
 import re
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
+
+if TYPE_CHECKING:
+    from .plugins import Loaded, PluginTool
 
 TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
 STATUS, ON, OFF, SET, PRESS = "status", "on", "off", "set", "press"
@@ -188,6 +191,10 @@ class Context:
     maintainers: list[str] = field(default_factory=list)  # [household] maintainers: who looks after TARS
     # Tells the maintainers something, in their chats (maintainers.tell): a device that's stopped answering.
     tell: Callable[[str], None] | None = None
+    # The plugin that made each device, by its name in lower case: a plugin granted devices gets its own as they are.
+    plugin_of: dict[str, str] = field(default_factory=dict)
+    # HomeTools.may_unlock, once the house is built: a plugin granted unlock unlocks another device only as it allows.
+    may_unlock: Callable[[Request], str | None] | None = None
     # This process does the house's background work (the voice assistant's): watching a device. Only one may, or
     # its maintainers would be told everything twice.
     background: bool = False
@@ -196,7 +203,7 @@ class Context:
 class Built(NamedTuple):
     tools: HomeTools | None
     unavailable: dict[str, str]  # a device in config.toml that couldn't be made, by its name there: why
-    plugins: dict | None = None  # each plugin in [home.plugins], as it loaded (plugins.Loaded), by its name
+    plugins: dict[str, Loaded] | None = None  # each plugin in [home.plugins], as it loaded, by its name
 
 
 def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = None) -> Built:
@@ -213,13 +220,16 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     if context.hass is None and cfg.url and context.secret(TOKEN_KEY):
         context.hass = hass.HomeAssistant(cfg.url, context.secret(TOKEN_KEY))
     makers: dict[str, Callable[[dict], Device]] = {}
-    plugin_tools, loaded = [], {}
+    plugin_tools: list[PluginTool] = []
+    loaded: dict[str, Loaded] = {}
     for plugin, settings in cfg.plugins.items():
         try:
             module = load_plugin(settings["module"], context.root)
             given, loaded[plugin] = admit(plugin, module, settings.get("grant"), context)
             made = provided(
-                module.setup({k: v for k, v in settings.items() if k not in ("module", "grant")}, given), plugin
+                module.setup({k: v for k, v in settings.items() if k not in ("module", "grant")}, given),
+                plugin,
+                {t.name for t in plugin_tools},
             )
             makers |= {f"{plugin}.{kind}": make for kind, make in made.kinds.items()}
             plugin_tools += made.tools
@@ -254,6 +264,7 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
                 device = spotify.make(name, d, context)
             elif kind in makers:
                 device = makers[kind](d | {"name": name})
+                context.plugin_of[name.lower()] = kind.partition(".")[0]
             else:
                 raise ValueError(f"its plugin has no kind {kind.partition('.')[2]!r}")
         except Exception as e:  # noqa: BLE001 - one device that can't be made never stops the others
@@ -269,11 +280,17 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         from .haconfig import HAConfig
 
         history = HAConfig(context.root / cfg.config_dir, cfg.container)
-    tools = (
-        HomeTools(cfg, dict(context.devices), context.hass, history, context.maintainers, plugin_tools)
-        if made
-        else None
-    )
+    tools = None
+    if made:
+        tools = HomeTools(
+            cfg,
+            dict(context.devices),
+            hass=context.hass,
+            ha_config=history,
+            maintainers=context.maintainers,
+            plugin_tools=plugin_tools,
+        )
+        context.may_unlock = tools._may_unlock
     return Built(tools, unavailable, loaded)
 
 
@@ -355,7 +372,7 @@ class HomeTools:
         hass=None,
         ha_config=None,
         maintainers: list[str] = (),
-        plugin_tools: list = (),
+        plugin_tools: Sequence[PluginTool] = (),
     ):
         """`hass`: Home Assistant (hass.HomeAssistant), for the home_assistant tool: all of it, beyond the devices.
         `ha_config`: its setup's history (haconfig.HAConfig), so a change TARS makes to its setup can be undone.

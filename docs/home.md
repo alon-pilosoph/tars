@@ -287,25 +287,37 @@ def setup(settings: dict, context: Context) -> dict:
 ```
 
 <a id="plugins"></a>**Declared and granted.** `needs` lists what the plugin uses: a key in `.env` by its name, or
-`home_assistant` (reading it and calling its services), `unlock` (Home Assistant's unlock, open and disarm services,
-never otherwise), `announce`, `tell`, `tv_agent` and `devices` (the house's other devices). `grant` under its
-`[home.plugins.<name>]` says what it gets:
+`home_assistant` (reading it and calling its services), `unlock` (whatever opens the house, never otherwise),
+`announce`, `tell`, `tv_agent` and `devices` (the house's other devices). `grant` under its `[home.plugins.<name>]`
+says what it gets, each a key's name in `.env` or one of those (`config.toml` is checked for it):
 
 - A plugin that needs anything its grant doesn't give it **doesn't load**: its devices are left out, and `--check`
   says what's missing. One that declares nothing can't be granted at all.
 - Its `context` has **only what was granted**: `secret()` refuses any other key (`plugins.Refused`), `hass`,
-  `announce`, `tell` and `tv_agent` are `None` unless granted, `devices` is empty unless granted, and Home Assistant's
-  `call` refuses `lock.unlock`, `lock.open` and `alarm_control_panel.alarm_disarm` without `unlock`.
-- **Without `grant`**, a plugin loads as it did before grants, with everything, and `--check` warns, with the exact
-  line to pin it (`grant = [...]`). `--check` lists each plugin with its version and what it was granted.
-- Grants hold at the interface TARS hands a plugin. A plugin is still Python running in TARS's process, so it's code
-  someone has read, not a sandbox: don't install one you haven't.
+  `announce`, `tell` and `tv_agent` are `None` unless granted, and `devices` is empty unless granted. `maintainers` is
+  a copy it can't change.
+- **Home Assistant**, granted, is its reading methods and `call`/`call_service`, never the client itself or its setup
+  (adding or removing integrations). Without `unlock`, a call is refused if it could open the house as the
+  `home_assistant` tool sees it: a lock's service other than `lock`, an entity on a lock's own device or named for
+  unlocking (a Nuki's unlatch button), a script, automation or scene that would unlock, opening a garage, door or gate
+  cover, or disarming an alarm. So is one that administers Home Assistant, one aimed at a device, a room or a label
+  rather than its entities, and a service that isn't a plain `domain.service`.
+- **The other devices**, granted, are read-only views: their status, what they are, their actions. Unlock and open
+  need `unlock` too, and then go only as the home tool's rules allow for the request they answer. The plugin's own
+  devices are its own, as they are.
+- **Without `grant`**, a plugin loads as it did before grants, with everything: TARS's own context, any key in `.env`,
+  all of Home Assistant. `--check` warns, with the exact line to pin it (`grant = [...]`). It lists each plugin with
+  its version and what it was granted, and warns too when a grant gives it one of TARS's own keys (its OpenAI key, the
+  Home Assistant token).
+- Grants hold at the interface TARS hands a plugin. A plugin is still Python running in TARS's process, and every
+  plugin keeps `root`, the project's folder, so it can read the files there, `.env` included: it's code someone has
+  read, not a sandbox. Don't install one you haven't.
 
-**Tools of its own.** `setup` may return `Provides(kinds, tools)` instead, with `PluginTool`s: a name, a description
-and parameters (a JSON schema) as the model sees them, and `call(args, request)` that answers in the tool's words, as
-a device's `call` does. One with `changes=True` waits for the turn to be over, is called one change at a time with
-the house's, and isn't called at all by a reply that read the web. `rules` adds a line to the model's instructions.
-A tool can't take a name TARS already has.
+**Tools of its own.** `setup` may return `Provides(kinds, tools)` instead, with `PluginTool`s: a name, a description and
+parameters (a JSON schema) as the model sees them, and `call(args, request)` that answers in the tool's words, as a
+device's `call` does. One with `changes=True` waits for the turn to be over, is called one change at a time with the
+house's, and isn't called at all by a reply that read the web. `rules` adds a line to the model's instructions. A tool
+can't take a name TARS or another plugin already has: the plugin that comes second doesn't load.
 
 - **`call`** answers in the tool's words: `done:` only when the device itself reports it, `sent:` when nothing can
   tell, `started:`, `not confirmed:` or `error:` otherwise. Raising `HomeError` is said as an error. It's called only

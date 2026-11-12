@@ -161,7 +161,7 @@ class HAAccess:
         self._hass, self._may_unlock, self._now = hass, may_unlock, now
         self._lock = lock or threading.Lock()
         self._setup = setup
-        self._doors: tuple[float, set[str]] = (-DOORS_KEPT_S, set())
+        self.doors = Doors(hass)
 
     def call(self, args: dict, request: Request) -> str:
         args = args if isinstance(args, dict) else {}
@@ -334,20 +334,37 @@ class HAAccess:
         """Why this call may not be made, if it would unlock (HomeTools.may_unlock), or None."""
         if domain == "lock":
             return None if name == "lock" else self._may_unlock(request)  # locking is never held back
-        doors = self._door_entities()
-        opening = [e for e in ids if e in doors or e.startswith("lock.")]
-        if opening and (refused := self._may_unlock(request)):
-            return f"{refused} ({', '.join(opening)} can open a door)"
-        if domain in RUNS_OTHERS:
-            for entity in ids or ([f"{domain}.{name}"] if domain == "script" else []):
-                if self._could_unlock(entity) and (refused := self._may_unlock(request)):
-                    return f"{refused} (it can unlock: {entity})"
+        if (why := self.doors.opening(domain, name, ids)) and (refused := self._may_unlock(request)):
+            return f"{refused} ({why})"
         return None
 
-    def _door_entities(self) -> set[str]:
+
+class Doors:
+    """What in Home Assistant can open a door, read from it: the home_assistant tool's check, and the Home Assistant
+    a plugin is given (plugins.GuardedHass)."""
+
+    def __init__(self, hass: HomeAssistant):
+        self._hass = hass
+        self._found: tuple[float, set[str]] = (-DOORS_KEPT_S, set())
+
+    def opening(self, domain: str, name: str, ids: list[str]) -> str | None:
+        """How calling domain.name on `ids` could open a door, or None: a lock's service other than lock, an entity
+        that opens one, or a script, automation or scene that would."""
+        if domain == "lock":
+            return None if name == "lock" else f"lock.{name} can open a door"
+        doors = self.entities()
+        if opening := [e for e in ids if e in doors or e.startswith("lock.")]:
+            return f"{', '.join(opening)} can open a door"
+        if domain in RUNS_OTHERS:
+            for entity in ids or ([f"{domain}.{name}"] if domain == "script" else []):
+                if self.could_unlock(entity):
+                    return f"it can unlock: {entity}"
+        return None
+
+    def entities(self) -> set[str]:
         """What can open a door: every lock, every entity on a lock's own device (a Nuki's unlatch button), and any
         entity named for unlocking or unlatching. Read again after DOORS_KEPT_S."""
-        at, found = self._doors
+        at, found = self._found
         if time.monotonic() - at < DOORS_KEPT_S:
             return found
         states = self._hass.states()
@@ -362,10 +379,10 @@ class HAAccess:
             registry = []
         lock_devices = {r.get("device_id") for r in registry if r.get("entity_id") in found and r.get("device_id")}
         found |= {r["entity_id"] for r in registry if r.get("device_id") in lock_devices}
-        self._doors = (time.monotonic(), found)
+        self._found = (time.monotonic(), found)
         return found
 
-    def _could_unlock(self, entity: str) -> bool:
+    def could_unlock(self, entity: str) -> bool:
         """Whether an automation, script or scene can open a door, from its setup (it names a lock, or anything else
         that opens one); True if that can't be read."""
         kind, _, object_id = entity.partition(".")
@@ -380,7 +397,7 @@ class HAAccess:
             setup = json.dumps(self._hass.config_of(kind, key)).lower()
         except HomeError:
             return True
-        doors = self._door_entities()
+        doors = self.entities()
         # Any lock or door entity it names: it may unlock it, or set it as a scene says.
         return "lock." in setup or bool(DOOR_WORDS.search(setup)) or any(e.lower() in setup for e in doors)
 

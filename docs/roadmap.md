@@ -12,7 +12,7 @@ being right.
 | 1 | [A week of real use](#1-a-week-of-real-use) | the first real wakes, voices and conversations; everything after learns from them | no code, a checklist |
 | 2 | [Security](#2-security) | the web UI has no accounts, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
-| 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
+| 4 | [Plugins and updates](#4-plugins-and-updates) | plugins react to nothing yet, and updating takes SSH | large |
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; the arrival greeting and dry runs left |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
@@ -97,9 +97,9 @@ passwords, goes to the backup only sealed with a key kept on the Pi. The speaker
 it's red, the wake model doesn't run.
 
 What's open: the web UI has no accounts, so anyone on the home network (a guest, a compromised device) can play every
-recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS
-with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins are trusted.
-The systemd services run unconfined.
+recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin gets only what it's
+granted, but it's code in TARS's process that can read the project's files, and one with no `grant` set gets everything
+(with a `--check` warning). The systemd services run unconfined.
 
 **Plan, most worth it first:**
 
@@ -193,10 +193,10 @@ should (the wake model is tiny), but it's the first time both run together.
 **Goal:** someone else's code can add to TARS without forking it, and TARS and its plugins update themselves safely.
 
 **Where it stands.** A plugin is a Python module named in `[home.plugins]` whose `setup(settings, context)` returns
-kinds of device for the house tool, with `BACKUP_FILES` for what it learned
-([your own devices](home.md#your-own-devices)); `examples/my_house` is the household's. It can only add devices: no
-tool of its own, nothing it reacts to, and no version. Updating is `git pull && deploy/install-pi.sh` over SSH
-([deployment](deployment.md)); the database upgrades itself.
+kinds of device for the house tool and tools of its own, with `BACKUP_FILES` for what it learned ([your own
+devices](home.md#your-own-devices)); `examples/my_house` is the household's. It declares its version and what it needs,
+and gets only what its `grant` gives it ([plugins](home.md#plugins)); nothing it reacts to yet. Updating is `git pull &&
+deploy/install-pi.sh` over SSH ([deployment](deployment.md)); the database upgrades itself.
 
 **Plan:**
 
