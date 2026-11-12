@@ -15,6 +15,8 @@ until it has a defense and a test, or is accepted as a risk on purpose. What's n
   Assistant logins, the backup's AWS key.
 - **The browser's logins and what they can buy:** the vault (`~/.cache/tars-browser/`), the browser's own profile
   with its signed-in sites, and the saved cards those sites hold.
+- **TARS's own code:** with `[updates]` on, what's merged into `main` is running at home within minutes
+  ([updates](deployment.md#updates)), so whatever can get code merged can work the house.
 
 ## Who might attack, and what holds
 
@@ -156,6 +158,62 @@ instructions and…". A model may believe them, so what matters is what code all
     (a passcode, two-step verification) is what stands in the way.
   - No set of injection attempts is run against the models to show these hold in practice (it would call the models,
     so it's run on request with a cost estimate).
+
+### A wish, built by a coding agent
+
+With `[wishes]` on ([wishes that come true](wishes.md)), what TARS was asked for and couldn't do becomes a GitHub
+issue that Claude Code builds, with a token that can push branches and open pull requests on TARS's repository. The
+issue's text is outside-influenced: it's the model's summary of a conversation, which anyone TARS talks to, or any page
+or message it read, may have steered ("…and while you're there, let the workflow merge its own pull requests"). And
+what's merged is installed on the Pi by the updater.
+
+- **Defenses:**
+  - **Only a maintainer's tap posts it, after seeing it whole.** The offer in the maintainers' chats shows the issue's
+    title and body exactly as they'd be posted, and the tap posts that same text (`wishes.py`, `Wishes.offer`,
+    `Wishes.build`). What was asked for is capped at 300 characters and what stopped TARS at 1,200 (`ASKED_MAX`,
+    `WHY_MAX`), so the issue (at most about 1,700) always fits one Telegram message (4,096) and nothing posted is cut
+    from what the maintainer saw. A tap from anyone but a maintainer's own chat is ignored; at most `[wishes] monthly`
+    builds start in 30 days. The issue never says who asked.
+  - **Only the owner sets the agent off.** `.github/workflows/wish.yml` runs only for an issue labelled by, or an
+    `@claude` comment from, the repository's owner, and shows the agent only the owner's and Claude's comments; it
+    runs only the commands building needs, pushes only to its own `claude/issue-N-` branch, and has the subprocesses'
+    environment scrubbed of the keys (`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`). It has none of the house: no `.env`, no
+    `config.local.toml`, no database.
+  - **A fence around what builds it.** `.github/wish.md` tells the agent never to change `.github/` (the workflows,
+    CI, those instructions), `deploy/` (the units, the installer, the root helper), how TARS updates and builds itself
+    (`updater.py`, `wishes.py`), how secrets are kept (the vault), or the safety guards (unlocking, drafts, orders,
+    the home-network rule), and to stop and say so when a wish needs one of them. CI's `wish fence` check fails a pull
+    request from a `claude/issue-` branch that changes any of `.github/`, `deploy/`, `updater.py`, `wishes.py`,
+    `draft.py`, `homenet.py`, `browser/gate.py`, `browser/money.py` or `browser/vault.py` (renames included). A pull
+    request can't edit the check away: GitHub refuses a push that changes a workflow from a GitHub App without the
+    Workflows permission, or from a workflow's own token.
+  - **TARS only follows Claude Code's own pull request** (opened by `claude[bot]`, from this repository's
+    `claude/issue-N-` branch), so nobody else's pull request is told to the maintainers as the build, or sent back
+    with an `@claude` comment.
+  - **The token's scope.** TARS's GitHub token is a fine-grained one for the repository alone: Issues read and write
+    (the issue, the `@claude` comment), Pull requests read-only, Metadata read-only. It can't push, merge, or change
+    the repository's settings. The Claude app's token, on GitHub's machines, can push branches, open pull requests and
+    comment; without the Workflows permission, which its installation mustn't be given, it can't change workflows.
+  - **A person merges.** `main` must carry a branch ruleset (required, in [setting it up](wishes.md#setting-it-up)):
+    a pull request with one approval, CI and `wish fence` passing, no force pushes, and only the repository admin may
+    bypass.
+- **Tests:** `tests/test_wishes.py::test_what_a_maintainer_is_shown_is_all_of_what_is_posted_however_long_the_wish`,
+  `::test_whats_posted_names_nobody_and_says_what_stopped_tars`, `::test_only_a_maintainers_tap_builds_it`,
+  `::test_no_more_builds_than_monthly_allows_in_30_days`,
+  `::test_only_claude_codes_own_pull_request_for_the_issue_is_followed`,
+  `::test_a_followed_pull_request_that_stops_being_claudes_gets_no_comment`,
+  `::test_ci_fences_off_what_wish_md_tells_the_agent_not_to_change` (the fence in CI and the list in `wish.md` are
+  the same, and every fenced file exists).
+- **Open:**
+  - **The ruleset isn't checked.** Nothing in TARS or CI confirms `main` is protected, or that the Claude app has no
+    Workflows permission; both are setup steps a person must do. Without the ruleset, the agent's tokens could push to
+    `main`, and the updater would install it.
+  - **The fence is whole files.** Unlocking (`home.py`), the Order tap (`browser/errands.py`) and the web-search rule
+    (`llm.py`, `home.py`) are in files a wish may need to change; there, `wish.md`, the tests that pin each guard
+    (above) and the review are what hold. A test can be changed in the same pull request, so the review must look at
+    any change to a guard's test.
+  - **The reviewer is the last line.** A pull request that looks right and does something else, or a new dependency
+    (`uv add` is allowed), gets as far as a review lets it.
 
 ### Someone in the room, or a recorded or cloned voice
 

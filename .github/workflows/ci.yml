@@ -18,6 +18,34 @@ jobs:
       - run: for f in deploy/*.sh training/*/*.sh; do bash -n "$f"; done
       - run: uv run pytest -q
 
+  # A wish's pull request (Claude Code's, from a claude/issue- branch: docs/wishes.md) may not change what fences the
+  # agent in, nor the guards that keep the house safe: .github/wish.md lists them, and tests/test_wishes.py keeps the
+  # two lists the same. A pull request can't take this check out: GitHub refuses a push that changes a workflow from
+  # the Claude app (unless its installation is given the Workflows permission, which it mustn't be) or from a workflow's
+  # own token. Skipped on every other pull request, which counts as passing.
+  wish-fence:
+    name: wish fence
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'claude/issue-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Nothing fenced off is changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          FENCED: '^(\.github/|deploy/|src/voice_assistant/(updater|wishes|draft|homenet)\.py$|src/voice_assistant/browser/(gate|money|vault)\.py$)'
+        run: |
+          # --no-renames: a fenced file moved away is a change to it too. A diff or grep that fails fails the check.
+          changed=$(git diff --name-only --no-renames "$BASE"...HEAD)
+          hit=$(grep -E "$FENCED" <<<"$changed") && found=0 || found=$?
+          [ "$found" -le 1 ] || exit "$found"
+          if [ "$found" -eq 0 ]; then
+            echo "::error::This wish's pull request changes what .github/wish.md says it must not:"
+            echo "$hit"
+            exit 1
+          fi
+
   web:
     runs-on: ubuntu-latest
     defaults:

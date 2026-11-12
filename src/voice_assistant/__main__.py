@@ -892,11 +892,39 @@ def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
     )
 
 
-def make_myself(cfg: Config, root: Path, events):
-    """TARS knowing itself (myself.py): its version, changes, docs, records and log."""
+def make_myself(cfg: Config, root: Path, events, wishes=None):
+    """TARS knowing itself (myself.py): its version, changes, docs, records and log. `wishes`: the process's own
+    Wishes, if it has one; otherwise one is made for offering them."""
     from .myself import Myself
 
-    return Myself(cfg, root, events)
+    wishes = wishes or make_wishes(cfg, root, events)
+    return Myself(cfg, root, events, offer=wishes.offer if wishes else None)
+
+
+def make_wishes(cfg: Config, root: Path, events):
+    """Wishes that come true (wishes.py), with [wishes] on and a database; None otherwise."""
+    if not cfg.wishes.enabled or events is None:
+        return None
+    from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
+    from .wishes import GitHub, GitHubError, Told, Wishes, running_has
+
+    env = root / ".env"
+
+    def github() -> GitHub:
+        try:
+            return GitHub(cfg.wishes.repo, api_key(env, cfg.wishes.secret))
+        except ConfigError as e:
+            raise GitHubError(str(e)) from None
+
+    def person(name: str, via: str, text: str) -> None:
+        # In their chat if they asked in one; otherwise the next time they're heard, never into an empty room.
+        chat = via == "chat" and chat_of(cfg, name) is not None
+        new = NewReminder(MESSAGE, text, for_name=name, due=time.time() if chat else None, needs_ack=False, max_tries=1)
+        channel = TELEGRAM if chat else VOICE
+        Reminders(events.store).add(new, set_via=channel, voices=[name], phones=[name], channel=channel)
+
+    told = Told(lambda text, buttons: tell_maintainers(cfg, root, text, buttons), person)
+    return Wishes(events.store, cfg.wishes, github, told, running_has(root))
 
 
 def make_feeds(cfg: Config, events):
@@ -969,7 +997,8 @@ def telegram(cfg: Config, root: Path) -> None:
     queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
     feeds = make_feeds(cfg, events)  # one for every chat: each person's feeds are kept by person
     skills = make_skills(events)
-    myself = make_myself(cfg, root, events)
+    wishes = make_wishes(cfg, root, events)  # one, with one GitHub client, for the offers, the taps and following
+    myself = make_myself(cfg, root, events, wishes)
     tars = TelegramTars(
         bot,
         cfg.telegram.people,
@@ -1000,9 +1029,18 @@ def telegram(cfg: Config, root: Path) -> None:
     told.append(tars)
     if cfg.updates.enabled:
         listen_for_update_taps(cfg, root, tars)
+    if wishes:
+        from .wishes import tap_listener
+
+        tars.listen_first(tap_listener(wishes, list(maintainer_chats(cfg).values()), tars.bot))
+        wishes.start()
     if queue:
         make_errands(cfg, root, make_browser_client(env), queue, tars, tools, presence).serve()
-    tars.run_forever(me)
+    try:
+        tars.run_forever(me)
+    finally:
+        if wishes:
+            wishes.close()
 
 
 def listen_for_update_taps(cfg: Config, root: Path, tars) -> None:
@@ -1011,8 +1049,7 @@ def listen_for_update_taps(cfg: Config, root: Path, tars) -> None:
 
     from .updater import Updater, tap_listener
 
-    chats = {name.strip().lower(): chat for name, chat in cfg.telegram.people.items()}
-    maintainers = [chats[m.strip().lower()] for m in cfg.household.maintainers if m.strip().lower() in chats]
+    maintainers = list(maintainer_chats(cfg).values())
 
     def start() -> None:
         # Its own unit, so the update outlives this service, which it restarts.
@@ -1220,26 +1257,41 @@ def ha_config_pass(cfg: Config, root: Path) -> None:
         print("(Home Assistant's setup: sealing it for the backup needs the backup extra: uv sync --extra backup)")
 
 
-def tell_maintainers(cfg: Config, root: Path, text: str, buttons: list[tuple[str, str]] = ()) -> None:
+def chat_of(cfg: Config, person: str) -> int | None:
+    """`person`'s Telegram chat in [telegram] people, whatever the case of their name."""
+    me = person.strip().lower()
+    return next((chat for name, chat in cfg.telegram.people.items() if name.strip().lower() == me), None)
+
+
+def maintainer_chats(cfg: Config) -> dict[str, int]:
+    """Each [household] maintainer with a Telegram chat: their name, as [telegram] people has it, and the chat."""
+    chats = {name.strip().lower(): (name, chat) for name, chat in cfg.telegram.people.items()}
+    return dict(chats[m.strip().lower()] for m in cfg.household.maintainers if m.strip().lower() in chats)
+
+
+def tell_maintainers(cfg: Config, root: Path, text: str, buttons: list[tuple[str, str]] = ()) -> list[str]:
     """Posts `text` (with buttons, if any) to each maintainer's Telegram chat, straight through Telegram's API: the
-    Telegram service may be what's restarting. A chat that can't be reached costs a line."""
+    Telegram service may be what's restarting. A chat that can't be reached costs a line. The maintainers reached."""
     from .telegram import Bot, TelegramError
 
-    chats = {name.strip().lower(): chat for name, chat in cfg.telegram.people.items()}
-    targets = [chats[m.strip().lower()] for m in cfg.household.maintainers if m.strip().lower() in chats]
+    targets = maintainer_chats(cfg)
     if not cfg.telegram.enabled or not targets:
         print(f"(no maintainer's chat to tell: {text})")
-        return
+        return []
     try:
         bot = Bot(api_key(root / ".env", TELEGRAM_KEY))
     except ConfigError as e:
         print(f"(can't tell the maintainers: {e})")
-        return
-    for chat in targets:
+        return []
+    reached = []
+    for name, chat in targets.items():
         try:
             bot.send_buttons(chat, text, list(buttons)) if buttons else bot.send(chat, text)
         except TelegramError as e:
             print(f"(couldn't tell a maintainer on Telegram: {e})")
+            continue
+        reached.append(name)
+    return reached
 
 
 def update_pass(cfg: Config, root: Path) -> None:

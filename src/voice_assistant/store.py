@@ -235,7 +235,16 @@ TABLES = {
     via TEXT NOT NULL,               -- voice | chat
     asked TEXT NOT NULL,             -- what they wanted, in a sentence
     why TEXT NOT NULL,               -- what stopped TARS, and what would make it possible
-    granted REAL                     -- when someone marked it done; NULL: still wished for
+    granted REAL,                    -- when it was done (marked, or its build installed); NULL: still wished for
+    build TEXT,                      -- having it built (wishes.py): offered, building, ready, merged, failed, granted
+    issue INTEGER,                   -- the GitHub issue asking for it
+    pr INTEGER,                      -- the pull request that builds it
+    sha TEXT,                        -- the pull request's merge commit
+    tries INTEGER NOT NULL DEFAULT 0,  -- times its CI failed and it was sent back to be fixed
+    checked TEXT,                    -- the commit it was last sent back for
+    built_at REAL,                   -- when a maintainer said to build it
+    head TEXT,                       -- the pull request's latest commit, as last seen
+    moved REAL                       -- when its build last moved: a new commit, or sent back to be fixed
 )""",
     "web_invites": """CREATE TABLE web_invites (
     token TEXT PRIMARY KEY,          -- sha256 of the one-time token in the link (signin.py)
@@ -426,6 +435,17 @@ MIGRATIONS = [
         "ALTER TABLE skills ADD COLUMN once REAL",
         "ALTER TABLE skills ADD COLUMN tries TEXT",
         "ALTER TABLE skill_runs ADD COLUMN failed INTEGER NOT NULL DEFAULT 0",
+    ],
+    [
+        "ALTER TABLE wishes ADD COLUMN build TEXT",
+        "ALTER TABLE wishes ADD COLUMN issue INTEGER",
+        "ALTER TABLE wishes ADD COLUMN pr INTEGER",
+        "ALTER TABLE wishes ADD COLUMN sha TEXT",
+        "ALTER TABLE wishes ADD COLUMN tries INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE wishes ADD COLUMN checked TEXT",
+        "ALTER TABLE wishes ADD COLUMN built_at REAL",
+        "ALTER TABLE wishes ADD COLUMN head TEXT",
+        "ALTER TABLE wishes ADD COLUMN moved REAL",
     ],
 ]
 
