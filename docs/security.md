@@ -44,8 +44,9 @@ Each threat lists its **defenses** (with where they live), the **tests** that ch
   passkey and a used or expired invite.
 - **Open:** **sign-in is off until it's turned on**, since it needs HTTPS first. Until then the web UI listens on the
   home network (`deploy/voice-assistant-web.service` serves `0.0.0.0:8080`), so anyone on the Wi-Fi can play every
-  recording, read every conversation and change or delete them; `--check` warns while it's off. The login page is plain HTTP, so a password typed into it over the home Wi-Fi crosses it unencrypted
-  (`[browser] login_host` can put it on Tailscale, which encrypts).
+  recording, read every conversation and change or delete them; `--check` warns while it's off. The login page is
+  plain HTTP, so a password typed into it over the home Wi-Fi crosses it unencrypted (`[browser] login_host` can put
+  it on Tailscale, which encrypts).
 
 ### A web page elsewhere, through someone's browser at home
 

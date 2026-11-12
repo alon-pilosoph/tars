@@ -1979,7 +1979,7 @@ requires-dist = [
     { name = "tinytuya", marker = "extra == 'my-house'", specifier = ">=1.17" },
     { name = "uvicorn", specifier = ">=0.30" },
     { name = "vosk", specifier = "==0.3.44" },
-    { name = "webauthn", specifier = ">=2.5" },
+    { name = "webauthn", specifier = ">=3.0.1" },
     { name = "websockets", specifier = ">=14" },
 ]
 provides-extras = ["claude", "echo", "backup", "tv", "my-house", "browser"]

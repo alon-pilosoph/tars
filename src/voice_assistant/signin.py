@@ -12,6 +12,7 @@ Tailscale certificate: `tailscale cert`). A passkey belongs to the name the page
 homepi.tailnet.ts.net signs in there only.
 """
 
+import base64
 import hashlib
 import html
 import json
@@ -24,6 +25,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from .events import person_key
 from .store import Store
@@ -32,9 +34,11 @@ COOKIE = "tars_session"
 SESSION_S = 30 * 86400.0
 INVITE_S = 86400.0
 CEREMONY_S = 300.0  # how long a challenge waits for its passkey
+MOST_CEREMONIES = 1000  # waiting at once; past it the oldest goes, so a flood of requests can't fill the memory
 # What's reachable without a session: the sign-in pages and their API, the page's shell and files (which hold no
 # data), and recording sessions (/api/session/<token>/...), whose links carry their own token.
-OPEN = ("/sign-in", "/api/sign-in", "/api/session/", "/assets/")
+OPEN_UNDER = ("/sign-in", "/api/sign-in")  # these and the paths below them
+OPEN = ("/api/session/", "/assets/")
 OPEN_EXACT = ("/", "/favicon.ico")
 
 
@@ -42,8 +46,19 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def user_id(person: str) -> bytes:
+    """The id a passkey keeps for its person, and hands back when it signs in (its userHandle)."""
+    return hashlib.sha256(f"tars:{person_key(person)}".encode()).digest()[:16]
+
+
+def shown(person: str) -> str:
+    """A name as the web UI shows it: "stacey" -> "Stacey", "mary ann" -> "Mary Ann" (format.ts personName)."""
+    return " ".join(w[0].upper() + w[1:] for w in person.split())
+
+
 class Accounts:
-    """Invites, passkeys and sessions, in the event database (web_invites, passkeys, web_sessions)."""
+    """Invites, passkeys and sessions, in the event database (web_invites, passkeys, web_sessions). People are kept
+    as person_key has them."""
 
     def __init__(self, store: Store, clock=time.time):
         self.store, self._clock = store, clock
@@ -51,10 +66,13 @@ class Accounts:
     def invite(self, person: str) -> str:
         """A one-time token for `person` to make a passkey with, good for INVITE_S."""
         token = secrets.token_urlsafe(32)
-        self.store.write(
-            "INSERT INTO web_invites (token, person, expires) VALUES (?, ?, ?)",
-            (_hash(token), person.strip(), self._clock() + INVITE_S),
-        )
+        now = self._clock()
+        with self.store.transaction() as db:
+            _purge(db, now)
+            db.execute(
+                "INSERT INTO web_invites (token, person, expires) VALUES (?, ?, ?)",
+                (_hash(token), person_key(person), now + INVITE_S),
+            )
         return token
 
     def invited(self, token: str) -> str | None:
@@ -85,7 +103,7 @@ class Accounts:
         return self.store.row("SELECT * FROM passkeys WHERE id=?", (credential_id,))
 
     def passkeys(self, person: str) -> list[dict]:
-        return self.store.rows("SELECT id FROM passkeys WHERE person=?", (person,))
+        return self.store.rows("SELECT id FROM passkeys WHERE person=?", (person_key(person),))
 
     def used(self, credential_id: str, sign_count: int) -> None:
         self.store.write(
@@ -95,10 +113,12 @@ class Accounts:
     def start_session(self, person: str) -> str:
         token = secrets.token_urlsafe(32)
         now = self._clock()
-        self.store.write(
-            "INSERT INTO web_sessions (token, person, created, expires) VALUES (?, ?, ?, ?)",
-            (_hash(token), person, now, now + SESSION_S),
-        )
+        with self.store.transaction() as db:
+            _purge(db, now)
+            db.execute(
+                "INSERT INTO web_sessions (token, person, created, expires) VALUES (?, ?, ?, ?)",
+                (_hash(token), person_key(person), now, now + SESSION_S),
+            )
         return token
 
     def session(self, token: str | None) -> str | None:
@@ -114,11 +134,22 @@ class Accounts:
         if token:
             self.store.write("DELETE FROM web_sessions WHERE token=?", (_hash(token),))
 
-    def remove(self, person: str) -> int:
-        """Signs `person` out everywhere and forgets their passkeys. How many passkeys went."""
+    def remove(self, person: str) -> tuple[int, int, int]:
+        """Signs `person` out everywhere, forgets their passkeys and voids their unused invites. How many passkeys,
+        sessions and invites went."""
+        key = person_key(person)
         with self.store.transaction() as db:
-            db.execute("DELETE FROM web_sessions WHERE lower(person)=lower(?)", (person,))
-            return db.execute("DELETE FROM passkeys WHERE lower(person)=lower(?)", (person,)).rowcount
+            return (
+                db.execute("DELETE FROM passkeys WHERE person=?", (key,)).rowcount,
+                db.execute("DELETE FROM web_sessions WHERE person=?", (key,)).rowcount,
+                db.execute("DELETE FROM web_invites WHERE person=? AND used IS NULL", (key,)).rowcount,
+            )
+
+
+def _purge(db, now: float) -> None:
+    """Old sessions and invites, which nothing would ever let in again."""
+    db.execute("DELETE FROM web_sessions WHERE expires <= ?", (now,))
+    db.execute("DELETE FROM web_invites WHERE expires <= ?", (now,))
 
 
 @dataclass
@@ -140,6 +171,8 @@ class Ceremonies:
         with self._lock:
             now = self._clock()
             self._waiting = {k: c for k, c in self._waiting.items() if c.expires > now}
+            while len(self._waiting) >= MOST_CEREMONIES:
+                del self._waiting[next(iter(self._waiting))]
             self._waiting[cid] = Ceremony(challenge, now + CEREMONY_S, invite)
         return cid
 
@@ -155,7 +188,7 @@ class Answer(BaseModel):
 
 
 def is_open(path: str) -> bool:
-    return path in OPEN_EXACT or path.startswith(OPEN)
+    return path in OPEN_EXACT or path.startswith(OPEN) or any(path == p or path.startswith(p + "/") for p in OPEN_UNDER)
 
 
 def _where(request: Request) -> tuple[str, str]:
@@ -179,7 +212,7 @@ def add_sign_in(app: FastAPI, accounts: Accounts, clock=time.time) -> None:
 
     @app.middleware("http")
     async def signed_in(request: Request, call_next):
-        if is_open(request.url.path) or accounts.session(request.cookies.get(COOKIE)):
+        if is_open(request.url.path) or await run_in_threadpool(accounts.session, request.cookies.get(COOKIE)):
             return await call_next(request)
         return JSONResponse({"detail": "sign in first"}, status_code=401)
 
@@ -206,7 +239,7 @@ def add_sign_in(app: FastAPI, accounts: Accounts, clock=time.time) -> None:
             return HTMLResponse(_page("This link has been used", "Ask for a new one.", "", ""), status_code=410)
         return HTMLResponse(
             _page(
-                f"Welcome, {html.escape(person)}",
+                f"Welcome, {html.escape(shown(person))}",
                 "Make a passkey on this device to sign in to TARS.",
                 "Make a passkey",
                 "invite",
@@ -240,6 +273,9 @@ def add_sign_in(app: FastAPI, accounts: Accounts, clock=time.time) -> None:
             )
         except Exception:  # noqa: BLE001 - any failed check is the same refusal
             raise HTTPException(401, "that passkey didn't check out: try again") from None
+        handle = (answer.credential.get("response") or {}).get("userHandle")
+        if handle and _unb64(handle) != user_id(key["person"]):
+            raise HTTPException(401, "that passkey didn't check out: try again")
         accounts.used(key["id"], done.new_sign_count)
         return signed(JSONResponse({"person": key["person"]}), request, key["person"])
 
@@ -253,7 +289,7 @@ def add_sign_in(app: FastAPI, accounts: Accounts, clock=time.time) -> None:
             rp_id=rp_id,
             rp_name="TARS",
             user_name=person,
-            user_id=hashlib.sha256(f"tars:{person_key(person)}".encode()).digest()[:16],
+            user_id=user_id(person),
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.REQUIRED, user_verification=UserVerificationRequirement.REQUIRED
             ),
@@ -303,6 +339,13 @@ def add_sign_in(app: FastAPI, accounts: Accounts, clock=time.time) -> None:
     @app.get("/api/me")
     def me(request: Request):
         return {"person": accounts.session(request.cookies.get(COOKIE))}
+
+
+def _unb64(s: str) -> bytes | None:
+    try:
+        return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    except ValueError, TypeError:
+        return None
 
 
 def _page(title: str, lead: str, button: str, kind: str) -> str:

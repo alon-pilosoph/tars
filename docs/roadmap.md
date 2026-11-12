@@ -97,10 +97,10 @@ changes nothing in the house, nor reads its past or TARS's records. Home Assista
 passwords, goes to the backup only sealed with a key kept on the Pi. The speakerphone's own mute is TARS's: while
 it's red, the wake model doesn't run.
 
-What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device) can play every
-recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS
-with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins are trusted.
-The systemd services run unconfined.
+What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device)
+can play every recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs
+inside TARS with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins
+are trusted. The systemd services run unconfined.
 
 **Plan, most worth it first:**
 

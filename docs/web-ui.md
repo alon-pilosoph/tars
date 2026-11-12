@@ -88,7 +88,7 @@ nothing to type and nothing a look-alike page could reuse: a passkey only answer
 | A first passkey | `voice-assistant --web-invite Stacey`: a one-time link, sent to her Telegram chat if she has one (printed otherwise), good for a day. Opening it and tapping **Make a passkey** makes one and signs her in. |
 | Another device | another invite, opened there; a person can have several passkeys |
 | Signing in | **Sign in with a passkey** on `/sign-in`, where any page sends someone with no session; the phone offers the passkeys it has for TARS |
-| A lost phone | `voice-assistant --web-sign-out Stacey`: signed out everywhere and her passkeys forgotten; then a new invite |
+| A lost phone | `voice-assistant --web-sign-out Stacey`: signed out everywhere, her passkeys forgotten and her unused invites voided; then a new invite |
 
 The session is a cookie that no script can read (HttpOnly), that no other site's page sends (SameSite=Strict), sent
 only over HTTPS when the page is HTTPS (Secure), and good for 30 days. Kept in the database: only a hash of each
@@ -116,8 +116,8 @@ link = "https://<pi-name>.<tailnet>.ts.net:8080"
 
 Tailscale's certificates last 90 days: run the same `tailscale cert` again before then. A passkey belongs to the name
 the page was opened by: one made at `https://<pi-name>.<tailnet>.ts.net:8080` works there, not at `homepi.local`, so
-always use that address (`link` makes TARS's own links use it). `--check` says whether sign-in is on, and fails if
-it's on without HTTPS.
+always use that address (`link` makes TARS's own links use it; with HTTPS, `--web-invite` won't make a link without
+it). `--check` says whether sign-in is on, and fails if it's on without HTTPS, or `link` isn't an `https://` name.
 
 ### A committed build
 

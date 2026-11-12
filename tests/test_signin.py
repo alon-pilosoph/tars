@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from starlette.routing import Mount
 
 from voice_assistant.events import EventLog
-from voice_assistant.signin import COOKIE, INVITE_S, SESSION_S, Accounts, is_open
+from voice_assistant.signin import COOKIE, INVITE_S, MOST_CEREMONIES, SESSION_S, Accounts, Ceremonies, is_open
 from voice_assistant.webui import create_app
 
 HOST = "homepi.local"
@@ -58,7 +58,7 @@ class Authenticator:
             "clientExtensionResults": {},
         }
 
-    def get(self, options: dict, origin: str = ORIGIN) -> dict:
+    def get(self, options: dict, origin: str = ORIGIN, handle: bytes | None = None) -> dict:
         data = self._auth_data(options["rpId"])
         client = json.dumps({"type": "webauthn.get", "challenge": options["challenge"], "origin": origin}).encode()
         signature = self.key.sign(data + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
@@ -70,7 +70,7 @@ class Authenticator:
                 "clientDataJSON": b64(client),
                 "authenticatorData": b64(data),
                 "signature": b64(signature),
-                "userHandle": None,
+                "userHandle": b64(handle) if handle is not None else None,
             },
             "clientExtensionResults": {},
         }
@@ -102,16 +102,29 @@ def make_passkey(client, accounts, phone: Authenticator, person="Stacey"):
     )
 
 
-def sign_in(client, phone: Authenticator, origin: str = ORIGIN):
+def sign_in(client, phone: Authenticator, origin: str = ORIGIN, handle: bytes | None = None):
     asked = client.post("/api/sign-in/options").json()
     return client.post(
-        "/api/sign-in", json={"ceremony": asked["ceremony"], "credential": phone.get(asked["options"], origin)}
+        "/api/sign-in", json={"ceremony": asked["ceremony"], "credential": phone.get(asked["options"], origin, handle)}
     )
+
+
+# Every route that answers without a session; a new one has to be added here on purpose.
+OPEN_ROUTES = {
+    "/",
+    "/sign-in",
+    "/sign-in/invite/{token}",
+    "/api/sign-in",
+    "/api/sign-in/options",
+    "/api/sign-in/invite/{token}",
+    "/api/sign-in/invite/{token}/options",
+    "/assets",
+}
 
 
 def test_without_a_session_every_route_but_the_open_ones_is_refused(site):
     client, _, _, _ = site
-    shut = []
+    shut, opened = [], set()
     for route in client.app.routes:
         if isinstance(route, Mount):
             path, methods = f"{route.path}/x.js", {"GET"}
@@ -125,12 +138,14 @@ def test_without_a_session_every_route_but_the_open_ones_is_refused(site):
             continue
         for method in methods - {"HEAD"}:
             r = client.request(method, path)
-            if is_open(route.path if isinstance(route, APIRoute) else path):
+            if route.path in OPEN_ROUTES or route.path.startswith("/api/session/"):  # recording sessions' own token
+                opened.add(route.path)
                 assert r.status_code != 401 or path.startswith("/api/sign-in"), (method, path)
             else:
                 assert r.status_code == 401, (method, path, r.status_code)
                 shut.append(path)
     assert {"/api/events", "/api/conversations/1", "/api/audio/1/which", "/api/status", "/api/me"} <= set(shut)
+    assert OPEN_ROUTES <= opened
 
 
 def test_the_open_routes_are_only_sign_in_the_shell_and_recording_sessions():
@@ -138,16 +153,17 @@ def test_the_open_routes_are_only_sign_in_the_shell_and_recording_sessions():
     assert is_open("/api/session/tok/begin") and is_open("/api/sign-in/options")
     assert not is_open("/api/events") and not is_open("/api/sessions") and not is_open("/api/status")
     assert not is_open("/sign-out") and not is_open("/api/me")
+    assert not is_open("/sign-inside") and not is_open("/api/sign-in-as") and not is_open("/api/sign-insecure/x")
 
 
 def test_an_invite_makes_a_passkey_and_signs_in_with_a_strict_httponly_cookie(site):
     client, accounts, _, _ = site
     _, made = make_passkey(client, accounts, Authenticator())
-    assert made.status_code == 200 and made.json() == {"person": "Stacey"}
+    assert made.status_code == 200 and made.json() == {"person": "stacey"}
     cookie = made.headers["set-cookie"]
     assert cookie.startswith(f"{COOKIE}=") and "HttpOnly" in cookie and "SameSite=strict" in cookie
     assert f"Max-Age={int(SESSION_S)}" in cookie and "Secure" not in cookie  # plain HTTP here
-    assert client.get("/api/events").status_code == 200 and client.get("/api/me").json() == {"person": "Stacey"}
+    assert client.get("/api/events").status_code == 200 and client.get("/api/me").json() == {"person": "stacey"}
 
 
 def test_signing_in_again_with_the_passkey_and_out(site):
@@ -157,7 +173,7 @@ def test_signing_in_again_with_the_passkey_and_out(site):
     client.post("/api/sign-out")
     assert client.get("/api/events").status_code == 401
     signed = sign_in(client, phone)
-    assert signed.status_code == 200 and signed.json() == {"person": "Stacey"}
+    assert signed.status_code == 200 and signed.json() == {"person": "stacey"}
     assert client.get("/api/events").status_code == 200
     assert log.store.row("SELECT sign_count, last_used FROM passkeys")["sign_count"] == 2
 
@@ -197,12 +213,51 @@ def test_a_session_ends_after_30_days(site):
     assert client.get("/api/events").status_code == 401
 
 
-def test_signing_someone_out_everywhere_forgets_their_passkeys(site):
+def test_signing_someone_out_everywhere_forgets_their_passkeys_and_voids_their_invites(site):
+    client, accounts, _, _ = site
+    phone = Authenticator()
+    make_passkey(client, accounts, phone, person=" Stacey ")
+    pending = accounts.invite("STACEY")
+    assert accounts.remove("stacey ") == (1, 1, 1)
+    assert client.get("/api/events").status_code == 401 and sign_in(client, phone).status_code == 401
+    assert client.post(f"/api/sign-in/invite/{pending}/options").status_code == 410
+    assert accounts.remove("Stacey") == (0, 0, 0)
+
+
+def test_a_name_is_the_same_person_whatever_its_case_or_spaces(site):
+    client, accounts, _, _ = site
+    token = accounts.invite("  mary ann ")
+    assert "Welcome, Mary Ann" in client.get(f"/sign-in/invite/{token}").text
+    make_passkey(client, accounts, Authenticator(), person="Mary Ann")
+    assert len(accounts.passkeys("MARY ANN")) == 1
+
+
+def test_a_passkey_handing_back_someone_elses_user_id_is_refused(site):
+    from voice_assistant.signin import user_id
+
     client, accounts, _, _ = site
     phone = Authenticator()
     make_passkey(client, accounts, phone)
-    assert accounts.remove("stacey") == 1
-    assert client.get("/api/events").status_code == 401 and sign_in(client, phone).status_code == 401
+    client.cookies.clear()
+    assert sign_in(client, phone, handle=user_id("alon")).status_code == 401
+    assert sign_in(client, phone, handle=user_id("Stacey")).status_code == 200
+
+
+def test_old_sessions_and_invites_are_cleared_out_as_new_ones_are_made(site):
+    client, accounts, clock, log = site
+    accounts.invite("Alon")
+    make_passkey(client, accounts, Authenticator())
+    clock.t += SESSION_S + 1
+    accounts.invite("Stacey")
+    assert log.store.row("SELECT count(*) AS n FROM web_sessions")["n"] == 0
+    assert [r["person"] for r in log.store.rows("SELECT person FROM web_invites")] == ["stacey"]
+
+
+def test_only_so_many_challenges_wait_at_once_the_oldest_going_first():
+    ceremonies = Ceremonies(clock=Clock())
+    first = ceremonies.start(b"first")
+    ids = [ceremonies.start(bytes([i % 256])) for i in range(MOST_CEREMONIES)]
+    assert ceremonies.take(first) is None and ceremonies.take(ids[-1]) is not None and ceremonies.take(ids[1])
 
 
 def test_changes_from_another_site_are_still_refused_before_sign_in(site):
@@ -221,3 +276,42 @@ def test_the_invite_page_escapes_the_name(site):
 def test_without_sign_in_the_web_ui_is_as_before(tmp_path):
     client = TestClient(create_app(EventLog(tmp_path / "events")), base_url=ORIGIN)
     assert client.get("/api/events").status_code == 200 and client.get("/sign-in").status_code == 404
+
+
+def cli_config(**web):
+    import dataclasses
+    from pathlib import Path
+
+    from voice_assistant.config import TelegramConfig, WebConfig, load_config
+
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    return dataclasses.replace(cfg, web=WebConfig(**web), telegram=TelegramConfig(enabled=False))
+
+
+def test_an_invite_over_https_needs_web_link_to_be_a_name(tmp_path):
+    from voice_assistant import __main__ as cli
+    from voice_assistant.config import ConfigError
+
+    with pytest.raises(ConfigError, match=r"\[web\] link"):
+        cli.web_invite(cli_config(sign_in=True, tls_cert="c.pem", tls_key="k.pem"), tmp_path, "Stacey", 8080)
+
+
+def test_links_without_web_link_are_https_when_the_web_ui_is(monkeypatch):
+    from voice_assistant import __main__ as cli
+    from voice_assistant.browser import login_page
+
+    monkeypatch.setattr(login_page, "reachable_address", lambda: "100.64.0.1")
+    assert cli.web_link(cli_config(tls_cert="c.pem", tls_key="k.pem"), 8080) == "https://100.64.0.1:8080"
+    assert cli.web_link(cli_config(), 8080) == "http://100.64.0.1:8080"
+    assert cli.web_link(cli_config(link="https://pi.tail.ts.net:8080/"), 8080) == "https://pi.tail.ts.net:8080"
+
+
+def test_signing_out_someone_tars_doesnt_know_says_so(tmp_path, capsys):
+    from voice_assistant import __main__ as cli
+
+    cfg = cli_config(link="https://pi.tail.ts.net:8080")
+    cli.web_invite(cfg, tmp_path, "Stacey", 8080)
+    cli.web_sign_out(cfg, tmp_path, "stacey")
+    assert "1 unused invite(s) voided" in capsys.readouterr().out
+    cli.web_sign_out(cfg, tmp_path, "Stacey")
+    assert "Nobody called Stacey has a passkey, a session or an invite" in capsys.readouterr().out

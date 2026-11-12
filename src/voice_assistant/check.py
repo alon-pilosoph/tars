@@ -7,6 +7,7 @@ the voice without playing it and doesn't listen.
 """
 
 import functools
+import ipaddress
 import os
 import platform
 import re
@@ -19,6 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import numpy as np
 from dotenv import dotenv_values
@@ -364,7 +366,23 @@ def sign_in(cfg: Config, https: bool) -> Result:
             "on, without HTTPS: browsers make and use passkeys only over HTTPS (or on localhost)",
             "[web] tls_cert and tls_key, from tailscale cert (docs/web-ui.md#signing-in)",
         )
+    if problem := link_problem(cfg.web.link):
+        return Result(name, FAIL, f"on, but {problem}", '[web] link = "https://<its name>.ts.net:8080"')
     return Result(name, OK, "a passkey and a session for every page")
+
+
+def link_problem(link: str) -> str | None:
+    """Why invite links made from [web] link can't make a passkey; None if they can."""
+    if not link:
+        return "[web] link is empty: invite links would use an address, and passkeys need a name"
+    parts = urlsplit(link)
+    if parts.scheme != "https":
+        return "[web] link isn't https://: browsers make passkeys only over HTTPS"
+    try:
+        ipaddress.ip_address(parts.hostname or "")
+    except ValueError:
+        return None
+    return "[web] link is an address: passkeys need a name"
 
 
 def telegram(cfg: Config, token: str | None, me: Callable[[str], dict]) -> Result:
