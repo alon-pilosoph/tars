@@ -95,9 +95,17 @@ only over HTTPS when the page is HTTPS (Secure), and good for 30 days. Kept in t
 session and invite token, and each passkey's public key (`web_sessions`, `web_invites`, `passkeys`).
 
 Without a session, everything answers 401 but the sign-in pages, the page's shell and its built files (which hold no
-data), and recording sessions, whose links carry their own token. `tests/test_signin.py` walks every route and fails if
-one answers without a session, so a new one can't forget it. The ceremonies are tested against a software passkey:
-a wrong origin, a replayed challenge, a passkey TARS doesn't know, a used or day-old invite are all refused.
+data), and recording sessions, whose links carry their own token. A page sends someone without one to
+`/sign-in?next=<where they were>`, and signing in takes them back there, but only to a page of TARS itself: `next` is
+resolved as the browser would, and anything on another site (`https://...`, `//...`, `/\...`, which the browser reads
+as `//...`) or not a page at all (`javascript:`) goes to Home instead.
+
+`tests/test_signin.py` walks every route and fails if one answers without a session, so a new one can't forget it. It
+also fails on a kind of route it doesn't know how to ask, and on a websocket that lets anyone in: the session check is
+HTTP middleware, which websockets don't pass through, so a websocket would need a check of its own (the web UI has
+none today). The ceremonies are tested against a software passkey: a wrong origin, a replayed challenge, a passkey
+TARS doesn't know, a used or day-old invite are all refused. And `checks/signin.spec.ts` signs in for real, in
+Chromium with a virtual authenticator for the passkey ([the checks](#the-checks)).
 
 **HTTPS first.** Browsers make and use passkeys only on HTTPS pages (or `localhost`). On a Pi on Tailscale:
 
@@ -246,7 +254,12 @@ build (`.github/workflows/pages.yml`, `npm run site`) run in Playwright's own Ch
   switch wake models on the Models page, and read the Status page (the demo's services are pretend: no key or
   network is used). Every step is checked against what the server then says. The demo log's
   audio is committed (`tools/demo_audio/`, four synthetic voices made by `tools/make_demo_audio.py`), so it runs on
-  any machine. A step that finds the demo missing what it needs fails rather than skipping.
+  any machine. A step that finds the demo missing what it needs fails rather than skipping. Then
+  `checks/signin.spec.ts`, against a second backend with sign-in on (`tools/webui_demo.py serve --sign-in`, an
+  empty log, at `localhost`, where browsers make passkeys without HTTPS): Chromium's virtual authenticator stands in
+  for a phone's passkey to make one from an invite, be sent to sign-in without a session, sign out and back in to the
+  page it was on, see a used invite refused, and see `?next=` pointing anywhere but TARS (`/\evil.example`,
+  `//evil.example`, another site, `javascript:`) land on Home.
 - **`npm run visual`** (`checks/visual.spec.ts`, under 2 minutes): Playwright's `toHaveScreenshot()` on the states
   a link can open and after interactions (opening a menu, rating, ticking, a dialog), on desktop and phone. The page
   loads from the build on disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.

@@ -10,9 +10,9 @@ import cbor2
 import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-from starlette.routing import Mount
+from starlette.routing import Host, Mount, Route, WebSocketRoute
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from voice_assistant.events import EventLog
 from voice_assistant.signin import COOKIE, INVITE_S, MOST_CEREMONIES, SESSION_S, Accounts, Ceremonies, is_open
@@ -122,20 +122,39 @@ OPEN_ROUTES = {
 }
 
 
-def test_without_a_session_every_route_but_the_open_ones_is_refused(site):
-    client, _, _, _ = site
+IDS = {"event_id", "turn_id", "item_id", "cluster_id", "reminder_id", "skill_id", "preference_id", "conversation_id",
+       "index", "take_id"}  # fmt: skip
+
+
+def concrete(route) -> str:
+    """A path the route answers: its ids 1, its other parameters their own names."""
+    path = route.path_format.replace("{", "").replace("}", "")
+    return "/".join("1" if part in IDS else part for part in path.split("/"))
+
+
+def walk(client) -> tuple[list[str], set[str]]:
+    """Asks every route of the app without a session: the paths refused, and the open routes that answered. Fails on
+    a route that answers but isn't open; on a websocket that lets anyone in, since the sign-in check is HTTP
+    middleware, which websockets never pass through; and on a kind of route it doesn't know, so none goes unasked."""
     shut, opened = [], set()
     for route in client.app.routes:
+        if isinstance(route, WebSocketRoute):  # FastAPI's APIWebSocketRoute too
+            let_in = False
+            try:
+                with client.websocket_connect(concrete(route)):
+                    let_in = True
+            except WebSocketDisconnect:
+                pass  # closed before it was accepted, or once it had been
+            if let_in:
+                pytest.fail(f"websocket {route.path} lets anyone in: guard it, the sign-in middleware can't")
+            shut.append(route.path)
+            continue
         if isinstance(route, Mount):
             path, methods = f"{route.path}/x.js", {"GET"}
-        elif isinstance(route, APIRoute):
-            path = route.path_format.replace("{", "").replace("}", "")
-            path = "/".join("1" if part in {"event_id", "turn_id", "item_id", "cluster_id", "reminder_id",
-                                             "skill_id", "preference_id", "conversation_id", "index", "take_id"}
-                            else part for part in path.split("/"))  # fmt: skip
-            methods = route.methods
+        elif isinstance(route, Route):  # FastAPI's APIRoute, and Starlette's own: the docs and /openapi.json
+            path, methods = concrete(route), route.methods or {"GET"}
         else:
-            continue
+            pytest.fail(f"{route!r}: a kind of route this walk can't ask; teach it, so the route can't go unchecked")
         for method in methods - {"HEAD"}:
             r = client.request(method, path)
             if route.path in OPEN_ROUTES or route.path.startswith("/api/session/"):  # recording sessions' own token
@@ -144,8 +163,40 @@ def test_without_a_session_every_route_but_the_open_ones_is_refused(site):
             else:
                 assert r.status_code == 401, (method, path, r.status_code)
                 shut.append(path)
+    return shut, opened
+
+
+def test_without_a_session_every_route_but_the_open_ones_is_refused(site):
+    client, _, _, _ = site
+    shut, opened = walk(client)
     assert {"/api/events", "/api/conversations/1", "/api/audio/1/which", "/api/status", "/api/me"} <= set(shut)
+    assert {"/openapi.json", "/docs", "/redoc"} <= set(shut)  # FastAPI's own pages, which aren't APIRoutes
     assert OPEN_ROUTES <= opened
+
+
+def test_the_walk_fails_on_a_websocket_anyone_can_open_and_passes_a_guarded_one(site):
+    client, _, _, _ = site
+
+    async def refuses(websocket: WebSocket):
+        await websocket.close(code=1008)
+
+    client.app.add_api_websocket_route("/api/guarded", refuses)
+    assert "/api/guarded" in walk(client)[0]
+
+    async def lets_in(websocket: WebSocket):
+        await websocket.accept()
+        await websocket.close()
+
+    client.app.add_api_websocket_route("/api/live", lets_in)
+    with pytest.raises(pytest.fail.Exception, match="websocket /api/live lets anyone in"):
+        walk(client)
+
+
+def test_the_walk_fails_on_a_kind_of_route_it_doesnt_know(site):
+    client, _, _, _ = site
+    client.app.router.routes.append(Host("other.example", app=client.app))
+    with pytest.raises(pytest.fail.Exception, match=r"Host\(host='other.example'.*a kind of route this walk can't ask"):
+        walk(client)
 
 
 def test_the_open_routes_are_only_sign_in_the_shell_and_recording_sessions():

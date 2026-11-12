@@ -210,6 +210,8 @@ def add_sign_in(app: FastAPI, accounts: Accounts, clock=time.time) -> None:
 
     ceremonies = Ceremonies(clock)
 
+    # HTTP only: websockets never pass through it, so a websocket route needs a check of its own (there are none;
+    # tests/test_signin.py fails on one that lets anyone in).
     @app.middleware("http")
     async def signed_in(request: Request, call_next):
         if is_open(request.url.path) or await run_in_threadpool(accounts.session, request.cookies.get(COOKIE)):

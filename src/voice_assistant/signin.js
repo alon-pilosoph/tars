@@ -23,6 +23,20 @@ async function post(path, body) {
   return data;
 }
 
+// Where ?next= sends the person once they're in: a page of this site only, else Home. It's resolved the way the
+// browser would resolve it, so "/\evil.example" (a backslash counts as a slash), "//evil.example", another site's
+// address and "javascript:" all go Home; and only the path, query and fragment are used, never a scheme or host.
+function back(next) {
+  if (!next) return "/";
+  let url;
+  try {
+    url = new URL(next, location.origin);
+  } catch {
+    return "/";
+  }
+  return url.origin === location.origin ? url.pathname + url.search + url.hash : "/";
+}
+
 function answer(c) {
   const r = c.response;
   const out = {
@@ -64,8 +78,7 @@ go.addEventListener("click", async () => {
     }
     const { person } = await post(base, { ceremony, credential: answer(credential) });
     said.textContent = `Signed in as ${person}.`;
-    const next = new URLSearchParams(location.search).get("next");
-    location.assign(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+    location.assign(back(new URLSearchParams(location.search).get("next")));
   } catch (e) {
     said.textContent = e.name === "NotAllowedError" ? "That was cancelled. Try again when you're ready." : e.message;
     go.disabled = false;

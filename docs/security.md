@@ -39,9 +39,13 @@ Each threat lists its **defenses** (with where they live), the **tests** that ch
   `tests/test_browser_errands.py::test_the_login_page_takes_one_login_with_its_token_only`.
 - **Defense, with `[web] sign_in`:** every page and API needs a session made with a passkey, from a one-time invite;
   the session cookie is HttpOnly, SameSite=Strict and Secure over HTTPS (served with `[web] tls_cert`, a Tailscale
-  certificate) ([signing in](web-ui.md#signing-in)). **Test:** `tests/test_signin.py` walks every route without a
-  session and fails if one answers, and refuses a passkey answer for another origin, a replayed challenge, an unknown
-  passkey and a used or expired invite.
+  certificate) ([signing in](web-ui.md#signing-in)). After signing in, `?next=` goes back to a page of TARS only,
+  never another site or a `javascript:` link. **Test:** `tests/test_signin.py` walks every route without a session
+  and fails if one answers, if a websocket lets anyone in (the session check is HTTP middleware, which websockets
+  skip), or if it meets a kind of route it can't ask; and refuses a passkey answer for another origin, a replayed
+  challenge, an unknown passkey and a used or expired invite. `webui/checks/signin.spec.ts` signs in end to end in
+  Chromium with a virtual authenticator, `?next=/\evil.example`, `//evil.example`, another site and `javascript:`
+  included.
 - **Open:** **sign-in is off until it's turned on**, since it needs HTTPS first. Until then the web UI listens on the
   home network (`deploy/voice-assistant-web.service` serves `0.0.0.0:8080`), so anyone on the Wi-Fi can play every
   recording, read every conversation and change or delete them; `--check` warns while it's off. The login page is
