@@ -115,6 +115,9 @@ nobody's waiting on a first word) and with a little thinking (`reasoning_effort 
 with `brain = "quick"`, Qwen answers first as by voice. There's no backup the other way: if OpenAI fails, the chat
 says so.
 
+**A chat is always meant for TARS.** Nothing in it is overheard, so a `<skip>` from the model is never posted and
+never kept: the chat gets "Sorry, I didn't catch that. Say it again?".
+
 **One thread, many conversations.** In Telegram a chat is one long thread; TARS splits it by time, as by voice.
 Each person has their own brain, so their own history: everything said since the conversation started (up to its
 last 50 exchanges), sent with each message, and nothing older. A conversation ends once the chat has been quiet for

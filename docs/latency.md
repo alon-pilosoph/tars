@@ -60,6 +60,15 @@ silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (a small local m
 words sounded) may extend the wait to 1.6 s, and a draft starts a quarter second into a pause. `[stt] provider =
 "deepgram"` makes the local rules the only ones.
 
+### Answering a choice
+
+An answer to a choice TARS just offered ("Which channel, 11 or 12?") comes fast, and its first sound is the easiest
+to lose. So the next recording's speech to text is told what to expect: the choices, numbers also as words, go to
+Deepgram as keyterms (`assistant.offered`, `stt.with_keyterms`; Flux and Nova-3). The brain is told that a short reply
+there is the pick, first sound cut off or not ("well" is twelve), where a wrong pick is harmless; for a door or a
+purchase it asks again. A reply to a question that comes out as no words at all gets "Sorry, I didn't catch that",
+once.
+
 ### The voice
 
 A warm connection to Cartesia sends a sentence's first audio in about 0.2 s, and opening one takes about 0.6 s (0.8 s
@@ -69,7 +78,9 @@ Deepgram, whose Flux voices take five connections at a time on its EU servers. P
 making one, so the rest waiting their turn costs nothing, and a reply thrown away stops its sentences and frees their
 connections. The speaker (`audio.Speaker`) skips any silence a voice starts a reply on (James starts within about 0.15
 s of it; Zeus, the voice before it, after 0.2-0.5 s) and hands the mic back at the last sound, so a short "Yes?" frees
-the mic 0.9 s after it starts, of which 0.3 s is a margin for the room's echo.
+the mic 0.7 s after it starts, of which 0.1 s is a margin for the room's echo. Measured in the room on the
+PowerConf, nothing of TARS reaches the mic once its last sound has played, and an answer to a question it asked
+starts 0.25-0.35 s after that: a 0.3 s margin cut the start off "twelve" two times in four ("well", "hello?").
 
 ### The greeting and the open mic
 

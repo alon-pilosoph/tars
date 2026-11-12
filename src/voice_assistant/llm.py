@@ -43,6 +43,9 @@ FOLLOW_UP_TAG = "[Follow-up, no wake word]"
 ASKED_TAG = "[Reply to your 'Did you call me?']"
 SKIP = "<skip>"
 SKIPS = (SKIP, _escaped(SKIP))
+# Said instead when the model skips what was said to it by name, or written in a chat: "New zone." heard for "news on"
+# can look overheard, but someone was talking to TARS, and the tag itself is never theirs to hear.
+PARDON = "Sorry, I didn't catch that. Say it again?"
 SKIP_RULES = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "
@@ -50,6 +53,11 @@ SKIP_RULES = (
     f'asked nor asks you for anything ("eight hours.", a name) is overheard too, often from the TV: skip it. Never '
     f"set a timer, change a device or do anything else on a follow-up unless it plainly asks for it, or answers "
     f"your question.\n"
+    f'When you just asked them to choose ("11 or 12?", "the kitchen or the bedroom?"), a short follow-up is their '
+    f'pick, often with its first sound cut off: take the choice it sounds like ("well" or "elve" is twelve, '
+    f'"leven" is eleven, "chen" is the kitchen) and do it, never skip it. Only where a wrong pick is harmless and '
+    f"easily put right, like a channel or a room; if the choice opens, unlocks, buys, sends or deletes something, "
+    f"ask again unless it plainly names one.\n"
     f"Messages starting with {ASKED_TAG} answer the question you just asked because you weren't sure someone "
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."

@@ -212,6 +212,10 @@ PLUG_IN = "Plug in the speakerphone, or set it in config.toml [audio] (--list-de
 MIC_STALL_S = 3.0
 # Playback that's this far behind the audio it was given has stopped: the device no longer asks for more.
 SPEAKER_STALL_S = 3.0
+# How long the mic stays shut once TARS's last sound has left the speaker, for the room's echo. In the room, on the
+# PowerConf, nothing of TARS was heard after its last sound, and an answer to its question starts 0.25-0.35 s after
+# it: shut 0.3 s, "twelve" came through as "well" or "hello?" two times in four; shut 0.1 s, it came through whole.
+ECHO_TAIL_S = 0.1
 
 
 class Microphone:
@@ -292,7 +296,7 @@ class Microphone:
             raise MicrophoneError(f"No audio from the microphone for {MIC_STALL_S:.0f}s; is it still connected?")
 
     @contextmanager
-    def paused(self, tail_s: float = 0.3):
+    def paused(self, tail_s: float = ECHO_TAIL_S):
         """Ignores the mic while TARS makes noise, so it doesn't hear itself."""
         self._muted = True
         try:
