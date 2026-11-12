@@ -730,9 +730,11 @@ def routers_now(
     secret: Callable[[str], str | None],
     make_router: Callable | None = None,
     broker: Callable[[dict, str | None, list[str]], tuple[str, str]] | None = None,
+    sensor_state: Callable[[str], str] | None = None,
 ) -> Result | list[Result]:
-    """--check's: each router in [[presence.routers]], signed into now, and whose phone it sees; and the broker the
-    doors' locks publish to ([[presence.doors]]), connected to now, and whether it keeps the locks' topics to them."""
+    """--check's: each router in [[presence.routers]], signed into now, and whose phone it sees; the broker the
+    doors' locks publish to ([[presence.doors]]), connected to now, and whether it keeps the locks' topics to them;
+    and each door's sensor, read in Home Assistant now (`sensor_state(entity)`, its state)."""
     from .presence import People
     from .routers import RouterError, make
 
@@ -772,7 +774,41 @@ def routers_now(
             results.append(Result("Doors", WARN, f"the MQTT broker at {mqtt['address']}: {open_to_all}", acl))
         else:
             results.append(Result("Doors", OK, f"listening to the {names} on the MQTT broker at {mqtt['address']}"))
+    for door in [d for d in cfg.presence.doors if d.get("sensor")]:
+        results.append(door_sensor_now(cfg, door, secret, sensor_state))
     return results
+
+
+def door_sensor_now(
+    cfg: Config, door: dict, secret: Callable[[str], str | None], sensor_state: Callable[[str], str] | None
+) -> Result:
+    """A [[presence.doors]] sensor, read in Home Assistant now: open or shut, or why it can't be."""
+    from .home import TOKEN_KEY, HomeError
+
+    where, entity = f"Door sensor ({door['name']})", door["sensor"]
+    fix = "pair it in Home Assistant (Bluetooth, then BTHome); docs/presence.md#the-door-sensor"
+    if sensor_state is None:
+        token = secret(TOKEN_KEY)
+        if not token:
+            return Result(where, FAIL, f"it's read from Home Assistant: no {TOKEN_KEY} in .env")
+        from .hass import HomeAssistant
+
+        hass = HomeAssistant(cfg.home.url, token)
+
+        def sensor_state(e: str) -> str:
+            try:
+                return str(hass.state(e).get("state", ""))
+            finally:
+                hass.close()
+
+    try:
+        state = sensor_state(entity)
+    except HomeError as e:
+        return Result(where, FAIL, f"{entity}: {e}", fix)
+    said = {"on": "open", "off": "shut"}.get(state)
+    if said is None:
+        return Result(where, WARN, f"{entity} is {state or 'not known'}: not heard from lately", fix)
+    return Result(where, OK, f"{entity}: the {door['name']} is {said}")
 
 
 def routers_last(cfg: Config, folder: Path, now: float | None = None) -> Result | list[Result]:

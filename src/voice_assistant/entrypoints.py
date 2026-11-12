@@ -52,6 +52,7 @@ from .wiring import (
     skill_clock,
     snapshot_files,
     spotify_login,
+    start_auto_locks,
     start_buttons,
     start_heartbeat,
     start_presence,
@@ -590,12 +591,18 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     speaker_id = household.speaker_id
     presence = household.presence
     reminders = make_reminders(cfg, household, push_to_talk)
-    start_presence(cfg, root, presence, reminders)
     announcements = Announcements()
+    clocks: list = []  # the skills' clock, once made: someone coming in by a door wakes it, for a "welcome home"
+    start_presence(cfg, root, presence, reminders, lambda names, door: [c.nudge() for c in clocks])
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
+    start_auto_locks(cfg, root, announcements.add, presence, events, home)
     browser = voice_errands(cfg, events)
     skills = household.skills
+    if skills and any(d.get("sensor") for d in cfg.presence.doors):
+        from .skills import offer_welcome
+
+        offer_welcome(skills)
     myself = household.myself
     transcriber, brain, voice = make_pipeline(
         cfg,
@@ -629,9 +636,10 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=skill_clock(skills, "aloud", home, presence, myself),
+            skill_clock=(clock := skill_clock(skills, "aloud", home, presence, myself)),
             commands=commands,
         )
+        clocks += [clock] if clock else []
         set_muted = body.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
             from .control import Server

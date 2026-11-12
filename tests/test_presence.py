@@ -396,6 +396,193 @@ def test_after_a_restart_it_starts_from_what_was_last_known():
     assert t.states["alon"] == State(True, NOW - 7200, NOW)  # still home, since when they came home
 
 
+def test_a_phone_dropping_off_just_after_the_door_is_opened_from_inside_is_someone_leaving_now():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    t.door_used(30.0)
+    assert t.update(ALON, True, 60.0, NOW + 60) == []  # off a few seconds: the lift, or a phone asleep
+    assert t.update(ALON, True, 30 + 90.0, NOW + 120) == [("stacey", False)]  # a minute and a half since
+    assert t.states["stacey"] == State(False, NOW, NOW)
+
+
+def test_without_the_door_or_long_after_it_a_phone_dropping_off_waits_the_whole_away_after():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    assert t.update(ALON, True, 5 * MIN, NOW + 5 * MIN) == []  # no door: asleep, perhaps
+    t.door_used(6 * MIN)
+    assert t.update(ALON, True, 8 * MIN, NOW + 8 * MIN) == []  # unseen since before the door: not leaving by it
+    assert t.update(ALON, True, 10 * MIN, NOW + 10 * MIN) == [("stacey", False)]  # the usual ten minutes
+
+
+def test_a_phone_seen_after_the_door_and_then_gone_past_its_window_isnt_left_by_it():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    t.door_used(0)
+    t.update(BOTH, True, 4 * MIN, NOW + 4 * MIN)  # still home four minutes on
+    assert t.update(ALON, True, 5 * MIN + 31, NOW + 5 * MIN + 31) == []  # the door's five minutes are up
+    assert t.states["stacey"].home is True
+
+
+def test_a_router_not_answering_after_the_door_doesnt_send_anyone_out_by_it():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    t.door_used(10.0)
+    assert t.update(ALON, False, 120.0, NOW + 120) == []
+    assert t.update(ALON, True, 150.0, NOW + 150) == []  # every router answered only since 120 s
+    assert t.update(ALON, True, 210.0, NOW + 210) == [("stacey", False)]
+
+
+def test_a_phone_already_dozing_when_the_door_is_opened_from_inside_isnt_leaving_by_it():
+    """Stacey's phone asleep on the table, last seen 100 s before Alon takes the bins out: she hasn't gone with him."""
+    t = tracker()
+    t.update(BOTH, True, 900.0, NOW)
+    for at in (930.0, 960.0, 990.0):
+        t.update(ALON, True, at, NOW + at - 900)
+    t.door_used(1000.0)
+    assert t.update(ALON, True, 1000.5, NOW + 100.5) == []  # the round the door asked for, at once
+    for at in range(1010, 1300, 10):  # the hurried rounds, then on to the five minutes' end
+        assert t.update(ALON, True, float(at), NOW + at - 900) == []
+    assert t.states["stacey"].home is True
+    assert t.update(ALON, True, 900.0 + 10 * MIN, NOW + 10 * MIN) == [("stacey", False)]  # her ten minutes, as ever
+
+
+def test_someone_elses_phone_dozing_a_while_after_the_door_isnt_leaving_by_it():
+    """Alon leaves; Stacey's phone is seen for two minutes after the door, then dozes a minute and a half."""
+    t = tracker()
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1010.0)
+    changes = []
+    for at in range(1020, 1310, 10):
+        here = set() if at >= 1150 else {"stacey"}
+        changes += t.update(here, True, float(at), NOW + at - 1000)
+    assert changes == [("alon", False)] and t.states["stacey"].home is True
+
+
+def test_the_one_who_left_by_the_door_is_out_in_a_minute_and_a_half_and_from_when_their_phone_was_last_seen():
+    t = tracker()
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1010.0)
+    assert t.update(BOTH, True, 1011.0, NOW + 11) == []  # still on the Wi-Fi as they step out
+    assert t.update(ALON, True, 1021.0, NOW + 21) == []
+    assert t.update(ALON, True, 1011.0 + 89, NOW + 100) == []
+    assert t.update(ALON, True, 1011.0 + 90, NOW + 101) == [("stacey", False)]  # 90 s since her phone was last seen
+    assert t.states["stacey"] == State(False, NOW + 11, NOW + 11)
+
+
+def test_a_phone_last_seen_a_round_before_the_door_counts_and_the_absence_runs_from_the_door():
+    t = Tracker(PEOPLE.names, 10 * MIN, 0.0, round_s=30.0)
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1025.0)  # opened between rounds; gone before the round it asked for
+    assert t.update(ALON, True, 1026.0, NOW + 26) == []
+    assert t.update(ALON, True, 1025.0 + 89, NOW + 114) == []  # 114 s unseen, but not 90 s since the door
+    assert t.update(ALON, True, 1025.0 + 90, NOW + 115) == [("stacey", False)]
+    t = Tracker(PEOPLE.names, 10 * MIN, 0.0, round_s=30.0)
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1031.0)  # more than a round after her phone was last seen: dozing already
+    assert t.update(ALON, True, 1031.0 + 120, NOW + 151) == []
+
+
+def test_someone_known_only_by_the_lock_letting_them_in_is_never_out_by_the_door():
+    """Alon let in by Auto Unlock before his phone has found the Wi-Fi, and the door opened from inside after."""
+    t = tracker({"alon": State(False, NOW - 3600, NOW - 3600), "stacey": State(True, NOW - 3600, NOW - 60)})
+    t.update({"stacey"}, True, 900.0, NOW)
+    assert t.arrived("alon", "front door", 1000.0, NOW + 100)
+    t.door_used(1030.0)
+    for at in range(1040, 1400, 10):
+        assert t.update({"stacey"}, True, float(at), NOW + at - 900) == []
+    assert t.states["alon"].home is True
+
+
+def test_someone_just_let_in_whose_phone_then_dozes_isnt_out_by_the_door():
+    t = tracker({"alon": State(False, NOW - 3600, NOW - 3600), "stacey": State(True, NOW - 3600, NOW - 60)})
+    t.update({"stacey"}, True, 900.0, NOW)
+    t.arrived("alon", "front door", 1000.0, NOW + 100)
+    t.update(BOTH, True, 1010.0, NOW + 110)  # his phone finds the Wi-Fi
+    t.door_used(1030.0)  # Stacey goes out to the car, his phone asleep in his pocket
+    changes = []
+    for at in range(1040, 1400, 10):
+        changes += t.update(set(), True, float(at), NOW + at - 900)
+    assert ("alon", False) not in changes and t.states["alon"].home is True
+
+
+def test_everyone_leaving_by_the_door_together_is_everyone_out():
+    t = tracker()
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1010.0)
+    t.update(BOTH, True, 1011.0, NOW + 11)
+    assert sorted(t.update(set(), True, 1101.0, NOW + 101)) == [("alon", False), ("stacey", False)]
+
+
+def test_a_door_moving_asks_the_routers_at_once_and_often_for_a_while():
+    from voice_assistant.presence import HURRY_EVERY_S, HURRY_S
+
+    now = [0.0]
+    w = Watcher([], PEOPLE, tracker(), Board.__new__(Board), 30, monotonic=lambda: now[0])
+    w.hurry(inside=True)
+    assert w._wake.is_set() and w._hurry_until == HURRY_S and w.tracker._doors_used == [0.0]
+    assert HURRY_EVERY_S < 30
+    w.hurry()
+    assert w.tracker._doors_used == [0.0]  # shut, or opened to let someone in: not someone leaving
+    now[0] = 100.0
+    w.hurry(inside=True, opened=w._clock() - 20)  # decided as it shut, 20 s after it opened
+    assert w.tracker._doors_used == [0.0, pytest.approx(80.0, abs=0.1)]  # the time of day moves on meanwhile
+
+
+def rounds_while(
+    w: Watcher, now: list[float], until: float, moving_every_s: float | None = None, last: float | None = None
+) -> list[float]:
+    """When the watching thread's rounds come (Watcher._round_due) until `until`, the last having been at `last` (now
+    if None), and the door moving every `moving_every_s`."""
+    rounds, moved = [], now[0]
+    last = now[0] if last is None else last
+    while now[0] < until:
+        if moving_every_s and now[0] >= moved:
+            w.hurry()
+            moved += moving_every_s
+        wait = w._round_due(last)
+        if wait > 0:
+            now[0] += min(wait, max(moved - now[0], 0.001) if moving_every_s else wait)
+            continue
+        rounds.append(now[0])
+        last = now[0]
+    return rounds
+
+
+def test_a_door_moving_asks_the_routers_soon_and_then_every_ten_seconds_for_three_minutes():
+    from voice_assistant.presence import HURRY_EVERY_S, HURRY_S
+
+    now = [0.0]
+    w = Watcher([], PEOPLE, tracker(), Board.__new__(Board), 30, monotonic=lambda: now[0])
+    assert rounds_while(w, now, 95.0) == [30.0, 60.0, 90.0]
+    now[0] = 100.0
+    w.hurry()
+    assert w._round_due(90.0) == 0  # a round at once
+    now[0] = 92.0
+    assert w._round_due(90.0) == 8.0  # just after one: ten seconds after it, not at once
+    now[0] = 100.0
+    rounds = rounds_while(w, now, 100 + HURRY_S + 60, last=90.0)
+    assert rounds[:3] == [100.0, 110.0, 120.0] and rounds[-3:] == [270.0, 300.0, 330.0]  # then every_s again
+    assert HURRY_EVERY_S == 10.0
+
+
+def test_a_door_that_never_stops_moving_hurries_the_routers_for_a_quarter_of_each_hour_at_most():
+    """A sensor saying "open" over and over (a fault, or forged) doesn't have the routers asked every 10 s forever."""
+    import itertools
+
+    from voice_assistant.presence import HURRY_MAX_S
+
+    now = [0.0]
+    w = Watcher([], PEOPLE, tracker(), Board.__new__(Board), 30, monotonic=lambda: now[0])
+    rounds = rounds_while(w, now, 3 * 3600, moving_every_s=1.0)
+    for hour in range(3):
+        start = hour * 3600
+        in_it = [r for r in rounds if start <= r < start + 3600]
+        sooner = sum(1 for a, b in itertools.pairwise(in_it) if b - a < 30)
+        assert HURRY_MAX_S / 10 - 1 <= sooner <= HURRY_MAX_S / 10 + 1  # hurried still, a quarter of the hour
+        assert len(in_it) <= 3600 / 30 + HURRY_MAX_S / 10 + 1
+    assert HURRY_MAX_S == 15 * 60
+
+
 # The board: what the assistant writes, and every process reads.
 
 
@@ -614,6 +801,34 @@ def test_going_out_or_coming_home_again_doesnt_reschedule_it(reminders):
     first = reminders.get(rid)["next_at"]
     assert reminders.arrived("stacey", first + 600) == []  # only what it scheduled now
     assert reminders.get(rid)["next_at"] == first
+
+
+def quiet_now() -> str:
+    """[presence] quiet: the hour NOW is in, in this machine's time zone."""
+    from datetime import datetime
+
+    hour = datetime.fromtimestamp(NOW).astimezone().hour
+    return f"{hour:02d}:00-{(hour + 1) % 24:02d}:00"
+
+
+def test_coming_home_in_the_quiet_hours_leaves_their_messages_for_when_they_speak(reminders, capsys):
+    rid = message_for_when_back(reminders)
+    on_arrival(reminders, grace_s=60, quiet=quiet_now(), clock=lambda: NOW)("Stacey", True)
+    assert reminders.get(rid)["next_at"] is None and [r["id"] for r in reminders.held_for("stacey")] == [rid]
+    assert "in the quiet hours" in capsys.readouterr().out
+    on_arrival(reminders, grace_s=60, quiet="", clock=lambda: NOW)("Stacey", True)
+    assert reminders.get(rid)["next_at"] == NOW + 60
+
+
+def test_coming_in_by_the_door_brings_their_messages_forward_after_a_welcome_but_not_in_the_quiet_hours(reminders):
+    from voice_assistant.reminders import CAME_IN_GAP_S, came_in
+
+    rid = message_for_when_back(reminders)
+    on_arrival(reminders, grace_s=60, clock=lambda: NOW)("Stacey", True)  # her phone, on the stairs
+    came_in(reminders, quiet=quiet_now(), clock=lambda: NOW + 20)(["Stacey"], "front door")
+    assert reminders.get(rid)["next_at"] == NOW + 60  # night: left as it was
+    came_in(reminders, clock=lambda: NOW + 20)(["Stacey", "Alon"], "front door")
+    assert reminders.get(rid)["next_at"] == NOW + 20 + CAME_IN_GAP_S
 
 
 def test_someone_known_only_by_their_phone_can_be_left_a_message_for_when_theyre_back(reminders):
