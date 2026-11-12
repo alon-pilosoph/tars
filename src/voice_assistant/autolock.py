@@ -5,7 +5,9 @@ It sends lock.lock only when it knows the door is shut right now: its sensor's l
 Home Assistant just before, it still is. When it can't know, it doesn't lock: it tells the maintainers, once, and the
 lock's own auto-lock is the backstop. It only ever locks.
 
-The rules, for each unlocking (the lock going from locked to unlocked or open):
+The rules, for each unlocking: the lock going from locked to unlocked or open, or found so as TARS starts. Only a
+settled state counts (locked, unlocked, open): the lock out of reach and back (unavailable, a Home Assistant restart),
+jamming, or unlatching (unlocked, open, unlocked) isn't a new unlocking, so it isn't tried again on its account.
 
 1. The door opened and shut again: locked `after_shut_s` (10 s) after it shut, if it's still shut. Opened again
    meanwhile, the count starts over when it shuts.
@@ -43,6 +45,7 @@ from .reminders import twelve_hour
 
 FILE = "auto_lock.json"  # in the event log's folder: { lock entity: off until (a time), ... }
 UNLOCKED = ("unlocked", "open")  # Home Assistant's lock states for not locked; "open" is unlatched
+SETTLED = ("locked", *UNLOCKED)  # where a lock stays: not locking, unlocking, opening, jammed, nor out of reach
 SHUT, OPEN = "off", "on"  # a door sensor's states in Home Assistant; anything else isn't known
 LOCK_SETTLE_S = 20.0  # a Nuki turns its bolt in a few seconds, then reports it; from the call returning
 MAX_TRIES, RETRY_S = 3, (5.0, 30.0)  # tries that never reached the lock, and the waits after the first two
@@ -188,6 +191,7 @@ class AutoLock:
         self._anyone_home, self._clock = anyone_home, clock
         self._mutex = threading.Lock()
         self.lock_state = ""
+        self.lock_settled = ""  # its last settled state (SETTLED); "" until one's heard
         self.door_state = ""  # the sensor's last word, as Home Assistant has it: only SHUT and OPEN are known
         self.door_known = ""  # its last known word (SHUT or OPEN), kept while it isn't answering
         self.down_since: float | None = clock()  # the sensor not answering since; nothing heard yet counts
@@ -221,8 +225,10 @@ class AutoLock:
             self._tell(told)
 
     def _lock_changed(self, state: str, now: float) -> None:
-        was, self.lock_state = self.lock_state, state
-        if state in UNLOCKED and was not in UNLOCKED:
+        was, self.lock_state = self.lock_settled, state
+        if state in SETTLED:
+            self.lock_settled = state
+        if state in UNLOCKED and was in ("locked", ""):
             self.unlocked_at, self.asked_at, self.tries, self.retry_at, self.gave_up = now, None, 0, None, False
             self.opened = self.door_state != SHUT  # open, or not known: it counts from when it's next seen shut
             self.shut_at = now if self.door_state == SHUT else None

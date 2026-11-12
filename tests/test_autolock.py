@@ -195,6 +195,50 @@ def test_a_lock_that_says_it_jammed_is_told_at_once_and_not_tried_again(tmp_path
     assert h.locked == 1 and len(h.told) == 1
 
 
+@pytest.mark.parametrize("flap", ["unavailable", "unknown"])
+def test_a_lock_dropping_out_of_reach_and_back_isnt_a_new_unlocking(tmp_path, flap):
+    """Its Bluetooth flapping, or Home Assistant restarting: a jammed lock is tried once, and told once."""
+    h = House(tmp_path)
+    h.jammed = True
+    h.set(LOCK, "unlocked")
+    h.wait(60 + LOCK_SETTLE_S)
+    assert h.locked == 1 and len(h.told) == 1
+    for _ in range(3):
+        h.set(LOCK, flap)
+        h.set(LOCK, "unlocked")
+        h.wait(600)
+    assert h.locked == 1 and len(h.told) == 1
+
+
+def test_unlatching_isnt_a_new_unlocking_and_keeps_its_count(tmp_path):
+    h = House(tmp_path)
+    for state in ("unlocking", "unlocked"):
+        h.set(LOCK, state)
+    h.wait(50)
+    for state in ("opening", "open", "unlocked"):  # Nuki's unlatch, the door never opened
+        h.set(LOCK, state)
+    h.wait(9)
+    assert h.locked == 0
+    h.wait(1)
+    assert h.locked == 1  # a minute after it was unlocked, not after it unlatched
+
+
+@pytest.mark.parametrize("path", [("opening", "open"), ("unlocking", "unlocked"), ("jammed", "unlocked"),
+                                  ("unavailable", "unlocked")])  # fmt: skip
+def test_any_way_from_locked_to_unlocked_is_a_new_unlocking(tmp_path, path):
+    h = House(tmp_path)
+    h.jammed = True
+    h.set(LOCK, "unlocked")
+    h.wait(60 + LOCK_SETTLE_S)
+    assert h.locked == 1 and len(h.told) == 1
+    h.set(LOCK, "locked")  # by hand
+    h.jammed = False
+    for state in path:
+        h.set(LOCK, state)
+    h.wait(60)
+    assert h.locked == 2 and len(h.told) == 1
+
+
 def test_a_door_left_open_is_said_aloud_once_or_posted_when_nobodys_home(tmp_path):
     h = House(tmp_path)
     h.set(DOOR, "on")
