@@ -967,11 +967,13 @@ def follow(
     on_state: Callable[[str, str], None],
     stop: Callable[[], bool] = lambda: False,
     clock: Callable[[], float] = time.monotonic,
+    moves_only: bool = False,
 ) -> None:
     """Follows `entities` over Home Assistant's websocket API, calling on_state(entity, state) each time one's state
     changes ("on", "off"; never unknown or unavailable, nor a change of attributes alone), until `stop()`.
-    Reconnects by itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's
-    thread."""
+    `moves_only`: only a change from one known state to another; one from unknown or unavailable, or from nothing
+    (Home Assistant starting, a Bluetooth sensor heard again), says where it is, not that it moved. Reconnects by
+    itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's thread."""
     wanted, address = set(entities), "ws" + url.rstrip("/").removeprefix("http") + "/api/websocket"
     tries, down = 0, ""
     while not stop():
@@ -995,6 +997,8 @@ def follow(
                         continue
                     new, old = (data.get("new_state") or {}).get("state"), (data.get("old_state") or {}).get("state")
                     if new in UNKNOWN or new is None or new == old:
+                        continue
+                    if moves_only and (old is None or old in UNKNOWN):
                         continue
                     try:
                         on_state(data["entity_id"], new)

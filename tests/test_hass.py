@@ -363,3 +363,26 @@ def test_a_token_home_assistant_refuses_is_said(monkeypatch, capsys):
     monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
     hass_module.follow("http://ha:8123", "bad", ["binary_sensor.d"], lambda e, s: None, lambda: len(tries) >= 3)
     assert "refused the token" in capsys.readouterr().out
+
+
+def test_following_moves_only_leaves_out_a_change_from_unknown_or_unavailable(monkeypatch):
+    """Home Assistant restarting, or a Bluetooth sensor heard again, says where the door is, not that it moved."""
+    import voice_assistant.hass as hass_module
+
+    door = "binary_sensor.front_door"
+    restored = {"type": "event", "event": {"data": {"entity_id": door, "new_state": {"state": "on"}}}}
+    socket = FakeSocket(
+        [
+            changed(door, "on", old="unavailable"),
+            changed(door, "off", old="unknown"),
+            restored,  # no old state at all: Home Assistant starting
+            changed(door, "on", old="off"),
+            changed(door, "off", old="on"),
+        ]
+    )
+    monkeypatch.setattr(hass_module, "connect", lambda url, **kw: socket)
+    monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
+    seen = []
+    done = lambda: len(seen) >= 2 or not socket._in
+    hass_module.follow("http://ha:8123", "token", [door], lambda e, s: seen.append(s), done, moves_only=True)
+    assert seen == ["on", "off"]

@@ -625,6 +625,33 @@ def test_someone_opening_the_door_from_inside_and_going_is_out_a_minute_and_a_ha
     assert changes == [("alon", False)] and clock.t == NOW + 101  # 90 s from the door, the first round after
 
 
+def test_the_door_sensors_are_followed_for_their_moves_only(tmp_path, monkeypatch):
+    """Home Assistant restarting, or the sensor heard again, isn't the door moving (hass.follow's moves_only)."""
+    import threading
+    import types
+
+    import voice_assistant.hass as hass_module
+    from voice_assistant.__main__ import follow_door_sensors
+
+    (tmp_path / ".env").write_text("HOME_ASSISTANT_TOKEN=t\n")
+    followed, done = [], threading.Event()
+
+    def follow(url, token, entities, on_state, **kw):
+        followed.append((entities, kw))
+        on_state("binary_sensor.front_door", "on")
+        done.set()
+
+    monkeypatch.setattr(hass_module, "follow", follow)
+    door = {"name": "front door", "topic": "nuki/1", "sensor": "binary_sensor.front_door"}
+    cfg = types.SimpleNamespace(presence=PresenceConfig(doors=[door]), home=types.SimpleNamespace(url="http://ha"))
+    sensed = types.SimpleNamespace(calls=[])
+    sensed.sensed = lambda name, is_open: sensed.calls.append((name, is_open))
+    follow_door_sensors(cfg, tmp_path, sensed)
+    assert done.wait(5)
+    assert followed == [(["binary_sensor.front_door"], {"moves_only": True})]
+    assert sensed.calls == [("front door", True)]
+
+
 def test_a_door_sensor_is_a_binary_sensor_and_needs_home_assistant(tmp_path):
     bad = PresenceConfig(doors=[{"name": "front door", "topic": "nuki/1", "sensor": "sensor.door"}])
     assert any("sensor must be" in p for p in _presence_problems(bad))

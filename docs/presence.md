@@ -170,7 +170,9 @@ needs lines of its own there.
 ## The door sensor
 
 A sensor on the door itself (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) says when it opens and
-shuts. TARS follows it in Home Assistant as it changes (`hass.follow`, over the websocket API) and, in `doors.py`:
+shuts. TARS follows it in Home Assistant as it changes (`hass.follow`, over the websocket API), from open to shut and
+back only: Home Assistant restarting, or the sensor heard again after it was unavailable, isn't the door moving. Then,
+in `doors.py`:
 
 - **Says who came in.** Someone the lock let in from outside (Auto Unlock or the keypad, as above) within two
   minutes of the door opening, or while it's open, has come in once it shuts behind them. That's an event of its
