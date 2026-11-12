@@ -30,6 +30,8 @@ DEEPGRAM_URL = "wss://{host}/v1/listen"
 DEEPGRAM_FILE_URL = "https://{host}/v1/listen"
 # A whole recording takes Deepgram about a tenth of its length; this is for a few minutes of it, with room.
 FILE_TIMEOUT_S = 30.0
+# A request said aloud ([home] local_first): seconds of audio, back in well under one.
+SPOKEN_FILE_TIMEOUT_S = 10.0
 FLUX_URL = "wss://{host}/v2/listen"
 CONNECT_S = 5.0
 # How sure Flux must be that the turn is over, and how sure for an early "maybe" (where a draft starts).
