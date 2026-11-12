@@ -477,3 +477,221 @@ def test_check_says_whether_the_broker_lets_tars_in_and_keeps_the_locks_topics_t
     assert broker_answers(mqtt, "hunter2", ["nuki/4224E764"], timeout_s=0.5, probe_s=0.5) == said
     if answer is OK:  # beside the lock's events, never a topic the lock acts on
         assert made[0].published == "nuki/4224E764/tars-check" and made[0].auth == ("tars", "hunter2")
+
+
+# The door's sensor: greeting whoever let themselves in, and the routers asked as it moves.
+
+
+class Hurried:
+    def __init__(self):
+        self.calls = []
+
+    def hurry(self, inside=False, opened=None):
+        self.calls.append(inside)
+        self.opened = opened
+
+    def at_door(self, person, door):
+        return True
+
+
+def sensing(log, clock):
+    came, watcher = [], Hurried()
+    doors = Doors(DoorLog(log.store, PEOPLE), watcher, clock=clock, came_in=lambda names, door: came.append(names))
+    return doors, came, watcher
+
+
+def test_someone_let_in_from_outside_has_come_in_as_the_door_shuts_behind_them_and_its_kept(log, capsys):
+    clock = Clock()
+    doors, came, watcher = sensing(log, clock)
+    doors.heard(event("1,0,111,0,1"))  # Alon's Auto Unlock
+    clock.t += 8
+    doors.sensed("front door", True)
+    assert came == []  # not while they're still in the doorway
+    clock.t += 5
+    doors.sensed("front door", False)
+    assert came == [["Alon"]]
+    assert watcher.calls == [False, False]  # asked at once each time; opened to let someone in, not to leave
+    out = capsys.readouterr().out
+    assert "(doors: the front door opened)" in out and "(doors: Alon came in by the front door)" in out
+    rows = doors.log.came_in_since(0)
+    assert [(r["door"], r["person"], r["at"]) for r in rows] == [("front door", "alon", NOW + 13)]
+    assert doors.log.came_in_since(rows[-1]["id"]) == [] and doors.log.last_id() >= rows[-1]["id"]
+    assert doors.log.unsettled(NOW + 3600) == []  # nothing to learn a key from
+
+
+def test_the_door_opened_with_nobody_let_in_is_someone_inside_using_it_and_nobody_is_welcomed(log):
+    clock = Clock()
+    doors, came, watcher = sensing(log, clock)
+    doors.heard(event("1,0,111,0,0"))  # the app: from anywhere
+    doors.sensed("front door", True)
+    clock.t += 6
+    doors.sensed("front door", False)
+    assert came == [] and watcher.calls == [False, True]  # told at the shut: by then a late lock would be heard
+    assert watcher.opened == NOW  # someone left from when it opened
+
+
+def test_a_lock_opened_long_before_the_door_lets_nobody_in_by_it(log):
+    clock = Clock()
+    doors, came, watcher = sensing(log, clock)
+    doors.heard(event("1,0,111,0,1"))
+    clock.t += 10 * MIN  # Auto Unlock, and then nobody came through
+    doors.sensed("front door", True)
+    doors.sensed("front door", False)
+    assert came == [] and watcher.calls == [False, True]
+
+
+def test_two_let_in_together_come_in_together_and_each_time_they_come_in_counts(log):
+    clock = Clock()
+    doors, came, _ = sensing(log, clock)
+    doors.heard(event("1,0,111,0,1"))
+    doors.heard(event("1,255,0,42,0"))  # Stacey's keypad code, once it's hers
+    doors.log.store.write("INSERT INTO door_keys (key, person, learned) VALUES ('code:42', 'stacey', 0)")
+    doors.heard(event("3,255,0,42,0"))
+    doors.sensed("front door", True)
+    doors.sensed("front door", False)
+    assert came == [["Alon", "Stacey"]]
+    clock.t += 5 * MIN  # out with the rubbish, and back by the keypad: whether to say anything is the skill's
+    doors.heard(event("1,0,111,0,1", at=clock.t))
+    doors.sensed("front door", True)
+    doors.sensed("front door", False)
+    assert came == [["Alon", "Stacey"], ["Alon"]]
+
+
+def test_the_lock_heard_while_the_door_is_already_open_still_lets_them_in_and_nobody_left(log):
+    clock = Clock()
+    doors, came, watcher = sensing(log, clock)
+    doors.sensed("front door", True)
+    clock.t += 2
+    doors.heard(event("3,0,111,0,1", at=clock.t))  # the lock publishes once its motor has finished
+    clock.t += 5
+    doors.sensed("front door", False)
+    assert came == [["Alon"]] and True not in watcher.calls
+
+
+def test_the_door_bouncing_or_opened_again_just_after_someone_came_in_isnt_anyone_leaving(log):
+    clock = Clock()
+    doors, came, watcher = sensing(log, clock)
+    doors.heard(event("1,0,111,0,1"))
+    doors.sensed("front door", True)
+    clock.t += 5
+    doors.sensed("front door", False)
+    clock.t += 1
+    doors.sensed("front door", True)  # it bounced off the frame
+    doors.sensed("front door", False)
+    clock.t += 30
+    doors.sensed("front door", True)  # back out to the car for the shopping
+    clock.t += 20
+    doors.sensed("front door", False)
+    assert came == [["Alon"]] and True not in watcher.calls
+    clock.t += 2 * MIN
+    doors.sensed("front door", True)  # a while later: someone inside using it
+    doors.sensed("front door", False)
+    assert watcher.calls[-1] is True
+
+
+def test_someone_let_in_before_their_phone_is_on_the_wifi_isnt_out_when_the_door_is_opened_again(log):
+    """Alon let in by Auto Unlock, his phone not on the Wi-Fi yet, and the door opened again 30 s later."""
+    clock, changes = Clock(), []
+    w = watching(log, clock, changes, alon=(False, NOW - 60 * MIN), stacey=(True, NOW - 60 * MIN))
+    doors = Doors(DoorLog(log.store, PEOPLE), w, clock=clock)
+    w.tracker.update({"stacey"}, True, 0.0, NOW)
+    doors.heard(event("1,0,111,0,1"))
+    doors.sensed("front door", True)
+    clock.t += 5
+    doors.sensed("front door", False)
+    clock.t += 30
+    doors.sensed("front door", True)
+    clock.t += 5
+    doors.sensed("front door", False)
+    while clock.t < NOW + 5 * MIN:
+        clock.t += 10
+        changes += w.tracker.update({"stacey"}, True, clock.t - NOW, clock.t)
+    assert changes == [("Alon", True)] and w.tracker.states["alon"].home is True
+
+
+def test_someone_opening_the_door_from_inside_and_going_is_out_a_minute_and_a_half_after_the_door(log):
+    clock, changes = Clock(), []
+    w = watching(log, clock, changes, alon=(True, NOW - 60 * MIN), stacey=(True, NOW - 60 * MIN))
+    doors = Doors(DoorLog(log.store, PEOPLE), w, clock=clock)
+    w.tracker.update({"alon", "stacey"}, True, 0.0, NOW)
+    clock.t += 3
+    doors.sensed("front door", True)
+    clock.t += 8
+    doors.sensed("front door", False)  # decided now, counted from when it opened
+    assert w.tracker._doors_used == [3.0]
+    while not changes and clock.t < NOW + 5 * MIN:
+        clock.t += 10
+        changes += w.tracker.update({"stacey"}, True, clock.t - NOW, clock.t)
+    assert changes == [("alon", False)] and clock.t == NOW + 101  # 90 s from the door, the first round after
+
+
+def test_the_door_sensors_are_followed_for_their_moves_only(tmp_path, monkeypatch):
+    """Home Assistant restarting, or the sensor heard again, isn't the door moving (hass.follow's moves_only)."""
+    import threading
+    import types
+
+    import voice_assistant.hass as hass_module
+    from voice_assistant.__main__ import follow_door_sensors
+
+    (tmp_path / ".env").write_text("HOME_ASSISTANT_TOKEN=t\n")
+    followed, done = [], threading.Event()
+
+    def follow(url, token, entities, on_state, **kw):
+        followed.append((entities, kw))
+        on_state("binary_sensor.front_door", "on")
+        done.set()
+
+    monkeypatch.setattr(hass_module, "follow", follow)
+    door = {"name": "front door", "topic": "nuki/1", "sensor": "binary_sensor.front_door"}
+    cfg = types.SimpleNamespace(presence=PresenceConfig(doors=[door]), home=types.SimpleNamespace(url="http://ha"))
+    sensed = types.SimpleNamespace(calls=[])
+    sensed.sensed = lambda name, is_open: sensed.calls.append((name, is_open))
+    follow_door_sensors(cfg, tmp_path, sensed)
+    assert done.wait(5)
+    assert followed == [(["binary_sensor.front_door"], {"moves_only": True})]
+    assert sensed.calls == [("front door", True)]
+
+
+def test_a_door_sensor_is_a_binary_sensor_and_needs_home_assistant(tmp_path):
+    bad = PresenceConfig(doors=[{"name": "front door", "topic": "nuki/1", "sensor": "sensor.door"}])
+    assert any("sensor must be" in p for p in _presence_problems(bad))
+    good = PresenceConfig(doors=[{"name": "front door", "topic": "nuki/1", "sensor": "binary_sensor.front_door"}])
+    assert not any("sensor" in p for p in _presence_problems(good))
+    assert any("quiet must be" in p for p in _presence_problems(PresenceConfig(quiet="late")))
+    from voice_assistant.config import ConfigError
+
+    (tmp_path / "config.toml").write_text(
+        '[presence]\n[[presence.doors]]\nname = "front door"\ntopic = "nuki/1"\nsensor = "binary_sensor.door"\n'
+    )
+    with pytest.raises(ConfigError, match=r"sensor is read from Home Assistant: set \[home\] url"):
+        load_config(tmp_path / "config.toml", local=False)
+
+
+@pytest.mark.parametrize(
+    "spec, hour, minute, quiet",
+    [("22:00-07:00", 23, 0, True), ("22:00-07:00", 6, 59, True), ("22:00-07:00", 7, 0, False),
+     ("22:00-07:00", 12, 0, False), ("13:30-14:00", 13, 45, True), ("", 3, 0, False)],
+)  # fmt: skip
+def test_quiet_hours_wrap_past_midnight(spec, hour, minute, quiet):
+    from datetime import datetime
+
+    from voice_assistant.config import is_quiet
+
+    at = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0).timestamp()
+    assert is_quiet(spec, at) is quiet
+
+
+def test_quiet_hours_are_off_unless_set_so_messages_waiting_are_said_on_coming_home_as_they_were():
+    assert PresenceConfig().quiet == ""
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    assert cfg.presence.quiet == ""
+
+
+def test_two_doors_cant_have_the_same_sensor():
+    """Followed by entity, two doors on one sensor would be one door: the second would never open or shut."""
+    sensor = "binary_sensor.front_door"
+    doors = [{"name": "front door", "topic": "nuki/1", "sensor": sensor}, {"name": "back door", "topic": "nuki/2"}]
+    assert not any("sensor" in p for p in _presence_problems(PresenceConfig(doors=doors)))
+    doors[1]["sensor"] = sensor
+    problems = _presence_problems(PresenceConfig(doors=doors))
+    assert "[[presence.doors]] #2: the front door already has the sensor binary_sensor.front_door" in problems

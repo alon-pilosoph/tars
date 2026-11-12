@@ -190,9 +190,11 @@ class HAAccess:
         lock: threading.Lock | None = None,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
         setup=None,
+        unlocking: Callable[[str], None] = lambda entity: None,
     ):
-        """`setup`: Home Assistant's setup, worked (ha_setup.HASetup)."""
-        self._hass, self._may_unlock, self._now = hass, may_unlock, now
+        """`setup`: Home Assistant's setup, worked (ha_setup.HASetup). `unlocking(entity)`: told of each lock a call
+        that may unlock names, before and after it's made (HomeTools'; auto-lock counts from then)."""
+        self._hass, self._may_unlock, self._now, self._unlocking = hass, may_unlock, now, unlocking
         self._lock = lock or threading.Lock()
         self._setup = setup
         self.doors = Doors(hass)
@@ -360,8 +362,15 @@ class HAAccess:
             return refused
         if not request.go_ahead():
             return "error: the request was withdrawn before anything was done; nothing changed"
+        locks = [e for e in ids if e.startswith("lock.")] if service != "lock.lock" else []
         with self._lock:
-            changed = self._hass.call_service(service, {**fields, **({"entity_id": ids} if ids else {})})
+            for e in locks:
+                self._unlocking(e)
+            try:
+                changed = self._hass.call_service(service, {**fields, **({"entity_id": ids} if ids else {})})
+            finally:
+                for e in locks:
+                    self._unlocking(e)
         if changed is None:
             return f"not confirmed: Home Assistant took {service} but didn't answer in time; check the state"
         now = {s.get("entity_id"): s.get("state") for s in changed if s.get("entity_id")}

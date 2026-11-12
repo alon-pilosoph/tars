@@ -1,6 +1,8 @@
 """Home Assistant's devices, against a pretend Home Assistant: each change is "done" only when the entity reports it,
 "sent" when the entity can't report back, and anything else is said as it is."""
 
+import json
+
 import httpx
 import pytest
 
@@ -290,3 +292,119 @@ def test_home_assistant_says_why_it_refused_a_service():
     hass = HomeAssistant(URL, TOKEN, httpx.MockTransport(handler))
     with pytest.raises(HomeError, match="HTTP 400: Entity does not support"):
         hass.call("cover.open_cover", {"entity_id": "cover.x"})
+
+
+# Following a door sensor (hass.follow): its changes as they happen, and Home Assistant coming back.
+
+
+class FakeSocket:
+    def __init__(self, messages, auth="auth_ok"):
+        self.sent, self._in = [], [{"type": "auth_required"}, {"type": auth}, *messages]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def send(self, text):
+        self.sent.append(json.loads(text))
+
+    def recv(self, timeout=None):
+        if not self._in:
+            raise ConnectionResetError("Home Assistant restarting")
+        return json.dumps(self._in.pop(0))
+
+
+def changed(entity, new, old="off"):
+    return {
+        "type": "event",
+        "event": {"data": {"entity_id": entity, "new_state": {"state": new}, "old_state": {"state": old}}},
+    }
+
+
+def test_following_hands_on_each_change_of_the_door_and_comes_back_after_home_assistant_goes(monkeypatch, capsys):
+    import voice_assistant.hass as hass_module
+
+    door = "binary_sensor.front_door"
+    sockets = [
+        FakeSocket([changed(door, "on"), changed("light.hall", "on"), changed(door, "on", old="on")]),
+        OSError("connection refused"),
+        FakeSocket([changed(door, "unavailable", old="on"), changed(door, "off", old="unavailable")]),
+    ]
+    made = []
+
+    def connect(url, **kw):
+        made.append(url)
+        s = sockets.pop(0)
+        if isinstance(s, Exception):
+            raise s
+        return s
+
+    monkeypatch.setattr(hass_module, "connect", connect)
+    monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
+    seen = []
+    done = lambda: (door, "off") in seen or len(made) > 3
+    hass_module.follow("http://127.0.0.1:8123/", "token", [door], lambda e, s: seen.append((e, s)), done)
+    assert seen == [(door, "on"), (door, "off")]  # not the hall light, nor attributes, nor unavailable
+    assert made[0] == "ws://127.0.0.1:8123/api/websocket"
+    out = capsys.readouterr().out
+    assert "(home: following binary_sensor.front_door)" in out and "following again" in out
+    assert out.count("can't follow") == 1  # said once, however long it takes
+
+
+def test_following_says_each_time_its_subscribed_and_hands_on_unknown_with_unknown_too(monkeypatch):
+    """on_subscribed: the first time and after a reconnect, so what changed meanwhile can be read."""
+    import voice_assistant.hass as hass_module
+
+    door = "binary_sensor.front_door"
+    taken = {"id": 1, "type": "result", "success": True, "result": None}
+    sockets = [
+        FakeSocket([taken, changed(door, "unavailable")]),
+        FakeSocket([{"id": 1, "type": "result", "success": False}, taken, changed(door, "off", old="unavailable")]),
+    ]
+    monkeypatch.setattr(hass_module, "connect", lambda url, **kw: sockets.pop(0))
+    monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
+    seen = []
+    on_state = lambda e, s: seen.append(s)
+    on_subscribed = lambda: seen.append("subscribed")
+    hass_module.follow(
+        "http://ha:8123", "token", [door], on_state, lambda: not sockets and "off" in seen,
+        unknown_too=True, on_subscribed=on_subscribed,
+    )  # fmt: skip
+    assert seen == ["subscribed", "unavailable", "subscribed", "off"]
+
+
+def test_a_token_home_assistant_refuses_is_said(monkeypatch, capsys):
+    import voice_assistant.hass as hass_module
+
+    tries = []
+    monkeypatch.setattr(
+        hass_module, "connect", lambda url, **kw: tries.append(1) or FakeSocket([], auth="auth_invalid")
+    )
+    monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
+    hass_module.follow("http://ha:8123", "bad", ["binary_sensor.d"], lambda e, s: None, lambda: len(tries) >= 3)
+    assert "refused the token" in capsys.readouterr().out
+
+
+def test_following_moves_only_leaves_out_a_change_from_unknown_or_unavailable(monkeypatch):
+    """Home Assistant restarting, or a Bluetooth sensor heard again, says where the door is, not that it moved."""
+    import voice_assistant.hass as hass_module
+
+    door = "binary_sensor.front_door"
+    restored = {"type": "event", "event": {"data": {"entity_id": door, "new_state": {"state": "on"}}}}
+    socket = FakeSocket(
+        [
+            changed(door, "on", old="unavailable"),
+            changed(door, "off", old="unknown"),
+            restored,  # no old state at all: Home Assistant starting
+            changed(door, "on", old="off"),
+            changed(door, "off", old="on"),
+        ]
+    )
+    monkeypatch.setattr(hass_module, "connect", lambda url, **kw: socket)
+    monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
+    seen = []
+    done = lambda: len(seen) >= 2 or not socket._in
+    hass_module.follow("http://ha:8123", "token", [door], lambda e, s: seen.append(s), done, moves_only=True)
+    assert seen == ["on", "off"]

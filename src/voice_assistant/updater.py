@@ -44,6 +44,10 @@ SETTLE_S = 60.0  # after installing, how long every service must keep running
 UNITS = ("voice-assistant", "voice-assistant-telegram", "voice-assistant-web")
 INSTALL_TIMEOUT_S = 1800.0
 TAP = "update:"  # what an Install button sends back, before the version
+STALE = (
+    "That update has been replaced by a newer one, so this button no longer does anything. Tap Install on my latest "
+    "message about an update."
+)
 HELPER = Path("/usr/local/sbin/tars-system")  # deploy/tars-system, installed root-owned by install-pi.sh
 UV = Path.home() / ".local" / "bin" / "uv"  # where install-pi.sh puts it; a service's PATH doesn't have it
 SILENT = {
@@ -312,8 +316,9 @@ def _last_line(done: subprocess.CompletedProcess) -> str:
 
 def tap_listener(updater: Updater, maintainers: list[int], bot, start: Callable[[], None]):
     """For the Telegram service (TelegramTars.listen_first): a maintainer's tap on an update's Install button approves
-    that version and starts installing it now (`start`), and the buttons go. Another's tap, or a stale one, is only
-    acknowledged. `maintainers`: their chat ids."""
+    that version and starts installing it now (`start`), and the buttons go. A maintainer's tap on an older ask, one
+    a newer update has replaced, takes its buttons away and says so: only the latest ask's button installs. Another's
+    tap is only acknowledged. `maintainers`: their chat ids."""
 
     def take(update: dict) -> bool:
         tap = update.get("callback_query") or {}
@@ -326,7 +331,14 @@ def tap_listener(updater: Updater, maintainers: list[int], bot, start: Callable[
             print(f"(updates: couldn't answer the tap: {e})")
         chat = (tap.get("from") or {}).get("id")
         message = tap.get("message") or {}
-        if chat not in maintainers or not updater.approve(data.removeprefix(TAP)):
+        if chat not in maintainers:
+            return True
+        if not updater.approve(data.removeprefix(TAP)):
+            try:
+                bot.drop_buttons(chat, message.get("message_id"))
+                bot.send(chat, STALE)
+            except Exception as e:  # noqa: BLE001 - only the explanation
+                print(f"(updates: couldn't say the tap was for an older update: {e})")
             return True
         try:
             bot.drop_buttons(chat, message.get("message_id"))

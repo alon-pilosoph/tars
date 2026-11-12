@@ -413,6 +413,27 @@ def test_check_connects_to_the_broker_the_doors_locks_publish_to(tmp_path, answe
         assert "mosquitto/acl" in results[-1].fix
 
 
+@pytest.mark.parametrize(
+    "state, status, says",
+    [("off", OK, "the front door is shut"), ("on", OK, "the front door is open"),
+     ("unavailable", WARN, "is unavailable: not heard from lately"), (None, FAIL, "no such entity")],
+)  # fmt: skip
+def test_check_reads_each_doors_sensor_in_home_assistant(tmp_path, state, status, says):
+    from voice_assistant.home import HomeError
+
+    def read(entity):
+        assert entity == "binary_sensor.front_door"
+        if state is None:
+            raise HomeError("no such entity")
+        return state
+
+    door = DOOR + 'sensor = "binary_sensor.front_door"\n'
+    body = TWO_ROUTERS.replace("[[presence.routers]]", door + BROKER + "[[presence.routers]]", 1)
+    cfg = presence_config(tmp_path, '[home]\nurl = "http://127.0.0.1:8123"\n' + body)
+    results = check.routers_now(cfg, {}.get, None, lambda *a: ("", ""), read)
+    assert (results[-1].name, results[-1].status) == ("Door sensor (front door)", status) and says in results[-1].detail
+
+
 def cfg_():
     return load_config(Path(__file__).parents[1] / "config.toml", local=False)
 
