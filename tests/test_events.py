@@ -8,7 +8,7 @@ import types
 import numpy as np
 import pytest
 
-from voice_assistant import events
+from voice_assistant import events, store
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
 from voice_assistant.events import (
     ASKED,
@@ -404,7 +404,7 @@ def test_assistant_records_what_followed_each_wake(log, speaker):
     assert log.get(noise)["follow"] == SAID_NOTHING and log.get(noise)["utterance_audio"]
 
 
-def test_a_wishes_table_from_before_builds_gains_their_columns_and_keeps_its_wishes(tmp_path):
+def test_a_wishes_table_from_before_builds_gains_their_columns_and_keeps_its_wishes(tmp_path, monkeypatch):
     folder = tmp_path / "events"
     EventLog(folder)
     with sqlite3.connect(folder / "events.db") as db:
@@ -414,7 +414,9 @@ def test_a_wishes_table_from_before_builds_gains_their_columns_and_keeps_its_wis
             "via TEXT NOT NULL, asked TEXT NOT NULL, why TEXT NOT NULL, granted REAL)"
         )
         db.execute("INSERT INTO wishes (at, via, asked, why) VALUES (1, 'voice', 'dim the hall', 'no hall light')")
-        db.execute(f"PRAGMA user_version={len(MIGRATIONS) - 1}")
+        step = next(i for i, m in enumerate(MIGRATIONS) if "ALTER TABLE wishes ADD COLUMN build TEXT" in m)
+        db.execute(f"PRAGMA user_version={step}")  # just before wishes gained their columns
+    monkeypatch.setattr(store, "MIGRATIONS", MIGRATIONS[: step + 1])  # later steps may come after it
     log = EventLog(folder)
     (wish,) = log.store.rows("SELECT * FROM wishes")
     assert wish["asked"] == "dim the hall" and wish["tries"] == 0
