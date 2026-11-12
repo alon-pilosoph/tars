@@ -328,9 +328,53 @@ with what they're sent is accepted: TARS can't work without them, and each one i
 
 ## The services on the machine
 
-TARS's systemd user services (`deploy/*.service`) run as the user who installed them, with that user's access:
-any of them can read `.env`, the vault and everything in `voice_data/`. Sandboxing each one (NoNewPrivileges,
-ProtectSystem, a web UI that can't read `.env` or reach the internet) is open.
+TARS's systemd user services (`deploy/*.service`) run as the user who installed them, and each is sandboxed:
+
+| Service | What it may do | Exposure (`systemd-analyze security`) |
+|---|---|---|
+| The voice assistant | write only its own folder and caches; a `/tmp` of its own; files it makes readable by its user alone (`UMask=0077`); no new privileges (no `sudo`); local, IPv4, IPv6 and netlink sockets only; no kernel tunables, modules, logs, cgroups, clock or hostname; no capabilities; system calls a service makes, and no others. Keeps the sound card, the IR remote's input device and Bluetooth (over D-Bus) | 9.6 → 3.4 |
+| The web UI | the same, and no Docker. Keeps the devices: the Status page's power and heat warnings come from the Pi's firmware, which `vcgencmd` asks through `/dev/vcio` | 9.6 → 3.4 |
+| The backup | the same, and no devices at all. It can't reach the user's service manager | 9.6 → 3.1 |
+| Telegram | the first half: its own folder and Chromium's two folders under `~/.config`, its own `/tmp`, files for its user alone, no new privileges, those sockets. Chromium's own sandbox, for errands, needs the namespaces and system calls the rest would take away | 9.6 → 8.3 |
+| The browser's screen (Xvfb) | writes only to `/tmp` (its lock and its socket), no home (so no service manager either), no Docker, no network but local sockets, no devices, the same kernel and system-call limits | 9.6 → 2.9 |
+| The updater | not sandboxed: it runs `deploy/tars-system` through `sudo` and rewrites the checkout and these units | unchanged |
+
+Netlink is allowed because glibc asks the kernel for the machine's own addresses over it to order the answers when it
+looks a name up, and Chromium watches the network over it. The browser, in Telegram's `/tmp` of its own, can't see the
+screen's socket file: it reaches the screen over Xvfb's abstract socket, which belongs to the network namespace, so
+`PrivateNetwork=` on either unit would cut it off.
+
+The web UI isn't given just `/dev/vcio` (`DevicePolicy=closed` with `DeviceAllow=/dev/vcio`): systemd enforces those
+with a cgroup BPF program that only a service manager running as root loads, so in a user unit they'd do nothing. A
+Pi whose warnings can't be read, a sandbox that hides the device included, says so on the Status page and in the log
+rather than showing nothing, as if it weren't a Pi.
+
+How it was checked: on the Pi (systemd 257), `voice-assistant --check` run inside the voice assistant's sandbox
+passes the same 35 checks as outside it (Home Assistant and every device, Telegram, the backup's bucket, the routers);
+the web UI serves its pages inside its own; Chromium launches inside Telegram's, and reaches the screen; and the screen
+makes its socket inside its own. A system call outside the filter fails with an error rather than killing the service.
+The web UI was checked with no devices (3.1); its 3.4 now is worked out, not measured: its unit differs from the voice
+assistant's only in hiding Docker, which `systemd-analyze` doesn't score.
+
+Still open:
+
+- **The service manager.** The voice assistant, Telegram and the web UI can reach the user's systemd over D-Bus
+  (`/run/user/<uid>/bus`), and anything that can ask it to start a unit (`systemd-run --user`) runs that unsandboxed.
+  They need it: a changed setting restarts TARS through `systemd-run` (settings.py), a maintainer's tap on Install
+  starts the updater (Telegram), and the Status page asks `systemctl` each unit's state (the web UI). Closing it needs
+  those to go through something narrower than the whole manager.
+- **Docker.** The voice assistant, Telegram and the backup can reach Docker's socket, which is root (below): Home
+  Assistant's setup history runs `git` in Home Assistant's container (haconfig.py), from the Home Assistant tool and
+  from each backup pass, and a restore stops and starts that container.
+- **The checkout.** Each sandboxed service can write the whole project folder, and the updater, unsandboxed, runs
+  `deploy/install-pi.sh`, `uv` and `git` from it: a service that rewrote one of those would have it run outside its
+  sandbox at the next update. Narrowing it means each service writes only what it keeps (`voice_data/`,
+  `config.local.toml`, `models/personal/`, and what a plugin keeps), and `uv run` no longer syncs `.venv` as a service
+  starts; each service has to be run on the Pi inside the narrower sandbox before it's changed.
+- A user service can't filter addresses (`IPAddressDeny` needs a system service), so the web UI can still reach the
+  internet (it reads recordings from the bucket, too); and every service can read `.env`, the vault and
+  `voice_data/`, since they all run as one user. A web UI as its own user, which can't, needs the services moved to
+  the system manager.
 
 **Root.** On the Pi, that user is in the `docker` group, so Home Assistant can run in Docker beside TARS; and a member
 of the `docker` group can start a container with the whole disk in it, which makes it effectively root. That's

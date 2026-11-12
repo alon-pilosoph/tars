@@ -101,7 +101,9 @@ locks' topics to the locks; what a lock says only ever puts someone at home, and
 What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device)
 can play every recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin gets
 only what it's granted, but it's code in TARS's process that can read the project's files, and one with no `grant` set
-gets everything (with a `--check` warning). The systemd services run unconfined.
+gets everything (with a `--check` warning). The systemd services are sandboxed, but as one user, so each can read
+`.env`, and most can still reach the user's service manager or Docker, either of which gets out of the sandbox
+([still open](security.md#the-services-on-the-machine)).
 
 **Plan, most worth it first:**
 
@@ -124,10 +126,11 @@ gets everything (with a `--check` warning). The systemd services run unconfined.
    is code in TARS's process, so that needs the services' sandboxing, item 5), and step 5's rules through the same
    checks.
 5. **The Pi.** SSH only over Tailscale, keys only; a firewall that drops anything incoming by default; automatic
-   security updates. systemd sandboxing for each service (NoNewPrivileges, ProtectSystem=strict, PrivateTmp,
-   RestrictAddressFamilies, IPAddressDeny for the web UI), the web UI as its own user that can't read `.env` or reach
-   the internet. `.env` mode 600; each key as narrow as its service allows, with spending caps; a Home Assistant user
-   limited to the listed devices.
+   security updates. Built: systemd sandboxing for each service, checked on the Pi (exposure 9.6 → about 3 for the
+   voice assistant, web UI and backup; [the services](security.md#the-services-on-the-machine)). Left: the web UI as
+   its own user that can't read `.env` or reach the internet, which needs system services (a user service can't
+   filter addresses). `.env` mode 600; each key as narrow as its service allows, with spending caps; a Home Assistant
+   user limited to the listed devices.
 6. **Data.** A shorter `keep_audio_days`; backups encrypted before they leave. The Pi's key has to read the bucket
    (the web UI plays recordings that only the bucket still has, and a restore reads it) and delete from it (the
    backup mirrors deletes), so it can't be a write-only key: instead, versioning on the bucket, keeping deleted and

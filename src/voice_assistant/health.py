@@ -62,6 +62,9 @@ THROTTLED = {
     18: "throttled since it started",
     19: "at the soft temperature limit since it started",
 }
+THROTTLED_TIMEOUT_S = 5.0
+# What the page says in their place on a Pi where they can't be read, and why after it.
+UNREAD = "power and heat warnings couldn't be read"
 
 
 # What /api/health answers, as webui/src/types.ts has it (Health).
@@ -110,7 +113,7 @@ class MachineHealth(TypedDict):
     memory_used: int
     temperature_c: float | None
     hot: bool
-    throttled: list[str] | None  # None: not a Pi
+    throttled: list[str] | None  # None: not a Pi; on a Pi whose flags can't be read, one line saying why
     disk_total: int
     disk_free: int
     disk_low: bool
@@ -280,13 +283,16 @@ def today(log: EventLog, conversations: ConversationLog, now: float) -> Today:
     return {"wakes": log.wakes_since(midnight), "answers": answers, "failed": failed, "last_wake": log.last_wake()}
 
 
-def machine(folder: Path, read_throttled: Callable[[], int | None] | None = None) -> MachineHealth:
-    """The machine TARS runs on, as it is now. `folder`: whose disk to measure (the event log's)."""
+def machine(folder: Path, read_throttled: Callable[[], int | str | None] | None = None) -> MachineHealth:
+    """The machine TARS runs on, as it is now. `folder`: whose disk to measure (the event log's). `read_throttled`:
+    as pi_throttled."""
     import psutil
 
     memory, disk = psutil.virtual_memory(), shutil.disk_usage(folder)
     load = os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)
     flags = (read_throttled or pi_throttled)()
+    if isinstance(flags, str):
+        print(f"(the Pi's {UNREAD}: {flags})", flush=True)
     celsius = temperature()
     return {
         "host": socket.gethostname(),
@@ -299,12 +305,22 @@ def machine(folder: Path, read_throttled: Callable[[], int | None] | None = None
         "memory_used": memory.total - memory.available,
         "temperature_c": celsius,
         "hot": celsius is not None and celsius >= HOT_C,
-        "throttled": None if flags is None else [said for bit, said in THROTTLED.items() if flags >> bit & 1],
+        "throttled": throttled(flags),
         "disk_total": disk.total,
         "disk_free": disk.free,
         "disk_low": disk.free < LOW_DISK_BYTES,  # as --check has it
         "uptime_s": time.time() - psutil.boot_time(),
     }
+
+
+def throttled(flags: int | str | None) -> list[str] | None:
+    """The Pi's warnings in words, from pi_throttled's answer: one a flag that's set; on a Pi whose flags can't be
+    read, one saying so and why (the page shows it as a warning, never as fine); None on anything else."""
+    if flags is None:
+        return None
+    if isinstance(flags, str):
+        return [f"{UNREAD}: {flags}"]
+    return [said for bit, said in THROTTLED.items() if flags >> bit & 1]
 
 
 def temperature() -> float | None:
@@ -322,16 +338,27 @@ def temperature() -> float | None:
     return round(max(readings), 1) if readings else None
 
 
-def pi_throttled() -> int | None:
-    """The Pi firmware's throttling flags, or None on anything else."""
+def pi_throttled() -> int | str | None:
+    """The Pi firmware's throttling flags; None on anything else (no vcgencmd); or, on a Pi where they can't be read,
+    why. vcgencmd asks the firmware through /dev/vcio, which a sandbox without devices hides: that's said, never taken
+    for a machine that isn't a Pi."""
     if not shutil.which("vcgencmd"):
         return None
     try:
-        command = ["vcgencmd", "get_throttled"]
-        out = subprocess.run(command, capture_output=True, text=True, timeout=5, check=False).stdout
-        return int(out.strip().split("=")[1], 16)
-    except OSError, subprocess.TimeoutExpired, IndexError, ValueError:
-        return None
+        done = subprocess.run(
+            ["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=THROTTLED_TIMEOUT_S, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return f"vcgencmd get_throttled didn't answer within {THROTTLED_TIMEOUT_S:.0f} s"
+    except OSError as e:
+        return f"vcgencmd couldn't run ({e.strerror or repr(e)})"
+    out = done.stdout.strip()
+    try:
+        return int(out.split("=")[1], 16)
+    except IndexError, ValueError:
+        said = (done.stderr.strip() or out).splitlines()
+        what = f"said {said[-1][:200]!r}" if said else "said nothing"
+        return f"vcgencmd get_throttled {what} (exit {done.returncode})"
 
 
 def status_page(url: str, fetch_json: Callable[[str], dict]) -> StatusPage:
@@ -419,7 +446,7 @@ class Health:
         wanted: list[str],
         services: Services,
         unit_state: Callable[[str], str | None],
-        read_throttled: Callable[[], int | None] | None = None,
+        read_throttled: Callable[[], int | str | None] | None = None,
         backup_enabled: bool = False,
     ):
         """`wanted`: the processes this setup runs (expected). `unit_state`: systemd's state of a unit, or None.

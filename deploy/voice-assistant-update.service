@@ -11,6 +11,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# Not sandboxed: installing an update runs deploy/tars-system through sudo, and rewrites the checkout and the
+# services themselves (docs/security.md#the-services-on-the-machine).
 Type=oneshot
 WorkingDirectory=%h/voice-assistant
 ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --update
