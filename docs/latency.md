@@ -23,6 +23,9 @@ Median over 8 spoken questions, three runs, on the development Mac ([method](#ho
 A turn that needs the web adds Qwen's hand-off (about 0.3 s) and a web search, and TARS says "Looking it up." as it
 starts.
 
+These numbers are for the default setup. With `[home] local_first`, off by default, nothing is streamed and none of
+the stages overlap the wait; that path hasn't been measured end to end yet ([local first](#local-first)).
+
 ## How the stages overlap
 
 ```mermaid
@@ -47,7 +50,8 @@ When Flux thinks you may be done, TARS prepares the answer in the background whi
 (`draft.py`). If you carry on talking, the draft is thrown away and the brain forgets it, without waiting for it, so
 a draft stuck in a web search can't hold up the next one. A draft is only played, logged, and allowed to send
 anything to the web page once your turn is confirmed over. The waiting rule therefore decides only *when TARS
-speaks*, never what it heard: answering early can't cause a cut-off.
+speaks*, never what it heard: answering early can't cause a cut-off. With `[home] local_first`, no draft is started:
+nothing is transcribed until the turn is over ([local first](#local-first)).
 
 ### The end of your turn
 
@@ -56,7 +60,46 @@ speaks*, never what it heard: answering early can't cause a cut-off.
 VAD (local) still hears when you start talking. If Flux fails, local rules take over for that turn: after 0.8 s of
 silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (a small local model that listens to how your last
 words sounded) may extend the wait to 1.6 s, and a draft starts a quarter second into a pause. `[stt] provider =
-"deepgram"` makes the local rules the only ones.
+"deepgram"` makes the local rules the only ones, and so does `[home] local_first`, which starts no draft in a pause.
+
+### Local first
+
+With `[home] local_first` (and `commands_on_pi`; both off by default), nothing goes to the cloud while you talk
+(`commands.LocalFirstTranscriber`). The recording is kept on the Pi, the local rules end the turn, and Vosk listens to
+it for a house command; only anything else goes to the cloud, whole:
+
+```mermaid
+sequenceDiagram
+    participant You
+    participant Rec as Recorder (local)
+    participant Vosk as Vosk (local)
+    participant DG as Deepgram, whole recording
+    participant Out as Speaker
+    You->>Rec: "Lock the front door."
+    Rec->>Rec: 0.8 s of silence (Smart Turn may wait to 1.6 s)
+    Rec->>Vosk: the whole recording
+    alt a house command
+        Vosk->>Out: done through Home Assistant, a reply made ahead
+    else anything else
+        Vosk->>DG: the whole recording
+        DG->>Out: the words, then the brain and the voice, started only now
+    end
+```
+
+What that changes, stage by stage:
+
+| Stage | Local first | Measured |
+|---|---|---|
+| Waiting to be sure you're done | the local rules on every turn: 0.8 s of silence, up to 1.6 s when Smart Turn hears you mid-thought | on the development Mac ([who decides](#who-decides-that-youve-finished)): a whole sentence called over after 0.88 s against Flux's 1.05 s, but all 18 sentences with a 1.2 s pause in them cut off, against Flux's 1 |
+| Vosk listening | every recording of 8 s or less, command or not | about 140 ms a take on the Pi, over 21 takes of a house recording session ([house commands](home.md#house-commands-on-the-pi)) |
+| A house command | no speech to text, model or voice in the cloud: the home tool's call, then a line from disk, once the device has answered | not yet measured on the Pi |
+| Anything else | the whole recording uploaded to Deepgram's endpoint for recordings (Nova-3) and transcribed, then the brain and the voice as in the table above, with nothing drafted during the wait; Deepgram gets 10 s, then OpenAI 15 s, with no retry | not yet measured on the Pi |
+
+Each turn's timings show it once it's on: `end_of_speech` is the local wait, and `stt` is Vosk's listening plus, for
+anything that isn't a command, the cloud's transcription. `tools/latency_bench.py` doesn't build the local-first
+path (it makes the pipeline without the house), so it has no end-to-end number yet; that, and whether a command's
+saved seconds are worth the slower and cut-off-prone turn for everything else, is to be measured on the household's
+own recorded takes ([local first](home.md#local-first)).
 
 ### The voice
 
@@ -317,6 +360,9 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
   over TARS, some of the overlapping words can be lost, as with any echo canceller. Measure it with
   `uv run python tools/echo_bench.py` (`--talk` to talk over it) before turning `echo_cancel` and `greet = "always"`
   on.
+- **Local first is unmeasured end to end.** Only Vosk's own time is measured on the Pi; the end of turn, the
+  recording's upload and a command's whole turn there aren't, and `latency_bench.py` can't run that path yet
+  ([local first](#local-first)).
 
 ## Settings
 
@@ -333,7 +379,8 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 | `[recorder] end_of_turn` | `"smart"` | without Flux: `silence` turns Smart Turn off |
 | `[recorder] greet` | `"pause"` | when to say "Yes, <name>?" after the wake word: `always` at once, `pause` only after `greet_after_s` of nothing, `never` |
 | `[audio] echo_cancel` | `false` | take TARS's own sound out of what the mic hears, so the mic stays open while it greets you; off until checked in the room with `tools/echo_bench.py` |
-| `[recorder] answer_early_s` | `0.25` | without Flux: when the answer starts being prepared; `0` waits for the end |
+| `[recorder] answer_early_s` | `0.25` | without Flux: when the answer starts being prepared; `0` waits for the end. Not used with `[home] local_first` |
+| `[home] local_first` | `false` | with `commands_on_pi`: the recording stays on the Pi until the turn is over and Vosk has found it isn't a house command; anything else is then sent whole, with no streaming and no draft ([local first](#local-first)) |
 | `[recorder] vad_threshold` | `0.5` | how sure the speech detector must be |
 | `[llm] humor` | `75` | the persona's humor setting, and which error lines TARS uses |
 

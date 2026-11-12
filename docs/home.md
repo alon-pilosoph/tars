@@ -543,6 +543,12 @@ machine) and their Telegram chat (to Telegram, like any file it sends), and the 
 home network by a name their phone can reach (its Tailscale name if it has one), signed so it opens without the token
 and expires on its own. The models never see the picture.
 
+A [house command on the Pi](#house-commands-on-the-pi) goes to no model when it's said: its words join the
+conversation the models get with the next request that goes to them. Its audio still goes to the cloud's speech to
+text, unless [local first](#local-first) is on: then a command Vosk hears on the Pi goes to no speech to text either,
+and only a request that isn't one is sent, whole, once it's over
+([what leaves the machine](architecture.md#what-leaves-the-machine)).
+
 ## Things to know
 
 - **The token is a key to the house.** It lives in `.env`, which never leaves the machine.
