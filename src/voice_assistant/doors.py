@@ -17,7 +17,8 @@ whoever the lock let in from outside has come in once the door shuts behind them
 kept in door_events (CAME_IN) and handed on (`came_in`): skills run on it (skills.COMES_IN: the household's
 "welcome home" is one), and their messages waiting until they're back are said then. Each time it moves the routers
 are asked at once, and every few seconds for a while (Watcher.hurry), and the door opened without anyone being let
-in is someone inside using it: a phone that drops off then has left by it (presence.Tracker.door_used).
+in (decided as it shuts, as the lock's event can come after the sensor's), and not just after someone came in by it,
+is someone inside using it: a phone there as it opened that drops off then has left by it (presence.Tracker).
 
 Whether TARS can hear the locks is watched too (Link): the broker not answering, refusing TARS, or lost, is logged
 when it starts, and the maintainers are told once it's lasted TELL_AFTER_S, and again when it's back.

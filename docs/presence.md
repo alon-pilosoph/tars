@@ -198,7 +198,7 @@ in `doors.py`:
 - **Asks the routers at once** each time the door moves (or 10 seconds after the last time, if that was just now),
   then every 10 seconds for three minutes, so whoever's phone comes or goes with it is seen in seconds, not at the
   next round. Never more often than that however often it moves, and for no more than a quarter of any hour: a
-  sensor that never stops (a fault, or forged) has them asked every 30 seconds the rest of the time, as ever.
+  sensor that never stops (a fault, or forged) has them asked every `every_s` the rest of the time, as ever.
 - **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it. That's
   decided as it shuts, not as it opens, since the lock's event can come a moment after the sensor's: nobody the lock
   let in from two minutes before it opened until it shut, and it wasn't opened within a minute of someone coming in
@@ -215,10 +215,11 @@ in `doors.py`:
 
   They're out from when their phone was last seen. Two or everyone leaving together are each out by the same rule:
   it doesn't ask that someone stays, as the household going out together is the commonest leaving and "the last one
-  out" is for it, and the Wi-Fi dropping every phone at once (a router changing channel) usually has them back in seconds,
-  well inside the minute and a half. What it can't tell apart: someone at home whose phone goes to sleep within a minute of the door, and stays
-  off for a minute and a half, is taken for leaving too, and is home again as soon as their phone is seen. Anyone
-  else, and without the door, a phone dropping off still waits `away_after_min`: it may be asleep on a table.
+  out" is for it, and the Wi-Fi dropping every phone at once (a router changing channel) usually has them back in
+  seconds, well inside the minute and a half. What it can't tell apart: someone at home whose phone goes to sleep
+  within a minute of the door, and stays off for a minute and a half, is taken for leaving too, and is home again as
+  soon as their phone is seen. Anyone else, and without the door, a phone dropping off still waits
+  `away_after_min`: it may be asleep on a table.
 
 The lock still says who; the sensor only says when. A door sensor alone puts nobody at home, and its own readings
 never work the house.
