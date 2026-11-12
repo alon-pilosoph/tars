@@ -25,6 +25,7 @@ import httpx
 from defusedxml import DefusedXmlException
 from defusedxml.ElementTree import fromstring
 
+from . import toolbox
 from .events import person_key
 from .store import Store
 
@@ -243,6 +244,11 @@ class Feeds:
         self.store, self.default_person = store, default_person.strip()
         self._get, self._clock = get, clock
         self._cache: dict[str, tuple[float, Page]] = {}
+
+    def toolset(self) -> toolbox.Toolset:
+        """The feeds tool for the brain (toolbox.py). Following and unfollowing are made at once: nothing holds them
+        back."""
+        return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't read the feeds ({e!r})")
 
     def call(self, args: dict, request=None) -> str:
         args = args if isinstance(args, dict) else {}
