@@ -3,7 +3,9 @@ removing an integration, renaming a device and putting it in a room, and undoing
 setup actions (ha_tool.py) come here.
 
 Kept in code:
-- Only TARS's maintainers ([household] maintainers) may change the setup; with none, nobody may.
+- Only TARS's maintainers ([household] maintainers) may change the setup; with none, nobody may. A change waits for
+  the turn to be over (Request.go_ahead), and none is made in a reply that read the web or in a turn a door's lock set
+  off (Request.by_door), as with the house's own changes.
 - A setup step that asks for a password, a token or a code, or a sign-in in a browser, isn't filled in by TARS: the
   person is sent to that step on Home Assistant's own page, so a secret never goes through a chat or a model.
 - Removing an integration, or undoing a change, takes two turns: the first says what would go (and which of TARS's
@@ -19,6 +21,7 @@ from collections.abc import Callable
 
 from .hass import HomeAssistant
 from .home import HomeError, Request, set_off_by_door
+from .toolbox import WITHDRAWN
 
 DISCOVERED, INTEGRATIONS, SETUP, REMOVE, RENAME, AREA, UNDO, SETUP_HISTORY = (
     "discovered",
@@ -74,6 +77,9 @@ class HASetup:
                 return "refused: this reply searched the web, so it changes nothing in the house; ask on its own"
             if refused := set_off_by_door(request):
                 return refused
+            # As the house's own changes do: a reply still being drafted may yet be thrown away.
+            if not request.go_ahead():
+                return WITHDRAWN
         try:
             if action == DISCOVERED:
                 return self.discovered()

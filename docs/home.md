@@ -627,6 +627,9 @@ maintainers`; none named: nobody; looking is for anyone):
   as a camera's live link is), and a password someone types to TARS anyway isn't passed on.
 - **Twice for what's hard to take back.** Removing an integration, or undoing a change, takes two turns: the first
   says what would happen, and only a later message from the same person, within ten minutes, does it.
+- **Held back as the house's changes are.** A change to the setup waits for the turn to be over, so a draft thrown
+  away changes nothing (nor counts as the first of the two turns), and none is made in a reply that searched the web
+  or in a turn a door's lock set off.
 - **Every change kept.** With `[home] config_dir`, each change is committed to [Home Assistant's setup
   history](#home-assistants-own-setup), before and after, and the reply says it can be undone; "undo" restores the
   commit before it.
