@@ -643,7 +643,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             skill_clock=skill_clock(skills, "aloud", home, presence, myself),
             commands=commands,
         )
-        set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
+        set_muted = assistant.body.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
             from .control import Server
 

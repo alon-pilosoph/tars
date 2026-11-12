@@ -21,7 +21,7 @@ from typing import NamedTuple
 import numpy as np
 
 from .audio import AudioDeviceError, Microphone, Speaker, chime
-from .body import LocalBody
+from .body import NO_WAKE, LocalBody, Wake
 from .commands import ON_PI, Command, HouseCommands, sentences
 from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
 from .control import Op, Refused
@@ -307,9 +307,6 @@ class Assistant:
         self._talk = threading.Event()
         self._stop = threading.Event()
         self.muted = False
-        # How the buttons mute it (the speakerphone's own mute, start_buttons): muted, a message waiting for "got it"
-        # unmutes it just for the answer, then mutes it again. None: nothing to switch (its mute is TARS's alone).
-        self.set_muted: Callable[[bool], None] | None = None
         self._unmuted = threading.Event()  # set while not muted: what a muted wait waits for
         self._unmuted.set()
         # A recording session (recording.py) holds TARS and asks for takes from the control thread (control.py).
@@ -463,6 +460,7 @@ class Assistant:
         self.prepare_phrases()
         if self._reminder_clock:
             self._reminder_clock.start()
+        wake = NO_WAKE  # the last wait's
         while True:
             print(f"\n{idle_message}")
             self._talk.clear()
@@ -475,14 +473,15 @@ class Assistant:
                 if woke is None:  # unmuted: back to listening for its name
                     continue
             else:
-                woke = self.trigger.wait(self.mic, due=self._woken)
+                wake = self.body.wait(self._woken)
+                woke = wake.how
             self._stop.clear()  # pressed while idle, it stops nothing
             if self._talk.is_set():
                 self._talk.clear()
                 if not self.muted:
                     self._woke_at, self._greet_s = time.monotonic(), None
                     print("Listening...  (the talk button)")
-                    self.converse(follow_up_s, greet=ALWAYS)
+                    self.converse(follow_up_s, greet=ALWAYS, wake=Wake(audio=wake.audio))  # greeted as who woke it last
                 if woke != DUE:
                     continue
             if self.muted and woke != DUE:
@@ -501,7 +500,7 @@ class Assistant:
                 continue
             self._woke_at, self._greet_s = time.monotonic(), None
             print("Listening...")
-            self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet, after_name=self.trigger.after_name)
+            self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet, wake=wake)
 
     def prepare_phrases(self) -> None:
         """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
@@ -732,15 +731,16 @@ class Assistant:
         light showing, then muted again, unless someone's button already did. Yields how long the answer may be
         (ANSWER_ONLY_S) when it unmuted, else None: the answer is all it hears, and once it's replied, it listens for
         no follow-up, since the room was muted for a reason."""
-        opened = bool(waits and self.muted and self.set_muted)
+        set_muted = self.body.set_muted
+        opened = bool(waits and self.muted and set_muted)
         if opened:
             print(f"(muted: listening for {what} only)")
-            self.set_muted(False)
+            set_muted(False)
         try:
             yield ANSWER_ONLY_S if opened else None
         finally:
             if opened and not self.muted:
-                self.set_muted(True)
+                set_muted(True)
 
     def _say_held_line(self, r: dict) -> bool:
         text = held_line(r)
@@ -779,9 +779,9 @@ class Assistant:
             print(f"(couldn't mark the reminder acknowledged: {e!r})")
         self._reread_reminders()
 
-    def wake_speaker(self) -> str | None:
-        """Who said the wake word, for the greeting; None if nobody is sure, or speaker ID couldn't tell."""
-        if not self.speaker_id or (audio := self.trigger.last_audio) is None:
+    def wake_speaker(self, audio: np.ndarray | None) -> str | None:
+        """Who said the wake word in `audio`, for the greeting; None if nobody is sure, or speaker ID couldn't tell."""
+        if not self.speaker_id or audio is None:
             return None
         try:
             return self.speaker_id.identify(audio.astype("int16").tobytes(), threshold=self.name_threshold)
@@ -789,27 +789,28 @@ class Assistant:
             print(f"(couldn't tell who spoke: {e!r})")
             return None
 
-    def greet(self) -> None:
-        text = greeting(self.wake_speaker())
+    def greet(self, wake: Wake) -> None:
+        text = greeting(self.wake_speaker(wake.audio))
         print(f"Bot:  {text}")
         if self.say(text, on_first_audio=self._greeted):
             self.journal.said(text)
 
-    def greet_and_listen(self, after_name: Future[np.ndarray] | None = None) -> Utterance | None:
+    def greet_and_listen(self, wake: Wake = NO_WAKE) -> Utterance | None:
         """Says "Yes, <name>?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
-        waits for the greeting, as for anything TARS says. `after_name`: what followed the wake word before listening
-        began; dropped when the mic waits for the greeting, as what's heard after it doesn't run on from the name."""
+        waits for the greeting, as for anything TARS says. What followed the wake word before listening began (the
+        wake's after_name) is dropped when the mic waits for the greeting, as what's heard after it doesn't run on
+        from the name."""
         if not self.body.hears_while_speaking:
-            self.greet()
+            self.greet(wake)
             return self.listen()
-        text = greeting(self.wake_speaker())
+        text = greeting(self.wake_speaker(wake.audio))
         print(f"Bot:  {text}  (listening while it's said)")
         try:
             audio = self.phrases.get(text).result(timeout=PHRASE_WAIT_S)
         except Exception as e:  # noqa: BLE001 - no greeting, but still listening
             print(f"(couldn't say {text!r}: {e!r})")
-            return self.listen(after_name=after_name)
+            return self.listen(after_name=wake.after_name)
         failed: list[BaseException] = []
 
         def play() -> None:
@@ -821,7 +822,7 @@ class Assistant:
         playing = threading.Thread(target=play, daemon=True, name="greeting")
         playing.start()
         try:
-            heard = self.listen(echo_of=text, after_name=after_name)
+            heard = self.listen(echo_of=text, after_name=wake.after_name)
         finally:
             playing.join()
         if failed:
@@ -916,22 +917,23 @@ class Assistant:
         first: Utterance | None = None,
         greet_after_s: float = 0.0,
         greet: str = PAUSE,
-        after_name: Future[np.ndarray] | None = None,
+        wake: Wake = NO_WAKE,
         asked: str = "",
     ) -> None:
         """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
 
         `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes, <name>?":
-        ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER. `after_name`: what
-        followed the wake word before listening began, where the request starts if it was said in one breath. `asked`:
-        what TARS said on its own that `first` answers, so an answer that comes out as no words is asked for again.
+        ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER. `wake`: what woke
+        it, whose voice the greeting names, and what followed the name before listening began, where the request
+        starts if it was said in one breath. `asked`: what TARS said on its own that `first` answers, so an answer
+        that comes out as no words is asked for again.
         """
         # While they're still talking, get the reply's connections ready.
         threading.Thread(target=self.brain.warm, daemon=True, name="brain-warm").start()
         self.voice.warm()
         self.prepare_phrases()
         try:
-            self._converse(follow_up_s, first, greet_after_s, greet, after_name, asked)
+            self._converse(follow_up_s, first, greet_after_s, greet, wake, asked)
         finally:
             self._just_said = []
             self.journal.end_conversation()
@@ -942,20 +944,20 @@ class Assistant:
         first: Utterance | None,
         greet_after_s: float,
         greet: str,
-        after_name: Future[np.ndarray] | None,
+        wake: Wake,
         asked: str,
     ) -> None:
         heard, pardoned, self._last_reply = first, False, asked
         if heard is None:
             if greet == ALWAYS:
-                heard = self.greet_and_listen(after_name)
+                heard = self.greet_and_listen(wake)
             elif greet == PAUSE and greet_after_s:
-                heard = self.listen(start_timeout_s=greet_after_s, after_name=after_name)
+                heard = self.listen(start_timeout_s=greet_after_s, after_name=wake.after_name)
                 if heard is None:
-                    self.greet()
+                    self.greet(wake)
                     heard = self.listen()
             else:
-                heard = self.listen(after_name=after_name)
+                heard = self.listen(after_name=wake.after_name)
         if heard is None:
             print("(didn't hear anything)")
             self.journal.nobody_spoke()

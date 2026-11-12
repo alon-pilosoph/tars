@@ -559,7 +559,7 @@ def muted_with_a_button(assistant):
         switched.append(muted)
         assistant.mute(muted)
 
-    assistant.set_muted = button
+    assistant.body.set_muted = button
     assistant.mute(True)
     return switched
 
@@ -577,7 +577,7 @@ def test_muted_a_question_it_announces_unmutes_it_just_for_the_answer(speaker):
 
 def test_muted_news_that_asks_nothing_leaves_it_muted(speaker):
     assistant, _ = make_assistant(speaker, [None], [])
-    assistant.set_muted = lambda muted: pytest.fail("nothing to listen for")
+    assistant.body.set_muted = lambda muted: pytest.fail("nothing to listen for")
     assistant.mute(True)
     assistant.announcements = Announcements()
     assistant.announcements.add("Toy Story is playing.")

@@ -63,7 +63,7 @@ def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(sp
     waits = []
     trigger = waking(assistant, "name")
     assistant.trigger = types.SimpleNamespace(
-        wait=lambda mic, due=None: waits.append(1) or trigger.wait(mic, due), after_name=None
+        wait=lambda mic, due=None: waits.append(1) or trigger.wait(mic, due), last_audio=None, after_name=None
     )
     threading.Timer(0.3, assistant.mute, [False]).start()  # the speakerphone unmuted, a moment later
     started = time.monotonic()

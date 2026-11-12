@@ -13,6 +13,7 @@ import voice_assistant.assistant as assistant_module
 from voice_assistant import phrases
 from voice_assistant.assistant import ASK_PHRASE, ERROR_LINES, Assistant
 from voice_assistant.audio import SpeakerError, chime
+from voice_assistant.body import Wake
 from voice_assistant.conversations import HOUSEHOLD, LIST, NOTE, PERSON, TIMINGS, SentItem
 from voice_assistant.errors import ServiceError
 from voice_assistant.events import EventLog
@@ -374,6 +375,10 @@ def test_did_you_call_me_goes_quiet_on_silence_or_no(speaker):
     assert brain.forgotten == 1 and assistant.recorder.timeouts == [assistant_module.ASK_TIMEOUT_S]
 
 
+HEY_TARS = np.zeros(32000, np.int16)  # Alon's, to speaker ID
+ALON = Wake(audio=HEY_TARS)
+
+
 class FakeSpeakerID:
     def __init__(self, who):
         self.voiceprints = {"alon": None}
@@ -389,11 +394,10 @@ class FakeSpeakerID:
 
 def test_a_bare_wake_word_gets_a_greeting_by_name_then_the_question(speaker):
     assistant, brain = make_assistant(speaker, [None, b"q", None], ["what's the weather"])
-    assistant.trigger = types.SimpleNamespace(last_audio=np.zeros(32000, np.int16))
     assistant.speaker_id = FakeSpeakerID("alon")
     said = []
     assistant.say = lambda text, **kw: said.append(text)
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, wake=ALON)
     assert said == ["Yes, Alon?"]
     assert assistant.recorder.timeouts[:2] == [1.5, None]  # short wait, greeting, then the normal wait
     assert assistant.speaker_id.thresholds[0] == assistant.name_threshold  # the greeting uses the wake clip's bar
@@ -403,10 +407,9 @@ def test_a_bare_wake_word_gets_a_greeting_by_name_then_the_question(speaker):
 def test_greeting_without_a_confident_name_is_just_yes(speaker):
     assistant, _ = make_assistant(speaker, [None, None], [])
     assistant.speaker_id = FakeSpeakerID(None)
-    assistant.trigger = types.SimpleNamespace(last_audio=np.zeros(32000, np.int16))
     said = []
     assistant.say = lambda text, **kw: said.append(text)
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, wake=ALON)
     assert said == ["Yes?"]
 
 
@@ -415,7 +418,7 @@ def test_when_speaker_id_fails_on_the_wake_word_the_greeting_is_just_yes(speaker
     assistant, brain, played = greeting_at_once(speaker, heard, ["what time is it"])
     assistant.speaker_id.identify = raising(ValueError("shapes (256,) and (192,) not aligned"))
     assistant.voice.stream = lambda text: iter([text.encode()])
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet, wake=ALON)
     assert played[0] == b"Yes?" and brain.asked[0].endswith("what time is it")
 
 
@@ -453,7 +456,7 @@ def test_what_followed_the_name_goes_to_the_first_request_only(speaker):
     """Said in one breath with the name, "what" of "what's new" was read off the mic with it, so it's handed on."""
     assistant, _ = make_assistant(speaker, [b"q", b"f", None], ["what's new", "and the weather"])
     what = np.ones(1920, np.int16)
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, after_name=found(what))
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, wake=Wake(after_name=found(what)))
     leads = assistant.recorder.leads
     assert leads[0] is what and leads[1:] == [None, None]  # follow-ups come after TARS spoke: nothing to carry
 
@@ -466,7 +469,7 @@ def test_what_followed_the_name_is_heard_while_the_mic_stays_open(speaker, greet
     transcript = "Yes, Alon? What's new" if echo else "what's new"
     assistant, _, _ = greeting_at_once(speaker, heard, [transcript], echo=echo)
     what = np.ones(1920, np.int16)
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet, after_name=found(what))
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet, wake=ALON._replace(after_name=found(what)))
     assert assistant.recorder.leads[0] is what
     assert all(lead is None for lead in assistant.recorder.leads[1:])  # after a greeting, the mic starts afresh
 
@@ -474,7 +477,7 @@ def test_what_followed_the_name_is_heard_while_the_mic_stays_open(speaker, greet
 def test_a_greeting_said_with_the_mic_closed_drops_what_followed_the_name(speaker):
     """Without echo cancellation the mic is cleared for "Yes, Alon?": what's heard after it doesn't run on from it."""
     assistant, _, _ = greeting_at_once(speaker, [b"q", None], ["what's new"])
-    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(np.ones(1920, np.int16)))
+    assistant.converse(follow_up_s=4.0, greet="always", wake=ALON._replace(after_name=found(np.ones(1920, np.int16))))
     assert assistant.recorder.leads == [None, None] and assistant.mic.pauses >= 1
 
 
@@ -484,7 +487,7 @@ def test_if_the_greeting_cant_be_said_what_followed_the_name_is_still_heard(spea
     unsaid.set_exception(RuntimeError("no voice"))
     assistant.phrases.get = lambda text, **kw: unsaid
     what = np.ones(1920, np.int16)
-    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(what))
+    assistant.converse(follow_up_s=4.0, greet="always", wake=ALON._replace(after_name=found(what)))
     assert assistant.recorder.leads[0] is what
     assert "couldn't say 'Yes, Alon?'" in capsys.readouterr().out
 
@@ -493,7 +496,7 @@ def test_if_the_name_couldnt_be_timed_the_request_is_heard_from_the_mic(speaker,
     assistant, brain = make_assistant(speaker, [b"q", None], ["what's new"])
     failed = Future()
     failed.set_exception(RuntimeError("recognizer failed"))
-    assistant.converse(follow_up_s=4.0, after_name=failed)
+    assistant.converse(follow_up_s=4.0, wake=Wake(after_name=failed))
     assert assistant.recorder.leads[0] is None and brain.asked == ["what's new"]
     assert "couldn't tell where the name ended" in capsys.readouterr().out
 
@@ -502,7 +505,6 @@ def logged_assistant(speaker, tmp_path, utterances, transcripts, replies=(), els
     journal = Journal(EventLog(tmp_path / "events"))
     assistant, _ = make_assistant(speaker, utterances, transcripts, replies, journal=journal, elsewhere=elsewhere)
     journal.wake(AUDIO, 0.9, "answer", "hey tars", 0.9, "", "")
-    assistant.trigger = types.SimpleNamespace(last_audio=None)
     return assistant, journal.conversations
 
 
@@ -567,9 +569,8 @@ def test_did_you_call_me_and_greetings_open_the_thread(speaker, tmp_path):
 
     assistant, convos = logged_assistant(speaker, tmp_path / "2", [None, b"qq", None], ["what time is it"], ["Noon."])
     assistant.speaker_id = FakeSpeakerID("alon")
-    assistant.trigger.last_audio = np.zeros(32000, np.int16)
     assistant.say = lambda text, **kw: True
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, wake=ALON)
     turns = convos.get(convos.conversations()[0]["id"])["turns"]
     assert [t["text"] for t in turns] == ["Yes, Alon?", "what time is it", "Noon."]
     assert turns[1]["speaker"]["name"] == "Alon"
@@ -792,7 +793,7 @@ def test_muted_its_unmuted_just_for_got_it_then_muted_again(speaker, tmp_path):
         switched.append(muted)
         assistant.mute(muted)
 
-    assistant.set_muted = button
+    assistant.body.set_muted = button
     assistant.mute(True)
     assistant.say_reminders(follow_up_s=4.0)
     assert reminders.get(rid)["status"] == ACKNOWLEDGED
@@ -802,7 +803,7 @@ def test_muted_its_unmuted_just_for_got_it_then_muted_again(speaker, tmp_path):
 
 def test_muted_with_nothing_to_wait_for_it_stays_muted(speaker, tmp_path):
     assistant, reminders, rid, _ = reminding(speaker, tmp_path, [], [], needs_ack=False)
-    assistant.set_muted = lambda muted: pytest.fail("nothing to listen for")
+    assistant.body.set_muted = lambda muted: pytest.fail("nothing to listen for")
     assistant.mute(True)
     assistant.say_reminders()
     assert assistant.muted and reminders.get(rid)["status"] == SAID
@@ -1049,7 +1050,6 @@ def test_a_bare_got_it_later_in_the_conversation_is_for_all_the_reminders_just_s
 def greeting_at_once(speaker, utterances, transcripts, echo=False):
     """An assistant that has just heard "hey TARS" from Alon, greeting at once, with or without echo cancellation."""
     assistant, brain = make_assistant(speaker, utterances, transcripts)
-    assistant.trigger = types.SimpleNamespace(last_audio=np.zeros(32000, np.int16))
     assistant.speaker_id = FakeSpeakerID("alon")
     assistant.mic.echo = types.SimpleNamespace(working=True) if echo else None
     assistant._woke_at = time.monotonic()
@@ -1066,7 +1066,7 @@ def greeting_at_once(speaker, utterances, transcripts, echo=False):
 
 def test_greeting_at_once_says_yes_with_no_wait_for_a_pause(speaker):
     assistant, brain, played = greeting_at_once(speaker, [b"q", None], ["what's the weather"])
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet="always")
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet="always", wake=ALON)
     assert len(played) == 2  # "Yes, Alon?", then the answer
     assert assistant.recorder.timeouts[0] is None  # no waiting to see whether more follows the wake word
     assert assistant.mic.pauses >= 1  # without echo cancellation, the mic closes while it's said
@@ -1075,7 +1075,7 @@ def test_greeting_at_once_says_yes_with_no_wait_for_a_pause(speaker):
 
 def test_with_echo_cancellation_the_greeting_is_said_with_the_mic_open_and_its_trace_taken_off(speaker):
     assistant, brain, played = greeting_at_once(speaker, [b"q", None], ["Yes, Alon? What's the weather"], echo=True)
-    assistant.converse(follow_up_s=4.0, greet="always")
+    assistant.converse(follow_up_s=4.0, greet="always", wake=ALON)
     assert played[0] and assistant.mic.pauses == 1  # the greeting with the mic open; only the answer closes it
     assert brain.asked[0].endswith("] What's the weather")  # what got through of "Yes, Alon?" is gone
 
@@ -1084,20 +1084,20 @@ def test_if_all_it_heard_was_its_own_greeting_it_keeps_listening(speaker):
     assistant, brain, _ = greeting_at_once(speaker, [b"q", b"q", None], ["yes alon", "what time is it"], echo=True)
     heard = []
     assistant.journal.heard = lambda pcm, text, name, score, embedding, first: heard.append((text, name, embedding))
-    assistant.converse(follow_up_s=4.0, greet="always")
+    assistant.converse(follow_up_s=4.0, greet="always", wake=ALON)
     assert len(brain.asked) == 1 and brain.asked[0].endswith("what time is it")
     assert heard[0] == ("", None, None)
 
 
 def test_greeting_at_once_listens_once_when_nobody_speaks(speaker):
     assistant, brain, _ = greeting_at_once(speaker, [None, None], [])
-    assistant.converse(follow_up_s=4.0, greet="always")
+    assistant.converse(follow_up_s=4.0, greet="always", wake=ALON)
     assert assistant.recorder.timeouts == [None] and brain.asked == []  # one wait, not two
 
 
 def test_never_greeting_waits_quietly(speaker):
     assistant, _, played = greeting_at_once(speaker, [None], [])
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet="never")
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet="never", wake=ALON)
     assert played == [] and assistant.recorder.timeouts == [None]
 
 

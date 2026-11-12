@@ -29,6 +29,9 @@ class Wake(NamedTuple):
     after_name: Future[np.ndarray] | None = None  # on a confirmed wake, what followed the name: found on the side
 
 
+NO_WAKE = Wake()
+
+
 class Recorded(NamedTuple):
     pcm: bytes  # 16 kHz mono int16
     silence_s: float  # how long ago they stopped talking when the recording ended

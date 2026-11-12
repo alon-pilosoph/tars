@@ -263,7 +263,7 @@ def test_muted_a_skill_that_asks_unmutes_it_for_the_answer_then_mutes_it_again(s
         switched.append(muted)
         assistant.mute(muted)
 
-    assistant.set_muted = button
+    assistant.body.set_muted = button
     assistant.mute(True)
     assistant._skill_clock = due(NEWS)
     assistant.run_skills(follow_up_s=4.0)
@@ -282,7 +282,7 @@ def test_unmuted_a_skill_listens_for_follow_ups_as_any_conversation(speaker):
 
 def test_muted_a_skill_that_only_tells_stays_muted(speaker):
     assistant, _ = make_assistant(speaker, [None], [], replies=["The news is on."])
-    assistant.set_muted = lambda muted: pytest.fail("nothing to listen for")
+    assistant.body.set_muted = lambda muted: pytest.fail("nothing to listen for")
     assistant.mute(True)
     assistant._skill_clock = due(NEWS)
     assistant.run_skills(follow_up_s=4.0)
