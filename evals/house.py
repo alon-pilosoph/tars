@@ -3,6 +3,7 @@ Home Assistant that's only pretend, and an Android TV box that does what it's to
 so a scenario can check it locked the door once, and never unlocked it for the wrong voice."""
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -241,7 +242,12 @@ class House:
         return self.changes[n:]
 
 
-def make_house(house: dict, unlock_voices=("alon",), unlock_chats=()) -> House:
+CHALLENGE = "472"  # the pretend house's unlock challenge, always: a scenario says it back
+
+
+def make_house(
+    house: dict, unlock_voices=("alon",), unlock_chats=(), unlock_challenge: bool = True, clock=time.monotonic
+) -> House:
     """The pretend house, as a scenario's `house` table sets it, with its home tool."""
     ha = PretendHA(entities(house), jams=house.get("jams", False), down=house.get("down", False))
     hass = HomeAssistant(URL, TOKEN, transport=ha.transport, command=ha.command)
@@ -257,8 +263,14 @@ def make_house(house: dict, unlock_voices=("alon",), unlock_chats=()) -> House:
             devices[spec["name"]] = entity_device(spec["name"], spec, hass, **timing)
     box, agent = PretendBox(house.get("tv") == "on"), PretendAgent()
     devices["tv"] = TvDevice("tv", box, agent, **timing)
-    cfg = HomeConfig(url=URL, unlock_voices=list(unlock_voices), unlock_chats=list(unlock_chats), devices=DEVICES)
-    tools = HomeTools(cfg, devices)
+    cfg = HomeConfig(
+        url=URL,
+        unlock_voices=list(unlock_voices),
+        unlock_chats=list(unlock_chats),
+        unlock_challenge=unlock_challenge,
+        devices=DEVICES,
+    )
+    tools = HomeTools(cfg, devices, digits=lambda: CHALLENGE, clock=clock)
     result = House(tools, ha, box, agent)
     call = tools.call
 

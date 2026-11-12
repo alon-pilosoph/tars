@@ -114,8 +114,8 @@ The systemd services run unconfined.
    reads only its own person's conversations. Still: no text from outside (web search results, a web page the browser reads, Telegram, a sent
    file) can lead to an unlock, turning off an alarm or sending data out; an eval set of injection attempts that
    must all fail (it calls the models: cost estimate first). No tool lets a model read the recordings, `.env` or
-   someone else's conversations. Against a replayed or cloned voice: a spoken challenge (a code word or a random
-   number) before unlocking.
+   someone else's conversations. Against a replayed or cloned voice: built, three random digits said back by the same
+   voice before unlocking ([unlocking](home.md#unlocking)).
 4. **What plugins and automations may do.** Each declares what it needs (the secrets by name, the devices, network
    access) and gets only that from `context`; the actions that matter most (unlock, send something out of the house,
    order) are never theirs unless granted by name. Step 4 builds on this; step 5's rules go through the same checks.
