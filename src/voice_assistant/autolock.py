@@ -20,7 +20,7 @@ jamming, or unlatching (unlocked, open, unlocked) isn't a new unlocking, so it i
 5. One that did, once each unlocking: if the lock doesn't say locked within LOCK_SETTLE_S of the call returning
    (jammed, the door not quite shut), the maintainers are told, and nothing is tried again until it's next unlocked.
 6. The door left open for `open_alert_min` (2 minutes): said aloud at home, or posted to everyone's Telegram chat if
-   nobody is home; once each time it's opened.
+   nobody is home; once each time it's opened. Opened while auto-lock is off, it's said once it's back on.
 7. The sensor not answering (unknown or unavailable in Home Assistant, or never heard): nothing is locked until it's
    back, whatever it said last. The maintainers are told once it's been out SENSOR_GRACE_S, and once it's back.
 8. Turned off (the home tool's "<door> auto-lock", off for some minutes): nothing is locked, nor said about the door
@@ -299,26 +299,27 @@ class AutoLock:
         now = self._clock()
         off = self.off.until() is not None
         with self._mutex:
-            alert = self._open_too_long(now) and not off
+            alert = None if off else self._open_too_long(now)  # off, it's kept for when it's back on
             down = self._down_to_tell(now)
             lock = not off and self._lock_due(now)
             check = self._not_locked(now)
         if down:
             self._tell(down)
         if alert:
-            self._say_open()
+            self._say_open(alert)
         if lock:
             self._lock_now()
         if check:
             self._tell(check)
 
-    def _open_too_long(self, now: float) -> bool:
+    def _open_too_long(self, now: float) -> float | None:
+        """For how many minutes the door's been open, once it's time to say so; None otherwise."""
         if not self.settings.open_alert_min or self.alerted or self.open_since is None or self.door_state != OPEN:
-            return False
+            return None
         if now - self.open_since < self.settings.open_alert_min * 60:
-            return False
+            return None
         self.alerted = True
-        return True
+        return max(self.settings.open_alert_min, (now - self.open_since) // 60)
 
     def _down_to_tell(self, now: float) -> str | None:
         if self.down_since is None or self.down_told or now - self.down_since < SENSOR_GRACE_S:
@@ -398,8 +399,7 @@ class AutoLock:
             "it, or the lock's own auto-lock does; I'll try again when it's next unlocked."
         )
 
-    def _say_open(self) -> None:
-        minutes = self.settings.open_alert_min
+    def _say_open(self, minutes: float) -> None:
         text = f"The {self.door} has been open for {minutes:g} minute{'s' if minutes != 1 else ''}."
         print(f"(auto-lock: {text})")
         if self._anyone_home() is False:

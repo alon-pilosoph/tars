@@ -476,6 +476,19 @@ def test_turned_off_it_locks_nothing_and_says_nothing_then_comes_back_by_itself(
     assert h.locked == 1 and device.status() == "front door auto-lock: on"
 
 
+def test_a_door_opened_while_its_off_and_still_open_once_its_back_on_is_said_then(tmp_path):
+    h = House(tmp_path)
+    h.off.set(1_800_000_000.0 + 10 * 60)
+    h.set(LOCK, "unlocked")
+    h.set(DOOR, "on")
+    h.wait(10 * 60 - 1)
+    assert h.said == [] and h.locked == 0
+    h.wait(1)  # back on, and it's still open
+    assert h.said == ["The front door has been open for 10 minutes."]
+    h.wait(600)
+    assert len(h.said) == 1 and h.locked == 0
+
+
 def test_already_unlocked_when_tars_starts_is_locked_once_the_door_is_shut(tmp_path):
     h = House(tmp_path, lock="unlocked", door="off")
     h.wait(60)
