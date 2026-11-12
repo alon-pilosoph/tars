@@ -214,15 +214,21 @@ in `doors.py`:
 The lock still says who; the sensor only says when. A door sensor alone puts nobody at home, and its own readings
 never work the house.
 
-Setting it up: pair the sensor with Home Assistant (its Bluetooth integration, then BTHome finds it; a Shelly BLU
-pairs for a minute after four presses of its button), and name its binary_sensor on the door:
+Setting it up:
 
-```toml
-[[presence.doors]]
-name = "front door"
-topic = "nuki/4224E764"
-sensor = "binary_sensor.front_door_window"
-```
+1. **Turn on the sensor's encryption** first: in the Shelly app, the sensor's BTHome encryption, which gives it a key
+   (the bindkey). Without it, anything in Bluetooth range can say it's the sensor and the door moved
+   ([security](security.md#a-door-sensor-that-says-the-door-moved-when-it-didnt)).
+2. **Pair it with Home Assistant**: its Bluetooth integration, then BTHome finds it (a Shelly BLU pairs for a minute
+   after four presses of its button) and asks for the bindkey.
+3. **Name its binary_sensor on the door**:
+
+   ```toml
+   [[presence.doors]]
+   name = "front door"
+   topic = "nuki/4224E764"
+   sensor = "binary_sensor.front_door_window"
+   ```
 
 TARS's log then says `(home: following binary_sensor.front_door_window)`, and `(doors: the front door opened)` and
 `(doors: Stacey came in by the front door)`, then `(skill welcome home: Stacey just came in by the front door)`, as
