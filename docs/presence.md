@@ -179,6 +179,13 @@ in `doors.py`:
   own, "Stacey just came in by the front door", kept in `door_events` (action 100), and what happens then is up to
   [skills](skills.md) that run on it (`comes_in`), not code. Two let in together come in together. Someone let in by
   a person inside, or by the app, hasn't "come in": the lock can't say who they are.
+
+  The two minutes are a trade-off. Auto Unlock can open the lock while its person is still at the car or on the
+  stairs, so the window has to be long enough for them to reach the door; but the sensor only says the door opened
+  and shut, not who went through. So if someone else goes out by the door in those two minutes, before they're there,
+  that's taken for them coming in: they're welcomed early, and whoever went out isn't seen leaving by the door (their
+  phone waits `away_after_min`). A shorter window would miss someone slow from the car instead: it errs on the side
+  of welcoming them.
 - **Starts the household with a "welcome home" skill**, once, when the first door with a sensor is set up: "Welcome
   them home by name, in a few warm words. Between 22:00 and 07:00 say nothing: people may be asleep." Change it,
   pause it or delete it by talking to TARS like any skill ("don't welcome Alon", "mention the weather too");
