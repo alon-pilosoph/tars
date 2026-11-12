@@ -5,7 +5,7 @@ A session is a script of prompts (the exact words, and how to say them) for one 
 key, good for LINK_HOURS or until the last prompt is done. The assistant does the recording, since it holds the
 speakerphone (Assistant.take, over control.py); the web UI keeps each take here, after `check` has listened for what
 would make it worth doing again. Two scripts so far: the person's voice (for speaker ID), and the house's commands
-(for testing offline recognizers on them, docs/roadmap.md).
+(for measuring house commands on the Pi, tools/commands_bench.py).
 """
 
 import json
@@ -14,11 +14,15 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .audio import SAMPLE_RATE
 from .store import Store
+
+if TYPE_CHECKING:
+    from .commands import DeviceWords
 
 VOICE, HOUSE = "voice", "house"
 KINDS = (VOICE, HOUSE)
@@ -117,13 +121,12 @@ HOUSE_HOWS = ["", FAR, "", SOFTLY, FAST, ""]
 MOST_COMMANDS = 36
 
 
-def house_script(devices: list[tuple[str, tuple[str, ...], bool]], rng: random.Random) -> list[Prompt]:
+def house_script(devices: list[DeviceWords], rng: random.Random) -> list[Prompt]:
     """Each thing each device does, in one of the ways people ask, from a few places and voices; then words that
-    name devices without asking for anything, which must not count, and plain requests. `devices`: each one's name,
-    what it does (Device.actions) and whether it takes a temperature, as the house made them. At most MOST_COMMANDS
-    commands."""
+    name devices without asking for anything, which must not count, and plain requests. `devices`: as the house made
+    them (commands.device_words), each said by its label. At most MOST_COMMANDS commands."""
     commands: list[tuple[str, str, str]] = []  # (how it opens, the words, what they mean)
-    for name, actions, warm in devices:
+    for _, name, actions, warm in devices:
         name = name.strip()
         if not name:
             continue

@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from voice_assistant import control
 from voice_assistant.audio import SAMPLE_RATE, MicrophoneError
+from voice_assistant.commands import DeviceWords
 from voice_assistant.control import Refused
 from voice_assistant.recording import (
     CUT_OFF,
@@ -92,13 +93,13 @@ def test_quiet_is_fine_when_the_prompt_asks_for_it():
 
 # ---------- Scripts ----------
 
-DEVICES = [  # as the house made them: name, what it does, whether it takes a temperature
-    ("front door", ("status", "lock", "unlock"), False),
-    ("AC", ("status", "on", "off", "set"), True),  # a plugin's, which says it takes a temperature
-    ("bedroom AC", ("status", "on", "off", "set"), True),
-    ("TV", ("status", "on", "off", "do"), False),
-    ("boiler", ("status", "on", "off"), False),
-    ("temperature", ("status", "history"), False),
+DEVICES = [  # as the house made them (commands.device_words)
+    DeviceWords("front_door", "front door", ("status", "lock", "unlock"), False),
+    DeviceWords("ac", "AC", ("status", "on", "off", "set"), True),  # a plugin's, which says it takes a temperature
+    DeviceWords("bedroom_ac", "bedroom AC", ("status", "on", "off", "set"), True),
+    DeviceWords("tv", "TV", ("status", "on", "off", "do"), False),
+    DeviceWords("boiler", "boiler", ("status", "on", "off"), False),
+    DeviceWords("temperature", "temperature", ("status", "history"), False),
 ]
 
 
@@ -123,7 +124,7 @@ def test_the_house_script_asks_for_everything_each_device_does_and_mixes_in_what
 
 
 def test_a_big_house_is_sampled_not_recorded_whole():
-    devices = [(f"light {n}", ("status", "on", "off"), False) for n in range(40)]
+    devices = [DeviceWords(f"light_{n}", f"light {n}", ("status", "on", "off"), False) for n in range(40)]
     assert len([p for p in house_script(devices, random.Random(2)) if p.means]) == MOST_COMMANDS
 
 

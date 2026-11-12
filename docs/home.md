@@ -160,7 +160,7 @@ job (an integration for its make); TARS only shows what Home Assistant already h
 
 With `[home] commands_on_pi`, the plainest requests skip the model: "lock the front door", "turn off the boiler",
 "switch the TV on", "set the AC to 23". The phrases are made from the house's own devices (`commands.py`): verbs ("turn
-on", "switch off", "put on", "lock"), each device by its name and its label, 16 to 30 degrees for one that takes a
+on", "switch off", "put on", "lock", "make it ... degrees", or just "boiler off"), each device by its name and its label, 16 to 30 degrees for one that takes a
 temperature (a fixed range: a device that doesn't go that far says it couldn't), and the polite bits ("please", "can
 you", "hey TARS"). A request that's exactly one of them, as speech to text wrote it, is done at once:
 
@@ -189,7 +189,8 @@ session](web-ui.md#recording-sessions) made from the house's own devices (about 
 `uv run python tools/commands_bench.py` plays every house session's takes to Vosk, as the Pi would hear them, and
 scores each against what it means: right, missed or wrong, with the time each took. `--cloud` also times the cloud's
 speech to text for whole recordings (what `local_first` adds for a plain request) and matches its transcripts (about
-$0.004 a minute of takes). Each run is kept in `voice_data/bench/commands/`, and one with a wrong match exits 1.
+$0.004 a minute of takes). Each run is kept in `voice_data/bench/commands/`, and one with a wrong match, Vosk's or the
+cloud's, exits 1.
 
 <a id="local-first"></a>**Local first** (`[home] local_first`, with `commands_on_pi`): nothing goes to the cloud's
 speech to text until the request is over and Vosk has heard it isn't a house command. TARS's own rules say when the turn

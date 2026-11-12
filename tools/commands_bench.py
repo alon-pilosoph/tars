@@ -10,19 +10,22 @@ what the take means, it's right (the command it is, or nothing for words that mu
 heard as nothing: it goes to the model, which costs time, not a mistake) or wrong (the one failure that matters: a
 command it isn't). With --cloud, each take also goes to Deepgram's endpoint for whole recordings, timed: what
 local_first adds for a request that isn't a command, and the transcript commands_on_pi matches when the cloud is
-there. About $0.004 a minute of takes.
+there. About $0.004 a minute of takes. A missed command is also matched as written, to tell words the phrases don't have
+from words Vosk didn't hear.
 
-Every take's result is saved (voice_data/bench/commands/<time>.jsonl), with what it was run on. The exit code is 1 if
-any take was wrong.
+Every take's result is saved (voice_data/bench/commands/<time>.jsonl), with what it was run on; a take whose audio is
+missing or damaged is skipped and counted. The exit code is 1 if any take was wrong, heard by Vosk or by the cloud.
 """
 
 import argparse
+import functools
 import json
 import statistics
 import subprocess
 import sys
 import time
 import wave
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -30,6 +33,8 @@ REPO = Path(__file__).parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from voice_assistant.commands import Command, Commands
+from voice_assistant.errors import ServiceError
+from voice_assistant.recording import HOUSE
 
 COMMAND_ACTIONS = ("on", "off", "lock", "set")  # what the Pi does; anything else a take asks for goes to the model
 PRICE_A_MINUTE = 0.0043  # Deepgram's endpoint for whole recordings (Nova-3), USD
@@ -47,9 +52,13 @@ class Result:
     outcome: str  # right | missed | wrong
     vosk_ms: float
     seconds: float
+    problem: str | None = None  # what the recording session's check found wrong with the take (recording.check)
+    written: str = ""  # what the words it was meant to say match, as written: a missed command the phrases don't have
     cloud_text: str | None = None
     cloud_matched: str | None = None
+    cloud_outcome: str | None = None
     cloud_ms: float | None = None
+    cloud_error: str | None = None
 
 
 def expected(means: str, names: dict[str, str]) -> Command | None:
@@ -74,9 +83,15 @@ def text(c: Command | None) -> str:
     return "" if c is None else f"{c.device}|{c.action}" + (f":{c.temperature}" if c.temperature else "")
 
 
-def score(takes: list[dict], commands: Commands, names: dict[str, str], hear, cloud=None) -> list[Result]:
-    """Each take ({session, prompt, say, means, pcm, seconds}) heard by `hear(pcm)` and, given `cloud(pcm)`, by the
-    cloud too."""
+def score(
+    takes: list[dict],
+    commands: Commands,
+    names: dict[str, str],
+    hear: Callable[[bytes], str],
+    cloud: Callable[[bytes], str] | None = None,
+) -> list[Result]:
+    """Each take ({session, prompt, say, means, pcm, seconds, problem}) heard by `hear(pcm)` and, given `cloud(pcm)`,
+    by the cloud too. The cloud failing on a take is kept on its result, not the end of the run."""
     results = []
     for t in takes:
         want = expected(t["means"], names)
@@ -85,17 +100,31 @@ def score(takes: list[dict], commands: Commands, names: dict[str, str], hear, cl
         vosk_ms = (time.perf_counter() - start) * 1000
         got = commands.match(heard) if heard else None
         r = Result(t["session"], t["prompt"], t["say"], t["means"], text(want), heard, text(got), outcome(want, got),
-                   round(vosk_ms, 1), t["seconds"])  # fmt: skip
+                   round(vosk_ms, 1), t["seconds"], t.get("problem"), text(commands.match(t["say"])))  # fmt: skip
         if cloud:
             start = time.perf_counter()
-            r.cloud_text = cloud(t["pcm"])
-            r.cloud_ms = round((time.perf_counter() - start) * 1000, 1)
-            r.cloud_matched = text(commands.match(r.cloud_text))
+            try:
+                r.cloud_text = cloud(t["pcm"])
+            except ServiceError as e:
+                r.cloud_error = str(e)
+            else:
+                r.cloud_ms = round((time.perf_counter() - start) * 1000, 1)
+                cloud_got = commands.match(r.cloud_text)
+                r.cloud_matched, r.cloud_outcome = text(cloud_got), outcome(want, cloud_got)
         results.append(r)
     return results
 
 
-def summary(results: list[Result]) -> str:
+def counted(results: list[Result], outcome_of: Callable[[Result], str | None]) -> str:
+    right, missed, wrong = (sum(outcome_of(r) == o for r in results) for o in ("right", "missed", "wrong"))
+    return f"{right} right, {missed} missed, {wrong} wrong"
+
+
+def any_wrong(results: list[Result]) -> bool:
+    return any("wrong" in (r.outcome, r.cloud_outcome) for r in results)
+
+
+def summary(results: list[Result], skipped: int = 0) -> str:
     lines = []
     for kind, picked in (
         ("commands", [r for r in results if r.expected]),
@@ -103,42 +132,58 @@ def summary(results: list[Result]) -> str:
     ):
         if not picked:
             continue
-        counts = {o: sum(r.outcome == o for r in picked) for o in ("right", "missed", "wrong")}
-        right, missed, wrong = (counts[o] for o in ("right", "missed", "wrong"))
-        lines.append(f"{kind:13} {len(picked):3} takes: {right} right, {missed} missed, {wrong} wrong")
+        line = f"{kind:13} {len(picked):3} takes: {counted(picked, lambda r: r.outcome)}"
+        missed = [r for r in picked if r.outcome == "missed"]
+        if missed:
+            unknown = sum(r.written != r.expected for r in missed)
+            line += f" ({unknown} of the missed not in the phrases, {len(missed) - unknown} not heard)"
+        lines.append(line)
+    if skipped:
+        lines.append(f"{skipped} takes skipped: their audio is missing or damaged")
     if results:
         lines.append(f"Vosk: median {statistics.median(r.vosk_ms for r in results):.0f} ms a take")
-    timed = [r for r in results if r.cloud_ms is not None]
+    timed = [r for r in results if r.cloud_outcome is not None]
     if timed:
         asks = [r.cloud_ms for r in timed if not r.expected]
         if asks:
             lines.append(f"cloud, whole recordings, for what isn't a command: median {statistics.median(asks):.0f} ms")
-        cloud_wrong = sum(1 for r in timed if r.cloud_matched and r.cloud_matched != r.expected)
-        cloud_right = sum(1 for r in timed if r.cloud_matched == r.expected)
-        lines.append(f"the cloud's transcripts, matched: {cloud_right} right, {cloud_wrong} wrong")
+        lines.append(f"the cloud's transcripts, matched: {counted(timed, lambda r: r.cloud_outcome)}")
+    if failed := sum(r.cloud_error is not None for r in results):
+        lines.append(f"the cloud failed on {failed} takes (each one's error is kept with its result)")
     for r in results:
-        if r.outcome == "wrong" or (r.cloud_matched and r.cloud_matched != r.expected):
+        if r.outcome == "wrong" or r.cloud_outcome == "wrong":
+            problem = f" ({r.problem})" if r.problem else ""
             lines.append(
-                f"  WRONG {r.prompt}: {r.said!r} heard {r.heard!r} as {r.matched or '-'} (cloud: {r.cloud_matched})"
+                f"  WRONG {r.prompt}{problem}: {r.said!r} heard {r.heard!r} as {r.matched or '-'}"
+                f" (cloud: {r.cloud_matched})"
             )
     return "\n".join(lines)
 
 
-def read_takes(store, session_token: str | None) -> list[dict]:
-    """Every house session's takes that have audio, with what each prompt said and meant."""
-    query = "SELECT * FROM sessions WHERE kind = 'house'" + (" AND token = ?" if session_token else "")
-    takes = []
-    for s in store.rows(query, (session_token,) if session_token else ()):
+def read_takes(store, session_token: str | None) -> tuple[list[dict], list[str]]:
+    """Every house session's takes that have audio (or one session's, by its token), with what each prompt said and
+    meant; and why each take whose audio couldn't be read was left out. A token no house session has is a
+    LookupError."""
+    query = "SELECT * FROM sessions WHERE kind = ?" + (" AND token = ?" if session_token else "")
+    sessions = store.rows(query, (HOUSE, session_token) if session_token else (HOUSE,))
+    if session_token and not sessions:
+        raise LookupError("No house recording session has that token.")
+    takes, skipped = [], []
+    for s in sessions:
         prompts = {p["id"]: p for p in json.loads(s["prompts"])}
         for t in store.rows("SELECT * FROM takes WHERE session_id = ? AND audio IS NOT NULL", (s["id"],)):
             p = prompts.get(t["prompt"])
             if p is None or p.get("means") is None:
                 continue
-            with wave.open(str(store.folder / t["audio"])) as w:
-                pcm = w.readframes(w.getnframes())
+            try:
+                with wave.open(str(store.folder / t["audio"])) as w:
+                    pcm = w.readframes(w.getnframes())
+            except (OSError, EOFError, wave.Error) as e:
+                skipped.append(f"session {s['id']}, {t['prompt']}: {e}")
+                continue
             takes.append({"session": s["id"], "prompt": t["prompt"], "say": p["say"], "means": p["means"], "pcm": pcm,
-                          "seconds": t["seconds"]})  # fmt: skip
-    return takes
+                          "seconds": t["seconds"], "problem": t["problem"]})  # fmt: skip
+    return takes, skipped
 
 
 def main() -> int:
@@ -150,9 +195,8 @@ def main() -> int:
     args = p.parse_args()
 
     from voice_assistant.__main__ import DEEPGRAM_KEY, api_key, make_event_log, make_home
-    from voice_assistant.commands import vosk_hearing
+    from voice_assistant.commands import device_words, vosk_hearing
     from voice_assistant.config import load_config
-    from voice_assistant.home import SET
 
     cfg = load_config(args.config)
     root = args.config.resolve().parent
@@ -161,40 +205,40 @@ def main() -> int:
     if log is None or home is None:
         print("The bench needs the event log and the house's devices.")
         return 2
-    found = [
-        (n, d.display, tuple(d.actions), SET in d.actions and d.takes_temperature) for n, d in home.devices.items()
-    ]
+    found = device_words(home.devices)
     commands = Commands(found)
-    names = {d.display.lower(): n for n, d in home.devices.items()} | {n: n for n in home.devices}
-    takes = read_takes(log.store, args.session)
+    names = {d.label.lower(): d.name for d in found} | {d.name: d.name for d in found}
+    try:
+        takes, skipped = read_takes(log.store, args.session)
+    except LookupError as e:
+        print(e)
+        return 2
+    for why in skipped:
+        print(f"(skipped {why})")
     if not takes:
         print("No house takes yet: voice-assistant --record-session house --for NAME")
         return 2
     minutes = sum(t["seconds"] for t in takes) / 60
-    cloud = None
+    cloud: Callable[[bytes], str] | None = None
     if args.cloud:
-        from voice_assistant.stt import DeepgramFileTranscriber
+        from voice_assistant.stt import DeepgramFileTranscriber, transcribe_recording
 
         print(f"{len(takes)} takes, {minutes:.1f} minutes: about ${minutes * PRICE_A_MINUTE:.2f} at Deepgram")
         deepgram = DeepgramFileTranscriber(api_key(root / ".env", DEEPGRAM_KEY), cfg.stt)
-
-        def cloud(pcm: bytes) -> str:
-            session = deepgram.session()
-            session.feed(pcm)
-            return session.transcript()
+        cloud = functools.partial(transcribe_recording, deepgram)
 
     results = score(takes, commands, names, vosk_hearing(commands.grammar(), root / "models"), cloud)
-    print(summary(results))
+    print(summary(results, len(skipped)))
     save = args.save or root / "voice_data" / "bench" / "commands" / f"{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
     save.parent.mkdir(parents=True, exist_ok=True)
     sha = subprocess.run(
         ["git", "-C", str(REPO), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
     )
     meta = {"run": time.strftime("%Y-%m-%dT%H:%M:%S"), "code": sha.stdout.strip(), "phrases": len(commands.grammar()),
-            "takes": len(takes), "cloud": bool(cloud)}  # fmt: skip
+            "takes": len(takes), "skipped": len(skipped), "cloud": bool(cloud)}  # fmt: skip
     save.write_text("\n".join([json.dumps({"meta": meta}), *(json.dumps(asdict(r)) for r in results)]) + "\n")
     print(f"(kept in {save})")
-    return 1 if any(r.outcome == "wrong" for r in results) else 0
+    return 1 if any_wrong(results) else 0
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .backup import S3, Backup
+    from .commands import DeviceWords
     from .events import EventLog
     from .health import Report
     from .llm import QuickService
@@ -271,8 +272,6 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
     log = make_event_log(cfg, root)
     if log is None:
         raise ConfigError("Recording sessions keep their takes in the event log: set [learning] log_events = true.")
-    if kind == HOUSE and not cfg.home.devices:
-        raise ConfigError("There are no [[home.devices]] in config.toml to make house commands from.")
     prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
     token = Sessions(log.store).create(kind, person, prompts)
     url = f"{cfg.web.link.rstrip('/') or f'http://{reachable_address()}:{port}'}/?session={token}"
@@ -294,15 +293,14 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
     print(f"Sent to {person} on Telegram.")
 
 
-def house_actions(cfg: Config, root: Path, events) -> list[tuple[str, tuple[str, ...], bool]]:
-    """Each device's name, what it does and whether it takes a temperature, as the house makes them: what a house
-    recording session asks for."""
-    from .home import SET
+def house_actions(cfg: Config, root: Path, events: EventLog | None) -> list[DeviceWords]:
+    """The house's devices as it makes them: what a house recording session asks for."""
+    from .commands import device_words
 
     home = make_home(cfg, root, events=events)
     if home is None or not home.devices:
         raise ConfigError("There are no devices in the house to make house commands from (docs/home.md).")
-    return [(d.display, tuple(d.actions), SET in d.actions and d.takes_temperature) for d in home.devices.values()]
+    return device_words(home.devices)
 
 
 def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
@@ -541,9 +539,9 @@ def house_commands(cfg: Config, root: Path, home):
     it's off or there's nothing to command."""
     if not (cfg.home.commands_on_pi and home and home.devices):
         return None
-    from .commands import WITTY_FROM_HUMOR, Commands, HouseCommands, Replies, vosk_hearing
+    from .commands import WITTY_FROM_HUMOR, Commands, HouseCommands, Replies, device_words, vosk_hearing
 
-    commands = Commands([(name, d.display, tuple(d.actions), d.takes_temperature) for name, d in home.devices.items()])
+    commands = Commands(device_words(home.devices))
     replies = Replies({name: d.display for name, d in home.devices.items()}, cfg.llm.humor >= WITTY_FROM_HUMOR)
     try:
         hear = vosk_hearing(commands.grammar(), root / "models")
