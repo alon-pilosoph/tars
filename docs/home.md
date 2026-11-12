@@ -443,7 +443,7 @@ everything in its data, at any depth: `entity_id`, `target`, a key (`scene.apply
 **What can't be seen into counts as if it would open one**: a room, a floor or a label (`area_id`, `floor_id`,
 `label_id`), whose entities aren't read; a template where the target or the service is; a script, automation or
 scene whose setup can't be read (one made by `scene.create` has none) or is nested deeper than five; `entity_id: all`
-for scripts, automations or scenes; a device when the entity registry can't be read; and a service that runs what
+for scripts, automations or scenes, or through `homeassistant.turn_on` and its like (every entity); a device when the entity registry can't be read; and a service that runs what
 TARS can't read (`OPAQUE` in `ha_tool.py`): code (`shell_command`, `python_script`, `pyscript`, `command_line`),
 `rest_command`, an add-on's input (`hassio.addon_stdin`), and the integrations that send a device a raw command
 (`mqtt`, `zwave_js`, `zha`, `deconz`, `esphome`, `knx`, `modbus`). Each of these is made only for a voice or chat

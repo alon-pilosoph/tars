@@ -373,6 +373,7 @@ def test_each_grant_is_checked_on_its_own(tmp_path, granted, service, data, need
         ("light.turn_on", {"target": {"label_id": "doors"}}),
         ("cover.open_cover", {"entity_id": "all"}),
         ("script.turn_on", {"entity_id": "all"}),
+        ("homeassistant.turn_on", {"entity_id": "all"}),  # every entity: every script and scene too
         ("cover.open_cover", {"entity_id": "cover.front_gate"}),
         # What can't be seen into: a request to another server, a command sent straight to a device.
         ("rest_command.open_sesame", {}),

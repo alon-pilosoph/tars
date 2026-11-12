@@ -469,7 +469,8 @@ class Doors:
             if domain == "script" and name not in SCRIPT_OWN:
                 found.entities.add(service)
         doors = self.entities()
-        if every := sorted(found.every.intersection({"lock", *RUNS_OTHERS})):
+        # homeassistant.turn_on and its like act on any entity, so all of theirs is every script and scene too.
+        if every := sorted(found.every.intersection({"lock", "homeassistant", *RUNS_OTHERS})):
             return f"it's aimed at every {every[0]}"
         found.entities |= {e for e in doors if e.partition(".")[0] in found.every}
         if opening := sorted(
