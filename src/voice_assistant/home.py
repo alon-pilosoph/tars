@@ -12,7 +12,8 @@ Whatever the device, the tool keeps the same promises, in code rather than in th
 - A reply that's still a draft changes nothing: a change waits until the turn is really over (Request.may_act), and a
   reply thrown away, because someone kept talking, never reaches a device.
 - Unlocking is only by voice, only for the voices [home] unlock_voices names, recognised surely on the request
-  itself, and only when the words heard in that turn ask to unlock.
+  itself, and only when the words heard in that turn ask to unlock; then, with [home] unlock_challenge, only once the
+  same voice has said back three random digits.
 """
 
 import importlib
@@ -98,6 +99,14 @@ class Request:
 
     def go_ahead(self) -> bool:
         return True if self.may_act is None else self.may_act(GO_AHEAD_TIMEOUT_S)
+
+
+@dataclass(frozen=True)
+class Challenge:
+    """The digits a trusted voice was asked to say back to unlock, and until when (by HomeTools' clock)."""
+
+    digits: str
+    until: float
 
 
 def spoken_digits(heard: str) -> str:
@@ -361,17 +370,18 @@ class HomeTools:
         ha_config=None,
         maintainers: list[str] = (),
         digits: Callable[[], str] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         """`hass`: Home Assistant (hass.HomeAssistant), for the home_assistant tool: all of it, beyond the devices.
         `ha_config`: its setup's history (haconfig.HAConfig), so a change TARS makes to its setup can be undone.
         `maintainers`: who looks after TARS, the only ones who may change Home Assistant's setup. `digits`: an
-        unlock challenge's digits, random by default."""
+        unlock challenge's digits, random by default. `clock`: seconds, for how long a challenge waits."""
         from .ha_setup import HASetup
         from .ha_tool import HAAccess
 
         self._cfg = cfg
-        self._challenge: tuple[str, str, float] | None = None  # (digits, whose voice, until when): an unlock asked
-        self._clock = time.monotonic
+        self._challenges: dict[str, Challenge] = {}  # by whose voice was asked
+        self._clock = clock
         self._digits = digits or (lambda: "".join(secrets.choice("123456789") for _ in range(CHALLENGE_DIGITS)))
         self.devices = {name.strip().lower(): d for name, d in devices.items()}
         self.tool = home_tool(devices)
@@ -476,31 +486,43 @@ class HomeTools:
             return "refused: nobody may unlock by voice ([home] unlock_voices is empty)"
         if not request.speaker or request.speaker.strip().lower() not in allowed:
             return "refused: unlocking by voice is only for voices TARS knows and trusts with it"
-        if request.score is None or request.score < cfg.unlock_threshold:
-            return "refused: TARS isn't sure enough whose voice that was to unlock; say it again, a little longer"
         who = request.speaker.strip().lower()
-        if cfg.unlock_challenge and (answer := self._answer(who, request.heard)) is not None:
-            return answer or None
-        if not UNLOCK_WORDS.search(request.heard):
+        sure = request.score is not None and request.score >= cfg.unlock_threshold
+        asks = UNLOCK_WORDS.search(request.heard)
+        if cfg.unlock_challenge and not asks and spoken_digits(request.heard) and (waiting := self._waiting(who)):
+            return self._answer(who, waiting, request, sure)
+        if not sure:
+            return "refused: TARS isn't sure enough whose voice that was to unlock; say it again, a little longer"
+        if not asks:
             return 'refused: unlocking needs them to say "unlock"; it never follows from anything else'
         if not cfg.unlock_challenge:
             return None
         digits = self._digits()
-        self._challenge = (digits, who, self._clock() + CHALLENGE_S)
+        with self._lock:
+            self._challenges[who] = Challenge(digits, self._clock() + CHALLENGE_S)
         said = ", ".join(DIGIT_NAMES[d] for d in digits)
         return f"challenge: not unlocked yet; ask them to say these digits: {said}"
 
-    def _answer(self, who: str, heard: str) -> str | None:
-        """A turn answering the challenge `who` was set: "" if it says its digits (may unlock), a refusal if it says
-        others, None if no challenge is waiting for them or it says no digits at all (a new "unlock" gets a new
-        challenge). Either way the challenge is used up: one try."""
-        challenge, self._challenge = self._challenge, None
-        said = spoken_digits(heard)
-        if challenge is None or challenge[1] != who or self._clock() > challenge[2] or not said:
-            return None
-        if challenge[0] in said:
-            return ""
-        return "refused: those weren't the digits asked for, so it stays locked; they can ask to unlock again"
+    def _waiting(self, who: str) -> Challenge | None:
+        with self._lock:
+            challenge = self._challenges.get(who)
+        return challenge if challenge and self._clock() <= challenge.until else None
+
+    def _answer(self, who: str, challenge: Challenge, request: Request, sure: bool) -> str | None:
+        """Why digits said to `challenge` may not unlock, or None if they may. Only a turn that's kept is an answer
+        (a draft may yet be thrown away), and then the challenge is used up, right or wrong: one try. An answer too
+        short to recognise their voice surely uses it up too."""
+        if not request.go_ahead():
+            return "error: the request was withdrawn before anything was done; nothing changed"
+        with self._lock:
+            if self._challenges.get(who) is not challenge:
+                return "refused: those digits were already answered; they can ask to unlock again"
+            del self._challenges[who]
+        if not sure:
+            return "refused: TARS isn't sure enough whose voice said the digits; they can ask to unlock again"
+        if spoken_digits(request.heard) != challenge.digits:
+            return "refused: those weren't the digits asked for, so it stays locked; they can ask to unlock again"
+        return None
 
     def glance(self) -> str:
         """The whole house for a person to read: a line a device, "Front door: locked · battery 80%"."""

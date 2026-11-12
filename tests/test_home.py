@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-import voice_assistant.home as home_module
 from evals.house import DEVICES, make_house
 from voice_assistant import llm
 from voice_assistant.config import ConfigError, HomeConfig, load_config
@@ -86,13 +85,53 @@ def test_a_challenge_gets_one_try():
     assert 'needs them to say "unlock"' in h.tools.call(args("front door", "unlock"), said_back("four seven two"))
 
 
-def test_a_challenge_waits_half_a_minute(monkeypatch):
+def test_a_challenge_waits_half_a_minute():
     now = [0.0]
-    monkeypatch.setattr(home_module.time, "monotonic", lambda: now[0])
-    h = house(lock="locked")
+    h = make_house({"lock": "locked"}, clock=lambda: now[0])
     h.tools.call(args("front door", "unlock"), ALON)
     now[0] += CHALLENGE_S + 1
     assert 'needs them to say "unlock"' in h.tools.call(args("front door", "unlock"), said_back("four seven two"))
+
+
+def test_the_digits_said_must_be_exactly_the_ones_asked_for():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    many = said_back("one two three four seven two eight nine")
+    assert "weren't the digits" in h.tools.call(args("front door", "unlock"), many)
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two, thanks")).startswith("done")
+
+
+@pytest.mark.parametrize("draft", ["four seven", "four seven two"])
+def test_an_answer_thrown_away_as_a_draft_leaves_the_challenge_for_the_real_one(draft):
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    thrown_away = Request("alon", 0.8, by_voice=True, heard=draft, may_act=lambda timeout_s: False)
+    assert "withdrawn" in h.tools.call(args("front door", "unlock"), thrown_away)
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
+
+
+def test_another_voice_cant_answer_or_use_up_someones_challenge():
+    h = make_house({"lock": "locked"}, unlock_voices=("alon", "stacey"))
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven three", who="stacey")).startswith("refused")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two", who="bob")).startswith("refused")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
+
+
+def test_an_answer_too_unsure_of_the_voice_uses_up_the_try():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert "isn't sure enough" in h.tools.call(args("front door", "unlock"), said_back("four seven two", score=0.4))
+    assert 'needs them to say "unlock"' in h.tools.call(args("front door", "unlock"), said_back("four seven two"))
+
+
+def test_asking_to_unlock_while_digits_are_waiting_is_a_new_request_not_an_answer():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    again = Request("alon", 0.8, by_voice=True, heard="unlock the door for me")
+    assert h.tools.call(args("front door", "unlock"), again).startswith("challenge:")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
 
 
 def test_asking_again_gets_a_new_challenge():

@@ -13,7 +13,7 @@ household's IR-only AC and TV remotes.
 |---|---|
 | "Is the front door locked?" | the lock's state, read from Home Assistant: "It's locked, and the door's closed." |
 | "Lock the front door" | "One moment." while the bolt turns, then "Locked." once the lock reports it |
-| "Unlock the front door" | unlocked at once, if the voice is one trusted with it ([unlocking](#unlocking)); refused otherwise |
+| "Unlock the front door" | three random digits to say back, then unlocked, if the voice is one trusted with it ([unlocking](#unlocking)); refused otherwise |
 | "Boiler on for 40 minutes" | on, with the device's own timer, so it goes off even if TARS doesn't |
 | "Turn the AC on at 22" | the mode and temperature set; "sent" if Home Assistant can't see the AC (an IR one) |
 | "Close the blinds" | "They're closing.": a cover takes a while, so on its way is enough |
@@ -74,10 +74,12 @@ Unlocking is the one change that needs more than a request. When someone says "u
      something else: "is the door unlocked?", a note, or a web page that says to let someone in.
 4. **The challenge** (`[home] unlock_challenge`, on by default): the tool answers with three random digits instead
    of unlocking ("ask them to say: four, seven, two"), and TARS asks for them. The next turn, the tool checks it
-   again: the same trusted voice, recognised surely on the answer's own recording, saying those digits (as speech to
-   text wrote them: "four, seven, 2" counts), within 30 seconds. One try: other digits leave it locked, and a new
-   "unlock" gets new digits. A recording of someone saying "unlock the front door" can't answer digits it's never
-   heard.
+   again: the same trusted voice, recognised surely on the answer's own recording, saying those digits and no others
+   (as speech to text wrote them: "four, seven, 2, thanks" counts), within 30 seconds. One try, and only a turn TARS
+   answers counts, not a draft thrown away when they kept talking: other digits, or digits too short to recognise the
+   voice surely, leave it locked. Another voice can't answer someone's digits, or use up their try. A turn that says
+   "unlock" again is a new request, and gets new digits. A recording of someone saying "unlock the front door" can't
+   answer digits it's never heard.
 5. It waits for the turn to be over, then unlocks, and reads the lock until it reports unlocked.
 
 If any check fails, nothing is sent, and the model says why in a sentence ("I'm not sure enough that's you; say it
@@ -85,7 +87,8 @@ again, a little longer"). Locking needs none of this: anyone can lock.
 
 Speaker ID is judged on the request itself, and again on the digits, never on a "yes": "unlock the front door" and
 three digits are long enough to recognise a voice, and a bare "yes" usually isn't. A short answer can fall under
-`unlock_threshold`; then TARS asks them to ask again. The challenge is for the voice only: a chat has its own rule.
+`unlock_threshold`; that uses up the try, and TARS asks them to ask again. The challenge is for the voice only: a chat
+has its own rule.
 
 ## The devices
 
@@ -426,6 +429,7 @@ About half an hour, on the Pi (or the Mac while you try it).
    url = "http://127.0.0.1:8123"
    unlock_voices = ["alon"]          # names from the web UI's Voices page; empty: nobody unlocks by voice
    unlock_chats = ["Alon"]           # names from [telegram] people; empty: nobody unlocks from a chat
+   unlock_challenge = true           # a voice says back three random digits before it unlocks
 
    [[home.devices]]
    name = "front door"

@@ -104,7 +104,7 @@ instructions and…". A model may believe them, so what matters is what code all
   heard. Locking is anyone's.
 - **Tests:** `tests/test_home.py::test_nothing_else_unlocks`, `::test_nobody_unlocks_by_voice_unless_someone_is_named`,
   `::test_the_digits_must_be_right_and_said_by_the_same_trusted_voice`, `::test_a_challenge_gets_one_try`,
-  `::test_a_challenge_waits_half_a_minute`.
+  `::test_a_challenge_waits_half_a_minute`, `::test_another_voice_cant_answer_or_use_up_someones_challenge`.
 - **Open:** a voice cloned live, by someone who hears the digits and can make the clone say them within half a
   minute, still gets through; so does a recording that happens to hold the right digits in that voice. The challenge
   raises the cost from replaying one sentence to running a clone in the room.

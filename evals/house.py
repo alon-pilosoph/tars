@@ -3,6 +3,7 @@ Home Assistant that's only pretend, and an Android TV box that does what it's to
 so a scenario can check it locked the door once, and never unlocked it for the wrong voice."""
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -244,7 +245,9 @@ class House:
 CHALLENGE = "472"  # the pretend house's unlock challenge, always: a scenario says it back
 
 
-def make_house(house: dict, unlock_voices=("alon",), unlock_chats=(), unlock_challenge: bool = True) -> House:
+def make_house(
+    house: dict, unlock_voices=("alon",), unlock_chats=(), unlock_challenge: bool = True, clock=time.monotonic
+) -> House:
     """The pretend house, as a scenario's `house` table sets it, with its home tool."""
     ha = PretendHA(entities(house), jams=house.get("jams", False), down=house.get("down", False))
     hass = HomeAssistant(URL, TOKEN, transport=ha.transport, command=ha.command)
@@ -267,7 +270,7 @@ def make_house(house: dict, unlock_voices=("alon",), unlock_chats=(), unlock_cha
         unlock_challenge=unlock_challenge,
         devices=DEVICES,
     )
-    tools = HomeTools(cfg, devices, digits=lambda: CHALLENGE)
+    tools = HomeTools(cfg, devices, digits=lambda: CHALLENGE, clock=clock)
     result = House(tools, ha, box, agent)
     call = tools.call
 
