@@ -1,6 +1,7 @@
 """Auto-lock that knows whether the door is shut (autolock.py): the rules, each with a clock TARS moves itself."""
 
 import inspect
+import time
 
 import pytest
 
@@ -651,3 +652,22 @@ def test_auto_lock_needs_the_door_sensor(tmp_path):
     )
     with pytest.raises(ConfigError, match="auto_lock needs door"):
         load_config(tmp_path / "config.toml", local=False)
+
+
+def test_the_house_built_for_a_lock_with_auto_lock_tells_it_of_an_unlock_in_the_file_both_processes_read(tmp_path):
+    from voice_assistant.config import load_config
+
+    (tmp_path / "config.toml").write_text(
+        '[home]\nurl = "http://127.0.0.1:8123"\n[[home.devices]]\nname = "front door"\nentity = "lock.front_door"\n'
+        'door = "binary_sensor.front_door"\nauto_lock = { after_shut_s = 5 }\n'
+    )
+    cfg = load_config(tmp_path / "config.toml", local=False)
+    (d, settings, off, asked), *rest = main.auto_locks(cfg, tmp_path)
+    assert rest == [] and d["entity"] == LOCK and settings == Settings(after_shut_s=5)
+    assert off.path.parent == asked.path.parent
+    tools = main.make_home(cfg, tmp_path)
+    assert "front door auto-lock" in tools.devices
+    tools.unlock_asked("lock.back_door")  # not one with auto-lock: nothing
+    assert asked.at() is None
+    tools.unlock_asked("lock.front_door")
+    assert asked.at() == pytest.approx(time.time(), abs=5)
