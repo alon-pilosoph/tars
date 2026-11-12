@@ -90,6 +90,61 @@ three digits are long enough to recognise a voice, and a bare "yes" usually isn'
 `unlock_threshold`; that uses up the try, and TARS asks them to ask again. The challenge is for the voice only: a chat
 has its own rule.
 
+### Auto-lock
+
+A lock's own auto-lock may go by the clock alone: a set time after it's unlocked, it locks, whether the door is shut
+or someone's still carrying the shopping in, and the bolt goes into the frame. (A Nuki with its own door sensor may
+wait for the door to shut; that hasn't been tried here.) With a door sensor (`door`) and `auto_lock = true` on the
+lock, TARS locks it instead, knowing whether the door is shut (`autolock.py`, run in the voice assistant).
+
+The rule under all of it: **TARS sends `lock.lock` only when it knows the door is shut right now**, its sensor's last
+word "shut" and read again in Home Assistant just before, still "shut". When it can't know, it doesn't lock: it
+tells the maintainers, once, and leaves it to the lock's own timer. It only ever locks: nothing in it unlocks,
+unlatches or opens.
+
+| What happens | What TARS does |
+|---|---|
+| Unlocked, the door opened, then shut | locks it 10 s after it shut (`after_shut_s`, 3 at least: a door pulled to can bounce off the frame); opened again meanwhile, the count starts over |
+| Unlocked, and the door never opened (Auto Unlock as someone walks past) | locks it after a minute (`unopened_s`) |
+| Someone asks TARS to unlock it (a trusted voice, a chat), already unlocked or not | counts that minute again from then, so it doesn't lock seconds after TARS said "unlocked"; its call to lock waits for any change TARS is making to the house, an unlock included, and asks again whether it's due once it has its turn |
+| The door open | never locks it; reads the door again just before locking, and locks only if that says shut |
+| The lock itself out of reach, jammed or still turning | sends it nothing until it says unlocked again |
+| The door can't be read just before locking, or Home Assistant doesn't take the call to lock | doesn't lock; tries again 5 s and 30 s later, reading the door again each time, then tells the maintainers which it was, and leaves it to the lock's own timer |
+| The lock doesn't lock (jammed, the door not quite shut) | tells the maintainers, once, if it isn't locked 20 s after the call returned, or at once if it says jammed; tries again only when it's next unlocked, or someone asks TARS to unlock it |
+| The lock out of reach and back (its Bluetooth, Home Assistant restarting), or unlatched | isn't a new unlocking: only locked to unlocked (or unlocked as TARS starts) is, so a lock that didn't lock isn't tried again on its account |
+| The sensor not answering (unknown or unavailable) | locks nothing until it's back, whatever it said last; tells the maintainers once it's been out a minute, and once it's back. Back and shut, it counts as just shut: locked 10 s later |
+| Home Assistant's live connection drops and comes back, or TARS starts | reads the lock and the door again as it's followed again, and every 30 s besides: a change missed meanwhile counts from when it's read (unlocked as TARS starts counts as just unlocked; a door read shut, as just shut) |
+| The door open for 2 minutes (`open_alert_min`, 0 for never) | says so aloud, at night too; if nobody's home, posts it to everyone's chat instead |
+| "Turn off the front door's auto-lock for half an hour" | the home tool's `front door auto-lock`: off for that long (an hour if not said; at most 12), then back on by itself; nothing is locked, or said about the door, meanwhile, and a door still open once it's back on is said then |
+
+```toml
+[[home.devices]]
+name = "front door"
+entity = "lock.front_door"
+door = "binary_sensor.front_door_window"
+auto_lock = true            # or { after_shut_s = 10, unopened_s = 60, open_alert_min = 2 }
+```
+
+**It can lock you out.** Step outside without your phone (for Auto Unlock or the app) or a keypad code, pull the door
+to, and it locks 10 s after it shuts, as it's meant to. To step out for a moment (the bins, a parcel), turn it off
+first: "turn off the front door's auto-lock for ten minutes". Anyone can, by voice or from a chat (see
+[security](security.md#auto-lock-tars-working-the-front-doors-lock-on-its-own)).
+
+**Keep the lock's own auto-lock on, with a long timer.** TARS down (the Pi off, Home Assistant restarting), its
+sensor not answering, or a door it couldn't read means TARS doesn't lock the door, so the lock's own is the backstop:
+on a Nuki, Settings > Auto Lock, set to 10 minutes or so. TARS locks long before it would. Turning TARS's auto-lock
+off for a while doesn't turn the lock's own off: the door still locks at its timer.
+
+**The last moment before the bolt can't be covered.** The door is read shut, then the call goes through Home
+Assistant to the lock (over Bluetooth, for a Nuki), and the bolt turns: a second or a few. A door opened in that
+moment still gets the bolt thrown, out against the frame as it's shut again; TARS sends nothing more (it never
+unlocks), so turn it back by hand or in the app. No code here can close that window; only a lock that checks its
+own door sensor as it turns could.
+
+TARS's log says `(auto-lock: the front door: 10 s after it shuts, 60 s if it's never opened, never while it's open)`
+as it starts, then `(auto-lock: the front door unlocked)`, `(auto-lock: locking the front door; its sensor says off)`
+and `(auto-lock: the front door locked)` as it happens, or `(auto-lock: not locking the front door: ...)` with why.
+
 ## The devices
 
 ### Through Home Assistant

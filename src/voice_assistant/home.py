@@ -448,12 +448,27 @@ class HomeTools:
         self.devices = {name.strip().lower(): d for name, d in devices.items()}
         self.tool = home_tool(devices)
         self._lock = threading.Lock()
+        # Told the entity of a lock someone's asked to unlock, before and after: auto-lock counts from then
+        # (autolock.Asked, set in wiring.make_home). It can only delay a lock.
+        self.unlock_asked: Callable[[str], None] | None = None
         self.ha = None
         if hass is not None:
             listed = {str(v) for d in cfg.devices for k, v in d.items() if k in ("entity", "battery", "door")}
             listed |= {str(e) for d in cfg.devices for e in d.get("details", [])}
             setup = HASetup(hass, list(maintainers), ha_config, listed)
-            self.ha = HAAccess(hass, self._may_unlock, self._lock, setup=setup)
+            self.ha = HAAccess(hass, self._may_unlock, self._lock, setup=setup, unlocking=self._unlocking)
+
+    @property
+    def changing(self) -> threading.Lock:
+        """Held while a change is made to the house, by either tool: auto-lock holds it to lock (autolock.py)."""
+        return self._lock
+
+    def _unlocking(self, entity: str) -> None:
+        if self.unlock_asked and entity:
+            try:
+                self.unlock_asked(entity)
+            except Exception as e:  # noqa: BLE001 - telling auto-lock never stops the unlock
+                print(f"(home: couldn't tell auto-lock {entity} was asked to unlock: {e!r})")
 
     @property
     def tools(self) -> list[dict]:
@@ -568,11 +583,15 @@ class HomeTools:
         # A change waits for the turn to be over: a reply still being drafted may yet be thrown away.
         if not request.go_ahead():
             return "error: the request was withdrawn before anything was done; nothing changed"
+        unlocking = str(getattr(device, "entity", "")) if action == UNLOCK else ""
         with self._lock:
+            self._unlocking(unlocking)
             try:
                 result = device.call(action, args, request)
             except HomeError as e:
                 return f"error: {e}; nothing is known to have changed"
+            finally:
+                self._unlocking(unlocking)
         print(f"(home: {name} {action}: {result})")
         return result
 

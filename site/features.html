@@ -212,6 +212,16 @@
               </p>
             </div>
             <div>
+              <h3>Locked once it's shut</h3>
+              <p>
+                With a sensor on the door, TARS locks it ten seconds after it shuts, never while the sensor says it's
+                open, and says so when it's been left open.<span class="d">
+                  It locks only when the door reads shut just then: a sensor gone quiet, or a lock that doesn't lock, is
+                  told to the maintainers, and the lock's own timer stays on as the backstop.</span
+                >
+              </p>
+            </div>
+            <div>
               <h3>Plain commands, on the Pi</h3>
               <p>
                 With it on, “lock the front door” or “AC to 23” skips the model: done at once, answered from lines made
@@ -271,7 +281,8 @@
                   class="d"
                 >
                   A router that doesn't answer says nothing about anyone, and just after TARS starts nobody is known
-                  yet, never “out”.</span
+                  yet, never “out”. With a sensor on the door, the routers are asked the moment it moves, and a phone
+                  that drops off just after it's opened from inside is out in a minute and a half.</span
                 >
               </p>
             </div>
@@ -286,7 +297,8 @@
               <h3>The front door knows first</h3>
               <p>
                 When the Nuki lock opens by Auto Unlock or its keypad, whoever's key it was is home at once, before
-                their phone finds the Wi-Fi.<span class="d">
+                their phone finds the Wi-Fi. As the door shuts behind them they've come in, and a skill you can change
+                or delete says “Welcome home, Stacey”, then her messages.<span class="d">
                   Whose key is whose is learned: a key that opens the door from outside as one person's phone comes
                   home, on two separate arrivals and never anyone else's, is theirs. The lock's word only ever says who
                   came in: a skill it sets off greets them and changes nothing in the house, and only the lock may say
