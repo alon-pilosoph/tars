@@ -113,6 +113,12 @@ in the background.
 hour), or why the last one failed; and whether the timer is running, where there's systemd. The bucket itself isn't
 asked, so the page costs no S3 request. A `backup.json` that can't be read is one failing line, not a page that fails.
 
+**The Pi says if it's short of power or too hot.** `vcgencmd get_throttled` reads the firmware's flags (under-voltage,
+slowed down, throttled, at the soft temperature limit, each now and since it started) through `/dev/vcio`, so the web
+UI's service keeps its devices ([the services](security.md#the-services-on-the-machine)). Without `vcgencmd` it isn't
+a Pi, and the row isn't shown. On a Pi where the flags can't be read (the command fails, hangs, or prints something
+else), the row is a warning saying why, and the web UI's log says it too: never "Fine", and never left out.
+
 ## The API
 
 JSON over HTTP, all under `/api`. Errors carry a readable reason: `{"detail": "..."}`, or for a malformed body

@@ -165,7 +165,8 @@ TARS's systemd user services (`deploy/*.service`) run as the user who installed 
 | Service | What it may do | Exposure (`systemd-analyze security`) |
 |---|---|---|
 | The voice assistant | write only its own folder and caches; a `/tmp` of its own; files it makes readable by its user alone (`UMask=0077`); no new privileges (no `sudo`); local, IPv4, IPv6 and netlink sockets only; no kernel tunables, modules, logs, cgroups, clock or hostname; no capabilities; system calls a service makes, and no others. Keeps the sound card, the IR remote's input device and Bluetooth (over D-Bus) | 9.6 → 3.4 |
-| The web UI, the backup | the same, and no devices at all. The web UI can't reach Docker, the backup can't reach the user's service manager | 9.6 → 3.1 |
+| The web UI | the same, and no Docker. Keeps the devices: the Status page's power and heat warnings come from the Pi's firmware, which `vcgencmd` asks through `/dev/vcio` | 9.6 → 3.4 |
+| The backup | the same, and no devices at all. It can't reach the user's service manager | 9.6 → 3.1 |
 | Telegram | the first half: its own folder and Chromium's two folders under `~/.config`, its own `/tmp`, files for its user alone, no new privileges, those sockets. Chromium's own sandbox, for errands, needs the namespaces and system calls the rest would take away | 9.6 → 8.3 |
 | The browser's screen (Xvfb) | writes only to `/tmp` (its lock and its socket), no home (so no service manager either), no Docker, no network but local sockets, no devices, the same kernel and system-call limits | 9.6 → 2.9 |
 | The updater | not sandboxed: it runs `deploy/tars-system` through `sudo` and rewrites the checkout and these units | unchanged |
@@ -175,10 +176,17 @@ looks a name up, and Chromium watches the network over it. The browser, in Teleg
 screen's socket file: it reaches the screen over Xvfb's abstract socket, which belongs to the network namespace, so
 `PrivateNetwork=` on either unit would cut it off.
 
+The web UI isn't given just `/dev/vcio` (`DevicePolicy=closed` with `DeviceAllow=/dev/vcio`): systemd enforces those
+with a cgroup BPF program that only a service manager running as root loads, so in a user unit they'd do nothing. A
+Pi whose warnings can't be read, a sandbox that hides the device included, says so on the Status page and in the log
+rather than showing nothing, as if it weren't a Pi.
+
 How it was checked: on the Pi (systemd 257), `voice-assistant --check` run inside the voice assistant's sandbox
 passes the same 35 checks as outside it (Home Assistant and every device, Telegram, the backup's bucket, the routers);
 the web UI serves its pages inside its own; Chromium launches inside Telegram's, and reaches the screen; and the screen
 makes its socket inside its own. A system call outside the filter fails with an error rather than killing the service.
+The web UI was checked with no devices (3.1); its 3.4 now is worked out, not measured: its unit differs from the voice
+assistant's only in hiding Docker, which `systemd-analyze` doesn't score.
 
 Still open:
 

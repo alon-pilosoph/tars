@@ -38,7 +38,7 @@ def hidden(name: str) -> set[str]:
     "name, wanted",
     [
         ("voice-assistant", BASE | STRICT),
-        ("voice-assistant-web", BASE | STRICT | {"PrivateDevices": "yes"}),
+        ("voice-assistant-web", BASE | STRICT),
         ("voice-assistant-backup", BASE | STRICT | {"PrivateDevices": "yes"}),
         ("voice-assistant-telegram", BASE),
     ],
@@ -49,8 +49,21 @@ def test_each_service_is_sandboxed(name, wanted):
     assert got["ReadWritePaths"].split()[0] == "%h/voice-assistant"
 
 
-def test_the_voice_keeps_its_devices():
-    assert "PrivateDevices" not in service("voice-assistant")
+@pytest.mark.parametrize(
+    "name",
+    [
+        "voice-assistant",  # the sound card, the speakerphone's mute, the IR remote
+        "voice-assistant-web",  # /dev/vcio: vcgencmd reads the Pi's power and heat warnings for the Status page
+    ],
+)
+def test_each_service_that_uses_a_device_keeps_them(name):
+    assert "PrivateDevices" not in service(name)
+
+
+@pytest.mark.parametrize("name", sorted(p.stem for p in DEPLOY.glob("*.service")))
+def test_no_unit_counts_on_a_device_filter_a_user_manager_cant_load(name):
+    # systemd enforces these with a cgroup BPF program, which a manager that isn't root never loads (bpf-devices.c).
+    assert not {"DevicePolicy", "DeviceAllow"} & service(name).keys()
 
 
 def test_telegram_leaves_chromium_its_own_sandbox():
