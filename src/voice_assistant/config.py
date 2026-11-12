@@ -260,6 +260,7 @@ _MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 _DASHED = re.compile(r"[0-9a-f]{1,2}(-[0-9a-f]{1,2}){3,}")
 _DOOR_KEY = re.compile(r"(key|code):\d+")
 MQTT_SETTINGS = ("address", "port", "user", "secret")
+_MQTT_USER = re.compile(r"[A-Za-z0-9_.-]+")  # what Mosquitto's passwords file and ACL take as a name, safely
 _SECRET = re.compile(r"[A-Z][A-Z0-9_]*")
 
 
@@ -285,7 +286,8 @@ class PresenceConfig:
     # topic being a Nuki's MQTT topic (its ID in hex). Someone opening it from outside is home at once.
     doors: list[dict] = field(default_factory=list)
     # [presence.mqtt]: the MQTT broker the locks publish to, { address = "localhost", port = 1883, user, secret },
-    # secret being the name of its password in .env. Needs the door extra (paho-mqtt).
+    # TARS's own user there, and secret the name of its password in .env; both needed with doors. Needs the door
+    # extra (paho-mqtt).
     mqtt: dict = field(default_factory=dict)
 
 
@@ -655,6 +657,15 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
         problems += [f"{where} has no setting {k}" for k in d if k not in ("name", "topic")]
     if p.doors and not (isinstance(p.mqtt.get("address"), str) and p.mqtt["address"].strip()):
         problems.append('[presence] doors need [presence.mqtt] address, the locks\' MQTT broker, like "localhost"')
+    # A broker anyone may publish to could say any door was opened: TARS signs in as itself, and the broker's ACL
+    # keeps the locks' topics to the locks (docs/presence.md#the-front-door).
+    if p.doors and not (p.mqtt.get("user") and p.mqtt.get("secret")):
+        problems.append(
+            "[presence] doors need [presence.mqtt] user and secret: TARS signs in to the broker as itself, like "
+            'user = "tars", secret = "MQTT_PASSWORD"'
+        )
+    if "user" in p.mqtt and not (isinstance(p.mqtt["user"], str) and _MQTT_USER.fullmatch(p.mqtt["user"])):
+        problems.append('[presence.mqtt] user must be TARS\'s name on the broker, letters and digits, like "tars"')
     if "port" in p.mqtt and not (isinstance(p.mqtt["port"], int) and 0 < p.mqtt["port"] < 65536):
         problems.append("[presence.mqtt] port must be a port number, like 1883")
     if "secret" in p.mqtt and not (isinstance(p.mqtt["secret"], str) and _SECRET.fullmatch(p.mqtt["secret"])):

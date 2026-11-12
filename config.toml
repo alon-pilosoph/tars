@@ -319,7 +319,9 @@ away_after_min = 10
 
 # One [[presence.doors]] for each door whose lock says who opened it: a Nuki with MQTT turned on, by its topic (its ID
 # in hex). Someone opening it from outside (Auto Unlock, the keypad) is home at once. [presence.mqtt] is the broker the
-# locks publish to; secret is the name of its password in .env. Needs the door extra: uv sync --extra door.
+# locks publish to, and TARS's own user there (both user and secret are needed); secret is the name of its password
+# in .env. deploy/install-pi.sh makes that user, and the password, on deploy/home-assistant's Mosquitto. Needs the door
+# extra: uv sync --extra door.
 #
 # [[presence.doors]]
 # name = "front door"

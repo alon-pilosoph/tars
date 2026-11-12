@@ -369,8 +369,15 @@ DOOR = '[[presence.doors]]\nname = "front door"\ntopic = "nuki/4224E764"\n'
 BROKER = '[presence.mqtt]\naddress = "localhost"\nuser = "tars"\nsecret = "MQTT_PASSWORD"\n'
 
 
-@pytest.mark.parametrize("problem, status", [("", OK), ("it refused TARS: Not authorized", FAIL)])
-def test_check_connects_to_the_broker_the_doors_locks_publish_to(tmp_path, problem, status):
+@pytest.mark.parametrize(
+    "answer, status, says",
+    [
+        (("", ""), OK, "listening to the front door"),
+        (("it refused TARS: Not authorized", ""), FAIL, "it refused TARS: Not authorized"),
+        (("", "it lets TARS write on nuki/4224E764"), WARN, "it lets TARS write on nuki/4224E764"),
+    ],
+)
+def test_check_connects_to_the_broker_the_doors_locks_publish_to(tmp_path, answer, status, says):
     asked = []
     cfg = presence_config(
         tmp_path, TWO_ROUTERS.replace("[[presence.routers]]", DOOR + BROKER + "[[presence.routers]]", 1)
@@ -379,10 +386,12 @@ def test_check_connects_to_the_broker_the_doors_locks_publish_to(tmp_path, probl
         cfg,
         {"MQTT_PASSWORD": "hunter2"}.get,
         None,  # no router's password is in .env: none is signed into
-        lambda mqtt, password: asked.append((mqtt["address"], password)) or problem,
+        lambda mqtt, password, topics: asked.append((mqtt["address"], password, topics)) or answer,
     )
-    assert asked == [("localhost", "hunter2")] and results[-1].name == "Doors" and results[-1].status == status
-    assert ("front door" in results[-1].detail) if status == OK else (problem in results[-1].detail)
+    assert asked == [("localhost", "hunter2", ["nuki/4224E764"])]
+    assert (results[-1].name, results[-1].status) == ("Doors", status) and says in results[-1].detail
+    if status == WARN:
+        assert "mosquitto/acl" in results[-1].fix
 
 
 def cfg_():

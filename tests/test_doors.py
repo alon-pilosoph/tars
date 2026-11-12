@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from voice_assistant.config import PresenceConfig, _presence_problems, load_config
-from voice_assistant.doors import LEARN_WINDOW_S, DoorEvent, DoorLog, Doors, parse
+from voice_assistant.doors import LEARN_WINDOW_S, TELL_AFTER_S, DoorEvent, DoorLog, Doors, Link, parse
 from voice_assistant.presence import Board, People, RouterStatus, State, Tracker, Watcher, make_presence
 
 NOW = 1_800_000_000.0
@@ -219,6 +219,18 @@ def test_the_doors_settings_are_checked():
     )
 
 
+@pytest.mark.parametrize("mqtt", [{}, {"user": "tars"}, {"secret": "MQTT_PASSWORD"}])
+def test_doors_need_tars_to_sign_in_to_the_broker_as_itself(mqtt):
+    p = PresenceConfig(doors=[{"name": "front door", "topic": "nuki/4224E764"}], mqtt={"address": "localhost", **mqtt})
+    assert any("need [presence.mqtt] user and secret" in problem for problem in _presence_problems(p))
+
+
+@pytest.mark.parametrize("user", ["", "tars:x", "a user", 7])
+def test_tars_s_user_on_the_broker_is_a_plain_name(user):
+    p = PresenceConfig(mqtt={"address": "localhost", "user": user, "secret": "MQTT_PASSWORD"})
+    assert any("user must be TARS's name on the broker" in problem for problem in _presence_problems(p))
+
+
 def test_someone_let_in_by_the_door_counts_as_seen_then(log):
     t = Tracker(PEOPLE.names, 10 * MIN, 0.0, {"alon": State(False, NOW - 86400, NOW - 86400)})
     assert t.arrived("alon", "front door", 1000.0, NOW)
@@ -237,13 +249,13 @@ def test_without_a_router_the_doors_are_only_recorded_and_say_so(log, tmp_path, 
         enabled=True,
         people={"Alon": ["key:111"]},
         doors=[{"name": "front door", "topic": "nuki/4224E764"}],
-        mqtt={"address": "localhost"},
+        mqtt={"address": "localhost", "user": "tars"},
     )
     cfg = dataclasses.replace(load_config(Path(__file__).parents[1] / "config.toml", local=False), presence=presence)
     cli.start_presence(cfg, tmp_path, make_presence(presence, log.store, lambda name: None))
     out = capsys.readouterr().out
     assert "(doors: no router to watch, so the doors are only recorded" in out
-    assert "(doors: listening to the front door on the MQTT broker at localhost)" in out
+    assert "(doors: connecting to the MQTT broker at localhost, for the front door)" in out
 
 
 def test_a_brokers_password_missing_from_env_leaves_the_doors_out(log, tmp_path, monkeypatch, capsys):
@@ -317,28 +329,151 @@ def test_listening_subscribes_to_each_doors_lock_and_hands_on_what_it_says(monke
     ]
 
 
-def test_losing_the_broker_and_getting_it_back_are_each_said_once(monkeypatch, capsys):
+class FakeClient:
+    """paho's Client, as listen() uses it: what it was given, and its callbacks to call."""
+
+    def __init__(self, *args, **kw):
+        self.subscribed, self.auth = [], None
+
+    def username_pw_set(self, user, password):
+        self.auth = (user, password)
+
+    def subscribe(self, topic, qos=0):
+        self.subscribed.append(topic)
+
+    reconnect_delay_set = connect_async = loop_start = lambda self, *a: None
+
+
+OK = type("Reason", (), {"is_failure": False})()
+NOT_AUTHORIZED = type("Reason", (), {"is_failure": True, "__str__": lambda self: "Not authorized"})()
+
+
+def listening(monkeypatch, told, clock):
     paho = pytest.importorskip("paho.mqtt.client")
-
-    class FakeClient:
-        def __init__(self, *args, **kw):
-            pass
-
-        def subscribe(self, topic, qos=0):
-            pass
-
-        reconnect_delay_set = connect_async = loop_start = lambda self, *a: None
-
     monkeypatch.setattr(paho, "Client", FakeClient)
     from voice_assistant.doors import listen
 
-    client = listen({"address": "localhost"}, None, [{"name": "front door", "topic": "nuki/1"}], print)
-    ok = type("Reason", (), {"is_failure": False})()
-    client.on_connect(client, None, None, ok)
+    link = Link("localhost", "front door", told.append, clock)
+    return listen({"address": "localhost"}, None, [{"name": "front door", "topic": "nuki/1"}], print, link), link
+
+
+def test_losing_the_broker_and_getting_it_back_are_each_said_once(monkeypatch, capsys):
+    client, _ = listening(monkeypatch, [], Clock(0.0))
+    client.on_connect(client, None, None, OK)
     client.on_disconnect(client, None, None, "unspecified error")
+    client.on_connect_fail(client, None)  # each try to reconnect
     client.on_disconnect(client, None, None, "unspecified error")
-    client.on_connect(client, None, None, ok)
-    client.on_connect(client, None, None, ok)
+    client.on_connect_fail(client, None)
+    client.on_connect(client, None, None, OK)
+    client.on_connect(client, None, None, OK)
     out = capsys.readouterr().out
-    assert out.count("(doors: lost the MQTT broker at localhost") == 1
-    assert out.count("(doors: the MQTT broker at localhost is back)") == 1
+    assert out.count("(doors: listening to the front door on the MQTT broker at localhost)") == 1
+    assert out.count("(doors: lost the MQTT broker at localhost (unspecified error); trying again") == 1
+    assert "can't reach" not in out and out.count("(doors: the MQTT broker at localhost is back)") == 1
+    assert client.subscribed == ["nuki/1/lockActionEvent"] * 3  # again on each connection
+
+
+def test_a_broker_down_when_tars_starts_is_said_and_told_once_it_lasts_and_again_when_its_back(monkeypatch, capsys):
+    told, clock = [], Clock(0.0)
+    client, link = listening(monkeypatch, told, clock)
+    for _ in range(3):
+        client.on_connect_fail(client, None)  # nothing listening there: paho's on_connect_fail, never on_disconnect
+    assert capsys.readouterr().out.count("(doors: can't reach the MQTT broker at localhost; trying again") == 1
+    clock.t = TELL_AFTER_S - 1
+    link.look()
+    assert told == []  # a broker restarting, or the network coming up, tells nobody
+    clock.t = TELL_AFTER_S + 60
+    link.look()
+    link.look()
+    assert told == [
+        (
+            "I can't hear the front door: can't reach the MQTT broker at localhost, for 11 minutes now, so opening it "
+            "lets nobody in as home until it's back. Is Mosquitto running? On the Pi: cd deploy/home-assistant && "
+            "docker compose --profile mqtt up -d."
+        )
+    ]
+    client.on_connect(client, None, None, OK)
+    assert told[1:] == ["I can hear the front door again: the MQTT broker at localhost answers."]
+    assert "(doors: listening to the front door on the MQTT broker at localhost)" in capsys.readouterr().out
+
+
+def test_a_broker_that_refuses_tars_says_to_check_its_password(monkeypatch, capsys):
+    told, clock = [], Clock(0.0)
+    client, link = listening(monkeypatch, told, clock)
+    client.on_connect(client, None, None, NOT_AUTHORIZED)
+    client.on_disconnect(client, None, None, "Not authorized")  # paho's, after the refusal: already said
+    client.on_connect(client, None, None, NOT_AUTHORIZED)
+    out = capsys.readouterr().out
+    assert out.count("(doors: the MQTT broker at localhost refused TARS: Not authorized; trying again") == 1
+    assert "lost" not in out and client.subscribed == []
+    clock.t = TELL_AFTER_S
+    link.look()
+    assert len(told) == 1 and "refused TARS: Not authorized, for 10 minutes now" in told[0]
+    assert "its password in .env" in told[0]
+
+
+def test_a_short_outage_tells_nobody(monkeypatch):
+    told, clock = [], Clock(0.0)
+    client, link = listening(monkeypatch, told, clock)
+    client.on_connect(client, None, None, OK)
+    clock.t = 3600.0
+    client.on_disconnect(client, None, None, "keepalive timeout")
+    clock.t += TELL_AFTER_S - 1
+    link.look()
+    client.on_connect(client, None, None, OK)
+    clock.t += TELL_AFTER_S
+    link.look()
+    assert told == [] and link.up
+
+
+class ProbedClient(FakeClient):
+    """A broker for broker_answers: lets TARS in or not, and sends back what TARS writes only without an ACL."""
+
+    answer, echoes = OK, False
+
+    def connect(self, address, port, keepalive=60):
+        self.at = (address, port)
+
+    def loop(self, timeout=1.0):
+        if not getattr(self, "connected", False):
+            self.connected = True
+            self.on_connect(self, None, None, self.answer)
+
+    def publish(self, topic, payload, qos=0):
+        self.published = topic
+        if self.echoes and topic in self.subscribed:
+            self.on_message(self, None, type("Msg", (), {"topic": topic})())
+
+    def disconnect(self):
+        pass
+
+
+OPEN = (
+    "it lets TARS write on nuki/4224E764, a lock's own topic: without an ACL keeping it to the lock, any device with a "
+    "password there could say the door was opened"
+)
+
+
+@pytest.mark.parametrize(
+    "answer, echoes, said",
+    [(OK, False, ("", "")), (NOT_AUTHORIZED, False, ("it refused TARS: Not authorized", "")), (OK, True, ("", OPEN))],
+)
+def test_check_says_whether_the_broker_lets_tars_in_and_keeps_the_locks_topics_to_the_locks(
+    monkeypatch, answer, echoes, said
+):
+    paho = pytest.importorskip("paho.mqtt.client")
+    made = []
+
+    class Broker(ProbedClient):
+        def __init__(self, *a, **kw):
+            super().__init__()
+            self.answer, self.echoes = answer, echoes
+            made.append(self)
+
+    monkeypatch.setattr(paho, "Client", Broker)
+    from voice_assistant.doors import broker_answers
+
+    mqtt = {"address": "localhost", "user": "tars"}
+    assert broker_answers(mqtt, "hunter2", ["nuki/4224E764"], timeout_s=0.5, probe_s=0.5) == said
+    if answer is OK:  # beside the lock's events, never a topic the lock acts on
+        assert made[0].published == "nuki/4224E764/tars-check" and made[0].auth == ("tars", "hunter2")

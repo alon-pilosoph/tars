@@ -42,6 +42,57 @@ Each threat lists its **defenses** (with where they live), the **tests** that ch
   them. The login page is plain HTTP, so a password typed into it over the home Wi-Fi crosses it unencrypted
   (`[browser] login_host` can put it on Tailscale, which encrypts).
 
+### A device on the home network, speaking for the front door
+
+The front door's Nuki says who opened it by publishing to the household's MQTT broker, and TARS takes what the
+broker hands it on `<topic>/lockActionEvent` as the lock's word ([the front door](presence.md#the-front-door),
+`doors.py`). Whoever can publish there speaks for the lock.
+
+- **What a forged message could do:** put a named person "home", from outside, before their phone: "who's home?"
+  says so, a reminder meant for them while they're out is said aloud at home instead of going to their chat, and a
+  message waiting for them is said aloud at home, to whoever is there. It sets off the skills waiting for someone to
+  come home, and adds false rows to `door_events`. A forged opening by a key nobody's named, as someone's real phone
+  comes home, counts towards that key being learned as theirs (two separate arrivals, and never with anyone else's
+  phone, before it is).
+- **What it can't do:** unlock, or change anything else. A skill a door's lock sets off reads the house but changes
+  nothing in it: every change is refused for that run, an unlock first (`Request.by_door`, refused in `home.py`,
+  `ha_tool.py`, `ha_setup.py`, and for TARS's own settings in `myself.py`), and an unlock needs a trusted voice
+  saying "unlock" anyway. TARS publishes nothing to the broker, so nothing it hears there goes back to the lock. A
+  lock never marks anyone out: leaving is still by the phone.
+- **Defenses:**
+  - The broker lets in only users with a password (`allow_anonymous false`, `password_file`), and its ACL
+    ([`deploy/home-assistant/mosquitto/acl`](../deploy/home-assistant/mosquitto/acl)) refuses anything not granted:
+    only the lock's own user (`nuki`) and Home Assistant, which works the lock anyway, may write the locks' topics; any
+    other device writes only under its own name; TARS may only read the locks' events.
+  - TARS signs in as its own user, its password in `.env` under `[presence.mqtt] secret`: doors without `user` and
+    `secret` are a mistake in the config. `deploy/install-pi.sh` gives TARS that user on the Mosquitto here (a random
+    password, written into Mosquitto's passwords through its own image) and has Mosquitto read the ACL
+    (`mosquitto.py`).
+  - `--check` writes beside a lock's events (`<topic>/tars-check`, a topic the lock ignores) and warns if it comes
+    back: a broker that lets TARS write there has no ACL keeping the lock's topics to the lock.
+  - What the broker kept from before (a retained message) is never an arrival, and only a payload of whole numbers
+    in Nuki's order is read at all.
+- **Tests:** `tests/test_home.py::test_a_turn_a_doors_lock_set_off_reads_the_house_and_changes_nothing_in_it`;
+  `tests/test_ha_tool.py::test_a_turn_a_doors_lock_set_off_reads_but_changes_nothing`;
+  `tests/test_ha_setup.py::test_someone_else_cant_confirm_a_removal_and_only_maintainers_may_change_it`;
+  `tests/test_settings.py` (the settings tool's refusals);
+  `tests/test_skills.py::test_a_skill_a_doors_lock_set_off_runs_reading_the_house_only`,
+  `tests/test_telegram.py::test_a_chat_skill_a_doors_lock_set_off_runs_reading_the_house_only`;
+  `tests/test_doors.py::test_doors_need_tars_to_sign_in_to_the_broker_as_itself`,
+  `::test_check_says_whether_the_broker_lets_tars_in_and_keeps_the_locks_topics_to_the_locks`,
+  `::test_listening_subscribes_to_each_doors_lock_and_hands_on_what_it_says` (an old, retained event is ignored),
+  `::test_anything_that_isnt_a_lock_action_is_ignored`; `tests/test_mosquitto.py`. The ACL itself was tried against
+  Mosquitto 2.1 in Docker: the lock's event heard, the same event from another device's user and from TARS's dropped.
+- **Open:**
+  - **MQTT is plain on the home network.** Port 1883 has no TLS, so a device that can see the Wi-Fi's traffic (one
+    that's taken over, spoofing the router's address) reads each password as it's sent, the lock's included, and can
+    then publish as the lock. TLS on the broker, and on the lock where the Nuki model has it, is the planned defense.
+  - Home Assistant's user may write everything, the locks' topics included: a Home Assistant taken over could say
+    anyone came home (it could unlock the door anyway).
+  - Two locks on one user (`nuki`) can each speak for the other; the Nuki's events aren't signed, so nothing past the
+    broker tells a forged one from a real one.
+  - A broker on another machine is set up by hand: `--check`'s warning is all TARS checks there.
+
 ### A web page elsewhere, through someone's browser at home
 
 - **Defenses:** the same name check, against a page that points its own name at the house's address; and a change

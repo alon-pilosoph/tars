@@ -56,6 +56,11 @@ from voice_assistant.config import load_config; keyed(load_config(Path('config.t
   exit 1
 fi
 
+echo "== The doors' MQTT broker (with [[presence.doors]] and deploy/home-assistant's Mosquitto on this machine)"
+# TARS's own user on it, its password in .env (made if missing), and Mosquitto given its ACL (mosquitto/acl), which
+# keeps the locks' topics to the locks. Nothing to do without doors; a broker elsewhere is a person's to set up.
+"$UV" run --frozen python -m voice_assistant.mosquitto || echo "!! The doors' broker isn't set up for TARS: see above."
+
 echo "== Models (the double-check's recognizer, the speech detectors and the speaker model download on first use)"
 "$UV" run --frozen python -c "
 from pathlib import Path

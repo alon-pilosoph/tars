@@ -9,7 +9,8 @@ routers already know which phones are connected, and TARS signs into them and as
 | A reminder due for Stacey while she's out | it goes to her Telegram chat instead of being said to an empty room |
 | "Tell Stacey dinner's at eight when she's back" | said soon after her phone comes home, or as soon as she next speaks to TARS, whichever is first |
 | Stacey's phone opens the Nuki by Auto Unlock | she's home at once, and a skill waiting for her is told "Stacey just came home, opening the front door" ([the front door](#the-front-door)) |
-| `voice-assistant --check` | signs into each router and says whose phone it sees, and connects to the locks' MQTT broker |
+| `voice-assistant --check` | signs into each router and says whose phone it sees, and connects to the locks' MQTT broker and checks it keeps their topics to them |
+| The locks' broker gone for ten minutes | the maintainers are told in their chats what to check, and again when it's back |
 | The web UI's Status page | how each router last answered, and who's home |
 
 ## Setting it up
@@ -114,16 +115,24 @@ whether the phone's Auto Unlock did. TARS listens (`doors.py`), keeps each actio
   are told in their chats ("I can tell when Stacey opens the front door now..."). Two people coming home together
   guess nothing. Keys can also be named in `[presence] people`, beside the phone: `"key:<auth id>"` for an app,
   `"code:<code id>"` for a keypad code. The ids are in `door_events`, and in Nuki Web's list of authorizations.
+- **The lock's word only ever puts someone at home.** It never works the house: a skill it sets off (someone coming
+  home by the door) greets them and reads the house, but every change, an unlock above all, is refused for that
+  run (`Request.by_door`, checked in `home.py`, `ha_tool.py`, `ha_setup.py` and TARS's settings). So "when Stacey
+  gets home, turn on the hall light" doesn't turn it on when she lets herself in by the door: her phone coming home
+  later isn't a new arrival. TARS publishes nothing to the broker. What a forged message could do, and what stops
+  one, is in [security](security.md#a-device-on-the-home-network-speaking-for-the-front-door).
+- **When TARS can't hear the locks, it says so.** The broker not answering (TARS starting before it, Mosquitto
+  stopped), refusing TARS (a wrong password) or lost is in the log when it starts, once, not at every retry; nobody is
+  let in by the door until it's back. Ten minutes of it and the maintainers are told in their chats what to check, and
+  again when it's back; a broker restarting tells nobody.
 
 Setting it up:
 
 1. In the Nuki app, turn on MQTT for the lock (Settings > Features & Configuration > MQTT) and point it at the
-   household's broker (`deploy/home-assistant` runs Mosquitto for Home Assistant). Home Assistant finds it as the
-   lock it works.
-2. Give TARS its own user on the broker, `tars`, the way [the house](home.md) adds a device's (the `docker run ...
-   mosquitto_passwd` command, with just `tars`, then `docker restart mosquitto`), and put its password in `.env` as
-   `MQTT_PASSWORD`.
-3. Say which door and which broker, in `config.local.toml`:
+   household's broker (`deploy/home-assistant` runs Mosquitto for Home Assistant), as the user `nuki`, the one
+   [the house](home.md) makes for it. Home Assistant finds it as the lock it works.
+2. Say which door and which broker, in `config.local.toml`. TARS signs in as its own user, `tars`, with the password
+   `.env` has under `secret`'s name; doors without `user` and `secret` are a mistake in the config:
 
    ```toml
    [[presence.doors]]
@@ -136,9 +145,23 @@ Setting it up:
    secret = "MQTT_PASSWORD"
    ```
 
-4. Install the door extra (`uv sync --extra door`; `deploy/install-pi.sh` installs every extra), and check it:
-   `--check` connects to the broker, and TARS's log says `(doors: listening to the front door ...)`, then
+3. Run `deploy/install-pi.sh`. With doors, and the broker on this machine (`localhost`) set up as
+   [the house](home.md) says, it gives TARS its user: a random password in `.env` as `MQTT_PASSWORD` if there isn't
+   one yet, TARS's line in Mosquitto's passwords (`python -m voice_assistant.mosquitto`, through Mosquitto's own
+   image, as the file must be Mosquitto's), and Mosquitto brought up to date and told to read its passwords and ACL
+   again. It installs the door extra too (`uv sync --extra door` elsewhere). A broker on another machine is set up by
+   hand: a user for TARS, its password in `.env`, and the ACL's rules below.
+4. Check it: `--check` connects to the broker and warns if TARS may write on a lock's topics (no ACL); TARS's log
+   says `(doors: connecting to the MQTT broker at localhost, for the front door)`, then
+   `(doors: listening to the front door on the MQTT broker at localhost)`, and
    `(doors: the front door unlocked by Auto Unlock, by Stacey)` as it happens.
+
+**Only the lock may say the door was opened.** The broker lets in only the users in its passwords file (no one
+without), and [`mosquitto/acl`](../deploy/home-assistant/mosquitto/acl) says what each may do: Home Assistant reads
+and writes everything (it works the lock anyway); TARS only reads `nuki/+/lockActionEvent`; every other user is a
+device, and writes only under its own name (`nuki/...` for the lock's user `nuki`) and Home Assistant's discovery.
+So a device's password, if it leaks, can't speak for the lock. A device whose topics aren't under its own user's name
+needs lines of its own there.
 
 ## Where it's used
 

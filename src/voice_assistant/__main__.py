@@ -579,7 +579,9 @@ def make_doors(cfg: Config, presence):
 
 
 def listen_to_doors(cfg: Config, root: Path, doors) -> None:
-    from .doors import listen
+    """Listens to the locks on the broker, from now on: the log says when it's listening, and the maintainers are
+    told if it can't for long (doors.Link)."""
+    from .doors import Link, listen
 
     mqtt = cfg.presence.mqtt
     password = None
@@ -589,13 +591,15 @@ def listen_to_doors(cfg: Config, root: Path, doors) -> None:
             print(f"(doors: leaving out the MQTT broker at {mqtt['address']}: no {mqtt['secret']} in .env)")
             return
     try:
-        listen(mqtt, password, cfg.presence.doors, doors.heard)
+        import paho.mqtt.client  # noqa: F401 - the door extra
     except ImportError:
         print("(doors: off: listening to the locks needs the door extra: uv sync --extra door)")
         return
-    doors.start()
     names = ", ".join(d["name"] for d in cfg.presence.doors)
-    print(f"(doors: listening to the {names} on the MQTT broker at {mqtt['address']})")
+    print(f"(doors: connecting to the MQTT broker at {mqtt['address']}, for the {names})")
+    doors.link = Link(mqtt["address"], names, doors.tell)
+    listen(mqtt, password, cfg.presence.doors, doors.heard, doors.link)
+    doors.start()
 
 
 def make_chat_when_out(cfg: Config, presence, reminders):

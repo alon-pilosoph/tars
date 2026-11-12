@@ -94,7 +94,8 @@ button that orders or pays until the person taps Order ([browser](browser.md#nev
 is encrypted, with the key beside it. `.env` is for TARS's user alone, and a reply that read web search results
 changes nothing in the house, nor reads its past or TARS's records. Home Assistant's setup, with its integrations'
 passwords, goes to the backup only sealed with a key kept on the Pi. The speakerphone's own mute is TARS's: while
-it's red, the wake model doesn't run.
+it's red, the wake model doesn't run. The doors' MQTT broker lets in only users with a password, and its ACL keeps the
+locks' topics to the locks; what a lock says only ever puts someone at home, and changes nothing in it.
 
 What's open: the web UI has no accounts, so anyone on the home network (a guest, a compromised device) can play every
 recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS
@@ -241,8 +242,9 @@ skill and preference, where it came from and what it did. Limits are in code: un
 **The first one:** the arrival greeting. Built: the Nuki's own events say who unlocked, and whoever opens it from
 outside is home at once, so a skill asked for in plain words ("when someone comes home, welcome them by name and tell
 them what's waiting") runs as they walk in, told "Stacey just came home, opening the front door"
-([the front door](presence.md#the-front-door)). Left: turning on the lock's MQTT and TARS's broker user on the Pi,
-and a week of it.
+([the front door](presence.md#the-front-door)). The lock's word only ever puts someone at home: a skill it sets off
+greets and reads the house, and changes nothing in it. Left: turning on the lock's MQTT on the Pi (deploy/install-pi.sh
+gives TARS its broker user, and Mosquitto its ACL), and a week of it.
 
 **Measure:** a set of phrasings turned into rules, checked for the rule they should make; dry runs over recorded
 event logs; and a rule built to unlock or order must be refused. **Done when** the arrival greeting and three
