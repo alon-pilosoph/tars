@@ -256,6 +256,10 @@ speakerphone_mute = true
 # "AC to 23" done at once with no model, answered from lines made ahead in TARS's voice, and heard by Vosk on the Pi
 # when the cloud's speech to text can't be reached. Anything else goes to the model as ever. Off until measured.
 commands_on_pi = false
+# With commands_on_pi: nothing goes to the cloud's speech to text until the request is over and Vosk on the Pi has
+# found it isn't a house command. A command is then free and works offline; anything else waits for TARS's own end of
+# turn and loses the streaming head start (docs/home.md#local-first).
+local_first = false
 # Home Assistant's config folder on this machine, relative to this one: its setup (integrations, devices, areas,
 # automations) is kept as a git history here, committed every backup pass, so any change to it can be seen and undone
 # (docs/home.md#home-assistants-own-setup). It holds Home Assistant's passwords, so it goes in the backup's snapshots

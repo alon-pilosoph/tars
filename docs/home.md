@@ -194,6 +194,17 @@ with an unknown word in it is refused: 0 wrong of 21, all 12 near-misses and pla
 of 9 commands missed (a miss goes to the model, or with the cloud out of reach isn't done). About 140 ms a take. It's
 off by default until the household's own voices, recorded, have no wrong match.
 
+<a id="local-first"></a>**Local first** (`[home] local_first`, with `commands_on_pi`): nothing goes to the cloud's
+speech to text until the request is over and Vosk has heard it isn't a house command. TARS's own rules say when the turn
+is over (Flux isn't listening), no answer is started in a pause, and Vosk listens to the whole recording: a command is
+done on the Pi, free and offline; anything else is sent, whole, to Deepgram's endpoint for recordings (OpenAI's as its
+backup), and goes on as ever. So is a recording longer than 8 s, which is no command, and one Vosk couldn't listen to. A
+spoken request waits as one does: 10 s for Deepgram, then OpenAI once, at the voice's own 15 s, not a voice message's
+minutes. TARS won't start without Vosk; with no devices to command, it says so and the cloud hears every request. The
+cost is the streaming head start for everything that isn't a command, and a later end of turn: TARS's own rules wait 0.8
+s of silence, and longer when Smart Turn thinks you're mid-sentence. How much that is, against the cloud seconds a
+command saves, is to be measured on the household's own recorded takes; it hasn't been yet.
+
 ### TARS's own speaker
 
 With `[home] own_speaker = true`, TARS's own speaker is one of the devices, for the voice: "TARS's speaker", which
@@ -619,6 +630,12 @@ IMDb. A camera's snapshot or live link goes to the person who asked: the snapsho
 machine) and their Telegram chat (to Telegram, like any file it sends), and the live link is to Home Assistant on the
 home network by a name their phone can reach (its Tailscale name if it has one), signed so it opens without the token
 and expires on its own. The models never see the picture.
+
+A [house command on the Pi](#house-commands-on-the-pi) goes to no model when it's said: its words join the
+conversation the models get with the next request that goes to them. Its audio still goes to the cloud's speech to
+text, unless [local first](#local-first) is on: then a command Vosk hears on the Pi goes to no speech to text either,
+and only a request that isn't one is sent, whole, once it's over
+([what leaves the machine](architecture.md#what-leaves-the-machine)).
 
 ## Things to know
 

@@ -612,6 +612,23 @@ def house_commands(cfg: Config, root: Path, home):
     return HouseCommands(commands, replies, home.call, hear)
 
 
+def local_first(cfg: Config, root: Path, commands):
+    """[home] local_first: speech to text that hears a house command on the Pi before sending anything to the cloud;
+    the cloud's endpoint for whole recordings takes the rest. Without Vosk, there's nothing to hear it with first."""
+    from .commands import LocalFirstTranscriber
+
+    if commands.hear is None:
+        raise ConfigError("[home] local_first needs Vosk on this machine to hear house commands (see the log above).")
+    env = root / ".env"
+    keys = env_keys(env)
+    cfg, _ = with_keys(cfg, keys)
+    client = make_openai_client(env) if OPENAI_KEY in keys else None
+    whole = make_recording_transcriber(cfg, env, client, spoken=True)
+    commands.local_first = True
+    print("(house commands: heard on the Pi first; the cloud hears only what isn't one)")
+    return LocalFirstTranscriber(commands.hear, commands.commands.match, whole)
+
+
 def make_presence(cfg: Config, root: Path, events):
     """[presence] (presence.Presence), when it's on and there's an event log to keep who's home in; None otherwise.
     It only reads the board until the assistant's watch() asks the routers."""
@@ -892,17 +909,29 @@ def make_pipeline(
     return FallbackTranscriber(streaming, backup), brain, voice
 
 
-def make_recording_transcriber(cfg: Config, env: Path, client) -> Transcriber:
+def make_recording_transcriber(cfg: Config, env: Path, client, spoken: bool = False) -> Transcriber:
     """Speech to text for a whole recording (a voice message), with the services make_pipeline picks for the voice at
     home: Deepgram's endpoint for whole recordings, with OpenAI's `client` as the backup, or whichever of the two
-    there's a key for. `cfg` has been through with_keys."""
-    from .stt import FILE_TIMEOUT_S, DeepgramFileTranscriber, FallbackTranscriber, OpenAITranscriber
+    there's a key for. `spoken`: a request said aloud ([home] local_first), with a spoken turn's waits rather than a
+    voice message's. `cfg` has been through with_keys."""
+    import httpx
+
+    from .stt import (
+        FILE_TIMEOUT_S,
+        SPOKEN_FILE_TIMEOUT_S,
+        DeepgramFileTranscriber,
+        FallbackTranscriber,
+        OpenAITranscriber,
+    )
 
     if client is not None:
-        client = client.with_options(timeout=FILE_TIMEOUT_S)  # a few minutes of audio, not one request
+        # A voice message is a few minutes of audio, not one request; spoken, someone is waiting, so no retry.
+        spoken_wait = {"timeout": OPENAI_TIMEOUT_S, "max_retries": 0}
+        client = client.with_options(**(spoken_wait if spoken else {"timeout": FILE_TIMEOUT_S}))
     if cfg.stt.provider == "openai":
         return OpenAITranscriber(client, cfg.stt)
-    deepgram = DeepgramFileTranscriber(api_key(env, DEEPGRAM_KEY), cfg.stt)
+    http = httpx.Client(timeout=SPOKEN_FILE_TIMEOUT_S) if spoken else None
+    deepgram = DeepgramFileTranscriber(api_key(env, DEEPGRAM_KEY), cfg.stt, http)
     if client is None:
         return deepgram
     return FallbackTranscriber(
@@ -1589,6 +1618,11 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         skills=skills,
         myself=myself,
     )
+    commands = house_commands(cfg, root, home)
+    if commands and cfg.home.local_first:
+        transcriber = local_first(cfg, root, commands)
+    elif cfg.home.local_first:
+        print("(house commands: none, with no devices in the house; local_first is off, the cloud hears every request)")
     recorder = make_recorder(cfg, root)
     echo = make_echo_canceller(cfg)
     speaker = Speaker(
@@ -1618,7 +1652,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             announcements=announcements,
             elsewhere=make_chat_when_out(cfg, presence, reminders),
             skill_clock=skill_clock(skills, "aloud", home, presence, myself),
-            commands=house_commands(cfg, root, home),
+            commands=commands,
         )
         set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:

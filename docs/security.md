@@ -323,7 +323,9 @@ what's merged is installed on the Pi by the updater.
 What leaves the machine for each service is written down:
 [the voice and the brain](architecture.md#what-leaves-the-machine), [the house](home.md#what-leaves-the-house),
 [the browser](browser.md#what-leaves-the-machine), [Telegram](telegram.md#what-it-sends-telegram). Audio leaves only
-after the wake word is heard on the machine, and double-checked there with `[wake] verify`. Trusting those services
+after the wake word is heard on the machine, and double-checked there with `[wake] verify`; with `[home]
+local_first`, only once the request is over and isn't a house command, which Vosk hears on the machine
+([what leaves the machine](architecture.md#what-leaves-the-machine)). Trusting those services
 with what they're sent is accepted: TARS can't work without them, and each one is optional.
 
 ## The services on the machine

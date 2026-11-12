@@ -351,9 +351,9 @@ weeks without being undone, and the unusual has been said at least once when it 
 
 **Built** ([house commands on the Pi](home.md#house-commands-on-the-pi), `[home] commands_on_pi`, off by default):
 phrases made from the house's devices, a request that's exactly one done with the home tool and no model, replies made
-ahead in TARS's voice, and Vosk hearing them when the cloud is out of reach. **Left:** hanging up the cloud stream
-early once Vosk is sure (today the transcript is the cloud's when it's there), `local_first`, and the measurement
-below on the household's own recorded voices.
+ahead in TARS's voice, and Vosk hearing them when the cloud is out of reach. `local_first` is built too
+([local first](home.md#local-first)). **Left:** hanging up the cloud stream early once Vosk is sure (today the
+transcript is the cloud's when it's there), and the measurement below on the household's own recorded voices.
 
 **Goal:** "lock the door", "AC to 23", "turn off the TV" handled on the Pi itself: answered at once, nearly free, and
 still working when the internet is down. Anything else goes on to the cloud as it does today. It's the house part

@@ -54,10 +54,14 @@ How a request is answered:
 flowchart LR
     mic[Mic] --> wake[Wake word] --> stt[Speech to text] --> brain[Quick brain] --> voice[Voice] --> spk[Speaker]
     brain -.-> handoff[Hand-offs]
+    wake -.->|local first| vosk[House command?<br/>Vosk on the Pi] -.->|no| stt
+    vosk -.->|yes| house[Done, a reply made ahead] -.-> spk
 ```
 
 The wake word runs on the device. Speech to text is Deepgram's Flux, the voice is Cartesia's Sonic, the quick brain is
-Qwen on Cerebras, and hand-offs go to OpenAI for web search and hard questions.
+Qwen on Cerebras, and hand-offs go to OpenAI for web search and hard questions. With `[home] local_first` (off by
+default), Vosk on the Pi listens first once you've finished: a house command is done there, with no speech to text or
+model in the cloud; anything else goes to the cloud whole ([local first](docs/home.md#local-first)).
 
 How it learns:
 
