@@ -12,7 +12,7 @@ palette).
 | Page | What's there |
 |---|---|
 | **Home** | What TARS sent since the last Refresh, then conversations by day, newest first: who spoke (by voice, or in a [Telegram](telegram.md) chat, marked as one), what they said, what TARS answered and the things it sent, and where an answer failed. Rate an answer with the thumbs, play what was said, name an unknown voice. Tap a conversation to open it: the recordings with a player, Fix text for a misheard transcript, Good and Bad, what TARS sent, how long each answer took and which model wrote it, what TARS heard, and Copy, "Not meant for TARS", Who was talking and Delete. With two or more named people, a filter by person. |
-| **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list: there are no accounts. Opening, copying or ticking something marks it seen; it stays under New until the next Refresh. |
+| **Sent** | Everything TARS sent (links, notes, lists, files), New first, filterable by person or Household. The whole house sees the same list, whoever's signed in. Opening, copying or ticking something marks it seen; it stays under New until the next Refresh. |
 | **Review** | Wakes no conversation explained (a "Did you call me?" nobody answered, a wake followed by silence, one the double-check turned away), and near-misses a real wake followed within 10 s (probably a missed "hey TARS"; other near-misses stay in the log, out of Review). Play what woke it; answer "hey TARS" or "Not it". TARS's own guess is highlighted, and "Agree with all" answers every one it guessed with its guess, leaving your own answers and the ones it has no guess for. Filter by its guess (Thinks yes, Thinks no, No guess, each with how many) to find the one "hey TARS" among a hundred nos; "Agree with all" then answers only those shown. |
 | **Reminders** | Every timer, reminder and message: what TARS will say, for and from whom, how it was set (by voice, on this page or on Telegram), whether it's posted to a Telegram chat rather than said aloud, and where it stands (due, ringing, said 2 of 4 times, acknowledged by whom and how, missed, stopped). Got it or Turn off, Again in 10 min, Stop, and a form to set one, at a time or until someone TARS knows by voice (or by phone, with [who's home](presence.md)) is back. The tab counts what's waiting for a got it. |
 | **Skills** | What TARS was taught by talking ([skills](skills.md)): every skill, everyone's and each person's, with what it does, what it's for, and when it runs by itself (a time, or someone coming home, a device changing); what TARS knows each person likes, guesses marked; and what skills did by themselves lately, and why. Pause or resume one that runs by itself, delete a skill, forget a preference. Teaching and changing are by talking to TARS, so there's no form. |
@@ -69,13 +69,63 @@ what the snapshot showed. Changes go to the server one at a time, in the order t
 for them, so two quick taps can't arrive out of order and a Refresh never reads what was there before your last
 tap. The Status page loads its own data when it's opened, and with Refresh while it's open.
 
-### No accounts, guarded by host and origin
+### Guarded by host and origin, and by a passkey
 
-TARS serves one household on its own network, so the web UI has no accounts. Instead, the server only answers to
-local addresses and names, Tailscale names and `[web] allowed_hosts` (421 otherwise), and only accepts changes from
-its own page or a page at a name in `[web] allowed_hosts` (403 otherwise). That closes the two ways a page elsewhere
-could reach it through someone's browser ([how](architecture.md#the-web-ui)).
-**Trade-off:** anyone on the home network can use it, and Sent is one list for the whole house.
+The server only answers to local addresses and names, Tailscale names and `[web] allowed_hosts` (421 otherwise), and
+only accepts changes from its own page or a page at a name in `[web] allowed_hosts` (403 otherwise). That closes the
+two ways a page elsewhere could reach it through someone's browser ([how](architecture.md#the-web-ui)). With sign-in
+off, anyone on the home network can use it; with it on, only someone signed in with a passkey ([signing
+in](#signing-in)). Either way Sent is one list for the whole house: a session says who's looking, not what they see.
+
+## Signing in
+
+With `[web] sign_in = true`, every page and API needs a session, made with a passkey: a key pair kept by the phone or
+computer (its Face ID, fingerprint or PIN unlocks it), which signs a fresh challenge from TARS to sign in. There's
+nothing to type and nothing a look-alike page could reuse: a passkey only answers the name it was made for.
+
+| What | How |
+|---|---|
+| A first passkey | `voice-assistant --web-invite Stacey`: a one-time link, sent to her Telegram chat if she has one (printed otherwise), good for a day. Opening it and tapping **Make a passkey** makes one and signs her in. |
+| Another device | another invite, opened there; a person can have several passkeys |
+| Signing in | **Sign in with a passkey** on `/sign-in`, where any page sends someone with no session; the phone offers the passkeys it has for TARS |
+| A lost phone | `voice-assistant --web-sign-out Stacey`: signed out everywhere, her passkeys forgotten and her unused invites voided; then a new invite |
+
+The session is a cookie that no script can read (HttpOnly), that no other site's page sends (SameSite=Strict), sent
+only over HTTPS when the page is HTTPS (Secure), and good for 30 days. Kept in the database: only a hash of each
+session and invite token, and each passkey's public key (`web_sessions`, `web_invites`, `passkeys`).
+
+Without a session, everything answers 401 but the sign-in pages, the page's shell and its built files (which hold no
+data), and recording sessions, whose links carry their own token. A page sends someone without one to
+`/sign-in?next=<where they were>`, and signing in takes them back there, but only to a page of TARS itself: `next` is
+resolved as the browser would, and anything on another site (`https://...`, `//...`, `/\...`, which the browser reads
+as `//...`) or not a page at all (`javascript:`) goes to Home instead.
+
+`tests/test_signin.py` walks every route and fails if one answers without a session, so a new one can't forget it. It
+also fails on a kind of route it doesn't know how to ask, and on a websocket that lets anyone in: the session check is
+HTTP middleware, which websockets don't pass through, so a websocket would need a check of its own (the web UI has
+none today). The ceremonies are tested against a software passkey: a wrong origin, a replayed challenge, a passkey
+TARS doesn't know, a used or day-old invite are all refused. And `checks/signin.spec.ts` signs in for real, in
+Chromium with a virtual authenticator for the passkey ([the checks](#the-checks)).
+
+**HTTPS first.** Browsers make and use passkeys only on HTTPS pages (or `localhost`). On a Pi on Tailscale:
+
+```bash
+sudo tailscale cert --cert-file /home/<user>/voice-assistant/tls/cert.pem --key-file /home/<user>/voice-assistant/tls/key.pem <pi-name>.<tailnet>.ts.net
+sudo chown -R <user> ~/voice-assistant/tls
+```
+
+```toml
+[web]
+sign_in = true
+tls_cert = "tls/cert.pem"
+tls_key = "tls/key.pem"
+link = "https://<pi-name>.<tailnet>.ts.net:8080"
+```
+
+Tailscale's certificates last 90 days: run the same `tailscale cert` again before then. A passkey belongs to the name
+the page was opened by: one made at `https://<pi-name>.<tailnet>.ts.net:8080` works there, not at `homepi.local`, so
+always use that address (`link` makes TARS's own links use it; with HTTPS, `--web-invite` won't make a link without
+it). `--check` says whether sign-in is on, and fails if it's on without HTTPS, or `link` isn't an `https://` name.
 
 ### A committed build
 
@@ -112,6 +162,12 @@ in the background.
 `<events folder>/backup.json`: files in the bucket and only there, and when the last good pass was (flagged after an
 hour), or why the last one failed; and whether the timer is running, where there's systemd. The bucket itself isn't
 asked, so the page costs no S3 request. A `backup.json` that can't be read is one failing line, not a page that fails.
+
+**The Pi says if it's short of power or too hot.** `vcgencmd get_throttled` reads the firmware's flags (under-voltage,
+slowed down, throttled, at the soft temperature limit, each now and since it started) through `/dev/vcio`, so the web
+UI's service keeps its devices ([the services](security.md#the-services-on-the-machine)). Without `vcgencmd` it isn't
+a Pi, and the row isn't shown. On a Pi where the flags can't be read (the command fails, hangs, or prints something
+else), the row is a warning saying why, and the web UI's log says it too: never "Fine", and never left out.
 
 ## The API
 
@@ -204,7 +260,12 @@ build (`.github/workflows/pages.yml`, `npm run site`) run in Playwright's own Ch
   switch wake models on the Models page, and read the Status page (the demo's services are pretend: no key or
   network is used). Every step is checked against what the server then says. The demo log's
   audio is committed (`tools/demo_audio/`, four synthetic voices made by `tools/make_demo_audio.py`), so it runs on
-  any machine. A step that finds the demo missing what it needs fails rather than skipping.
+  any machine. A step that finds the demo missing what it needs fails rather than skipping. Then
+  `checks/signin.spec.ts`, against a second backend with sign-in on (`tools/webui_demo.py serve --sign-in`, an
+  empty log, at `localhost`, where browsers make passkeys without HTTPS): Chromium's virtual authenticator stands in
+  for a phone's passkey to make one from an invite, be sent to sign-in without a session, sign out and back in to the
+  page it was on, see a used invite refused, and see `?next=` pointing anywhere but TARS (`/\evil.example`,
+  `//evil.example`, another site, `javascript:`) land on Home.
 - **`npm run visual`** (`checks/visual.spec.ts`, under 2 minutes): Playwright's `toHaveScreenshot()` on the states
   a link can open and after interactions (opening a menu, rating, ticking, a dialog), on desktop and phone. The page
   loads from the build on disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.
@@ -225,5 +286,6 @@ check.
 
 - **The screenshot tests run locally only.** The baselines are per platform because fonts render differently on
   macOS and Linux, and the committed ones are macOS (`darwin`).
-- **No accounts:** see [above](#no-accounts-guarded-by-host-and-origin).
+- **Sign-in is off by default**, since it needs HTTPS first; until it's on, anyone on the home network can use the
+  page ([signing in](#signing-in)). With it on, everyone signed in sees the same house: there are no roles.
 - **No live updates**, by design: new conversations and wakes appear on Refresh.

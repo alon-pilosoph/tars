@@ -7,6 +7,7 @@ the voice without playing it and doesn't listen.
 """
 
 import functools
+import ipaddress
 import os
 import platform
 import re
@@ -19,6 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import numpy as np
 from dotenv import dotenv_values
@@ -38,6 +40,7 @@ from .config import (
 )
 from .echo import MAX_DELAY_S
 from .errors import SERVICE_FAILURES
+from .plugins import TARS_KEYS, Loaded
 
 if TYPE_CHECKING:
     from .backup import Backup
@@ -329,12 +332,16 @@ def unit_exec_start(unit: str) -> str:
         return ""
 
 
-def web(get: Callable[[str], int], port: int = WEB_PORT) -> Result:
+def web(get: Callable[[str], int], port: int = WEB_PORT, cfg: Config | None = None) -> Result | list[Result]:
+    """Whether the web UI answers, and, with `cfg`, whether it asks anyone to sign in ([web] sign_in)."""
+    https = bool(cfg and cfg.web.tls_cert)
     try:
-        status = get(f"http://127.0.0.1:{port}/api/status")
+        status = get(f"{'https' if https else 'http'}://127.0.0.1:{port}/api/status")
     except Exception:  # noqa: BLE001 - refused, timed out, not HTTP: not running, as far as TARS can tell
         status = None
-    if status != 200:
+    if cfg is not None:
+        return [web(lambda url: status, port), sign_in(cfg, https)]
+    if status not in (200, 401):  # 401: it's running, and asks for a session
         return Result(
             "Web UI",
             WARN,
@@ -342,6 +349,41 @@ def web(get: Callable[[str], int], port: int = WEB_PORT) -> Result:
             "systemctl --user start voice-assistant-web on the Pi, or voice-assistant --web",
         )
     return Result("Web UI", OK, f"running on port {port}")
+
+
+def sign_in(cfg: Config, https: bool) -> Result:
+    name = "Web UI sign-in"
+    if not cfg.web.sign_in:
+        return Result(
+            name,
+            WARN,
+            "off: anyone on the home network can play the recordings and read the conversations",
+            "[web] sign_in = true, with tls_cert and tls_key (docs/web-ui.md#signing-in)",
+        )
+    if not https:
+        return Result(
+            name,
+            FAIL,
+            "on, without HTTPS: browsers make and use passkeys only over HTTPS (or on localhost)",
+            "[web] tls_cert and tls_key, from tailscale cert (docs/web-ui.md#signing-in)",
+        )
+    if problem := link_problem(cfg.web.link):
+        return Result(name, FAIL, f"on, but {problem}", '[web] link = "https://<its name>.ts.net:8080"')
+    return Result(name, OK, "a passkey and a session for every page")
+
+
+def link_problem(link: str) -> str | None:
+    """Why invite links made from [web] link can't make a passkey; None if they can."""
+    if not link:
+        return "[web] link is empty: invite links would use an address, and passkeys need a name"
+    parts = urlsplit(link)
+    if parts.scheme != "https":
+        return "[web] link isn't https://: browsers make passkeys only over HTTPS"
+    try:
+        ipaddress.ip_address(parts.hostname or "")
+    except ValueError:
+        return None
+    return "[web] link is an address: passkeys need a name"
 
 
 def telegram(cfg: Config, token: str | None, me: Callable[[str], dict]) -> Result:
@@ -543,11 +585,12 @@ def systemd_state(unit: str) -> str | None:
     return out.stdout.strip() or "unknown"
 
 
-def http_status(url: str, headers: dict | None = None) -> int:
-    """The HTTP status, whatever it is; httpx.TransportError if nothing answered."""
+def http_status(url: str, headers: dict | None = None, verify: bool = True) -> int:
+    """The HTTP status, whatever it is; httpx.TransportError if nothing answered. `verify`: False for this machine's
+    own web UI, asked at 127.0.0.1, which its certificate (made for its name) doesn't cover."""
     import httpx
 
-    return httpx.get(url, headers=headers, timeout=5, follow_redirects=True).status_code
+    return httpx.get(url, headers=headers, timeout=5, follow_redirects=True, verify=verify).status_code
 
 
 def service_status(name: str, key: str, status: int, took: float) -> Result:
@@ -581,7 +624,8 @@ def house(built, hass_ok: bool) -> list[Result]:
     from .hass import Entity
     from .home import HomeError
 
-    results = [Result(name, FAIL, why, "docs/home.md") for name, why in built.unavailable.items()]
+    results = [plugin_result(p) for p in (built.plugins or {}).values()]
+    results += [Result(name, FAIL, why, "docs/home.md") for name, why in built.unavailable.items()]
     for name, device in (built.tools.devices if built.tools else {}).items():
         if isinstance(device, Entity) and not hass_ok:
             results.append(Result(name, SKIP, "needs Home Assistant"))
@@ -592,6 +636,25 @@ def house(built, hass_ok: bool) -> list[Result]:
             found = [(FAIL, str(e), "")]
         results += [Result(name, status, detail, fix) for status, detail, fix in found] or [Result(name, OK, "ready")]
     return results
+
+
+def plugin_result(p: Loaded) -> Result:
+    """A plugin, as it loaded: its version and what it was granted."""
+    name, fix = f"Plugin {p.name}", "docs/home.md#plugins"
+    if p.error:
+        return Result(name, FAIL, f"{p.version + ': ' if p.version else ''}didn't load: {p.error}", fix)
+    if p.granted is None:
+        needs = ", ".join(f'"{n}"' for n in p.needs)
+        return Result(
+            name,
+            WARN,
+            f"{p.version}: given everything, since no grant is set",
+            f"pin what it may use: grant = [{needs}] under [home.plugins.{p.name}]" if p.needs else fix,
+        )
+    granted = f"{p.version}: granted {', '.join(p.granted) or 'nothing'}"
+    if own := sorted(TARS_KEYS.intersection(p.granted)):
+        return Result(name, WARN, f"{granted}; {', '.join(own)} is TARS's own", "give it a key of its own in .env")
+    return Result(name, OK, granted)
 
 
 def own_speaker(cfg: Config, mixer: Callable[[str], Mixer]) -> Result | list[Result]:
@@ -663,9 +726,13 @@ def buttons(
 
 
 def routers_now(
-    cfg: Config, secret: Callable[[str], str | None], make_router: Callable | None = None
+    cfg: Config,
+    secret: Callable[[str], str | None],
+    make_router: Callable | None = None,
+    broker: Callable[[dict, str | None, list[str]], tuple[str, str]] | None = None,
 ) -> Result | list[Result]:
-    """--check's: each router in [[presence.routers]], signed into now, and whose phone it sees."""
+    """--check's: each router in [[presence.routers]], signed into now, and whose phone it sees; and the broker the
+    doors' locks publish to ([[presence.doors]]), connected to now, and whether it keeps the locks' topics to them."""
     from .presence import People
     from .routers import RouterError, make
 
@@ -690,6 +757,21 @@ def routers_now(
         here = sorted(people.names[p] for p in people.whose(seen))
         phones = f"; sees the phone of {', '.join(here)}" if here else "; sees nobody's phone just now"
         results.append(Result(where, OK, f"{len(seen)} devices connected{phones}"))
+    if cfg.presence.doors:
+        from .doors import broker_answers
+
+        mqtt, names = cfg.presence.mqtt, ", ".join(d["name"] for d in cfg.presence.doors)
+        topics = [d["topic"] for d in cfg.presence.doors]
+        password = secret(mqtt["secret"]) if mqtt.get("secret") else None
+        problem, open_to_all = (broker or broker_answers)(mqtt, password, topics)
+        fix = "check [presence.mqtt] and its password in .env; docs/presence.md#the-front-door"
+        if problem:
+            results.append(Result("Doors", FAIL, f"the MQTT broker at {mqtt['address']}: {problem}", fix))
+        elif open_to_all:
+            acl = "give the broker deploy/home-assistant/mosquitto/acl's rules; docs/presence.md#the-front-door"
+            results.append(Result("Doors", WARN, f"the MQTT broker at {mqtt['address']}: {open_to_all}", acl))
+        else:
+            results.append(Result("Doors", OK, f"listening to the {names} on the MQTT broker at {mqtt['address']}"))
     return results
 
 
@@ -966,7 +1048,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ("Voice", speaking),
         ("Microphone", (lambda: Result("Microphone", SKIP, "not listened to (a silent check)")) if silent else listen),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
-        ("Web UI", lambda: web(http_status, web_port())),
+        ("Web UI", lambda: web(functools.partial(http_status, verify=False), web_port(), cfg)),
         ("Home Assistant", hass_check),
         ("The house", devices),
         ("TARS's speaker", speaker_volume),

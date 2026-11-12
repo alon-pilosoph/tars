@@ -65,11 +65,11 @@ uv run voice-assistant --web        # in a second terminal: http://127.0.0.1:808
 ```
 
 The first start downloads the double-check's recognizer (40 MB), the speech detector (2 MB), the end-of-turn model
-(8 MB) and the speaker model (25 MB) into `models/`. Expect about 1.2 to 1.5 seconds from when you stop talking to
-TARS's first sound, a little more when you sounded mid-thought: Deepgram's Flux decides when you're done, and TARS
-prepares the answer meanwhile ([response time](latency.md)). A web search adds a "Looking it up." first. macOS asks
-for microphone access the first time; if TARS hears nothing, check System Settings → Privacy & Security →
-Microphone for your terminal.
+(8 MB) and the speaker model (25 MB) into `models/`. Expect about 2 seconds from when you stop talking to TARS's first
+sound, as on the Pi in use (a benchmark gets 1.2-1.5 s), a little more when you sounded mid-thought: Deepgram's Flux
+decides when you're done, and TARS prepares the answer meanwhile ([response time](latency.md)). A question TARS hands
+to OpenAI (the web, the news) starts with a short "Let's see." or the like. macOS asks for microphone access the first
+time; if TARS hears nothing, check System Settings → Privacy & Security → Microphone for your terminal.
 
 ## Install on the Pi
 
@@ -83,7 +83,9 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs the system packages in
 [`deploy/pi-packages.txt`](../deploy/pi-packages.txt) (PortAudio, and Chromium on a virtual screen for
 [TARS's browser](browser.md#on-the-pi)) and uv, the Python packages (every one has a
-ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node),
+ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node), gives
+TARS its own user on the household's Mosquitto when there are doors to listen to
+([the front door](presence.md#the-front-door)),
 downloads the models, lists the audio devices, and installs and starts the systemd user units, at boot too: the
 assistant and the web UI, TARS on Telegram with `[telegram]` on ([setting it up](telegram.md#setting-it-up)), and the
 backup's timer with `[backup]` on ([backing up to S3](backup.md)). Then it runs `voice-assistant --check`.
@@ -103,6 +105,13 @@ from it. If the Pi doesn't see the speakerphone at all, `journalctl -k | grep -i
 over-current on all four ports at once is a damaged cable (try another, with a data line), and nothing at all is a
 cable that only charges. A speakerphone that's heard but silent (`--check` says "very quiet") may have its own mute
 on: the PowerConf's light is red then.
+
+Each service is sandboxed ([the services](security.md#the-services-on-the-machine)): it writes only to the project's
+folder and `~/.cache` (Telegram also to Chromium's `~/.config/chromium` and `~/.config/chromium-headless`), can't use
+`sudo`, and has a `/tmp` of its own; the browser's screen alone writes to the shared `/tmp`, for its socket. Something
+of your own that writes elsewhere (a plugin's files outside `voice_data/`) gets "Read-only file system": keep it under
+the project's folder. What the services make is readable by their user alone (`UMask=0077`): to read their files as
+someone else, use that user.
 
 By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
@@ -176,8 +185,9 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
 
 ## Things to know
 
-- **Reaching it.** Open `http://<pi-name>.local:8080` on the home network. It has no accounts, so don't forward the
-  port to the internet; to use it away from home, put the Pi and the phone on
+- **Reaching it.** Open `http://<pi-name>.local:8080` on the home network. Until sign-in is on
+  ([signing in](web-ui.md#signing-in): passkeys, over HTTPS from a Tailscale certificate), anyone there can use it, so
+  never forward the port to the internet; to use it away from home, put the Pi and the phone on
   [Tailscale](https://tailscale.com) and open `http://<pi-name>:8080`. It only answers to IP addresses, `localhost`,
   `*.local`, `*.ts.net` and single-label names; add any other name to `[web] allowed_hosts`. For a name of your
   own, such as `home.example.com`, point its DNS A record at the Pi's Tailscale address (`100.x.y.z`): it resolves
@@ -253,7 +263,8 @@ household, the Pi-only setup is simpler and private, which is why TARS is built 
 
 ## Limitations
 
-- **No accounts.** The web UI is for the home network, or a tailnet away from home; never forward its port.
+- **The web UI is for the home network, or a tailnet away from home**; never forward its port. Turn on sign-in
+  ([passkeys](web-ui.md#signing-in)) so being on the Wi-Fi isn't enough.
 - **The backup is AWS's.** It needs an S3 bucket and an IAM key ([backing up to S3](backup.md)); without them,
   nothing leaves the Pi but the turns themselves.
 - **Measured on the development Mac.** The wake stages' cost and the response times come from the Mac; the Pi should

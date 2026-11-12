@@ -20,6 +20,35 @@ Description=TARS web UI
 WorkingDirectory=%h/voice-assistant
 ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --web --host 0.0.0.0 --port 8080
 Environment=PYTHONUNBUFFERED=1
+# Sandboxed (docs/security.md#the-services-on-the-machine): the system and home read-only but TARS's own folder (and
+# caches), a /tmp of its own, files only its user can read, no new privileges (no sudo), only local, IP and netlink
+# sockets (glibc asks the kernel for the machine's addresses over netlink to order a name's answers).
+# Keeps the user manager's D-Bus (the Status page asks systemctl each unit's state): docs/security.md says what that
+# leaves open. No Docker.
+# Keeps the devices: the Status page's power and heat warnings come from the Pi's firmware, which vcgencmd asks
+# through /dev/vcio, and PrivateDevices= hides it. DevicePolicy=/DeviceAllow= can't let just that one through here:
+# systemd enforces them with a BPF program only a root service manager can load, so in a user unit they do nothing.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/voice-assistant -%h/.cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+# A call outside the filter fails with an error rather than killing TARS.
+SystemCallErrorNumber=EPERM
 Restart=always
 RestartSec=3
 # 78 (EX_CONFIG): a mistake in config.toml or a missing API key. Restarting won't fix it; see the logs.

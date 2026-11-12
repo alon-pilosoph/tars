@@ -1,9 +1,11 @@
 """TARS on Telegram: who it answers, what it writes back, what it sends them, and where reminders set there go."""
 
 import json
+import os
 import sqlite3
 import threading
 import time
+import types
 from datetime import datetime
 from pathlib import Path
 
@@ -167,6 +169,14 @@ def test_a_message_from_someone_in_people_is_answered_with_their_name_on_it():
     tars(bot, [brain]).handle(message("what time is it?"))
     assert brain.asked == ["[Speaker: Alon] what time is it?"]
     assert bot.said() == ["Nine o'clock."]
+
+
+def test_a_skip_in_a_chat_is_never_posted_and_asks_again():
+    from voice_assistant.llm import PARDON, SKIP
+
+    bot, brain = FakeBot(), ScriptedBrain([SKIP])
+    tars(bot, [brain]).handle(message("new zone"))
+    assert bot.said() == [PARDON] and brain.forgotten == 1
 
 
 @pytest.mark.parametrize(
@@ -496,8 +506,15 @@ def test_the_real_brain_sets_a_reminder_and_sends_a_note_from_a_chat(convos):
 
 def test_tidy_takes_out_the_lines_said_while_waiting():
     assert tidy(f"{SEARCHING} It's 24 degrees.") == "It's 24 degrees."
+    assert tidy("Let me check. The door is locked.") == "The door is locked."
     assert tidy(f"Timer set. {THINKING} Rome first.") == "Timer set. Rome first."
     assert tidy("Line one.\n\nLine two.") == "Line one.\n\nLine two."
+
+
+def test_tidy_keeps_a_waiting_line_that_is_the_whole_reply():
+    assert tidy("On it.") == "On it."  # the quick model started the film itself
+    assert tidy("Let's see. The answer") == "The answer"
+    assert tidy("Let's see. Let me check. The answer") == "Let me check. The answer"  # one line, not every one
 
 
 def test_a_long_reply_that_arrived_in_part_counts_as_sent(convos):
@@ -1076,6 +1093,18 @@ def test_a_skill_due_in_a_chat_is_a_turn_posted_there_as_its_owners():
     assert bot.messages == [(ALON, "Three new games came out.")]
 
 
+def test_a_chat_skill_a_doors_lock_set_off_runs_reading_the_house_only():
+    from voice_assistant.skills import CHAT, Due, Skill
+
+    skill = Skill("welcome", "Welcome them home.", owner="Alon", say=CHAT)
+    when = datetime(2026, 11, 8, 18, 0).astimezone()
+    due = [Due(skill, when, "Alon just came home, opening the front door", "front door")]
+    clock = types.SimpleNamespace(take=lambda: [due.pop()] if due else [], record=lambda due, said: None)
+    bot, alon = FakeBot(), ScriptedBrain(["Welcome home."])
+    tars(bot, [alon], skill_clock=clock).deliver()
+    assert (alon.request.by_chat, alon.request.by_door) == (True, "front door")  # home.py refuses its changes
+
+
 def test_a_chat_skill_with_nothing_to_say_posts_nothing():
     from voice_assistant.llm import SKIP
 
@@ -1088,3 +1117,84 @@ def test_a_chat_skill_for_someone_without_a_chat_is_left():
     bot, alon = FakeBot(), ScriptedBrain([])
     tars(bot, [alon], skill_clock=chat_skill_due("Stacey")).deliver()
     assert bot.messages == [] and alon.asked == []
+
+
+# One-offs ("turn the heater off at six"), shared with the assistant: whichever is running does each.
+
+SIX = datetime(2026, 11, 12, 6, 0, 10).astimezone()
+
+
+def one_off_due(tmp_path, running, by_chat=True, household=True):
+    """The Telegram service's skill clock at six, with "turn the heater off at six" asked for by Alon, in his chat
+    or aloud. `running`: the processes whose heartbeats say they're up, with their pids."""
+    from voice_assistant.skills import CHAT, Clock, OneOffs, Skills
+    from voice_assistant.store import Store
+
+    skills = Skills(Store(tmp_path / "db"), clock=SIX.replace(hour=1).timestamp)
+    args = dict.fromkeys(("when", "days", "trigger", "say", "about", "guess")) | {
+        "action": "save", "name": "heater off", "instructions": "Turn the heater off.", "at": "06:00",
+        "once": {"day": None, "in_minutes": None}, "household": household,
+    }  # fmt: skip
+    assert skills.call(args, types.SimpleNamespace(speaker="Alon", by_chat=by_chat)).startswith("done")
+    clock = Clock(skills.all, CHAT, now=lambda: SIX, record=skills.ran, one_offs=OneOffs(skills, CHAT, running.get))
+    clock.look()
+    return skills, clock
+
+
+class HouseBrain(ScriptedBrain):
+    """A brain whose turn asks the house for changes, each answered as `answers` says ((what, answer) each)."""
+
+    def __init__(self, replies=(), answers=()):
+        super().__init__(replies)
+        self.answers = list(answers)
+
+    def stream_reply(self, text, request=None):
+        for what, answer in self.answers:
+            request.changed(what, answer)
+        return super().stream_reply(text, request)
+
+
+def told(skills) -> list[tuple[str, str, str]]:
+    return [(r["for_name"], r["channel"], r["text"]) for r in Reminders(skills.store).all() if r["kind"] == MESSAGE]
+
+
+def test_a_household_one_off_asked_in_a_chat_is_done_and_answered_in_that_chat(tmp_path):
+    skills, clock = one_off_due(tmp_path, {"assistant": 1, "telegram": os.getpid()})
+    bot, alon = FakeBot(), HouseBrain(["Done: the heater's off."], [("the heater off", "done: heater is off")])
+    tars(bot, [alon], skill_clock=clock).deliver()
+    assert alon.asked[0].startswith("(Nobody said this: it's 06:00, when the skill heater off runs by itself.")
+    assert (alon.request.speaker, alon.request.by_chat) == ("Alon", True)
+    assert bot.messages == [(ALON, "Done: the heater's off.")] and skills.all() == [] and told(skills) == []
+
+
+def test_a_one_off_the_house_didnt_make_isnt_posted_and_is_tried_again(tmp_path):
+    skills, clock = one_off_due(tmp_path, {"telegram": os.getpid()})
+    bot, alon = FakeBot(), HouseBrain(["Done: the heater's off."], [("the heater off", "not confirmed: still on")])
+    tars(bot, [alon], skill_clock=clock).deliver()
+    assert bot.messages == [] and alon.forgotten == 1 and len(skills.all()) == 1
+    assert json.loads(skills.store.row("SELECT tries FROM skills")["tries"])["why"] == (
+        "the heater off: not confirmed: still on"
+    )
+
+
+def test_one_asked_aloud_while_the_assistant_is_down_is_done_here_and_handed_over_to_be_said(tmp_path):
+    skills, clock = one_off_due(tmp_path, {"telegram": os.getpid()}, by_chat=False)
+    bot, alon, own = FakeBot(), ScriptedBrain([]), ScriptedBrain(["Done: the heater's off."])
+    tars(bot, [alon, own], skill_clock=clock).deliver()
+    assert alon.asked == [] and bot.messages == []  # not his chat's: a brain of its own, nothing posted
+    assert own.request.speaker is None and not own.request.by_chat
+    assert skills.all() == [] and told(skills) == [("Alon", VOICE, "Done: the heater's off.")]
+
+
+def test_one_asked_aloud_is_left_to_the_assistant_while_its_running(tmp_path):
+    skills, clock = one_off_due(tmp_path, {"assistant": 1, "telegram": os.getpid()}, by_chat=False)
+    bot, alon = FakeBot(), ScriptedBrain([])
+    tars(bot, [alon], skill_clock=clock).deliver()
+    assert alon.asked == [] and len(skills.all()) == 1
+
+
+def test_a_one_off_whose_post_fails_is_done_all_the_same_and_posted_with_the_reminders(tmp_path):
+    skills, clock = one_off_due(tmp_path, {"telegram": os.getpid()})
+    bot, alon = FakeBot(failing=10), ScriptedBrain(["Done: the heater's off."])
+    tars(bot, [alon], skill_clock=clock).deliver()
+    assert skills.all() == [] and told(skills) == [("Alon", TELEGRAM, "Done: the heater's off.")]

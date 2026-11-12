@@ -394,11 +394,11 @@ def test_cerebras_answers_and_openai_is_never_asked():
 
 def test_a_turn_that_needs_the_web_is_openais_with_its_tools_and_both_remember_it():
     brain, openai, cerebras = cerebras_brain(lambda m: LOOK_UP if "weather" in m[-1]["content"] else "Noted.")
-    assert "".join(brain.stream_reply("what's the weather?")) == "From OpenAI."
+    assert "".join(brain.stream_reply("what's the weather?")) == f"{llm.LETS_SEE} From OpenAI."
     assert {"type": "web_search"} in openai.requests[0]["tools"] and cerebras.streams[0].closed
     "".join(brain.stream_reply("and tomorrow?"))
     # No <look-up> in the conversation.
-    assert seen_by_cerebras(cerebras) == ["what's the weather?", "From OpenAI.", "and tomorrow?"]
+    assert seen_by_cerebras(cerebras) == ["what's the weather?", f"{llm.LETS_SEE} From OpenAI.", "and tomorrow?"]
 
 
 def test_when_cerebras_fails_openai_answers():
@@ -821,7 +821,7 @@ def test_with_its_own_tools_qwen_is_told_to_do_its_part_of_a_mixed_request_then_
     brain, _, cerebras, _ = quick_with_tools(tmp_path, [], think_effort="high")
     "".join(brain.stream_reply("hi"))
     system = cerebras.requests[0]["messages"][0]["content"]
-    assert "do your part first, with your tools, then reply with exactly <look-up> or <ponder>" in system
+    assert "do your part first, with your tools, then hand the rest over as above" in system
 
 
 def test_with_nothing_of_its_own_to_do_qwen_isnt_told_about_mixed_requests():
@@ -852,16 +852,17 @@ def test_qwen_cant_send_a_link_it_didnt_find_on_the_web(tmp_path):
 def test_a_refused_link_isnt_passed_on_with_the_hand_off_that_follows_it(tmp_path):
     link = {"kind": "link", "title": "Rome", "for": "person", "url": "https://made.up/rome"}
     brain, openai, _, _ = quick_with_tools(tmp_path, [("send", link)], then=LOOK_UP)
-    assert "".join(brain.stream_reply("send me a link about Rome")) == "From OpenAI."
+    assert "".join(brain.stream_reply("send me a link about Rome")) == f"{llm.LETS_SEE} From OpenAI."
     assert all(m.get("type") is None for m in openai.requests[0]["input"])
     assert LOOK_UP not in json.dumps(openai.requests[0]["input"])
 
 
 def test_what_qwens_tools_did_goes_with_a_hand_off_so_it_isnt_done_twice(tmp_path):
     brain, openai, _, _ = quick_with_tools(tmp_path, [("remind", REMIND)], then=LOOK_UP)
-    assert "".join(brain.stream_reply("pasta timer, and what's the weather?")) == "From OpenAI."
+    assert "".join(brain.stream_reply("pasta timer, and what's the weather?")) == f"{llm.LETS_SEE} From OpenAI."
     kinds = [m.get("type") for m in openai.requests[0]["input"]]
-    assert kinds == [None, "function_call", "function_call_output"] and len(brain.changes) == 1
+    # What Qwen's tools did, then the line TARS said as it handed over.
+    assert kinds == [None, "function_call", "function_call_output", None] and len(brain.changes) == 1
 
 
 def test_a_hard_question_goes_to_the_thinking_model_which_takes_its_time():
@@ -978,7 +979,9 @@ def test_with_claude_as_the_quick_model_it_sets_a_reminder_itself(tmp_path):
 
 def test_claude_hands_over_like_qwen_and_fails_over_to_openai(tmp_path):
     brain, _, _ = claude_brain(tmp_path, lambda m: FakeClaudeStream(LOOK_UP))
-    assert "".join(brain.stream_reply("weather?")) == "From OpenAI." and brain.answered_by == llm.LOOKED_UP
+    assert (
+        "".join(brain.stream_reply("weather?")) == f"{llm.LETS_SEE} From OpenAI." and brain.answered_by == llm.LOOKED_UP
+    )
     import anthropic
     import httpx2
 
@@ -1030,14 +1033,55 @@ def test_luna_as_the_quick_model_reasons_and_sets_a_reminder_on_its_own_tier(tmp
 
 def test_luna_as_the_quick_model_hands_over_like_qwen(tmp_path):
     brain, _ = responses_brain(tmp_path, fake_openai_chat(lambda m: LOOK_UP))
-    assert "".join(brain.stream_reply("weather?")) == "From OpenAI." and brain.answered_by == llm.LOOKED_UP
+    assert (
+        "".join(brain.stream_reply("weather?")) == f"{llm.LETS_SEE} From OpenAI." and brain.answered_by == llm.LOOKED_UP
+    )
 
 
-def test_a_blank_line_before_the_hand_off_still_gets_looking_it_up_said():
+def test_a_blank_line_before_the_hand_off_still_gets_a_line_said_and_only_one():
     openai = fake_openai_chat(lambda m: "Sunny.", search_for=lambda m: ["response.web_search_call.in_progress"])
     cerebras = fake_cerebras(lambda m: f"\n\n{LOOK_UP}")  # Qwen sometimes writes a blank line first
     brain = QuickChat(openai, LLMConfig(), [QuickService("Cerebras", cerebras, "qwen")])
-    assert "".join(brain.stream_reply("weather?")).strip() == f"{llm.SEARCHING} Sunny."
+    assert "".join(brain.stream_reply("weather?")).strip() == f"{llm.LETS_SEE} Sunny."  # no "Looking it up." too
+
+
+def test_the_quick_model_picks_the_line_said_while_openai_answers():
+    brain, openai, _ = cerebras_brain(lambda m: f"Let me check. {LOOK_UP}")
+    assert "".join(brain.stream_reply("is the door locked?")) == "Let me check. From OpenAI."
+    assert 'already begun, aloud: "Let me check."' in openai.requests[0]["instructions"]
+    assert brain.answered_by == llm.LOOKED_UP
+
+
+def test_a_line_said_without_the_hand_off_still_goes_to_openai():
+    brain, openai, _ = cerebras_brain(lambda m: "Let me check.")
+    assert "".join(brain.stream_reply("is the door locked?")) == "Let me check. From OpenAI."
+    assert brain.answered_by == llm.LOOKED_UP and len(openai.requests) == 1
+
+
+@pytest.mark.parametrize("line", ["Let me check", "Let me check...", "let me check…"])
+def test_a_line_said_without_its_full_stop_still_goes_to_openai(line):
+    brain, openai, _ = cerebras_brain(lambda m: line)
+    assert "".join(brain.stream_reply("is the door locked?")) == f"{line} From OpenAI."
+    assert brain.answered_by == llm.LOOKED_UP and len(openai.requests) == 1
+
+
+def test_a_line_before_a_ponder_hand_off_is_the_only_one_said():
+    brain, _, _ = cerebras_brain(lambda m: f"Let me check. {llm.PONDER}")
+    said = "".join(brain.stream_reply("should I refinance?"))
+    assert said.startswith("Let me check. From OpenAI.") and llm.THINKING not in said
+
+
+def test_a_line_said_after_the_quick_models_own_tools_is_its_whole_reply(tmp_path):
+    brain, openai, _, _ = quick_with_tools(tmp_path, [("remind", REMIND)], then="On it.")
+    assert "".join(brain.stream_reply("pasta timer")) == "On it."
+    assert openai.requests == [] and brain.answered_by == llm.QUICK and len(brain.changes) == 1
+
+
+def test_the_quick_model_is_told_the_lines_it_may_start_a_hand_off_with():
+    brain, _, cerebras = cerebras_brain(lambda m: "ok")
+    "".join(brain.stream_reply("hi"))
+    rules = cerebras.requests[0]["messages"][0]["content"]
+    assert all(f'"{line}"' in rules for line in llm.FILLERS) and f"Let me check. {LOOK_UP}" in rules
 
 
 class Silent(FakeStream):
@@ -1188,8 +1232,8 @@ def test_after_a_hand_off_openai_is_told_what_tars_already_said():
 
 
 def test_with_nothing_said_yet_openai_isnt_told_to_carry_on():
-    brain, openai, _ = cerebras_brain(lambda m: "<look-up>")
-    "".join(brain.stream_reply("weather?"))
+    brain, openai, _ = cerebras_brain(lambda m: OpenAIError("down"))  # nothing from Cerebras: OpenAI answers
+    "".join(brain.stream_reply("hi"))
     assert "already begun" not in openai.requests[0]["instructions"]
 
 

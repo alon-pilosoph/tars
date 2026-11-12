@@ -37,7 +37,7 @@ from .control import Refused, Unavailable
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
-from .llm import REMIND_TOOLS, SEARCHING, SKIP, THINKING, Brain, split_ack, split_skip
+from .llm import FILLERS, PARDON, REMIND_TOOLS, SKIP, THINKING, Brain, split_ack, split_skip
 from .mic_mute import DEVICE as MIC
 from .reminders import (
     ACKNOWLEDGED,
@@ -318,7 +318,13 @@ def _clock(at: float) -> str:
 def tidy(reply: str) -> str:
     """A reply written to be heard, for reading: without the lines said while a slow answer comes ("Looking it
     up."), which a chat shows as "typing..." instead."""
-    text = reply.strip().removeprefix(SEARCHING).replace(THINKING, "", 1)
+    text = reply.strip()
+    # Only with more after them: "On it." can be the whole reply.
+    filler = next((f for f in FILLERS if text.startswith(f)), "")
+    if text[len(filler) :].strip():
+        text = text[len(filler) :]
+    if text.replace(THINKING, "", 1).strip():
+        text = text.replace(THINKING, "", 1)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
@@ -623,7 +629,12 @@ class TelegramTars:
         asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
-                pieces = brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True, heard=text))
+                skipped, pieces = split_skip(
+                    brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True, heard=text))
+                )
+                if skipped:  # a chat is always meant for TARS: the tag is never posted
+                    brain.forget_last()
+                    pieces = iter([PARDON])
                 if self._tools:
                     acks, pieces = split_ack(pieces)
                 reply = tidy("".join(pieces))
@@ -674,10 +685,15 @@ class TelegramTars:
                     if free:
                         self._report(chat, r, now)
         if self._skill_clock:
+            from .skills import CHAT
+
             for due in self._skill_clock.take():
-                chat = self._chat_for(due.skill.owner)
+                skill, chat = due.skill, self._chat_for(due.skill.asker)
+                if skill.once is not None and (skill.say != CHAT or chat is None):
+                    self._run_skill(None, due)  # not answered in a chat: handed over to be said aloud
+                    continue
                 if chat is None:
-                    print(f"(skill {due.skill.name}: {due.skill.owner} has no chat to post it in)")
+                    print(f"(skill {skill.name}: {skill.owner} has no chat to post it in)")
                     continue
                 with chat.busy:  # due now: after an exchange in progress, not the next round
                     self._run_skill(chat, due)
@@ -690,33 +706,58 @@ class TelegramTars:
                     if free:
                         self._post_sent_at_home(chat, row, now)
 
-    def _run_skill(self, chat: Chat, due) -> None:
+    def _run_skill(self, chat: Chat | None, due) -> None:
         """A skill whose time has come, in its owner's chat: a turn of its own, with its instructions as the request,
-        whose reply is posted, and part of the chat's conversation, so their answer follows on from it."""
-        from .skills import on_its_own
+        whose reply is posted, and part of the chat's conversation, so their answer follows on from it. `chat`: None
+        for a one-off that isn't answered in a chat here (asked aloud, and taken here because the assistant isn't
+        running; or for someone without a chat): run with a brain of its own, and its answer handed over to be said
+        aloud (skills.Clock.hand_over). A one-off's try that didn't happen isn't posted: it's tried again, or given
+        up and whoever asked is told (skills.Clock.settle)."""
+        from .skills import Answers, happened, on_its_own
 
-        brain, skill = chat.brain, due.skill
-        print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, in {chat.person}'s chat)", flush=True)
+        skill, clock = due.skill, self._skill_clock
+        # What the house answers, for whether a one-off happened; one a door's lock set off changes nothing in it
+        # (home.Request.by_door).
+        house = Answers()
+        if chat:
+            request = Request(speaker=chat.person, by_chat=True, changed=house, by_door=due.door)
+            brain, where = chat.brain, f"in {chat.person}'s chat"
+        else:  # not part of any chat's conversation
+            request = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
+            brain, where = self._make_brain(), "to be said aloud"
+        print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, {where})", flush=True)
         try:
             asked = on_its_own(skill, due.when, SKIP, due.why)
-            skipped, pieces = split_skip(brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True)))
+            skipped, pieces = split_skip(brain.stream_reply(asked, request))
             reply = tidy("".join(pieces))
         except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
             brain.forget_last()
             print(f"(skill {skill.name} didn't run: {e!r})", flush=True)
+            if skill.once is not None:
+                clock.settle(due, house, e)
+            return
+        if skill.once is not None and happened(house)[0]:
+            brain.forget_last()
+            print(f"(skill {skill.name}: not posted, since it didn't happen: {reply!r})", flush=True)
+            clock.settle(due, house)
             return
         if skipped or not reply:
             brain.forget_last()
             print(f"(skill {skill.name}: nothing to do now)", flush=True)
-            self._skill_clock.record(due, "")
+            clock.record(due, "")
+            return
+        if chat is None:
+            clock.hand_over(due, reply)
             return
         try:
             self._send(chat.chat_id, reply, tries=SEND_TRIES)
         except TelegramError as e:
             brain.forget_last()
             print(f"(skill {skill.name}: couldn't post it: {e})", flush=True)
+            if skill.once is not None:  # done all the same: posted with the reminders, once Telegram takes it
+                clock.hand_over(due, reply)
             return
-        self._skill_clock.record(due, reply)
+        clock.record(due, reply)
         now = self._clock()
         if (conversation := self._current_conversation(chat, now)) is not None:
             self._log(self._conversations.add_tars_turn, conversation, reply, ts=now)

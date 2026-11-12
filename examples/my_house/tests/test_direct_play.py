@@ -19,7 +19,7 @@ class Box(AndroidTV):
         super().__init__("10.0.0.8", key_path=None)
         self.front, self.session, self.commands = "com.amazon.tv.launcher", "", []
 
-    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False):
+    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False, quiet_s=3.0):
         self.commands.append(command)
         if command.startswith("dumpsys power"):
             return "  mWakefulness=Awake"
