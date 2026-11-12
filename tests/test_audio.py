@@ -264,9 +264,9 @@ def test_a_stop_cuts_what_s_playing_and_takes_no_more_of_it_and_the_next_plays(m
                 speaker.stop()
 
     with Speaker(None, 24_000, prebuffer_s=10.0) as speaker:
-        speaker.play_pcm_stream(reply(speaker), 24_000)
+        assert speaker.play_pcm_stream(reply(speaker), 24_000)  # cut short
         assert taken == [0, 1]  # the piece after the stop was the last taken, and none of it went in
         assert not np.frombuffer(bytes(speaker._stream.played), np.int16).any()  # cut before it played
-        speaker.play_pcm_stream([np.full(2400, 3000, np.int16).tobytes()], 24_000)
+        assert not speaker.play_pcm_stream([np.full(2400, 3000, np.int16).tobytes()], 24_000)
         played = np.frombuffer(bytes(speaker._stream.played), np.int16)
     assert (played == 3000).sum() == 2400

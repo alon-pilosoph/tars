@@ -12,9 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 from openai import APIConnectionError
 
-import voice_assistant.assistant as assistant_module
 from voice_assistant.assistant import Assistant
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
+from voice_assistant.body import Recorded
 from voice_assistant.conversations import ConversationLog
 from voice_assistant.events import EventLog
 from voice_assistant.stt import BufferedSession
@@ -66,15 +66,6 @@ class FakeTrigger:
         self.resets += 1
 
 
-class FakeSpeaker:
-    """Plays nothing: a test that wants to hear what was said replaces play_pcm_stream."""
-
-    stops = 0
-
-    def stop(self):
-        self.stops += 1
-
-
 def raising(error: Exception):
     def fail(*args, **kwargs):
         raise error
@@ -117,11 +108,6 @@ def fake_openai_chat(reply_for, calls_for=None, search_for=None):
 
 
 @pytest.fixture
-def speaker():
-    return FakeSpeaker()
-
-
-@pytest.fixture
 def log(tmp_path):
     return EventLog(tmp_path / "events")
 
@@ -136,34 +122,84 @@ def client(log):
     return TestClient(create_app(log))
 
 
-class ScriptedRecorder:
-    """record() returns the next scripted utterance (None = nobody spoke) and logs the timeout it was given.
+class Asleep(Exception):
+    """FakeBody's wait with no wakes left: it ends run_forever, which never returns on its own."""
 
-    An utterance can be a list: "pause" and "resume" events, then the utterance, e.g. ["pause", "resume", "pause", pcm].
-    """
 
-    trailing_silence_s = 0.0
+class FakeBody:
+    """A body (body.py) for tests: scripted wakes and utterances in, what was played out.
 
-    def __init__(self, script):
+    Each wait takes the next of `wakes`: a Wake, or a function given `due` that returns one (a button pressed while it
+    waits); with none left, it raises Asleep. Each record takes the next of `script`, the utterance (None = nobody
+    spoke), and logs the timeout it was given. An utterance can be a list: "pause" and "resume" events, then the
+    utterance, e.g. ["pause", "resume", "pause", pcm]. Each play takes all its audio (`played`, chunk by chunk;
+    `plays`, one bytes a play), then calls `on_play` with it, if set: a test's stop button. The plays numbered in
+    `cuts` (from 0) it cuts short itself, as one that heard "stop" over TARS would."""
+
+    set_muted = None
+
+    def __init__(self, script=(), wakes=(), hears_while_speaking=False):
         self.script = list(script)
+        self.wakes = list(wakes)
+        self.hears_while_speaking = hears_while_speaking
+        self.waits = 0
         self.timeouts = []
         self.longest = []  # each record()'s max_s: None for the configured longest
         self.leads = []  # each record()'s lead: what followed the wake word, or None
+        self.played: list[bytes] = []
+        self.plays: list[bytes] = []
+        self.pauses = 0  # plays that shut the mic: all but those it went on listening through
+        self.stops = 0
+        self.on_play = None
+        self.cuts: set[int] = set()
+        self._cut = False
 
-    def record(self, mic, start_timeout_s=None, on_pause=None, on_resume=None, max_s=None, **kw):
+    def wait(self, due):
+        self.waits += 1
+        if not self.wakes:
+            raise Asleep
+        wake = self.wakes.pop(0)
+        return wake(due) if callable(wake) else wake
+
+    def record(self, start_timeout_s=None, on_pause=None, on_resume=None, max_s=None, **kw):
         self.timeouts.append(start_timeout_s)
         self.longest.append(max_s)
         self.leads.append(kw.get("lead"))
         entry = self.script.pop(0)
         if not isinstance(entry, list):
-            return entry
+            return None if entry is None else Recorded(entry, 0.0)
         *events, pcm = entry
         for event in events:
             if event == "pause" and on_pause:
                 on_pause(pcm)
             elif event == "resume" and on_resume:
                 on_resume()
-        return pcm
+        return None if pcm is None else Recorded(pcm, 0.0)
+
+    def play(self, audio, sample_rate, on_first_audio=None, listening=False):
+        self._cut = False
+        if not listening:
+            self.pauses += 1
+        chunks = []
+        for chunk in audio:
+            if on_first_audio and not chunks:
+                on_first_audio()
+            chunks.append(chunk)
+        self.played += chunks
+        self.plays.append(b"".join(chunks))
+        if self.on_play:
+            self.on_play(chunks)
+        return self._cut or len(self.plays) - 1 in self.cuts
+
+    def stop(self):
+        self.stops += 1
+        self._cut = True
+
+    def discard(self):
+        pass
+
+    def clear(self):
+        pass
 
 
 class ScriptedTranscriber:
@@ -220,35 +256,13 @@ class RecordingBrain:
         self.remembered.append((asked, said))
 
 
-class SilentReply:
-    """A StreamedReply that reads the whole reply at once and makes no audio."""
-
-    def __init__(self, pieces, voice, on_sentence, made_ahead=None):
-        list(pieces)
-
-    def __iter__(self):
-        return iter([])
-
-    def stop(self):
-        pass
-
-
-@pytest.fixture
-def no_tts(monkeypatch):
-    monkeypatch.setattr(assistant_module, "StreamedReply", SilentReply)
-
-
-def make_assistant(speaker, utterances, transcripts, replies=(), journal=None, clock=time.monotonic, elsewhere=None):
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: list(chunks)
+def make_assistant(utterances, transcripts, replies=(), journal=None, clock=time.monotonic, elsewhere=None):
+    """An assistant whose FakeBody records `utterances`, transcribed as `transcripts`, and whose brain replies
+    `replies`, then "ok"; its voice says every sentence as b"did-you-call-me"."""
     voice = types.SimpleNamespace(sample_rate=24_000, stream=lambda text: iter([b"did-you-call-me"]), warm=lambda: None)
     brain = RecordingBrain(replies)
-    recorder = ScriptedRecorder(utterances)
-    trigger = types.SimpleNamespace(last_audio=None, after_name=None)
     assistant = Assistant(
-        FakeMic(),
-        speaker,
-        trigger,
-        recorder,
+        FakeBody(utterances),
         ScriptedTranscriber(transcripts),
         brain,
         voice,

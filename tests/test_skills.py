@@ -212,12 +212,11 @@ def due(*skills):
     return clock
 
 
-def test_a_skill_due_is_a_turn_said_after_a_chime_and_its_answer_heard_without_the_wake_word(speaker):
+def test_a_skill_due_is_a_turn_said_after_a_chime_and_its_answer_heard_without_the_wake_word():
     assistant, brain = make_assistant(
-        speaker, [speech(), None], ["twelve"], replies=["Alon, should I put the news on?", "Channel 12 is on."]
+        [speech(), None], ["twelve"], replies=["Alon, should I put the news on?", "Channel 12 is on."]
     )
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    played = assistant.body.played
     assistant.voice.stream = lambda text: iter([text.encode()])
     assistant._skill_clock = due(NEWS)
     assert assistant._due()
@@ -228,24 +227,23 @@ def test_a_skill_due_is_a_turn_said_after_a_chime_and_its_answer_heard_without_t
     assert not assistant._due()
 
 
-def test_a_persons_own_skill_runs_as_theirs(speaker):
-    assistant, brain = make_assistant(speaker, [None], [], replies=["Morning."])
+def test_a_persons_own_skill_runs_as_theirs():
+    assistant, brain = make_assistant([None], [], replies=["Morning."])
     assistant._skill_clock = due(Skill("morning", "Tell me the news.", ("19:55",), owner="Alon"))
     assistant.run_skills(follow_up_s=4.0)
     assert brain.requests[0].speaker == "Alon"  # their feeds, and what they like
 
 
-def test_a_skill_with_nothing_to_do_says_nothing_and_is_forgotten(speaker):
-    assistant, brain = make_assistant(speaker, [], [], replies=[SKIP])
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+def test_a_skill_with_nothing_to_do_says_nothing_and_is_forgotten():
+    assistant, brain = make_assistant([], [], replies=[SKIP])
+    played = assistant.body.played
     assistant._skill_clock = due(NEWS)
     assistant.run_skills(follow_up_s=4.0)
     assert played == [] and brain.forgotten == 1
 
 
-def test_a_skill_whose_turn_fails_waits_for_its_next_time(speaker):
-    assistant, brain = make_assistant(speaker, [], [])
+def test_a_skill_whose_turn_fails_waits_for_its_next_time():
+    assistant, brain = make_assistant([], [])
 
     def down(text, request=None):
         raise ConnectionError("no model")
@@ -256,34 +254,34 @@ def test_a_skill_whose_turn_fails_waits_for_its_next_time(speaker):
     assert brain.forgotten == 1 and not assistant._due()
 
 
-def test_muted_a_skill_that_asks_unmutes_it_for_the_answer_then_mutes_it_again(speaker):
-    assistant, brain = make_assistant(speaker, [speech(), None], ["no thanks"], replies=["News on?", "Okay."])
+def test_muted_a_skill_that_asks_unmutes_it_for_the_answer_then_mutes_it_again():
+    assistant, brain = make_assistant([speech(), None], ["no thanks"], replies=["News on?", "Okay."])
     switched = []
 
     def button(muted):
         switched.append(muted)
         assistant.mute(muted)
 
-    assistant.set_muted = button
+    assistant.body.set_muted = button
     assistant.mute(True)
     assistant._skill_clock = due(NEWS)
     assistant.run_skills(follow_up_s=4.0)
     assert brain.asked[1] == "[Follow-up, no wake word] no thanks"
     assert switched == [False, True] and assistant.muted
     # Only the answer, a few seconds of it, and no listening for more once it's replied: the room was muted.
-    assert assistant.recorder.longest == [assistant_module.ANSWER_ONLY_S]
+    assert assistant.body.longest == [assistant_module.ANSWER_ONLY_S]
 
 
-def test_unmuted_a_skill_listens_for_follow_ups_as_any_conversation(speaker):
-    assistant, _ = make_assistant(speaker, [speech(), None], ["no thanks"], replies=["News on?", "Okay."])
+def test_unmuted_a_skill_listens_for_follow_ups_as_any_conversation():
+    assistant, _ = make_assistant([speech(), None], ["no thanks"], replies=["News on?", "Okay."])
     assistant._skill_clock = due(NEWS)
     assistant.run_skills(follow_up_s=4.0)
-    assert assistant.recorder.longest == [None, None]  # the answer, then the follow-up window
+    assert assistant.body.longest == [None, None]  # the answer, then the follow-up window
 
 
-def test_muted_a_skill_that_only_tells_stays_muted(speaker):
-    assistant, _ = make_assistant(speaker, [None], [], replies=["The news is on."])
-    assistant.set_muted = lambda muted: pytest.fail("nothing to listen for")
+def test_muted_a_skill_that_only_tells_stays_muted():
+    assistant, _ = make_assistant([None], [], replies=["The news is on."])
+    assistant.body.set_muted = lambda muted: pytest.fail("nothing to listen for")
     assistant.mute(True)
     assistant._skill_clock = due(NEWS)
     assistant.run_skills(follow_up_s=4.0)
@@ -417,13 +415,13 @@ def test_someone_who_came_home_by_their_phone_sets_off_a_skill_that_may_change_t
     assert due.why == "Stacey just came home (nobody was home)" and due.door == ""
 
 
-def test_a_skill_a_doors_lock_set_off_runs_reading_the_house_only(speaker):
+def test_a_skill_a_doors_lock_set_off_runs_reading_the_house_only():
     house = House()
     clock = house.clock(on({"event": "arrives", "who": "stacey"}, "welcome"))
     clock.look(SUNDAY)
     house.home["Stacey"], house.doors["Stacey"] = True, "front door"
     clock.look(SUNDAY)
-    assistant, brain = make_assistant(speaker, [None], [], replies=["Welcome home, Stacey."])
+    assistant, brain = make_assistant([None], [], replies=["Welcome home, Stacey."])
     assistant._skill_clock = clock
     assistant.run_skills(follow_up_s=4.0)
     assert brain.requests[0].by_door == "front door"  # home.py refuses its changes
@@ -522,9 +520,9 @@ def test_runs_are_kept_and_told(skills):
     assert "morning" not in teach(skills, speaker="Stacey", action="runs")
 
 
-def test_a_run_is_recorded_with_what_it_said(speaker):
+def test_a_run_is_recorded_with_what_it_said():
     runs = []
-    assistant, _ = make_assistant(speaker, [None], [], replies=["News?"])
+    assistant, _ = make_assistant([None], [], replies=["News?"])
     clock = Clock(lambda: [NEWS], ALOUD, record=lambda skill, why, said: runs.append((skill.name, why, said)))
     clock.look(SUNDAY)
     assistant._skill_clock = clock
@@ -905,12 +903,11 @@ def house_brain(brain, *answers):
     return brain
 
 
-def test_a_one_off_done_is_said_and_gone(speaker, tonight):
+def test_a_one_off_done_is_said_and_gone(tonight):
     at_five(tonight)
-    assistant, brain = make_assistant(speaker, [None], [], replies=["Done: the AC's back on, cool at 23°."])
+    assistant, brain = make_assistant([None], [], replies=["Done: the AC's back on, cool at 23°."])
     house_brain(brain, ("the ac on", "done: the AC is on, cool 23°"))
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    played = assistant.body.played
     assistant.voice.stream = lambda text: iter([text.encode()])
     assistant._skill_clock = clock = taker(tonight, ALOUD, BOTH_UP)
     clock.look()
@@ -918,12 +915,11 @@ def test_a_one_off_done_is_said_and_gone(speaker, tonight):
     assert b"Done: the AC's back on, cool at 23\xc2\xb0." in played and tonight.all() == []
 
 
-def test_a_one_off_the_house_didnt_make_isnt_said_and_is_tried_again(speaker, tonight):
+def test_a_one_off_the_house_didnt_make_isnt_said_and_is_tried_again(tonight):
     at_five(tonight)
-    assistant, brain = make_assistant(speaker, [], [], replies=["Done: the AC's back on."])
+    assistant, brain = make_assistant([], [], replies=["Done: the AC's back on."])
     house_brain(brain, ("the ac on", "not confirmed: the AC didn't change"))
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    played = assistant.body.played
     assistant._skill_clock = clock = taker(tonight, ALOUD, BOTH_UP)
     clock.look()
     assistant.run_skills(follow_up_s=4.0)
@@ -933,9 +929,9 @@ def test_a_one_off_the_house_didnt_make_isnt_said_and_is_tried_again(speaker, to
     assert "the last try didn't happen (the ac on: not confirmed: the AC didn't change)" in due.why
 
 
-def test_a_one_off_whose_turn_fails_is_tried_again(speaker, tonight):
+def test_a_one_off_whose_turn_fails_is_tried_again(tonight):
     at_five(tonight)
-    assistant, brain = make_assistant(speaker, [], [])
+    assistant, brain = make_assistant([], [])
 
     def down(text, request=None):
         raise ConnectionError("no model")
@@ -949,9 +945,9 @@ def test_a_one_off_whose_turn_fails_is_tried_again(speaker, tonight):
     assert "(something went wrong on my side)" in clock.take()[0].why
 
 
-def test_a_one_off_done_before_its_turn_failed_isnt_done_again_and_whoever_asked_is_told(speaker, tonight):
+def test_a_one_off_done_before_its_turn_failed_isnt_done_again_and_whoever_asked_is_told(tonight):
     at_five(tonight)
-    assistant, brain = make_assistant(speaker, [], [])
+    assistant, brain = make_assistant([], [])
 
     def cut_off(text, request=None):
         request.changed("the ac on", "done: the AC is on, cool 23°")
@@ -964,11 +960,10 @@ def test_a_one_off_done_before_its_turn_failed_isnt_done_again_and_whoever_asked
     assert tonight.all() == [] and messages(tonight) == [("Alon", VOICE, "As you asked: done: the AC is on, cool 23°.")]
 
 
-def test_one_to_answer_in_a_chat_run_here_while_telegram_is_down_is_posted_there_once_its_back(speaker, tonight):
+def test_one_to_answer_in_a_chat_run_here_while_telegram_is_down_is_posted_there_once_its_back(tonight):
     at_five(tonight, request=types.SimpleNamespace(speaker="Alon", by_chat=True))
-    assistant, brain = make_assistant(speaker, [], [], replies=["Done: the AC's back on."])
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    assistant, brain = make_assistant([], [], replies=["Done: the AC's back on."])
+    played = assistant.body.played
     assistant._skill_clock = clock = taker(tonight, ALOUD, {"assistant": ASSISTANT})
     clock.look()
     assistant.run_skills(follow_up_s=4.0)
@@ -976,9 +971,9 @@ def test_one_to_answer_in_a_chat_run_here_while_telegram_is_down_is_posted_there
     assert tonight.all() == [] and messages(tonight) == [("Alon", TELEGRAM, "Done: the AC's back on.")]
 
 
-def test_a_one_off_done_whose_answer_cant_be_said_now_is_said_with_the_reminders(speaker, tonight, monkeypatch):
+def test_a_one_off_done_whose_answer_cant_be_said_now_is_said_with_the_reminders(tonight, monkeypatch):
     at_five(tonight)
-    assistant, _ = make_assistant(speaker, [], [], replies=["Done: the AC's back on."])
+    assistant, _ = make_assistant([], [], replies=["Done: the AC's back on."])
     monkeypatch.setattr(assistant, "_made_now", lambda lines: {})  # the voice can't be reached
     assistant._skill_clock = clock = taker(tonight, ALOUD, BOTH_UP)
     clock.look()

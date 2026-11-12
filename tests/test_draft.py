@@ -11,12 +11,6 @@ from voice_assistant.speech import StreamedReply
 from .conftest import make_assistant, speech
 
 
-def played_by(speaker):
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
-    return played
-
-
 def test_stopping_a_reply_stuck_on_the_network_does_not_wait_for_it():
     network = threading.Event()
 
@@ -32,53 +26,52 @@ def test_stopping_a_reply_stuck_on_the_network_does_not_wait_for_it():
     assert not stopped.is_alive()
 
 
-def test_an_answer_started_in_a_pause_is_the_one_played(speaker):
-    assistant, brain = make_assistant(speaker, [["pause", speech()]], ["what time is it"], replies=["It's noon."])
+def test_an_answer_started_in_a_pause_is_the_one_played():
+    assistant, brain = make_assistant([["pause", speech()]], ["what time is it"], replies=["It's noon."])
     assistant.voice.stream = lambda text: iter([text.encode()])
-    played = played_by(speaker)
+    played = assistant.body.played
     assistant.converse(follow_up_s=0)
     assert brain.asked == ["what time is it"] and played == [b"It's noon."] and brain.forgotten == 0
 
 
-def test_talking_again_throws_the_early_answer_away(speaker):
+def test_talking_again_throws_the_early_answer_away():
     assistant, brain = make_assistant(
-        speaker,
         [["pause", "resume", "pause", speech()]],
         ["what time", "what time is it in Tokyo"],
         replies=["Early.", "It's 3 AM."],
     )
     assistant.voice.stream = lambda text: iter([text.encode()])
-    played = played_by(speaker)
+    played = assistant.body.played
     assistant.converse(follow_up_s=0)
     assert played == [b"It's 3 AM."]
     assert brain.asked == ["what time", "what time is it in Tokyo"] and brain.forgotten == 1
 
 
-def test_without_a_pause_it_answers_at_the_end(speaker):
-    assistant, brain = make_assistant(speaker, [speech()], ["hello"], replies=["Hello."])
+def test_without_a_pause_it_answers_at_the_end():
+    assistant, brain = make_assistant([speech()], ["hello"], replies=["Hello."])
     assistant.voice.stream = lambda text: iter([text.encode()])
-    played = played_by(speaker)
+    played = assistant.body.played
     assistant.converse(follow_up_s=0)
     assert played == [b"Hello."] and brain.asked == ["hello"]
 
 
-def test_a_reply_that_fails_while_playing_is_stopped_and_forgotten(speaker):
-    assistant, brain = make_assistant(speaker, [speech()], ["tell me a story"], replies=["Once. Upon. A time."])
+def test_a_reply_that_fails_while_playing_is_stopped_and_forgotten():
+    assistant, brain = make_assistant([speech()], ["tell me a story"], replies=["Once. Upon. A time."])
     interrupted = []
     brain.interrupt = lambda: interrupted.append(True)
 
-    def fail(chunks, *args, **kwargs):
+    def fail(audio, *args, **kwargs):
         raise TimeoutError("the voice stalled")
 
-    speaker.play_pcm_stream = fail
+    assistant.body.play = fail
     assistant.say_error = lambda: None
     assistant.converse(follow_up_s=0)
     with assistant._thinking:  # the discarded draft has been cleaned up once it lets go
         assert brain.forgotten == 1 and interrupted == [True]
 
 
-def test_a_question_the_brain_failed_on_is_forgotten(speaker):
-    assistant, brain = make_assistant(speaker, [["pause", speech()]], ["yes, the lights"])
+def test_a_question_the_brain_failed_on_is_forgotten():
+    assistant, brain = make_assistant([["pause", speech()]], ["yes, the lights"])
 
     def broken(text, request=None):
         brain.asked.append(text)
@@ -135,15 +128,13 @@ def test_a_reply_thrown_away_stops_its_sentences_and_frees_the_voice():
     assert closed.wait(1)
 
 
-def test_what_an_answer_does_waits_for_the_turn_and_a_thrown_away_one_does_nothing(speaker):
+def test_what_an_answer_does_waits_for_the_turn_and_a_thrown_away_one_does_nothing():
     assistant, brain = make_assistant(
-        speaker,
         [["pause", "resume", "pause", speech()]],
         ["unlock the", "unlock the door"],
         replies=["Early.", "Unlocked."],
     )
     assistant.voice.stream = lambda text: iter([text.encode()])
-    played_by(speaker)
     assistant.converse(follow_up_s=0)
     thrown_away, played = brain.requests
     assert played.by_voice and thrown_away.by_voice

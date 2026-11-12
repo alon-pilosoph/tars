@@ -30,8 +30,8 @@ def ask(action: str) -> dict:
     return {"device": DEVICE, "action": action}
 
 
-def test_a_chat_mutes_and_unmutes_the_assistant_as_its_button_does(speaker, short_folder):
-    assistant, _ = make_assistant(speaker, [], [])
+def test_a_chat_mutes_and_unmutes_the_assistant_as_its_button_does(short_folder):
+    assistant, _ = make_assistant([], [])
     pressed = []
 
     def button(muted: bool) -> None:  # start_buttons' set_muted: the speakerphone's mute, then the assistant's
@@ -52,8 +52,8 @@ def test_a_chat_mutes_and_unmutes_the_assistant_as_its_button_does(speaker, shor
         server.close()
 
 
-def test_an_assistant_with_no_mute_to_work_says_so(speaker, short_folder):
-    assistant, _ = make_assistant(speaker, [], [])
+def test_an_assistant_with_no_mute_to_work_says_so(short_folder):
+    assistant, _ = make_assistant([], [])
     server = control.Server(short_folder, assistant.control_ops())  # not Linux: no buttons, no mute
     try:
         said = chat(MicMute(short_folder)).call(ask("on"), Request())
@@ -74,8 +74,8 @@ def test_a_mute_the_assistant_didnt_take_is_not_confirmed():
     assert chat(mic).call(ask("off"), Request()).startswith("not confirmed:")
 
 
-def test_a_chats_say_is_announced_word_for_word(speaker, short_folder):
-    assistant, _ = make_assistant(speaker, [], [])
+def test_a_chats_say_is_announced_word_for_word(short_folder):
+    assistant, _ = make_assistant([], [])
     assistant.announcements = Announcements()
     server = control.Server(short_folder, assistant.control_ops())
     try:

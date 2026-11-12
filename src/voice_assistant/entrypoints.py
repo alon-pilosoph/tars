@@ -28,13 +28,13 @@ from .wiring import (
     ha_bundle_path,
     house_commands,
     listen_for_update_taps,
+    local_body,
     local_first,
     maintainer_chats,
     make_backup,
     make_brain,
     make_browser_client,
     make_chat_when_out,
-    make_echo_canceller,
     make_errands,
     make_event_log,
     make_ha_config,
@@ -46,7 +46,6 @@ from .wiring import (
     make_reminders,
     make_s3,
     make_speaker_id,
-    make_trigger,
     own_speaker,
     phrase_folder,
     reminder_tools,
@@ -536,6 +535,7 @@ def restore_backup(cfg: Config, root: Path) -> None:
 def typed(cfg: Config, root: Path) -> None:
     """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
     from .assistant import UNPROMPTED_WAIT_S, Assistant
+    from .body import LocalBody
 
     made: list = []  # the assistant, once made: what the TV agent says when it's done is said through it
     # One at a time: the agent's line, from its own thread, never over a reply or in the middle of one.
@@ -562,7 +562,7 @@ def typed(cfg: Config, root: Path) -> None:
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
     ) as speaker:
-        assistant = Assistant(None, speaker, None, None, None, brain, voice)
+        assistant = Assistant(LocalBody(None, speaker, None, None), None, brain, voice)
         made.append(assistant)
         while True:
             try:
@@ -619,22 +619,11 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         transcriber = local_first(cfg, root, commands)
     elif cfg.home.local_first:
         print("(house commands: none, with no devices in the house; local_first is off, the cloud hears every request)")
-    recorder = make_recorder(cfg, root)
-    echo = make_echo_canceller(cfg)
-    speaker = Speaker(
-        find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s, echo
-    )
-    with Microphone(find_device(cfg.audio.input_device, "input"), echo) as mic, speaker:
-        if echo:
-            echo.set_delay(mic.latency + speaker.latency)
-        journal = Journal(events)
-        journal.keep_pruning(cfg.learning.keep_audio_days)
-        trigger, idle_message = make_trigger(cfg, push_to_talk, root, journal)
+    journal = Journal(events)
+    journal.keep_pruning(cfg.learning.keep_audio_days)
+    with local_body(cfg, root, voice.sample_rate, push_to_talk, journal) as (body, idle_message):
         assistant = Assistant(
-            mic,
-            speaker,
-            trigger,
-            recorder,
+            body,
             transcriber,
             brain,
             voice,
@@ -651,7 +640,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             commands=commands,
         )
         clocks += [clock] if clock else []
-        set_muted = assistant.set_muted = start_buttons(cfg, volume, assistant, root)
+        set_muted = body.set_muted = start_buttons(cfg, volume, assistant, root)
         if events and not push_to_talk:
             from .control import Server
 

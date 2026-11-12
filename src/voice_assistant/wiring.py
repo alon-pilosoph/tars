@@ -10,6 +10,7 @@ import json
 import platform
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,9 +38,10 @@ from .versions import pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from .backup import S3, Backup
+    from .body import LocalBody
     from .events import EventLog
     from .health import Report
     from .llm import QuickService
@@ -169,6 +171,27 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
     except (FileNotFoundError, ValueError) as e:  # a wake model or check that's missing or broken
         raise ConfigError(str(e)) from None
     return trigger, f"Say '{trigger.phrase}'..."
+
+
+@contextmanager
+def local_body(
+    cfg: Config, root: Path, sample_rate: int, push_to_talk: bool, journal
+) -> Iterator[tuple[LocalBody, str]]:
+    """The Pi's body (body.py) for the assistant, open while it's in use: the mic and the speaker, with the echo
+    canceller between them, the wake word, or Enter with `push_to_talk`, and the recorder; and what to show while it
+    waits for its name. `sample_rate`: the voice's, which the speaker plays at."""
+    from .audio import Microphone, Speaker, find_device
+    from .body import LocalBody
+    from .recorder import make_recorder
+
+    recorder = make_recorder(cfg, root)
+    echo = make_echo_canceller(cfg)
+    speaker = Speaker(find_device(cfg.audio.output_device, "output"), sample_rate, cfg.audio.playback_prebuffer_s, echo)
+    with Microphone(find_device(cfg.audio.input_device, "input"), echo) as mic, speaker:
+        if echo:
+            echo.set_delay(mic.latency + speaker.latency)
+        trigger, idle_message = make_trigger(cfg, push_to_talk, root, journal)
+        yield LocalBody(mic, speaker, trigger, recorder), idle_message
 
 
 def make_speaker_id(cfg: Config, root: Path):

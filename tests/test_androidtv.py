@@ -403,10 +403,9 @@ def test_a_stopped_agent_says_nothing():
 # Saying it.
 
 
-def test_what_tars_announces_is_said_after_a_chime_and_joins_the_conversation(speaker):
-    assistant, brain = make_assistant(speaker, [None], [])
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+def test_what_tars_announces_is_said_after_a_chime_and_joins_the_conversation():
+    assistant, brain = make_assistant([None], [])
+    played = assistant.body.played
     assistant.voice.stream = lambda text: iter([text.encode()])
     assistant.announcements = Announcements()
     assistant.announcements.add("Toy Story is playing.")
@@ -416,12 +415,11 @@ def test_what_tars_announces_is_said_after_a_chime_and_joins_the_conversation(sp
     assert not assistant._due()
 
 
-def announcing(speaker, down):
+def announcing(down):
     """An assistant whose voice can't make the lines in `down`, and what it played; the clock moves by now[0]."""
     now = [1000.0]
-    assistant, brain = make_assistant(speaker, [], [])
-    played = []
-    speaker.play_pcm_stream = lambda chunks, *a, **kw: played.extend(chunks)
+    assistant, brain = make_assistant([], [])
+    played = assistant.body.played
 
     def voice(text):
         if text in down:
@@ -433,9 +431,9 @@ def announcing(speaker, down):
     return assistant, brain, played, now
 
 
-def test_what_the_voice_couldnt_say_waits_silently_and_is_said_once_it_can(speaker):
+def test_what_the_voice_couldnt_say_waits_silently_and_is_said_once_it_can():
     down = {"Toy Story is playing."}
-    assistant, brain, played, now = announcing(speaker, down)
+    assistant, brain, played, now = announcing(down)
     assistant.announcements.add("Toy Story is playing.")
     assistant.say_announcements()
     assert played == [] and brain.remembered == []  # not even the chime
@@ -447,9 +445,9 @@ def test_what_the_voice_couldnt_say_waits_silently_and_is_said_once_it_can(speak
     assert played == [chime(24_000), b"Toy Story is playing."] and brain.remembered == ["Toy Story is playing."]
 
 
-def test_what_couldnt_be_said_keeps_its_place_and_a_new_line_is_tried_at_once(speaker):
+def test_what_couldnt_be_said_keeps_its_place_and_a_new_line_is_tried_at_once():
     down = {"Netflix is open."}
-    assistant, _, played, _ = announcing(speaker, down)
+    assistant, _, played, _ = announcing(down)
     assistant.announcements.add("Netflix is open.")
     assistant.announcements.add("Toy Story is playing.")
     assistant.say_announcements()
@@ -462,9 +460,9 @@ def test_what_couldnt_be_said_keeps_its_place_and_a_new_line_is_tried_at_once(sp
     assert played[1:] == [b"Netflix is open.", b"The volume is at 20."]
 
 
-def test_a_line_that_waited_too_long_is_old_news_and_dropped(speaker):
+def test_a_line_that_waited_too_long_is_old_news_and_dropped():
     down = {"Toy Story is playing."}
-    assistant, _, played, now = announcing(speaker, down)
+    assistant, _, played, now = announcing(down)
     assistant.announcements.add("Toy Story is playing.")
     assistant.say_announcements()
     down.clear()
@@ -473,16 +471,16 @@ def test_a_line_that_waited_too_long_is_old_news_and_dropped(speaker):
     assert played == [] and not assistant.announcements.waiting()
 
 
-def test_a_reply_to_an_announcement_is_heard_without_the_wake_word(speaker):
-    assistant, brain = make_assistant(speaker, [speech(), None], ["the first one"], replies=["Playing Toy Story."])
+def test_a_reply_to_an_announcement_is_heard_without_the_wake_word():
+    assistant, brain = make_assistant([speech(), None], ["the first one"], replies=["Playing Toy Story."])
     assistant.announcements = Announcements()
     assistant.announcements.add("Toy Story, or Toy Story 4?")
     assistant.say_announcements(follow_up_s=4.0)
     assert brain.asked == ["[Follow-up, no wake word] the first one"]
 
 
-def test_an_answer_to_an_announcements_question_that_came_out_as_no_words_is_asked_for_again(speaker):
-    assistant, brain = make_assistant(speaker, [speech(), speech(), None], ["", "twelve"], replies=["On it."])
+def test_an_answer_to_an_announcements_question_that_came_out_as_no_words_is_asked_for_again():
+    assistant, brain = make_assistant([speech(), speech(), None], ["", "twelve"], replies=["On it."])
     said = []
     assistant.say = lambda text, **kw: said.append(text) or True
     assistant.announcements = Announcements()
@@ -492,9 +490,9 @@ def test_an_answer_to_an_announcements_question_that_came_out_as_no_words_is_ask
     assert brain.asked == ["[Follow-up, no wake word] twelve"]
 
 
-def test_news_that_asks_nothing_doesnt_listen_after_it(speaker):
+def test_news_that_asks_nothing_doesnt_listen_after_it():
     # "Channel 12 is on.", then the news itself saying "eight hours." was once taken for a timer.
-    assistant, brain = make_assistant(speaker, [speech(), None], ["eight hours."], replies=["Timer set."])
+    assistant, brain = make_assistant([speech(), None], ["eight hours."], replies=["Timer set."])
     assistant.announcements = Announcements()
     assistant.announcements.add("Channel 12 is on.")
     assistant.say_announcements(follow_up_s=4.0)
@@ -559,25 +557,25 @@ def muted_with_a_button(assistant):
         switched.append(muted)
         assistant.mute(muted)
 
-    assistant.set_muted = button
+    assistant.body.set_muted = button
     assistant.mute(True)
     return switched
 
 
-def test_muted_a_question_it_announces_unmutes_it_just_for_the_answer(speaker):
-    assistant, brain = make_assistant(speaker, [speech(), None], ["the first one"], replies=["Playing Toy Story."])
+def test_muted_a_question_it_announces_unmutes_it_just_for_the_answer():
+    assistant, brain = make_assistant([speech(), None], ["the first one"], replies=["Playing Toy Story."])
     switched = muted_with_a_button(assistant)
     assistant.announcements = Announcements()
     assistant.announcements.add("Toy Story, or Toy Story 4?")
     assistant.say_announcements(follow_up_s=4.0)
     assert brain.asked == ["[Follow-up, no wake word] the first one"]
     assert switched == [False, True] and assistant.muted
-    assert assistant.recorder.longest == [assistant_module.ANSWER_ONLY_S]
+    assert assistant.body.longest == [assistant_module.ANSWER_ONLY_S]
 
 
-def test_muted_news_that_asks_nothing_leaves_it_muted(speaker):
-    assistant, _ = make_assistant(speaker, [None], [])
-    assistant.set_muted = lambda muted: pytest.fail("nothing to listen for")
+def test_muted_news_that_asks_nothing_leaves_it_muted():
+    assistant, _ = make_assistant([None], [])
+    assistant.body.set_muted = lambda muted: pytest.fail("nothing to listen for")
     assistant.mute(True)
     assistant.announcements = Announcements()
     assistant.announcements.add("Toy Story is playing.")

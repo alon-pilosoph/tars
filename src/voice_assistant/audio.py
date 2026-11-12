@@ -386,8 +386,9 @@ class Speaker:
         chunks: Iterable[bytes],
         sample_rate: int,
         on_first_audio: Callable[[], None] | None = None,
-    ) -> None:
-        """Play 16-bit mono PCM as it arrives, from its first sound, and return once its last sound has played."""
+    ) -> bool:
+        """Play 16-bit mono PCM as it arrives, from its first sound, and return once its last sound has played: True
+        if stop() cut it short."""
         if sample_rate != self.sample_rate:
             raise ValueError(f"Speaker runs at {self.sample_rate} Hz, got {sample_rate} Hz audio")
         with self._lock:
@@ -431,6 +432,7 @@ class Speaker:
                 # Voices end with silence; dropping it frees the mic as soon as TARS stops making a sound.
                 del self._buffer[audible_bytes(self._buffer) :]
                 left_s = len(self._buffer) / 2 / self._rate
+                stopped = self._stopped
         if not self._drained.wait(left_s + SPEAKER_STALL_S):
             with self._lock:
                 self._buffer.clear()
@@ -439,6 +441,7 @@ class Speaker:
             )
         # The last samples are still in the device's own buffer when the callback hands them over.
         time.sleep(self._stream.latency)
+        return stopped
 
     def chime(self, freq: float = 880.0, duration_s: float = 0.12, volume: float = 0.3) -> None:
         t = np.linspace(0, duration_s, int(self.sample_rate * duration_s), endpoint=False)
