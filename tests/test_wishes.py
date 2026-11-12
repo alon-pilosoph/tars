@@ -580,8 +580,8 @@ def test_a_wish_offered_to_nobody_is_told_the_plain_way(log, tmp_path):
 
 
 def test_the_maintainers_told_straight_through_telegram_are_those_reached(tmp_path, monkeypatch):
-    from voice_assistant import __main__ as main
     from voice_assistant import telegram
+    from voice_assistant import wiring as main
     from voice_assistant.config import TelegramConfig
 
     shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
@@ -606,8 +606,8 @@ def test_the_maintainers_told_straight_through_telegram_are_those_reached(tmp_pa
 
 @pytest.mark.parametrize("via, channel, due_now", [("chat", "telegram", True), ("voice", "voice", False)])
 def test_whoever_asked_is_told_in_their_chat_or_the_next_time_theyre_heard(log, tmp_path, via, channel, due_now):
-    from voice_assistant.__main__ import make_wishes
     from voice_assistant.config import TelegramConfig
+    from voice_assistant.wiring import make_wishes
 
     shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     cfg = dataclasses.replace(

@@ -34,8 +34,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
-from voice_assistant.__main__ import brain_config, make_openai_client, make_quick_client
 from voice_assistant.config import QUICK_PROVIDERS, LLMConfig, load_config
+from voice_assistant.wiring import brain_config, make_openai_client, make_quick_client
 
 from .costs import RUNS, cost, estimate, load_prices, save_profile
 from .report import compare, gate, summarize, wilson

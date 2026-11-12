@@ -354,12 +354,19 @@ The assistant is `src/voice_assistant/`:
 | The house | `home.py` (the `home` tool, its rules, the `Device` interface, loading plugins), `plugins.py` (a plugin's manifest, its grant and the context scoped to it, its own tools), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), `volume.py` (TARS's own speaker as a device: its sound card's volume through amixer, or the Mac's), `commands.py` (house commands done on the Pi without the model, their replies made ahead, and Vosk hearing them offline), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
 | Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), `doors.py` (a Nuki's lock actions over MQTT, someone opening the door from outside home at once, whose key is whose, learned, and the broker watched), `mosquitto.py` (TARS's own user on the household's Mosquitto, from the installer), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people at a terminal), `recording.py` (recording sessions: scripts, checks, takes), `takes.py` (the assistant's side of them), `control.py` (the socket the web UI asks the assistant over) |
-| The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
+| The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (the command line), `entrypoints.py` (what each option runs: the assistant, `--text`, `--web`, `--telegram`, `--backup` and the rest), `wiring.py` (each part made from `config.toml`, and the `Household`: the parts the processes share), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
 | Downloads | `models.py` (the small local models, on first use) |
 | Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, the services and Telegram, voice, mic, storage, the web UI, Home Assistant and each device in the house, each router, the backup, and systemd's services) |
 | Is it all running | `health.py` (heartbeats, today's counts, the services and their status pages, the machine: what the Status page shows) |
 | The web UI | `webui.py` (server and API), `webui/` (the React page), `tools/webui_demo.py` (demo data) |
+
+Each process starts the same way: `__main__.py` picks the option's entrypoint, which makes a `Household` from
+`config.toml` and asks it for what it uses: the event log, who's home, the voiceprints, the reminders, the skills, the
+feeds, the wishes and TARS knowing itself. Each is made when it's first asked for, once, so the web UI never loads what
+the brain uses, and making one starts nothing: the process starts its own heartbeat, and only the assistant asks the
+routers and listens to the doors. What each process makes its own way, the house (with its own way of saying things),
+the brain and the errands, the entrypoint makes itself.
 
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),
 `tools/` (benchmarks: `latency_bench.py`, `turn_bench.py`, `wakeword_bench.py`, `verifier_bench.py`;

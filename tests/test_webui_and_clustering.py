@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from voice_assistant import __main__ as cli
+from voice_assistant import entrypoints as cli
 from voice_assistant import webui
 from voice_assistant.clustering import MIN_REQUESTS_TO_ENROLL, enroll_named, recluster
 from voice_assistant.config import ConfigError, load_config

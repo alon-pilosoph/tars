@@ -120,7 +120,7 @@ def test_when_the_cloud_fails_local_first_vosk_isnt_asked_twice(speaker, capsys)
 
 
 def test_local_first_needs_vosk(tmp_path):
-    from voice_assistant.__main__ import local_first
+    from voice_assistant.wiring import local_first
 
     shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     with pytest.raises(ConfigError, match="needs Vosk"):
@@ -128,9 +128,9 @@ def test_local_first_needs_vosk(tmp_path):
 
 
 def test_a_spoken_request_waits_for_the_cloud_as_a_spoken_turn_does(tmp_path):
-    from voice_assistant.__main__ import OPENAI_TIMEOUT_S, make_recording_transcriber
     from voice_assistant.config import with_keys
     from voice_assistant.stt import FILE_TIMEOUT_S, SPOKEN_FILE_TIMEOUT_S
+    from voice_assistant.wiring import OPENAI_TIMEOUT_S, make_recording_transcriber
 
     options = []
     client = types.SimpleNamespace(with_options=lambda **kw: options.append(kw) or client)

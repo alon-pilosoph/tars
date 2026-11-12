@@ -31,7 +31,6 @@ from pathlib import Path
 
 from openai import RateLimitError
 
-from voice_assistant.__main__ import api_key, brain_config, make_openai_client, make_quick_client
 from voice_assistant.config import QUICK_PROVIDERS, load_config
 from voice_assistant.events import EventLog
 from voice_assistant.llm import (
@@ -57,6 +56,7 @@ from voice_assistant.reminders import (
     ReminderTools,
     due_at,
 )
+from voice_assistant.wiring import api_key, brain_config, make_openai_client, make_quick_client
 
 REPO = Path(__file__).parents[1]
 VOICES = ["alon", "stacey"]

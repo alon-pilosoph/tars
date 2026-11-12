@@ -447,8 +447,8 @@ def test_a_failed_reply_is_an_error_not_silence(event):
 
 @pytest.mark.parametrize("log_events, typed, sends", [(True, False, True), (False, False, False), (True, True, False)])
 def test_tars_only_sends_things_when_they_can_be_kept(tmp_path, log_events, typed, sends):
-    from voice_assistant.__main__ import brain_config
     from voice_assistant.config import load_config
+    from voice_assistant.wiring import brain_config
 
     cfg = load_config(tmp_path / "none.toml")
     cfg.learning.log_events = log_events

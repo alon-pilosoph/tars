@@ -803,8 +803,8 @@ def test_reminders_set_at_home_are_never_reported_to_a_chat(convos):
 def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path):
     import dataclasses
 
-    from voice_assistant.__main__ import chat_brain_config
     from voice_assistant.config import load_config
+    from voice_assistant.wiring import chat_brain_config
 
     # As shipped: Qwen on Cerebras, Luna at "fast".
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)

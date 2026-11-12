@@ -154,9 +154,9 @@ def test_the_house_says_which_devices_take_a_temperature(tmp_path):
     import types
     from pathlib import Path
 
-    from voice_assistant.__main__ import house_commands
     from voice_assistant.config import load_config
     from voice_assistant.home import Device
+    from voice_assistant.wiring import house_commands
 
     class AC(Device):
         actions = (STATUS, ON, OFF, SET)

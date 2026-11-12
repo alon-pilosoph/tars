@@ -21,7 +21,6 @@ import soundfile as sf
 from dotenv import dotenv_values
 from scipy.signal import resample_poly
 
-from voice_assistant.__main__ import make_openai_client, make_pipeline
 from voice_assistant.assistant import Assistant
 from voice_assistant.audio import (
     BLOCK_SAMPLES,
@@ -32,6 +31,7 @@ from voice_assistant.audio import (
 from voice_assistant.config import RecorderConfig, load_config
 from voice_assistant.recorder import make_recorder
 from voice_assistant.vad import SileroVAD
+from voice_assistant.wiring import make_openai_client, make_pipeline
 
 REPO = Path(__file__).parents[1]
 QUESTIONS = [

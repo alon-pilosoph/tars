@@ -340,7 +340,7 @@ def cli_config(**web):
 
 
 def test_an_invite_over_https_needs_web_link_to_be_a_name(tmp_path):
-    from voice_assistant import __main__ as cli
+    from voice_assistant import entrypoints as cli
     from voice_assistant.config import ConfigError
 
     with pytest.raises(ConfigError, match=r"\[web\] link"):
@@ -348,7 +348,7 @@ def test_an_invite_over_https_needs_web_link_to_be_a_name(tmp_path):
 
 
 def test_links_without_web_link_are_https_when_the_web_ui_is(monkeypatch):
-    from voice_assistant import __main__ as cli
+    from voice_assistant import entrypoints as cli
     from voice_assistant.browser import login_page
 
     monkeypatch.setattr(login_page, "reachable_address", lambda: "100.64.0.1")
@@ -358,7 +358,7 @@ def test_links_without_web_link_are_https_when_the_web_ui_is(monkeypatch):
 
 
 def test_signing_out_someone_tars_doesnt_know_says_so(tmp_path, capsys):
-    from voice_assistant import __main__ as cli
+    from voice_assistant import entrypoints as cli
 
     cfg = cli_config(link="https://pi.tail.ts.net:8080")
     cli.web_invite(cfg, tmp_path, "Stacey", 8080)

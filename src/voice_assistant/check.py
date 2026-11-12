@@ -138,7 +138,7 @@ def summary(results: list[Result]) -> str:
 
 
 def keys(cfg: Config, env: Path) -> Result:
-    from .__main__ import env_keys
+    from .wiring import env_keys
 
     have = env_keys(env)
     try:
@@ -812,9 +812,9 @@ def env_value(env: Path, name: str) -> str | None:
 def with_keys_there(cfg: Config, env: Path) -> tuple[Config, set[str], bool]:
     """The setup cut down to the keys in `env` (config.with_keys), the keys, and whether they're enough to run on; if
     they aren't, the setup as it's written."""
-    from . import __main__ as cli
+    from . import wiring
 
-    have = cli.env_keys(env)
+    have = wiring.env_keys(env)
     try:
         return with_keys(cfg, have)[0], have, True
     except ConfigError:
@@ -826,7 +826,7 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
     the web UI's Status page. A service TARS doesn't use, as config.toml and .env set it up, is a SKIP."""
     import httpx
 
-    from . import __main__ as cli
+    from . import wiring
     from .hass import HomeAssistant
     from .home import TOKEN_KEY
     from .tts import CARTESIA_API, CARTESIA_VERSION
@@ -839,7 +839,7 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
         if OPENAI_KEY not in have:
             return Result("OpenAI", SKIP, f"not used (no {OPENAI_KEY})")
         try:
-            return timed("OpenAI", lambda: cli.make_openai_client(env).models.retrieve(cfg.llm.model).id)
+            return timed("OpenAI", lambda: wiring.make_openai_client(env).models.retrieve(cfg.llm.model).id)
         except Exception as e:  # noqa: BLE001 - what went wrong is the result
             return service_error("OpenAI", e)
 
@@ -849,7 +849,7 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
             why = f"no {provider.key_name}" if provider.key_name not in have else f"[llm] {provider.setting} is empty"
             return Result(provider.name, SKIP, f"not used ({why})")
         try:
-            client = cli.make_quick_client(env, provider)
+            client = wiring.make_quick_client(env, provider)
             return timed(provider.name, lambda: has_model(client.models.list(), model))
         except Exception as e:  # noqa: BLE001
             return service_error(provider.name, e)
@@ -857,7 +857,7 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
     def deepgram():
         if cfg.stt.provider == "openai" and cfg.tts.provider != "deepgram":
             return Result("Deepgram", SKIP, "not used")
-        key = cli.api_key(env, DEEPGRAM_KEY)
+        key = wiring.api_key(env, DEEPGRAM_KEY)
         t = time.perf_counter()
         try:
             host = cfg.stt.deepgram_host if cfg.stt.provider in ("deepgram", "flux") else cfg.tts.deepgram_host
@@ -870,7 +870,7 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
     def cartesia():
         if cfg.tts.provider != "cartesia":
             return Result("Cartesia", SKIP, "not used")
-        key = cli.api_key(env, CARTESIA_KEY)
+        key = wiring.api_key(env, CARTESIA_KEY)
         t = time.perf_counter()
         try:
             status = http_status(
@@ -916,10 +916,11 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
     """`silent`: nothing played, nothing listened to: the voice is made and not said."""
     import sounddevice as sd
 
-    from . import __main__ as cli
+    from . import wiring
     from .audio import BLOCK_SECONDS, Microphone, NoDeviceError, Speaker, device_names, find_device
     from .haconfig import KEY_NAME
     from .health import PROCESSES, expected
+    from .recorder import make_recorder
 
     env = root / ".env"
     asked = cfg
@@ -957,7 +958,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
     def speaking():
         if not have_keys:
             return Result("Voice", SKIP, "needs the API keys")
-        _, _, tts = cli.make_pipeline(cfg, root, typed=True)
+        _, _, tts = wiring.make_pipeline(cfg, root, typed=True)
         if silent:
             return within(30, "Voice", lambda: voice(tts.stream, None), "no voice in time", "check the network")
 
@@ -1002,8 +1003,8 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
     def models():
         def load():
             t = time.perf_counter()
-            cli.make_trigger(cfg, False, root)
-            cli.make_recorder(cfg, root)
+            wiring.make_trigger(cfg, False, root)
+            make_recorder(cfg, root)
             took = time.perf_counter() - t
             return Result("Local models", OK, f"wake word, double-check and speech detectors loaded ({took:.0f} s)")
 
@@ -1014,7 +1015,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         if not cfg.audio.echo_cancel:
             return Result("Echo cancellation", SKIP, "off ([audio] echo_cancel)")
         try:
-            cli.load_echo_canceller()
+            wiring.load_echo_canceller()
         except Exception as e:  # noqa: BLE001 - what went wrong is the result
             return Result("Echo cancellation", FAIL, f"can't start: {e}", "or set [audio] echo_cancel = false")
         return echo_delay(device_delay("input"), device_delay("output"))
@@ -1030,7 +1031,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         return within(
             MODELS_S,
             "Voiceprints",
-            lambda: voiceprints(cli.make_speaker_id(cfg, root).names()),
+            lambda: voiceprints(wiring.make_speaker_id(cfg, root).names()),
             why,
             "check the network and run it again",
         )
@@ -1054,11 +1055,11 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ("TARS's speaker", speaker_volume),
         (BUTTONS, lambda: buttons(cfg)),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
-        ("Backup", lambda: backup(cfg, lambda: cli.make_backup(cfg, root))),
+        ("Backup", lambda: backup(cfg, lambda: wiring.make_backup(cfg, root))),
         (
             "Home Assistant's setup",
             lambda: ha_config(
-                cfg, lambda: cli.make_ha_config(cfg, root), sealed=KEY_NAME in cli.env_keys(root / ".env")
+                cfg, lambda: wiring.make_ha_config(cfg, root), sealed=KEY_NAME in wiring.env_keys(root / ".env")
             ),
         ),
         ("Browser", lambda: browser(cfg)),
