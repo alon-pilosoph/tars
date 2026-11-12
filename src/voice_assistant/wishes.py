@@ -3,10 +3,12 @@ maintainer says yes, and told to whoever asked once it's installed.
 
 1. A wish (myself.py) goes to the maintainers' chats with what would be posted to GitHub, and a Build it button.
 2. A maintainer's tap opens an issue on [wishes] repo, labelled [wishes] label, which .github/workflows/wish.yml hands
-   to Claude Code: it builds the wish on a branch of its own and opens a pull request. It has the repository and
-   nothing else: no .env, no config.local.toml, no database; what it knows of the house is the issue.
-3. follow(), every few minutes in the Telegram service, watches the pull request: CI green, the maintainers are told
-   what it does; CI red, it's asked to fix it, [wishes] tries times at most; closed unmerged, it's dropped.
+   to Claude Code: it builds the wish on a branch of its own and opens a pull request. It has the repository, and of
+   the house only the issue: no .env, no config.local.toml, no database.
+3. follow(), every few minutes in the Telegram service, watches the pull request Claude Code opened (its app's, on
+   this repository's own claude/issue-N- branch: nobody else's): CI green, the maintainers are told what it does; CI
+   red, it's asked to fix it, [wishes] tries times at most; stuck for hours, or closed unmerged, the maintainers hear
+   it's dropped.
 4. Merged is installed by the updater (updater.py). Once the running checkout has it, the wish is granted and the one
    who asked is told, once: in their chat, or the next time they speak to TARS.
 
@@ -29,9 +31,11 @@ TAP = "wish:"  # what a Build it button sends back, before the wish's number
 OFFERED, BUILDING, READY, MERGED, FAILED, GRANTED = "offered", "building", "ready", "merged", "failed", "granted"
 FOLLOW_EVERY_S = 5 * 60.0
 NO_PULL_AFTER_S = 3 * 3600.0  # a build with no pull request by then has failed
+STALLED_AFTER_S = 3 * 3600.0  # nor CI finishing on its latest commit, nor a fix pushed after it was sent back
 MONTH_S = 30 * 86400.0
 PASSED = {"success", "neutral", "skipped"}
 API = "https://api.github.com"
+BOT = "claude[bot]"  # who Claude Code's GitHub App opens pull requests as
 
 
 class GitHubError(Exception):
@@ -57,29 +61,48 @@ class GitHub:
         except httpx.HTTPError as e:
             raise GitHubError(f"GitHub didn't answer: {type(e).__name__}") from None
         if r.status_code >= 400:
-            raise GitHubError(f"GitHub said {r.status_code}: {r.json().get('message', '') if r.content else ''}")
-        return r.json()
+            try:
+                said = r.json().get("message", "")
+            except ValueError, AttributeError:
+                said = r.text[:200]
+            raise GitHubError(f"GitHub said {r.status_code}: {said}")
+        try:
+            return r.json()
+        except ValueError:
+            raise GitHubError(f"GitHub's answer wasn't JSON ({r.status_code}): {r.text[:200]}") from None
 
     def open_issue(self, title: str, body: str, label: str) -> tuple[int, str]:
-        made = self._call("POST", "/repos/{repo}/issues", json={"title": title, "body": body, "labels": [label]})
-        return made["number"], made["html_url"]
+        made = self._expect(
+            self._call("POST", "/repos/{repo}/issues", json={"title": title, "body": body, "labels": [label]}), dict
+        )
+        try:
+            return int(made["number"]), str(made["html_url"])
+        except KeyError, TypeError, ValueError:
+            raise GitHubError("GitHub's answer had no issue in it") from None
+
+    def ours(self, pull: dict, issue: int) -> bool:
+        """Whether `pull` is Claude Code's build of `issue`: opened by its app, from this repository's own
+        claude/issue-<issue>- branch. Anyone can open a pull request on a public repository, so nothing else counts."""
+        head = pull.get("head") or {}
+        return (
+            (head.get("repo") or {}).get("full_name") == self.repo
+            and str(head.get("ref", "")).startswith(f"claude/issue-{issue}-")
+            and (pull.get("user") or {}).get("type") == "Bot"
+            and (pull.get("user") or {}).get("login") == BOT
+        )
 
     def pull_for(self, issue: int) -> dict | None:
-        """The newest pull request that says it closes `issue`, open or not."""
-        pulls = self._call("GET", "/repos/{repo}/pulls", params={"state": "all", "per_page": 50})
-        marks = (f"#{issue}\n", f"#{issue} ", f"#{issue}.")
-        for p in pulls:
-            body = f"{p.get('body') or ''}\n"
-            if any(m in body for m in marks) or p["head"]["ref"].startswith(f"claude/issue-{issue}-"):
-                return p
-        return None
+        """The newest pull request Claude Code opened for `issue`, open or not."""
+        pulls = self._expect(self._call("GET", "/repos/{repo}/pulls", params={"state": "all", "per_page": 50}), list)
+        return next((p for p in pulls if isinstance(p, dict) and self.ours(p, issue)), None)
 
     def pull(self, number: int) -> dict:
-        return self._call("GET", f"/repos/{{repo}}/pulls/{number}")
+        return self._expect(self._call("GET", f"/repos/{{repo}}/pulls/{number}"), dict)
 
     def checks(self, sha: str) -> tuple[str, list[str]]:
         """CI on a commit: ("pending" | "passed" | "failed", the names of the checks that failed)."""
-        runs = self._call("GET", f"/repos/{{repo}}/commits/{sha}/check-runs", params={"per_page": 100})["check_runs"]
+        got = self._call("GET", f"/repos/{{repo}}/commits/{sha}/check-runs", params={"per_page": 100})
+        runs = self._expect(self._expect(got, dict).get("check_runs"), list)
         if not runs or any(r["status"] != "completed" for r in runs):
             return "pending", []
         failed = sorted(r["name"] for r in runs if r["conclusion"] not in PASSED)
@@ -88,18 +111,25 @@ class GitHub:
     def comment(self, number: int, body: str) -> None:
         self._call("POST", f"/repos/{{repo}}/issues/{number}/comments", json={"body": body})
 
+    @staticmethod
+    def _expect(got, kind: type):
+        if not isinstance(got, kind):
+            raise GitHubError(f"GitHub's answer wasn't the {kind.__name__} expected")
+        return got
+
 
 @dataclass
 class Told:
-    """Where what happens to a wish is said: `maintainers(text, buttons)`, and `person(name, via, text)` for the one
-    who asked."""
+    """Where what happens to a wish is said: `maintainers(text, buttons)`, which returns the maintainers it reached,
+    and `person(name, via, text)` for the one who asked."""
 
-    maintainers: Callable[[str, list[tuple[str, str]]], None]
+    maintainers: Callable[[str, list[tuple[str, str]]], list[str] | None]
     person: Callable[[str, str, str], None]
 
 
 def issue(wish: dict) -> tuple[str, str]:
-    """What's posted to GitHub for a wish: its title and body. Nobody's name, nor the chat it came from."""
+    """What's posted to GitHub for a wish: its title and body. Not who asked, nor the chat it came from; the model is
+    told to write the wish without names too."""
     asked, why = wish["asked"].strip().rstrip("."), wish["why"].strip().rstrip(".")
     title = asked[:1].upper() + asked[1:]
     body = (
@@ -129,15 +159,19 @@ class Wishes:
             clock,
         )
 
-    def offer(self, wish_id: int, text: str) -> None:
-        """Tells the maintainers about a wish just noted (`text`), asking whether to have it built."""
+    def offer(self, wish_id: int, text: str) -> list[str]:
+        """Tells the maintainers about a wish just noted (`text`), asking whether to have it built. The maintainers
+        reached."""
         wish = self._wish(wish_id)
         title, body = issue(wish)
         self.store.write("UPDATE wishes SET build=? WHERE id=?", (OFFERED, wish_id))
-        self.told.maintainers(
-            f"{text}\n\nWant me to have it built? Claude Code would build it from this, posted on GitHub as "
-            f"an issue, and open a pull request for you to review:\n\n{title}\n{body}",
-            [("Build it", f"{TAP}{wish_id}")],
+        return (
+            self.told.maintainers(
+                f"{text}\n\nWant me to have it built? Claude Code would build it from this, posted on GitHub as "
+                f"an issue, and open a pull request for you to review:\n\n{title}\n{body}",
+                [("Build it", f"{TAP}{wish_id}")],
+            )
+            or []
         )
 
     def build(self, wish_id: int) -> str:
@@ -161,7 +195,9 @@ class Wishes:
 
     def follow(self) -> None:
         """One pass over the wishes being built, merged or waiting to be told."""
-        for wish in self.store.rows("SELECT * FROM wishes WHERE build IN (?, ?, ?)", (BUILDING, READY, MERGED)):
+        for wish in self.store.rows(
+            "SELECT * FROM wishes WHERE build IN (?, ?, ?) AND granted IS NULL", (BUILDING, READY, MERGED)
+        ):
             try:
                 if wish["build"] == MERGED:
                     self._grant(wish)
@@ -171,12 +207,18 @@ class Wishes:
                 print(f"(wishes: couldn't follow wish {wish['id']}: {e})")
 
     def _watch(self, wish: dict) -> None:
-        github = self._github()
+        github, now = self._github(), self._clock()
         pull = github.pull_for(wish["issue"]) if wish["pr"] is None else github.pull(wish["pr"])
         if pull is None:
-            if self._clock() - wish["built_at"] > NO_PULL_AFTER_S:
+            if now - wish["built_at"] > NO_PULL_AFTER_S:
                 self._set(wish, FAILED)
                 self.told.maintainers(f"Nothing came of building “{wish['asked']}”: no pull request after 3 hours.", [])
+            return
+        if not github.ours(pull, wish["issue"]):
+            self._set(wish, FAILED)
+            self.told.maintainers(
+                f"I stopped following “{wish['asked']}”: pull request {pull.get('number')} isn't Claude Code's own.", []
+            )
             return
         if wish["pr"] is None:
             self.store.write("UPDATE wishes SET pr=? WHERE id=?", (pull["number"], wish["id"]))
@@ -187,8 +229,15 @@ class Wishes:
             return
         if pull["state"] == "closed":
             self._set(wish, FAILED)
+            self.told.maintainers(
+                f"“{wish['asked']}” was closed without merging, so I've dropped it. {pull['html_url']}", []
+            )
             return
         head = pull["head"]["sha"]
+        moved = wish["moved"] or wish["built_at"]
+        if head != wish["head"]:
+            moved = now
+            self.store.write("UPDATE wishes SET head=?, moved=? WHERE id=?", (head, moved, wish["id"]))
         state, failed = github.checks(head)
         if state == "passed" and wish["build"] == BUILDING:
             self._set(wish, READY)
@@ -212,23 +261,29 @@ class Wishes:
                     "cause, and push to this branch, keeping to .github/wish.md.",
                 )
                 self.store.write(
-                    "UPDATE wishes SET tries=tries+1, checked=?, build=? WHERE id=?", (head, BUILDING, wish["id"])
+                    "UPDATE wishes SET tries=tries+1, checked=?, build=?, moved=? WHERE id=?",
+                    (head, BUILDING, now, wish["id"]),
                 )
+        elif state != "passed" and wish["build"] == BUILDING and now - moved > STALLED_AFTER_S:
+            self._set(wish, FAILED)
+            stuck = "no fix was pushed after it was sent back" if state == "failed" else "CI never finished on it"
+            self.told.maintainers(f"I gave up on “{wish['asked']}”: {stuck} in 3 hours. {pull['html_url']}", [])
 
     def _grant(self, wish: dict) -> None:
         if not (wish["sha"] and self._running(wish["sha"])):
             return
-        with self.store.transaction() as db:
-            if not db.execute(
-                "UPDATE wishes SET build=?, granted=? WHERE id=? AND build=?",
-                (GRANTED, self._clock(), wish["id"], MERGED),
-            ).rowcount:
-                return
-        text = f"Remember you asked me for this: {wish['asked'].rstrip('.')}? I can do it now."
+        # Told first: should marking it fail, they may hear it twice, never not at all.
         if wish["person"]:
-            self.told.person(wish["person"], wish["via"], text)
+            self.told.person(
+                wish["person"],
+                wish["via"],
+                f"Remember you asked me for this: {wish['asked'].rstrip('.')}? I can do it now.",
+            )
         else:
             self.told.maintainers(f"“{wish['asked']}” is installed: I can do it now.", [])
+        self.store.write(
+            "UPDATE wishes SET build=?, granted=? WHERE id=? AND build=?", (GRANTED, self._clock(), wish["id"], MERGED)
+        )
 
     def _set(self, wish: dict, build: str) -> None:
         self.store.write("UPDATE wishes SET build=? WHERE id=?", (build, wish["id"]))

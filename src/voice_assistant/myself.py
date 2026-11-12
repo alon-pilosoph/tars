@@ -82,7 +82,8 @@ TOOL = {
             "value": {"type": ["string", "null"], "description": "set: the new value; null otherwise."},
             "why": {
                 "type": ["string", "null"],
-                "description": "wish: what stopped you, and what would make it possible; null otherwise.",
+                "description": "wish: what stopped you, and what would make it possible, without anyone's name or "
+                "the house's own names for its rooms and devices (it may be posted publicly too); null otherwise.",
             },
         },
     },
@@ -102,10 +103,10 @@ class Myself:
         run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         unit_state: Callable[[str], str | None] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
-        offer: Callable[[int, str], None] | None = None,
+        offer: Callable[[int, str], list[str]] | None = None,
     ):
         """`offer(wish, text)`: with [wishes], tells the maintainers a wish with a Build it button (wishes.py), in
-        place of the plain message."""
+        place of the plain message, and returns who it reached; nobody reached, it's told the plain way."""
         from .check import systemd_state
 
         self._cfg, self._root, self._events, self._run, self._now = cfg, root, events, run, now
@@ -254,13 +255,16 @@ class Myself:
             "INSERT INTO wishes (at, person, via, asked, why) VALUES (?, ?, ?, ?, ?)",
             (time.time(), person, via, asked, why),
         )
+        reached = None
         if self._offer:
             try:
-                self._offer(number, self._wish_text(person, asked, why))
-                told = list(self._cfg.household.maintainers)
+                reached = self._offer(number, self._wish_text(person, asked, why))
             except Exception as e:  # noqa: BLE001 - it's still kept, and told the plain way
                 print(f"(wishes: couldn't offer to build it: {e!r})")
-                told = self._tell_maintainers(person, asked, why, by_chat=via == "chat")
+        if reached:
+            # The one who asked gets the offer too if they're a maintainer, so they can build it; they know.
+            me = (person or "").strip().lower()
+            told = [name for name in reached if name.strip().lower() != me]
         else:
             told = self._tell_maintainers(person, asked, why, by_chat=via == "chat")
         to = f"passed on to {', '.join(told)} in their chat" if told else "noted for whoever looks after TARS"

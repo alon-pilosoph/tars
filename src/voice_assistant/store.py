@@ -220,7 +220,9 @@ TABLES = {
     sha TEXT,                        -- the pull request's merge commit
     tries INTEGER NOT NULL DEFAULT 0,  -- times its CI failed and it was sent back to be fixed
     checked TEXT,                    -- the commit it was last sent back for
-    built_at REAL                    -- when a maintainer said to build it
+    built_at REAL,                   -- when a maintainer said to build it
+    head TEXT,                       -- the pull request's latest commit, as last seen
+    moved REAL                       -- when its build last moved: a new commit, or sent back to be fixed
 )""",
     "settings_log": """CREATE TABLE settings_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -372,6 +374,8 @@ MIGRATIONS = [
         "ALTER TABLE wishes ADD COLUMN tries INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE wishes ADD COLUMN checked TEXT",
         "ALTER TABLE wishes ADD COLUMN built_at REAL",
+        "ALTER TABLE wishes ADD COLUMN head TEXT",
+        "ALTER TABLE wishes ADD COLUMN moved REAL",
     ],
 ]
 

@@ -21,6 +21,7 @@ from voice_assistant.wishes import (
     NO_PULL_AFTER_S,
     OFFERED,
     READY,
+    STALLED_AFTER_S,
     GitHub,
     GitHubError,
     Told,
@@ -70,7 +71,7 @@ class FakeGitHub(httpx.MockTransport):
             return httpx.Response(201, json={})
         return httpx.Response(404, json={"message": "Not Found"})
 
-    def open_pull(self, issue: int, sha: str = "aaa1", body: str | None = None) -> dict:
+    def open_pull(self, issue: int, sha: str = "aaa1", body: str | None = None, ref=None, repo=REPO, user=None) -> dict:
         pull = {
             "number": 200 + len(self.pulls),
             "title": "TARS reads the kindergarten's updates",
@@ -79,7 +80,8 @@ class FakeGitHub(httpx.MockTransport):
             "state": "open",
             "merged_at": None,
             "merge_commit_sha": None,
-            "head": {"sha": sha, "ref": f"claude/issue-{issue}-updates"},
+            "head": {"sha": sha, "ref": ref or f"claude/issue-{issue}-updates", "repo": {"full_name": repo}},
+            "user": user or {"login": "claude[bot]", "type": "Bot"},
         }
         self.pulls.append(pull)
         return pull
@@ -244,11 +246,76 @@ def test_no_pull_request_after_hours_is_a_failed_build(log, github):
     assert row(log, n)["build"] == FAILED and said[0][0].startswith("Nothing came of building")
 
 
-def test_a_pull_request_closed_unmerged_drops_the_wish_quietly(log, github):
+def test_a_pull_request_closed_unmerged_drops_the_wish_and_says_so(log, github):
     wishes, said, _, _, n = building(log, github)
     github.open_pull(100)["state"] = "closed"
     wishes.follow()
-    assert row(log, n)["build"] == FAILED and said == []
+    assert row(log, n)["build"] == FAILED and said[0][0].startswith(
+        "“read the kindergarten's WhatsApp updates” was closed"
+    )
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        {"repo": "someone/tars"},  # a fork's branch of the same name
+        {"user": {"login": "someone", "type": "User"}, "ref": "claude/issue-100-mine"},
+        {"user": {"login": "someone", "type": "User"}, "ref": "fix-it", "body": "Closes #100.\n\nMine."},
+        {"ref": "claude/issue-1000-other"},
+    ],
+)
+def test_only_claude_codes_own_pull_request_for_the_issue_is_followed(log, github, kind):
+    wishes, said, _, _, n = building(log, github)
+    pull = github.open_pull(100, **kind)
+    github.ci("aaa1", "failure")
+    wishes.follow()
+    assert row(log, n)["pr"] is None and github.comments == [] and said == []
+    pull["merged_at"], pull["merge_commit_sha"] = "2026-11-12T10:00:00Z", "m3rg3"
+    wishes.follow()
+    assert row(log, n)["build"] == BUILDING
+
+
+def test_a_followed_pull_request_that_stops_being_claudes_gets_no_comment(log, github):
+    wishes, said, _, _, n = building(log, github)
+    pull = github.open_pull(100)
+    github.ci("aaa1", "success", None)
+    wishes.follow()
+    assert row(log, n)["pr"] == 200
+    pull["head"]["repo"] = {"full_name": "someone/tars"}
+    github.ci("aaa1", "failure")
+    wishes.follow()
+    assert github.comments == [] and row(log, n)["build"] == FAILED and "isn't Claude Code's own" in said[0][0]
+
+
+def test_ci_that_never_finishes_is_given_up_on(log, github):
+    wishes, said, _, clock, n = building(log, github)
+    github.open_pull(100)
+    wishes.follow()
+    clock.t += STALLED_AFTER_S - 60
+    wishes.follow()
+    assert said == []
+    clock.t += 120
+    wishes.follow()
+    assert row(log, n)["build"] == FAILED and "CI never finished on it in 3 hours" in said[0][0]
+
+
+def test_a_fix_never_pushed_is_given_up_on_and_a_push_restarts_the_wait(log, github):
+    wishes, said, _, clock, n = building(log, github)
+    pull = github.open_pull(100)
+    github.ci("aaa1", "failure")
+    wishes.follow()
+    assert len(github.comments) == 1
+    clock.t += STALLED_AFTER_S - 60
+    pull["head"]["sha"] = "aaa2"  # pushed, and CI is running
+    wishes.follow()
+    clock.t += STALLED_AFTER_S - 60
+    wishes.follow()
+    assert said == [] and row(log, n)["build"] == BUILDING
+    github.ci("aaa2", "failure")
+    wishes.follow()
+    clock.t += STALLED_AFTER_S + 60
+    wishes.follow()
+    assert row(log, n)["build"] == FAILED and "no fix was pushed after it was sent back" in said[0][0]
 
 
 def test_merged_and_installed_grants_it_and_tells_whoever_asked_once(log, github):
@@ -269,6 +336,27 @@ def test_merged_and_installed_grants_it_and_tells_whoever_asked_once(log, github
     assert row(log, n)["build"] == GRANTED and row(log, n)["granted"] is not None
 
 
+def test_a_grant_that_couldnt_be_told_is_told_on_the_next_pass(log, github):
+    wishes, _, _, _ = wishing(log, github, running=lambda sha: True)
+    n = wish(log)
+    log.store.write("UPDATE wishes SET build=?, sha=? WHERE id=?", (MERGED, "m3rg3", n))
+    told = []
+
+    def person(*p):
+        if not told:
+            told.append(None)
+            raise RuntimeError("the database was busy")
+        told.append(p)
+
+    wishes.told.person = person
+    with pytest.raises(RuntimeError):
+        wishes.follow()
+    assert row(log, n)["build"] == MERGED
+    wishes.follow()
+    wishes.follow()
+    assert len(told) == 2 and row(log, n)["build"] == GRANTED
+
+
 def test_a_wish_from_someone_unknown_is_told_to_the_maintainers_when_installed(log, github):
     wishes, said, people, _ = wishing(log, github, running=lambda sha: True)
     n = wish(log, person=None, via="voice")
@@ -282,6 +370,21 @@ def test_github_errors_while_following_are_a_line_not_a_crash(log, github, capsy
     github.down = True
     wishes.follow()
     assert row(log, n)["build"] == BUILDING and "couldn't follow wish" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "answer, said",
+    [
+        (httpx.Response(502, text="<html>Bad gateway</html>"), "GitHub said 502: <html>Bad gateway</html>"),
+        (httpx.Response(200, text="not json"), "GitHub's answer wasn't JSON"),
+        (httpx.Response(200, json=["a list"]), "GitHub's answer wasn't the dict expected"),
+        (httpx.Response(201, json={"id": 1}), "GitHub's answer had no issue in it"),
+    ],
+)
+def test_an_answer_from_github_that_isnt_what_was_expected_is_a_github_error(answer, said):
+    gh = GitHub(REPO, "t", transport=httpx.MockTransport(lambda r: answer))
+    with pytest.raises(GitHubError, match=said.replace("(", r"\(")):
+        gh.open_issue("x", "y", "wish")
 
 
 def test_an_error_from_github_says_what_it_said():
@@ -346,14 +449,69 @@ def test_a_wish_noted_with_wishes_on_is_offered_with_its_number(log, tmp_path):
     shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     cfg = dataclasses.replace(shipped, household=HouseholdConfig(["Alon"]))
     offered = []
-    tars = Myself(cfg, tmp_path, log, offer=lambda n, text: offered.append((n, text)))
-    said = tars.call(
-        {"action": "wish", "query": "read the WhatsApp updates", "why": "no WhatsApp", "since": None,
-         "until": None, "value": None},
-        Request("Stacey", by_chat=True),
-    )  # fmt: skip
+    tars = Myself(cfg, tmp_path, log, offer=lambda n, text: offered.append((n, text)) or ["Alon"])
+    said = tars.call(WISH, Request("Stacey", by_chat=True))
     assert said.startswith("passed on to Alon in their chat (1)")
     assert offered == [(1, "Stacey asked me: read the WhatsApp updates. I couldn't: no WhatsApp.")]
+
+
+WISH = {"action": "wish", "query": "read the WhatsApp updates", "why": "no WhatsApp", "since": None, "until": None,
+        "value": None}  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "reached, asker, said",
+    [
+        (["Alon", "Stacey"], "stacey", "passed on to Alon in their chat (1)"),  # not to the one who asked
+        (["Alon"], "Alon", "noted for whoever looks after TARS (1)"),  # offered to Alon, who asked
+    ],
+)
+def test_a_wish_offered_is_said_passed_on_only_to_the_maintainers_reached_besides_the_asker(
+    log, tmp_path, reached, asker, said
+):
+    shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    cfg = dataclasses.replace(shipped, household=HouseholdConfig(["Alon", "Stacey", "Sam"]))
+    tars = Myself(cfg, tmp_path, log, offer=lambda n, text: reached)
+    assert tars.call(WISH, Request(asker, by_chat=True)).startswith(said)
+
+
+def test_a_wish_offered_to_nobody_is_told_the_plain_way(log, tmp_path):
+    from voice_assistant.config import TelegramConfig
+
+    shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    cfg = dataclasses.replace(
+        shipped,
+        household=HouseholdConfig(["Alon", "Stacey"]),
+        telegram=TelegramConfig(enabled=True, people={"Alon": 1, "Stacey": 2}),
+    )
+    tars = Myself(cfg, tmp_path, log, offer=lambda n, text: [])
+    assert tars.call(WISH, Request("Stacey", by_chat=True)).startswith("passed on to Alon in their chat (1)")
+    assert [r["for_name"] for r in log.store.rows("SELECT * FROM reminders")] == ["Alon"]
+
+
+def test_the_maintainers_told_straight_through_telegram_are_those_reached(tmp_path, monkeypatch):
+    from voice_assistant import __main__ as main
+    from voice_assistant import telegram
+    from voice_assistant.config import TelegramConfig
+
+    shipped = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    cfg = dataclasses.replace(
+        shipped,
+        household=HouseholdConfig(["alon ", "Stacey", "Sam"]),
+        telegram=TelegramConfig(enabled=True, people={"Alon": 1, "Stacey": 2}),
+    )
+
+    class Bot:
+        def __init__(self, token):
+            pass
+
+        def send_buttons(self, chat, text, buttons):
+            if chat == 2:
+                raise telegram.TelegramError("blocked")
+
+    monkeypatch.setattr(telegram, "Bot", Bot)
+    monkeypatch.setattr(main, "api_key", lambda env, name: "t")
+    assert main.tell_maintainers(cfg, tmp_path, "x", [("Build it", "wish:1")]) == ["Alon"]
 
 
 @pytest.mark.parametrize("via, channel, due_now", [("chat", "telegram", True), ("voice", "voice", False)])
@@ -368,10 +526,10 @@ def test_whoever_asked_is_told_in_their_chat_or_the_next_time_theyre_heard(log, 
         household=HouseholdConfig(["Alon"]),
         telegram=TelegramConfig(enabled=True, people={"Alon": 1, "Stacey": 2}),
     )
-    make_wishes(cfg, tmp_path, log).told.person("Stacey", via, "I can do it now.")
+    make_wishes(cfg, tmp_path, log).told.person("stacey", via, "I can do it now.")
     (r,) = log.store.rows("SELECT * FROM reminders")
     assert (r["for_name"], r["text"], r["channel"], r["due"] is not None) == (
-        "Stacey",
+        "stacey",
         "I can do it now.",
         channel,
         due_now,

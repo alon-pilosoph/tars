@@ -402,3 +402,20 @@ def test_assistant_records_what_followed_each_wake(log, speaker):
     assistant.converse(follow_up_s=4.0)
     journal.flush()
     assert log.get(noise)["follow"] == SAID_NOTHING and log.get(noise)["utterance_audio"]
+
+
+def test_a_wishes_table_from_before_builds_gains_their_columns_and_keeps_its_wishes(tmp_path):
+    folder = tmp_path / "events"
+    EventLog(folder)
+    with sqlite3.connect(folder / "events.db") as db:
+        db.execute("DROP TABLE wishes")
+        db.execute(
+            "CREATE TABLE wishes (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
+            "via TEXT NOT NULL, asked TEXT NOT NULL, why TEXT NOT NULL, granted REAL)"
+        )
+        db.execute("INSERT INTO wishes (at, via, asked, why) VALUES (1, 'voice', 'dim the hall', 'no hall light')")
+        db.execute(f"PRAGMA user_version={len(MIGRATIONS) - 1}")
+    log = EventLog(folder)
+    (wish,) = log.store.rows("SELECT * FROM wishes")
+    assert wish["asked"] == "dim the hall" and wish["tries"] == 0
+    assert {"build", "issue", "pr", "sha", "checked", "built_at", "head", "moved"} <= set(wish)
