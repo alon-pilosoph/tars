@@ -530,15 +530,10 @@ def house_commands(cfg: Config, root: Path, home):
     it's off or there's nothing to command."""
     if not (cfg.home.commands_on_pi and home and home.devices):
         return None
-    from .commands import DRY_FROM_HUMOR, Commands, HouseCommands, Replies, vosk_hearing
-    from .home import SET
+    from .commands import WITTY_FROM_HUMOR, Commands, HouseCommands, Replies, vosk_hearing
 
-    found = [
-        (name, d.display, tuple(d.actions), SET in d.actions and d.takes_temperature)
-        for name, d in home.devices.items()
-    ]
-    commands = Commands(found)
-    replies = Replies({name: d.display for name, d in home.devices.items()}, cfg.llm.humor >= DRY_FROM_HUMOR)
+    commands = Commands([(name, d.display, tuple(d.actions), d.takes_temperature) for name, d in home.devices.items()])
+    replies = Replies({name: d.display for name, d in home.devices.items()}, cfg.llm.humor >= WITTY_FROM_HUMOR)
     try:
         hear = vosk_hearing(commands.grammar(), root / "models")
     except Exception as e:  # noqa: BLE001 - commands still work from the cloud's transcript

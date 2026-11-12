@@ -161,17 +161,19 @@ job (an integration for its make); TARS only shows what Home Assistant already h
 With `[home] commands_on_pi`, the plainest requests skip the model: "lock the front door", "turn off the boiler",
 "switch the TV on", "set the AC to 23". The phrases are made from the house's own devices (`commands.py`): verbs ("turn
 on", "switch off", "put on", "lock"), each device by its name and its label, 16 to 30 degrees for one that takes a
-temperature, and the polite bits ("please", "can you", "hey TARS"). A request that's exactly one of them, as speech to
-text wrote it, is done at once:
+temperature (a fixed range: a device that doesn't go that far says it couldn't), and the polite bits ("please", "can
+you", "hey TARS"). A request that's exactly one of them, as speech to text wrote it, is done at once:
 
 - **The home tool's own call**, with its checks: done only when the device says so, after the turn is over. Unlocking
   is never one of them: it stays with the model and [its challenge](#unlocking). Anything with more in it ("for forty
   minutes", "and the AC", "don't") goes to the model as ever, and so does a phrase two devices share.
 - **A reply in TARS's voice**, from a few lines for each outcome, made ahead and kept on disk, never the same one twice
-  running ("Front door's locked.", "Locked. Fort Knox has nothing on us."; plainer below 50% humor). A device that
-  doesn't confirm gets "The boiler didn't confirm it."
+  running when there's another ("Front door's locked.", "Locked. Fort Knox has nothing on us."; one plain line below
+  50% humor). Each outcome is said as it is: done ("Front door's locked."), on its way ("Front door's locking."), sent
+  to a device that can't report back ("Sent it to the AC."), not confirmed ("The boiler didn't confirm it.") and an
+  error or a refusal ("Couldn't do that with the AC.").
 - **The exchange joins the conversation**, so "and the boiler too" can follow; the web UI marks the turn as done on
-  the Pi.
+  the Pi. A follow-up (said without the wake word) goes to the model, which can tell it wasn't meant for TARS.
 - **With the cloud out of reach**, Vosk on the Pi listens to the recording for the same phrases alone (spoken forms,
   "a c" for AC), and a command it hears is done the same way: the door locks with the internet down.
 

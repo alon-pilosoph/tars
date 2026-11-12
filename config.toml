@@ -230,10 +230,6 @@ tv_model = ""
 # 40" (docs/home.md#tarss-own-speaker). On the Pi it's [audio] output_device's own volume, so name the speakerphone
 # there; on a Mac, the system's output volume, only when TARS plays to the default output.
 own_speaker = false
-# House commands handled on the Pi (docs/home.md#house-commands-on-the-pi): "lock the door", "turn off the boiler",
-# "AC to 23" done at once with no model, answered from lines made ahead in TARS's voice, and heard by Vosk on the Pi
-# when the cloud's speech to text can't be reached. Anything else goes to the model as ever. Off until measured.
-commands_on_pi = false
 # With own_speaker, its volume keys turn it a step a press: the speakerphone's own + and -, a keyboard's
 # (docs/home.md#buttons).
 volume_keys = true
@@ -244,6 +240,10 @@ volume_keys = true
 # The speakerphone's own mute is TARS's: while it's muted (its light red), TARS doesn't listen, and the remote's
 # mute mutes it the same way. Linux, with a speakerphone that has one (deploy/99-tars-speakerphone.rules).
 speakerphone_mute = true
+# House commands handled on the Pi (docs/home.md#house-commands-on-the-pi): "lock the door", "turn off the boiler",
+# "AC to 23" done at once with no model, answered from lines made ahead in TARS's voice, and heard by Vosk on the Pi
+# when the cloud's speech to text can't be reached. Anything else goes to the model as ever. Off until measured.
+commands_on_pi = false
 # Home Assistant's config folder on this machine, relative to this one: its setup (integrations, devices, areas,
 # automations) is kept as a git history here, committed every backup pass, so any change to it can be seen and undone
 # (docs/home.md#home-assistants-own-setup). It holds Home Assistant's passwords, so it goes in the backup's snapshots

@@ -176,10 +176,19 @@ class _MadeAhead:
         self.sample_rate = voice.sample_rate
 
     def stream(self, text: str) -> Iterator[bytes]:
+        """The thing is done by now: a line that can't be said is logged, never an error that ends the turn."""
         if text.strip() in self._phrases:
-            yield from self._phrases.get(text.strip()).result(timeout=PHRASE_WAIT_S)
-            return
-        yield from self._voice.stream(text)
+            try:
+                audio = self._phrases.get(text.strip()).result(timeout=PHRASE_WAIT_S)
+            except Exception as e:  # noqa: BLE001 - said live instead
+                print(f"(the made-ahead line {text.strip()!r} isn't there ({e!r}); saying it live)")
+            else:
+                yield from audio
+                return
+        try:
+            yield from self._voice.stream(text)
+        except Exception as e:  # noqa: BLE001 - see above
+            print(f"(couldn't say {text.strip()!r} after a house command: {e!r})")
 
     def warm(self) -> None:
         self._voice.warm()
@@ -1011,7 +1020,8 @@ class Assistant:
             return answer
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
         request = Request(answer.who.name, answer.who.score, by_voice=True, heard=text, may_act=draft.may_act)
-        if self.commands and tag is None and (command := self.commands.commands.match(text)):
+        # A follow-up may not be meant for TARS (the TV, someone else in the room): only the model may skip it.
+        if self.commands and tag is None and not follow_up and (command := self.commands.commands.match(text)):
             return self._command_reply(answer, command, prompt, request)
         try:
             # A follow-up, or a reply to "Did you call me?" (maybe a "no"), may not be meant for TARS at all.
@@ -1038,8 +1048,13 @@ class Assistant:
         commands = self.commands
 
         def pieces() -> Iterator[str]:
-            result = commands.call(command.args, request)
+            try:
+                result = commands.call(command.args, request)
+            except Exception as e:  # noqa: BLE001 - a device's failure, said as one
+                result = f"error: {e!r}"
             print(f"(house command on the Pi: {command.device} {command.action}: {result})")
+            if not request.go_ahead():  # thrown away: nothing was done, and nothing is said or remembered
+                return
             said = commands.replies.say(command, result)
             self.brain.remember_exchange(prompt, said)
             yield from (f"{s} " for s in sentences(said))
