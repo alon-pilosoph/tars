@@ -45,6 +45,9 @@ DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 TICK_S = 10.0  # how often a clock looks for a skill that's due, or something happening one waits for
 DRY_RUN_DAYS = 7  # a device trigger is replayed over this much of the device's history before it's kept
 COOLDOWN_S = 600.0  # a skill that runs when something happens runs again no sooner: no loops, no flapping
+# Someone who came in by a door longer ago than this, by the time a clock reads it, didn't "just" come in: it's seen,
+# and nothing runs on it.
+CAME_IN_FRESH_S = 60.0
 MOST_RUNS = 20  # told when asked what TARS did
 TIME = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
 MOST_NOTES = 40  # a person's preferences told to the model, newest first
@@ -1145,27 +1148,28 @@ class Clock:
         events: list[tuple[dict, str]] = []  # (what happened, as a trigger matches it; in words)
         if self._people and any(s.trigger["event"] in (ARRIVES, LEAVES) for s in skills):
             events += self._comings_and_goings()
-        if self._came_in and any(s.trigger["event"] == COMES_IN for s in skills):
-            events += self._comings_in()
+        if self._came_in:  # looked at whatever's waiting for it, so what comes in meanwhile is never kept for later
+            events += self._comings_in(when)
         found = []
         for skill in skills:
-            event, door = skill.trigger["event"], ""
+            event = skill.trigger["event"]
             if event == UPDATED:
-                why = self._updated(skill)
+                happened = [(self._updated(skill), "")]
             elif event == CHANGES:
-                why = self._changed(skill)
+                happened = [(self._changed(skill), "")]
+            elif event == COMES_IN:  # each one coming in is welcomed, not only the first in ten minutes
+                happened = self._matches(skill.trigger, events, every=True)
             else:
-                why, door = self._matches(skill.trigger, events)
-            if not why:
-                continue
-            key = skill.id or skill.name
-            if event == COMES_IN:  # each one coming in is welcomed, not only the first in ten minutes
-                key = (key, why)
-            if self._clock() - self._fired.get(key, -COOLDOWN_S) < COOLDOWN_S:
-                print(f"(skill {skill.name}: {why}, but it ran less than {COOLDOWN_S / 60:.0f} minutes ago)")
-                continue
-            self._fired[key] = self._clock()
-            found.append(Due(skill, when, why, door))
+                happened = self._matches(skill.trigger, events)
+            for why, door in happened:
+                if not why:
+                    continue
+                key = (skill.id or skill.name, why) if event == COMES_IN else skill.id or skill.name
+                if self._clock() - self._fired.get(key, -COOLDOWN_S) < COOLDOWN_S:
+                    print(f"(skill {skill.name}: {why}, but it ran less than {COOLDOWN_S / 60:.0f} minutes ago)")
+                    continue
+                self._fired[key] = self._clock()
+                found.append(Due(skill, when, why, door))
         self._remember_statuses(skills)
         return found
 
@@ -1200,9 +1204,9 @@ class Clock:
             events.append((event, words))
         return events
 
-    def _comings_in(self) -> list[tuple[dict, str]]:
+    def _comings_in(self, when: datetime) -> list[tuple[dict, str]]:
         """Who came in by a door since the last look, as events: one each, said together with whoever came in with
-        them. What happened before the first look is only seen."""
+        them. What happened before the first look, or more than CAME_IN_FRESH_S before `when`, is only seen."""
         try:
             if self._came_in_id is None:
                 self._came_in_id = self._last_came_in() if self._last_came_in else 0
@@ -1216,7 +1220,8 @@ class Clock:
         self._came_in_id = rows[-1]["id"]
         together: dict[tuple, list[str]] = {}
         for r in rows:
-            together.setdefault((r["at"], r["door"]), []).append(r["person"])
+            if when.timestamp() - r["at"] <= CAME_IN_FRESH_S:
+                together.setdefault((r["at"], r["door"]), []).append(r["person"])
         events = []
         for (_, door), people in together.items():
             names = people[0] if len(people) == 1 else f"{', '.join(people[:-1])} and {people[-1]}"
@@ -1226,18 +1231,21 @@ class Clock:
         return events
 
     @staticmethod
-    def _matches(trigger: dict, events: list[tuple[dict, str]]) -> tuple[str, str]:
+    def _matches(trigger: dict, events: list[tuple[dict, str]], every: bool = False) -> list[tuple[str, str]]:
         """What happened that a who's-home trigger waits for, in words, and the door that said so if it was someone
-        opening one ("" if by their phone); ("", "") if nothing did."""
-        who = trigger.get("who") or ANYONE
+        opening one ("" if by their phone): the first, or with `every` each, once for each thing said (two who came
+        in together are one); [] if nothing did."""
+        who, found = trigger.get("who") or ANYONE, {}
         for event, words in events:
             if event["event"] == trigger["event"] and (
                 who in (ANYONE, event["who"]) or (who == EVERYONE and event["all"])
             ):
                 if who == EVERYONE:
                     words += " (nobody was home)" if event["event"] == ARRIVES else " (nobody's home now)"
-                return words, event["door"]
-        return "", ""
+                found.setdefault(words, event["door"])
+                if not every:
+                    break
+        return list(found.items())
 
     def _updated(self, skill: Skill) -> str:
         """Why a skill that runs on TARS being updated is set off now, with what changed; "" if it isn't. A skill

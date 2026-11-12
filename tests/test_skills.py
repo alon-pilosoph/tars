@@ -2,6 +2,7 @@
 model on each request for whoever is asking; a skill with set times runs by itself, aloud at home or in its owner's
 chat."""
 
+import dataclasses
 import types
 from datetime import UTC, datetime, timedelta
 
@@ -999,9 +1000,12 @@ class Doorway:
     """door_events' came-in rows, as the clock reads them."""
 
     def __init__(self):
-        self.rows: list[dict] = [{"id": 7, "at": 1.0, "door": "front door", "person": "Alon"}]  # before TARS started
+        before = SUNDAY.timestamp() - 3600  # before TARS started
+        self.rows: list[dict] = [{"id": 7, "at": before, "door": "front door", "person": "Alon"}]
 
-    def came(self, *people, at=100.0):
+    def came(self, *people, at: float | None = None):
+        """Who came in together, at `at` (a few seconds before SUNDAY if None)."""
+        at = SUNDAY.timestamp() - 5 if at is None else at
         start = max(r["id"] for r in self.rows) + 1
         self.rows += [{"id": start + i, "at": at, "door": "front door", "person": p} for i, p in enumerate(people)]
 
@@ -1039,7 +1043,7 @@ def test_two_coming_in_together_are_one_welcome_and_each_coming_in_later_is_anot
     clock.look(SUNDAY)
     assert [d.why for d in clock.take()] == ["Alon and Stacey just came in by the front door"]
     clock.ticks[0] += 60  # a minute later, inside the cooldown: someone else coming in is welcomed all the same
-    door.came("Ari", at=160.0)
+    door.came("Ari", at=SUNDAY.timestamp() - 2)
     clock.look(SUNDAY)
     assert [d.why for d in clock.take()] == ["Ari just came in by the front door"]
 
@@ -1056,7 +1060,7 @@ def test_a_nudge_looks_at_once_rather_than_at_the_next_tick():
         while clock._came_in_id is None and time_module.monotonic() < deadline:
             clock.nudge()
             time_module.sleep(0.01)
-        door.came("Stacey")
+        door.came("Stacey", at=time_module.time())
         clock.nudge()
         while not clock.is_due() and time_module.monotonic() < deadline:
             time_module.sleep(0.01)
@@ -1084,3 +1088,49 @@ def test_the_household_starts_with_a_welcome_home_once_and_deleted_it_stays_gone
     assert not offer_welcome(skills)  # already offered
     assert teach(skills, action="delete", name=WELCOME).startswith("done")
     assert not offer_welcome(skills) and WELCOME not in {s.name for s in skills.all()}
+
+
+def test_comings_in_read_together_are_each_their_own_welcome():
+    """Two separate comings-in between two looks (the clock asleep a moment): each is welcomed, not only the first."""
+    door = Doorway()
+    clock = door.clock(on({"event": "comes_in"}, "welcome"), on({"event": "comes_in", "who": "stacey"}, "s"))
+    clock.look(SUNDAY)
+    door.came("Alon", at=SUNDAY.timestamp() - 8)
+    door.came("Stacey", at=SUNDAY.timestamp() - 2)
+    clock.look(SUNDAY)
+    due = [(d.skill.name, d.why) for d in clock.take()]
+    assert due == [
+        ("welcome", "Alon just came in by the front door"),
+        ("welcome", "Stacey just came in by the front door"),
+        ("s", "Stacey just came in by the front door"),
+    ]
+
+
+def test_a_coming_in_while_its_skill_was_paused_isnt_welcomed_when_its_resumed_hours_later():
+    door = Doorway()
+    welcome = on({"event": "comes_in"}, "welcome")
+    skills = [welcome]
+    clock = door.clock()
+    clock._skills = lambda: list(skills)
+    clock.look(SUNDAY)
+    skills[0] = dataclasses.replace(welcome, paused=True)
+    door.came("Alon")
+    clock.look(SUNDAY)  # looked at all the same: nothing waits for it
+    skills[0] = welcome
+    later = SUNDAY + timedelta(hours=6)
+    clock.look(later)
+    assert not clock.is_due()
+    door.came("Stacey", at=later.timestamp() - 3)
+    clock.look(later)
+    assert [d.why for d in clock.take()] == ["Stacey just came in by the front door"]
+
+
+def test_a_coming_in_more_than_a_minute_old_by_the_time_its_read_is_too_late_to_welcome():
+    """The clock couldn't read the table for a while, or the service was busy: "just came in" isn't true any more."""
+    door = Doorway()
+    clock = door.clock(on({"event": "comes_in"}, "welcome"))
+    clock.look(SUNDAY)
+    door.came("Alon", at=SUNDAY.timestamp() - 61)
+    door.came("Stacey", at=SUNDAY.timestamp() - 30)
+    clock.look(SUNDAY)
+    assert [d.why for d in clock.take()] == ["Stacey just came in by the front door"]
