@@ -303,6 +303,11 @@ class Myself:
 
         if getattr(request, "read_the_web", False):
             return "refused: this reply searched the web, so it changes nothing about TARS; they can ask on its own"
+        if door := getattr(request, "by_door", ""):
+            return (
+                f"refused: this ran because the {door}'s lock said someone came in, and that alone changes nothing "
+                "about TARS; they can ask for it"
+            )
         if not (getattr(request, "speaker", None) or getattr(request, "by_voice", False)):
             return "refused: TARS changes its settings only for someone it knows, or someone at home asking aloud"
         try:

@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable
 
 from .hass import HomeAssistant
-from .home import HomeError, Request
+from .home import HomeError, Request, set_off_by_door
 
 DISCOVERED, INTEGRATIONS, SETUP, REMOVE, RENAME, AREA, UNDO, SETUP_HISTORY = (
     "discovered",
@@ -72,6 +72,8 @@ class HASetup:
                 return refused
             if request.read_the_web:
                 return "refused: this reply searched the web, so it changes nothing in the house; ask on its own"
+            if refused := set_off_by_door(request):
+                return refused
         try:
             if action == DISCOVERED:
                 return self.discovered()

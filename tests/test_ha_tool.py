@@ -178,6 +178,15 @@ def test_after_a_web_search_the_past_isnt_read_and_nothing_changes(ha):
     assert said.startswith("refused") and ha.fake.calls == []
 
 
+def test_a_turn_a_doors_lock_set_off_reads_but_changes_nothing(ha):
+    by_door = Request(speaker="Alon", by_chat=True, heard="unlock", by_door="front door")
+    assert ask(ha, "state", by_door, entity_ids=["switch.boiler"]).startswith("switch.boiler: off")
+    for service, ids in (("light.turn_on", ["light.hall"]), ("lock.unlock", ["lock.front_door"])):
+        said = ask(ha, "call", by_door, service=service, entity_ids=ids)
+        assert said.startswith("refused: this ran because the front door's lock said someone came in"), said
+    assert ha.fake.calls == []
+
+
 def test_a_change_waits_for_the_turn_and_says_what_it_did(ha):
     turned = ask(ha, "call", service="light.turn_on", entity_ids=["light.hall"], data='{"brightness_pct": 40}')
     assert turned == "done: light.turn_on; now light.hall on"

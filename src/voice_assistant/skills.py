@@ -13,7 +13,8 @@ marked as a guess.
 
 All of it is taught, changed and removed in conversation, through the skills tool, and every request is told the
 skills and preferences of whoever is asking (note()). Nothing here does a step: the tools keep their own rules, so a
-skill can't unlock (that needs the words said by a voice trusted with it), and an order still waits for its tap."""
+skill can't unlock (that needs the words said by a voice trusted with it), one set off by someone opening a door's
+lock reads the house but changes nothing in it (Due.door), and an order still waits for its tap."""
 
 import json
 import re
@@ -615,6 +616,9 @@ class Due(NamedTuple):
     skill: Skill
     when: datetime
     why: str = ""  # what happened, for one that runs on something happening; "" for its time
+    # Someone coming home by opening this door set it off (doors.py): its run reads the house, and changes nothing
+    # in it (home.Request.by_door). "" for anything else, their phone coming home included.
+    door: str = ""
 
 
 class Clock:
@@ -711,11 +715,13 @@ class Clock:
             events += self._comings_and_goings()
         found = []
         for skill in skills:
-            event = skill.trigger["event"]
+            event, door = skill.trigger["event"], ""
             if event == UPDATED:
                 why = self._updated(skill)
+            elif event == CHANGES:
+                why = self._changed(skill)
             else:
-                why = self._changed(skill) if event == CHANGES else self._matches(skill.trigger, events)
+                why, door = self._matches(skill.trigger, events)
             if not why:
                 continue
             key = skill.id or skill.name
@@ -723,7 +729,7 @@ class Clock:
                 print(f"(skill {skill.name}: {why}, but it ran less than {COOLDOWN_S / 60:.0f} minutes ago)")
                 continue
             self._fired[key] = self._clock()
-            found.append(Due(skill, when, why))
+            found.append(Due(skill, when, why, door))
         self._remember_statuses(skills)
         return found
 
@@ -743,12 +749,13 @@ class Clock:
                 continue
             nobody_before = not any(before.get(p) for p in now)
             nobody_now = not any(now.values())
+            door = self._came_by(person) if home else None
             event = {
                 "event": ARRIVES if home else LEAVES,
                 "who": person.lower(),
                 "all": nobody_before if home else nobody_now,
+                "door": door or "",
             }
-            door = self._came_by(person) if home else None
             words = (
                 f"{person} just came home{f', opening the {door}' if door else ''}"
                 if home
@@ -758,17 +765,18 @@ class Clock:
         return events
 
     @staticmethod
-    def _matches(trigger: dict, events: list[tuple[dict, str]]) -> str:
-        """What happened that a who's-home trigger waits for, in words; "" if nothing did."""
+    def _matches(trigger: dict, events: list[tuple[dict, str]]) -> tuple[str, str]:
+        """What happened that a who's-home trigger waits for, in words, and the door that said so if it was someone
+        opening one ("" if by their phone); ("", "") if nothing did."""
         who = trigger.get("who") or ANYONE
         for event, words in events:
             if event["event"] == trigger["event"] and (
                 who in (ANYONE, event["who"]) or (who == EVERYONE and event["all"])
             ):
                 if who == EVERYONE:
-                    return words + (" (nobody was home)" if event["event"] == ARRIVES else " (nobody's home now)")
-                return words
-        return ""
+                    words += " (nobody was home)" if event["event"] == ARRIVES else " (nobody's home now)"
+                return words, event["door"]
+        return "", ""
 
     def _updated(self, skill: Skill) -> str:
         """Why a skill that runs on TARS being updated is set off now, with what changed; "" if it isn't. A skill

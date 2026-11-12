@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 import time
+import types
 from datetime import datetime
 from pathlib import Path
 
@@ -1074,6 +1075,18 @@ def test_a_skill_due_in_a_chat_is_a_turn_posted_there_as_its_owners():
     assert alon.asked[0].startswith("(Nobody said this: it's 07:30, when the skill digest runs by itself, for Alon.")
     assert (alon.request.speaker, alon.request.by_chat) == ("Alon", True)
     assert bot.messages == [(ALON, "Three new games came out.")]
+
+
+def test_a_chat_skill_a_doors_lock_set_off_runs_reading_the_house_only():
+    from voice_assistant.skills import CHAT, Due, Skill
+
+    skill = Skill("welcome", "Welcome them home.", owner="Alon", say=CHAT)
+    when = datetime(2026, 11, 8, 18, 0).astimezone()
+    due = [Due(skill, when, "Alon just came home, opening the front door", "front door")]
+    clock = types.SimpleNamespace(take=lambda: [due.pop()] if due else [], record=lambda due, said: None)
+    bot, alon = FakeBot(), ScriptedBrain(["Welcome home."])
+    tars(bot, [alon], skill_clock=clock).deliver()
+    assert (alon.request.by_chat, alon.request.by_door) == (True, "front door")  # home.py refuses its changes
 
 
 def test_a_chat_skill_with_nothing_to_say_posts_nothing():

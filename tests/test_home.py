@@ -2,6 +2,7 @@
 draft that's thrown away), devices are made from config.toml with what's missing said per device, plugins load, and
 the brain offers the tool, hands it over, and says "One moment." while a lock turns."""
 
+import dataclasses
 import json
 import sys
 import threading
@@ -67,6 +68,17 @@ def test_nothing_else_unlocks(request_, why):
     said = h.tools.call(args("front door", "unlock"), request_)
     assert said.startswith("refused") and why in said
     assert h.ha.state("lock.front_door") == "locked" and h.ha.calls == []
+
+
+def test_a_turn_a_doors_lock_set_off_reads_the_house_and_changes_nothing_in_it():
+    # A skill run because someone came in by the front door (doors.py), even one with a trusted voice's every word.
+    h = house(lock="locked", boiler="off")
+    by_door = dataclasses.replace(ALON, by_door="front door")
+    for device, action in (("front door", "unlock"), ("boiler", "on"), ("front door", "lock")):
+        said = h.tools.call(args(device, action), by_door)
+        assert said.startswith("refused: this ran because the front door's lock said someone came in"), said
+    assert h.tools.call(args("boiler", "status"), by_door).startswith("boiler: ")
+    assert h.ha.state("lock.front_door") == "locked" and h.ha.state("switch.boiler") == "off" and h.ha.calls == []
 
 
 def test_nobody_unlocks_by_voice_unless_someone_is_named():

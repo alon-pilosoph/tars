@@ -13,6 +13,7 @@ Whatever the device, the tool keeps the same promises, in code rather than in th
   reply thrown away, because someone kept talking, never reaches a device.
 - Unlocking is only by voice, only for the voices [home] unlock_voices names, recognised surely on the request
   itself, and only when the words heard in that turn ask to unlock.
+- A turn a door's lock set off (a skill run as someone comes in by it) changes nothing: Request.by_door.
 """
 
 import importlib
@@ -75,7 +76,9 @@ class Request:
     still read the house, but changes nothing in it.
     `emit`: hands a device's media (a camera's snapshot or live link, as a conversations.SentItem) to this turn's
     reply, so it reaches the asker's TARS page and chat like the send tool's own items; None when nothing collects
-    it (a --check run), so a device that needs it says so."""
+    it (a --check run), so a device that needs it says so.
+    `by_door`: the door whose lock set this turn off (a skill run because someone came home by opening it, doors.py):
+    what a lock says over MQTT is only ever who came in, so the turn reads the house, but changes nothing in it."""
 
     speaker: str | None = None
     score: float | None = None
@@ -85,9 +88,21 @@ class Request:
     may_act: Callable[[float], bool] | None = None
     read_the_web: bool = False
     emit: Callable[[object], None] | None = None  # object is a conversations.SentItem; typed loosely to avoid a cycle
+    by_door: str = ""
 
     def go_ahead(self) -> bool:
         return True if self.may_act is None else self.may_act(GO_AHEAD_TIMEOUT_S)
+
+
+def set_off_by_door(request: Request) -> str:
+    """Why `request` may change nothing in the house because a door's lock set it off (Request.by_door); "" if it
+    wasn't."""
+    if not getattr(request, "by_door", ""):
+        return ""
+    return (
+        f"refused: this ran because the {request.by_door}'s lock said someone came in, and that alone never changes "
+        "anything in the house; say what could be done, and they can ask for it"
+    )
 
 
 class HomeError(Exception):
@@ -419,6 +434,8 @@ class HomeTools:
                 "refused: this reply searched the web, so it changes nothing in the house; "
                 "they can ask for the change on its own"
             )
+        if refused := set_off_by_door(request):
+            return refused
         if action == UNLOCK and (refused := self._may_unlock(request)):
             return refused
         # A change waits for the turn to be over: a reply still being drafted may yet be thrown away.

@@ -10,7 +10,7 @@ the model, which carries them out with the tools it already has.
 | "Bedtime" / "the kids want something calm to watch" | the skill it names, or the one that's for that, done |
 | "Every day at 19:55, ask me if I want the news on" | a skill that runs by itself, said aloud at home |
 | "Every morning at 7:30, send me what's new in gaming" | one posted in your own chat instead |
-| "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out; as they walk in, when they open the front door ([the front door](presence.md#the-front-door)) |
+| "When Stacey gets home, tell her what's waiting" / "when the last one leaves, turn off the AC" | run when someone comes home or goes out; as they walk in, when they open the front door, though then it only greets and reads the house, changing nothing ([the front door](presence.md#the-front-door)) |
 | "If the CO2 goes over 1000, turn on the purifier and tell me" / "when the front door is unlocked, …" | run when a device changes |
 | "Tell me when Alon teaches you something new" | runs when TARS is updated, and is told what changed: in your chat, or aloud |
 | "What did you do today?" | what skills did by themselves, when, and why |
@@ -56,7 +56,10 @@ the model, which carries them out with the tools it already has.
 - **What it did** is kept: each run by itself, when, why, and what it said (`skill_runs`), so "what did you do
   today?" has an answer.
 - **The tools keep their own rules**, whatever a skill says: unlocking needs the words said, by a voice trusted with
-  it, so no skill opens the door; an order still waits for its tap on Telegram.
+  it, so no skill opens the door; an order still waits for its tap on Telegram. A skill set off by someone opening
+  the front door's lock ("Stacey just came home, opening the front door") reads the house but changes nothing in it,
+  whatever it says: what a lock says over MQTT is only ever who came in
+  ([the front door](presence.md#the-front-door)).
 
 The web UI's **Skills** page shows all of it, and what skills did by themselves lately; a skill can be paused,
 resumed or deleted there, and a preference forgotten ([the web UI](web-ui.md)).
