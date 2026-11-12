@@ -522,6 +522,53 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
     return False, itertools.chain([head], stream)
 
 
+class Reply:
+    """A turn's reply, with what its markers mean done in one place: asked of `brain` at once, its start read for
+    <skip>, and with `acks` for <ack>, then iterated for the words to say or post as they're written. A skip is
+    forgotten at once, and the reply is then nothing (`skipped`), or, unless it `may_skip` (said to TARS by name, or
+    written in a chat), PARDON (`pardoned`). Anything else stays in the conversation once written, unless dropped.
+    One that fails to start is forgotten, and raises."""
+
+    def __init__(
+        self, brain: Brain, asked: str, request: Request | None = None, *, may_skip: bool = True, acks: bool = False
+    ):
+        self._brain, self._lock, self._dropped = brain, threading.Lock(), False
+        self.skipped = self.pardoned = False
+        self.acks: list[int] | None = None  # the reminders it acknowledged, [] for the ones just said
+        try:
+            skipped, pieces = split_skip(brain.stream_reply(asked, request))
+            if skipped:
+                self.drop()
+                self.skipped, self.pardoned = may_skip, not may_skip
+                pieces = iter(() if may_skip else [PARDON])
+            elif acks:
+                self.acks, pieces = split_ack(pieces)
+        except BaseException:
+            self.drop()
+            raise
+        self._pieces = pieces
+
+    def __iter__(self) -> Iterator[str]:
+        return self._pieces
+
+    def read(self) -> str:
+        """The whole reply, once it's written. One that fails meanwhile is dropped, and raises."""
+        try:
+            return "".join(self._pieces).strip()
+        except Exception:
+            self.drop()
+            raise
+
+    def drop(self) -> None:
+        """Leaves the brain as if it was never asked: the reply failed, was thrown away, or isn't said. Once, from
+        any thread: a second drop can't forget the turn after it."""
+        with self._lock:
+            if self._dropped:
+                return
+            self._dropped = True
+        self._brain.forget_last()
+
+
 class _UpTo:
     """A streamed reply up to the first of `markers`, holding back only what might be the start of one. `found`: the
     marker that came, if one did."""
