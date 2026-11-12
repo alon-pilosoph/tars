@@ -967,9 +967,11 @@ def follow(
     on_state: Callable[[str, str], None],
     stop: Callable[[], bool] = lambda: False,
     clock: Callable[[], float] = time.monotonic,
+    unknown_too: bool = False,
 ) -> None:
     """Follows `entities` over Home Assistant's websocket API, calling on_state(entity, state) each time one's state
-    changes ("on", "off"; never unknown or unavailable, nor a change of attributes alone), until `stop()`.
+    changes ("on", "off"; never a change of attributes alone, and unknown or unavailable only with `unknown_too`),
+    until `stop()`.
     Reconnects by itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's
     thread."""
     wanted, address = set(entities), "ws" + url.rstrip("/").removeprefix("http") + "/api/websocket"
@@ -994,7 +996,7 @@ def follow(
                     if data.get("entity_id") not in wanted:
                         continue
                     new, old = (data.get("new_state") or {}).get("state"), (data.get("old_state") or {}).get("state")
-                    if new in UNKNOWN or new is None or new == old:
+                    if new is None or new == old or (new in UNKNOWN and not unknown_too):
                         continue
                     try:
                         on_state(data["entity_id"], new)

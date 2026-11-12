@@ -879,13 +879,19 @@ def _entity_problems(home: HomeConfig, d: dict, where: str) -> list[str]:
     if not home.url:
         problems.append(f"{where} goes through Home Assistant: set [home] url")
     allowed = {"name", "entity", "details"}
-    allowed |= {"door", "battery"} if domain == "lock" else set()
+    allowed |= {"door", "battery", "auto_lock"} if domain == "lock" else set()
     allowed |= {"timer"} if domain in ("switch", "light", "fan", "input_boolean") else set()
     problems += [f"{where} ({domain}) has no setting {k}" for k in d if k not in allowed]
     for key, domains in (("door", ("binary_sensor",)), ("battery", ("sensor",))):
         value = d.get(key)
         if key in d and not (isinstance(value, str) and _ENTITY.fullmatch(value) and value.split(".")[0] in domains):
             problems.append(f"{where}: {key} must be a {domains[0]}.* entity, not {value!r}")
+    if domain == "lock" and d.get("auto_lock") not in (None, False):
+        from .autolock import problems as auto_lock_problems
+
+        problems += auto_lock_problems(d["auto_lock"], where)
+        if not d.get("door"):
+            problems.append(f"{where}: auto_lock needs door, its door sensor: it never locks an open door")
     details = d.get("details", [])
     if not (isinstance(details, list) and all(isinstance(e, str) and _ENTITY.fullmatch(e) for e in details)):
         problems.append(f'{where}: details must be a list of entity ids, like ["sensor.boiler_time_left"]')

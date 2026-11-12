@@ -90,6 +90,40 @@ three digits are long enough to recognise a voice, and a bare "yes" usually isn'
 `unlock_threshold`; that uses up the try, and TARS asks them to ask again. The challenge is for the voice only: a chat
 has its own rule.
 
+### Auto-lock
+
+A lock's own auto-lock goes by the clock: 30 seconds after it's unlocked, it locks, whether the door is shut or
+someone's still carrying the shopping in, and the bolt goes into the frame. With a door sensor (`door`) and
+`auto_lock = true` on the lock, TARS locks it instead, knowing whether the door is shut (`autolock.py`, run in the
+voice assistant):
+
+| What happens | What TARS does |
+|---|---|
+| Unlocked, the door opened, then shut | locks it 10 s after it shut (`after_shut_s`); opened again meanwhile, the count starts over |
+| Unlocked, and the door never opened (Auto Unlock as someone walks past) | locks it after a minute (`unopened_s`) |
+| The door open | never locks it; reads the door again just before locking, in case it's just opened |
+| The lock doesn't lock (jammed, the door not quite shut) | tells the maintainers, once; tries again only when it's next unlocked |
+| The door open for 2 minutes (`open_alert_min`, 0 for never) | says so aloud, at night too; if nobody's home, posts it to everyone's chat instead |
+| The sensor not answering (unknown or unavailable) | doesn't trust its last word: locks by the clock, 30 s after unlocking (`no_sensor_s`), and tells the maintainers until it's back |
+| "Turn off the front door's auto-lock for half an hour" | the home tool's `front door auto-lock`: off for that long (an hour if not said; at most 12), then back on by itself; nothing is locked, or said about the door, meanwhile |
+
+```toml
+[[home.devices]]
+name = "front door"
+entity = "lock.front_door"
+door = "binary_sensor.front_door_window"
+auto_lock = true            # or { after_shut_s = 10, unopened_s = 60, open_alert_min = 2, no_sensor_s = 30 }
+```
+
+**Keep the lock's own auto-lock on, with a long timer.** TARS down (the Pi off, Home Assistant restarting) means
+nothing locks the door, so the lock's own is the backstop: on a Nuki, Settings > Auto Lock, set to 10 minutes or so.
+TARS locks long before it would. Turning TARS's auto-lock off for a while doesn't turn the lock's own off: the door
+still locks at its timer.
+
+TARS's log says `(auto-lock: the front door: 10 s after it shuts, 60 s if it's never opened, never while it's open)`
+as it starts, then `(auto-lock: the front door unlocked)` and `(auto-lock: locking the front door; its sensor says
+off)` as it happens.
+
 ## The devices
 
 ### Through Home Assistant
