@@ -173,8 +173,10 @@ class ScriptedTranscriber:
     def __init__(self, texts):
         self.texts = iter(texts)
         self.heard: list[bytes] = []
+        self.expected: list[tuple[str, ...]] = []  # what each session was told to expect
 
-    def session(self):
+    def session(self, expect=()):
+        self.expected.append(expect)
         return BufferedSession(self._transcribe)
 
     def _transcribe(self, pcm: bytes) -> str:
@@ -218,7 +220,7 @@ class RecordingBrain:
 class SilentReply:
     """A StreamedReply that reads the whole reply at once and makes no audio."""
 
-    def __init__(self, pieces, voice, on_sentence):
+    def __init__(self, pieces, voice, on_sentence, made_ahead=None):
         list(pieces)
 
     def __iter__(self):

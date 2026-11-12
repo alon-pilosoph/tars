@@ -224,6 +224,9 @@ class HomeConfig:
     unlock_voices: list[str] = field(default_factory=list)
     # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
     unlock_threshold: float = 0.6
+    # Before unlocking by voice, TARS asks for a few random digits, said back by the same voice within half a minute:
+    # a recording of someone saying "unlock" can't answer a number it's never heard (docs/home.md#unlocking).
+    unlock_challenge: bool = True
     # Who may unlock from their own Telegram chat, by their names in [telegram] people, when their own message says
     # "unlock". Empty = nobody.
     unlock_chats: list[str] = field(default_factory=list)

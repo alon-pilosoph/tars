@@ -153,7 +153,7 @@ def test_an_ac_home_assistant_only_guesses_is_off_is_still_set_and_its_status_sa
     # Someone turned it on with its remote: Home Assistant still has it off, and an IR one sends nothing while it does.
     ac, ha = device({"name": "AC", "entity": "climate.living_room"}, {"ac": "off"})
     assert ac.status().startswith("AC: off (Home Assistant's guess: it can't report back)")
-    assert do(ac, "set", temperature=21).startswith("sent: asked the AC to change to 21 degrees")
+    assert do(ac, "set", temperature=21).startswith("sent: asked the AC to turn on at 21 degrees")
     assert [c for c, _ in ha.calls] == ["climate.turn_on", "climate.set_temperature"]
     assert do(ac, "off").startswith("sent: asked the AC to turn off")  # whatever Home Assistant has it as
 

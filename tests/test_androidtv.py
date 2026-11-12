@@ -10,7 +10,7 @@ import types
 import pytest
 
 import voice_assistant.assistant as assistant_module
-from voice_assistant.androidtv import AndroidTV, TvAgent, TvDevice, screen
+from voice_assistant.androidtv import CONNECT_TIMEOUT_S, SLOW_READ_S, AndroidTV, TvAgent, TvDevice, screen
 from voice_assistant.assistant import Announcements
 from voice_assistant.audio import chime
 from voice_assistant.home import HomeError, Request
@@ -48,7 +48,7 @@ class Box(AndroidTV):
         self.state = {"awake": awake, "front": front, "media": media, "ui": ui}
         self.commands: list[str] = []
 
-    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False):
+    def _run(self, command, decode=True, timeout_s=10.0, repeatable=False, quiet_s=3.0):
         self.commands.append(command)
         s = self.state
         if command.startswith("dumpsys power"):
@@ -92,6 +92,21 @@ def test_what_the_stick_says_is_read():
     assert "app: com.stremio.one\nplaying: Toy Story" in screen(box)
 
 
+SCREEN_BOMB = (
+    'UI hierchary dumped to: /sdcard/tars_ui.xml\n<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaaaaaaaa">'
+    '<!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]><hierarchy><node text="&b;" focused="true" /></hierarchy>'
+)
+SCREEN_EXTERNAL = (
+    'UI hierchary dumped to: /sdcard/tars_ui.xml\n<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM '
+    '"file:///etc/passwd">]><hierarchy><node text="&x;" focused="true" /></hierarchy>'
+)
+
+
+@pytest.mark.parametrize("dump", [SCREEN_BOMB, SCREEN_EXTERNAL])
+def test_a_screen_dump_with_entities_is_read_as_nothing_not_expanded(dump):
+    assert Box(front="com.stremio.one", ui=dump).ui() == ""
+
+
 def test_typing_goes_as_one_word_with_quotes_kept():
     box = Box()
     box.type("it's toy story")
@@ -125,6 +140,23 @@ class Flaky(AndroidTV):
         if self.errors and (error := self.errors.pop(0)):
             raise error
         return "  mWakefulness=Awake"
+
+
+class Timed(Flaky):
+    """Keeps how long each command may go without a word from the box."""
+
+    def _shell(self, command, transport_timeout_s=None, **kw):
+        self.quiet = getattr(self, "quiet", {}) | {command.split()[0]: transport_timeout_s}
+        return super()._shell(command, **kw)
+
+
+def test_reading_the_screen_or_starting_an_app_may_go_quiet_but_a_quick_read_may_not():
+    # While live TV played, each screen read was cut off after 3 s of quiet: it takes 11 s to come back, so the
+    # channel that was on was said to have failed.
+    box = Timed()
+    box.ui(), box.open_link("https://x", "com.app"), box.awake()
+    assert box.quiet["uiautomator"] == box.quiet["am"] == SLOW_READ_S
+    assert box.quiet["dumpsys"] == CONNECT_TIMEOUT_S  # a box gone quiet on a quick read has gone
 
 
 def test_a_press_that_may_have_reached_the_box_is_never_sent_twice():
@@ -447,6 +479,17 @@ def test_a_reply_to_an_announcement_is_heard_without_the_wake_word(speaker):
     assistant.announcements.add("Toy Story, or Toy Story 4?")
     assistant.say_announcements(follow_up_s=4.0)
     assert brain.asked == ["[Follow-up, no wake word] the first one"]
+
+
+def test_an_answer_to_an_announcements_question_that_came_out_as_no_words_is_asked_for_again(speaker):
+    assistant, brain = make_assistant(speaker, [speech(), speech(), None], ["", "twelve"], replies=["On it."])
+    said = []
+    assistant.say = lambda text, **kw: said.append(text) or True
+    assistant.announcements = Announcements()
+    assistant.announcements.add("Which channel, 11 or 12?")
+    assistant.say_announcements(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON]
+    assert brain.asked == ["[Follow-up, no wake word] twelve"]
 
 
 def test_news_that_asks_nothing_doesnt_listen_after_it(speaker):

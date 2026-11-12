@@ -108,3 +108,19 @@ says = ["20|twenty"]
 say = "what's your humor setting?"
 route = "quick"
 says = ["20|twenty"]
+
+[[scenario]]
+id = "clipped-choice"
+about = """TARS asked "11 or 12?" and the answer came at once, its first sound lost: "twelve" written down as "Well."
+It's the pick, twelve, not an overheard fragment to skip."""
+tags = ["follow-up", "tags"]
+
+[[scenario.turn]]
+say = "ask me whether I want a fun fact about the number 11 or 12, then tell me one about the one I pick"
+says = ["11|eleven"]
+
+[[scenario.turn]]
+tag = "follow-up"
+say = "Well."
+route = ["quick", "fallback"]
+says = ["12|twelve"]

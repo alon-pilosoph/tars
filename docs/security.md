@@ -99,10 +99,15 @@ instructions and…". A model may believe them, so what matters is what code all
 ### Someone in the room, or a recorded or cloned voice
 
 - **Defenses:** anyone in the room can ask TARS anything, by design; only unlocking is held back, for a trusted voice
-  that's recognised surely and says "unlock". Locking is anyone's.
-- **Tests:** `tests/test_home.py::test_nothing_else_unlocks`, `::test_nobody_unlocks_by_voice_unless_someone_is_named`.
-- **Open:** speaker ID can't tell a recording or a cloned voice from the person: a replay of "unlock the front door"
-  in a trusted voice would unlock it. A spoken challenge (a random number to repeat) is the planned defense.
+  that's recognised surely and says "unlock", and then says back three random digits, recognised as the same voice,
+  within 30 seconds, in one try ([unlocking](home.md#unlocking)). A replayed recording can't answer digits it's never
+  heard. Locking is anyone's.
+- **Tests:** `tests/test_home.py::test_nothing_else_unlocks`, `::test_nobody_unlocks_by_voice_unless_someone_is_named`,
+  `::test_the_digits_must_be_right_and_said_by_the_same_trusted_voice`, `::test_a_challenge_gets_one_try`,
+  `::test_a_challenge_waits_half_a_minute`, `::test_another_voice_cant_answer_or_use_up_someones_challenge`.
+- **Open:** a voice cloned live, by someone who hears the digits and can make the clone say them within half a
+  minute, still gets through; so does a recording that happens to hold the right digits in that voice. The challenge
+  raises the cost from replaying one sentence to running a clone in the room.
 
 ### A model that gets it wrong
 
@@ -146,9 +151,19 @@ instructions and…". A model may believe them, so what matters is what code all
 
 - **Defenses:** every Python package is pinned with hashes in `uv.lock` and installed `--frozen`, in CI and on the Pi;
   the web UI's packages are pinned in `package-lock.json`.
-- **Tests:** CI installs from the lock files only.
-- **Open:** nothing checks the pinned versions for known vulnerabilities (pip-audit or Dependabot), and nothing scans
-  TARS's own code (bandit or semgrep).
+- **Checked on every push** (CI's `pip-audit`, `npm-audit`, `bandit` and `sbom` jobs, each on its own so one failing
+  doesn't hide the others): pip-audit against every locked Python package (all extras), `npm audit` against the web
+  UI's runtime packages (high and above), and bandit over TARS's own code, `examples/` and `tools/` (medium and above).
+  The tools themselves are pinned in `uv.lock` (pyproject's `security` group). A known vulnerability, or a new finding,
+  fails CI. Each run keeps CycloneDX bills of materials of the Python packages (`sbom.json`) and the web UI's runtime
+  packages (`sbom-webui.json`). Feeds and the TV's screen dumps are read with `defusedxml` (XML from outside: no
+  entities, no expansion bombs). The local models download only over HTTPS, refusing a redirect off it, from addresses
+  pinned to a release or revision, and each is kept only if its SHA-256 is the one in the code. Bandit's false
+  positives (fixed table and column names in SQL, Chrome's debugging port on localhost) are marked one by one with
+  `# nosec` and why, never skipped wholesale.
+- **Tests:** CI installs from the lock files only, and its security jobs fail on a known vulnerability or finding.
+- **Open:** a vulnerability published after a release is only caught on the next push (no scheduled audit), and
+  releases aren't signed yet (roadmap step 4).
 
 ### The services TARS uses
 

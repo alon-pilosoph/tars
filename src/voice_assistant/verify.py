@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 MODEL_NAME = "vosk-model-small-en-us-0.15"  # 40 MB download, runs fine on a Raspberry Pi
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
+MODEL_SHA256 = "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"  # 41,205,931 bytes
 
 # Gives the recognizer somewhere else to put a lookalike. The learned layer scores each of these
 # (training/stage2/train_check.py) and its weights follow this order, so append only.
@@ -105,7 +106,9 @@ ANSWER, ASK, IGNORE = "answer", "ask", "ignore"
 def ensure_model(models_dir: Path) -> Path:
     path = models_dir / MODEL_NAME
     if not path.exists():
-        archive = fetch(models_dir / f"{MODEL_NAME}.zip", MODEL_URL, "the speech recognizer for wake checks")
+        archive = fetch(
+            models_dir / f"{MODEL_NAME}.zip", MODEL_URL, "the speech recognizer for wake checks", MODEL_SHA256
+        )
         with tempfile.TemporaryDirectory(dir=models_dir) as unpacked, zipfile.ZipFile(archive) as z:
             z.extractall(unpacked)
             (Path(unpacked) / MODEL_NAME).rename(path)

@@ -15,6 +15,7 @@ from voice_assistant import llm
 from voice_assistant.config import ConfigError, HomeConfig, load_config
 from voice_assistant.draft import Draft
 from voice_assistant.home import (
+    CHALLENGE_S,
     MAX_PRESSES,
     ONE_MOMENT,
     SETTINGS,
@@ -26,6 +27,7 @@ from voice_assistant.home import (
     button,
     load_plugin,
     presses,
+    spoken_digits,
 )
 from voice_assistant.llm import LLMConfig, OpenAIChat, QuickChat, QuickService
 
@@ -45,9 +47,111 @@ def house(**state):
 # Unlocking: a trusted voice, sure, by voice, that asked to unlock.
 
 
-def test_a_trusted_voice_that_asks_unlocks_at_once():
+def said_back(digits: str, who: str = "alon", score: float = 0.8) -> Request:
+    return Request(who, score, by_voice=True, heard=digits)
+
+
+def test_a_trusted_voice_that_asks_is_asked_for_digits_and_saying_them_unlocks():
     h = house(lock="locked")
+    assert h.tools.call(args("front door", "unlock"), ALON) == (
+        "challenge: not unlocked yet; ask them to say these digits: four, seven, two"
+    )
+    assert h.ha.state("lock.front_door") == "locked"
+    assert (
+        h.tools.call(args("front door", "unlock"), said_back("Four, seven, 2.")) == "done: front door reports unlocked"
+    )
+
+
+@pytest.mark.parametrize(
+    "answer, why",
+    [
+        (said_back("four seven three"), "weren't the digits"),
+        (said_back("four seven two", who="stacey"), "voices TARS knows and trusts"),
+        (said_back("four seven two", score=0.4), "isn't sure enough"),
+        (Request("alon", 0.8, by_voice=False, heard="four seven two"), "only by voice"),
+    ],
+)
+def test_the_digits_must_be_right_and_said_by_the_same_trusted_voice(answer, why):
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert why in h.tools.call(args("front door", "unlock"), answer)
+    assert h.ha.state("lock.front_door") == "locked"
+
+
+def test_a_challenge_gets_one_try():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    h.tools.call(args("front door", "unlock"), said_back("four seven three"))
+    assert 'needs them to say "unlock"' in h.tools.call(args("front door", "unlock"), said_back("four seven two"))
+
+
+def test_a_challenge_waits_half_a_minute():
+    now = [0.0]
+    h = make_house({"lock": "locked"}, clock=lambda: now[0])
+    h.tools.call(args("front door", "unlock"), ALON)
+    now[0] += CHALLENGE_S + 1
+    assert 'needs them to say "unlock"' in h.tools.call(args("front door", "unlock"), said_back("four seven two"))
+
+
+def test_the_digits_said_must_be_exactly_the_ones_asked_for():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    many = said_back("one two three four seven two eight nine")
+    assert "weren't the digits" in h.tools.call(args("front door", "unlock"), many)
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two, thanks")).startswith("done")
+
+
+@pytest.mark.parametrize("draft", ["four seven", "four seven two"])
+def test_an_answer_thrown_away_as_a_draft_leaves_the_challenge_for_the_real_one(draft):
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    thrown_away = Request("alon", 0.8, by_voice=True, heard=draft, may_act=lambda timeout_s: False)
+    assert "withdrawn" in h.tools.call(args("front door", "unlock"), thrown_away)
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
+
+
+def test_another_voice_cant_answer_or_use_up_someones_challenge():
+    h = make_house({"lock": "locked"}, unlock_voices=("alon", "stacey"))
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven three", who="stacey")).startswith("refused")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two", who="bob")).startswith("refused")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
+
+
+def test_an_answer_too_unsure_of_the_voice_uses_up_the_try():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert "isn't sure enough" in h.tools.call(args("front door", "unlock"), said_back("four seven two", score=0.4))
+    assert 'needs them to say "unlock"' in h.tools.call(args("front door", "unlock"), said_back("four seven two"))
+
+
+def test_asking_to_unlock_while_digits_are_waiting_is_a_new_request_not_an_answer():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    again = Request("alon", 0.8, by_voice=True, heard="unlock the door for me")
+    assert h.tools.call(args("front door", "unlock"), again).startswith("challenge:")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
+
+
+def test_asking_again_gets_a_new_challenge():
+    h = house(lock="locked")
+    h.tools.call(args("front door", "unlock"), ALON)
+    assert h.tools.call(args("front door", "unlock"), ALON).startswith("challenge:")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
+
+
+def test_with_the_challenge_off_a_trusted_voice_unlocks_at_once():
+    h = make_house({"lock": "locked"}, unlock_challenge=False)
     assert h.tools.call(args("front door", "unlock"), ALON) == "done: front door reports unlocked"
+
+
+@pytest.mark.parametrize(
+    "heard, digits",
+    [("four, seven, two", "472"), ("4 7 2", "472"), ("472", "472"), ("for seven to", "472"), ("it's six", "6")],
+)
+def test_digits_are_read_however_speech_to_text_wrote_them(heard, digits):
+    assert spoken_digits(heard) == digits
 
 
 @pytest.mark.parametrize(
@@ -76,7 +180,8 @@ def test_nobody_unlocks_by_voice_unless_someone_is_named():
 
 def test_a_trusted_voice_is_matched_whatever_the_case():
     h = make_house({"lock": "locked"}, unlock_voices=(" Alon ",))
-    assert h.tools.call(args("front door", "unlock"), ALON).startswith("done")
+    assert h.tools.call(args("front door", "unlock"), ALON).startswith("challenge:")
+    assert h.tools.call(args("front door", "unlock"), said_back("four seven two")).startswith("done")
 
 
 CHAT = Request("Alon", by_chat=True, heard="unlock the front door")
@@ -425,7 +530,7 @@ def test_without_quick_tools_the_house_is_handed_to_openai():
 
     openai = fake_openai_chat(lambda m: "It's on." if m[-1].get("type") else "", calls_for)
     brain = QuickChat(openai, LLMConfig(), [QuickService("Cerebras", cerebras, "qwen")], home=h.tools)
-    assert "".join(brain.stream_reply("turn the boiler on", ALON)) == "It's on."
+    assert "".join(brain.stream_reply("turn the boiler on", ALON)) == "Let's see. It's on."
     assert brain.answered_by == llm.LOOKED_UP and h.ha.state("switch.boiler") == "on"
 
 
