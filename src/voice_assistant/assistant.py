@@ -74,6 +74,7 @@ PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes, <name>?" after the wake word
 ANSWER_ONLY_S = 6.0
 MUTED_POLL_S = 0.25  # muted, how often what's due is looked for (unmuting ends the wait at once)
 ERROR_LINE_WAIT_S = 1.0
+AFTER_NAME_WAIT_S = 1.0  # the longest the first request waits to know what followed the name (about 0.25 s)
 PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes, Alon?")
 UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
 VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
@@ -464,7 +465,7 @@ class Assistant:
                 continue
             self._woke_at, self._greet_s = time.monotonic(), None
             print("Listening...")
-            self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet)
+            self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet, after_name=self.trigger.after_name)
 
     def prepare_phrases(self) -> None:
         """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
@@ -744,10 +745,11 @@ class Assistant:
         if self.say(text, on_first_audio=self._greeted):
             self.journal.said(text)
 
-    def greet_and_listen(self) -> Utterance | None:
+    def greet_and_listen(self, after_name: Future[np.ndarray] | None = None) -> Utterance | None:
         """Says "Yes, <name>?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
-        waits for the greeting, as for anything TARS says."""
+        waits for the greeting, as for anything TARS says. `after_name`: what followed the wake word before listening
+        began; dropped when the mic waits for the greeting, as what's heard after it doesn't run on from the name."""
         if not (self.mic and self.mic.echo and self.mic.echo.working):
             self.greet()
             return self.listen()
@@ -757,7 +759,7 @@ class Assistant:
             audio = self.phrases.get(text).result(timeout=PHRASE_WAIT_S)
         except Exception as e:  # noqa: BLE001 - no greeting, but still listening
             print(f"(couldn't say {text!r}: {e!r})")
-            return self.listen()
+            return self.listen(after_name=after_name)
         failed: list[BaseException] = []
 
         def play() -> None:
@@ -769,7 +771,7 @@ class Assistant:
         playing = threading.Thread(target=play, daemon=True, name="greeting")
         playing.start()
         try:
-            heard = self.listen(echo_of=text)
+            heard = self.listen(echo_of=text, after_name=after_name)
         finally:
             playing.join()
         if failed:
@@ -803,11 +805,13 @@ class Assistant:
         tag: str | None = None,
         echo_of: str | None = None,
         max_s: float | None = None,
+        after_name: Future[np.ndarray] | None = None,
         expect: tuple[str, ...] = (),
     ) -> Utterance | None:
         """Records one utterance, transcribing it as it comes, and starts answering at each pause in case it's the
-        end. `max_s`: the longest it records, instead of the configured longest. `expect`: words likely said, the
-        choices TARS just offered."""
+        end. `max_s`: the longest it records, instead of the configured longest. `after_name`: what followed the wake
+        word in the wake window: a request said in one breath with the name starts there. `expect`: words likely
+        said, the choices TARS just offered."""
         session = self.transcriber.session(expect)
         draft: Draft[Answer] | None = None
 
@@ -834,6 +838,7 @@ class Assistant:
                 turn_state=session.turn_state,
                 stop=self._stop.is_set,
                 max_s=max_s,
+                lead=_found(after_name),
             )
         except BaseException:
             # Every draft must be settled, or the next one would wait behind it.
@@ -860,38 +865,46 @@ class Assistant:
         first: Utterance | None = None,
         greet_after_s: float = 0.0,
         greet: str = PAUSE,
+        after_name: Future[np.ndarray] | None = None,
         asked: str = "",
     ) -> None:
         """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
 
         `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes, <name>?":
-        ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER. `asked`: what
-        TARS said on its own that `first` answers, so an answer that comes out as no words is asked for again.
+        ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER. `after_name`: what
+        followed the wake word before listening began, where the request starts if it was said in one breath. `asked`:
+        what TARS said on its own that `first` answers, so an answer that comes out as no words is asked for again.
         """
         # While they're still talking, get the reply's connections ready.
         threading.Thread(target=self.brain.warm, daemon=True, name="brain-warm").start()
         self.voice.warm()
         self.prepare_phrases()
         try:
-            self._converse(follow_up_s, first, greet_after_s, greet, asked)
+            self._converse(follow_up_s, first, greet_after_s, greet, after_name, asked)
         finally:
             self._just_said = []
             self.journal.end_conversation()
 
     def _converse(
-        self, follow_up_s: float, first: Utterance | None, greet_after_s: float, greet: str, asked: str
+        self,
+        follow_up_s: float,
+        first: Utterance | None,
+        greet_after_s: float,
+        greet: str,
+        after_name: Future[np.ndarray] | None,
+        asked: str,
     ) -> None:
         heard, pardoned, self._last_reply = first, False, asked
         if heard is None:
             if greet == ALWAYS:
-                heard = self.greet_and_listen()
+                heard = self.greet_and_listen(after_name)
             elif greet == PAUSE and greet_after_s:
-                heard = self.listen(start_timeout_s=greet_after_s)
+                heard = self.listen(start_timeout_s=greet_after_s, after_name=after_name)
                 if heard is None:
                     self.greet()
                     heard = self.listen()
             else:
-                heard = self.listen()
+                heard = self.listen(after_name=after_name)
         if heard is None:
             print("(didn't hear anything)")
             self.journal.nobody_spoke()
@@ -1196,6 +1209,17 @@ class Assistant:
             # With the answer started during the pause, the stages overlap the wait instead of adding to it.
             parts.append(f"TOTAL to first sound {self.timings['total']:.2f}s")
         print(f"[{' | '.join(parts)}]")
+
+
+def _found(after_name: Future[np.ndarray] | None) -> np.ndarray | None:
+    """What followed the name, once it's been found; None if it couldn't be, and the request is heard from the mic."""
+    if after_name is None:
+        return None
+    try:
+        return after_name.result(timeout=AFTER_NAME_WAIT_S)
+    except Exception as e:  # noqa: BLE001 - only what came before listening is lost, as it always was
+        print(f"(couldn't tell where the name ended: {e!r})")
+        return None
 
 
 def _tee(pieces: Iterator[str], into: list[str]) -> Iterator[str]:

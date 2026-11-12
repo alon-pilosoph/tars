@@ -20,6 +20,8 @@ from voice_assistant.verify import (
     RecentAudio,
     TunedCheck,
     VerifiedTrigger,
+    after_name,
+    end_of_name,
     ensure_model,
 )
 from voice_assistant.versions import INSTALLED, FixedPair, Pair
@@ -41,6 +43,7 @@ def hearing(monkeypatch, tmp_path):
     def verifier(text: str, phrase: str = "hey tars") -> PhraseVerifier:
         v = PhraseVerifier(phrase, tmp_path)
         v.heard = lambda pcm: text
+        v.name_end_s = lambda pcm: None
         return v
 
     return verifier
@@ -205,3 +208,110 @@ def test_a_reminder_coming_due_ends_the_wait(hearing):
 def test_a_wake_in_the_same_block_as_a_due_reminder_wins(hearing):
     trigger = FakeTrigger(fire_at=[1])
     assert listening(trigger, hearing("hey tars")).wait(SilentMic(20), due=lambda: True) == ANSWER
+
+
+def words(*timed):
+    return [{"word": w, "start": start, "end": end} for w, start, end in timed]
+
+
+NAMES = {"tars", "darts", "cars"}
+
+
+@pytest.mark.parametrize(
+    "heard, end",
+    [
+        (words(("hey", 2.28, 2.46), ("tars", 2.46, 2.88)), 2.88),
+        (words(("hey", 2.28, 2.46), ("tars", 2.46, 2.88), ("[unk]", 2.88, 3.0)), 2.88),  # "what" said straight on
+        (words(("hey", 1.0, 1.2), ("tars", 1.2, 1.6), ("hey", 2.0, 2.2), ("darts", 2.2, 2.6)), 2.6),  # the last one
+        # Nothing after "hey" is the name: what follows may be the request, so nothing is cut from it.
+        (words(("hey", 2.28, 2.46), ("[unk]", 2.46, 2.9)), None),
+        (words(("hey", 2.28, 2.46), ("[unk]", 2.46, 2.9), ("tars", 2.9, 3.0)), None),
+        (words(("hey", 2.28, 2.46), ("there", 2.46, 2.9)), None),
+        (words(("[unk]", 1.0, 1.3), ("tars", 1.3, 1.7), ("stop", 1.7, 2.0)), None),  # no "hey" heard
+        (words(("hey", 2.6, 3.0)), None),
+        (words(("[unk]", 0.2, 0.5)), None),
+        ([], None),
+    ],
+)
+def test_the_name_ends_with_the_name_after_the_last_hey(heard, end):
+    assert end_of_name(heard, NAMES) == end
+
+
+@pytest.mark.parametrize(
+    "heard, end",
+    [
+        (words(("tars", 1.0, 1.4), ("stop", 1.4, 1.7)), 1.7),
+        (words(("tars", 1.0, 1.4), ("stop", 1.4, 1.7), ("[unk]", 1.7, 2.0)), 1.7),
+        (words(("[unk]", 0.2, 0.5)), None),
+    ],
+)
+def test_a_phrase_without_hey_ends_with_the_last_word_recognized(heard, end):
+    assert end_of_name(heard) == end
+
+
+def test_what_followed_the_name_is_the_wake_window_after_it():
+    audio = np.arange(3 * 16000, dtype=np.int16)
+    assert len(after_name(audio, 2.88)) == round(0.12 * 16000)
+    assert after_name(audio, 2.88)[0] == audio[round(2.88 * 16000)]
+    assert len(after_name(audio, None)) == 0
+    assert len(after_name(audio, 5.0)) == 0
+
+
+def test_a_confirmed_wake_finds_what_followed_the_name_on_the_side(hearing):
+    trigger = FakeTrigger(fire_at=[40])
+    verifier = hearing("hey tars")
+    verifier.name_end_s = lambda pcm: 2.0
+    woke = listening(trigger, verifier)
+    assert woke.wait(SilentMic(50)) == ANSWER
+    window = round(2.5 * 16000 / BLOCK_SAMPLES) * BLOCK_SAMPLES  # the pair's check window, in whole blocks
+    assert len(woke.after_name.result(timeout=5)) == window - 2.0 * 16000
+
+
+def test_when_the_name_cant_be_timed_the_wake_still_stands(hearing):
+    verifier = hearing("hey tars")
+    verifier.name_end_s = lambda pcm: (_ for _ in ()).throw(RuntimeError("recognizer failed"))
+    woke = listening(FakeTrigger(fire_at=[3]), verifier)
+    assert woke.wait(SilentMic(20)) == ANSWER
+    with pytest.raises(RuntimeError):
+        woke.after_name.result(timeout=5)
+
+
+def test_a_close_call_keeps_nothing_after_the_name(hearing):
+    woke = listening(FakeTrigger(fire_at=[3]), hearing("hey cars"))
+    assert woke.wait(SilentMic(20)) == ASK and woke.after_name is None
+
+
+@pytest.mark.parametrize(
+    "phrase, heard, end",
+    [
+        ("hey tars", words(("hey", 2.2, 2.4), ("darts", 2.4, 2.8), ("[unk]", 2.8, 3.0)), 2.8),
+        ("hey tars", words(("hey", 2.2, 2.4), ("jarvis", 2.4, 2.8)), None),
+        ("tars stop", words(("tars", 1.0, 1.4), ("stop", 1.4, 1.7), ("[unk]", 1.7, 2.0)), 1.7),
+    ],
+)
+def test_the_name_is_timed_by_the_phrase_listened_for(hearing, monkeypatch, phrase, heard, end):
+    import vosk
+
+    class Recognizer:
+        def __init__(self, *a):
+            pass
+
+        def SetWords(self, on):
+            pass
+
+        def AcceptWaveform(self, data):
+            pass
+
+        def FinalResult(self):
+            return json.dumps({"result": heard})
+
+    monkeypatch.setattr(vosk, "KaldiRecognizer", Recognizer)
+    assert PhraseVerifier(phrase, Path("models")).name_end_s(SILENCE) == end
+
+
+def test_a_wait_that_ends_without_a_wake_leaves_nothing_from_the_last_one(hearing):
+    verifier = hearing("hey tars")
+    verifier.name_end_s = lambda pcm: 2.0
+    woke = listening(FakeTrigger(fire_at=[3]), verifier)
+    assert woke.wait(SilentMic(20)) == ANSWER and woke.after_name is not None
+    assert woke.wait(SilentMic(20), due=lambda: True) == DUE and woke.after_name is None

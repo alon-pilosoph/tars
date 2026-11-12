@@ -3,6 +3,7 @@
 import threading
 import time
 import types
+from concurrent.futures import Future
 
 import numpy as np
 import pytest
@@ -440,6 +441,61 @@ def test_asking_straight_away_skips_the_greeting(speaker):
     assistant.say = lambda text, **kw: said.append(text)
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5)
     assert said == [] and brain.asked == ["what time is it"]
+
+
+def found(pcm):
+    done = Future()
+    done.set_result(pcm)
+    return done
+
+
+def test_what_followed_the_name_goes_to_the_first_request_only(speaker):
+    """Said in one breath with the name, "what" of "what's new" was read off the mic with it, so it's handed on."""
+    assistant, _ = make_assistant(speaker, [b"q", b"f", None], ["what's new", "and the weather"])
+    what = np.ones(1920, np.int16)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, after_name=found(what))
+    leads = assistant.recorder.leads
+    assert leads[0] is what and leads[1:] == [None, None]  # follow-ups come after TARS spoke: nothing to carry
+
+
+@pytest.mark.parametrize(
+    "greet, echo, heard",
+    [("always", True, [b"q", None]), ("pause", False, [None, b"q", None]), ("never", False, [b"q", None])],
+)
+def test_what_followed_the_name_is_heard_while_the_mic_stays_open(speaker, greet, echo, heard):
+    transcript = "Yes, Alon? What's new" if echo else "what's new"
+    assistant, _, _ = greeting_at_once(speaker, heard, [transcript], echo=echo)
+    what = np.ones(1920, np.int16)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet, after_name=found(what))
+    assert assistant.recorder.leads[0] is what
+    assert all(lead is None for lead in assistant.recorder.leads[1:])  # after a greeting, the mic starts afresh
+
+
+def test_a_greeting_said_with_the_mic_closed_drops_what_followed_the_name(speaker):
+    """Without echo cancellation the mic is cleared for "Yes, Alon?": what's heard after it doesn't run on from it."""
+    assistant, _, _ = greeting_at_once(speaker, [b"q", None], ["what's new"])
+    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(np.ones(1920, np.int16)))
+    assert assistant.recorder.leads == [None, None] and assistant.mic.pauses >= 1
+
+
+def test_if_the_greeting_cant_be_said_what_followed_the_name_is_still_heard(speaker, capsys):
+    assistant, _, _ = greeting_at_once(speaker, [b"q", None], ["what's new"], echo=True)
+    unsaid = Future()
+    unsaid.set_exception(RuntimeError("no voice"))
+    assistant.phrases.get = lambda text, **kw: unsaid
+    what = np.ones(1920, np.int16)
+    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(what))
+    assert assistant.recorder.leads[0] is what
+    assert "couldn't say 'Yes, Alon?'" in capsys.readouterr().out
+
+
+def test_if_the_name_couldnt_be_timed_the_request_is_heard_from_the_mic(speaker, capsys):
+    assistant, brain = make_assistant(speaker, [b"q", None], ["what's new"])
+    failed = Future()
+    failed.set_exception(RuntimeError("recognizer failed"))
+    assistant.converse(follow_up_s=4.0, after_name=failed)
+    assert assistant.recorder.leads[0] is None and brain.asked == ["what's new"]
+    assert "couldn't tell where the name ended" in capsys.readouterr().out
 
 
 def logged_assistant(speaker, tmp_path, utterances, transcripts, replies=(), elsewhere=None):
