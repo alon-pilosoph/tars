@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from voice_assistant import __main__ as cli
+from voice_assistant import wiring as cli
 from voice_assistant.audio import SAMPLE_RATE
 from voice_assistant.backup import (
     ARCHIVE_RULE,

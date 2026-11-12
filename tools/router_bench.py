@@ -34,7 +34,7 @@ from capability_bench import (
     spread,
 )
 
-from voice_assistant.__main__ import api_key
+from voice_assistant.wiring import api_key
 
 REPO = Path(__file__).parents[1]
 URL = "https://api.typesafe.ai/v1/systemone"

@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from voice_assistant import volume
-from voice_assistant.__main__ import make_home
 from voice_assistant.config import HomeConfig, load_config
 from voice_assistant.home import PRESS, SET, HomeError, Request
 from voice_assistant.volume import (
@@ -22,6 +21,7 @@ from voice_assistant.volume import (
     playback_controls,
     preferred,
 )
+from voice_assistant.wiring import make_home
 
 POWERCONF = "Anker PowerConf: USB Audio (hw:2,0)"
 # A USB speakerphone's controls, as amixer -c 2 scontents lists them: its microphone first, which is never turned.
@@ -256,8 +256,8 @@ def test_without_it_and_without_devices_there_is_no_home_tool(tmp_path):
 
 
 def test_its_off_unless_asked_for_and_left_out_saying_why_when_it_cant_be_turned(monkeypatch, capsys):
-    from voice_assistant import __main__ as cli
     from voice_assistant import volume
+    from voice_assistant import wiring as cli
 
     assert cli.own_speaker(config()) is None
 

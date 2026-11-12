@@ -15,7 +15,7 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 
-from voice_assistant.__main__ import make_openai_client
+from voice_assistant.wiring import make_openai_client
 
 REPO = Path(__file__).parents[1]
 OUT = REPO / "tools" / "demo_audio"

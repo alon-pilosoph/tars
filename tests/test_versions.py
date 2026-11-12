@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from voice_assistant import __main__ as cli
+from voice_assistant import wiring as cli
 from voice_assistant.config import ConfigError, load_config
 from voice_assistant.verify import ANSWER, VerifiedTrigger
 from voice_assistant.versions import ABOUT, CHECK, INSTALLED, MODEL, FixedPair, ModelVersions, Pair

@@ -15,7 +15,6 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from voice_assistant.__main__ import chat_home, make_home
 from voice_assistant.config import ROUTER_KINDS, ConfigError, PresenceConfig, load_config
 from voice_assistant.home import SETTINGS, Request
 from voice_assistant.mic_mute import DEVICE as MIC
@@ -63,6 +62,7 @@ from voice_assistant.routers import (
     xiaomi_devices,
     xiaomi_password,
 )
+from voice_assistant.wiring import chat_home, make_home
 
 DATA = Path(__file__).parent / "presence_data"
 NOW = 1_800_000_000.0
