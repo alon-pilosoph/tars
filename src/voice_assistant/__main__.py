@@ -637,6 +637,7 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
             return home.call({"device": device, "action": "status"}, Request())
 
         skills.devices, skills.status = (lambda: set(home.devices)), status
+        skills.past = lambda device, start, end: home.devices[device].past(start, end)
     updates = {}
     if myself:
         updates = {"version": myself.version, "between": myself.between}
