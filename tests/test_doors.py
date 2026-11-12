@@ -679,3 +679,9 @@ def test_quiet_hours_wrap_past_midnight(spec, hour, minute, quiet):
 
     at = datetime.now().astimezone().replace(hour=hour, minute=minute, second=0).timestamp()
     assert is_quiet(spec, at) is quiet
+
+
+def test_quiet_hours_are_off_unless_set_so_messages_waiting_are_said_on_coming_home_as_they_were():
+    assert PresenceConfig().quiet == ""
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    assert cfg.presence.quiet == ""

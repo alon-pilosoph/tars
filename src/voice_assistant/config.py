@@ -307,9 +307,10 @@ class PresenceConfig:
     # is one), and the routers are asked at once whenever it moves, so someone leaving by it is out in a minute or two
     # (docs/presence.md#the-door-sensor). Needs [home] url.
     doors: list[dict] = field(default_factory=list)
-    # When waiting messages aren't said aloud as someone comes home, "22:00-07:00" (the house's local time; "" for
-    # never): they wait for them to speak to TARS. A skill's own hours are in its instructions.
-    quiet: str = "22:00-07:00"
+    # Hours waiting messages aren't said aloud as someone comes home, like "22:00-07:00" (the house's local time); ""
+    # (the default) for never: in them they wait for that person to speak to TARS. A skill's own hours, the "welcome
+    # home" one's included, are in its instructions.
+    quiet: str = ""
     # [presence.mqtt]: the MQTT broker the locks publish to, { address = "localhost", port = 1883, user, secret },
     # TARS's own user there, and secret the name of its password in .env; both needed with doors. Needs the door
     # extra (paho-mqtt).

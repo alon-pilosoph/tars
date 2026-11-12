@@ -191,8 +191,10 @@ in `doors.py`:
   pause it or delete it by talking to TARS like any skill ("don't welcome Alon", "mention the weather too");
   deleted, it isn't put back. Being set off by the door, it reads the house but changes nothing in it.
 - **Says their waiting messages** a few seconds after they come in, after the welcome, brought forward if their
-  phone had set them for later; between [presence] `quiet`'s hours (22:00 to 07:00 unless set otherwise) they wait
-  until the person next speaks to TARS, even ones their phone's coming home would have said.
+  phone had set them for later. With `[presence] quiet` set (off unless it is: `quiet = "22:00-07:00"`), in those
+  hours nobody's waiting messages are said as they come home, by the door or by their phone: they wait until the
+  person next speaks to TARS. The welcome's own hours are in its instructions, changed by talking to TARS, not by
+  `quiet`.
 - **Asks the routers at once** each time the door moves (or 10 seconds after the last time, if that was just now),
   then every 10 seconds for three minutes, so whoever's phone comes or goes with it is seen in seconds, not at the
   next round. Never more often than that however often it moves, and for no more than a quarter of any hour: a
