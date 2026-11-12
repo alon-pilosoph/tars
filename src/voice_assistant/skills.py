@@ -4,8 +4,10 @@ out with the tools it has.
 A skill is a name and what to do, in plain words: "bedtime: turn the TV off and the AC to 24". Asked for by its name,
 or for what it's for (its `when`), the model does it as if it had been asked for all of it. It can also run by itself
 at set times of day, said aloud at home (the voice's TARS keeps that time) or posted in its owner's chat (the
-Telegram service's): "every day at 19:55, ask whether I want the news on". A skill is its owner's, or the
-household's, for anyone in it.
+Telegram service's): "every day at 19:55, ask whether I want the news on". Or once, later ("turn the AC back on at
+5am"): a one-off, run by whichever of the two is up (OneOffs), counted as done only when the house says so, and
+tried again, or given up and its asker told, when it didn't happen. A skill is its owner's, or the household's, for
+anyone in it.
 
 A preference is something TARS knows about a person, in plain words, that it keeps in mind whenever they ask
 anything: "skip esports in the gaming news", "likes the AC at 23". It's said by them, or noticed by the model and
@@ -16,6 +18,7 @@ skills and preferences of whoever is asking (note()). Nothing here does a step: 
 skill can't unlock (that needs the words said by a voice trusted with it), and an order still waits for its tap."""
 
 import json
+import os
 import re
 import sys
 import threading
@@ -42,6 +45,19 @@ MOST_RUNS = 20  # told when asked what TARS did
 TIME = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
 MOST_NOTES = 40  # a person's preferences told to the model, newest first
 LATE_S = 90.0  # a one-off run later than this after its time (TARS was off) is told it's late
+# A one-off whose try didn't happen (docs/skills.md#once-later) is tried again ONCE_RETRY_S later, ONCE_TRIES tries at
+# most, all within ONCE_WINDOW_S of the first: then it's given up, kept as failed, and whoever asked is told. A try cut
+# short by TARS stopping counts, so one that keeps TARS from running isn't tried for ever, nor long after its time.
+ONCE_TRIES = 3
+ONCE_RETRY_S = 120.0
+ONCE_WINDOW_S = 15 * 60.0
+# Which of TARS's processes answers where (health.PROCESSES' names): a one-off is that one's to run while it's running,
+# and otherwise the other's.
+PROCESS = {ALOUD: "assistant", CHAT: "telegram"}
+# How the house answers a change that wasn't made (home.py): anything else is made, or on its way.
+NOT_MADE = ("error", "not confirmed", "refused")
+STOPPED = "TARS stopped while it was doing it"
+SLIPPED = "something went wrong on my side"
 SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET = "save", "delete", "pause", "resume", "remember", "forget"
 LIST, RUNS = "list", "runs"
 ACTIONS = (LIST, RUNS, SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET)
@@ -166,8 +182,8 @@ SKILLS_TOOL = {
             "say": {
                 "type": ["string", "null"],
                 "enum": [ALOUD, CHAT, None],
-                "description": "save, with at or a trigger: aloud at home, or in their own chat; null: where "
-                "they asked (a chat's in their chat; a household one aloud).",
+                "description": "save, with at, once or a trigger: aloud at home, or in their own chat; null: where "
+                "they asked (a chat's in their chat; a household one aloud, but a one-off where they asked).",
             },
             "household": {
                 "type": ["boolean", "null"],
@@ -244,10 +260,16 @@ class Skill:
     id: int | None = None
     trigger: dict | None = None  # something happening that it runs on (trigger())
     once: float | None = None  # the Unix time a one-off runs, after which it's gone; None: not a one-off
+    by: str = ""  # who taught it, or last changed it: for a one-off, who asked for it
 
     @property
     def household(self) -> bool:
         return self.owner == HOUSEHOLD
+
+    @property
+    def asker(self) -> str:
+        """Who it answers, run by itself: its owner, or, for a household one-off, whoever asked for it."""
+        return self.by if self.household and self.once is not None else self.owner
 
 
 def times(raw: str | None) -> tuple[str, ...]:
@@ -282,9 +304,8 @@ def line(skill: Skill) -> str:
         )
     if skill.once is not None:
         at = datetime.fromtimestamp(skill.once).astimezone()
-        parts.append(
-            f"runs by itself once, {at:%a %Y-%m-%d %H:%M}, {'said aloud' if skill.say == ALOUD else 'in their chat'}"
-        )
+        where = "said aloud" if skill.say == ALOUD else f"in {skill.by}'s chat" if skill.household else "in their chat"
+        parts.append(f"runs by itself once, {at:%a %Y-%m-%d %H:%M}, {where}")
     if skill.trigger:
         where = "said aloud" if skill.say == ALOUD else "in their chat"
         parts.append(f"runs by itself when {describe(skill.trigger)}, {where}")
@@ -409,14 +430,16 @@ class Skills:
             (SEEN_VERSION.format(key=key), version),
         )
 
-    def ran(self, skill: Skill, why: str, said: str) -> None:
-        """A skill ran by itself: kept, so "what did you do today?" can be answered."""
-        self.store.write(
-            "INSERT INTO skill_runs (skill_id, name, owner, at, why, said) VALUES (?, ?, ?, ?, ?, ?)",
-            (skill.id, skill.name, skill.owner, self._clock(), why, said),
-        )
-        if skill.once is not None and skill.id is not None:  # a one-off is done
-            self._by_id("DELETE FROM skills WHERE id=? AND once=?", (skill.id, skill.once))
+    def ran(self, skill: Skill, why: str, said: str, failed: bool = False) -> None:
+        """A skill ran by itself: kept, so "what did you do today?" can be answered. `failed`: a one-off that didn't
+        happen, given up (OneOffs). A one-off is gone once it's done, either way."""
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO skill_runs (skill_id, name, owner, at, why, said, failed) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (skill.id, skill.name, skill.owner, self._clock(), why, said, failed),
+            )
+            if skill.once is not None and skill.id is not None:
+                db.execute("DELETE FROM skills WHERE id=? AND once=?", (skill.id, skill.once))
 
     def runs(self, person: str | None) -> str:
         mine = person_key(person)
@@ -429,7 +452,7 @@ class Skills:
             return "No skill has run by itself lately."
         lines = [
             f"- {time.strftime('%a %H:%M', time.localtime(r['at']))}, {r['name']} ({r['why']}): "
-            f"{r['said'] or 'nothing to do'}"
+            f"{'failed, and they were told: ' if r['failed'] else ''}{r['said'] or 'nothing to do'}"
             for r in rows
         ]
         return "What skills did by themselves lately, newest first:\n" + "\n".join(lines)
@@ -507,10 +530,11 @@ class Skills:
         if on_event and on_event["event"] == CHANGES and self.status:
             self._check_reading(on_event)
         owner = HOUSEHOLD if args.get("household") else person
-        # Where it says what it has to: as asked, or where it was asked for (a chat's, in that chat), but a
-        # household's is said aloud.
-        say = args.get("say") or (CHAT if chat and owner != HOUSEHOLD else ALOUD)
-        if owner == HOUSEHOLD and say == CHAT:
+        # Where it says what it has to: as asked, or where it was asked for (a chat's, in that chat). A household
+        # one-off answers whoever asked for it, so one asked for in a chat is said in theirs; any other household
+        # skill is said aloud.
+        say = args.get("say") or (CHAT if chat and (owner != HOUSEHOLD or once is not None) else ALOUD)
+        if owner == HOUSEHOLD and say == CHAT and once is None:
             raise ValueError("a household skill is said aloud; one posted in a chat is someone's own")
         now = self._clock()
         happens = json.dumps(on_event) if on_event else None
@@ -522,7 +546,7 @@ class Skills:
             if had:
                 db.execute(
                     "UPDATE skills SET instructions=?, purpose=?, at=?, days=?, trigger=?, once=?, say=?, updated=?, "
-                    "updated_by=?, paused=0 WHERE id=?",
+                    "updated_by=?, paused=0, tries=NULL WHERE id=?",
                     (*values, had["id"]),
                 )
             else:
@@ -583,11 +607,13 @@ class Skills:
             for s in self.all()
         ]
         prefs = self.store.rows("SELECT id, person, about, text, guessed, at FROM preferences ORDER BY person, id DESC")
-        runs = self.store.rows("SELECT id, name, owner, at, why, said FROM skill_runs ORDER BY id DESC LIMIT 50")
+        runs = self.store.rows(
+            "SELECT id, name, owner, at, why, said, failed FROM skill_runs ORDER BY id DESC LIMIT 50"
+        )
         return {
             "skills": skills,
             "preferences": [{**p, "guessed": bool(p["guessed"])} for p in prefs],
-            "runs": runs,
+            "runs": [{**r, "failed": bool(r["failed"])} for r in runs],
         }
 
     def set_paused(self, skill_id: int, paused: bool) -> bool:
@@ -679,6 +705,7 @@ class Skills:
             row["id"],
             json.loads(row["trigger"]) if row["trigger"] else None,
             row["once"],
+            row["updated_by"],
         )
 
 
@@ -703,6 +730,165 @@ def _late(once: float, when: datetime) -> str:
     )
 
 
+def _again(once: float, tries: int, why: str, when: datetime) -> str:
+    """For a one-off tried again: how the last try went, so it isn't left half done or done twice."""
+    meant = datetime.fromtimestamp(once, when.tzinfo)
+    return (
+        f"it was meant for {meant:%H:%M}, and the last try didn't happen ({why}); this is try {tries} of {ONCE_TRIES}. "
+        "Check how things are first, and do only what isn't done yet"
+    )
+
+
+def happened(house: list[tuple[str, str]], failed: BaseException | None = None) -> tuple[str, bool]:
+    """Whether a one-off's try happened, from the house's answers to the changes its turn asked for (home.Request's
+    `changed`, in order) and what the turn failed with, if it did: ("", False) if it happened, else why not, in words
+    for whoever asked, and whether that's final (the house refused: trying again changes nothing). It happened when
+    the house made every change it was asked for, each by its last answer ("done", "sent", "started"; a change
+    counts as done only when the device reports it), or when the turn asked nothing of it and didn't fail (there was
+    only something to say, or it chose to do nothing this late). A turn that failed before the house made anything
+    didn't happen; one that failed after is kept as done, since doing it again could undo it (a button pressed
+    twice)."""
+    last: dict[str, str] = {}
+    for what, answer in house:
+        last[what] = answer
+    for what, answer in last.items():
+        if answer.lower().startswith(NOT_MADE):
+            return f"{what}: {answer}", answer.lower().startswith("refused")
+    if failed is not None and not last:
+        return SLIPPED, False
+    return "", False
+
+
+class Answers(list):
+    """What the house answered to the changes a skill's own turn asked for, in order: home.Request's `changed`."""
+
+    def __call__(self, what: str, answer: str) -> None:
+        self.append((what, answer))
+
+
+def made(house: list[tuple[str, str]]) -> str:
+    """What the house made of a one-off's changes, in its own words, for whoever asked; "" for nothing."""
+    last = {what: answer for what, answer in house}
+    return f"As you asked: {'; '.join(last.values())}." if last else ""
+
+
+class Try(NamedTuple):
+    """A one-off's try, taken for this process: which it is (1 for the first), and, after the first, why the last
+    didn't happen."""
+
+    n: int
+    last: str = ""
+
+
+class OneOffs:
+    """The one-offs in the event database, as one of TARS's processes takes them (`say`: where it answers, ALOUD for
+    the assistant, CHAT for Telegram). A one-off is the process's that answers where it was asked while that one is
+    running, and otherwise the other's, so it's done whichever of the two is up; and each try is taken in the
+    database, so only one of them ever makes it. `running(process)`: the pid of one of TARS's processes (PROCESS's
+    names), from its heartbeat (health.py), or None if it isn't running.
+
+    A skill's `tries` (JSON, NULL before the first): how many were taken (`n`), when the first was (`first`), the
+    process that has one in hand ("telegram:4242", `by`), why the last didn't happen (`why`), when it may be tried
+    again (`next`), and whether it's been given up (`over`)."""
+
+    def __init__(self, skills: Skills, say: str, running: Callable[[str], int | None], pid: int | None = None):
+        self._skills, self._store, self.say, self._running = skills, skills.store, say, running
+        self._me = f"{PROCESS[say]}:{os.getpid() if pid is None else pid}"
+
+    def take(self, skill: Skill, now: float) -> Try | None:
+        """A one-off that's due (`now`, a Unix time, is past its time), taken for this process if it's this one's
+        to try now; None if it isn't (another has it in hand, it waits to be tried again, it's the other process's
+        while that one runs, or it's done or changed since it was read). One whose tries are used up, or whose
+        window is over, is given up here instead, and whoever asked is told."""
+        with self._store.transaction() as db:
+            row = db.execute("SELECT once, tries FROM skills WHERE id=?", (skill.id,)).fetchone()
+            if row is None or row["once"] != skill.once:
+                return None
+            tries = json.loads(row["tries"]) if row["tries"] else {"n": 0, "first": None, "by": None, "why": ""}
+            held = tries.get("by")
+            if held == self._me or (held and self._alive(held)):
+                return None
+            if skill.say != self.say and self._running(PROCESS[skill.say]) is not None:
+                return None
+            if held:  # in hand when the process that had it stopped: that try counts, and didn't happen
+                tries |= {"by": None, "why": tries.get("why") or STOPPED, "next": now}
+            n = tries["n"]
+            over = tries.get("over") or (n > 0 and (n >= ONCE_TRIES or now - tries["first"] > ONCE_WINDOW_S))
+            if not over and n and now < tries.get("next", now):
+                return None
+            taken = {"over": True} if over else {"n": n + 1, "first": tries["first"] or now}
+            tries |= {"by": self._me, **taken}
+            db.execute("UPDATE skills SET tries=? WHERE id=?", (json.dumps(tries), skill.id))
+        if over:
+            self._give_up(skill, tries.get("why") or STOPPED, now)
+            return None
+        return Try(n + 1, (tries.get("why") or "") if n else "")
+
+    def failed(self, skill: Skill, why: str, now: float, final: bool = False) -> None:
+        """A try this process took didn't happen (`why`, in words for whoever asked): tried again ONCE_RETRY_S on,
+        or, `final` or its tries used up, given up now."""
+        with self._store.transaction() as db:
+            row = db.execute("SELECT once, tries FROM skills WHERE id=?", (skill.id,)).fetchone()
+            tries = json.loads(row["tries"]) if row and row["once"] == skill.once and row["tries"] else {}
+            if tries.get("by") != self._me:  # changed or deleted meanwhile: what's there now is kept to
+                return
+            over = final or tries["n"] >= ONCE_TRIES or now + ONCE_RETRY_S - tries["first"] > ONCE_WINDOW_S
+            tries |= {"by": self._me if over else None, "why": why, "next": now + ONCE_RETRY_S, "over": over}
+            db.execute("UPDATE skills SET tries=? WHERE id=?", (json.dumps(tries), skill.id))
+        if over:
+            self._give_up(skill, why, now)
+        else:
+            print(f"(skill {skill.name}: didn't happen ({why}); tried again in {ONCE_RETRY_S:.0f} s)", flush=True)
+
+    def tell(self, skill: Skill, text: str, now: float) -> None:
+        """`text` for whoever asked for a one-off, where they asked: as a message in the reminders table, the way
+        TARS's notices go between its processes (maintainers.py), which the assistant says aloud and Telegram posts
+        in their chat. For an answer this process can't give there itself, and for a one-off that didn't happen."""
+        from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
+
+        channel = TELEGRAM if skill.say == CHAT else VOICE
+        new = NewReminder(MESSAGE, text, for_name=skill.asker, due=now, needs_ack=False, max_tries=1)
+        Reminders(self._store).add(new, set_via=channel, now=now, channel=channel, phones=[skill.asker])
+
+    def _give_up(self, skill: Skill, why: str, now: float) -> None:
+        """Whoever asked is told, and then it's kept as failed, and gone. If the tables can't be written now, it's let
+        go, to be given up again at the next look: it's never tried again, nor gone before they're told (unless
+        there's nobody it could be told to)."""
+        text = gave_up(skill, why, now)
+        print(f"(skill {skill.name}: given up: {why})", flush=True)
+        try:
+            try:
+                self.tell(skill, text, now)
+            except ValueError as e:  # nobody it could be for: kept as failed all the same
+                print(f"(skill {skill.name}: nobody to tell it didn't happen: {e})", flush=True)
+            at = datetime.fromtimestamp(skill.once).astimezone()
+            self._skills.ran(skill, f"once, at {at:%H:%M}", text, failed=True)
+        except Exception as e:  # noqa: BLE001 - the tables can't be written now: the next look tries again
+            print(f"(skill {skill.name}: couldn't give it up now: {e!r})", flush=True)
+            self._let_go(skill)
+
+    def _let_go(self, skill: Skill) -> None:
+        with self._store.transaction() as db:
+            row = db.execute("SELECT tries FROM skills WHERE id=? AND once=?", (skill.id, skill.once)).fetchone()
+            if row and row["tries"]:
+                tries = json.loads(row["tries"]) | {"by": None}
+                db.execute("UPDATE skills SET tries=? WHERE id=?", (json.dumps(tries), skill.id))
+
+    def _alive(self, held: str) -> bool:
+        """Whether the process that has a one-off in hand ("telegram:4242") is still the one running."""
+        process, _, pid = held.partition(":")
+        return pid.isdigit() and self._running(process) == int(pid)
+
+
+def gave_up(skill: Skill, why: str, now: float) -> str:
+    """What whoever asked for a one-off is told when it didn't happen."""
+    what = skill.instructions if len(skill.instructions) <= 160 else skill.instructions[:159].rstrip() + "…"
+    return (
+        f"What you asked me to do at {said_when(skill.once, now)} didn't happen ({why}): {what} "
+        "Ask me again if you still want it."
+    )
+
+
 class Due(NamedTuple):
     skill: Skill
     when: datetime
@@ -718,7 +904,11 @@ class Clock:
     COOLDOWN_S, so one can't set itself off, or flap with a reading around its limit. What changed while TARS
     started up is only seen, never acted on. But TARS being updated is: `version()` is the version running, and each
     skill that runs on it keeps the one it last saw (`seen`, `see`), so one deployed while TARS was down, which
-    restarts it, is still told, once, with what changed between the two (`between(old, new)`)."""
+    restarts it, is still told, once, with what changed between the two (`between(old, new)`).
+
+    A one-off, wherever it answers, is due from its time on, and is this TARS's when `one_offs` (OneOffs) takes it
+    for this process: so it runs while either process is up, and only one of them runs it. Without `one_offs`, no
+    one-off is run here."""
 
     def __init__(
         self,
@@ -734,11 +924,13 @@ class Clock:
         between: Callable[[str, str], str] | None = None,
         seen: Callable[[str], str | None] | None = None,
         see: Callable[[str, str], None] | None = None,
+        one_offs: OneOffs | None = None,
     ):
         self._skills, self.say = skills, say
         self._version, self._between, self._seen, self._see = version, between, seen, see
         self._now, self._tick_s = now, tick_s
         self._people, self._status, self._record, self._clock = people, status, record, clock
+        self._one_offs = one_offs
         self._ran: set = set()
         self._fired: dict = {}  # skill: when it last ran on something happening (self._clock)
         self._home: dict[str, bool | None] | None = None  # who was home last time; None before the first look
@@ -765,35 +957,88 @@ class Clock:
         return due
 
     def record(self, due: Due, said: str) -> None:
-        """How a skill that ran by itself went: what it said, or "" for nothing to do."""
+        """How a skill that ran by itself went: what it said, or "" for nothing to do. A one-off is done, and gone."""
         if self._record:
+            why = due.why or f"at {due.when:%H:%M}"
+            if due.skill.once is not None:
+                why = f"once, at {datetime.fromtimestamp(due.skill.once, due.when.tzinfo):%H:%M}"
             try:
-                self._record(due.skill, due.why or f"at {due.when:%H:%M}", said)
+                self._record(due.skill, why, said)
             except Exception as e:  # noqa: BLE001 - the log of runs is no reason to stop
                 print(f"(skills: couldn't keep the run of {due.skill.name}: {e!r})")
 
+    def failed(self, due: Due, why: str, final: bool = False) -> None:
+        """A skill's own turn that didn't happen (`why`, in words for whoever asked; `final`: trying again changes
+        nothing): a one-off is tried again, or given up and they're told (OneOffs.failed); any other skill waits for
+        its next time."""
+        if due.skill.once is None or self._one_offs is None:
+            print(f"(skill {due.skill.name} didn't happen: {why}; it waits for its next time)")
+            return
+        try:
+            self._one_offs.failed(due.skill, why, self._now().timestamp(), final)
+        except Exception as e:  # noqa: BLE001 - kept in hand: whoever runs TARS next tries it again, or gives it up
+            print(f"(skills: couldn't keep how {due.skill.name} went: {e!r})")
+
+    def hand_over(self, due: Due, said: str) -> None:
+        """A one-off done whose answer (`said`) this process can't give where it was asked, now or at all: kept as
+        done, and its answer handed to whichever process answers there, for whoever asked (OneOffs.tell)."""
+        self.record(due, said)
+        if self._one_offs is None or not said:
+            return
+        try:
+            self._one_offs.tell(due.skill, said, self._now().timestamp())
+        except Exception as e:  # noqa: BLE001 - it's done all the same; only its answer is lost
+            print(f"(skill {due.skill.name}: couldn't hand over its answer: {e!r})")
+
+    def settle(self, due: Due, house: list[tuple[str, str]], failed: BaseException | None = None) -> None:
+        """A one-off's try that won't be answered as it was written: its turn `failed`, or the house didn't make what
+        it asked for (`house`: its answers, as home.Request's `changed` heard them). If it didn't happen, it's tried
+        again, or given up and whoever asked is told; if it did all the same, it's kept as done, and they're told
+        what the house said it made (happened())."""
+        why, final = happened(house, failed)
+        if why:
+            self.failed(due, why, final)
+        else:
+            self.hand_over(due, made(house))
+
     def look(self, when: datetime | None = None) -> None:
-        """Keeps what's due at `when` (now): skills whose time it is, and those waiting for what's changed since."""
+        """Keeps what's due at `when` (now): skills whose time it is, those waiting for what's changed since, and the
+        one-offs this process takes."""
         when = when or self._now()
         try:
-            skills = [s for s in self._skills() if not s.paused and s.say == self.say]
+            every = [s for s in self._skills() if not s.paused]
         except Exception as e:  # noqa: BLE001 - the table can't be read now: next tick
             print(f"(skills: couldn't read them: {e!r})")
             return
+        skills = [s for s in every if s.say == self.say and s.once is None]
         found = self._timed(skills, when) + self._happened([s for s in skills if s.trigger], when)
+        found += self._once([s for s in every if s.once is not None], when)
         if found:
             with self._lock:
                 self._due += found
 
+    def _once(self, skills: list[Skill], when: datetime) -> list[Due]:
+        """The one-offs whose time has come that this process takes now (OneOffs.take): one TARS was off for runs
+        when it's back, told how late it is; one tried again is told how the last try went."""
+        if self._one_offs is None:
+            return []
+        found, now = [], when.timestamp()
+        for skill in skills:
+            if now < skill.once:
+                continue
+            try:
+                taken = self._one_offs.take(skill, now)
+            except Exception as e:  # noqa: BLE001 - the table can't be written now: next tick
+                print(f"(skills: couldn't take {skill.name}: {e!r})")
+                continue
+            if taken:
+                why = _late(skill.once, when) if taken.n == 1 else _again(skill.once, taken.n, taken.last, when)
+                found.append(Due(skill, when, why))
+        return found
+
     def _timed(self, skills: list[Skill], when: datetime) -> list[Due]:
         hhmm, found = when.strftime("%H:%M"), []
         for skill in skills:
-            if skill.once is not None:  # due from its time on, once: a TARS that was off then runs it when it's back
-                key = (skill.id or skill.name, skill.once)
-                if when.timestamp() >= skill.once and key not in self._ran:
-                    self._ran.add(key)
-                    found.append(Due(skill, when, _late(skill.once, when)))
-                continue
             key = (skill.id or skill.name, when.date(), hhmm)
             if hhmm in skill.at and (not skill.days or DAYS[when.weekday()] in skill.days) and key not in self._ran:
                 self._ran.add(key)

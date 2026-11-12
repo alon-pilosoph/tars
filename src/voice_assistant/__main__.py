@@ -617,12 +617,16 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
     tick, so one taught a minute ago is kept to. With `home` (a HomeTools) and `presence`, it also watches the
     devices and who's home for the skills that run on something happening, and a trigger saved is checked against
     the devices and people there are. With `myself` (myself.py), the skills that run on TARS being updated are told
-    when it is, and what changed."""
+    when it is, and what changed. The one-offs are shared between the two: each is run by the process that answers
+    where it was asked while that one's heartbeat says it's running, and otherwise by this one (skills.OneOffs)."""
+    from .health import running
     from .home import Request
-    from .skills import Clock
+    from .skills import Clock, OneOffs
 
     if not skills:
         return None
+    folder = skills.store.folder
+    one_offs = OneOffs(skills, say, lambda process: running(folder, process))
     people = status = None
     if presence:
         names = presence.board.people.names  # by person_key: as they're written
@@ -641,7 +645,7 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
     if myself:
         updates = {"version": myself.version, "between": myself.between}
         updates |= {"seen": skills.seen_version, "see": skills.see_version}
-    return Clock(skills.all, say, people=people, status=status, record=skills.ran, **updates).start()
+    return Clock(skills.all, say, people=people, status=status, record=skills.ran, one_offs=one_offs, **updates).start()
 
 
 def own_speaker(cfg: Config):

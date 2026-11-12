@@ -34,8 +34,8 @@ from .recorder import UtteranceRecorder
 from .recording import NO_SPEECH, SILENCE, TAP
 from .reminders import VOICE, Change, Clock, Reminders, ReminderTools, held_line, late, says_line
 from .reminders import line as reminder_line
+from .skills import ALOUD, Answers, happened, on_its_own
 from .skills import Clock as SkillClock
-from .skills import on_its_own
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
 from .stt import Session, Transcriber
@@ -515,27 +515,44 @@ class Assistant:
     def run_skills(self, follow_up_s: float = 0.0) -> None:
         """Each skill whose time has come, or that something happening set off: a turn of its own, with its
         instructions as the request, whose reply is said after a chime; then it listens a moment, without the wake
-        word, for an answer to what it asked."""
+        word, for an answer to what it asked. A one-off's try that didn't happen isn't said: it's tried again, or
+        given up and whoever asked is told (skills.Clock.settle). One to answer in a chat, run here because Telegram
+        isn't running, is posted in their chat once Telegram is back, and one done whose answer can't be said now is
+        said with the reminders (skills.Clock.hand_over)."""
         clock = self._skill_clock
         for due in clock.take() if clock else []:
-            skill = due.skill
+            skill, house = due.skill, Answers()
             print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'})")
+            # Their feeds and preferences; and what the house answers, for whether a one-off happened.
+            whose = Request(speaker=None if skill.household else skill.owner, changed=house)
             try:
-                whose = Request(speaker=None if skill.household else skill.owner)  # their feeds and preferences
                 asked = on_its_own(skill, due.when, SKIP, due.why)
                 skipped, pieces = split_skip(self.brain.stream_reply(asked, whose))
                 text = "".join(pieces).strip()
             except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
                 print(f"(skill {skill.name} didn't run: {e!r})")
                 self.brain.forget_last()
+                if skill.once is not None:
+                    clock.settle(due, house, e)
+                continue
+            if skill.once is not None and happened(house)[0]:
+                print(f"(skill {skill.name}: not said, since it didn't happen: {text!r})")
+                self.brain.forget_last()
+                clock.settle(due, house)
                 continue
             if skipped or not text:
                 print(f"(skill {skill.name}: nothing to do now)")
                 self.brain.forget_last()
                 clock.record(due, "")
                 continue
+            if skill.say != ALOUD:  # not the room's to hear, nor part of its conversation
+                self.brain.forget_last()
+                clock.hand_over(due, text)
+                continue
             audio = self._made_now([text])
             if text not in audio:
+                if skill.once is not None:  # done all the same: its answer waits for the voice
+                    clock.hand_over(due, text)
                 continue
             clock.record(due, text)
             self.journal.unprompted()

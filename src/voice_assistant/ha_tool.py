@@ -313,6 +313,11 @@ class HAAccess:
             return "error: data must be a JSON object"
         if any(k in fields for k in TARGETS):
             return "error: name the entities in entity_ids; data can't aim it at a device, a room or a label"
+        what = f"{service} on {', '.join(ids)}" if ids else service
+        return request.answered(what, self._change(service, domain, name, ids, fields, request))
+
+    def _change(self, service: str, domain: str, name: str, ids: list[str], fields: dict, request: Request) -> str:
+        """A call that's well formed, made unless something holds it back."""
         if request.read_the_web:
             return "refused: this reply searched the web, so it changes nothing in the house; they can ask on its own"
         if refused := self._unlock_check(domain, name, ids, request):

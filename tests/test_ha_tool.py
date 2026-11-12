@@ -188,6 +188,20 @@ def test_a_change_waits_for_the_turn_and_says_what_it_did(ha):
     assert "sent:" in ask(ha, "call", service="light.toggle", entity_ids=["light.hall"])
 
 
+def test_each_call_it_makes_or_holds_back_is_told_with_its_answer_and_reads_and_bad_calls_arent(ha):
+    heard = []
+    request = Request(by_chat=True, changed=lambda what, answer: heard.append((what, answer)))
+    ask(ha, "state", request, entity_ids=["light.hall"])
+    ask(ha, "call", request, service="light", entity_ids=["light.hall"])  # not a service: nothing asked of it
+    ask(ha, "call", request, service="light.turn_on", entity_ids=["light.hall"])
+    ask(ha, "call", request, service="lock.unlock", entity_ids=["lock.front_door"])
+    assert heard == [
+        ("light.turn_on on light.hall", "done: light.turn_on; now light.hall on"),
+        ("lock.unlock on lock.front_door", heard[1][1]),
+    ]
+    assert heard[1][1].startswith("refused")
+
+
 def test_home_assistant_itself_isnt_administered(ha):
     for service in ("homeassistant.restart", "recorder.purge", "update.install", "hassio.host_reboot"):
         assert ask(ha, "call", service=service).startswith(f"refused: {service.split('.')[0]} administers")
