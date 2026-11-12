@@ -37,6 +37,8 @@ fi
 sudo -n "$HELPER"  # packages from deploy/pi-packages.txt, device rules, lingering
 # The browser's profile keeps the sites' logins with a fixed key (no desktop keyring): only TARS's user may read it.
 mkdir -p "$HOME/.cache/tars-browser" && chmod 700 "$HOME/.cache/tars-browser"
+# Chromium's own folders, made here: Telegram's sandbox lets it write to them, not make them.
+mkdir -p -m 700 "$HOME/.config/chromium" "$HOME/.config/chromium-headless"
 
 echo "== uv (the services run it from ~/.local/bin)"
 UV="$HOME/.local/bin/uv"

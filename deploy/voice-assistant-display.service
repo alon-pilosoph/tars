@@ -13,12 +13,16 @@ Description=TARS browser's virtual screen
 
 [Service]
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x1000x24 -nolisten tcp
-# Sandboxed: nothing but its socket under the shared /tmp, where the browser finds the screen.
+# Sandboxed: it writes only to /tmp (its lock and socket file), with no home (so no /run/user and no user D-Bus) and
+# no Docker. The browser, in Telegram's /tmp of its own, can't see that socket file: it reaches the screen over the
+# abstract socket @/tmp/.X11-unix/X99, which belongs to the network namespace, so PrivateNetwork= on either unit
+# would cut it off.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/tmp
 RestrictAddressFamilies=AF_UNIX
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
 LockPersonality=yes
 SystemCallArchitectures=native
 ProtectKernelTunables=yes

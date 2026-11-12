@@ -1,4 +1,5 @@
-"""The systemd units in deploy/: each service sandboxed as docs/security.md#the-pi says, the updater not."""
+"""The systemd units in deploy/: each service sandboxed as docs/security.md#the-services-on-the-machine says, the
+updater not."""
 
 import configparser
 from pathlib import Path
@@ -12,8 +13,12 @@ BASE = {
     "ProtectSystem": "strict",
     "ProtectHome": "read-only",
     "RestrictAddressFamilies": "AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+    "UMask": "0077",
 }
 STRICT = {"SystemCallFilter": "@system-service", "CapabilityBoundingSet": "", "ProtectKernelTunables": "yes"}
+CHROMIUM_SANDBOX_NEEDS = ("SystemCallFilter", "MemoryDenyWriteExecute", "RestrictNamespaces", "CapabilityBoundingSet")
+BUS = {"-/run/user/%U/bus", "-/run/user/%U/systemd"}
+DOCKER = {"-/run/docker.sock", "-/var/run/docker.sock"}
 
 
 def service(name: str) -> dict[str, str]:
@@ -21,6 +26,12 @@ def service(name: str) -> dict[str, str]:
     unit.optionxform = str
     unit.read(DEPLOY / f"{name}.service")
     return dict(unit["Service"])
+
+
+def hidden(name: str) -> set[str]:
+    """Every path InaccessiblePaths= hides, across the unit's lines (configparser keeps only the last of a repeat)."""
+    lines = (DEPLOY / f"{name}.service").read_text().splitlines()
+    return {p for line in lines if line.startswith("InaccessiblePaths=") for p in line.partition("=")[2].split()}
 
 
 @pytest.mark.parametrize(
@@ -38,11 +49,49 @@ def test_each_service_is_sandboxed(name, wanted):
     assert got["ReadWritePaths"].split()[0] == "%h/voice-assistant"
 
 
-def test_the_screen_writes_only_its_socket():
+def test_the_voice_keeps_its_devices():
+    assert "PrivateDevices" not in service("voice-assistant")
+
+
+def test_telegram_leaves_chromium_its_own_sandbox():
+    got = service("voice-assistant-telegram")
+    assert [k for k in CHROMIUM_SANDBOX_NEEDS if k in got] == []
+
+
+@pytest.mark.parametrize("name", ["voice-assistant", "voice-assistant-web", "voice-assistant-backup"])
+def test_only_chromium_writes_to_config(name):
+    assert not any(p.lstrip("-").startswith("%h/.config") for p in service(name)["ReadWritePaths"].split())
+
+
+def test_telegram_writes_only_chromiums_config():
+    written = [p for p in service("voice-assistant-telegram")["ReadWritePaths"].split() if ".config" in p]
+    assert written == ["-%h/.config/chromium", "-%h/.config/chromium-headless"]
+
+
+@pytest.mark.parametrize(
+    "name, without",
+    [
+        ("voice-assistant", set()),  # restarts itself through systemd-run; Home Assistant's history runs in Docker
+        ("voice-assistant-telegram", set()),  # the same, and starts the updater
+        ("voice-assistant-web", DOCKER),  # asks systemctl each unit's state
+        ("voice-assistant-backup", BUS),  # Home Assistant's history runs in Docker
+        ("voice-assistant-display", DOCKER),  # ProtectHome=yes already hides /run/user
+    ],
+)
+def test_each_service_reaches_only_the_managers_it_uses(name, without):
+    assert hidden(name) == without
+
+
+def test_the_screen_writes_only_tmp_and_has_no_home():
     got = service("voice-assistant-display")
     assert (
         got["ProtectHome"] == "yes" and got["ReadWritePaths"] == "/tmp" and got["RestrictAddressFamilies"] == "AF_UNIX"
     )
+
+
+@pytest.mark.parametrize("name", ["voice-assistant-display", "voice-assistant-telegram"])
+def test_the_browser_and_screen_share_a_network_for_the_abstract_socket(name):
+    assert "PrivateNetwork" not in service(name)
 
 
 def test_the_updater_isnt_sandboxed_since_it_installs_as_root():

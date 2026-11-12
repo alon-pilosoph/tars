@@ -18,14 +18,18 @@ Wants=network-online.target
 WorkingDirectory=%h/voice-assistant
 ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --telegram
 Environment=PYTHONUNBUFFERED=1
-# Sandboxed (docs/security.md#the-pi): the system and home read-only but TARS's own folder (and caches), a /tmp of
-# its own, no new privileges (no sudo), only local, IPv4 and IPv6 sockets. Checked on the Pi with --check inside it.
+# Sandboxed (docs/security.md#the-services-on-the-machine): the system and home read-only but TARS's own folder, its
+# caches and Chromium's two folders in ~/.config, a /tmp of its own, files only its user can read, no new privileges
+# (no sudo), only local, IP and netlink sockets (glibc asks the kernel for the machine's addresses over netlink to
+# order a name's answers, and Chromium watches the network over it).
+# Keeps the user manager's D-Bus (a changed setting restarts TARS, a tap on Install starts the updater) and Docker
+# (Home Assistant's setup history runs git in its container): docs/security.md says what that leaves open.
 # Not the kernel, syscall or capability limits the others have: Chromium's own sandbox, for errands, needs them.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/voice-assistant -%h/.cache -%h/.config
+ReadWritePaths=%h/voice-assistant -%h/.cache -%h/.config/chromium -%h/.config/chromium-headless
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LockPersonality=yes
 SystemCallArchitectures=native

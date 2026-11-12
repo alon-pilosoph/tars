@@ -104,9 +104,12 @@ over-current on all four ports at once is a damaged cable (try another, with a d
 cable that only charges. A speakerphone that's heard but silent (`--check` says "very quiet") may have its own mute
 on: the PowerConf's light is red then.
 
-Each service is sandboxed ([the services](security.md#the-pi)): it writes only to the project's folder and its
-caches, can't use `sudo`, and keeps its own `/tmp`. Something of your own that writes elsewhere (a plugin's files
-outside `voice_data/`) gets "Read-only file system": keep it under the project's folder.
+Each service is sandboxed ([the services](security.md#the-services-on-the-machine)): it writes only to the project's
+folder and `~/.cache` (Telegram also to Chromium's `~/.config/chromium` and `~/.config/chromium-headless`), can't use
+`sudo`, and has a `/tmp` of its own; the browser's screen alone writes to the shared `/tmp`, for its socket. Something
+of your own that writes elsewhere (a plugin's files outside `voice_data/`) gets "Read-only file system": keep it under
+the project's folder. What the services make is readable by their user alone (`UMask=0077`): to read their files as
+someone else, use that user.
 
 By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),

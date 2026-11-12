@@ -20,14 +20,18 @@ Description=TARS web UI
 WorkingDirectory=%h/voice-assistant
 ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --web --host 0.0.0.0 --port 8080
 Environment=PYTHONUNBUFFERED=1
-# Sandboxed (docs/security.md#the-pi): the system and home read-only but TARS's own folder (and caches), a /tmp of
-# its own, no new privileges (no sudo), only local, IPv4 and IPv6 sockets. Checked on the Pi with --check inside it.
+# Sandboxed (docs/security.md#the-services-on-the-machine): the system and home read-only but TARS's own folder (and
+# caches), a /tmp of its own, files only its user can read, no new privileges (no sudo), only local, IP and netlink
+# sockets (glibc asks the kernel for the machine's addresses over netlink to order a name's answers).
+# Keeps the user manager's D-Bus (the Status page asks systemctl each unit's state): docs/security.md says what that
+# leaves open. No Docker.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/voice-assistant -%h/.cache -%h/.config
+ReadWritePaths=%h/voice-assistant -%h/.cache
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
 LockPersonality=yes
 SystemCallArchitectures=native
 UMask=0077
