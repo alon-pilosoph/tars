@@ -11,7 +11,7 @@ import pytest
 from voice_assistant import check
 from voice_assistant.audio import NoDeviceError
 from voice_assistant.check import FAIL, OK, SKIP, WARN, Result
-from voice_assistant.config import ConfigError, load_config
+from voice_assistant.config import ConfigError, WebConfig, load_config
 
 from .conftest import raising
 from .test_presence import FakeHomeware, FakeXiaomi, presence_config
@@ -108,8 +108,27 @@ def test_voiceprints_web_ui_and_services(tmp_path):
     assert check.voiceprints([]).status == WARN and check.voiceprints(["alon"]).detail == "alon"
     assert check.web(lambda url: 200).status == OK
     assert check.web(raising(ConnectionRefusedError())).status == WARN
+    assert check.web(lambda url: 401).status == OK  # it asks for a session: it's running
     assert check.systemd("voice-assistant", lambda u: None).status == SKIP
     assert check.systemd("voice-assistant", lambda u: "failed").status == WARN
+
+
+@pytest.mark.parametrize(
+    "web, scheme, status",
+    [
+        (WebConfig(), "http", WARN),
+        (WebConfig(sign_in=True), "http", FAIL),
+        (WebConfig(sign_in=True, tls_cert="c.pem", tls_key="k.pem", link="https://pi.tail.ts.net:8080"), "https", OK),
+        (WebConfig(sign_in=True, tls_cert="c.pem", tls_key="k.pem"), "https", FAIL),  # links would use an address
+        (WebConfig(sign_in=True, tls_cert="c.pem", tls_key="k.pem", link="http://pi.tail.ts.net:8080"), "https", FAIL),
+        (WebConfig(sign_in=True, tls_cert="c.pem", tls_key="k.pem", link="https://100.64.0.1:8080"), "https", FAIL),
+    ],
+)
+def test_check_says_whether_the_web_ui_asks_anyone_to_sign_in(web, scheme, status):
+    asked = []
+    cfg = dataclasses.replace(cfg_(), web=web)
+    running, signing = check.web(lambda url: asked.append(url) or 401, 8080, cfg)
+    assert asked == [f"{scheme}://127.0.0.1:8080/api/status"] and running.status == OK and signing.status == status
 
 
 def test_the_web_ui_is_looked_for_on_the_port_its_unit_serves_on(tmp_path):
@@ -363,6 +382,35 @@ def test_check_signs_into_each_router_and_says_whose_phone_it_sees(tmp_path):
         ("Router 192.168.1.160", FAIL, "no XIAOMI_PASSWORD in .env"),
     ]
     assert check.routers_now(cfg_(), {}.get).status == SKIP
+
+
+DOOR = '[[presence.doors]]\nname = "front door"\ntopic = "nuki/4224E764"\n'
+BROKER = '[presence.mqtt]\naddress = "localhost"\nuser = "tars"\nsecret = "MQTT_PASSWORD"\n'
+
+
+@pytest.mark.parametrize(
+    "answer, status, says",
+    [
+        (("", ""), OK, "listening to the front door"),
+        (("it refused TARS: Not authorized", ""), FAIL, "it refused TARS: Not authorized"),
+        (("", "it lets TARS write on nuki/4224E764"), WARN, "it lets TARS write on nuki/4224E764"),
+    ],
+)
+def test_check_connects_to_the_broker_the_doors_locks_publish_to(tmp_path, answer, status, says):
+    asked = []
+    cfg = presence_config(
+        tmp_path, TWO_ROUTERS.replace("[[presence.routers]]", DOOR + BROKER + "[[presence.routers]]", 1)
+    )
+    results = check.routers_now(
+        cfg,
+        {"MQTT_PASSWORD": "hunter2"}.get,
+        None,  # no router's password is in .env: none is signed into
+        lambda mqtt, password, topics: asked.append((mqtt["address"], password, topics)) or answer,
+    )
+    assert asked == [("localhost", "hunter2", ["nuki/4224E764"])]
+    assert (results[-1].name, results[-1].status) == ("Doors", status) and says in results[-1].detail
+    if status == WARN:
+        assert "mosquitto/acl" in results[-1].fix
 
 
 def cfg_():

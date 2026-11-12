@@ -18,6 +18,33 @@ Type=oneshot
 WorkingDirectory=%h/voice-assistant
 ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --backup
 Environment=PYTHONUNBUFFERED=1
+# Sandboxed (docs/security.md#the-services-on-the-machine): the system and home read-only but TARS's own folder (and
+# caches), a /tmp of its own, files only its user can read, no new privileges (no sudo), only local, IP and netlink
+# sockets (glibc asks the kernel for the machine's addresses over netlink to order a name's answers).
+# Keeps Docker (Home Assistant's setup history runs git in its container): docs/security.md says what that leaves
+# open. No user manager.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/voice-assistant -%h/.cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+InaccessiblePaths=-/run/user/%U/bus -/run/user/%U/systemd
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+# A call outside the filter fails with an error rather than killing TARS.
+SystemCallErrorNumber=EPERM
+PrivateDevices=yes
 # Below the voice: a pass reads every new recording and compresses the database, and must never slow a reply.
 Nice=15
 IOSchedulingClass=idle

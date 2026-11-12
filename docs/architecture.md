@@ -52,7 +52,7 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
 2. **Stage 2** (Vosk with a grammar plus a learned layer, local) decides: answer, ask "Did you call me?", or ignore.
    See [hearing "hey TARS"](wake-word.md).
 3. **Recording** runs until you've finished. [Silero VAD](https://github.com/snakers4/silero-vad) (local, 2 MB)
-   hears you start; Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
+   hears you start, from straight after the name when you said it all in one breath ("hey TARS, what's new"); Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
    decides when you're done, from your words as well as the pause. If Flux fails, the local rules take over: after
    `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (local, 8 MB) may keep
    waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes, Alon?" (speaker ID from the
@@ -75,8 +75,9 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    your turn is confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, or is a fragment that asks for nothing ("eight hours."), and TARS
-   stays quiet and forgets it. The conversation is sent to the
-   LLM until it's been quiet for `memory_minutes`.
+   stays quiet and forgets it. A `<skip>` for a request said by name, or a chat message, is forgotten too, but
+   answered with "Sorry, I didn't catch that. Say it again?", and so is an answer to TARS's question that comes out
+   as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
 class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
@@ -125,7 +126,7 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
 ### The LLM's tools
 
 - **Web search** (OpenAI's built-in tool, `[llm] web_search`): for current questions and real links. When the
-  model starts a search, TARS says "Looking it up." so the wait isn't silent.
+  model starts a search with nothing said yet, TARS says "Looking it up." so the wait isn't silent.
 - **Send** (`[llm] send`, needs `[learning] log_events`): a strict function tool for a link, a note (short
   markdown), a list, or a text file (`.txt`, `.md`, `.csv`, `.ics`), for whoever asked or for the household. The
   assistant checks every call (links must be http(s), a file needs a known type and its text) and returns errors to
@@ -159,7 +160,9 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
   TARS really couldn't do is noted, with what stopped it and what would make it possible (the `wishes` table), and
   posted at once to the Telegram chat of each of TARS's maintainers (`[household] maintainers`, as a message the
   Telegram service posts, whichever process noted it; never back to the one who asked); "what did people ask for that
-  you couldn't do?" lists them, and only a maintainer marks one granted (with none named, anyone TARS knows). `settings`, `set`: what about TARS can be changed by asking ("be less
+  you couldn't do?" lists them, and only a maintainer marks one granted (with none named, anyone TARS knows). With
+  `[wishes]` on, the maintainers get a Build it button instead, which has Claude Code build it on GitHub; TARS follows
+  the pull request and tells whoever asked once it's installed (`wishes.py`, [wishes that come true](wishes.md)). `settings`, `set`: what about TARS can be changed by asking ("be less
   jokey", "you cut me off", "remember our chats longer"; `settings.py`): only what `ADJUSTABLE` lists, each within
   bounds (the wake threshold can't go where TARS would never wake), never who may unlock or set up the house, the keys
   or the models. A change is written as its own line in `config.local.toml`, the rest of the file as it was, kept only
@@ -180,8 +183,8 @@ and what would make it possible, and notes it as a wish (below). Qwen hands over
 
 | Marker | When | To | TARS says first |
 |---|---|---|---|
-| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | "Looking it up." once a search starts |
-| `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment." |
+| `<look-up>` | the web: weather, news, prices, a real link; and reminders, sending and the house, unless `quick_tools` is on | OpenAI's `model`, with all the tools | a line Qwen picks as it hands over ("Let's see.", "Let me check.", "Looking it up.", "On it."), or "Let's see." if it picks none |
+| `<ponder>` | real thinking: planning, comparing options, several steps | `think_model` (default `model`) at `think_effort`, for at most `think_timeout_s` | "Let me think about that for a moment.", unless Qwen already said a line |
 
 With `[llm] quick_tools` on, Qwen has the reminder tools and the send tool (notes, lists and files, but not links, which
 need web search) and uses them itself, saving those turns the hand-off. A request with a part of each ("set a timer, and
@@ -289,10 +292,13 @@ crash in one never takes another down. The web UI is described in [the web UI](w
 **Each process writes a heartbeat**, `voice_data/events/heartbeats/<name>.json`, every 30 seconds (`health.py`), and
 the web UI's Status page reads them: a process whose heartbeat is older than three beats has stopped, crashed or
 frozen whole, on a Mac as on the Pi ([the Status page](web-ui.md#the-status-page)). It's written from a thread of
-its own, never touches the database, and one that can't be written costs a line in the log.
+its own, never touches the database, and one that can't be written costs a line in the log. The assistant and
+Telegram read each other's too, with its pid: a one-off ("turn the heater off at six") is run by the one that
+answers where it was asked while that one is running, and otherwise by the other ([once, later](skills.md#once-later)).
 
-**It has no accounts**, so it's meant for the home network, and it protects itself against the two ways a web page
-elsewhere could reach it through someone's browser:
+**With `[web] sign_in`, it needs a passkey** (`signin.py`, [signing in](web-ui.md#signing-in)); without it, it's
+meant for the home network. Either way, it protects itself against the two ways a web page elsewhere could reach it
+through someone's browser:
 
 - **Host allow-list:** it only answers requests addressed to an IP address, `localhost`, `*.local`, `*.ts.net`, a
   single-label name (`tars`, the Pi's hostname) or a name in `[web] allowed_hosts`. Anything else gets 421, which
@@ -322,8 +328,8 @@ The assistant is `src/voice_assistant/`:
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API, an errand's approvals, login links and codes) |
 | The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` (the loop), `brain.py`, `openai_brain.py` and `anthropic_brain.py` (its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `money.py` (amounts, however written), `tools.py`, `login.py`, `login_page.py`, `codes.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `trace.py`, `run.py`, `chrome.py` (TARS's own Chrome), `mcp_server.py` and `claude.py` (Claude Code as its brain); `telegram_errands.py` (an errand's questions and answer in a chat); `homenet.py` (what's at home, for the browser and the web UI) |
-| The house | `home.py` (the `home` tool, its rules, the `Device` interface, plugins), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), `volume.py` (TARS's own speaker as a device: its sound card's volume through amixer, or the Mac's), `commands.py` (house commands done on the Pi without the model, their replies made ahead, and Vosk hearing them offline), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
-| Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
+| The house | `home.py` (the `home` tool, its rules, the `Device` interface, loading plugins), `plugins.py` (a plugin's manifest, its grant and the context scoped to it, its own tools), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), `volume.py` (TARS's own speaker as a device: its sound card's volume through amixer, or the Mac's), `commands.py` (house commands done on the Pi without the model, their replies made ahead, and Vosk hearing them offline), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
+| Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), `doors.py` (a Nuki's lock actions over MQTT, someone opening the door from outside home at once, whose key is whose, learned, and the broker watched), `mosquitto.py` (TARS's own user on the household's Mosquitto, from the installer), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people at a terminal), `recording.py` (recording sessions: scripts, checks, takes), `takes.py` (the assistant's side of them), `control.py` (the socket the web UI asks the assistant over) |
 | The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (wiring, command line), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |

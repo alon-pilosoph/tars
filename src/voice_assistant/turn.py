@@ -14,6 +14,7 @@ MODEL_URL = (
     "https://huggingface.co/pipecat-ai/smart-turn-v3/resolve/"
     "f766f81d3cfdf7737ac64aad813d91bbfd56bf93/smart-turn-v3.2-cpu.onnx"
 )
+MODEL_SHA256 = "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f"  # 8,679,182 bytes
 WINDOW_S = 8  # the model hears the last 8 seconds, zero-padded in front
 # Whisper's log-mel front end, which the model was trained on. Matches transformers' WhisperFeatureExtractor
 # (tests/test_turn.py checks this); reimplemented because transformers is too big for a Pi.
@@ -64,7 +65,7 @@ def features(audio: np.ndarray) -> np.ndarray:
 
 class SmartTurn:
     def __init__(self, model_path: Path):
-        self._session = onnx_session(model_path, MODEL_URL, "the end-of-turn model")
+        self._session = onnx_session(model_path, MODEL_URL, "the end-of-turn model", MODEL_SHA256)
 
     def p_finished(self, pcm: bytes) -> float:
         """How likely it is that the speaker has finished (0-1), from 16 kHz mono int16 audio of what they said."""

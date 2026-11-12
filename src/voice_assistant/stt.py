@@ -70,7 +70,15 @@ class Session(Protocol):
 
 
 class Transcriber(Protocol):
-    def session(self) -> Session: ...
+    def session(self, expect: tuple[str, ...] = ()) -> Session:
+        """`expect`: words the speaker will likely say (the choices TARS just offered), for a service that can lean
+        towards them."""
+        ...
+
+
+def with_keyterms(url: str, expect: tuple[str, ...]) -> str:
+    """Deepgram's keyterm prompting: each word to expect, as its own `keyterm` (Nova-3 and Flux)."""
+    return url + "".join(f"&{urlencode({'keyterm': term})}" for term in expect)
 
 
 def deepgram_connect(url: str, key: str, open_timeout: float = CONNECT_S, **kwargs):
@@ -106,7 +114,7 @@ class OpenAITranscriber:
         self._client = client
         self._cfg = cfg
 
-    def session(self) -> Session:
+    def session(self, expect: tuple[str, ...] = ()) -> Session:
         return BufferedSession(self._transcribe)
 
     def _transcribe(self, pcm: bytes) -> str:
@@ -135,9 +143,10 @@ class DeepgramTranscriber:
         if cfg.language:
             params["language"] = cfg.language
         self._url = f"{DEEPGRAM_URL.format(host=cfg.deepgram_host)}?{urlencode(params)}"
+        self._keyterms = cfg.model.startswith("nova-3")  # the only Nova that takes them
 
-    def session(self) -> Session:
-        return DeepgramSession(self._url, self._key)
+    def session(self, expect: tuple[str, ...] = ()) -> Session:
+        return DeepgramSession(with_keyterms(self._url, expect if self._keyterms else ()), self._key)
 
 
 class DeepgramFileTranscriber:
@@ -153,19 +162,20 @@ class DeepgramFileTranscriber:
         if cfg.language:
             params["language"] = cfg.language
         self._url = f"{DEEPGRAM_FILE_URL.format(host=cfg.deepgram_host)}?{urlencode(params)}"
+        self._keyterms = model.startswith("nova-3")
         self._http = http or httpx.Client(timeout=FILE_TIMEOUT_S)
 
-    def session(self) -> Session:
-        return BufferedSession(self._transcribe)
+    def session(self, expect: tuple[str, ...] = ()) -> Session:
+        return BufferedSession(lambda pcm: self._transcribe(pcm, expect))
 
-    def _transcribe(self, pcm: bytes) -> str:
+    def _transcribe(self, pcm: bytes, expect: tuple[str, ...] = ()) -> str:
         import httpx
 
         if not pcm:
             return ""
         try:
             response = self._http.post(
-                self._url,
+                with_keyterms(self._url, expect if self._keyterms else ()),
                 content=wav_bytes(pcm),
                 headers={"Authorization": f"Token {self._key}", "Content-Type": "audio/wav"},
             )
@@ -288,8 +298,8 @@ class FluxTranscriber:
         }
         self._url = f"{FLUX_URL.format(host=cfg.deepgram_host)}?{urlencode(params)}"
 
-    def session(self) -> Session:
-        return FluxSession(self._url, self._key, self._has_backup)
+    def session(self, expect: tuple[str, ...] = ()) -> Session:
+        return FluxSession(with_keyterms(self._url, expect), self._key, self._has_backup)
 
 
 class FluxSession:
@@ -391,8 +401,8 @@ class FallbackTranscriber:
     def __init__(self, transcriber: Transcriber, backup: Transcriber):
         self._transcriber, self._backup = transcriber, backup
 
-    def session(self) -> Session:
-        return _FallbackSession(self._transcriber.session(), self._backup.session())
+    def session(self, expect: tuple[str, ...] = ()) -> Session:
+        return _FallbackSession(self._transcriber.session(expect), self._backup.session(expect))
 
 
 class _FallbackSession:

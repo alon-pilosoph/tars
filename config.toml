@@ -181,9 +181,18 @@ ack_window_s = 6.0
 # The web UI only answers to IP addresses, localhost, *.local, *.ts.net and single-label names (tars, the Pi's
 # hostname), so a web page elsewhere can't reach it through someone's browser. Add any other name you use here.
 allowed_hosts = []
-# Where a phone opens the web UI, for the links TARS sends (recording sessions): "http://homepi.local:8080".
-# "": this machine's Tailscale address if it has one, else its address at home, on the web UI's port.
+# Where a phone opens the web UI, for the links TARS sends (recording sessions, sign-in invites):
+# "https://homepi.tailnet.ts.net:8080". "": this machine's Tailscale address if it has one, else its address at home,
+# on the web UI's port.
 link = ""
+# Sign in with a passkey (docs/web-ui.md#signing-in): every page and API then needs a session, and anyone on the home
+# network can no longer play the recordings or read the conversations. Each person's first passkey comes from a
+# one-time link: voice-assistant --web-invite NAME (sent to their Telegram chat if they have one).
+sign_in = false
+# HTTPS, which passkeys need: a certificate and its key, paths from the project folder. On a Tailscale machine,
+# tailscale cert <its name>.ts.net makes both; then link = "https://<its name>.ts.net:8080".
+tls_cert = ""
+tls_key = ""
 
 [telegram]
 # Chat with TARS on Telegram, and get what it sends you there (docs/telegram.md): voice-assistant --telegram, with a
@@ -221,6 +230,9 @@ url = ""
 unlock_voices = []
 # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
 unlock_threshold = 0.6
+# Before unlocking by voice, TARS asks for three random digits, said back by the same voice within 30 seconds: a
+# recording of someone saying "unlock" can't answer them (docs/home.md#unlocking).
+unlock_challenge = true
 # Who may unlock from their own Telegram chat, by their names in [telegram] people: only when their own message (or
 # voice message) says "unlock". Whoever holds their phone can, so it's off unless named. Empty = nobody.
 unlock_chats = []
@@ -256,9 +268,11 @@ local_first = false
 config_dir = ""
 # Home Assistant's Docker container: its image runs git as root, and undoing a change stops and starts it.
 container = "homeassistant"
-# Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices):
+# Code of your own, for devices Home Assistant doesn't work (docs/home.md#your-own-devices). grant is what it may
+# use, and has to cover what it declares it needs, or it doesn't load (docs/home.md#plugins):
 # [home.plugins.my_house]
 # module = "examples.my_house"
+# grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
 
 # One [[home.devices]] for each thing TARS may work, by the name people call it. Home Assistant's entity ids are in
 # Settings > Devices & services > Entities; TARS works locks, switches, lights, fans, toggle helpers (input_boolean),
@@ -303,6 +317,8 @@ enabled = false
 # it's the same on every band and router) or the name a router shows it under ("Alons-iPhone").
 people = {}
 # people = { Alon = ["ca:fe:00:00:00:01"], Stacey = ["staceys-iphone", "ca:fe:00:00:00:02"] }
+# A door lock's key for someone can be listed with their phone: "key:<an app's auth id>" or "code:<a keypad code's
+# id>". Keys nobody lists are learned from whose phone comes home as the door opens (docs/presence.md#the-front-door).
 # How often the routers are asked, from 5 to 120 seconds.
 every_s = 30
 # Someone whose phone no router has seen for this long, while every router answered, has gone out. A phone asleep on a
@@ -322,6 +338,22 @@ away_after_min = 10
 # kind = "xiaomi"
 # address = "192.168.1.160"
 # secret = "XIAOMI_PASSWORD"
+
+# One [[presence.doors]] for each door whose lock says who opened it: a Nuki with MQTT turned on, by its topic (its ID
+# in hex). Someone opening it from outside (Auto Unlock, the keypad) is home at once. [presence.mqtt] is the broker the
+# locks publish to, and TARS's own user there (both user and secret are needed); secret is the name of its password
+# in .env. deploy/install-pi.sh makes that user, and the password, on deploy/home-assistant's Mosquitto. Needs the door
+# extra: uv sync --extra door.
+#
+# [[presence.doors]]
+# name = "front door"
+# topic = "nuki/4224E764"
+#
+# [presence.mqtt]
+# address = "localhost"
+# port = 1883
+# user = "tars"
+# secret = "MQTT_PASSWORD"
 
 [backup]
 # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and every six hours
@@ -378,6 +410,22 @@ default_person = ""
 # a room, undo a change (docs/home.md#changing-home-assistants-setup). Empty = nobody in particular: wishes are only
 # kept, and nobody changes Home Assistant's setup through TARS.
 maintainers = []
+
+[wishes]
+# Wishes that come true (docs/wishes.md): something TARS was asked for and couldn't do goes to the maintainers
+# ([household]) with a Build it button. A tap opens an issue on `repo`, labelled `label`, which the repository's
+# .github/workflows/wish.yml hands to Claude Code; it opens a pull request, which TARS follows: CI green, the
+# maintainers are told what it does; red, it's sent back to be fixed, `tries` times at most. Once it's merged and
+# installed (see [updates], which must be on), whoever asked is told. The GitHub token (a fine-grained one, for `repo`
+# only: Issues read and write, Pull requests read-only, Metadata read-only; nothing else) is in .env, under the name
+# `secret`. `repo` must be public, and `main` protected by a ruleset: docs/wishes.md#setting-it-up.
+enabled = false
+repo = ""
+secret = "GITHUB_TOKEN"
+label = "wish"
+tries = 3
+# The most builds started in 30 days.
+monthly = 4
 
 [updates]
 # TARS updates itself, from a timer every ten minutes (docs/deployment.md#updates): what's merged into `branch` is

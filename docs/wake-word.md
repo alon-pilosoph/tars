@@ -56,8 +56,18 @@ to the last 3 seconds with a grammar limited to "hey tars", "hey darts" (the sof
   its "hey" lost or never said;
 - **ignore** anything else, including plausible phrases like "hey there" or "hey Jarvis".
 
-Code: `wake.py` (stage 1), `verify.py` (stage 2 and the answer/ask/ignore decision). Settings: `[wake]` in
-`config.toml`.
+**Said in one breath.** Stage 1 fires a little after the name ends, so in "hey TARS, what's new" said without a pause,
+the start of "what's" is already in the window by then, read off the mic with the name. On an answer, a second Vosk pass
+with word times finds where the name ends (the name right after the last "hey"; if something else is there, it may be
+the request, so nothing is taken), and the request is recorded from there if speech runs on from it without a break;
+after a pause, or a "Yes, Alon?" said with the mic closed, it starts where the mic hears it, as before. The pass is its
+own because asking the check for word times changes its alternatives, and so its confidence: on 17 of the household's
+wake windows, a "bar" rose from 0.23 to 0.42, past the 0.3 threshold. It takes about 0.25 s on a Pi 4 and runs while
+TARS gets on with the wake; the mic keeps what's said meanwhile. On the household's two clipped "hey TARS, what's new"
+windows, the request went from "the new" to "what's new" and "that's new".
+
+Code: `wake.py` (stage 1), `verify.py` (stage 2, the answer/ask/ignore decision, and where the name ends),
+`recorder.py` (starting from what followed it). Settings: `[wake]` in `config.toml`.
 
 ### Two setups
 

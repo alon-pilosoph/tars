@@ -20,9 +20,10 @@ LINK, NOTE, LIST, FILE = "link", "note", "list", "file"
 KINDS = (LINK, NOTE, LIST, FILE)
 PERSON, HOUSEHOLD = "person", "household"
 SCOPES = (PERSON, HOUSEHOLD)
-# How long each stage of an answer took, in seconds, as the assistant's log prints them: the silence waited through,
-# speech to text, the brain's first sentence, the voice's first audio, and from the end of speech to first sound.
-TIMINGS = ("greet", "end_of_speech", "stt", "llm", "tts", "total")
+# How long each stage of an answer took, in seconds, as the assistant's log prints them: from the wake word to the
+# greeting, the silence waited through, how long before the turn was over the brain was asked, speech to text, the
+# brain's first sentence, the voice's first audio, and from the end of speech to first sound.
+TIMINGS = ("greet", "end_of_speech", "head_start", "stt", "llm", "tts", "total")
 # Where answering failed: transcribing, the brain, the voice, or anything else.
 STAGES = STT, LLM, TTS, OTHER = ("stt", "llm", "tts", "other")
 MAX_ERROR = 300
@@ -144,7 +145,7 @@ class ConversationLog:
         marks = ", ".join("?" * (4 + len(columns)))
         with closing(self.store.connect()) as db:
             cursor = db.execute(
-                f"INSERT INTO turns ({names}) SELECT {marks} WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)",
+                f"INSERT INTO turns ({names}) SELECT {marks} WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)",  # nosec B608  # column names are the code's
                 (conversation_id, ts, role, text, *columns.values(), conversation_id),
             )
             return cursor.lastrowid if cursor.rowcount else None

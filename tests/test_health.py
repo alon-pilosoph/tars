@@ -3,6 +3,8 @@ answers), the services are asked with their keys and read from their own status 
 never for longer than ASK_DEADLINE_S), and the machine's numbers are read, the Pi's throttling included."""
 
 import json
+import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -48,6 +50,15 @@ def test_a_process_that_beat_lately_is_running_and_one_that_stopped_isnt(tmp_pat
     assert not web["running"] and web["beat"] is None and web["unit_state"] == "inactive"  # never seen
     later = time.time() + HEARTBEAT_EVERY_S * 4
     assert not processes(tmp_path, ["assistant"], unit_state, later)[0]["running"]  # it stopped beating
+
+
+def test_a_running_process_is_known_by_its_pid_and_one_that_stopped_or_never_beat_isnt(tmp_path):
+    Heartbeat(tmp_path, "telegram").beat()
+    assert health.running(tmp_path, "telegram") == os.getpid()
+    assert health.running(tmp_path, "telegram", time.time() + HEARTBEAT_EVERY_S * 4) is None
+    assert health.running(tmp_path, "assistant") is None
+    (tmp_path / "heartbeats" / "assistant.json").write_text(json.dumps({"beat": time.time(), "pid": "4242"}))
+    assert health.running(tmp_path, "assistant") is None  # a pid that isn't one is no process to wait for
 
 
 def test_a_beat_from_before_the_clock_was_set_back_is_no_sign_of_life(tmp_path):
@@ -114,6 +125,51 @@ def test_the_machine_is_read_and_a_pis_throttling_said_in_words(tmp_path):
     ]
     assert machine(tmp_path, read_throttled=lambda: None)["throttled"] is None  # not a Pi
     assert machine(tmp_path, read_throttled=lambda: 0)["throttled"] == []  # a Pi with nothing wrong
+
+
+def test_a_pi_whose_throttling_cant_be_read_says_so_rather_than_nothing(tmp_path, capsys):
+    found = machine(tmp_path, read_throttled=lambda: "vcgencmd get_throttled said 'no /dev/vcio' (exit 1)")
+    assert found["throttled"] == [f"{health.UNREAD}: vcgencmd get_throttled said 'no /dev/vcio' (exit 1)"]
+    assert "no /dev/vcio" in capsys.readouterr().out  # in the log, too
+
+
+class FakeVcgencmd:
+    """vcgencmd as subprocess.run runs it: what it prints, or what running it raises."""
+
+    def __init__(self, stdout: str = "", stderr: str = "", returncode: int = 0, raises: Exception | None = None):
+        self.done = subprocess.CompletedProcess(["vcgencmd"], returncode, stdout, stderr)
+        self.raises = raises
+
+    def __call__(self, command, **kwargs):
+        assert command == ["vcgencmd", "get_throttled"]
+        if self.raises:
+            raise self.raises
+        return self.done
+
+
+@pytest.mark.parametrize(
+    "vcgencmd, found",
+    [
+        (FakeVcgencmd("throttled=0x50005\n"), 0x50005),
+        (FakeVcgencmd("throttled=0x0\n"), 0),
+        # The firmware's device hidden (a sandbox with PrivateDevices=yes): what it says on stderr is passed on.
+        (FakeVcgencmd(stderr="Can't open device file: /dev/vcio\n", returncode=1), "/dev/vcio"),
+        (FakeVcgencmd(returncode=255), "said nothing (exit 255)"),
+        (FakeVcgencmd("throttled=junk\n"), "'throttled=junk'"),
+        (FakeVcgencmd(raises=PermissionError(13, "Permission denied")), "couldn't run (Permission denied)"),
+        (FakeVcgencmd(raises=subprocess.TimeoutExpired("vcgencmd", 5)), "didn't answer within 5 s"),
+    ],
+)
+def test_a_pis_throttling_is_read_and_a_failure_is_why_not_silence(monkeypatch, vcgencmd, found):
+    monkeypatch.setattr(health.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(health.subprocess, "run", vcgencmd)
+    got = health.pi_throttled()
+    assert got == found if isinstance(found, int) else isinstance(got, str) and found in got
+
+
+def test_without_vcgencmd_its_not_a_pi(monkeypatch):
+    monkeypatch.setattr(health.shutil, "which", lambda name: None)
+    assert health.pi_throttled() is None
 
 
 def test_a_services_own_status_page_is_read_and_one_that_cant_be_is_said_so():

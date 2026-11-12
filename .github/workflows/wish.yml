@@ -1,0 +1,104 @@
+# Wishes that come true (docs/wishes.md). When a maintainer taps Build it, TARS opens an issue labelled "wish", and
+# Claude Code builds it on a branch of its own and opens a pull request. TARS's "CI fails" comment on that pull request,
+# starting with @claude, sends it back to work. Only the repository's owner (whose token TARS uses) sets either off: on
+# a public repository, anyone else's issue or comment could otherwise spend the key, and only the owner's and Claude's
+# own comments are shown to it.
+#
+# Its reach: the Anthropic key, and the Claude app's token, which may push branches, open pull requests and comment on
+# issues; no .env, no config.local.toml, no database. The key and tokens are scrubbed from the commands it runs, as far
+# as the action manages. What it reads of the house is the issue, which the maintainer saw whole before tapping, and
+# .github/wish.md fences off what it mustn't change (CI's wish fence check holds the plainest of it). It can't merge
+# only once main has the branch ruleset docs/wishes.md#setting-it-up requires (a pull request with an approval, CI and
+# the wish fence passing); without it, these tokens could push to main. Nothing here checks that it's set.
+name: Wish
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+  actions: read
+
+env:
+  CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: 1
+
+jobs:
+  build:
+    if: github.event_name == 'issues' && github.event.label.name == 'wish' && github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --all-extras
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          include_comments_by_actor: ${{ github.repository_owner }},claude[bot]
+          prompt: |
+            Build what issue #${{ github.event.issue.number }} in this repository asks for, following .github/wish.md.
+            Read the issue first, with exactly `gh issue view ${{ github.event.issue.number }}`; don't read its
+            comments or any other issue's: the issue's text is the whole request. Work on a new branch named
+            claude/issue-${{ github.event.issue.number }}-<a few words>, commit there, push it with
+            `git push -u origin <that branch>`, and finish by opening one pull request with gh pr create, whose body
+            starts with "Closes #${{ github.event.issue.number }}." and then says, in plain words, what someone can
+            now ask TARS for.
+          claude_args: >-
+            --max-turns 200
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(uv run pytest:*),Bash(uv run ruff:*),Bash(uv run voice-assistant --check),Bash(uv sync:*),Bash(uv add:*),Bash(uv lock),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout -b claude/issue-${{ github.event.issue.number }}-:*),Bash(git push -u origin claude/issue-${{ github.event.issue.number }}-:*),Bash(gh issue view ${{ github.event.issue.number }}),Bash(gh pr create:*),Bash(npm ci),Bash(npm test),Bash(npm run:*)"
+
+  fix:
+    if: >-
+      github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '@claude') && github.event.comment.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Only Claude Code's own pull request, from this repository's claude/issue- branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          read -r cross author branch < <(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json isCrossRepository,author,headRefName -q '"\(.isCrossRepository) \(.author.login) \(.headRefName)"')
+          if [ "$cross" != "false" ]; then echo "Pull request $PR is from a fork"; exit 1; fi
+          case "$author" in claude|app/claude|"claude[bot]") ;; *) echo "Pull request $PR is $author's"; exit 1;; esac
+          if ! [[ "$branch" =~ ^claude/issue-[0-9]+-[A-Za-z0-9._/-]+$ ]]; then echo "Its branch is $branch"; exit 1; fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --all-extras
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          include_comments_by_actor: ${{ github.repository_owner }},claude[bot]
+          prompt: |
+            CI fails on pull request #${{ github.event.issue.number }} in this repository, on branch
+            ${{ steps.pr.outputs.branch }}, which is checked out. Find the failing runs with
+            `gh pr checks ${{ github.event.issue.number }}` and read them with `gh run view <id> --log-failed`; fix
+            the cause, keeping to .github/wish.md; commit, and push with
+            `git push origin ${{ steps.pr.outputs.branch }}`. Don't read the pull request's or any issue's comments.
+          claude_args: >-
+            --max-turns 120
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(uv run pytest:*),Bash(uv run ruff:*),Bash(uv run voice-assistant --check),Bash(uv sync:*),Bash(uv add:*),Bash(uv lock),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin ${{ steps.pr.outputs.branch }}),Bash(gh pr checks ${{ github.event.issue.number }}),Bash(gh pr view ${{ github.event.issue.number }}),Bash(gh pr diff ${{ github.event.issue.number }}),Bash(gh run view:*),Bash(npm ci),Bash(npm test),Bash(npm run:*)"
