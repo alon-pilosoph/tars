@@ -60,7 +60,7 @@ requests, or records a [voice session](web-ui.md#recording-sessions) on the spea
 | False wakes (TV, talk) | Review | at most one or two a day, none answered |
 | Wrong names | Home, a conversation's "who was talking" | rare once voiceprints come from the speakerphone |
 | Cut off mid-sentence | your notes | never |
-| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 1.2-1.5 s ([response time](latency.md)) |
+| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 2 s in use on the Pi (1.2-1.5 s on a benchmark; [response time](latency.md)) |
 | Turns Cerebras couldn't take | `answered_by = 'fallback'` in the `turns` table | rare |
 | Hard questions handed over | `answered_by = 'ponder'` in the `turns` table, and the time to "Let me think" | rare, never for a simple question, and "Let me think" as quick as any first sound |
 | Failed answers | Home, in red: where it failed (speech to text, the answer, the voice) and why | rare, and no one stage over and over |

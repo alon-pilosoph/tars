@@ -189,7 +189,7 @@ export interface Turn {
 export interface Timings {
   greet?: number; // from the wake word to the first sound of "Yes, <name>?"
   end_of_speech?: number; // the silence waited through
-  head_start?: number; // how long before the end of the turn the answer was started, during the pause
+  head_start?: number; // how long before the end of the turn the brain was asked; 0 when only after it
   stt?: number;
   llm?: number; // to the brain's first sentence
   tts?: number; // from that sentence to the voice's first audio

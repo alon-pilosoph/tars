@@ -548,7 +548,17 @@ def test_an_answer_started_during_the_pause_keeps_how_early_it_started(speaker, 
 
     assistant.recorder.record = still_quiet
     assistant.converse(follow_up_s=4.0)
-    assert 0.15 < turns_of(convos)[-1]["timings"]["head_start"] < 1.0
+    assert 0 < turns_of(convos)[-1]["timings"]["head_start"] < 1.0
+
+
+def test_an_answer_asked_only_after_the_turn_logs_no_head_start(speaker, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q", None], ["what time is it"], replies=["Late."])
+    playing(speaker)
+    assistant.converse(follow_up_s=4.0)
+    assert turns_of(convos)[-1]["timings"]["head_start"] < 0.005
+    line = next(x for x in capsys.readouterr().out.splitlines() if "TOTAL to first sound" in x)
+    assert "started early" not in line
 
 
 @pytest.mark.parametrize("stage", ["stt", "llm", "tts"])

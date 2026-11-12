@@ -907,7 +907,7 @@ class Assistant:
                 heard.draft.keep()
                 return False
             self.timings = {"end_of_speech": heard.silence_s, "stt": answer.stt_s}
-            if answer.t_asked:  # how long before the turn was over the brain was asked, by an early draft
+            if answer.t_asked:  # how long before the turn was over the brain was asked; 0: only after it was over
                 self.timings["head_start"] = max(0.0, t_over - answer.t_asked)
             if self._greet_s is not None:  # the conversation's first request: how soon TARS greeted the wake word
                 self.timings["greet"], self._greet_s = self._greet_s, None
@@ -1092,7 +1092,11 @@ class Assistant:
             "llm": "llm first sentence",
             "tts": "tts first audio",
         }
-        parts = [f"{labels[k]} {v:.2f}s" for k, v in self.timings.items() if k in labels]
+        parts = [
+            f"{labels[k]} {v:.2f}s"
+            for k, v in self.timings.items()
+            if k in labels and not (k == "head_start" and round(v, 2) == 0)
+        ]
         if "total" in self.timings:
             # With the answer started during the pause, the stages overlap the wait instead of adding to it.
             parts.append(f"TOTAL to first sound {self.timings['total']:.2f}s")

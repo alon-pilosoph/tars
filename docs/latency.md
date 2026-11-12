@@ -1,8 +1,9 @@
 # Response time
 
 How long TARS takes to answer, from the moment you stop talking to its first sound: where that time goes, how the
-pipeline is built to overlap it, and the measured steps that took a benchmark from about 3.5 s to 1.2-1.5 s. In use on
-the Pi, half the answers come within 2.2 s ([in use](#in-use-on-the-pi)).
+pipeline is built to overlap it, and the measured steps that took a benchmark from about 3.5 s to 1.2-1.5 s (with Groq,
+since turned off). In use on the Pi, TARS answers in about 2 s: half the answers within 2.2 s
+([in use](#in-use-on-the-pi)).
 
 The constraints shape every choice below. A voice assistant feels slow well before it feels wrong, so every stage is
 streamed and started as early as possible. But cutting someone off mid-sentence is worse than a slow answer, so
@@ -17,9 +18,9 @@ Median over 8 spoken questions, three runs, on the development Mac ([method](#ho
 |---|---|---|
 | Waiting to be sure you're done | ~0.5 s | Deepgram's Flux decides, from your words as well as the pause |
 | Speech to text | ~0 s | Flux sends the words with its decision |
-| The brain's first sentence | ~0.4 s | Qwen on Groq at low reasoning, streamed (on Cerebras: ~0.6 s; OpenAI's Luna: ~0.7 s, and it still answers anything that needs the web) |
+| The brain's first sentence | ~0.6-0.7 s | Qwen on Cerebras at low reasoning, streamed (on Groq: ~0.4 s, off by default; OpenAI's Luna: ~0.7 s, and it still answers anything that needs the web) |
 | The voice's first audio | ~0.3 s | Cartesia's Sonic voice James, a sentence at a time (Deepgram's Aura-2 Zeus from its EU servers: ~0.4 s; OpenAI's Onyx: ~1.1 s) |
-| **From you stopping to TARS's first sound** | **~1.2-1.5 s** | the answer is prepared during the wait, so these overlap |
+| **From you stopping to TARS's first sound** | **about 2 s in use on the Pi** | the answer is prepared during the wait, so these overlap; the benchmark's runs took 1.6-2.6 s with Cerebras, 1.3-1.4 s with Groq |
 
 A turn that needs the web adds Qwen's hand-off (about 0.3 s) and a web search, and TARS says "Looking it up." as it
 starts.
@@ -43,9 +44,9 @@ Three things account for most of the second:
 - **Short replies take longer to call over.** Many requests were a word or two ("twelve", "yeah"), and Flux waits
   longer to be sure of those than of a whole sentence.
 - **The stages added up.** In 19 of the 21 turns the total was at least the sum of the three stages, give or take a
-  tenth of a second, and so was the benchmark's. An answer started during the pause should come in under that sum. Each turn now
-  keeps how long before the turn was over its answer was started (`head_start`), which tells whether Flux's "maybe
-  done" comes too late to help or the early start isn't happening.
+  tenth of a second, and so was the benchmark's. An answer started during the pause should come in under that sum.
+  Each turn now keeps how long before the turn was over the brain was asked (`head_start`, 0 when it was asked only
+  after), which tells whether Flux's "maybe done" comes too late to help or the early start isn't happening.
 
 Groq made no difference to these numbers: it had written 3 of 27 quick replies before it was turned off, and the median
 before (2.5 s over 23 turns) is within the spread of the one after.
@@ -143,7 +144,7 @@ and Home shows it.
 ### Timings on every answer
 
 Each of TARS's turns keeps the same stages as the log line (`timings` in the `turns` table, in seconds, with
-`head_start`: how long before the turn was over its answer was started), which model
+`head_start`: how long before the turn was over the brain was asked, 0 when it was asked only after), which model
 wrote it (`answered_by`: `quick` for Qwen, `look_up` when Qwen handed the turn over, `ponder` when it went to the
 thinking model, `fallback` when Qwen couldn't answer on any service or ran into its cap, `openai` with no quick service
 set up), and where Qwen's reply came from (`quick_service`, hand-offs included). Home shows the
@@ -172,7 +173,7 @@ also prints its own stage timings in the assistant's log.
 
 To compare two setups, each gets three clean runs on the same day, alternating between them, so the network and the
 services' load are shared. A run counts only if none of its turns had a failure, a refusal, a fallback or a timeout.
-The headline 1.2-1.5 s comes from such a comparison of three voices on one day ([which voice?](#which-voice)). Each
+The benchmark's 1.2-1.5 s comes from such a comparison of three voices on one day ([which voice?](#which-voice)). Each
 headline is only comparable with the setups measured on its own day: on the day of the four-setup comparison
 ([where Qwen and Deepgram run](#where-should-qwen-and-deepgram-run)), the setup before it took 1.7-2.5 s against an
 older headline of 1.1-1.6 s, and the setup it chose measured 1.3-1.4 s there but 1.3-1.5 s with Zeus a week later.
