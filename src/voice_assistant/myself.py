@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import history as when
+from . import toolbox
 from .config import QUICK_PROVIDERS, Config
 from .health import PROCESSES, expected, processes
 
@@ -112,6 +113,11 @@ class Myself:
         self._cfg, self._root, self._events, self._run, self._now = cfg, root, events, run, now
         self._offer = offer
         self._unit_state = unit_state or systemd_state
+
+    def toolset(self) -> toolbox.Toolset:
+        """The tars tool for the brain (toolbox.py). A reply that read the web reads none of its records or log, and
+        neither it nor a turn a door's lock set off changes its settings (call, set)."""
+        return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't look ({e!r})")
 
     def call(self, args: dict, request) -> str:
         args = args if isinstance(args, dict) else {}

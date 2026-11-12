@@ -48,6 +48,7 @@ WAITS_S = (10, 20, 40, 60, 60)
 # What the brain's behavior comes from besides config.toml: its rules, prompts and tools.
 BRAIN_CODE = (
     "src/voice_assistant/llm.py",
+    "src/voice_assistant/toolbox.py",
     "src/voice_assistant/reminders.py",
     "src/voice_assistant/conversations.py",
     "src/voice_assistant/home.py",

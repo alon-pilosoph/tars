@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from .. import toolbox
 from ..config import BrowserConfig
 from ..events import person_key
 
@@ -126,6 +127,12 @@ class BrowseTool:
         """`people`: who may ask: the household's Telegram chats."""
         self.queue, self._people, self.via = queue, {person_key(p): p for p in people}, via
         self.rules = VOICE_RULES if via == VOICE else CHAT_RULES
+
+    def toolset(self) -> toolbox.Toolset:
+        """The browse tool for the brain (toolbox.py). An errand is queued only once the turn goes ahead, as a change
+        to the house is, so a draft thrown away queues nothing (call); what it would order, pay or send waits for a
+        tap (gate.py)."""
+        return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't start the errand ({e!r}); nothing was started")
 
     def call(self, args: dict, request) -> str:
         """The brain's browse call, for whoever `request` says is asking."""

@@ -10,6 +10,7 @@ from voice_assistant.check import FAIL, OK, WARN, plugin_result
 from voice_assistant.config import HomeConfig
 from voice_assistant.home import LOCK, STATUS, UNLOCK, Context, Device, Request, build
 from voice_assistant.plugins import BUILT_IN_TOOLS, GuardedHass, Manifest, Refused, admit, scoped
+from voice_assistant.toolbox import READS, Tool, Toolbox, Toolset, Turn
 
 PLUGIN = """
 from voice_assistant.home import Device
@@ -156,12 +157,17 @@ def test_a_plugins_tools_reach_the_brain_and_one_that_changes_waits_for_the_turn
     names = [t["name"] for t in house.tools]
     assert {"water_garden", "garden_moisture"} <= set(names)
     assert "The garden's soil moisture is garden_moisture's." in house.rules()
-    assert house.call_plugin("garden_moisture", {}, Request(read_the_web=True)) == "soil: 31%"
-    assert house.call_plugin("water_garden", {}, Request(read_the_web=True)).startswith("refused")
+    tools = Toolbox([house.toolset()])
+
+    def call_plugin(name, args, request):
+        return tools.call(tools.get(name), args, Turn(request))
+
+    assert call_plugin("garden_moisture", {}, Request(read_the_web=True)) == "soil: 31%"
+    assert call_plugin("water_garden", {}, Request(read_the_web=True)).startswith("refused")
     withdrawn = Request(may_act=lambda timeout: False)
-    assert house.call_plugin("water_garden", {}, withdrawn).startswith("error: the request was withdrawn")
+    assert call_plugin("water_garden", {}, withdrawn).startswith("error: the request was withdrawn")
     assert garden_plugin.seen["watered"] == []
-    assert house.call_plugin("water_garden", {"zone": 1}, Request()) == "done: watered"
+    assert call_plugin("water_garden", {"zone": 1}, Request()) == "done: watered"
     assert garden_plugin.seen["watered"] == [{"zone": 1}]
 
 
@@ -544,7 +550,7 @@ def test_every_tool_the_brain_has_of_its_own_is_kept_from_plugins(garden):
     from .conftest import fake_openai_chat
 
     def part(tool):
-        return types.SimpleNamespace(tool=tool, can="", rules="")
+        return types.SimpleNamespace(toolset=lambda: Toolset([Tool(tool, READS, lambda args, turn: "")]))
 
     house = building(garden, ["GARDEN_KEY", "home_assistant"], FakeHass()).tools
     own = {"water_garden", "garden_moisture"}

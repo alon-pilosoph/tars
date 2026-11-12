@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
+from . import toolbox
 from .events import person_key
 from .reminders import MAX_AHEAD_S, due_at
 from .reminders import when as said_when
@@ -555,6 +556,12 @@ class Skills:
         return "\n\n".join(parts)
 
     # The tool.
+
+    def toolset(self) -> toolbox.Toolset:
+        """The skills tool for the brain (toolbox.py). What it's taught, or asked to forget, waits for the turn to go
+        ahead, and only someone TARS knows can teach it (call)."""
+        failed = "error: couldn't reach what TARS was taught ({e!r}); nothing changed"
+        return toolbox.one_tool(self, toolbox.ITS_OWN, failed)
 
     def call(self, args: dict, request=None) -> str:
         args = args if isinstance(args, dict) else {}
