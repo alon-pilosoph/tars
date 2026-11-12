@@ -128,6 +128,10 @@
               <li>“Remind me to call the bank at nine.”</li>
               <li>“Set a pasta timer for twelve minutes.”</li>
               <li>“Tell Stacey dinner's ready when she's back.”</li>
+              <li>
+                “Turn off the AC now and back on at 5am.” TARS does that one itself, as it was set, and tells you if it
+                couldn't.
+              </li>
             </ul>
             <div class="rules">
               <div>
@@ -203,7 +207,8 @@
               <h3>Unlocking is for voices it trusts</h3>
               <p>
                 The door unlocks only for a voice TARS knows and trusts with it, recognised from the request itself, and
-                only when it heard “unlock”. Anyone can lock.
+                only when it heard “unlock”. Then TARS asks for three random digits, said back by the same voice: a
+                recording can't answer them. Anyone can lock.
               </p>
             </div>
             <div>
@@ -265,6 +270,18 @@
               <p>
                 A reminder due for someone who's out goes to their Telegram chat instead of an empty room. A message
                 left “for when she's back” is said a minute after her phone comes home.
+              </p>
+            </div>
+            <div>
+              <h3>The front door knows first</h3>
+              <p>
+                When the Nuki lock opens by Auto Unlock or its keypad, whoever's key it was is home at once, before
+                their phone finds the Wi-Fi.<span class="d">
+                  Whose key is whose is learned: a key that opens the door from outside as one person's phone comes
+                  home, on two separate arrivals and never anyone else's, is theirs. The lock's word only ever says who
+                  came in: a skill it sets off greets them and changes nothing in the house, and only the lock may say
+                  it, the broker's ACL keeping its topics to it.</span
+                >
               </p>
             </div>
             <div>

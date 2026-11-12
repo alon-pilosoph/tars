@@ -27,3 +27,6 @@ devices.json
 tinytuya.json
 snapshot.json
 tuya-raw.json
+
+# The web UI's HTTPS certificate and its key (docs/web-ui.md#signing-in)
+tls/

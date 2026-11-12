@@ -220,6 +220,7 @@ def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
 
 def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .clustering import regroup
+    from .signin import Accounts
     from .webui import serve
 
     log = make_event_log(cfg, root)
@@ -256,6 +257,8 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         health=make_health(cfg, root, log),
         bucket=bucket,
         finished=functools.partial(enroll_from_session, speaker_id, log.store),
+        accounts=Accounts(log.store) if cfg.web.sign_in else None,
+        tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
     )
 
 
@@ -264,9 +267,7 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
     Telegram chat if they have one."""
     import random
 
-    from .browser.login_page import reachable_address
     from .recording import ABOUT, HOUSE, SECONDS_A_PROMPT, Sessions, house_script, voice_script
-    from .telegram import Bot, TelegramError
 
     log = make_event_log(cfg, root)
     if log is None:
@@ -275,23 +276,79 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
         raise ConfigError("There are no [[home.devices]] in config.toml to make house commands from.")
     prompts = house_script(cfg.home.devices, random.Random()) if kind == HOUSE else voice_script()
     token = Sessions(log.store).create(kind, person, prompts)
-    url = f"{cfg.web.link.rstrip('/') or f'http://{reachable_address()}:{port}'}/?session={token}"
+    url = f"{web_link(cfg, port)}/?session={token}"
     minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
     print(f"{ABOUT[kind][0]} for {person}, {len(prompts)} phrases (about {minutes} minutes):\n{url}")
-    chat = chat_of(cfg, person)
-    if not (cfg.telegram.enabled and chat):
-        print(f"({person} has no Telegram chat in [telegram] people: open the link on their phone.)")
-        return
     text = (
         f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes. "
         f"Open it when you're near TARS; the link works for a day.\n{url}"
     )
+    send_link(cfg, root, person, text, "their phone")
+
+
+def web_link(cfg: Config, port: int) -> str:
+    """Where someone's phone reaches the web UI: [web] link, else this machine's address."""
+    from .browser.login_page import reachable_address
+
+    return cfg.web.link.rstrip("/") or f"{'https' if cfg.web.tls_cert else 'http'}://{reachable_address()}:{port}"
+
+
+def send_link(cfg: Config, root: Path, person: str, text: str, open_on: str) -> None:
+    """`text`, with a link in it, sent to `person`'s Telegram chat if they have one."""
+    from .events import person_key
+    from .telegram import Bot, TelegramError
+
+    chat = next((c for name, c in cfg.telegram.people.items() if person_key(name) == person_key(person)), None)
+    if not (cfg.telegram.enabled and chat):
+        print(f"({person} has no Telegram chat in [telegram] people: open the link on {open_on}.)")
+        return
     try:
         Bot(api_key(root / ".env", TELEGRAM_KEY)).call("sendMessage", chat_id=chat, text=text)
     except TelegramError as e:
         print(f"(couldn't send it on Telegram: {e})")
         return
     print(f"Sent to {person} on Telegram.")
+
+
+def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
+    """--web-invite: a one-time link for `person` to make a passkey with, printed and sent to their Telegram chat if
+    they have one."""
+    from .signin import Accounts
+
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
+    if not person.strip():
+        raise ConfigError("--web-invite needs the person's name.")
+    if cfg.web.tls_cert and not cfg.web.link:
+        raise ConfigError(
+            "Set [web] link to the web UI's name, e.g. https://<pi-name>.<tailnet>.ts.net:8080: passkeys belong to a "
+            "name, and browsers won't make one for an address (docs/web-ui.md#signing-in)."
+        )
+    if not cfg.web.sign_in:
+        print("(sign-in is off: the link works, but the web UI won't ask for it until [web] sign_in = true)")
+    url = f"{web_link(cfg, port)}/sign-in/invite/{Accounts(log.store).invite(person)}"
+    print(f"A link for {person} to make a passkey for the web UI, good for a day:\n{url}")
+    text = f"A link to sign in to TARS's web page: it makes a passkey on your phone. It works once, for a day.\n{url}"
+    send_link(cfg, root, person, text, "their phone or computer")
+
+
+def web_sign_out(cfg: Config, root: Path, person: str) -> None:
+    """--web-sign-out: `person` signed out of the web UI everywhere, their passkeys forgotten and unused invites voided
+    (a lost phone)."""
+    from .signin import Accounts
+
+    log = make_event_log(cfg, root)
+    if log is None:
+        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
+    passkeys, sessions, invites = Accounts(log.store).remove(person)
+    if not (passkeys or sessions or invites):
+        print(f"Nobody called {person} has a passkey, a session or an invite for the web UI.")
+        return
+    print(
+        f"{person} is signed out everywhere: {passkeys} passkey(s) forgotten, {sessions} session(s) ended and "
+        f"{invites} unused invite(s) voided. --web-invite makes a new one."
+    )
 
 
 def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
@@ -360,6 +417,12 @@ def main() -> None:
         help="send a link to a recording session on TARS's speakerphone: someone's voice, or the house's commands",
     )
     parser.add_argument("--for", dest="person", metavar="NAME", help="whose --record-session it is")
+    parser.add_argument(
+        "--web-invite", metavar="NAME", help="a one-time link for NAME to make a passkey for the web UI ([web] sign_in)"
+    )
+    parser.add_argument(
+        "--web-sign-out", metavar="NAME", help="sign NAME out of the web UI everywhere, and forget their passkeys"
+    )
     parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
@@ -458,6 +521,12 @@ def main() -> None:
         if args.record_session:
             record_session(cfg, root, args.record_session, args.person, args.port)
             return
+        if args.web_invite:
+            web_invite(cfg, root, args.web_invite, args.port)
+            return
+        if args.web_sign_out:
+            web_sign_out(cfg, root, args.web_sign_out)
+            return
         if args.telegram:
             telegram(keyed(cfg, root), root)
             return
@@ -539,16 +608,67 @@ def make_presence(cfg: Config, root: Path, events):
     return presence_from(cfg.presence, events.store, lambda name: dotenv_values(env).get(name) or None)
 
 
-def start_presence(presence, reminders=None) -> None:
-    """The assistant's: asks the routers from now on, and says waiting messages once their person is home."""
+def start_presence(cfg: Config, root: Path, presence, reminders=None) -> None:
+    """The assistant's: asks the routers from now on, listens to the doors' locks, and says waiting messages once
+    their person is home."""
     if presence is None:
         return
     from .reminders import on_arrival
 
     for line in presence.left_out:
         print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
-    if presence.watch(on_arrival(reminders.reminders) if reminders else None):
+    doors = make_doors(cfg, presence)
+    changes = [
+        c for c in (on_arrival(reminders.reminders) if reminders else None, doors and doors.phone_came_home) if c
+    ]
+
+    def changed(person: str, home: bool) -> None:
+        for change in changes:
+            change(person, home)
+
+    watcher = presence.watch(changed if changes else None)
+    if watcher:
         print(f"(presence: asking {len(presence.routers)} router(s) every {presence.every_s:.0f} s)")
+    if doors:
+        doors.watcher = watcher
+        if watcher is None:
+            print("(doors: no router to watch, so the doors are only recorded: nobody is marked home by them)")
+        listen_to_doors(cfg, root, doors)
+
+
+def make_doors(cfg: Config, presence):
+    """[[presence.doors]]: what their locks say is kept, and learned from; None without any."""
+    if not cfg.presence.doors:
+        return None
+    from . import maintainers
+    from .doors import DoorLog, Doors
+
+    store = presence.board.store
+    return Doors(DoorLog(store, presence.people), None, lambda text: maintainers.tell(cfg, store, text))
+
+
+def listen_to_doors(cfg: Config, root: Path, doors) -> None:
+    """Listens to the locks on the broker, from now on: the log says when it's listening, and the maintainers are
+    told if it can't for long (doors.Link)."""
+    from .doors import Link, listen
+
+    mqtt = cfg.presence.mqtt
+    password = None
+    if mqtt.get("secret"):
+        password = dotenv_values(root / ".env").get(mqtt["secret"]) or None
+        if password is None:
+            print(f"(doors: leaving out the MQTT broker at {mqtt['address']}: no {mqtt['secret']} in .env)")
+            return
+    try:
+        import paho.mqtt.client  # noqa: F401 - the door extra
+    except ImportError:
+        print("(doors: off: listening to the locks needs the door extra: uv sync --extra door)")
+        return
+    names = ", ".join(d["name"] for d in cfg.presence.doors)
+    print(f"(doors: connecting to the MQTT broker at {mqtt['address']}, for the {names})")
+    doors.link = Link(mqtt["address"], names, doors.tell)
+    listen(mqtt, password, cfg.presence.doors, doors.heard, doors.link)
+    doors.start()
 
 
 def make_chat_when_out(cfg: Config, presence, reminders):
@@ -617,18 +737,27 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
     tick, so one taught a minute ago is kept to. With `home` (a HomeTools) and `presence`, it also watches the
     devices and who's home for the skills that run on something happening, and a trigger saved is checked against
     the devices and people there are. With `myself` (myself.py), the skills that run on TARS being updated are told
-    when it is, and what changed."""
+    when it is, and what changed. The one-offs are shared between the two: each is run by the process that answers
+    where it was asked while that one's heartbeat says it's running, and otherwise by this one (skills.OneOffs)."""
+    from .events import person_key
+    from .health import running
     from .home import Request
-    from .skills import Clock
+    from .skills import Clock, OneOffs
 
     if not skills:
         return None
-    people = status = None
+    folder = skills.store.folder
+    one_offs = OneOffs(skills, say, lambda process: running(folder, process))
+    people = status = came_by = None
     if presence:
         names = presence.board.people.names  # by person_key: as they're written
 
         def people() -> dict[str, bool | None]:
             return {names[key]: state.home for key, state in presence.board.states().items()}
+
+        def came_by(name: str) -> str | None:
+            state = presence.board.states().get(person_key(name))
+            return state.via if state and state.home else None
 
         skills.people = lambda: set(names)
     if home:
@@ -637,11 +766,15 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
             return home.call({"device": device, "action": "status"}, Request())
 
         skills.devices, skills.status = (lambda: set(home.devices)), status
+        skills.past = lambda device, start, end: home.devices[device].past(start, end)
     updates = {}
     if myself:
         updates = {"version": myself.version, "between": myself.between}
         updates |= {"seen": skills.seen_version, "see": skills.see_version}
-    return Clock(skills.all, say, people=people, status=status, record=skills.ran, **updates).start()
+    clock = Clock(
+        skills.all, say, people=people, came_by=came_by, status=status, record=skills.ran, one_offs=one_offs, **updates
+    )
+    return clock.start()
 
 
 def own_speaker(cfg: Config):
@@ -1421,7 +1554,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     presence = make_presence(cfg, root, events)
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
-    start_presence(presence, reminders)
+    start_presence(cfg, root, presence, reminders)
     announcements = Announcements()
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)

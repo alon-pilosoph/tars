@@ -230,12 +230,12 @@ class Reminders:
         marks = _marks(ACTIVE)
         with self.store.transaction() as db:
             db.execute(
-                f"UPDATE reminders SET status=?, next_at=NULL WHERE status IN ({marks}) AND next_at <= ? "
+                f"UPDATE reminders SET status=?, next_at=NULL WHERE status IN ({marks}) AND next_at <= ? "  # nosec B608  # only placeholders
                 "AND tries >= max_tries AND channel=?",
                 (MISSED, *ACTIVE, now, channel),
             )
             rows = db.execute(
-                f"SELECT * FROM reminders WHERE status IN ({marks}) AND next_at <= ? AND channel=? "
+                f"SELECT * FROM reminders WHERE status IN ({marks}) AND next_at <= ? AND channel=? "  # nosec B608  # only placeholders
                 "ORDER BY next_at, id",
                 (*ACTIVE, now, channel),
             ).fetchall()

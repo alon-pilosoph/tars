@@ -178,6 +178,15 @@ def test_after_a_web_search_the_past_isnt_read_and_nothing_changes(ha):
     assert said.startswith("refused") and ha.fake.calls == []
 
 
+def test_a_turn_a_doors_lock_set_off_reads_but_changes_nothing(ha):
+    by_door = Request(speaker="Alon", by_chat=True, heard="unlock", by_door="front door")
+    assert ask(ha, "state", by_door, entity_ids=["switch.boiler"]).startswith("switch.boiler: off")
+    for service, ids in (("light.turn_on", ["light.hall"]), ("lock.unlock", ["lock.front_door"])):
+        said = ask(ha, "call", by_door, service=service, entity_ids=ids)
+        assert said.startswith("refused: this ran because the front door's lock said someone came in"), said
+    assert ha.fake.calls == []
+
+
 def test_a_change_waits_for_the_turn_and_says_what_it_did(ha):
     turned = ask(ha, "call", service="light.turn_on", entity_ids=["light.hall"], data='{"brightness_pct": 40}')
     assert turned == "done: light.turn_on; now light.hall on"
@@ -186,6 +195,20 @@ def test_a_change_waits_for_the_turn_and_says_what_it_did(ha):
     assert "withdrawn" in ask(ha, "call", withdrawn, service="light.turn_off", entity_ids=["light.hall"])
     assert len(ha.fake.calls) == 1
     assert "sent:" in ask(ha, "call", service="light.toggle", entity_ids=["light.hall"])
+
+
+def test_each_call_it_makes_or_holds_back_is_told_with_its_answer_and_reads_and_bad_calls_arent(ha):
+    heard = []
+    request = Request(by_chat=True, changed=lambda what, answer: heard.append((what, answer)))
+    ask(ha, "state", request, entity_ids=["light.hall"])
+    ask(ha, "call", request, service="light", entity_ids=["light.hall"])  # not a service: nothing asked of it
+    ask(ha, "call", request, service="light.turn_on", entity_ids=["light.hall"])
+    ask(ha, "call", request, service="lock.unlock", entity_ids=["lock.front_door"])
+    assert heard == [
+        ("light.turn_on on light.hall", "done: light.turn_on; now light.hall on"),
+        ("lock.unlock on lock.front_door", heard[1][1]),
+    ]
+    assert heard[1][1].startswith("refused")
 
 
 def test_home_assistant_itself_isnt_administered(ha):
@@ -259,6 +282,15 @@ def test_a_door_opened_by_a_button_on_the_lock_or_a_script_pressing_one_keeps_th
     assert "it can unlock: script.let_in" in ask(ha, "call", stacey, service="script.let_in")
     assert ha.fake.calls == []
     assert ask(ha, "call", stacey, service="light.turn_on", entity_ids=["light.hall"]).startswith("done")
+
+
+def test_a_call_that_unlocks_two_ways_is_one_answer_to_the_challenge(ha):
+    tools = HomeTools(HomeConfig(unlock_voices=["alon"]), {}, ha.ha._hass, digits=lambda: "472")
+    alon = Request("alon", 0.8, by_voice=True, heard="unlock the door")
+    letting_in = {"service": "script.turn_on", "entity_ids": ["button.front_door_unlatch", "script.let_in"]}
+    assert ask(tools, "call", alon, **letting_in).startswith("challenge:")
+    answer = Request("alon", 0.8, by_voice=True, heard="four seven two")
+    assert ask(tools, "call", answer, **letting_in).startswith("done")
 
 
 def test_only_maintainers_may_change_home_assistants_setup():

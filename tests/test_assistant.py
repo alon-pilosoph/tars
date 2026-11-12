@@ -3,6 +3,7 @@
 import threading
 import time
 import types
+from concurrent.futures import Future
 
 import numpy as np
 import pytest
@@ -74,16 +75,112 @@ def test_empty_transcript_ends_the_conversation(speaker):
     assert brain.asked == ["hello"]
 
 
+def test_an_answer_to_its_question_that_came_out_as_no_words_is_asked_for_again_once(speaker):
+    # "Which channel, 11 or 12?" and "twelve" said as it ended: heard, but nothing of it written down.
+    assistant, brain = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", b"c"],
+        ["turn the news on", "", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    said = []
+    assistant.say = lambda text, **kw: said.append(text)
+    assistant.converse(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON]  # once: twice in a row is noise, not an answer
+    assert brain.asked == ["turn the news on"]
+    assistant, brain = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", None],
+        ["turn the news on", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    assistant.say = lambda text, **kw: None
+    assistant.converse(follow_up_s=4.0)
+    assert brain.asked == ["turn the news on", f"{FOLLOW_UP_TAG} twelve"]
+
+
+def test_each_question_that_gets_no_words_back_is_asked_again(speaker):
+    assistant, _ = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", b"c", None],
+        ["turn the news on", "", "twelve", ""],
+        replies=["Which channel, 11 or 12?", "The kitchen or the bedroom TV?"],
+    )
+    said = []
+    assistant.say = lambda text, **kw: said.append(text) or True
+    assistant.converse(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON, assistant_module.PARDON]
+
+
+def test_asking_again_is_kept_in_the_conversation(speaker, tmp_path):
+    assistant, convos = logged_assistant(
+        speaker,
+        tmp_path,
+        [b"q", b"a", b"b", None],
+        ["turn the news on", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    assistant.converse(follow_up_s=4.0)
+    assert [t["text"] for t in turns_of(convos)] == [
+        "turn the news on",
+        "Which channel, 11 or 12?",
+        assistant_module.PARDON,
+        "twelve",
+        "On it.",
+    ]
+
+
+def test_asking_again_is_made_ahead(speaker):
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.prepare_phrases()
+    assert assistant.phrases.made_ahead(assistant_module.PARDON)
+
+
+def test_no_words_after_an_answer_that_asked_nothing_ends_the_conversation_quietly(speaker):
+    assistant, brain = make_assistant(speaker, [b"q", b"a", b"b"], ["lights on", "", "x"], replies=["Done."])
+    said = []
+    assistant.say = lambda text, **kw: said.append(text)
+    assistant.converse(follow_up_s=4.0)
+    assert said == [] and brain.asked == ["lights on"]
+
+
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("Which channel, 11 or 12?", ("11", "eleven", "12", "twelve")),
+        ("Sure. The kitchen or the living room?", ("kitchen", "living")),
+        ("11, 12 or 13?", ("12", "twelve", "13", "thirteen", "11", "eleven")),
+        ("Done. Anything else?", ()),  # no choice offered
+        ("Kitchen or bedroom? Never mind, done.", ()),  # it's no question once it's moved on
+    ],
+)
+def test_the_choices_a_question_offered_are_what_the_answer_is_expected_to_say(said, expected):
+    assert assistant_module.offered(said) == expected
+
+
+def test_the_answer_to_a_choice_is_heard_expecting_the_choices(speaker):
+    assistant, _ = make_assistant(
+        speaker, [b"q", b"a", None], ["turn the news on", "twelve"], replies=["Which channel, 11 or 12?", "On it."]
+    )
+    assistant.converse(follow_up_s=4.0)
+    assert assistant.transcriber.expected == [(), ("11", "eleven", "12", "twelve"), ()]
+
+
 def test_follow_ups_can_be_turned_off(speaker):
     assistant, _ = make_assistant(speaker, [b"a"], ["hello"])
     assistant.converse(follow_up_s=0)
     assert assistant.recorder.timeouts == [None]
 
 
-def test_first_request_is_never_treated_as_overheard(speaker):
-    assistant, brain = make_assistant(speaker, [b"a", None], ["hi"], replies=["<skip>"])
+def test_first_request_is_never_treated_as_overheard(speaker, tmp_path):
+    # "New zone." for "news on", after the wake word: the model took it for overheard, and the tag reached the voice.
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"a", None], ["New zone."], replies=["<skip>"])
     assistant.converse(follow_up_s=4.0)
-    assert brain.forgotten == 0
+    assert assistant.brain.forgotten == 1  # the tag never stays in the history
+    assert turns_of(convos)[-1]["text"] == assistant_module.PARDON
+    assert assistant.brain.remembered == [assistant_module.PARDON]  # what's said next answers it, not skipped
+    assert assistant.recorder.timeouts == [None, 4.0]  # and the answer is listened for
 
 
 def failing(assistant, error):
@@ -346,6 +443,61 @@ def test_asking_straight_away_skips_the_greeting(speaker):
     assert said == [] and brain.asked == ["what time is it"]
 
 
+def found(pcm):
+    done = Future()
+    done.set_result(pcm)
+    return done
+
+
+def test_what_followed_the_name_goes_to_the_first_request_only(speaker):
+    """Said in one breath with the name, "what" of "what's new" was read off the mic with it, so it's handed on."""
+    assistant, _ = make_assistant(speaker, [b"q", b"f", None], ["what's new", "and the weather"])
+    what = np.ones(1920, np.int16)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, after_name=found(what))
+    leads = assistant.recorder.leads
+    assert leads[0] is what and leads[1:] == [None, None]  # follow-ups come after TARS spoke: nothing to carry
+
+
+@pytest.mark.parametrize(
+    "greet, echo, heard",
+    [("always", True, [b"q", None]), ("pause", False, [None, b"q", None]), ("never", False, [b"q", None])],
+)
+def test_what_followed_the_name_is_heard_while_the_mic_stays_open(speaker, greet, echo, heard):
+    transcript = "Yes, Alon? What's new" if echo else "what's new"
+    assistant, _, _ = greeting_at_once(speaker, heard, [transcript], echo=echo)
+    what = np.ones(1920, np.int16)
+    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet, after_name=found(what))
+    assert assistant.recorder.leads[0] is what
+    assert all(lead is None for lead in assistant.recorder.leads[1:])  # after a greeting, the mic starts afresh
+
+
+def test_a_greeting_said_with_the_mic_closed_drops_what_followed_the_name(speaker):
+    """Without echo cancellation the mic is cleared for "Yes, Alon?": what's heard after it doesn't run on from it."""
+    assistant, _, _ = greeting_at_once(speaker, [b"q", None], ["what's new"])
+    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(np.ones(1920, np.int16)))
+    assert assistant.recorder.leads == [None, None] and assistant.mic.pauses >= 1
+
+
+def test_if_the_greeting_cant_be_said_what_followed_the_name_is_still_heard(speaker, capsys):
+    assistant, _, _ = greeting_at_once(speaker, [b"q", None], ["what's new"], echo=True)
+    unsaid = Future()
+    unsaid.set_exception(RuntimeError("no voice"))
+    assistant.phrases.get = lambda text, **kw: unsaid
+    what = np.ones(1920, np.int16)
+    assistant.converse(follow_up_s=4.0, greet="always", after_name=found(what))
+    assert assistant.recorder.leads[0] is what
+    assert "couldn't say 'Yes, Alon?'" in capsys.readouterr().out
+
+
+def test_if_the_name_couldnt_be_timed_the_request_is_heard_from_the_mic(speaker, capsys):
+    assistant, brain = make_assistant(speaker, [b"q", None], ["what's new"])
+    failed = Future()
+    failed.set_exception(RuntimeError("recognizer failed"))
+    assistant.converse(follow_up_s=4.0, after_name=failed)
+    assert assistant.recorder.leads[0] is None and brain.asked == ["what's new"]
+    assert "couldn't tell where the name ended" in capsys.readouterr().out
+
+
 def logged_assistant(speaker, tmp_path, utterances, transcripts, replies=(), elsewhere=None):
     journal = Journal(EventLog(tmp_path / "events"))
     assistant, _ = make_assistant(speaker, utterances, transcripts, replies, journal=journal, elsewhere=elsewhere)
@@ -535,6 +687,32 @@ def test_each_answer_is_kept_with_how_long_it_took_and_who_wrote_it(speaker, tmp
     assert set(tars["timings"]) == set(TIMINGS) - {"greet"} and tars["timings"]["total"] >= 0  # no greeting here
 
 
+def test_an_answer_started_during_the_pause_keeps_how_early_it_started(speaker, tmp_path, monkeypatch):
+    monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
+    assistant, convos = logged_assistant(speaker, tmp_path, [["pause", b"q"], None], ["what time is it"], ["Late."])
+    playing(speaker)
+    record = assistant.recorder.record
+
+    def still_quiet(*args, **kw):
+        pcm = record(*args, **kw)
+        time.sleep(0.2)  # the silence goes on after the draft started, until the turn is called over
+        return pcm
+
+    assistant.recorder.record = still_quiet
+    assistant.converse(follow_up_s=4.0)
+    assert 0 < turns_of(convos)[-1]["timings"]["head_start"] < 1.0
+
+
+def test_an_answer_asked_only_after_the_turn_logs_no_head_start(speaker, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
+    assistant, convos = logged_assistant(speaker, tmp_path, [b"q", None], ["what time is it"], replies=["Late."])
+    playing(speaker)
+    assistant.converse(follow_up_s=4.0)
+    assert turns_of(convos)[-1]["timings"]["head_start"] < 0.005
+    line = next(x for x in capsys.readouterr().out.splitlines() if "TOTAL to first sound" in x)
+    assert "started early" not in line
+
+
 @pytest.mark.parametrize("stage", ["stt", "llm", "tts"])
 def test_a_failed_answer_is_kept_with_where_it_failed(speaker, tmp_path, monkeypatch, stage):
     monkeypatch.setattr(assistant_module, "StreamedReply", StreamedReply)
@@ -542,7 +720,7 @@ def test_a_failed_answer_is_kept_with_where_it_failed(speaker, tmp_path, monkeyp
     playing(speaker)
     down = OpenAIError(f"{stage} is down")
     if stage == "stt":
-        assistant.transcriber = types.SimpleNamespace(session=lambda: BufferedSession(raising(down)))
+        assistant.transcriber = types.SimpleNamespace(session=lambda expect=(): BufferedSession(raising(down)))
     elif stage == "llm":
         assistant.brain.stream_reply = raising(down)
     else:

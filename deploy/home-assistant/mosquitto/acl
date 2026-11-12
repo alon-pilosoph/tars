@@ -1,0 +1,19 @@
+# Who may read and write what on the broker (mosquitto.conf's acl_file). Anything not granted here is refused, so a
+# device's password, if it leaks, can't speak for another device: above all, only the lock may say the door was opened
+# (TARS puts whoever opens it from outside at home, docs/presence.md#the-front-door).
+#
+# Mosquitto reads this again on a SIGHUP (deploy/install-pi.sh sends one), or docker restart mosquitto.
+
+# Home Assistant works every device, the lock included, so it reads and writes everything.
+user homeassistant
+topic readwrite #
+
+# TARS only listens to what the locks did; it writes nothing.
+user tars
+topic read nuki/+/lockActionEvent
+
+# Every other user is a device: its own topics, under its user's name (the Nuki lock's user is nuki, and its topics
+# are nuki/<its id>/...; Zigbee2MQTT's are zigbee2mqtt/...), and Home Assistant's discovery, where it announces
+# itself. A device whose topics are under another name needs its own lines above, as Home Assistant's are.
+pattern readwrite %u/#
+pattern readwrite homeassistant/#
