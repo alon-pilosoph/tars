@@ -202,7 +202,7 @@ def processes(
             {
                 "name": name,
                 "label": label,
-                "running": last is not None and -AHEAD_S <= now - last <= beat["every_s"] * MISSED_BEATS,
+                "running": _beating(beat, now),
                 "started": beat.get("started"),
                 "beat": last,
                 "version": beat.get("version") or "",
@@ -210,6 +210,19 @@ def processes(
             }
         )
     return out
+
+
+def running(folder: Path, name: str, now: float | None = None) -> int | None:
+    """The pid of one of TARS's processes (PROCESSES' `name`) if its heartbeat says it's running now, else None: how
+    the assistant and Telegram tell whether the other is up, to run what it would (skills.OneOffs)."""
+    beat = _read_beat(folder / HEARTBEATS / f"{name}.json")
+    return beat.get("pid") if _beating(beat, time.time() if now is None else now) else None
+
+
+def _beating(beat: dict, now: float) -> bool:
+    """Whether a heartbeat was written lately enough for its process to be running."""
+    last = beat.get("beat")
+    return last is not None and -AHEAD_S <= now - last <= beat["every_s"] * MISSED_BEATS
 
 
 def _read_beat(path: Path) -> dict:
@@ -221,6 +234,8 @@ def _read_beat(path: Path) -> dict:
     if not isinstance(found, dict):
         found = {}
     beat = {k: v for k in ("beat", "started", "every_s") if isinstance(v := found.get(k), int | float)}
+    if isinstance(found.get("pid"), int) and not isinstance(found["pid"], bool):
+        beat["pid"] = found["pid"]
     beat.setdefault("every_s", HEARTBEAT_EVERY_S)
     if isinstance(found.get("version"), str):
         beat["version"] = found["version"]

@@ -88,6 +88,9 @@ class Request:
     `emit`: hands a device's media (a camera's snapshot or live link, as a conversations.SentItem) to this turn's
     reply, so it reaches the asker's TARS page and chat like the send tool's own items; None when nothing collects
     it (a --check run), so a device that needs it says so.
+    `changed(what, answer)`: told of each change this turn asks of the house, and what the house answered ("the ac
+    on", "done: ..."), refusals included, so a skill's own turn can tell whether what it was for happened (skills.py);
+    None when nobody needs to know.
     `by_door`: the door whose lock set this turn off (a skill run because someone came home by opening it, doors.py):
     what a lock says over MQTT is only ever who came in, so the turn reads the house, but changes nothing in it."""
 
@@ -100,6 +103,13 @@ class Request:
     read_the_web: bool = False
     emit: Callable[[object], None] | None = None  # object is a conversations.SentItem; typed loosely to avoid a cycle
     by_door: str = ""
+    changed: Callable[[str, str], None] | None = None
+
+    def answered(self, what: str, answer: str) -> str:
+        """`answer`, the house's to the change `what`, told to `changed`, and handed back."""
+        if self.changed:
+            self.changed(what, answer)
+        return answer
 
     def go_ahead(self) -> bool:
         return True if self.may_act is None else self.may_act(GO_AHEAD_TIMEOUT_S)
@@ -470,6 +480,9 @@ class HomeTools:
                 return device.history(args)
             except HomeError as e:
                 return f"error: {e}"
+        return request.answered(f"the {name} {action}", self._change(name, device, action, args, request))
+
+    def _change(self, name: str, device: Device, action: str, args: dict, request: Request) -> str:
         if request.read_the_web:
             return (
                 "refused: this reply searched the web, so it changes nothing in the house; "

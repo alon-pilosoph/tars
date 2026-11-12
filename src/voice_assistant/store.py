@@ -214,7 +214,9 @@ TABLES = {
     created REAL NOT NULL,
     updated REAL NOT NULL,
     updated_by TEXT NOT NULL,        -- who taught it, or last changed it
-    trigger TEXT                     -- JSON: something happening it runs on (skills.trigger); NULL: none
+    trigger TEXT,                    -- JSON: something happening it runs on (skills.trigger); NULL: none
+    once REAL,                       -- when it runs, the one time, then it's gone; NULL: not a one-off
+    tries TEXT                       -- JSON: a one-off's tries so far, and who has one in hand (skills.OneOffs)
 )""",
     "skill_runs": """CREATE TABLE skill_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,7 +225,8 @@ TABLES = {
     owner TEXT NOT NULL,
     at REAL NOT NULL,
     why TEXT NOT NULL,               -- "at 19:55", "Stacey just came home"
-    said TEXT NOT NULL               -- what it said; "" when there was nothing to do
+    said TEXT NOT NULL,              -- what it said; "" when there was nothing to do
+    failed INTEGER NOT NULL DEFAULT 0 -- a one-off that didn't happen, given up; said: what they were told
 )""",
     "wishes": """CREATE TABLE wishes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -418,6 +421,11 @@ MIGRATIONS = [
         ),
         "CREATE TABLE door_keys (key TEXT PRIMARY KEY, person TEXT NOT NULL, learned REAL NOT NULL)",
         "CREATE INDEX door_events_key ON door_events(key)",
+    ],
+    [
+        "ALTER TABLE skills ADD COLUMN once REAL",
+        "ALTER TABLE skills ADD COLUMN tries TEXT",
+        "ALTER TABLE skill_runs ADD COLUMN failed INTEGER NOT NULL DEFAULT 0",
     ],
 ]
 

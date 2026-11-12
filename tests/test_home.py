@@ -274,6 +274,19 @@ def test_a_device_it_doesnt_have_or_an_action_it_cant_do_is_an_error():
     assert h.tools.call(["not", "an", "object"], Request()) == "error: the arguments must be an object"
 
 
+def test_each_change_asked_for_is_told_with_what_the_house_answered_and_reads_arent():
+    h = house(lock="locked")
+    heard = []
+    request = Request(changed=lambda what, answer: heard.append((what, answer)))
+    h.tools.call(args("boiler", "status"), request)
+    h.tools.call(args("everything", "status"), request)
+    h.tools.call(args("garage", "open"), request)  # no such device: nothing asked of the house
+    h.tools.call(args("boiler", "on"), request)
+    h.tools.call(args("front door", "unlock"), request)  # refused: told all the same
+    assert [what for what, _ in heard] == ["the boiler on", "the front door unlock"]
+    assert heard[0][1].startswith("done") and heard[1][1].startswith("refused")
+
+
 def test_home_assistant_not_answering_is_an_error_that_says_nothing_changed():
     h = house(down=True)
     said = h.tools.call(args("boiler", "on"), Request())
