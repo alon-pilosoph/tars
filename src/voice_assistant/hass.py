@@ -344,13 +344,19 @@ class Entity(Device):
         worded as status() words it now: (when, status), each a change from the one before."""
         entities = [self.entity, *self._entities(), *self.details]
         found = self._hass.history(
-            entities, datetime.fromtimestamp(start).astimezone(), datetime.fromtimestamp(end).astimezone(), True
+            entities,
+            datetime.fromtimestamp(start).astimezone(),
+            datetime.fromtimestamp(end).astimezone(),
+            attributes=True,
         )
         changes = sorted(
-            (datetime.fromisoformat(s["last_changed"]).timestamp(), s["entity_id"], s)
-            for states in found
-            for s in states
-            if s.get("entity_id") in entities and s.get("last_changed")
+            (
+                (datetime.fromisoformat(s.get("last_updated") or s["last_changed"]).timestamp(), s["entity_id"], s)
+                for states in found
+                for s in states
+                if s.get("entity_id") in entities and (s.get("last_updated") or s.get("last_changed"))
+            ),
+            key=lambda change: change[:2],
         )
         then = _Then()
         replay = copy.copy(self)
@@ -440,7 +446,8 @@ class Entity(Device):
 
 
 class _Then:
-    """Home Assistant as it was at one moment, for Entity.past: each entity's state as replayed so far."""
+    """Home Assistant as it was at one moment, for Entity.past: each entity's state as replayed so far. It answers
+    only `state`: a status() that reads Home Assistant any other way can't be replayed (no dry run)."""
 
     def __init__(self):
         self.states: dict[str, dict] = {}

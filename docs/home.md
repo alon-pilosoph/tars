@@ -294,6 +294,9 @@ def setup(settings: dict, context: Context) -> dict:
   their chats (a device that's stopped answering), and `background` is true only in the voice assistant's process,
   the one that runs a device's background work (a watch), so nothing is watched, or told, twice. The TV agent knows no app of its own:
   `tv_agent(box, extra_rules=...)` tells it how one of the household's works (my_house: how Stremio lists streams).
+- **`past(start, end)`** gives its status after each change between two times (Unix seconds), as `(when, status)`
+  in order, worded as `status()` words it, so a skill waiting on it is dry-run over its last week before it's kept
+  ([skills](skills.md)). Without it, or when it raises `HomeError`, the skill is kept without a dry run.
 - **`stop()`** ends anything the device still does in the background, as TARS shuts down or someone takes over; the
   base class's does nothing.
 - **`button(args)`** and **`presses(args)`** read a press as every device does: "volume up" is `volume_up`, and

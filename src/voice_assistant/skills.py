@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import tomllib
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -349,9 +350,16 @@ def fired(trigger: dict, before: str, now: str) -> str:
 
 def dry_run(trigger: dict, past: list[tuple[float, str]]) -> list[float]:
     """When a device trigger would have run over its device's past statuses ((when, status), in order): each change
-    it's set off by, no sooner than COOLDOWN_S after the last, as the clock runs it."""
+    it's set off by, no sooner than COOLDOWN_S after the last, as the clock runs it. The clock looks every TICK_S, so
+    a status gone again sooner than that is taken as never seen."""
+    seen: list[tuple[float, str]] = []
+    for i, (at, status) in enumerate(past):
+        if i + 1 < len(past) and past[i + 1][0] - at < TICK_S:
+            continue
+        if not seen or seen[-1][1] != status:
+            seen.append((at, status))
     ran: list[float] = []
-    for (_, before), (at, now) in itertools.pairwise(past):
+    for (_, before), (at, now) in itertools.pairwise(seen):
         if fired(trigger, before, now) and (not ran or at - ran[-1] >= COOLDOWN_S):
             ran.append(at)
     return ran
@@ -362,9 +370,10 @@ def dry_run_note(trigger: dict, ran: list[float], days: int = DRY_RUN_DAYS) -> s
     if not ran:
         times = "it never would have"
     else:
-        hours = [datetime.fromtimestamp(t).astimezone().hour for t in ran]
-        busiest = max(set(hours), key=hours.count)
-        times = f"it would have run {len(ran)} time{'s' * (len(ran) != 1)} (most often around {busiest:02d}:00)"
+        times = f"it would have run {len(ran)} time{'s' * (len(ran) != 1)}"
+        if len(ran) >= 3:
+            hours = Counter(datetime.fromtimestamp(t).astimezone().hour for t in ran)
+            times += f" (most often around {hours.most_common(1)[0][0]:02d}:00)"
     return (
         f"checked against the last {days} days of the {trigger['device']}'s history: {times}. Say so only if that's "
         "clearly more often than they'd want, or never, and offer to change it; otherwise don't mention it"
@@ -543,7 +552,7 @@ class Skills:
         except Exception as e:  # noqa: BLE001 - kept without one
             print(f"(skills: no dry run for the {on_event['device']}: {e!r})")
             return ""
-        return dry_run_note(on_event, dry_run(on_event, past)) if len(past) > 1 else ""
+        return dry_run_note(on_event, dry_run(on_event, past)) if past else ""
 
     # The web UI's Skills page: everything, everyone's, and changed by id (it has no one asking).
 

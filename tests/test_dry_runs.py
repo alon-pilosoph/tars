@@ -8,8 +8,8 @@ import pytest
 
 from evals.house import TOKEN, URL
 from voice_assistant.hass import HomeAssistant, entity_device
-from voice_assistant.home import Device, HomeError
-from voice_assistant.skills import COOLDOWN_S, Skills, dry_run, dry_run_note, fired
+from voice_assistant.home import Device, HomeError, Request
+from voice_assistant.skills import COOLDOWN_S, TICK_S, Skills, dry_run, dry_run_note, fired
 from voice_assistant.store import Store
 
 T0 = datetime(2026, 11, 2, 8, 0).astimezone().timestamp()
@@ -47,11 +47,22 @@ def test_a_dry_run_counts_each_time_as_the_clock_would_with_its_cooldown():
     assert dry_run(UNLOCKED, past) == [T0 + 60, T0 + 60 + COOLDOWN_S + 1]
 
 
+def test_a_dry_run_doesnt_count_a_status_gone_before_the_clock_would_look():
+    past = [
+        (T0, "front door: locked"),
+        (T0 + 60, "front door: unlocked"),
+        (T0 + 60 + TICK_S / 2, "front door: locked"),
+        (T0 + 3600, "front door: unlocked"),
+    ]
+    assert dry_run(UNLOCKED, past) == [T0 + 3600]
+
+
 def test_the_note_says_how_often_and_when_and_when_to_bring_it_up():
     note = dry_run_note(UNLOCKED, [T0 + 3600 * i for i in (0, 24, 48)])
     assert note.startswith("checked against the last 7 days of the front door's history: it would have run 3 times")
     assert "(most often around 08:00)" in note and "Say so only if" in note
     assert ": it never would have." in dry_run_note(UNLOCKED, [])
+    assert "it would have run 2 times. Say so" in dry_run_note(UNLOCKED, [T0, T0 + 3600])
 
 
 def state(entity: str, value: str, at: float, **attributes) -> dict:
@@ -89,6 +100,17 @@ def test_a_devices_past_is_its_history_worded_as_its_status_is_now():
     assert "no_attributes" not in query and query["filter_entity_id"] == "lock.front_door,binary_sensor.front_door"
 
 
+def test_changes_at_the_same_moment_are_timed_by_when_they_were_updated():
+    def handle(request: httpx.Request) -> httpx.Response:
+        first = state("climate.ac", "cool", T0, temperature=22)
+        later = state("climate.ac", "cool", T0, temperature=23)  # only its setting changed: last_changed stays
+        later["last_updated"] = datetime.fromtimestamp(T0 + 300).astimezone().isoformat()
+        return httpx.Response(200, json=[[first, later]])
+
+    ac = entity_device("AC", {"entity": "climate.ac"}, HomeAssistant(URL, TOKEN, httpx.MockTransport(handle)))
+    assert ac.past(T0, T0 + 3600) == [(T0, "AC: cool, set to 22 degrees"), (T0 + 300, "AC: cool, set to 23 degrees")]
+
+
 def test_a_device_without_history_has_no_past():
     class Remote(Device):
         pass
@@ -103,7 +125,7 @@ def saving(tmp_path, past):
     skills.past = past
     return skills.call(
         {"action": "save", "name": "door", "instructions": "Tell Alon.", "trigger": dict(UNLOCKED)},
-        type("Request", (), {"speaker": "Alon", "by_chat": False})(),
+        Request(speaker="Alon"),
     )
 
 
@@ -118,6 +140,11 @@ def test_saving_a_device_skill_tells_the_model_what_its_dry_run_found(tmp_path):
     assert asked == [("front door", 7 * 86400.0)]
     assert said.startswith("done: kept") and "Dry run: checked against the last 7 days" in said
     assert "it would have run 30 times" in said
+
+
+def test_a_device_that_never_changed_is_said_never_to_have_run(tmp_path):
+    said = saving(tmp_path, lambda device, start, end: [(T0, "front door: locked")])
+    assert "Dry run: checked against the last 7 days" in said and "it never would have" in said
 
 
 def test_with_no_history_to_read_its_kept_without_a_dry_run(tmp_path, capsys):
