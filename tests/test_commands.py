@@ -1,6 +1,8 @@
 """House commands handled on the Pi (commands.py): phrases from the house's devices, answered without the model,
 and heard by Vosk when the cloud's speech to text is out of reach."""
 
+import types
+
 import pytest
 
 from voice_assistant.commands import ON_PI, Command, Commands, HouseCommands, Replies, normalize, sentences
@@ -108,6 +110,39 @@ def test_a_command_is_done_with_the_home_tool_and_answered_without_the_model(tmp
     assert brain.remembered == [("Turn the boiler on, please.", "Boiler's on.")]
     turns = journal.conversations.get(journal.conversations.conversations()[0]["id"])["turns"]
     assert turns[-1]["text"] == "Boiler's on." and turns[-1]["answered_by"] == ON_PI
+
+
+def test_a_command_after_a_reply_that_set_a_reminder_doesnt_set_it_again():
+    """The brain's changes are the last reply's (Brain.changes), and a command is no reply of the brain's."""
+    from voice_assistant.reminders import CANCEL, Change
+
+    assistant, brain = make_assistant([b"q", None], ["Turn the boiler on, please."])
+    brain.changes = [Change(CANCEL, id=7)]  # what the model's reply before this one asked for, made already
+    applied = []
+    assistant.reminder_tools = types.SimpleNamespace(apply=lambda change, **kw: applied.append(change), reminders=None)
+    assistant.commands = house([])
+    assistant.converse(follow_up_s=4.0)
+    assert brain.asked == [] and applied == []
+
+
+def test_a_command_whose_answer_fails_is_kept_as_answered_on_the_pi_not_by_the_last_model(tmp_path):
+    from voice_assistant.events import EventLog
+    from voice_assistant.journal import Journal
+
+    journal = Journal(EventLog(tmp_path / "events"))
+    journal.wake(b"\0\0" * 1600, 0.9, "answer", "hey tars", 0.9, "", "")
+    assistant, brain = make_assistant([b"q", None], ["Turn the boiler on, please."], journal=journal)
+    brain.answered_by, brain.quick_service = "quick", "Groq"  # the model's reply before this one
+
+    def broken(chunks):
+        assistant.body.on_play = None  # once: the error line after it plays
+        raise RuntimeError("the speaker's buffer")
+
+    assistant.body.on_play = broken
+    assistant.commands = house([])
+    assistant.converse(follow_up_s=4.0)
+    turns = journal.conversations.get(journal.conversations.conversations()[0]["id"])["turns"]
+    assert turns[-1]["failed_at"] and turns[-1]["answered_by"] == ON_PI and turns[-1]["quick_service"] is None
 
 
 def test_anything_else_still_goes_to_the_model():

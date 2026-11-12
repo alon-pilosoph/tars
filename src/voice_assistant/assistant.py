@@ -1077,10 +1077,12 @@ class Assistant:
             quick_service=said.quick_service,
         )
         acks = answer.written.acks if answer.written else None
+        # The brain's changes are its last reply's; a house command done on the Pi is none of its replies.
+        changes = [] if answer.on_pi else self.brain.changes
         if acks is not None and self.reminders:
             # One the reply also put off or cancelled is that change's: acknowledged, it couldn't be put off.
-            self._ack(acks, name, changed={c.id for c in self.brain.changes if c.id is not None})
-        self._change_reminders(self.brain.changes, name)
+            self._ack(acks, name, changed={c.id for c in changes if c.id is not None})
+        self._change_reminders(changes, name)
         return True
 
     def _change_reminders(self, changes: list[Change], who: str | None) -> None:
@@ -1102,13 +1104,14 @@ class Assistant:
         if answer:
             self._measure(answer, answer.t_asked, None)
         asked = bool(answer and answer.t_asked)
+        on_pi = bool(answer and answer.on_pi)  # no model answered it: the brain's are its last reply's
         self.journal.failed(
             text,
             failed_at(e),
             f"{type(e).__name__}: {e}",
             dict(self.timings),
-            answered_by=self.brain.answered_by if asked else None,
-            quick_service=self.brain.quick_service if asked else None,
+            answered_by=ON_PI if on_pi else self.brain.answered_by if asked else None,
+            quick_service=self.brain.quick_service if asked and not on_pi else None,
         )
 
     def _draft(
