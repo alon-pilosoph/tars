@@ -27,6 +27,10 @@ jamming, or unlatching (unlocked, open, unlocked) isn't a new unlocking, so it i
    being open, until it's back on; it comes back by itself. Kept in a file beside the event log, so a chat's process
    can turn it off and the assistant, which locks, reads it.
 
+What it knows comes from following both in Home Assistant, and from reading both again (REST) each time that's
+taken up, the first and after every reconnect, and every RESYNC_S besides: a change missed while nothing was
+followed is caught, as if it had just happened.
+
 TARS down means nothing locks the door: the lock's own auto-lock, with a long timer, is the backstop (docs). Nor can
 any code here close the last window, a door opened between the read and the bolt moving (docs/home.md#auto-lock).
 """
@@ -50,6 +54,7 @@ SHUT, OPEN = "off", "on"  # a door sensor's states in Home Assistant; anything e
 LOCK_SETTLE_S = 20.0  # a Nuki turns its bolt in a few seconds, then reports it; from the call returning
 MAX_TRIES, RETRY_S = 3, (5.0, 30.0)  # tries that never reached the lock, and the waits after the first two
 SENSOR_GRACE_S = 60.0  # a sensor out this long is told: Home Assistant restarting is shorter
+RESYNC_S = 30.0  # the lock and the door read again this often, beside following them: a change missed is caught
 TICK_S = 1.0
 DEFAULT_OFF_MIN, MOST_OFF_MIN = 60.0, 12 * 60.0
 
@@ -207,22 +212,47 @@ class AutoLock:
         self.tries = 0  # tries that never reached the lock, this unlocking
         self.retry_at: float | None = None  # not tried again before this
         self.gave_up = False  # the maintainers were told it couldn't be locked, this unlocking
+        self._heard = {lock_entity: 0, sensor: 0}  # changes taken for each, so a read never undoes a newer one
+        self._synced_at: float | None = None  # both last read again
+        self._resync = threading.Event()  # set when following is taken up again: read both at the next step
 
-    def start_from(self, lock_state: str, door_state: str) -> None:
-        """What Home Assistant says now, as TARS starts: unlocked now counts as just unlocked."""
-        self.changed(self.sensor, door_state)
-        self.changed(self.lock_entity, lock_state)
-
-    def changed(self, entity: str, state: str) -> None:
-        """An entity's new state, as Home Assistant reports it (hass.follow)."""
+    def changed(self, entity: str, state: str, heard: int | None = None) -> None:
+        """An entity's new state, as Home Assistant reports it (hass.follow). `heard`: from a read started when
+        `_heard[entity]` was this; taken only if no newer change has come since."""
         now, told = self._clock(), None
         with self._mutex:
+            if heard is not None and self._heard.get(entity) != heard:
+                return
+            if entity in self._heard:
+                self._heard[entity] += 1
             if entity == self.lock_entity:
                 self._lock_changed(state, now)
             elif entity == self.sensor:
                 told = self._door_changed(state, now)
         if told:
             self._tell(told)
+
+    def subscribed(self) -> None:
+        """Following is taken up (hass.follow's on_subscribed): both are read again at the next step."""
+        self._resync.set()
+
+    def resync(self) -> None:
+        """Reads the door, then the lock, in Home Assistant now, and takes what they say as changes: as TARS starts,
+        unlocked counts as just unlocked; later, a change missed counts from now. A read that fails changes nothing
+        (the read just before locking still decides)."""
+        self._resync.clear()
+        for entity in (self.sensor, self.lock_entity):
+            with self._mutex:
+                heard = self._heard[entity]
+            try:
+                state = self._read(entity)
+            except HomeError as e:
+                if entity == self.sensor and self.door_state == "":
+                    with self._mutex:
+                        self.down_why = f"I couldn't read it: {e}"
+                continue
+            self.changed(entity, str(state), heard)
+        self._synced_at = self._clock()
 
     def _lock_changed(self, state: str, now: float) -> None:
         was, self.lock_state = self.lock_settled, state
@@ -259,7 +289,10 @@ class AutoLock:
         return None
 
     def step(self) -> None:
-        """What's due now: locking, checking it locked, saying the door's open. Called every TICK_S."""
+        """What's due now: reading both again, locking, checking it locked, saying the door's open. Called every
+        TICK_S."""
+        if self._resync.is_set() or self._synced_at is None or self._clock() - self._synced_at >= RESYNC_S:
+            self.resync()
         now = self._clock()
         off = self.off.until() is not None
         with self._mutex:
@@ -326,16 +359,18 @@ class AutoLock:
 
     def _lock_now(self) -> None:
         """Reads the door again and locks only if it reads shut; otherwise it's tried again later, or never."""
+        with self._mutex:
+            heard = self._heard[self.sensor]
         try:
             door = self._read(self.sensor)
         except HomeError as e:
-            self._failed(f"Home Assistant didn't answer when I read its sensor to be sure it's shut ({e})")
+            self._failed(f"I couldn't read its sensor to be sure it's shut ({e})")
             return
         if door != SHUT:
             # It opened as the time came (the next shutting counts again), or its sensor isn't answering (nothing is
             # locked until it's back).
             print(f"(auto-lock: not locking the {self.door}: its sensor says {door or 'nothing'})")
-            self.changed(self.sensor, door)
+            self.changed(self.sensor, door, heard)
             return
         print(f"(auto-lock: locking the {self.door}; its sensor says {door})")
         try:
@@ -369,17 +404,9 @@ class AutoLock:
         else:
             self._say(text)
 
-    def start(self, follow: Callable[[list[str], Callable[[str, str], None]], None]) -> AutoLock:
-        """Follows the lock and its sensor (`follow(entities, on_state)`, on a thread of its own) and steps every
-        TICK_S on another."""
-
-        def read(entity: str) -> str:
-            try:
-                return self._read(entity)
-            except HomeError:
-                return ""
-
-        self.start_from(read(self.lock_entity), read(self.sensor))
+    def start(self, follow: Callable[[list[str], Callable[[str, str], None], Callable[[], None]], None]) -> AutoLock:
+        """Follows the lock and its sensor (`follow(entities, on_state, on_subscribed)`, on a thread of its own) and
+        steps every TICK_S on another, the first step reading both."""
 
         def ticking() -> None:
             while True:
@@ -390,7 +417,9 @@ class AutoLock:
                     print(f"(auto-lock: a step failed: {e!r})")
 
         entities = [self.lock_entity, self.sensor]
-        threading.Thread(target=follow, args=(entities, self.changed), daemon=True, name="auto-lock-follow").start()
+        threading.Thread(
+            target=follow, args=(entities, self.changed, self.subscribed), daemon=True, name="auto-lock-follow"
+        ).start()
         threading.Thread(target=ticking, daemon=True, name="auto-lock").start()
         s = self.settings
         print(

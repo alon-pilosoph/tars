@@ -106,6 +106,7 @@ voice assistant):
 | The lock out of reach and back (its Bluetooth, Home Assistant restarting), or unlatched | isn't a new unlocking: only locked to unlocked (or unlocked as TARS starts) is, so a lock that didn't lock isn't tried again on its account |
 | The door open for 2 minutes (`open_alert_min`, 0 for never) | says so aloud, at night too; if nobody's home, posts it to everyone's chat instead |
 | The door can't be read just before locking, or Home Assistant doesn't take the call to lock | doesn't lock; tries again 5 s and 30 s later, reading the door again each time, then tells the maintainers which it was, and leaves it to the lock's own timer |
+| Home Assistant's live connection drops and comes back, or TARS starts | reads the lock and the door again as it's followed again, and every 30 s besides: a change missed meanwhile counts from when it's read (unlocked as TARS starts counts as just unlocked; a door read shut, as just shut) |
 | The sensor not answering (unknown or unavailable) | locks nothing until it's back, whatever it said last; tells the maintainers once it's been out a minute, and once it's back. Back and shut, it counts as just shut: locked 10 s later |
 | "Turn off the front door's auto-lock for half an hour" | the home tool's `front door auto-lock`: off for that long (an hour if not said; at most 12), then back on by itself; nothing is locked, or said about the door, meanwhile |
 

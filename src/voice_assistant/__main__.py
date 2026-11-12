@@ -892,7 +892,11 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None) -
 
         AutoLock(
             d["name"].strip(), entity, d["door"], settings, off, read, lock, say, post, tell_maintainers, anyone_home
-        ).start(lambda entities, changed: follow(cfg.home.url, token, entities, changed, unknown_too=True))
+        ).start(
+            lambda entities, changed, subscribed: follow(
+                cfg.home.url, token, entities, changed, unknown_too=True, on_subscribed=subscribed
+            )
+        )
 
 
 def make_skills(events):
