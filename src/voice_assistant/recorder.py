@@ -166,15 +166,15 @@ class UtteranceRecorder:
     ) -> list[np.ndarray] | None:
         self._vad.reset()
         preroll: deque[np.ndarray] = deque(maxlen=keep)
-        # The lead, kept whole while speech runs on from its end; a quiet block lets it go.
+        # The lead, kept whole while speech runs on from its end; a quiet block lets it go. Its speech counts toward
+        # the start, but the start is only decided on the mic's audio: a lead that ends in speech may be no more than
+        # the name's own last sound, so it starts a recording only if the mic's first block goes on with it.
         carried = _blocks(lead) if lead is not None else []
         streak = 0
         for block in carried:
             streak = streak + 1 if self.is_speech(block) else 0
         if not streak:
             carried = []
-        if streak >= START_BLOCKS:
-            return None if stopped() else carried
         for _ in range(int(timeout_s / BLOCK_SECONDS)):
             if stopped():
                 return None

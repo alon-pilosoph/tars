@@ -230,10 +230,38 @@ def test_a_request_said_in_one_breath_with_the_name_starts_after_it():
     assert len(whole) // 2 == (1 + 6 + 2) * BLOCK_SAMPLES  # a single voiced block of lead counts once the mic goes on
 
 
-def test_a_lead_that_is_already_speech_starts_the_recording_at_once():
-    m = mic()
-    pcm = recorder("SSS" + "S" * 4 + "." * 30, end_silence_s=0.4).record(m, lead=lead(3))
+def test_a_lead_that_is_already_speech_starts_the_recording_on_the_mics_first_block():
+    m, sent = mic(), []
+    pcm = recorder("SSS" + "S" * 4 + "." * 30, end_silence_s=0.4).record(m, lead=lead(3), on_audio=sent.append)
+    assert len(sent[0]) // 2 == (3 + 1) * BLOCK_SAMPLES  # the start is decided on the mic's audio, not the lead's
     assert len(pcm) // 2 == (3 + 4 + 2) * BLOCK_SAMPLES and m.reads == 4 + 5  # 5 quiet blocks end it
+
+
+class NumberedMic(FakeMic):
+    """Block i of the mic's audio is all i, so where each one lands can be told."""
+
+    def __init__(self, n=60):
+        super().__init__([np.full(BLOCK_SAMPLES, i, np.int16) for i in range(1, n + 1)])
+
+
+def test_the_mics_first_block_after_a_lead_of_speech_is_kept_once():
+    m, sent, lead_pcm = NumberedMic(), [], np.full(300 + 3 * BLOCK_SAMPLES, -1, np.int16)
+    # The lead's odd start is quiet, its 3 blocks speech; the mic's 4 speech blocks go on from it, then a tail of 2.
+    pcm = recorder("." + "SSS" + "S" * 4 + "." * 30, end_silence_s=0.4).record(m, lead=lead_pcm, on_audio=sent.append)
+    expected = np.concatenate([lead_pcm, *(np.full(BLOCK_SAMPLES, i, np.int16) for i in range(1, 4 + 2 + 1))])
+    assert np.array_equal(np.frombuffer(pcm, np.int16), expected)  # in order, the seam neither lost nor doubled
+    assert b"".join(sent).startswith(pcm)  # transcription hears the same audio, the seam included
+
+
+def test_the_names_own_last_sound_then_silence_does_not_start_a_recording():
+    """'hey TARS ...': the lead is only the name's last sound, voiced to the end; the mic hears nothing after it."""
+    m = mic()
+    assert recorder("SS" + "." * 100).record(m, lead=lead(2), start_timeout_s=1.0) is None
+    assert m.reads == 12  # it waited the whole second for speech
+    # When the request comes after the pause, it starts where the mic hears it, as without the lead.
+    with_lead = recorder("SS" + "." * 10 + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic(), lead=lead(2))
+    without = recorder("." * 10 + "S" * 6 + "." * 30, end_silence_s=0.4).record(mic())
+    assert blocks_in(with_lead) == blocks_in(without)
 
 
 def test_a_stop_button_pressed_by_then_drops_a_lead_that_is_already_speech():
