@@ -133,7 +133,8 @@ class FakeBody:
     waits); with none left, it raises Asleep. Each record takes the next of `script`, the utterance (None = nobody
     spoke), and logs the timeout it was given. An utterance can be a list: "pause" and "resume" events, then the
     utterance, e.g. ["pause", "resume", "pause", pcm]. Each play takes all its audio (`played`, chunk by chunk;
-    `plays`, one bytes a play), then calls `on_play` with it, if set: a test's stop button."""
+    `plays`, one bytes a play), then calls `on_play` with it, if set: a test's stop button. The plays numbered in
+    `cuts` (from 0) it cuts short itself, as one that heard "stop" over TARS would."""
 
     set_muted = None
 
@@ -150,6 +151,7 @@ class FakeBody:
         self.pauses = 0  # plays that shut the mic: all but those it went on listening through
         self.stops = 0
         self.on_play = None
+        self.cuts: set[int] = set()
         self._cut = False
 
     def wait(self, due):
@@ -187,7 +189,7 @@ class FakeBody:
         self.plays.append(b"".join(chunks))
         if self.on_play:
             self.on_play(chunks)
-        return self._cut
+        return self._cut or len(self.plays) - 1 in self.cuts
 
     def stop(self):
         self.stops += 1
