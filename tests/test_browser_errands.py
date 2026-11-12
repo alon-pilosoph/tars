@@ -75,6 +75,7 @@ def test_the_brain_has_the_browse_tool_and_it_starts_an_errand_for_whoever_asked
     class FakeErrands:
         tool = types.MappingProxyType({"type": "function", "name": "browse", "parameters": {}})
         rules, can, needs = "BROWSE RULES", "do errands", "an errand"
+        toolset = BrowseTool.toolset
 
         def call(self, args, request):
             started.append((args["errand"], request.speaker))

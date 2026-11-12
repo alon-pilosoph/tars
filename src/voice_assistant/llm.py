@@ -11,7 +11,7 @@ import re
 import threading
 import time
 import types
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
@@ -21,8 +21,9 @@ from openai import OpenAI, OpenAIError, RateLimitError
 
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
-from .home import CAN_HOME, NEEDS_HOME, ONE_MOMENT, HomeTools, Request
+from .home import ONE_MOMENT, HomeTools, Request
 from .reminders import Change, ReminderTools
+from .toolbox import COLLECTS, Provider, Tool, Toolbox, Toolset, Turn
 
 # The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a marathon session from
 # growing the prompt forever.
@@ -472,6 +473,48 @@ def _text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def _send(args, turn: Turn) -> str:
+    if turn.no_links and isinstance(args, dict) and _has_link(args):
+        return f"error: a link needs web search, which you can't do: {turn.no_links}"
+    item, result = check_send(args)
+    if item and any(_same_send(s, item) for s in turn.sent):
+        return "already sent: it's on the TARS page once"  # asked twice in one reply
+    if item:
+        turn.sent.append(item)
+    return result
+
+
+# The send tool: what it sends goes on the turn, and reaches the TARS page once the reply is kept.
+SENDING = Toolset([Tool(SEND_TOOL, COLLECTS, _send)], [SEND_RULES], [CAN_SEND], [NEEDS_SENDING])
+
+
+def quick_sending(links: str) -> Toolset:
+    """The send tool without links, for the quick model; `links`: what it's told to do instead (LINK_HAND_OFF or
+    NO_LINKS). The same call as SENDING's, so a link is turned down by what the turn says it can't do (Turn.no_links),
+    whichever was offered."""
+    rules = [QUICK_SEND_RULES.format(links=links)]
+    return Toolset([Tool(QUICK_SEND_TOOL, COLLECTS, _send)], rules, [CAN_SEND_NO_LINKS], [NEEDS_SENDING])
+
+
+def reminding(reminders: ReminderTools, specs: Sequence[dict]) -> Toolset:
+    """The reminder tools (`specs`: REMIND_TOOLS, or a chat's), over `reminders`, which checks each call: what it asks
+    to change goes on the turn, and is made once the reply is kept. Their rules come with the acks'
+    (OpenAIChat._reminder_rules), since a model that doesn't set reminders still hears them acknowledged."""
+
+    def calling(name: str) -> Callable[[object, Turn], str]:
+        def call(args, turn: Turn) -> str:
+            change, result = reminders.call(name, args if isinstance(args, dict) else {}, pending=turn.changes)
+            if change:
+                turn.changes.append(change)
+            return result
+
+        return call
+
+    failed = "error: couldn't reach the reminders ({e!r})"
+    tools = [Tool(spec, COLLECTS, calling(spec["name"]), failed) for spec in specs]
+    return Toolset(tools, can=[CAN_REMIND], needs=[NEEDS_REMINDING])
+
+
 class ReplyFailed(OpenAIError):
     pass
 
@@ -520,6 +563,53 @@ def split_skip(pieces: Iterable[str]) -> tuple[bool, Iterator[str]]:
             pass
         return True, iter(())
     return False, itertools.chain([head], stream)
+
+
+class Reply:
+    """A turn's reply, with what its markers mean done in one place: asked of `brain` at once, its start read for
+    <skip>, and with `acks` for <ack>, then iterated for the words to say or post as they're written. A skip is
+    forgotten at once, and the reply is then nothing (`skipped`), or, unless it `may_skip` (said to TARS by name, or
+    written in a chat), PARDON (`pardoned`). Anything else stays in the conversation once written, unless dropped.
+    One that fails to start is forgotten, and raises."""
+
+    def __init__(
+        self, brain: Brain, asked: str, request: Request | None = None, *, may_skip: bool = True, acks: bool = False
+    ):
+        self._brain, self._lock, self._dropped = brain, threading.Lock(), False
+        self.skipped = self.pardoned = False
+        self.acks: list[int] | None = None  # the reminders it acknowledged, [] for the ones just said
+        try:
+            skipped, pieces = split_skip(brain.stream_reply(asked, request))
+            if skipped:
+                self.drop()
+                self.skipped, self.pardoned = may_skip, not may_skip
+                pieces = iter(() if may_skip else [PARDON])
+            elif acks:
+                self.acks, pieces = split_ack(pieces)
+        except BaseException:
+            self.drop()
+            raise
+        self._pieces = pieces
+
+    def __iter__(self) -> Iterator[str]:
+        return self._pieces
+
+    def read(self) -> str:
+        """The whole reply, once it's written. One that fails meanwhile is dropped, and raises."""
+        try:
+            return "".join(self._pieces).strip()
+        except Exception:
+            self.drop()
+            raise
+
+    def drop(self) -> None:
+        """Leaves the brain as if it was never asked: the reply failed, was thrown away, or isn't said. Once, from
+        any thread: a second drop can't forget the turn after it."""
+        with self._lock:
+            if self._dropped:
+                return
+            self._dropped = True
+        self._brain.forget_last()
 
 
 class _UpTo:
@@ -635,6 +725,7 @@ class OpenAIChat:
         feeds=None,
         skills=None,
         myself=None,
+        tools: Sequence[Provider] = (),
     ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
         QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
@@ -643,7 +734,8 @@ class OpenAIChat:
         `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud).
         `home`: the devices in the house, when there are any. `browser`: TARS's errands in its browser
         (browser/errands.py), in a chat that has them. `feeds`: the RSS feeds people follow (feeds.py). `skills`:
-        what TARS is taught, skills and preferences (skills.py). `myself`: TARS knowing itself (myself.py)."""
+        what TARS is taught, skills and preferences (skills.py). `myself`: TARS knowing itself (myself.py). `tools`:
+        any other providers of tools (toolbox.py), offered after those."""
         self._clock = clock or time.monotonic
         self._channel_rules = [channel_rules] if channel_rules else []
         self._remind_tools = remind_tools or REMIND_TOOLS
@@ -651,10 +743,7 @@ class OpenAIChat:
         self._cfg = cfg
         self._reminders = reminders
         self._home = home if home and home.tools else None
-        self._browser = browser
-        self._feeds = feeds
         self._skills = skills
-        self._myself = myself
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -663,32 +752,15 @@ class OpenAIChat:
         self._last_turn_at = self._previous_turn_at = 0.0
         self.sent: list[SentItem] = []
         self.changes: list[Change] = []
-        self._tools = (
-            ([web_search_tool(cfg)] if cfg.web_search else [])
-            + ([SEND_TOOL] if cfg.send else [])
-            + (self._remind_tools if reminders else [])
-            + (self._home.tools if self._home else [])
-            + ([browser.tool] if browser else [])
-            + ([feeds.tool] if feeds else [])
-            + ([skills.tool] if skills else [])
-            + ([myself.tool] if myself else [])
-        )
+        # Every model's calls go through the one toolbox; each is offered its part of it.
+        self._reminding = reminding(reminders, self._remind_tools) if reminders else None
+        self._house = self._home.toolset() if self._home else None
+        given = [p.toolset() for p in (browser, feeds, skills, myself, *tools) if p]
+        self._toolbox = Toolbox(t for t in [SENDING] * cfg.send + [self._reminding, self._house, *given] if t)
+        self._tools = ([web_search_tool(cfg)] if cfg.web_search else []) + self._toolbox.specs
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
-        can = [CAN_WEB] * cfg.web_search + [CAN_SEND] * cfg.send + [CAN_REMIND] * bool(reminders)
-        can += (
-            [CAN_HOME] * bool(self._home and self._home.devices)
-            + ([self._home.ha.can] if self._home and self._home.ha else [])
-            + ([browser.can] if browser else [])
-            + ([feeds.can] if feeds else [])
-            + ([skills.can] if skills else [])
-            + ([myself.can] if myself else [])
-        )
-        rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules()] + [SEND_RULES] * cfg.send
-        rules += [self._home.rules()] if self._home else []
-        rules += [browser.rules] if browser else []
-        rules += [feeds.rules] if feeds else []
-        rules += [skills.rules] if skills else []
-        rules += [myself.rules] if myself else []
+        can = [CAN_WEB] * cfg.web_search + self._toolbox.can
+        rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules(), *self._toolbox.rules]
         rules.append(abilities(can, [], self._cant()))
         self._instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         # Only send optional settings that are configured; not every model accepts them.
@@ -810,7 +882,7 @@ class OpenAIChat:
 
     def _one_moment(self, calls: list[tuple[str, str]], said: str) -> str:
         """ONE_MOMENT, to say before tool calls that take a few seconds (a lock turning), if nothing's been said."""
-        slow = self._home and any(name == "home" and self._home.slow(arguments) for name, arguments in calls)
+        slow = any(self._toolbox.slow(name, arguments) for name, arguments in calls)
         return f"{ONE_MOMENT} " if slow and not said.strip() else ""
 
     def _now(self) -> str:
@@ -870,68 +942,27 @@ class OpenAIChat:
         return output
 
     def _call_tool(self, call, no_links: str, writing: _Writing) -> str:
-        """Called with the lock held. `no_links`: what this model should do instead of sending a link, which needs
-        web search; empty if it can. `writing`: the reply the call is part of, whose request the home tool goes by.
-        Raises ReplyFailed if that reply was stopped while the house answered."""
+        """Called with the lock held, whichever model made it, through the toolbox. `no_links`: what this model should
+        do instead of sending a link, which needs web search; empty if it can. `writing`: the reply the call is part
+        of, whose request the tools go by. Raises ReplyFailed if that reply was stopped while a tool answered."""
         try:
             args = json.loads(call.arguments or "{}")
         except json.JSONDecodeError:
             return "error: the arguments weren't valid JSON"
-        if call.name == "send" and no_links and isinstance(args, dict) and _has_link(args):
-            return f"error: a link needs web search, which you can't do: {no_links}"
-        if call.name == "send":
-            item, result = check_send(args)
-            if item and any(_same_send(s, item) for s in self.sent):
-                return "already sent: it's on the TARS page once"  # asked twice in one reply
-            if item:
-                self.sent.append(item)
-            return result
-        if self._reminders and call.name in ("remind", "cancel_reminder", "snooze_reminder"):
-            try:
-                args = args if isinstance(args, dict) else {}
-                change, result = self._reminders.call(call.name, args, pending=self.changes)
-            except Exception as e:  # noqa: BLE001 - the table couldn't be read: the model says it didn't work
-                return f"error: couldn't reach the reminders ({e!r})"
-            if change:
-                self.changes.append(change)
-            return result
-        if self._home and self._home.ha and call.name == self._home.ha.tool["name"]:
-            failed = "error: couldn't reach Home Assistant ({e!r}); nothing is known to have changed"
-            return self._outside_lock(self._home.call_ha, args, writing, failed)
-        if self._home and call.name in self._home.plugin_tools:
-            failed = "error: the plugin's tool failed ({e!r}); nothing is known to have changed"
-            return self._outside_lock(
-                lambda a, request: self._home.call_plugin(call.name, a, request), args, writing, failed
-            )
-        if self._home and call.name == "home":
-            # A device can take seconds (a bolt turning), and a change first waits for the turn to be over.
-            failed = "error: couldn't reach the device ({e!r}); nothing is known to have changed"
-            return self._outside_lock(self._home.call, args, writing, failed)
-        if self._browser and call.name == "browse":
-            # Queued only once the turn goes ahead (a draft thrown away queues nothing), as a change to the house is.
-            failed = "error: couldn't start the errand ({e!r}); nothing was started"
-            return self._outside_lock(self._browser.call, args, writing, failed)
-        if self._skills and call.name == "skills":
-            failed = "error: couldn't reach what TARS was taught ({e!r}); nothing changed"
-            return self._outside_lock(self._skills.call, args, writing, failed)
-        if self._myself and call.name == "tars":
-            return self._outside_lock(self._myself.call, args, writing, "error: couldn't look ({e!r})")
-        if self._feeds and call.name == "feeds":
-            # Reading feeds takes a moment: the conversation isn't held meanwhile.
-            return self._outside_lock(self._feeds.call, args, writing, "error: couldn't read the feeds ({e!r})")
-        return f"error: no tool called {call.name}"
+        if (tool := self._toolbox.get(call.name)) is None:
+            return f"error: no tool called {call.name}"
+        turn = Turn(writing.request, self.sent, self.changes, no_links)
+        if tool.does == COLLECTS:
+            return self._toolbox.call(tool, args, turn)
+        return self._outside_lock(lambda: self._toolbox.call(tool, args, turn), writing)
 
-    def _outside_lock(self, call, args: dict, writing: _Writing | None, failed: str) -> str:
-        """`call(args, request)`, for a tool that may wait for the turn to be over: the conversation isn't held
-        meanwhile, so nothing else the brain does waits on it. Its failing is `failed` (with {e!r}), for the model to
-        say. Raises ReplyFailed if the reply was stopped meanwhile: its other calls aren't made, since what they sent
-        or set would land on the next reply."""
-        writing = writing or self._writing
+    def _outside_lock(self, call: Callable[[], str], writing: _Writing) -> str:
+        """`call()`, for a tool that may wait (for the turn to be over, a device, the network): the conversation isn't
+        held meanwhile, so nothing else the brain does waits on it. Raises ReplyFailed if the reply was stopped
+        meanwhile: its other calls aren't made, since what they sent or set would land on the next reply."""
         self._lock.release()
         try:
-            result = call(args, writing.request)
-        except Exception as e:  # noqa: BLE001 - a tool that fails never costs the reply: the model says so
-            result = failed.format(e=e)
+            result = call()
         finally:
             self._lock.acquire()
         _check(writing)
@@ -1034,29 +1065,19 @@ class QuickChat(OpenAIChat):
         feeds=None,
         skills=None,
         myself=None,
+        tools: Sequence[Provider] = (),
     ):
         super().__init__(
-            client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills, myself
+            client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills, myself, tools
         )
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.
         own_home = (cfg.quick_tools or client is None) and bool(self._home)
-        tools = self._remind_tools * own_remind + [QUICK_SEND_TOOL] * own_send
-        tools += self._home.tools if own_home else []
-        self._quick_tool_defs = tools  # as the Responses API takes them
-        self._quick_tools = [_chat_tool(t) for t in tools]
-        can = [CAN_REMIND] * own_remind + [CAN_SEND_NO_LINKS] * own_send
-        can += [CAN_HOME] * (own_home and bool(self._home.devices))
-        can += [self._home.ha.can] if own_home and self._home.ha else []
-        look_up = [NEEDS_THE_WEB] * cfg.web_search + [NEEDS_SENDING] * (cfg.send and not own_send)
-        look_up += [NEEDS_REMINDING] * (bool(reminders) and not own_remind and client is not None)
-        look_up += [NEEDS_HOME] * (bool(self._home and self._home.devices) and not own_home)
-        look_up += [self._home.ha.needs] if self._home and self._home.ha and not own_home else []
-        look_up += [browser.needs] if browser and client is not None else []
-        look_up += [feeds.needs] if feeds and client is not None else []
-        look_up += [skills.needs] if skills and client is not None else []
-        look_up += [myself.needs] if myself and client is not None else []
+        owned = [t for t, own in ((self._reminding, own_remind), (SENDING, own_send), (self._house, own_home)) if own]
+        # Handed over to OpenAI's model when there is one; sending is, either way.
+        handed = [t for t in self._toolbox.toolsets if t not in owned and (client is not None or t is SENDING)]
+        look_up = [NEEDS_THE_WEB] * cfg.web_search + [need for t in handed for need in t.needs]
         examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:
@@ -1067,9 +1088,12 @@ class QuickChat(OpenAIChat):
         self._watch = {form: m for m in self._markers + TOOL_CALL_TEXT for form in (m, _escaped(m))}
         self._no_links = f"reply {LOOK_UP} instead" if LOOK_UP in self._markers else "say you can't send links"
         links = LINK_HAND_OFF if LOOK_UP in self._markers else NO_LINKS
-        rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules(tools=own_remind)]
-        rules += [QUICK_SEND_RULES.format(links=links)] * own_send
-        rules += [self._home.rules()] if own_home else []
+        # Offered in this order: reminders before send, unlike OpenAI's.
+        mine = Toolbox([self._reminding] * own_remind + [quick_sending(links)] * own_send + [self._house] * own_home)
+        self._quick_tool_defs = mine.specs  # as the Responses API takes them
+        self._quick_tools = [_chat_tool(t) for t in mine.specs]
+        rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules(tools=own_remind), *mine.rules]
+        can = mine.can
         cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and client is None)
         rules.append(abilities(can, hand_offs, cant))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])

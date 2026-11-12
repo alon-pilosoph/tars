@@ -43,7 +43,12 @@ the model, which carries them out with the tools it already has.
   the answer follows on in that chat. When there's nothing to do (the news is already on), it says nothing. A
   person's own skill runs as theirs: their feeds, and what they like.
 - **On something happening**: a skill can run when someone comes home or goes out (by name, anyone, or everyone:
-  the first one home, the last one out), or when a device changes: its status comes to say a word it didn't
+  the first one home, the last one out); when someone comes in by a door with a sensor (`comes_in`: later than
+  coming home, which is mostly their phone finding the Wi-Fi on the way up;
+  [the door sensor](presence.md#the-door-sensor)), which the household's "welcome home" runs on, at once, and once
+  for each one coming in, two coming in together being one; someone who came in while the skill was paused, or more
+  than a minute before it's seen, hasn't "just" come in, and sets nothing off; or when a device changes: its status
+  comes to say a word it didn't
   ("unlocked", "open", "off"; as a word, so "unlocked" isn't "locked"), or a reading in it crosses a limit ("co2"
   over 1000). The turn is told what happened ("Stacey just came home"). Each service watches for its own skills,
   every 10 seconds: who's home from the event database, and only the devices a trigger names, by their status.

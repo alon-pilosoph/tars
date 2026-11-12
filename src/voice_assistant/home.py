@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
+from . import toolbox
 from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
 
 if TYPE_CHECKING:
@@ -440,25 +441,78 @@ class HomeTools:
         from .ha_tool import HAAccess
 
         self._cfg = cfg
-        self.plugin_tools = {t.name: t for t in plugin_tools}  # plugins.PluginTool, by name
+        self._plugin_tools = list(plugin_tools)
         self._challenges: dict[str, Challenge] = {}  # by whose voice was asked
         self._clock = clock
         self._digits = digits or (lambda: "".join(secrets.choice("123456789") for _ in range(CHALLENGE_DIGITS)))
         self.devices = {name.strip().lower(): d for name, d in devices.items()}
         self.tool = home_tool(devices)
         self._lock = threading.Lock()
+        # Told the entity of a lock someone's asked to unlock, before and after: auto-lock counts from then
+        # (autolock.Asked, set in wiring.make_home). It can only delay a lock.
+        self.unlock_asked: Callable[[str], None] | None = None
         self.ha = None
         if hass is not None:
             listed = {str(v) for d in cfg.devices for k, v in d.items() if k in ("entity", "battery", "door")}
             listed |= {str(e) for d in cfg.devices for e in d.get("details", [])}
             setup = HASetup(hass, list(maintainers), ha_config, listed)
-            self.ha = HAAccess(hass, self._may_unlock, self._lock, setup=setup)
+            self.ha = HAAccess(hass, self._may_unlock, self._lock, setup=setup, unlocking=self._unlocking)
+
+    @property
+    def changing(self) -> threading.Lock:
+        """Held while a change is made to the house, by either tool: auto-lock holds it to lock (autolock.py)."""
+        return self._lock
+
+    def _unlocking(self, entity: str) -> None:
+        if self.unlock_asked and entity:
+            try:
+                self.unlock_asked(entity)
+            except Exception as e:  # noqa: BLE001 - telling auto-lock never stops the unlock
+                print(f"(home: couldn't tell auto-lock {entity} was asked to unlock: {e!r})")
 
     @property
     def tools(self) -> list[dict]:
-        """The house's tools for the brain: home, for the devices listed, and home_assistant, for all the rest."""
-        own = [t.spec for t in self.plugin_tools.values()]
-        return [self.tool] * bool(self.devices) + ([self.ha.tool] if self.ha else []) + own
+        """The house's tools as the model is offered them: home, for the devices listed, home_assistant, for all the
+        rest, and each plugin's own."""
+        return [t.spec for t in self._tools()]
+
+    def toolset(self) -> toolbox.Toolset:
+        """The house's tools for the brain (toolbox.py). home and home_assistant tell reads from changes themselves,
+        action by action, and hold back each change as this module's docstring says (call, and ha_tool.py); a
+        plugin's own tool says whether it changes anything (PluginTool.changes), and the toolbox holds back one that
+        does."""
+        can = [CAN_HOME] * bool(self.devices) + ([self.ha.can] if self.ha else [])
+        needs = [NEEDS_HOME] * bool(self.devices) + ([self.ha.needs] if self.ha else [])
+        return toolbox.Toolset(self._tools(), [self.rules()], can, needs)
+
+    def _tools(self) -> list[toolbox.Tool]:
+        tools = []
+        if self.devices:
+            failed = "error: couldn't reach the device ({e!r}); nothing is known to have changed"
+            tools.append(toolbox.Tool(self.tool, toolbox.ITS_OWN, self._call, failed, self.slow))
+        if self.ha:
+            failed = "error: couldn't reach Home Assistant ({e!r}); nothing is known to have changed"
+            tools.append(toolbox.Tool(self.ha.tool, toolbox.ITS_OWN, self._call_ha, failed))
+        return tools + [self._plugin_tool(t) for t in self._plugin_tools]
+
+    def _call(self, args, turn: toolbox.Turn) -> str:
+        return self.call(args, turn.request)
+
+    def _call_ha(self, args, turn: toolbox.Turn) -> str:
+        return self.call_ha(args, turn.request)
+
+    def _plugin_tool(self, tool: PluginTool) -> toolbox.Tool:
+        """A plugin's own tool, as the brain calls it. One that changes something is made one at a time with the
+        house's changes, under the same lock, once the toolbox lets it through."""
+        failed = "error: the plugin's tool failed ({e!r}); nothing is known to have changed"
+        if not tool.changes:
+            return toolbox.Tool(tool.spec, toolbox.READS, lambda args, turn: tool.call(args, turn.request), failed)
+
+        def change(args, turn: toolbox.Turn) -> str:
+            with self._lock:
+                return tool.call(args, turn.request)
+
+        return toolbox.Tool(tool.spec, toolbox.CHANGES, change, failed)
 
     @property
     def names(self) -> set[str]:
@@ -472,21 +526,8 @@ class HomeTools:
             said += list(dict.fromkeys(r for d in self.devices.values() if (r := d.rules())))
         if self.ha:
             said.append(self.ha.rules)
-        said += [t.rules for t in self.plugin_tools.values() if t.rules]
+        said += [t.rules for t in self._plugin_tools if t.rules]
         return "\n".join(said)
-
-    def call_plugin(self, name: str, args: dict, request: Request) -> str:
-        """A plugin's own tool. One that changes something waits for the turn to be over, and isn't called by a
-        reply that read the web; the changes are made one at a time with the house's, under the same lock."""
-        tool = self.plugin_tools[name]
-        if not tool.changes:
-            return tool.call(args, request)
-        if request.read_the_web:
-            return "refused: this reply read the web, so it changes nothing; they can ask again on its own"
-        if not request.go_ahead():
-            return "error: the request was withdrawn before anything was done; nothing changed"
-        with self._lock:
-            return tool.call(args, request)
 
     def call_ha(self, args: dict, request: Request) -> str:
         """The home_assistant tool. Its changes are made one at a time with the home tool's, under the same lock."""
@@ -542,11 +583,15 @@ class HomeTools:
         # A change waits for the turn to be over: a reply still being drafted may yet be thrown away.
         if not request.go_ahead():
             return "error: the request was withdrawn before anything was done; nothing changed"
+        unlocking = str(getattr(device, "entity", "")) if action == UNLOCK else ""
         with self._lock:
+            self._unlocking(unlocking)
             try:
                 result = device.call(action, args, request)
             except HomeError as e:
                 return f"error: {e}; nothing is known to have changed"
+            finally:
+                self._unlocking(unlocking)
         print(f"(home: {name} {action}: {result})")
         return result
 

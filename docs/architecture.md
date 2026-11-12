@@ -80,7 +80,11 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
-class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
+class and a config change. Every turn the brain answers, by voice, in a chat or a skill's own, is a `Reply`
+(`llm.py`): it reads the start of the reply for `<skip>` and `<ack>`, forgets a skip at once (or answers it with
+"Sorry, I didn't catch that", when it was said to TARS), forgets a reply that fails to start, and is streamed as it's
+written. A reply stays in the conversation unless it's dropped, once: when it fails, is thrown away as a draft, or
+isn't said (a skill with nothing to say, a one-off that didn't happen, a post that didn't arrive). Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
 to end. When TARS wakes, it connects to Cerebras, OpenAI and the voice while you're still talking.
 
 ### When something fails
@@ -124,6 +128,21 @@ OpenAI, a failed quick service has nothing behind it, so when every one is being
 `tests/test_config.py` covers each case.
 
 ### The LLM's tools
+
+**One toolbox** (`toolbox.py`). The brain names no tool. Each provider (send and the reminders, the brain's own; the
+house, with any plugin's own tools; errands; feeds; skills; TARS itself) hands it a `Toolset`: its tools, the rules
+that describe them, and, for `abilities()`, what they let a model do and what a model without them hands over. Every
+model's calls go through the one `Toolbox`, by name, and each model is offered its part of it: OpenAI's model all of
+it, Qwen with `quick_tools` the reminders, send without links, and the house. Every `Tool` says what calling it may
+change, with no default, so none is offered without saying: `READS`, nothing; `CHANGES`, something at once, which the
+toolbox refuses in a reply that read the web and makes only once the turn goes ahead (a plugin's tool with
+`changes=True`); `COLLECTS`, only what it puts on the turn (sent items, reminder changes), made once the reply is kept;
+`ITS_OWN`, for a tool that tells reads from changes action by action and holds back each change in its own code (the
+house's unlock rules and a door's own turn, Home Assistant's, an errand waiting for the turn, TARS's settings). Only a
+`COLLECTS` tool is called holding the conversation; the rest may wait, so it's released meanwhile. Web search isn't
+in the toolbox: it's OpenAI's own, run on its side, and the brain marks the reply that used it
+(`Request.read_the_web`) for every tool to go by. A new tool is a provider with a `toolset()`, given to the brain
+(`tools=`), with nothing in `llm.py` to change.
 
 - **Web search** (OpenAI's built-in tool, `[llm] web_search`): for current questions and real links. When the
   model starts a search with nothing said yet, TARS says "Looking it up." so the wait isn't silent.
@@ -328,7 +347,7 @@ The assistant is `src/voice_assistant/`:
 | Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
-| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
+| Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model, and `Reply`, a turn's reply and its markers), `toolbox.py` (the brain's tools, from whoever provides them, each saying what it may change), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API, an errand's approvals, login links and codes) |
 | The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` (the loop), `brain.py`, `openai_brain.py` and `anthropic_brain.py` (its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `money.py` (amounts, however written), `tools.py`, `login.py`, `login_page.py`, `codes.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `trace.py`, `run.py`, `chrome.py` (TARS's own Chrome), `mcp_server.py` and `claude.py` (Claude Code as its brain); `telegram_errands.py` (an errand's questions and answer in a chat); `homenet.py` (what's at home, for the browser and the web UI) |
