@@ -29,7 +29,7 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **Works the house** through Home Assistant: locks, switches, lights, covers, the AC, the TV, and sensors with their
   history ("how was the air last night?"). A change is "done" only when the device reports it, nothing is done by a
   draft, and the door unlocks only for a trusted voice that asked, then said back three random digits; with a door
-  sensor, TARS locks it once the door is shut, never into an open door. An agent plays
+  sensor, TARS locks it once the door is shut, and only when the sensor says so just then. An agent plays
   things on an Android TV, checking the screen step by step; anything else is a plugin ([the house](docs/home.md)).
 - **Knows who's home** from whose phone is on the home Wi-Fi, asking the routers themselves: no app on anyone's
   phone; and from the front door's Nuki, whose keys it learns, so whoever unlocks it is home as they walk in, and,

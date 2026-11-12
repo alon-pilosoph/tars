@@ -330,6 +330,24 @@ def test_locking_waits_for_the_houses_lock_and_an_unlock_made_meanwhile_starts_t
     assert held.taken == 2 and h.locked == 1
 
 
+def test_a_door_opened_between_the_read_and_the_bolt_still_gets_it_thrown_and_nothing_more_is_sent(tmp_path):
+    """The window no code here can close: read shut, then opened as the call goes to the lock. The bolt is thrown
+    into the open door; auto-lock sends nothing else (it never unlocks), and isn't fooled into calling it a jam."""
+    h = House(tmp_path)
+    h.set(LOCK, "unlocked")
+
+    def opened_as_its_called():
+        h.set(DOOR, "on")  # read shut a moment ago
+        return h.lock()
+
+    h.auto._lock = opened_as_its_called
+    h.wait(60)
+    assert h.locked == 1 and h.states[LOCK] == "locked" and h.auto.door_state == "on"
+    h.set(DOOR, "off")
+    h.wait(600)
+    assert h.locked == 1 and h.told == []
+
+
 def test_auto_lock_can_only_lock(tmp_path):
     """Nothing it's given can unlock: TARS's only call to the lock is lock.lock."""
     assert {"lock", "read"} <= set(inspect.signature(AutoLock).parameters)
