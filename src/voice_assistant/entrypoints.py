@@ -17,6 +17,7 @@ from .recorder import make_recorder
 from .store import DB_FILE, Store
 from .versions import UNUSABLE, model_versions, pair_source
 from .wiring import (
+    Household,
     api_key,
     ask_to_say,
     browse_tool,
@@ -36,21 +37,16 @@ from .wiring import (
     make_echo_canceller,
     make_errands,
     make_event_log,
-    make_feeds,
     make_ha_config,
     make_health,
     make_home,
-    make_myself,
     make_openai_client,
     make_pipeline,
-    make_presence,
     make_recording_transcriber,
     make_reminders,
     make_s3,
-    make_skills,
     make_speaker_id,
     make_trigger,
-    make_wishes,
     own_speaker,
     phrase_folder,
     reminder_tools,
@@ -106,19 +102,18 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     from .signin import Accounts
     from .webui import serve
 
-    log = make_event_log(cfg, root)
+    household = Household(cfg, root)
+    log = household.events
     if log is None:
         raise ConfigError("The web UI shows the event log: set log_events = true under [learning] in config.toml.")
-    speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
+    speaker_id = household.speaker_id
     try:
         pairs = pair_source(cfg, root)
     except (FileNotFoundError, ValueError) as e:
         raise ConfigError(str(e)) from None
-    from .reminders import Reminders
-
-    reminders = Reminders.from_config(log.store, cfg.reminders) if cfg.reminders.enabled else None
+    reminders = household.reminders
     names = speaker_id.names if speaker_id else list
-    presence = make_presence(cfg, root, log)
+    presence = household.presence
     # Someone known by their phone can be left a message for when they're back, here too.
     voices = (lambda: [*names(), *presence.phones]) if presence else names
     start_heartbeat(log, "web", root)
@@ -280,7 +275,6 @@ def install_models(cfg: Config, root: Path, folder: Path, based_on: str | None) 
 def telegram(cfg: Config, root: Path) -> None:
     """--telegram: TARS in the household's Telegram chats, a process of its own, like the web UI."""
     from .conversations import ConversationLog
-    from .reminders import Reminders
     from .speaker import voiceprint_names
     from .telegram import CHAT_REMIND_TOOLS, Bot, TelegramError, TelegramTars, channel_rules, refused_token_error
 
@@ -296,14 +290,15 @@ def telegram(cfg: Config, root: Path) -> None:
         if e.refused:
             raise refused_token_error(env) from None
         raise SystemExit(f"Can't reach Telegram: {e}") from None  # systemd tries again
-    events = make_event_log(cfg, root)
+    household = Household(cfg, root)
+    events = household.events
     start_heartbeat(events, "telegram", root)
-    presence = make_presence(cfg, root, events)
+    presence = household.presence
     tools = None
-    if cfg.reminders.enabled and events:
+    if household.reminders is not None:
         voiceprints = root / cfg.speaker.voiceprints
         names = (lambda: voiceprint_names(voiceprints)) if cfg.speaker.enabled else list
-        tools = reminder_tools(Reminders.from_config(events.store, cfg.reminders), names, presence)
+        tools = reminder_tools(household.reminders, names, presence)
     told: list = []  # the TelegramTars, once made: how a task on the TV went is posted through it
 
     def announce(line: str) -> None:
@@ -316,10 +311,10 @@ def telegram(cfg: Config, root: Path) -> None:
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
     print(f"(chats are answered by {who})")
     queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
-    feeds = make_feeds(cfg, events)  # one for every chat: each person's feeds are kept by person
-    skills = make_skills(events)
-    wishes = make_wishes(cfg, root, events)  # one, with one GitHub client, for the offers, the taps and following
-    myself = make_myself(cfg, root, events, wishes)
+    feeds = household.feeds  # one for every chat: each person's feeds are kept by person
+    skills = household.skills
+    wishes = household.wishes  # one, with one GitHub client, for the offers, the taps and following
+    myself = household.myself
     tars = TelegramTars(
         bot,
         cfg.telegram.people,
@@ -552,17 +547,16 @@ def typed(cfg: Config, root: Path) -> None:
                 if made[0].say(line, keep=False, wait_s=UNPROMPTED_WAIT_S):
                     made[0].brain.remember_said(line)
 
-    events = make_event_log(cfg, root)
-    presence = make_presence(cfg, root, events) if cfg.presence.enabled else None
-    home = make_home(cfg, root, announce, presence, own_speaker(cfg))
+    household = Household(cfg, root)
+    home = make_home(cfg, root, announce, household.presence, own_speaker(cfg))
     _, brain, voice = make_pipeline(
         cfg,
         root,
         typed=True,
         home=home,
-        feeds=make_feeds(cfg, events),
-        skills=make_skills(events),
-        myself=make_myself(cfg, root, events),
+        feeds=household.feeds,
+        skills=household.skills,
+        myself=household.myself,
     )
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
@@ -590,25 +584,26 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     from .assistant import Announcements, Assistant
     from .journal import Journal
 
-    events = make_event_log(cfg, root)
+    household = Household(cfg, root)
+    events = household.events
     start_heartbeat(events, "assistant", root)
-    speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
-    presence = make_presence(cfg, root, events)
-    reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
+    speaker_id = household.speaker_id
+    presence = household.presence
+    reminders = make_reminders(cfg, household, push_to_talk)
     start_presence(cfg, root, presence, reminders)
     announcements = Announcements()
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
     browser = voice_errands(cfg, events)
-    skills = make_skills(events)
-    myself = make_myself(cfg, root, events)
+    skills = household.skills
+    myself = household.myself
     transcriber, brain, voice = make_pipeline(
         cfg,
         root,
         reminders=reminders,
         home=home,
         browser=browser,
-        feeds=make_feeds(cfg, events),
+        feeds=household.feeds,
         skills=skills,
         myself=myself,
     )

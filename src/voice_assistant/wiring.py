@@ -185,15 +185,14 @@ def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
     return Health(log, expected(cfg), services, systemd_state, backup_enabled=cfg.backup.enabled).report
 
 
-def make_reminders(cfg: Config, events, push_to_talk: bool, speaker_id=None, presence=None):
-    """Reminders need the event log to keep them in, and the wake loop to say them: not with push-to-talk, which
-    waits on Enter instead. Waiting until someone's back needs their voiceprint, or their phone (`presence`)."""
-    if not (cfg.reminders.enabled and events) or push_to_talk or cfg.wake.mode == "push-to-talk":
+def make_reminders(cfg: Config, household: Household, push_to_talk: bool):
+    """The voice's reminder tools, over the household's reminders, which need the event log to keep them in; and the
+    wake loop to say them: not with push-to-talk, which waits on Enter instead. Waiting until someone's back needs
+    their voiceprint, or their phone (the household's presence)."""
+    if push_to_talk or cfg.wake.mode == "push-to-talk" or household.reminders is None:
         return None
-    from .reminders import Reminders
-
-    voices = speaker_id.names if speaker_id else list
-    return reminder_tools(Reminders.from_config(events.store, cfg.reminders), voices, presence)
+    voices = household.speaker_id.names if household.speaker_id else list
+    return reminder_tools(household.reminders, voices, household.presence)
 
 
 def reminder_tools(reminders, voices, presence=None):
@@ -892,3 +891,56 @@ def start_buttons(cfg: Config, volume, assistant, root: Path):
     which = (["the volume keys"] if keys else []) + ([f"the remote's {', '.join(remote)}"] if remote else [])
     print(f"(buttons: {' and '.join(which)})")
     return set_muted
+
+
+class Household:
+    """The parts of TARS that the assistant, typed questions, the web UI and the Telegram service each make the same
+    way from config.toml: the event log, who's home, the voiceprints, the reminders, the skills, the feeds, the wishes
+    and TARS knowing itself. Each is made the first time it's asked for, and kept: a process pays only for what it
+    asks for, in the order it asks. Nothing here starts a thread, listens or opens a device; starting is the
+    process's own (start_heartbeat, start_presence). What a process makes its own way, the house, the doors, the
+    errands, the brain, isn't here."""
+
+    def __init__(self, cfg: Config, root: Path):
+        self.cfg, self.root = cfg, root
+
+    @functools.cached_property
+    def events(self) -> EventLog | None:
+        return make_event_log(self.cfg, self.root)
+
+    @functools.cached_property
+    def presence(self):
+        """Who's home (make_presence), only read until the assistant's start_presence asks the routers."""
+        return make_presence(self.cfg, self.root, self.events)
+
+    @functools.cached_property
+    def speaker_id(self):
+        """The voiceprints (speaker.py), with [speaker] on; None otherwise."""
+        return make_speaker_id(self.cfg, self.root) if self.cfg.speaker.enabled else None
+
+    @functools.cached_property
+    def reminders(self):
+        """The reminders' table (reminders.Reminders), with [reminders] on and an event log; None otherwise. Each
+        process gives the brain its own tools over it (reminder_tools), knowing people its own way."""
+        if not (self.cfg.reminders.enabled and self.events):
+            return None
+        from .reminders import Reminders
+
+        return Reminders.from_config(self.events.store, self.cfg.reminders)
+
+    @functools.cached_property
+    def skills(self):
+        return make_skills(self.events)
+
+    @functools.cached_property
+    def feeds(self):
+        return make_feeds(self.cfg, self.events)
+
+    @functools.cached_property
+    def wishes(self):
+        return make_wishes(self.cfg, self.root, self.events)
+
+    @functools.cached_property
+    def myself(self):
+        """TARS knowing itself, offering wishes through the household's own (wishes)."""
+        return make_myself(self.cfg, self.root, self.events, self.wishes)
