@@ -79,8 +79,19 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    answered with "Sorry, I didn't catch that. Say it again?", and so is an answer to TARS's question that comes out
    as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
 
-Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
-class and a config change. Every turn the brain answers, by voice, in a chat or a skill's own, is a `Reply`
+The conversation (`assistant.py`) reaches the room only through its **body** (`body.py`), which does a few things
+for it: wait for a wake, and say what woke it (its name, a near miss, or something due), with the audio that woke it,
+for the greeting's name, and what followed the name; record one utterance, handing the draft its audio as it comes, the
+pause, the resume and the turn's state; play audio as it comes, and say whether it was cut short; stop playing; and
+throw away what's heard while nobody listens (muted, or held by a recording session). `LocalBody` is the Pi's: the
+wake word and its double-check, the mic and the recorder, the speaker, and the echo canceller between them; while it
+plays, the mic is shut, unless the greeting is being said over it. The voice makes a reply's audio before it reaches
+the body, a sentence at a time, so the reply still starts while it's being written. `wiring.local_body` opens it for
+the assistant, typed questions have one with only the speaker, and the tests drive the assistant through a
+`FakeBody`'s scripted wakes and utterances.
+
+Every stage sits behind a small interface (`Body`, `Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is
+one new class and a config change. Every turn the brain answers, by voice, in a chat or a skill's own, is a `Reply`
 (`llm.py`): it reads the start of the reply for `<skip>` and `<ack>`, forgets a skip at once (or answers it with
 "Sorry, I didn't catch that", when it was said to TARS), forgets a reply that fails to start, and is streamed as it's
 written. A reply stays in the conversation unless it's dropped, once: when it fails, is thrown away as a draft, or
@@ -344,7 +355,7 @@ The assistant is `src/voice_assistant/`:
 
 | Area | Files |
 |---|---|
-| Audio in and out | `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
+| Audio in and out | `body.py` (the body the conversation hears and speaks through, and `LocalBody`, the Pi's), `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model, and `Reply`, a turn's reply and its markers), `toolbox.py` (the brain's tools, from whoever provides them, each saying what it may change), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
@@ -354,7 +365,7 @@ The assistant is `src/voice_assistant/`:
 | The house | `home.py` (the `home` tool, its rules, the `Device` interface, loading plugins), `plugins.py` (a plugin's manifest, its grant and the context scoped to it, its own tools), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), `volume.py` (TARS's own speaker as a device: its sound card's volume through amixer, or the Mac's), `commands.py` (house commands done on the Pi without the model, their replies made ahead, and Vosk hearing them offline), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
 | Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), `doors.py` (a Nuki's lock actions over MQTT, someone opening the door from outside home at once, whose key is whose, learned, and the broker watched), `mosquitto.py` (TARS's own user on the household's Mosquitto, from the installer), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people at a terminal), `recording.py` (recording sessions: scripts, checks, takes), `takes.py` (the assistant's side of them), `control.py` (the socket the web UI asks the assistant over) |
-| The main loop | `assistant.py` (wake, listen, answer, follow-ups, errors, timing), `__main__.py` (the command line), `entrypoints.py` (what each option runs: the assistant, `--text`, `--web`, `--telegram`, `--backup` and the rest), `wiring.py` (each part made from `config.toml`, and the `Household`: the parts the processes share), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
+| The main loop | `assistant.py` (the conversation, through its body: wake, listen, answer, follow-ups, errors, timing), `__main__.py` (the command line), `entrypoints.py` (what each option runs: the assistant, `--text`, `--web`, `--telegram`, `--backup` and the rest), `wiring.py` (each part made from `config.toml`, and the `Household`: the parts the processes share), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
 | What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
 | Downloads | `models.py` (the small local models, on first use) |
 | Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, the services and Telegram, voice, mic, storage, the web UI, Home Assistant and each device in the house, each router, the backup, and systemd's services) |

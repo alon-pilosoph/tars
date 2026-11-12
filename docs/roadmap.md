@@ -157,7 +157,10 @@ and a self-run pentest of the web UI and the Pi finds nothing new.
   and any trace of the greeting left in the transcript is taken off its start (`without_echo`). Both settings are off
   by default, since they haven't been measured in the room (`tools/echo_bench.py`).
 - **Answers aren't.** Everything else TARS says, answers, reminders and announcements, plays with the mic paused
-  (`Microphone.paused()` in `assistant.py`), so nothing can interrupt it.
+  (`LocalBody.play` in `body.py`), so nothing can interrupt it.
+- **Where an interrupt lands is built.** The body's play returns whether it was cut short, and the assistant takes a
+  play the body cut short itself as the stop button: the reply and the brain stop, and no follow-up is listened for
+  (tested with a fake body, `tests/test_body.py`). What's missing is the body hearing anything while it plays.
 - **A "TARS stop" model** is trained, with "stop" on its own and in sentences as negatives. It catches 99% of the
   held-out voices in quiet and 87% at 5 dB of TV, and 76% of the owner's held-out takes across all 8 conditions,
   with no false answers in an hour of TV or audiobooks and no false interrupts in 23 minutes of TARS's own replies
@@ -177,13 +180,13 @@ weather" came through as "the were"), where a neural canceller or a microphone a
    help, and the choices are a full-duplex speakerphone or mic array, or a button (the PowerConf's call button, read
    over HID, as "stop").
 2. **Listen while speaking.** If it hears enough: keep the mic open during answers too, and run the wake model on
-   it.
+   it, inside `LocalBody.play`, which cuts its play short when it hears it.
 3. **"hey TARS" as the interrupt first.** It's the phrase that already works, and it means what people expect: said
    in the middle of an answer, it stops it and listens for a new request. The double-check still has to agree, so a
    lookalike in TARS's own answer doesn't cut it off.
-4. **On an interrupt:** stop the playback, the reply (`StreamedReply.stop()`) and the brain (`brain.interrupt()`),
-   all of which exist; keep what was already said in the conversation, marked as cut off; then record the new
-   request, with no greeting.
+4. **On an interrupt:** the playback, the reply (`StreamedReply.stop()`) and the brain (`brain.interrupt()`) already
+   stop when the body cuts its play short; still to do: keep what was already said in the conversation, marked as
+   cut off (it keeps the whole reply as written now), then record the new request, with no greeting.
 5. **Then "TARS stop",** tested with TARS talking and echo cancellation on, and on the owner's own takes. A bare stop
    (no new request) is its own action: cut the reply and go back to waiting.
 
@@ -432,7 +435,10 @@ body.
 
 **Where it stands.** TARS is already three processes sharing one folder: the voice, Telegram and the web UI. Telegram
 runs without the voice process, and reaches it only for `/say`, the microphone's mute and recording sessions, over a
-Unix socket (`control.py`). But all three assume the hardware and the home network are on their own machine.
+Unix socket (`control.py`). But all three assume the hardware and the home network are on their own machine. The
+conversation's side of the boundary is in place for the room's audio: the assistant hears and speaks only through a
+`Body` (`body.py`), in-process, the Pi's being `LocalBody` (its wake word, mic, recorder and speaker), chosen where the
+assistant is made (`wiring.local_body`). The buttons, and everything on the home network, aren't behind it yet.
 
 **The split:**
 
@@ -473,7 +479,9 @@ The body decides nothing: it does what it's asked and says what happened.
 **Plan, each step shipped on its own, TARS working after each:**
 
 1. **One boundary in the code.** Everything that touches hardware or the home network goes through a body interface,
-   still in-process on the Pi. Nothing changes for anyone.
+   still in-process on the Pi. Nothing changes for anyone. Done for the room's audio (`Body`); still to do for the
+   buttons (wired to the assistant in `wiring.start_buttons`) and the home network: the house's devices, the TV, the
+   routers.
 2. **Two processes on the Pi.** The body becomes its own service, and the brain talks to it over a socket, as
    `control.py` does now; the body's own unlock check lands here.
 3. **The brain moves.** Pointed at a server, the two joined over Tailscale; the body's fallback when the brain can't
