@@ -2,7 +2,17 @@
 
 import pytest
 
-from voice_assistant.autolock import LOCK_SETTLE_S, AutoLock, AutoLockDevice, Off, Settings, problems
+from voice_assistant.autolock import (
+    LOCK_SETTLE_S,
+    MAX_TRIES,
+    RETRY_S,
+    SENSOR_GRACE_S,
+    AutoLock,
+    AutoLockDevice,
+    Off,
+    Settings,
+    problems,
+)
 from voice_assistant.home import HomeError, Request
 
 LOCK, DOOR = "lock.front_door", "binary_sensor.front_door"
@@ -13,7 +23,7 @@ class House:
 
     def __init__(self, tmp_path, door="off", lock="locked", anyone_home=True, settings=None):
         self.t, self.states = 0.0, {LOCK: lock, DOOR: door}
-        self.locked, self.said, self.posted, self.told = 0, [], [], []
+        self.locked, self.said, self.posted, self.told, self.reads = 0, [], [], [], []
         self.home, self.jammed = anyone_home, False
         self.off = Off(tmp_path, LOCK, clock=lambda: 1_800_000_000.0 + self.t)
         self.auto = AutoLock(
@@ -23,6 +33,7 @@ class House:
         self.auto.start_from(lock, door)
 
     def read(self, entity):
+        self.reads.append(entity)
         state = self.states[entity]
         if state == "error":
             raise HomeError("Home Assistant didn't answer")
@@ -123,16 +134,97 @@ def test_a_door_left_open_is_said_aloud_once_or_posted_when_nobodys_home(tmp_pat
     assert h.posted == ["The front door has been open for 2 minutes. Nobody's home, as far as I can tell."]
 
 
-def test_a_sensor_that_doesnt_answer_isnt_trusted_and_the_lock_goes_by_the_clock(tmp_path):
+def test_a_sensor_gone_quiet_while_the_door_is_open_never_gets_it_locked(tmp_path):
+    """Its last word was open: nothing is locked until it's back and says shut, and the maintainers are told once."""
     h = House(tmp_path)
-    h.set(DOOR, "unavailable")
     h.set(LOCK, "unlocked")
-    h.wait(29)
-    assert h.locked == 0 and len(h.told) == 1 and "sensor isn't answering" in h.told[0]
+    h.set(DOOR, "on")
+    h.wait(300)  # propped open
+    h.set(DOOR, "unavailable")
+    h.wait(SENSOR_GRACE_S - 1)
+    assert h.locked == 0 and h.told == []  # a minute out, as Home Assistant restarting is, isn't told
+    h.wait(600)
+    assert h.locked == 0 and len(h.told) == 1
+    assert "sensor isn't answering (unavailable)" in h.told[0] and "won't lock it until it's back" in h.told[0]
+    assert "It's unlocked now" in h.told[0] and "own auto-lock is the backstop" in h.told[0]
+    h.set(DOOR, "on")  # back, and still open
+    assert len(h.told) == 2 and "answering again" in h.told[1]
+    h.wait(600)
+    assert h.locked == 0
+    h.set(DOOR, "off")
+    h.wait(9)
+    assert h.locked == 0
     h.wait(1)
     assert h.locked == 1
+
+
+def test_a_sensor_out_as_it_was_unlocked_counts_the_door_shut_from_when_its_back(tmp_path):
+    """It may have opened and shut unseen: back and shut, it's locked after_shut_s later, not by the clock before."""
+    h = House(tmp_path)
+    h.set(DOOR, "unknown")
+    h.set(LOCK, "unlocked")
+    h.wait(30 * 60)
+    assert h.locked == 0 and len(h.told) == 1 and "sensor isn't answering (unknown)" in h.told[0]
     h.set(DOOR, "off")
-    assert len(h.told) == 2 and "answering again" in h.told[1]
+    h.wait(9)
+    assert h.locked == 0
+    h.wait(1)
+    assert h.locked == 1 and "answering again" in h.told[1]
+
+
+def test_a_sensor_that_flickers_out_for_a_moment_isnt_told(tmp_path):
+    h = House(tmp_path)
+    h.set(DOOR, "unavailable")
+    h.wait(10)
+    h.set(DOOR, "off")
+    h.wait(SENSOR_GRACE_S * 2)
+    assert h.told == []
+
+
+@pytest.mark.parametrize("read", ["unknown", "unavailable", ""])
+def test_the_door_read_as_anything_but_shut_just_before_locking_isnt_locked(tmp_path, read):
+    h = House(tmp_path)
+    h.set(LOCK, "unlocked")
+    h.states[DOOR] = read  # its word hasn't come over the websocket
+    h.wait(60 + SENSOR_GRACE_S)
+    assert h.locked == 0 and len(h.told) == 1 and "sensor isn't answering" in h.told[0]
+    h.set(DOOR, "off")
+    h.wait(10)
+    assert h.locked == 1
+
+
+def test_a_door_that_cant_be_read_just_before_locking_isnt_locked_and_is_tried_again_then_told(tmp_path):
+    """Home Assistant not answering the read: tried MAX_TRIES times, RETRY_S apart, then the maintainers are told
+    the real reason, and nothing more until it's next unlocked."""
+    h = House(tmp_path)
+    h.set(LOCK, "unlocked")
+    h.states[DOOR] = "error"
+    h.wait(60)
+    assert h.locked == 0 and h.reads == [DOOR]
+    h.wait(RETRY_S[0])
+    assert h.reads == [DOOR] * 2
+    h.wait(RETRY_S[1] - 1)
+    assert h.reads == [DOOR] * 2 and h.told == []
+    h.wait(1)
+    assert h.reads == [DOOR] * MAX_TRIES and h.locked == 0 and len(h.told) == 1
+    assert "Home Assistant didn't answer when I read its sensor" in h.told[0] and "bolt" not in h.told[0]
+    h.states[DOOR] = "off"
+    h.wait(600)
+    assert h.reads == [DOOR] * MAX_TRIES and h.locked == 0 and len(h.told) == 1
+    h.set(LOCK, "locked")  # by hand
+    h.set(LOCK, "unlocked")
+    h.wait(60)
+    assert h.locked == 1
+
+
+def test_a_door_read_again_once_home_assistant_answers_is_locked(tmp_path):
+    h = House(tmp_path)
+    h.set(LOCK, "unlocked")
+    h.states[DOOR] = "error"
+    h.wait(60)
+    h.states[DOOR] = "off"
+    h.wait(RETRY_S[0])
+    assert h.locked == 1 and h.told == []
 
 
 def test_turned_off_it_locks_nothing_and_says_nothing_then_comes_back_by_itself(tmp_path):

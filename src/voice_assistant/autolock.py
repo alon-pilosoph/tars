@@ -1,24 +1,30 @@
 """Auto-lock that knows whether the door is shut (docs/home.md#auto-lock): a lock in [home] with a door sensor and
 auto_lock is locked by TARS, never while the door is open.
 
+It sends lock.lock only when it knows the door is shut right now: its sensor's last word was "off", and read again in
+Home Assistant just before, it still is. When it can't know, it doesn't lock: it tells the maintainers, once, and the
+lock's own auto-lock is the backstop. It only ever locks.
+
 The rules, for each unlocking (the lock going from locked to unlocked or open):
 
 1. The door opened and shut again: locked `after_shut_s` (10 s) after it shut, if it's still shut. Opened again
    meanwhile, the count starts over when it shuts.
 2. Unlocked and never opened (an Auto Unlock as someone walks past, the app): locked `unopened_s` (60 s) after.
-3. Never while the door sensor says it's open: the door is read again in Home Assistant just before locking.
+3. Only when the door reads shut, just before: anything but "off" (open, unknown, unavailable, or Home Assistant not
+   answering) and it isn't locked. A read that fails is tried again, MAX_TRIES times in all with RETRY_S between,
+   then the maintainers are told it couldn't be read.
 4. Tried once each unlocking: if the lock doesn't say locked within LOCK_SETTLE_S (jammed, the door not quite shut),
    the maintainers are told, and nothing is tried again until it's next unlocked.
 5. The door left open for `open_alert_min` (2 minutes): said aloud at home, or posted to everyone's Telegram chat if
    nobody is home; once each time it's opened.
-6. The sensor not answering (unknown or unavailable in Home Assistant): its last word isn't trusted, the lock is
-   locked by the clock, `no_sensor_s` after it was unlocked, as a lock's own timer would, and the maintainers are told
-   once until it's back.
+6. The sensor not answering (unknown or unavailable in Home Assistant, or never heard): nothing is locked until it's
+   back, whatever it said last. The maintainers are told once it's been out SENSOR_GRACE_S, and once it's back.
 7. Turned off (the home tool's "<door> auto-lock", off for some minutes): nothing is locked, nor said about the door
    being open, until it's back on; it comes back by itself. Kept in a file beside the event log, so a chat's process
    can turn it off and the assistant, which locks, reads it.
 
-TARS down means nothing locks the door: the lock's own auto-lock, with a long timer, is the backstop (docs).
+TARS down means nothing locks the door: the lock's own auto-lock, with a long timer, is the backstop (docs). Nor can
+any code here close the last window, a door opened between the read and the bolt moving (docs/home.md#auto-lock).
 """
 
 import json
@@ -35,7 +41,10 @@ from .reminders import twelve_hour
 
 FILE = "auto_lock.json"  # in the event log's folder: { lock entity: off until (a time), ... }
 UNLOCKED = ("unlocked", "open")  # Home Assistant's lock states for not locked; "open" is unlatched
+SHUT, OPEN = "off", "on"  # a door sensor's states in Home Assistant; anything else isn't known
 LOCK_SETTLE_S = 20.0  # a Nuki turns its bolt in a few seconds, then reports it
+MAX_TRIES, RETRY_S = 3, (5.0, 30.0)  # tries to read the door before locking, and the waits after the first two
+SENSOR_GRACE_S = 60.0  # a sensor out this long is told: Home Assistant restarting is shorter
 TICK_S = 1.0
 DEFAULT_OFF_MIN, MOST_OFF_MIN = 60.0, 12 * 60.0
 
@@ -47,7 +56,6 @@ class Settings:
     after_shut_s: float = 10.0
     unopened_s: float = 60.0
     open_alert_min: float = 2.0  # 0: never said
-    no_sensor_s: float = 30.0
 
     @classmethod
     def of(cls, value) -> Settings | None:
@@ -58,7 +66,7 @@ class Settings:
         return None
 
 
-RANGES = {"after_shut_s": (0, 300), "unopened_s": (10, 600), "open_alert_min": (0, 60), "no_sensor_s": (10, 600)}
+RANGES = {"after_shut_s": (0, 300), "unopened_s": (10, 600), "open_alert_min": (0, 60)}
 
 
 def problems(value, where: str) -> list[str]:
@@ -176,14 +184,21 @@ class AutoLock:
         self._read, self._lock, self._say, self._post, self._tell = read, lock, say, post, tell
         self._anyone_home, self._clock = anyone_home, clock
         self._mutex = threading.Lock()
-        self.lock_state = self.door_state = ""
+        self.lock_state = ""
+        self.door_state = ""  # the sensor's last word, as Home Assistant has it: only SHUT and OPEN are known
+        self.door_known = ""  # its last known word (SHUT or OPEN), kept while it isn't answering
+        self.down_since: float | None = clock()  # the sensor not answering since; nothing heard yet counts
+        self.down_why = "nothing heard from it yet"
+        self.down_told = False
         self.unlocked_at: float | None = None  # this unlocking; None while locked
-        self.opened = False  # the door opened since it was unlocked
+        self.opened = False  # the door opened since it was unlocked (or may have, unseen)
         self.shut_at: float | None = None
         self.open_since: float | None = None
         self.alerted = False  # said it's open, this opening
         self.tried_at: float | None = None  # locking was asked, this unlocking
-        self.sensor_down_told = False
+        self.tries = 0  # tries that couldn't read the door, this unlocking
+        self.retry_at: float | None = None  # not tried again before this
+        self.gave_up = False  # the maintainers were told it couldn't be locked, this unlocking
 
     def start_from(self, lock_state: str, door_state: str) -> None:
         """What Home Assistant says now, as TARS starts: unlocked now counts as just unlocked."""
@@ -192,31 +207,44 @@ class AutoLock:
 
     def changed(self, entity: str, state: str) -> None:
         """An entity's new state, as Home Assistant reports it (hass.follow)."""
-        now = self._clock()
+        now, told = self._clock(), None
         with self._mutex:
             if entity == self.lock_entity:
                 self._lock_changed(state, now)
             elif entity == self.sensor:
-                self._door_changed(state, now)
+                told = self._door_changed(state, now)
+        if told:
+            self._tell(told)
 
     def _lock_changed(self, state: str, now: float) -> None:
         was, self.lock_state = self.lock_state, state
         if state in UNLOCKED and was not in UNLOCKED:
-            self.unlocked_at, self.opened, self.tried_at = now, self.door_state == "on", None
-            self.shut_at = None if self.door_state == "on" else now
+            self.unlocked_at, self.tried_at, self.tries, self.retry_at, self.gave_up = now, None, 0, None, False
+            self.opened = self.door_state != SHUT  # open, or not known: it counts from when it's next seen shut
+            self.shut_at = now if self.door_state == SHUT else None
             print(f"(auto-lock: the {self.door} unlocked)")
         elif state == "locked":
             self.unlocked_at = self.tried_at = None
 
-    def _door_changed(self, state: str, now: float) -> None:
-        was, self.door_state = self.door_state, state
-        if state == "on" and was != "on":
+    def _door_changed(self, state: str, now: float) -> str | None:
+        """What to tell the maintainers, if anything: the sensor answering again."""
+        self.door_state = state
+        if state not in (SHUT, OPEN):
+            if self.down_since is None:
+                self.down_since, self.down_why = now, state or "nothing heard"
+            return None
+        was, back = self.door_known, self.down_since is not None
+        self.door_known, self.down_since = state, None
+        if state == OPEN and was != OPEN:
             self.opened, self.open_since, self.shut_at, self.alerted = True, now, None, False
-        elif state == "off" and was != "off":
+        elif state == SHUT and (was != SHUT or back):
+            # Back shut after a time out: it may have opened and shut unseen, so it counts as shut just now.
             self.open_since, self.shut_at = None, now
-        if state in ("on", "off") and self.sensor_down_told:
-            self.sensor_down_told = False
-            self._tell(f"The {self.door}'s sensor is answering again: TARS locks it once it's shut, as before.")
+            self.opened = self.opened or (back and was != "")
+        if back and self.down_told:
+            self.down_told = False
+            return f"The {self.door}'s sensor is answering again: TARS locks the door once it's shut, as before."
+        return None
 
     def step(self) -> None:
         """What's due now: locking, checking it locked, saying the door's open. Called every TICK_S."""
@@ -224,10 +252,15 @@ class AutoLock:
         off = self.off.until() is not None
         with self._mutex:
             alert = self._open_too_long(now) and not off
+            down = self._down_to_tell(now)
             lock = not off and self._lock_due(now)
+            if lock:
+                self.tried_at = now
             check = self.tried_at is not None and now - self.tried_at >= LOCK_SETTLE_S and self.unlocked_at is not None
             if check:
                 self.tried_at = float("inf")  # told once; tried again only when it's next unlocked
+        if down:
+            self._tell(down)
         if alert:
             self._say_open()
         if lock:
@@ -239,45 +272,47 @@ class AutoLock:
             )
 
     def _open_too_long(self, now: float) -> bool:
-        if not self.settings.open_alert_min or self.alerted or self.open_since is None:
+        if not self.settings.open_alert_min or self.alerted or self.open_since is None or self.door_state != OPEN:
             return False
         if now - self.open_since < self.settings.open_alert_min * 60:
             return False
         self.alerted = True
         return True
 
+    def _down_to_tell(self, now: float) -> str | None:
+        if self.down_since is None or self.down_told or now - self.down_since < SENSOR_GRACE_S:
+            return None
+        self.down_told = True
+        unlocked = " It's unlocked now." if self.lock_state in UNLOCKED else ""
+        return (
+            f"The {self.door}'s sensor isn't answering ({self.down_why}), so I can't tell whether the door is shut, "
+            f"and I won't lock it until it's back.{unlocked} The lock's own auto-lock is the backstop. Its battery, "
+            "or Home Assistant's Bluetooth?"
+        )
+
     def _lock_due(self, now: float) -> bool:
-        if self.unlocked_at is None or self.tried_at is not None:
+        """Whether locking is due now: only ever with the door's last word shut. Changes nothing."""
+        if self.unlocked_at is None or self.tried_at is not None or self.gave_up:
+            return False
+        if self.door_state != SHUT or (self.retry_at is not None and now < self.retry_at):
             return False
         s = self.settings
-        if self.door_state not in ("on", "off"):
-            if not self.sensor_down_told:
-                self.sensor_down_told = True
-                self._tell(
-                    f"The {self.door}'s sensor isn't answering ({self.door_state or 'nothing heard'}), so I can't tell "
-                    f"if the door is shut: I lock it {s.no_sensor_s:.0f} s after it's unlocked until it's back. Its "
-                    "battery, or Home Assistant's Bluetooth?"
-                )
-            due = self.unlocked_at + s.no_sensor_s
-        elif self.door_state == "on":
-            return False
-        elif self.opened:
-            due = (now if self.shut_at is None else self.shut_at) + s.after_shut_s
-        else:
-            due = self.unlocked_at + s.unopened_s
-        if now < due:
-            return False
-        self.tried_at = now
-        return True
+        shut_at = now if self.shut_at is None else self.shut_at
+        due = shut_at + s.after_shut_s if self.opened else self.unlocked_at + s.unopened_s
+        return now >= due
 
     def _lock_now(self) -> None:
+        """Reads the door again and locks only if it reads shut; otherwise it's tried again later, or never."""
         try:
             door = self._read(self.sensor)
         except HomeError as e:
-            door = f"not read ({e})"
-        if door == "on":  # it opened as the time came: the next shutting counts again
-            print(f"(auto-lock: not locking the {self.door}: it's open)")
-            self.changed(self.sensor, "on")
+            self._not_read(f"Home Assistant didn't answer when I read its sensor ({e})")
+            return
+        if door != SHUT:
+            # It opened as the time came (the next shutting counts again), or its sensor isn't answering (nothing is
+            # locked until it's back).
+            print(f"(auto-lock: not locking the {self.door}: its sensor says {door or 'nothing'})")
+            self.changed(self.sensor, door)
             with self._mutex:
                 self.tried_at = None
             return
@@ -286,6 +321,20 @@ class AutoLock:
             self._lock()
         except HomeError as e:
             print(f"(auto-lock: couldn't ask for the {self.door} to lock: {e})")
+
+    def _not_read(self, why: str) -> None:
+        """A try that couldn't read the door: tried again after a wait, MAX_TRIES in all, then told."""
+        print(f"(auto-lock: not locking the {self.door}: {why})")
+        with self._mutex:
+            self.tried_at, self.tries = None, self.tries + 1
+            if self.tries < MAX_TRIES:
+                self.retry_at = self._clock() + RETRY_S[min(self.tries, len(RETRY_S)) - 1]
+                return
+            self.gave_up = True
+        self._tell(
+            f"I didn't lock the {self.door}: {why}, {MAX_TRIES} times, so I couldn't be sure it's shut. It stays "
+            "unlocked until someone locks it, or the lock's own auto-lock does; I'll try again when it's next unlocked."
+        )
 
     def _say_open(self) -> None:
         minutes = self.settings.open_alert_min
