@@ -248,7 +248,7 @@ class AndroidTV:
         if start < 0:
             return ""
         try:
-            root = fromstring(out[start:])  # an app's own text is in it
+            root = fromstring(out[start:])  # defused: whatever the app puts on screen ends up in it
         except ElementTree.ParseError, DefusedXmlException:
             return ""
         lines = []
