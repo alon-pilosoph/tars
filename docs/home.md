@@ -382,7 +382,8 @@ def setup(settings: dict, context: Context) -> dict:
 **Tools of its own.** `setup` may return `Provides(kinds, tools)` instead, with `PluginTool`s: a name, a description and
 parameters (a JSON schema) as the model sees them, and `call(args, request)` that answers in the tool's words, as a
 device's `call` does. One with `changes=True` waits for the turn to be over, is called one change at a time with the
-house's, and isn't called at all by a reply that read the web: it's a tool like TARS's own, held back by the brain's
+house's, and isn't called at all by a reply that read the web, nor in a turn a door's lock set off ([the front
+door](presence.md#the-front-door)): it's a tool like TARS's own, held back by the brain's
 toolbox as every tool that changes something is ([the LLM's tools](architecture.md#the-llms-tools)). `rules` adds a
 line to the model's instructions. A tool can't take a name TARS or another plugin already has: the plugin that comes
 second doesn't load.

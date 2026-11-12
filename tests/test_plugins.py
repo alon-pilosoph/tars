@@ -164,6 +164,9 @@ def test_a_plugins_tools_reach_the_brain_and_one_that_changes_waits_for_the_turn
 
     assert call_plugin("garden_moisture", {}, Request(read_the_web=True)) == "soil: 31%"
     assert call_plugin("water_garden", {}, Request(read_the_web=True)).startswith("refused")
+    # A turn a door's lock set off reads the garden, and waters nothing (home.Request.by_door).
+    assert call_plugin("garden_moisture", {}, Request(by_door="front door")) == "soil: 31%"
+    assert "front door's lock" in call_plugin("water_garden", {}, Request(by_door="front door"))
     withdrawn = Request(may_act=lambda timeout: False)
     assert call_plugin("water_garden", {}, withdrawn).startswith("error: the request was withdrawn")
     assert garden_plugin.seen["watered"] == []

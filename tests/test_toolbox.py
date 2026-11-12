@@ -85,6 +85,32 @@ def test_a_tool_that_changes_something_is_refused_after_a_web_search_and_reads_s
     assert garden.watered == []
 
 
+def test_a_tool_that_changes_something_is_refused_on_a_turn_a_doors_lock_set_off_and_reads_still_go():
+    garden = Garden()
+    tools = Toolbox([garden.toolset()])
+    door = Turn(Request(by_door="front door", may_act=lambda timeout: True))
+    assert tools.call(tools.get("moisture"), {}, door) == "soil: 31%"
+    refused = tools.call(tools.get("water"), {}, door)
+    assert refused.startswith("refused: this ran because the front door's lock said someone came in")
+    assert garden.watered == []
+
+
+@pytest.mark.parametrize(
+    "request_, said",
+    [
+        (Request(read_the_web=True, by_door="front door"), "refused: this reply read the web"),
+        (Request(by_door="front door", may_act=lambda timeout: False), "refused: this ran because"),
+        (Request(may_act=lambda timeout: False), "error: the request was withdrawn"),
+        (Request(may_act=lambda timeout: True), ""),
+        (None, ""),  # nobody's turn in particular: a typed one, over already
+    ],
+)
+def test_what_holds_a_change_back_is_the_web_then_a_door_then_the_turn(request_, said):
+    from voice_assistant.toolbox import held_back
+
+    assert held_back(request_).startswith(said) and bool(held_back(request_)) == bool(said)
+
+
 def test_a_change_waits_for_the_turn_to_go_ahead():
     garden = Garden()
     tools = Toolbox([garden.toolset()])

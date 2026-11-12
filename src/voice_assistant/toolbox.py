@@ -7,14 +7,15 @@ the instructions, and, for abilities(), what they let a model do (`can`) and wha
 Every tool says what calling it may change (`does`), and there's no default, so none can be offered without saying:
 
 - READS: nothing. It's called as it is.
-- CHANGES: something, at once. The toolbox holds it back: refused in a reply that read the web, and made only once
-  the turn goes ahead (Request.go_ahead), so a draft thrown away changes nothing.
+- CHANGES: something, at once. The toolbox holds it back (held_back): refused in a reply that read the web and in a
+  turn a door's lock set off (Request.by_door), and made only once the turn goes ahead (Request.go_ahead), so a draft
+  thrown away changes nothing.
 - COLLECTS: only what it puts on the turn (Turn.sent, Turn.changes), made once the reply is kept and forgotten with
   it. It's called holding the conversation, where those are kept; every other tool is called with it released, as it
   may wait (for the turn to be over, a device, the network).
 - ITS_OWN: reads and changes, told apart action by action in its own code, which holds back each change as it must:
   the house's unlocking, a door's own turn and the web (home.py, ha_tool.py), and each provider's own, said where it
-  hands over its toolset.
+  hands over its toolset; every change at least as held_back does.
 
 Web search isn't one of them: it's OpenAI's own tool, run on its side, and the brain marks the reply that used it
 (Request.read_the_web) for every tool here to go by.
@@ -31,6 +32,10 @@ READS, CHANGES, COLLECTS, ITS_OWN = "reads", "changes", "collects", "its own"
 DOES = (READS, CHANGES, COLLECTS, ITS_OWN)
 READ_THE_WEB = "refused: this reply read the web, so it changes nothing; they can ask again on its own"
 WITHDRAWN = "error: the request was withdrawn before anything was done; nothing changed"
+BY_DOOR = (
+    "refused: this ran because the {door}'s lock said someone came in, and that alone never changes anything; say "
+    "what could be done, and they can ask for it"
+)
 
 
 @dataclass
@@ -79,6 +84,20 @@ class Toolset:
     rules: Sequence[str] = ()
     can: Sequence[str] = ()
     needs: Sequence[str] = ()
+
+
+def held_back(request: Request | None) -> str:
+    """Why a change asked for in `request`'s turn isn't made, or "" when it may be: refused in a reply that read the
+    web (Request.read_the_web), then in a turn a door's lock set off (Request.by_door), and otherwise waiting for the
+    turn to go ahead (Request.go_ahead), withdrawn if it doesn't. None: a turn from nobody in particular, over already
+    (typed). What the toolbox holds a CHANGES tool to, and an ITS_OWN tool each of its changes."""
+    if request is None:
+        return ""
+    if getattr(request, "read_the_web", False):
+        return READ_THE_WEB
+    if door := getattr(request, "by_door", ""):
+        return BY_DOOR.format(door=door)
+    return "" if request.go_ahead() else WITHDRAWN
 
 
 class Provider(Protocol):
@@ -130,11 +149,8 @@ class Toolbox:
     def call(self, tool: Tool, args, turn: Turn) -> str:
         """What `tool` answers, held back as its `does` says; its failing, said as its `failed`."""
         try:
-            if tool.does == CHANGES:
-                if turn.request.read_the_web:
-                    return READ_THE_WEB
-                if not turn.request.go_ahead():
-                    return WITHDRAWN
+            if tool.does == CHANGES and (refused := held_back(turn.request)):
+                return refused
             return tool.call(args, turn)
         except Exception as e:  # noqa: BLE001 - a tool that fails never costs the reply: the model says so
             return tool.failed.format(e=e)

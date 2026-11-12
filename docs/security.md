@@ -68,7 +68,8 @@ broker hands it on `<topic>/lockActionEvent` as the lock's word ([the front door
   phone, before it is).
 - **What it can't do:** unlock, or change anything else. A skill a door's lock sets off reads the house but changes
   nothing in it: every change is refused for that run, an unlock first (`Request.by_door`, refused in `home.py`,
-  `ha_tool.py`, `ha_setup.py`, and for TARS's own settings in `myself.py`), and an unlock needs a trusted voice
+  `ha_tool.py`, `ha_setup.py`, for a plugin's own tools in `toolbox.py`, and for TARS's own settings in `myself.py`),
+  and an unlock needs a trusted voice
   saying "unlock" anyway. TARS publishes nothing to the broker, so nothing it hears there goes back to the lock. A
   lock never marks anyone out: leaving is still by the phone.
 - **Defenses:**
@@ -86,6 +87,8 @@ broker hands it on `<topic>/lockActionEvent` as the lock's word ([the front door
     in Nuki's order is read at all.
 - **Tests:** `tests/test_home.py::test_a_turn_a_doors_lock_set_off_reads_the_house_and_changes_nothing_in_it`;
   `tests/test_ha_tool.py::test_a_turn_a_doors_lock_set_off_reads_but_changes_nothing`;
+  `tests/test_toolbox.py::test_a_tool_that_changes_something_is_refused_on_a_turn_a_doors_lock_set_off_and_reads_still_go`,
+  `::test_what_holds_a_change_back_is_the_web_then_a_door_then_the_turn`;
   `tests/test_ha_setup.py::test_someone_else_cant_confirm_a_removal_and_only_maintainers_may_change_it`;
   `tests/test_settings.py` (the settings tool's refusals);
   `tests/test_skills.py::test_a_skill_a_doors_lock_set_off_runs_reading_the_house_only`,
@@ -260,8 +263,8 @@ what's merged is installed on the Pi by the updater.
   - without `ha_admin`, it never administers Home Assistant (`ADMIN`); running code there needs both.
 
   The other devices are read-only views that unlock only with `unlock`, and then only as the home tool allows. A
-  plugin tool that changes something waits for the turn and isn't called by a reply that read the web, and can't take
-  another tool's name ([plugins](home.md#plugins)).
+  plugin tool that changes something waits for the turn, isn't called by a reply that read the web nor in a turn a
+  door's lock set off, and can't take another tool's name ([plugins](home.md#plugins)).
 - **Tests:** `tests/test_plugins.py`: a plugin needing more than its grant doesn't load; an ungranted key is refused;
   `::test_each_grant_is_checked_on_its_own` (every combination of `unlock` and `ha_admin` against an unlock, an
   administering, an ordinary and a both-needing call); every route that opens the house is refused without `unlock`
@@ -269,7 +272,7 @@ what's merged is installed on the Pi by the updater.
   applied or made, the room, the template, the service that can't be seen into),
   `::test_what_cant_be_read_counts_as_opening_the_door`, and a service is only ever a plain name; the client and its
   setup aren't handed over; another device can't be unlocked through its view; a changing tool waits for the turn and
-  refuses a reply that read the web; `--check` warns on a grant of TARS's own keys.
+  refuses a reply that read the web and a turn a door's lock set off; `--check` warns on a grant of TARS's own keys.
 - **Open:** grants hold at the interface, not in a sandbox: a plugin is Python in TARS's process and could reach
   around them, and every plugin keeps `root`, so it can read the project's files, `.env` included. One is installed
   only after being read. A plugin with no `grant` set loads with everything (as before grants), with a `--check`

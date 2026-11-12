@@ -146,10 +146,12 @@ that describe them, and, for `abilities()`, what they let a model do and what a 
 model's calls go through the one `Toolbox`, by name, and each model is offered its part of it: OpenAI's model all of
 it, Qwen with `quick_tools` the reminders, send without links, and the house. Every `Tool` says what calling it may
 change, with no default, so none is offered without saying: `READS`, nothing; `CHANGES`, something at once, which the
-toolbox refuses in a reply that read the web and makes only once the turn goes ahead (a plugin's tool with
-`changes=True`); `COLLECTS`, only what it puts on the turn (sent items, reminder changes), made once the reply is kept;
-`ITS_OWN`, for a tool that tells reads from changes action by action and holds back each change in its own code (the
-house's unlock rules and a door's own turn, Home Assistant's, an errand waiting for the turn, TARS's settings). Only a
+toolbox refuses in a reply that read the web and in a turn a door's lock set off (`Request.by_door`), and makes only
+once the turn goes ahead (`held_back`; a plugin's tool with `changes=True`); `COLLECTS`, only what it puts on the turn
+(sent items, reminder changes), made once the reply is kept; `ITS_OWN`, for a tool that tells reads from changes
+action by action and holds back each change in its own code, at least as `held_back` does (the house's unlock rules,
+Home Assistant's, an errand, a feed followed, a skill taught, TARS's settings and wishes: [which guard holds
+what](security.md#what-each-tool-may-change)). Only a
 `COLLECTS` tool is called holding the conversation; the rest may wait, so it's released meanwhile. Web search isn't
 in the toolbox: it's OpenAI's own, run on its side, and the brain marks the reply that used it
 (`Request.read_the_web`) for every tool to go by. A new tool is a provider with a `toolset()`, given to the brain

@@ -73,7 +73,7 @@ class Manifest:
 class PluginTool:
     """A tool a plugin adds for the brain: its name, what it does and its parameters (a JSON schema object), as the
     model sees them; call(args, request) -> what to tell the model. `changes`: it changes something (it waits for the
-    turn to be over, and a reply that read the web can't call it)."""
+    turn to be over, and neither a reply that read the web nor a turn a door's lock set off can call it)."""
 
     name: str
     description: str
