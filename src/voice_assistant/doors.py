@@ -17,7 +17,8 @@ whoever the lock let in from outside has come in once the door shuts behind them
 kept in door_events (CAME_IN) and handed on (`came_in`): skills run on it (skills.COMES_IN: the household's
 "welcome home" is one), and their messages waiting until they're back are said then. Each time it moves the routers
 are asked at once, and every few seconds for a while (Watcher.hurry), and the door opened without anyone being let
-in is someone inside using it: a phone that drops off then has left by it (presence.Tracker.door_used).
+in (decided as it shuts, as the lock's event can come after the sensor's), and not just after someone came in by it,
+is someone inside using it: a phone there as it opened that drops off then has left by it (presence.Tracker).
 
 Whether TARS can hear the locks is watched too (Link): the broker not answering, refusing TARS, or lost, is logged
 when it starts, and the maintainers are told once it's lasted TELL_AFTER_S, and again when it's back.
@@ -53,6 +54,9 @@ SETTLE_EVERY_S = 30.0
 TELL_AFTER_S = 10 * 60.0
 # A lock opened from outside this near the door sensor's opening (before it, or while it's open) let that person in.
 LET_IN_S = 2 * 60.0
+# The door opened again this soon after someone came in by it is them still coming in (it bounced off the frame, the
+# shopping from the car), never someone inside leaving: someone who does leave then waits away_after_min.
+REOPEN_S = 60.0
 CAME_IN = 100  # door_events.action for someone the lock let in coming in, the sensor saying the door shut behind them
 PROBE = "tars-check"  # --check's: a topic beside a lock's own, which TARS may write only on a broker without an ACL
 
@@ -185,6 +189,7 @@ class Doors:
         self._arrivals: list[tuple[str, float]] = []  # (person, when) their phone came home, while TARS runs
         self._let_in: dict[str, list[tuple[str, float]]] = {}  # door: (person, when) its lock let them in from outside
         self._opened: dict[str, float] = {}  # door: when its sensor said it opened, while it's open
+        self._came_in_at: dict[str, float] = {}  # door: when someone last came in by it
         self._lock = threading.Lock()
 
     def heard(self, e: DoorEvent) -> None:
@@ -200,23 +205,26 @@ class Doors:
                 self.watcher.at_door(person, e.door)
 
     def sensed(self, door: str, is_open: bool) -> None:
-        """The door's sensor: it opened, or shut. The routers are asked at once; whoever its lock let in from
-        outside has come in as it shuts; opened with nobody let in, it's someone inside using it."""
-        now, inside, came = self._clock(), False, []
+        """The door's sensor: it opened, or shut. The routers are asked at once. As it shuts, whoever its lock let in
+        from outside, from LET_IN_S before it opened until now, has come in; with nobody let in it was someone inside
+        using it (Watcher.hurry's `inside`, from when it opened), unless it opened within REOPEN_S of someone coming
+        in by it. Decided at the shut, not the opening: the lock's event can come a moment after the sensor's."""
+        now, inside, came, opened = self._clock(), False, [], None
         print(f"(doors: the {door} {'opened' if is_open else 'shut'})")
         with self._lock:
             let_in = [(p, at) for p, at in self._let_in.get(door, []) if now - at <= 2 * LET_IN_S]
             self._let_in[door] = let_in
             if is_open:
                 self._opened[door] = now
-                inside = not any(now - at <= LET_IN_S for _, at in let_in)
-            else:
-                opened = self._opened.pop(door, None)
-                came = [] if opened is None else [p for p, at in let_in if opened - LET_IN_S <= at <= now]
-                came = list(dict.fromkeys(came))
+            elif (opened := self._opened.pop(door, None)) is not None:
+                came = list(dict.fromkeys(p for p, at in let_in if opened - LET_IN_S <= at <= now))
                 self._let_in[door] = [(p, at) for p, at in let_in if p not in came]
+                if came:
+                    self._came_in_at[door] = now
+                else:
+                    inside = opened - self._came_in_at.get(door, -REOPEN_S - 1) > REOPEN_S
         if self.watcher:
-            self.watcher.hurry(inside=inside)
+            self.watcher.hurry(inside=inside, opened=opened if inside else None)
         if not came:
             return
         names = [self.log.people.names[p] for p in came]

@@ -70,7 +70,8 @@ broker hands it on `<topic>/lockActionEvent` as the lock's word ([the front door
   nothing in it: every change is refused for that run, an unlock first (`Request.by_door`, refused in `home.py`,
   `ha_tool.py`, `ha_setup.py`, and for TARS's own settings in `myself.py`), and an unlock needs a trusted voice
   saying "unlock" anyway. TARS publishes nothing to the broker, so nothing it hears there goes back to the lock. A
-  lock never marks anyone out: leaving is still by the phone.
+  lock never marks anyone out: leaving is still by the phone, hurried only by a door sensor
+  ([below](#a-door-sensor-that-says-the-door-moved-when-it-didnt)).
 - **Defenses:**
   - The broker lets in only users with a password (`allow_anonymous false`, `password_file`), and its ACL
     ([`deploy/home-assistant/mosquitto/acl`](../deploy/home-assistant/mosquitto/acl)) refuses anything not granted:
@@ -104,6 +105,56 @@ broker hands it on `<topic>/lockActionEvent` as the lock's word ([the front door
   - Two locks on one user (`nuki`) can each speak for the other; the Nuki's events aren't signed, so nothing past the
     broker tells a forged one from a real one.
   - A broker on another machine is set up by hand: `--check`'s warning is all TARS checks there.
+
+### A door sensor that says the door moved when it didn't
+
+A door with a sensor ([the door sensor](presence.md#the-door-sensor)) is followed in Home Assistant: TARS takes the
+binary_sensor's state there as the door opening and shutting (`hass.follow`, `doors.Doors.sensed`). Whoever can set
+that state, or what Home Assistant hears from the sensor, speaks for the door:
+
+- anyone with a Home Assistant login or token allowed to set states (an administrator's), and any automation,
+  script or integration in Home Assistant;
+- with the sensor's BTHome encryption off, anyone in Bluetooth range: an unencrypted BTHome advertisement isn't
+  signed, so a phone or an ESP32 nearby can send one as the sensor.
+
+- **What a forged "open" or "shut" could do:**
+  - hurry the routers: asked every 10 seconds instead of every 30, for at most a quarter of any hour however often
+    it says so;
+  - mark someone out early, but only someone whose phone really did drop off the Wi-Fi from a round before the
+    forged opening to a minute after it, and stayed off for a minute and a half. That person is out, and the skills
+    waiting for them (or for the last one out) to go out run as for anyone going out, changes to the house included;
+    they're home again the moment their phone is seen;
+  - with a real let-in by the lock, have them "come in" sooner (a forged shut) or not at all (no shut), and keep a
+    real opening from inside within a minute of it from being taken for someone leaving.
+- **What it can't do:** put anyone at home (only a router seeing their phone, or the lock letting them in, does);
+  welcome anyone the lock didn't let in from outside within two minutes; change anything in the house on someone
+  coming in (that run is the door's, `Request.by_door`, as for the lock above); unlock. A sensor going unavailable
+  and coming back, or Home Assistant restarting, isn't a move at all.
+- **Defenses:**
+  - Leaving by the door asks for the phone too, and only a phone there as the door opened
+    (`presence.Tracker._left_by_door`); someone known only by the lock letting them in, or let in just before, is
+    never out by it.
+  - Only a change from open to shut, or back, is a move (`hass.follow`'s `moves_only`).
+  - The routers' hurrying is bounded (`presence.Watcher._round_due`), and the door uses kept for leaving are the
+    newest 16.
+  - Turn on the sensor's BTHome encryption (a bindkey), as the [setup](presence.md#the-door-sensor) says: then only
+    something with the key can speak as it over Bluetooth.
+- **Tests:** `tests/test_presence.py::test_a_phone_already_dozing_when_the_door_is_opened_from_inside_isnt_leaving_by_it`,
+  `::test_someone_elses_phone_dozing_a_while_after_the_door_isnt_leaving_by_it`,
+  `::test_someone_known_only_by_the_lock_letting_them_in_is_never_out_by_the_door`,
+  `::test_a_door_that_never_stops_moving_hurries_the_routers_for_a_quarter_of_each_hour_at_most`;
+  `tests/test_doors.py::test_the_door_opened_with_nobody_let_in_is_someone_inside_using_it_and_nobody_is_welcomed`,
+  `::test_the_door_bouncing_or_opened_again_just_after_someone_came_in_isnt_anyone_leaving`,
+  `::test_the_door_sensors_are_followed_for_their_moves_only`;
+  `tests/test_hass.py::test_following_moves_only_leaves_out_a_change_from_unknown_or_unavailable`;
+  `tests/test_skills.py::test_someone_coming_in_by_the_door_sets_off_the_skills_waiting_for_them_as_by_the_door`
+  (a came-in run carries its door, for which `home.py` refuses every change).
+- **Open:**
+  - TARS can't tell whether the sensor's BTHome encryption is on: Home Assistant doesn't say. `--check` reads the
+    sensor, not how it's paired.
+  - With encryption on, a recorded advertisement replayed is still for Home Assistant's BTHome integration to
+    refuse; that hasn't been tried here.
+  - Home Assistant's administrators, and its automations, can set the sensor's state as they can work the lock.
 
 ### A web page elsewhere, through someone's browser at home
 

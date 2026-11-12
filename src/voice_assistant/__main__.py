@@ -733,7 +733,8 @@ def follow_door_sensors(cfg: Config, root: Path, doors) -> None:
         if state in ("on", "off"):
             doors.sensed(sensors[entity], state == "on")
 
-    run = functools.partial(follow, cfg.home.url, token, list(sensors), changed)
+    # moves_only: Home Assistant restarting, or the sensor heard again after a while, isn't the door moving.
+    run = functools.partial(follow, cfg.home.url, token, list(sensors), changed, moves_only=True)
     threading.Thread(target=run, daemon=True, name="door-sensors").start()
 
 

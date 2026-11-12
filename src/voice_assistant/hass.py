@@ -968,12 +968,14 @@ def follow(
     stop: Callable[[], bool] = lambda: False,
     clock: Callable[[], float] = time.monotonic,
     unknown_too: bool = False,
+    moves_only: bool = False,
 ) -> None:
     """Follows `entities` over Home Assistant's websocket API, calling on_state(entity, state) each time one's state
     changes ("on", "off"; never a change of attributes alone, and unknown or unavailable only with `unknown_too`),
     until `stop()`.
-    Reconnects by itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's
-    thread."""
+    `moves_only`: only a change from one known state to another; one from unknown or unavailable, or from nothing
+    (Home Assistant starting, a Bluetooth sensor heard again), says where it is, not that it moved. Reconnects by
+    itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's thread."""
     wanted, address = set(entities), "ws" + url.rstrip("/").removeprefix("http") + "/api/websocket"
     tries, down = 0, ""
     while not stop():
@@ -984,6 +986,9 @@ def follow(
                 ws.send(json.dumps({"type": "auth", "access_token": token}))
                 if json.loads(ws.recv(timeout=HTTP_TIMEOUT_S)).get("type") != "auth_ok":
                     raise HomeError(f"Home Assistant refused the token ({TOKEN_KEY} in .env)")
+                # Every state change, filtered here: subscribe_trigger, which filters in Home Assistant, needs an
+                # administrator's token, and TARS's user shouldn't be one (docs/home.md); subscribe_entities is the
+                # frontend's own compressed format.
                 ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
                 print(f"(home: {'following' if not down else 'following again'} {', '.join(sorted(wanted))})")
                 down = ""
@@ -997,6 +1002,8 @@ def follow(
                         continue
                     new, old = (data.get("new_state") or {}).get("state"), (data.get("old_state") or {}).get("state")
                     if new is None or new == old or (new in UNKNOWN and not unknown_too):
+                        continue
+                    if moves_only and (old is None or old in UNKNOWN):
                         continue
                     try:
                         on_state(data["entity_id"], new)

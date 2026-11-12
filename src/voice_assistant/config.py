@@ -307,9 +307,10 @@ class PresenceConfig:
     # is one), and the routers are asked at once whenever it moves, so someone leaving by it is out in a minute or two
     # (docs/presence.md#the-door-sensor). Needs [home] url.
     doors: list[dict] = field(default_factory=list)
-    # When waiting messages aren't said aloud as someone comes home, "22:00-07:00" (the house's local time; "" for
-    # never): they wait for them to speak to TARS. A skill's own hours are in its instructions.
-    quiet: str = "22:00-07:00"
+    # Hours waiting messages aren't said aloud as someone comes home, like "22:00-07:00" (the house's local time); ""
+    # (the default) for never: in them they wait for that person to speak to TARS. A skill's own hours, the "welcome
+    # home" one's included, are in its instructions.
+    quiet: str = ""
     # [presence.mqtt]: the MQTT broker the locks publish to, { address = "localhost", port = 1883, user, secret },
     # TARS's own user there, and secret the name of its password in .env; both needed with doors. Needs the door
     # extra (paho-mqtt).
@@ -711,6 +712,7 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
             problems.append(f"{where}: user must be the admin's name, like admin")
         problems += [f"{where} has no setting {k}" for k in r if k not in ("kind", "address", "user", "secret")]
     names: set[str] = set()
+    sensors: dict[str, str] = {}  # each door's sensor, and the door
     for i, d in enumerate(p.doors, 1):
         where = f"[[presence.doors]] #{i}"
         if not (isinstance(d.get("name"), str) and d["name"].strip()):
@@ -725,6 +727,11 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
             isinstance(d["sensor"], str) and _ENTITY.fullmatch(d["sensor"]) and d["sensor"].startswith("binary_sensor.")
         ):
             problems.append(f"{where}: sensor must be its door sensor's binary_sensor.* entity, not {d['sensor']!r}")
+        elif "sensor" in d and d["sensor"] in sensors:
+            # Followed by entity, two doors on one sensor would be one: the second would never open or shut.
+            problems.append(f"{where}: the {sensors[d['sensor']]} already has the sensor {d['sensor']}")
+        elif "sensor" in d:
+            sensors[d["sensor"]] = str(d.get("name", "")).strip() or "door before it"
         problems += [f"{where} has no setting {k}" for k in d if k not in ("name", "topic", "sensor")]
     if p.doors and not (isinstance(p.mqtt.get("address"), str) and p.mqtt["address"].strip()):
         problems.append('[presence] doors need [presence.mqtt] address, the locks\' MQTT broker, like "localhost"')
