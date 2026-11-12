@@ -362,7 +362,8 @@ and holds each change at least as `held_back` does. Reading is never held back, 
 | web search | nothing here: it's OpenAI's, run on its side | | | | marks the reply as having read the web, for every tool above |
 
 `send` and the reminders only put what they make on the turn (`COLLECTS`), so a reply that's dropped or skipped makes
-none of it. They aren't refused after the web or on a door's turn: what they make is said or shown to the household,
+none of it; a skill's own turn makes it once its line is said or posted (or, a one-off done, handed on to be told),
+and not when it was skipped, didn't happen, or nobody heard it. They aren't refused after the web or on a door's turn: what they make is said or shown to the household,
 and changes nothing in the house.
 
 - **Tests:** `tests/test_toolbox.py` (the toolbox's guards on a `CHANGES` tool, and `held_back`'s order);

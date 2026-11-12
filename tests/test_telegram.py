@@ -1114,6 +1114,31 @@ def test_a_chat_skill_a_doors_lock_set_off_runs_reading_the_house_only():
     assert (alon.request.by_chat, alon.request.by_door) == (True, "front door")  # home.py refuses its changes
 
 
+def test_a_chat_skill_posted_does_what_it_asked_of_the_reminders_and_posts_what_it_sent(convos):
+    """As an ordinary chat turn does, once its reply is posted: a reminder it set, and the note it sent."""
+    bot, alon = FakeBot(), ScriptedBrain(["Three new games came out; the list is below."])
+    tools = ReminderTools(Reminders(convos.store))
+    alon.next_sent = [SentItem(NOTE, "New games", body="Zelda.")]
+    alon.next_changes = [Change(ADD, NewReminder(REMINDER, "the Zelda review", due=time.time() + 600))]
+    tars(bot, [alon], convos, tools, skill_clock=chat_skill_due()).deliver()
+    assert bot.said() == ["Three new games came out; the list is below.", "New games\n\nZelda."]
+    (reminder,) = tools.reminders.active()
+    assert (reminder["from_name"], reminder["channel"], reminder["set_via"]) == ("Alon", TELEGRAM, TELEGRAM)
+    (item,) = convos.store.rows("SELECT * FROM items")
+    assert item["title"] == "New games" and item["delivered"] is not None and item["turn_id"] is not None
+
+
+@pytest.mark.parametrize("failing, reply", [(0, "<skip>"), (99, "Three new games came out.")])
+def test_a_chat_skill_that_posts_nothing_does_nothing_it_asked_for(convos, failing, reply):
+    """Skipped, or its post failed: as a chat turn that can't be delivered, nothing it asked for is done."""
+    bot, alon = FakeBot(failing=failing), ScriptedBrain([reply])
+    tools = ReminderTools(Reminders(convos.store))
+    alon.next_sent = [SentItem(NOTE, "New games", body="Zelda.")]
+    alon.next_changes = [Change(ADD, NewReminder(REMINDER, "the Zelda review", due=time.time() + 600))]
+    tars(bot, [alon], convos, tools, skill_clock=chat_skill_due()).deliver()
+    assert tools.reminders.active() == [] and convos.items() == [] and alon.forgotten == 1
+
+
 def test_a_chat_skill_with_nothing_to_say_posts_nothing():
     from voice_assistant.llm import SKIP
 
@@ -1207,3 +1232,30 @@ def test_a_one_off_whose_post_fails_is_done_all_the_same_and_posted_with_the_rem
     bot, alon = FakeBot(failing=10), ScriptedBrain(["Done: the heater's off."])
     tars(bot, [alon], skill_clock=clock).deliver()
     assert skills.all() == [] and told(skills) == [("Alon", TELEGRAM, "Done: the heater's off.")]
+
+
+def test_a_one_off_handed_over_still_does_what_it_asked_and_what_it_sent_waits_to_be_posted(tmp_path, convos):
+    """Done all the same, its answer only waits: what it set is set, and what it sent is posted once Telegram takes
+    it (deliver), as anything sent for someone with a chat."""
+    skills, clock = one_off_due(tmp_path, {"telegram": os.getpid()})
+    tools = ReminderTools(Reminders(skills.store))
+    from voice_assistant.telegram import SEND_TRIES
+
+    bot, alon = FakeBot(failing=SEND_TRIES), ScriptedBrain(["Done: the heater's off; the bill's below."])
+    alon.next_sent = [SentItem(NOTE, "Heating bill", body="120 shekels.")]
+    alon.next_changes = [Change(ADD, NewReminder(REMINDER, "the heater back on", due=time.time() + 600))]
+    tars(bot, [alon], convos, tools, skill_clock=clock).deliver()  # its post fails, and Telegram's back after
+    assert [r["text"] for r in tools.reminders.active() if r["kind"] == REMINDER] == ["the heater back on"]
+    (item,) = convos.store.rows("SELECT * FROM items")
+    assert (item["title"], item["for_name"]) == ("Heating bill", "Alon") and item["delivered"] is not None
+    assert bot.said() == ["Heating bill\n\n120 shekels."]  # its answer waits with the reminders
+
+
+def test_one_asked_aloud_done_here_does_what_it_asked_of_the_reminders_as_by_voice(tmp_path):
+    skills, clock = one_off_due(tmp_path, {"telegram": os.getpid()}, by_chat=False, household=False)
+    tools = ReminderTools(Reminders(skills.store))
+    bot, own = FakeBot(), ScriptedBrain(["Done: the heater's off."])
+    own.next_changes = [Change(ADD, NewReminder(REMINDER, "the heater back on", due=time.time() + 600))]
+    tars(bot, [ScriptedBrain([]), own], None, tools, skill_clock=clock).deliver()
+    (reminder,) = [r for r in tools.reminders.active() if r["kind"] == REMINDER]
+    assert (reminder["from_name"], reminder["channel"], reminder["set_via"]) == ("Alon", VOICE, VOICE)

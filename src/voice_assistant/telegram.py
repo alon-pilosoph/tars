@@ -17,6 +17,7 @@ person here (telegram_errands.py): an order to approve, a link for a login TARS 
 answer when it's done.
 """
 
+import dataclasses
 import json
 import re
 import threading
@@ -34,7 +35,7 @@ import numpy as np
 from .audio import SAMPLE_RATE, decode_recording, warm_decoder
 from .config import TELEGRAM_KEY, ConfigError
 from .control import Refused, Unavailable
-from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
+from .conversations import FILE, HOUSEHOLD, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
 from .llm import FILLERS, REMIND_TOOLS, SKIP, THINKING, Brain, Reply
@@ -710,7 +711,9 @@ class TelegramTars:
         for a one-off that isn't answered in a chat here (asked aloud, and taken here because the assistant isn't
         running; or for someone without a chat): run with a brain of its own, and its answer handed over to be said
         aloud (skills.Clock.hand_over). A one-off's try that didn't happen isn't posted: it's tried again, or given
-        up and whoever asked is told (skills.Clock.settle)."""
+        up and whoever asked is told (skills.Clock.settle). What the turn sent, and asked of the reminders, is made
+        once its reply is kept, posted or handed over, as an ordinary chat turn's is once it's posted (_skill_did);
+        never for one skipped, one that didn't happen, or one whose post failed."""
         from .skills import Answers, happened, on_its_own
 
         skill, clock = due.skill, self._skill_clock
@@ -732,6 +735,7 @@ class TelegramTars:
             if skill.once is not None:
                 clock.settle(due, house, e)
             return
+        sent, changes = list(brain.sent), list(brain.changes)  # the brain forgets them with the turn
         if skill.once is not None and happened(house)[0]:
             written.drop()
             print(f"(skill {skill.name}: not posted, since it didn't happen: {reply!r})", flush=True)
@@ -744,6 +748,7 @@ class TelegramTars:
             return
         if chat is None:
             clock.hand_over(due, reply)
+            self._skill_did(None, request.speaker, None, None, sent, changes)
             return
         try:
             self._send(chat.chat_id, reply, tries=SEND_TRIES)
@@ -752,11 +757,43 @@ class TelegramTars:
             print(f"(skill {skill.name}: couldn't post it: {e})", flush=True)
             if skill.once is not None:  # done all the same: posted with the reminders, once Telegram takes it
                 clock.hand_over(due, reply)
+                self._skill_did(chat, chat.person, None, None, sent, changes, post=False)
             return
         clock.record(due, reply)
         now = self._clock()
+        turn = None
         if (conversation := self._current_conversation(chat, now)) is not None:
-            self._log(self._conversations.add_tars_turn, conversation, reply, ts=now)
+            turn = self._log(self._conversations.add_tars_turn, conversation, reply, ts=now)
+        self._skill_did(chat, chat.person, conversation, turn, sent, changes)
+
+    def _skill_did(
+        self,
+        chat: Chat | None,
+        person: str | None,
+        conversation: int | None,
+        turn: int | None,
+        sent: list[SentItem],
+        changes: list[Change],
+        post: bool = True,
+    ) -> None:
+        """What a skill's own turn sent, and asked of the reminders, once its reply is kept, as _answer makes a chat
+        turn's: in `chat`, posted there now (`post`) or, its reply handed over, by deliver() once Telegram takes it;
+        with no chat (a one-off asked aloud, run here), kept for the TARS page and `person`'s chat, and made from
+        `person` (None: the household's), as by voice."""
+        for item in sent:
+            delivered = self._post_item(chat.chat_id, item) if chat and post else None
+            if self._conversations:  # kept even without a conversation, like those sent by voice
+                item = item if person else dataclasses.replace(item, scope=HOUSEHOLD)
+                self._log(self._conversations.add_item, conversation, turn, item, person, delivered=delivered)
+        for change in changes:
+            if chat:
+                self._apply(change, chat, conversation)
+            elif self._tools:
+                try:
+                    self._tools.apply(change, person)
+                    print(f"(reminders: {change.action} done)")
+                except Exception as e:  # noqa: BLE001 - checked when the model asked; only a broken table gets here
+                    print(f"(couldn't {change.action} the reminder: {e!r})")
 
     # For what posts to a chat besides its conversation (telegram_errands.py)
 

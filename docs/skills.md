@@ -43,7 +43,10 @@ the model, which carries them out with the tools it already has.
   asked. Aloud, the voice's TARS says the reply after a chime and listens for an answer without the wake word (even
   while muted, when it asks something: unmuted just for the answer, a few seconds of it, then muted again). In a chat, the Telegram service posts it, and
   the answer follows on in that chat. When there's nothing to do (the news is already on), it says nothing. A
-  person's own skill runs as theirs: their feeds, and what they like.
+  person's own skill runs as theirs: their feeds, and what they like. What its turn sets (a timer, a reminder) or
+  sends (a note, a link) is done as for any turn, once its line is said or posted, where it's said or posted; a
+  one-off done whose answer is handed on, to be told later, does it too. One skipped, one that didn't happen, or one
+  nobody heard (the voice down, the post failed) does none of it, and isn't kept in the conversation.
 - **On something happening**: a skill can run when someone comes home or goes out (by name, anyone, or everyone:
   the first one home, the last one out), or when a device changes: its status comes to say a word it didn't
   ("unlocked", "open", "off"; as a word, so "unlocked" isn't "locked"), or a reading in it crosses a limit ("co2"
