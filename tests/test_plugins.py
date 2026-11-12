@@ -178,7 +178,7 @@ def test_the_grant_is_checked_in_the_settings():
 
     bad = HomeConfig(plugins={"garden": {"module": "garden_plugin", "grant": "home_assistant"}})
     assert any("grant is a list" in p for p in _home_problems(bad))
-    ok = HomeConfig(plugins={"garden": {"module": "garden_plugin", "grant": ["home_assistant"]}})
+    ok = HomeConfig(plugins={"garden": {"module": "garden_plugin", "grant": ["home_assistant", "unlock", "ha_admin"]}})
     assert not any("grant" in p for p in _home_problems(ok))
 
 
@@ -218,22 +218,34 @@ def test_the_brain_calls_a_plugins_tool_and_reads_back_what_it_said(garden):
 
 
 class FakeHouse(FakeHass):
-    """Home Assistant with a Nuki (its lock and unlatch button on one device), a script and an automation that
-    unlock it, a garage door, blinds and a light."""
+    """Home Assistant with a Nuki (its lock and unlatch button on one device), scripts and automations that unlock it
+    (some through another), a group and a scene made on the spot with the lock in them, a garage door, a gate, blinds
+    and a light."""
 
     STATES: ClassVar[dict] = {
         "lock.front_door": {},
         "button.front_door_unlatch": {},
         "script.leave_home": {},
+        "script.bedtime": {},  # runs leave_home
+        "script.lights_for": {},  # turns on whatever it's given: a template
+        "script.lights_out": {},
         "automation.welcome": {"id": "welcome"},
+        "automation.chain": {"id": "chain"},  # triggers welcome
         "scene.evening": {"id": "evening"},
+        "scene.made": {"entity_id": ["light.kitchen"]},  # by scene.create: no setup to read
+        "group.doors": {"entity_id": ["lock.front_door", "light.kitchen"]},
         "cover.garage": {"device_class": "garage"},
+        "cover.front_gate": {"device_class": "gate"},
         "cover.blinds": {"device_class": "blind"},
         "light.kitchen": {},
     }
     CONFIGS: ClassVar[dict] = {
         ("script", "leave_home"): {"sequence": [{"action": "lock.unlock", "target": {"entity_id": "lock.front_door"}}]},
+        ("script", "bedtime"): {"sequence": [{"action": "light.turn_off"}, {"action": "script.leave_home"}]},
+        ("script", "lights_for"): {"sequence": [{"action": "light.turn_on", "target": {"entity_id": "{{ which }}"}}]},
+        ("script", "lights_out"): {"sequence": [{"action": "light.turn_off", "target": {"entity_id": "all"}}]},
         ("automation", "welcome"): {"actions": [{"action": "button.press", "entity_id": "button.front_door_unlatch"}]},
+        ("automation", "chain"): {"actions": [{"action": "automation.trigger", "entity_id": "automation.welcome"}]},
         ("scene", "evening"): {"entities": {"light.kitchen": "on"}},
     }
 
@@ -245,9 +257,13 @@ class FakeHouse(FakeHass):
 
     def entity_entries(self):
         return [{"entity_id": "lock.front_door", "device_id": "nuki"}, {"entity_id": "button.front_door_unlatch",
-                "device_id": "nuki"}]  # fmt: skip
+                "device_id": "nuki"}, {"entity_id": "light.kitchen", "device_id": "hue"}]  # fmt: skip
 
     def config_of(self, kind, key):
+        from voice_assistant.home import HomeError
+
+        if (kind, key) not in self.CONFIGS:
+            raise HomeError(f"no {kind} {key}")
         return self.CONFIGS[(kind, key)]
 
     def remove_entry(self, entry_id):
@@ -288,20 +304,88 @@ def test_the_service_checked_is_the_one_sent(tmp_path):
         ("button.press", {"entity_id": "light.kitchen, button.front_door_unlatch"}),
         ("cover.open_cover", {"entity_id": "cover.garage"}),
         ("cover.toggle", {"target": {"entity_id": ["cover.garage"]}}),
-        ("homeassistant.turn_off", {"entity_id": "lock.front_door"}),
-        ("homeassistant.restart", {}),
-        ("hassio.addon_stop", {}),
         ("alarm_control_panel.alarm_disarm", {"entity_id": "alarm_control_panel.home"}),
         ("light.turn_on", {"area_id": "hall"}),  # aimed wider than the entities it names
-        ("light.turn_on", {"entity_id": "all"}),
+        ("button.press", {"entity_id": "all"}),  # every button: the unlatch one too
     ],
 )
 def test_every_way_home_assistant_opens_the_house_needs_the_unlock_grant(tmp_path, service, data):
     g, hass = guarded(tmp_path)
-    with pytest.raises(Refused):
+    with pytest.raises(Refused, match="needs the unlock grant"):
         g.call_service(service, data)
     assert hass.called == []
     opened, hass = guarded(tmp_path, ("home_assistant", "unlock"))
+    opened.call_service(service, data)
+    assert hass.called == [service]
+
+
+@pytest.mark.parametrize("granted", [(), ("unlock",), ("ha_admin",), ("unlock", "ha_admin")])
+@pytest.mark.parametrize(
+    ("service", "data", "needs"),
+    [
+        ("lock.unlock", {"entity_id": "lock.front_door"}, {"unlock"}),
+        ("homeassistant.restart", {}, {"ha_admin"}),
+        ("hassio.addon_stop", {"addon": "core_mosquitto"}, {"ha_admin"}),
+        ("light.turn_on", {"entity_id": "light.kitchen"}, set()),
+        # Both: it administers Home Assistant, and on the lock (or as code) it could open the door.
+        ("homeassistant.turn_off", {"entity_id": "lock.front_door"}, {"unlock", "ha_admin"}),
+        ("shell_command.open_gate", {}, {"unlock", "ha_admin"}),
+    ],
+)
+def test_each_grant_is_checked_on_its_own(tmp_path, granted, service, data, needs):
+    g, hass = guarded(tmp_path, ("home_assistant", *granted))
+    if needs <= set(granted):
+        g.call_service(service, data)
+        assert hass.called == [service]
+        return
+    missing = "ha_admin" if "ha_admin" in needs - set(granted) else "unlock"
+    with pytest.raises(Refused, match=f"needs the {missing} grant"):
+        g.call_service(service, data)
+    assert hass.called == []
+
+
+@pytest.mark.parametrize(
+    ("service", "data"),
+    [
+        # A scene applied or made on the spot, the lock in its entities, as a state or as a dict with one.
+        ("scene.apply", {"entities": {"lock.front_door": "unlocked"}}),
+        ("scene.apply", {"entities": {"lock.front_door": {"state": "unlocked"}}}),
+        ("scene.apply", {"entities": {"group.doors": "unlocked"}}),  # a group with the lock in it
+        ("scene.apply", {"entities": {"cover.garage": "open"}}),
+        ("scene.create", {"scene_id": "made", "entities": {"LOCK.FRONT_DOOR": "unlocked"}}),
+        ("scene.create", {"scene_id": "made", "snapshot_entities": ["lock.front_door"]}),
+        ("scene.turn_on", {"entity_id": "scene.made"}),  # made on the spot: its setup can't be read
+        # A script or automation that runs another that unlocks; a lock handed to one; a template for a target.
+        ("script.bedtime", {}),
+        ("script.turn_on", {"entity_id": "script.bedtime"}),
+        ("automation.trigger", {"entity_id": "automation.chain"}),
+        ("script.turn_on", {"entity_id": "script.lights_out", "variables": {"door": "lock.front_door"}}),
+        ("script.turn_on", {"entity_id": "script.lights_for", "variables": {"which": "light.kitchen"}}),
+        ("script.turn_on", {"entity_id": "script.lights_out", "variables": {"target": {"area_id": "hall"}}}),
+        ("homeassistant.turn_on", {"entity_id": "script.leave_home"}),
+        ("homeassistant.turn_on", {"entity_id": "group.doors"}),
+        ("light.turn_on", {"entity_id": "{{ 'lock.front_door' }}"}),
+        # A device, a room, a floor or a label, which could take the lock in without naming it.
+        ("button.press", {"target": {"device_id": "nuki"}}),
+        ("button.press", {"device_id": ["hue", "nuki"]}),
+        ("light.turn_on", {"target": {"area_id": "hall"}}),
+        ("light.turn_on", {"floor_id": "ground"}),
+        ("light.turn_on", {"target": {"label_id": "doors"}}),
+        ("cover.open_cover", {"entity_id": "all"}),
+        ("script.turn_on", {"entity_id": "all"}),
+        ("cover.open_cover", {"entity_id": "cover.front_gate"}),
+        # What can't be seen into: a request to another server, a command sent straight to a device.
+        ("rest_command.open_sesame", {}),
+        ("mqtt.publish", {"topic": "zigbee2mqtt/front_door/set", "payload": '{"state": "UNLOCK"}'}),
+        ("zwave_js.set_value", {"command_class": 98, "property": "targetMode", "value": 0}),
+    ],
+)
+def test_whatever_could_reach_the_lock_however_its_nested_needs_the_unlock_grant(tmp_path, service, data):
+    g, hass = guarded(tmp_path, ("home_assistant", "ha_admin"))
+    with pytest.raises(Refused, match="needs the unlock grant"):
+        g.call_service(service, data)
+    assert hass.called == []
+    opened, hass = guarded(tmp_path, ("home_assistant", "ha_admin", "unlock"))
     opened.call_service(service, data)
     assert hass.called == [service]
 
@@ -310,9 +394,14 @@ def test_every_way_home_assistant_opens_the_house_needs_the_unlock_grant(tmp_pat
     ("service", "data"),
     [
         ("light.turn_on", {"entity_id": "light.kitchen"}),
+        ("light.turn_on", {"entity_id": "all"}),  # every light: none opens a door
+        ("light.turn_on", {"target": {"device_id": "hue"}}),  # a device with nothing that opens a door
         ("scene.turn_on", {"entity_id": "scene.evening"}),
+        ("scene.apply", {"entities": {"light.kitchen": {"state": "on", "brightness": 80}}}),
+        ("script.turn_on", {"entity_id": "script.lights_out"}),
         ("cover.open_cover", {"entity_id": "cover.blinds"}),
         ("cover.close_cover", {"entity_id": "cover.garage"}),
+        ("cover.close_cover", {"entity_id": "all"}),
         ("lock.lock", {"entity_id": "lock.front_door"}),
     ],
 )
@@ -320,6 +409,42 @@ def test_what_doesnt_open_the_house_goes_through(tmp_path, service, data):
     g, hass = guarded(tmp_path)
     g.call_service(service, data)
     assert hass.called == [service]
+
+
+def test_what_cant_be_read_counts_as_opening_the_door(tmp_path, monkeypatch):
+    from voice_assistant.ha_tool import MAX_NESTED
+    from voice_assistant.home import HomeError
+
+    # Scripts s0 to s5, each running the next, the last only a light: from s0 that's one more than is read, from s1 not.
+    deep = {f"script.s{i}": {} for i in range(MAX_NESTED + 1)} | {"script.loop": {}}
+    monkeypatch.setattr(FakeHouse, "STATES", FakeHouse.STATES | deep)
+    chain = {("script", f"s{i}"): {"sequence": [{"action": f"script.s{i + 1}"}]} for i in range(MAX_NESTED)}
+    chain[("script", f"s{MAX_NESTED}")] = {"sequence": [{"action": "light.turn_on", "entity_id": "light.kitchen"}]}
+    loop = {"sequence": [{"action": "script.loop"}, {"action": "light.turn_on", "entity_id": "light.kitchen"}]}
+    monkeypatch.setattr(FakeHouse, "CONFIGS", FakeHouse.CONFIGS | chain | {("script", "loop"): loop})
+    g, hass = guarded(tmp_path)
+    with pytest.raises(Refused, match="it can unlock: script.s0"):  # nested deeper than it's read
+        g.call_service("script.s0", {})
+    g.call_service("script.s1", {})
+    g.call_service("script.loop", {})  # one that runs itself is read once
+    assert hass.called == ["script.s1", "script.loop"]
+
+    def unreadable(self):
+        raise HomeError("no registry")
+
+    monkeypatch.setattr(FakeHouse, "entity_entries", unreadable)
+    g, hass = guarded(tmp_path)
+    with pytest.raises(Refused, match="which devices open a door can't be read"):
+        g.call_service("light.turn_on", {"target": {"device_id": "hue"}})
+    g.call_service("light.turn_on", {"entity_id": "light.kitchen"})
+    assert hass.called == ["light.turn_on"]
+
+
+def test_a_calls_data_is_a_dict(tmp_path):
+    g, hass = guarded(tmp_path, ("home_assistant", "unlock", "ha_admin"))
+    with pytest.raises(Refused, match="its data is a dict"):
+        g.call_service("light.turn_on", ["lock.front_door"])
+    assert hass.called == []
 
 
 def test_a_plugin_never_holds_home_assistants_client(tmp_path):

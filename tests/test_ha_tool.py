@@ -261,6 +261,66 @@ def test_a_door_opened_by_a_button_on_the_lock_or_a_script_pressing_one_keeps_th
     assert ask(ha, "call", stacey, service="light.turn_on", entity_ids=["light.hall"]).startswith("done")
 
 
+@pytest.mark.parametrize(
+    ("service", "ids", "data"),
+    [
+        # A scene applied or made on the spot, the lock in its entities: as a state, or a dict with one.
+        ("scene.apply", None, {"entities": {"lock.front_door": "unlocked"}}),
+        ("scene.apply", None, {"entities": {"lock.front_door": {"state": "unlocked"}}}),
+        ("scene.apply", None, {"entities": {"group.doors": "unlocked"}}),  # a group with the lock in it
+        ("scene.apply", None, {"entities": {"button.front_door_unlatch": "pressed"}}),
+        ("scene.create", None, {"scene_id": "in", "entities": {"lock.front_door": {"state": "unlocked"}}}),
+        ("scene.create", None, {"scene_id": "in", "snapshot_entities": ["lock.front_door"]}),
+        # ...then turned on: one with the lock among its entities, one with no setup to read.
+        ("scene.turn_on", ["scene.made"], None),
+        ("scene.turn_on", ["scene.on_the_spot"], None),
+        # A script that runs one that opens the door; a lock or its device handed to one; a template for its target.
+        ("script.turn_on", ["script.bedtime"], None),
+        ("automation.trigger", ["automation.chain"], None),
+        ("script.turn_on", ["script.movie"], {"variables": {"door": "lock.front_door"}}),
+        ("script.turn_on", ["script.movie"], {"variables": {"device_id": "nuki"}}),
+        ("script.turn_on", ["script.movie"], {"variables": {"target": {"area_id": "hall"}}}),
+        ("script.lights_for", None, {"which": "light.hall"}),
+        ("button.press", ["all"], None),  # every button: the unlatch one too
+        # What can't be seen into: a request to another server, a command sent straight to a device.
+        ("rest_command.open_sesame", None, None),
+        ("mqtt.publish", None, {"topic": "zigbee2mqtt/front_door/set", "payload": '{"state": "UNLOCK"}'}),
+    ],
+)
+def test_a_door_reached_through_a_calls_data_keeps_the_unlock_rules(ha, service, ids, data):
+    fake = ha.fake
+    fake.states |= {
+        "group.doors": {"state": "locked", "attributes": {"entity_id": ["lock.front_door", "light.hall"]}},
+        "scene.made": {"state": "unknown", "attributes": {"entity_id": ["light.hall", "lock.front_door"]}},
+        "scene.on_the_spot": {"state": "unknown", "attributes": {}},
+        "script.bedtime": {"state": "off", "attributes": {}},
+        "script.lights_for": {"state": "off", "attributes": {}},
+        "automation.chain": {"state": "on", "attributes": {"id": "chain"}},
+    }
+    fake.configs |= {
+        "script/bedtime": {"sequence": [{"action": "light.turn_off"}, {"action": "script.let_in"}]},
+        "script/lights_for": {"sequence": [{"action": "light.turn_on", "target": {"entity_id": "{{ which }}"}}]},
+        "automation/chain": {"actions": [{"action": "script.turn_on", "target": {"entity_id": "script.bedtime"}}]},
+    }
+    stacey = Request(by_chat=True, speaker="Stacey", heard="set the scene")
+    alon = Request(by_chat=True, speaker="Alon", heard="unlock the door please")
+    asked = {"service": service, "entity_ids": ids, "data": json.dumps(data) if data else None}
+    assert ask(ha, "call", stacey, **asked).startswith("refused") and fake.calls == []
+    assert not ask(ha, "call", alon, **asked).startswith(("refused", "error")) and len(fake.calls) == 1
+
+
+def test_a_call_whose_data_reaches_no_door_goes_ahead(ha):
+    stacey = Request(by_chat=True, speaker="Stacey", heard="evening, please")
+    for service, ids, data in [
+        ("scene.apply", None, {"entities": {"light.hall": {"state": "on", "brightness": 80}}}),
+        ("light.turn_off", ["all"], None),  # every light: none opens a door
+        ("script.turn_on", ["script.movie"], {"variables": {"device_id": "hue"}}),
+    ]:
+        said = ask(ha, "call", stacey, service=service, entity_ids=ids, data=json.dumps(data) if data else None)
+        assert said.startswith(("done", "sent")), said
+    assert len(ha.fake.calls) == 3
+
+
 def test_only_maintainers_may_change_home_assistants_setup():
     fake = FakeHA()
     hass = HomeAssistant("http://ha.local:8123", "token", fake.transport, command=lambda m: {})

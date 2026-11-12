@@ -10,9 +10,10 @@ Provides(kinds, tools) to add tools of its own as well.
 
 `needs` is what it may use: a key in .env by its name, or one of NEEDS. [home.plugins.<name>] grant says what it's
 given. A plugin that needs anything not granted doesn't load. Its context has only what was granted: other keys aren't
-there, Home Assistant only if granted, and nothing that opens the house (in Home Assistant, or another device's
-unlock) unless "unlock" is granted by name. Without grant, a plugin loads as it did before grants, with everything,
-and --check warns until grant is set.
+there, Home Assistant only if granted, nothing that could open the house (in Home Assistant, or another device's
+unlock) unless "unlock" is granted by name, and nothing that administers Home Assistant unless "ha_admin" is. Each
+grant is checked on its own, so neither brings the other. Without grant, a plugin loads as it did before grants, with
+everything, and --check warns until grant is set.
 
 Grants hold at the interface TARS hands a plugin; a plugin is still Python running in TARS's process (and keeps root,
 so it can read the project's files), so it's code someone reviewed, not a sandbox.
@@ -24,10 +25,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-# What a plugin can be granted, besides keys in .env (UPPER_CASE names).
+# What a plugin can be granted, besides keys in .env (UPPER_CASE names). Each is checked on its own: one never
+# brings another with it.
 NEEDS = {
-    "home_assistant": "read Home Assistant and call its services (never unlock, open or disarm)",
-    "unlock": "Home Assistant's unlock, open and disarm services, and a lock's unlock",
+    "home_assistant": "read Home Assistant and call its services (never what could open the house, or administers it)",
+    "unlock": "whatever in Home Assistant could open the house (and what can't be told), and a lock's unlock",
+    "ha_admin": "administer Home Assistant: restart, update, back up, users, recorder (running code needs unlock too)",
     "announce": "say something aloud on its own",
     "tell": "message TARS's maintainers",
     "tv_agent": "the Android TV agent",
@@ -43,9 +46,6 @@ SERVICE = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+")
 # Besides what ha_tool.Doors finds: what else opens the house, only with "unlock" granted.
 DISARM = "alarm_control_panel.alarm_disarm"
 OPEN_COVERS = ("garage", "door", "gate")  # a cover with one of these device classes lets someone in
-CLOSING = ("close_cover", "close_cover_tilt", "stop_cover", "stop_cover_tilt")
-# What in a call's data aims it at more than the entities it names.
-WIDE_TARGETS = ("device_id", "area_id", "floor_id", "label_id")
 # Home Assistant's methods a plugin may use as they are: reading it. call and call_service are guarded.
 HASS_READS = ("ping", "state", "states", "areas", "history", "logbook", "services", "entries", "discovered",
               "devices", "entity_entries", "area_list", "config_of", "snapshot", "statistics", "link")  # fmt: skip
@@ -109,36 +109,31 @@ class Refused(PermissionError):
 
 
 class GuardedHass:
-    """Home Assistant as a plugin granted home_assistant sees it: reading it (HASS_READS), and calling its services,
-    but none that opens the house or administers Home Assistant unless it was granted unlock. The client itself isn't
-    handed over: each method here only relays to it."""
+    """Home Assistant as a plugin granted home_assistant sees it: reading it (HASS_READS), and calling its services.
+    Each grant is checked on its own: a service that administers Home Assistant (ha_tool.ADMIN) needs ha_admin, and
+    one that could open the house needs unlock, whatever else was granted. The client itself isn't handed over: each
+    method here only relays to it."""
 
-    def __init__(self, hass, unlock: bool):
+    def __init__(self, hass, unlock: bool, admin: bool = False):
         from .ha_tool import ADMIN, Doors
 
-        doors = Doors(hass)
+        doors = Doors(hass, covers=OPEN_COVERS)
 
         def may(service: str, data: dict) -> str:
             checked = service.strip().lower() if isinstance(service, str) else ""
             if not SERVICE.fullmatch(checked):
                 raise Refused(f"{service!r} isn't a service's name, as light.turn_on")
+            if not isinstance(data, dict):
+                raise Refused(f"{checked}: its data is a dict, as {{'entity_id': 'light.kitchen'}}")
+            domain, _, name = checked.partition(".")
+            if domain in ADMIN and not admin:
+                raise Refused(f"{checked} administers Home Assistant: it needs the ha_admin grant")
             if unlock:
                 return checked
-            domain, _, name = checked.partition(".")
-            if domain in ADMIN:
-                raise Refused(f"{checked} administers Home Assistant: it needs the unlock grant")
             if checked == DISARM:
                 raise Refused(f"{checked} needs the unlock grant")
-            ids = _aimed_at(data)
-            if ids is None:
-                raise Refused(f"{checked}: without the unlock grant, it names its entities in entity_id, never wider")
-            if why := doors.opening(domain, name, ids):
+            if why := doors.opening(domain, name, data):
                 raise Refused(f"{checked} needs the unlock grant ({why})")
-            if domain == "cover" and name not in CLOSING:
-                for entity in ids:
-                    kind = (hass.state(entity).get("attributes") or {}).get("device_class")
-                    if kind in OPEN_COVERS:
-                        raise Refused(f"{checked} needs the unlock grant ({entity} is a {kind})")
             return checked
 
         def guarded(method):
@@ -152,19 +147,6 @@ class GuardedHass:
 
 def _relay(method):
     return lambda *args, **kwargs: method(*args, **kwargs)
-
-
-def _aimed_at(data) -> list[str] | None:
-    """The entities a service call names in its data, or None if it's aimed at a device, a room, a label or all."""
-    data = data if isinstance(data, dict) else {}
-    target = data.get("target") if isinstance(data.get("target"), dict) else {}
-    if any(k in data or k in target for k in WIDE_TARGETS):
-        return None
-    ids = []
-    for named in (data.get("entity_id"), target.get("entity_id")):
-        ids += named.split(",") if isinstance(named, str) else list(named) if isinstance(named, list | tuple) else []
-    ids = [str(e).strip().lower() for e in ids]
-    return None if "all" in ids else ids
 
 
 class DeviceView:
@@ -232,7 +214,7 @@ def scoped(context, needs: set[str], plugin: str = ""):
     return dataclasses.replace(
         context,
         secret=secret,
-        hass=GuardedHass(hass, unlock) if hass is not None else None,
+        hass=GuardedHass(hass, unlock, "ha_admin" in needs) if hass is not None else None,
         announce=context.announce if "announce" in needs else None,
         tell=context.tell if "tell" in needs else None,
         tv_agent=context.tv_agent if "tv_agent" in needs else None,

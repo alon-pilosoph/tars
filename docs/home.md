@@ -287,9 +287,10 @@ def setup(settings: dict, context: Context) -> dict:
 ```
 
 <a id="plugins"></a>**Declared and granted.** `needs` lists what the plugin uses: a key in `.env` by its name, or
-`home_assistant` (reading it and calling its services), `unlock` (whatever opens the house, never otherwise),
-`announce`, `tell`, `tv_agent` and `devices` (the house's other devices). `grant` under its `[home.plugins.<name>]`
-says what it gets, each a key's name in `.env` or one of those (`config.toml` is checked for it):
+`home_assistant` (reading it and calling its services), `unlock` (whatever could open the house, never otherwise),
+`ha_admin` (administering Home Assistant), `announce`, `tell`, `tv_agent` and `devices` (the house's other devices).
+`grant` under its `[home.plugins.<name>]` says what it gets, each a key's name in `.env` or one of those
+(`config.toml` is checked for it):
 
 - A plugin that needs anything its grant doesn't give it **doesn't load**: its devices are left out, and `--check`
   says what's missing. One that declares nothing can't be granted at all.
@@ -297,11 +298,16 @@ says what it gets, each a key's name in `.env` or one of those (`config.toml` is
   `announce`, `tell` and `tv_agent` are `None` unless granted, and `devices` is empty unless granted. `maintainers` is
   a copy it can't change.
 - **Home Assistant**, granted, is its reading methods and `call`/`call_service`, never the client itself or its setup
-  (adding or removing integrations). Without `unlock`, a call is refused if it could open the house as the
-  `home_assistant` tool sees it: a lock's service other than `lock`, an entity on a lock's own device or named for
-  unlocking (a Nuki's unlatch button), a script, automation or scene that would unlock, opening a garage, door or gate
-  cover, or disarming an alarm. So is one that administers Home Assistant, one aimed at a device, a room or a label
-  rather than its entities, and a service that isn't a plain `domain.service`.
+  (adding or removing integrations). A service is only ever a plain `domain.service` and its data a dict. Each grant
+  is checked on its own, and neither brings the other:
+  - **Without `unlock`**, a call is refused if it [could open a door](#what-opens-a-door) as the `home_assistant`
+    tool reads it, at any depth of its data, including what can't be seen into (a room, a floor or a label, a
+    template, a setup that can't be read, `rest_command`, `mqtt` and the rest of `OPAQUE`). A garage, door or gate
+    cover counts as a door too, opened by anything but closing or stopping it, and so does disarming an alarm.
+  - **Without `ha_admin`**, a service that administers Home Assistant (`ADMIN` in `ha_tool.py`: restarting or
+    updating it, its add-ons, backups, users and recorder, running code) is refused, whatever else was granted.
+  - So `unlock` alone opens the door but never restarts Home Assistant, `ha_admin` alone restarts it but never
+    calls `homeassistant.turn_on` on the lock, and running code there (`shell_command`, `python_script`) needs both.
 - **The other devices**, granted, are read-only views: their status, what they are, their actions. Unlock and open
   need `unlock` too, and then go only as the home tool's rules allow for the request they answer. The plugin's own
   devices are its own, as they are.
@@ -415,12 +421,39 @@ which checks a change took and knows each one's quirks; this is for the rest, an
 
 The same promises hold, in code: a change waits for the turn to go ahead; a reply that searched the web changes
 nothing, and doesn't read the house's past either (history, statistics and the logbook say who was home and when, and a
-page could ask for that); and unlocking follows [the same rules](#unlocking), whether it's the lock's own service,
-another service on the lock, a button on the lock's own device (a Nuki's "unlatch" and "Lock 'n' Go" open the door
-without its lock entity) or anything else named for unlocking or unlatching, or a script, automation or scene that
-names any of these (one whose setup can't be read counts as if it did). A call's data can't aim it at a whole device,
-room or label, which could take the lock in without naming it. It won't administer Home Assistant itself: restarting or updating it, its integrations, users,
-backups and recorder, or running code (`ADMIN` in `ha_tool.py`); that's for a person, in Home Assistant.
+page could ask for that); and a call that [could open a door](#what-opens-a-door) is made only as
+[unlocking](#unlocking) allows. A call's own data can't aim it at a whole device, room or label, which could take the
+lock in without naming it. It won't administer Home Assistant itself: restarting or updating it, its integrations,
+users, backups and recorder, or running code (`ADMIN` in `ha_tool.py`); that's for a person, in Home Assistant.
+
+<a id="what-opens-a-door"></a>**What could open a door** (`Doors` in `ha_tool.py`) is read from the service and
+everything in its data, at any depth: `entity_id`, `target`, a key (`scene.apply` and `scene.create` take
+`entities` as `{"lock.front_door": "unlocked"}` or `{"lock.front_door": {"state": "unlocked"}}`),
+`snapshot_entities`, a script's `variables`. A call could open a door if it is or names:
+
+- a lock's service other than `lock` (locking is never held back);
+- a door entity: a lock, anything on a lock's own device (a Nuki's "unlatch" and "Lock 'n' Go" buttons open the door
+  without its lock entity), anything named for unlocking or unlatching, or a group or a scene with one of those among
+  its entities (its `entity_id` attribute), as a scene made on the spot by `scene.create` has;
+- a device (`device_id`) with a door entity on it;
+- a script, automation or scene (named, or a script run by its own service, `script.<name>`) whose setup names any
+  of these, or runs one that does, read up to five deep;
+- `entity_id: all` for a domain with a door entity in it: every button includes the unlatch one, every light doesn't.
+
+**What can't be seen into counts as if it would open one**: a room, a floor or a label (`area_id`, `floor_id`,
+`label_id`), whose entities aren't read; a template where the target or the service is; a script, automation or
+scene whose setup can't be read (one made by `scene.create` has none) or is nested deeper than five; `entity_id: all`
+for scripts, automations or scenes; a device when the entity registry can't be read; and a service that runs what
+TARS can't read (`OPAQUE` in `ha_tool.py`): code (`shell_command`, `python_script`, `pyscript`, `command_line`),
+`rest_command`, an add-on's input (`hassio.addon_stdin`), and the integrations that send a device a raw command
+(`mqtt`, `zwave_js`, `zha`, `deconz`, `esphome`, `knx`, `modbus`). Each of these is made only for a voice or chat
+that may unlock; for a plugin, only with the `unlock` grant ([plugins](#plugins)).
+
+**Not caught**, because nothing in the call names them: an automation that a change sets off by itself (an
+`input_boolean` turned on that an automation watches, to unlock), a template entity or helper whose own action unlocks
+(its setup is YAML Home Assistant doesn't show), anything outside Home Assistant listening for a change (Node-RED),
+and an integration's own service that isn't in `OPAQUE`. Keep those out of reach, or name them for unlocking (an
+entity named so counts as a door).
 
 ## Setting it up
 
