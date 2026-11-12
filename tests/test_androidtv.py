@@ -466,6 +466,17 @@ def test_a_reply_to_an_announcement_is_heard_without_the_wake_word(speaker):
     assert brain.asked == ["[Follow-up, no wake word] the first one"]
 
 
+def test_an_answer_to_an_announcements_question_that_came_out_as_no_words_is_asked_for_again(speaker):
+    assistant, brain = make_assistant(speaker, [speech(), speech(), None], ["", "twelve"], replies=["On it."])
+    said = []
+    assistant.say = lambda text, **kw: said.append(text) or True
+    assistant.announcements = Announcements()
+    assistant.announcements.add("Which channel, 11 or 12?")
+    assistant.say_announcements(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON]
+    assert brain.asked == ["[Follow-up, no wake word] twelve"]
+
+
 def test_news_that_asks_nothing_doesnt_listen_after_it(speaker):
     # "Channel 12 is on.", then the news itself saying "eight hours." was once taken for a timer.
     assistant, brain = make_assistant(speaker, [speech(), None], ["eight hours."], replies=["Timer set."])

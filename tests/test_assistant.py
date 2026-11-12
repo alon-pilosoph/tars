@@ -98,6 +98,44 @@ def test_an_answer_to_its_question_that_came_out_as_no_words_is_asked_for_again_
     assert brain.asked == ["turn the news on", f"{FOLLOW_UP_TAG} twelve"]
 
 
+def test_each_question_that_gets_no_words_back_is_asked_again(speaker):
+    assistant, _ = make_assistant(
+        speaker,
+        [b"q", b"a", b"b", b"c", None],
+        ["turn the news on", "", "twelve", ""],
+        replies=["Which channel, 11 or 12?", "The kitchen or the bedroom TV?"],
+    )
+    said = []
+    assistant.say = lambda text, **kw: said.append(text) or True
+    assistant.converse(follow_up_s=4.0)
+    assert said == [assistant_module.PARDON, assistant_module.PARDON]
+
+
+def test_asking_again_is_kept_in_the_conversation(speaker, tmp_path):
+    assistant, convos = logged_assistant(
+        speaker,
+        tmp_path,
+        [b"q", b"a", b"b", None],
+        ["turn the news on", "", "twelve"],
+        replies=["Which channel, 11 or 12?", "On it."],
+    )
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    assistant.converse(follow_up_s=4.0)
+    assert [t["text"] for t in turns_of(convos)] == [
+        "turn the news on",
+        "Which channel, 11 or 12?",
+        assistant_module.PARDON,
+        "twelve",
+        "On it.",
+    ]
+
+
+def test_asking_again_is_made_ahead(speaker):
+    assistant, _ = make_assistant(speaker, [], [])
+    assistant.prepare_phrases()
+    assert assistant.phrases.made_ahead(assistant_module.PARDON)
+
+
 def test_no_words_after_an_answer_that_asked_nothing_ends_the_conversation_quietly(speaker):
     assistant, brain = make_assistant(speaker, [b"q", b"a", b"b"], ["lights on", "", "x"], replies=["Done."])
     said = []
@@ -140,6 +178,7 @@ def test_first_request_is_never_treated_as_overheard(speaker, tmp_path):
     assistant.converse(follow_up_s=4.0)
     assert assistant.brain.forgotten == 1  # the tag never stays in the history
     assert turns_of(convos)[-1]["text"] == assistant_module.PARDON
+    assert assistant.brain.remembered == [assistant_module.PARDON]  # what's said next answers it, not skipped
     assert assistant.recorder.timeouts == [None, 4.0]  # and the answer is listened for
 
 
