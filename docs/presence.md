@@ -92,6 +92,8 @@ They lean towards "still home", never towards a false "gone":
   again once every router answers.
 - **Before the routers have answered, nobody is known**, and someone already home when TARS starts hasn't "come
   home". A message waits for a real arrival.
+- **With a [door sensor](#the-door-sensor), someone leaving by the door is out in a minute and a half**: a phone
+  that was there as the door was opened from inside, and drops off just after. Nobody else is hurried out.
 - **What the assistant hasn't written for five minutes isn't known now**, so a Telegram chat or the Status page never
   says someone's home from a record that stopped being kept.
 
@@ -184,10 +186,23 @@ shuts. TARS follows it in Home Assistant as it changes (`hass.follow`, over the 
   until the person next speaks to TARS, even ones their phone's coming home would have said.
 - **Asks the routers at once** each time the door moves, then every 10 seconds for three minutes, so whoever's phone
   comes or goes with it is seen in seconds, not at the next round.
-- **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it: a phone
-  that was on the Wi-Fi up to two minutes before, and that every router then answers without for a minute and a half,
-  all within five minutes of the door, has left by it, out from when it was last seen. Without the door, a phone
-  dropping off still waits `away_after_min`: it may be asleep on a table.
+- **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it. Someone
+  has left by it when all of these hold (`Tracker._left_by_door`):
+  - a router last saw their phone no earlier than one round (`every_s`) before the door opened, and no later than a
+    minute after: a phone already asleep when the door opened, or still seen more than a minute after it, is still
+    in the house;
+  - every router has answered without it for a minute and a half since then, or since the door opened if that was
+    later (a router that doesn't answer starts the minute and a half again);
+  - it's within five minutes of the door opening;
+  - the lock didn't let them in within two minutes before the door opened, or since: someone known only by the lock
+    letting them in, before their phone has found the Wi-Fi, is never out by the door.
+
+  They're out from when their phone was last seen. Two or everyone leaving together are each out by the same rule:
+  it doesn't ask that someone stays, as the household going out together is the commonest leaving and "the last one
+  out" is for it, and the Wi-Fi dropping every phone at once (a router changing channel) usually has them back in seconds,
+  well inside the minute and a half. What it can't tell apart: someone at home whose phone goes to sleep within a minute of the door, and stays
+  off for a minute and a half, is taken for leaving too, and is home again as soon as their phone is seen. Anyone
+  else, and without the door, a phone dropping off still waits `away_after_min`: it may be asleep on a table.
 
 The lock still says who; the sensor only says when. A door sensor alone puts nobody at home, and its own readings
 never work the house.

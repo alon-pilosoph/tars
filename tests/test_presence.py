@@ -432,16 +432,97 @@ def test_a_router_not_answering_after_the_door_doesnt_send_anyone_out_by_it():
     assert t.update(ALON, True, 210.0, NOW + 210) == [("stacey", False)]
 
 
+def test_a_phone_already_dozing_when_the_door_is_opened_from_inside_isnt_leaving_by_it():
+    """Stacey's phone asleep on the table, last seen 100 s before Alon takes the bins out: she hasn't gone with him."""
+    t = tracker()
+    t.update(BOTH, True, 900.0, NOW)
+    for at in (930.0, 960.0, 990.0):
+        t.update(ALON, True, at, NOW + at - 900)
+    t.door_used(1000.0)
+    assert t.update(ALON, True, 1000.5, NOW + 100.5) == []  # the round the door asked for, at once
+    for at in range(1010, 1300, 10):  # the hurried rounds, then on to the five minutes' end
+        assert t.update(ALON, True, float(at), NOW + at - 900) == []
+    assert t.states["stacey"].home is True
+    assert t.update(ALON, True, 900.0 + 10 * MIN, NOW + 10 * MIN) == [("stacey", False)]  # her ten minutes, as ever
+
+
+def test_someone_elses_phone_dozing_a_while_after_the_door_isnt_leaving_by_it():
+    """Alon leaves; Stacey's phone is seen for two minutes after the door, then dozes a minute and a half."""
+    t = tracker()
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1010.0)
+    changes = []
+    for at in range(1020, 1310, 10):
+        here = set() if at >= 1150 else {"stacey"}
+        changes += t.update(here, True, float(at), NOW + at - 1000)
+    assert changes == [("alon", False)] and t.states["stacey"].home is True
+
+
+def test_the_one_who_left_by_the_door_is_out_in_a_minute_and_a_half_and_from_when_their_phone_was_last_seen():
+    t = tracker()
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1010.0)
+    assert t.update(BOTH, True, 1011.0, NOW + 11) == []  # still on the Wi-Fi as they step out
+    assert t.update(ALON, True, 1021.0, NOW + 21) == []
+    assert t.update(ALON, True, 1011.0 + 89, NOW + 100) == []
+    assert t.update(ALON, True, 1011.0 + 90, NOW + 101) == [("stacey", False)]  # 90 s since her phone was last seen
+    assert t.states["stacey"] == State(False, NOW + 11, NOW + 11)
+
+
+def test_a_phone_last_seen_a_round_before_the_door_counts_and_the_absence_runs_from_the_door():
+    t = Tracker(PEOPLE.names, 10 * MIN, 0.0, round_s=30.0)
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1025.0)  # opened between rounds; gone before the round it asked for
+    assert t.update(ALON, True, 1026.0, NOW + 26) == []
+    assert t.update(ALON, True, 1025.0 + 89, NOW + 114) == []  # 114 s unseen, but not 90 s since the door
+    assert t.update(ALON, True, 1025.0 + 90, NOW + 115) == [("stacey", False)]
+    t = Tracker(PEOPLE.names, 10 * MIN, 0.0, round_s=30.0)
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1031.0)  # more than a round after her phone was last seen: dozing already
+    assert t.update(ALON, True, 1031.0 + 120, NOW + 151) == []
+
+
+def test_someone_known_only_by_the_lock_letting_them_in_is_never_out_by_the_door():
+    """Alon let in by Auto Unlock before his phone has found the Wi-Fi, and the door opened from inside after."""
+    t = tracker({"alon": State(False, NOW - 3600, NOW - 3600), "stacey": State(True, NOW - 3600, NOW - 60)})
+    t.update({"stacey"}, True, 900.0, NOW)
+    assert t.arrived("alon", "front door", 1000.0, NOW + 100)
+    t.door_used(1030.0)
+    for at in range(1040, 1400, 10):
+        assert t.update({"stacey"}, True, float(at), NOW + at - 900) == []
+    assert t.states["alon"].home is True
+
+
+def test_someone_just_let_in_whose_phone_then_dozes_isnt_out_by_the_door():
+    t = tracker({"alon": State(False, NOW - 3600, NOW - 3600), "stacey": State(True, NOW - 3600, NOW - 60)})
+    t.update({"stacey"}, True, 900.0, NOW)
+    t.arrived("alon", "front door", 1000.0, NOW + 100)
+    t.update(BOTH, True, 1010.0, NOW + 110)  # his phone finds the Wi-Fi
+    t.door_used(1030.0)  # Stacey goes out to the car, his phone asleep in his pocket
+    changes = []
+    for at in range(1040, 1400, 10):
+        changes += t.update(set(), True, float(at), NOW + at - 900)
+    assert ("alon", False) not in changes and t.states["alon"].home is True
+
+
+def test_everyone_leaving_by_the_door_together_is_everyone_out():
+    t = tracker()
+    t.update(BOTH, True, 1000.0, NOW)
+    t.door_used(1010.0)
+    t.update(BOTH, True, 1011.0, NOW + 11)
+    assert sorted(t.update(set(), True, 1101.0, NOW + 101)) == [("alon", False), ("stacey", False)]
+
+
 def test_a_door_moving_asks_the_routers_at_once_and_often_for_a_while():
     from voice_assistant.presence import HURRY_EVERY_S, HURRY_S
 
     now = [0.0]
     w = Watcher([], PEOPLE, tracker(), Board.__new__(Board), 30, monotonic=lambda: now[0])
     w.hurry(inside=True)
-    assert w._wake.is_set() and w._hurry_until == HURRY_S and w.tracker._door_used_at == 0.0
+    assert w._wake.is_set() and w._hurry_until == HURRY_S and w.tracker._doors_used == [0.0]
     assert HURRY_EVERY_S < 30
     w.hurry()
-    assert w.tracker._door_used_at == 0.0  # shut, or opened to let someone in: not someone leaving
+    assert w.tracker._doors_used == [0.0]  # shut, or opened to let someone in: not someone leaving
 
 
 # The board: what the assistant writes, and every process reads.
