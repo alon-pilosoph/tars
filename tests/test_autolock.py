@@ -231,6 +231,25 @@ def test_a_lock_dropping_out_of_reach_and_back_isnt_a_new_unlocking(tmp_path, fl
     assert h.locked == 1 and len(h.told) == 1
 
 
+@pytest.mark.parametrize("state", ["unavailable", "jammed", "unlocking"])
+def test_nothing_is_sent_to_a_lock_that_isnt_saying_unlocked_and_its_locked_once_it_is(tmp_path, state):
+    h = House(tmp_path)
+    h.set(LOCK, "unlocked")
+    h.wait(50)
+    h.set(LOCK, state)
+    h.wait(600)
+    assert h.locked == 0
+    h.set(LOCK, "unlocked")
+    h.wait(1)
+    assert h.locked == 1
+
+
+def test_a_sensor_unavailable_as_tars_starts_is_told_as_unavailable(tmp_path):
+    h = House(tmp_path, door="unavailable", lock="unlocked")
+    h.wait(SENSOR_GRACE_S)
+    assert h.locked == 0 and len(h.told) == 1 and "sensor isn't answering (unavailable)" in h.told[0]
+
+
 def test_unlatching_isnt_a_new_unlocking_and_keeps_its_count(tmp_path):
     h = House(tmp_path)
     for state in ("unlocking", "unlocked"):

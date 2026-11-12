@@ -15,7 +15,8 @@ jamming, or unlatching (unlocked, open, unlocked) isn't a new unlocking, so it i
    Someone asking TARS to unlock it (the house's tools, either process: Asked) starts that count again, the lock
    already unlocked included, as Home Assistant then has nothing new to say.
 3. Only when the door reads shut, just before: anything but "off" (open, unknown, unavailable, or Home Assistant not
-   answering) and it isn't locked.
+   answering) and it isn't locked. Nor while the lock itself says anything but unlocked or open (out of reach,
+   jammed, turning): it's tried once it's back.
 4. A try that never reached the lock (the door couldn't be read, or Home Assistant didn't take the call) is tried
    again, MAX_TRIES in all with RETRY_S between, reading the door again each time; then the maintainers are told
    what failed.
@@ -314,8 +315,9 @@ class AutoLock:
         """What to tell the maintainers, if anything: the sensor answering again."""
         self.door_state = state
         if state not in (SHUT, OPEN):
+            self.down_why = state or "nothing heard"
             if self.down_since is None:
-                self.down_since, self.down_why = now, state or "nothing heard"
+                self.down_since = now
             return None
         was, back = self.door_known, self.down_since is not None
         self.door_known, self.down_since = state, None
@@ -394,7 +396,9 @@ class AutoLock:
         """Whether locking is due now: only ever with the door's last word shut. Changes nothing."""
         if self.unlocked_at is None or self.asked_at is not None or self.gave_up:
             return False
-        if self.door_state != SHUT or (self.retry_at is not None and now < self.retry_at):
+        if self.door_state != SHUT or self.lock_state not in UNLOCKED:
+            return False
+        if self.retry_at is not None and now < self.retry_at:
             return False
         s = self.settings
         shut_at = now if self.shut_at is None else self.shut_at
