@@ -16,9 +16,9 @@ being right.
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; the arrival greeting and dry runs left |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
-Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
-them; [wishes that come true](#planned-wishes-that-come-true), where something TARS couldn't do becomes a pull request
-and, once merged, a message to whoever asked; and [noticing routines](#planned-noticing-routines), where TARS learns
+Alongside the steps, built: [house commands on the Pi](#built-house-commands-on-the-pi), small and independent of
+them. Planned: [wishes that come true](#planned-wishes-that-come-true), where something TARS couldn't do becomes a pull
+request and, once merged, a message to whoever asked; and [noticing routines](#planned-noticing-routines), where TARS learns
 the household's habits from Home Assistant's history and offers to take them over. Benched for now: [learning from
 how conversations go](#benched-learning-from-how-conversations-go). Later, after the six: [working
 offline](#later-working-offline), [a brain anywhere, a body at home](#later-a-brain-anywhere-a-body-at-home) (TARS
@@ -362,7 +362,7 @@ what each came from, so a wrong one is easy to see.
 says it does; offers made and declined, and skills undone. **Done when** three offered routines have run for two
 weeks without being undone, and the unusual has been said at least once when it mattered, and never when it didn't.
 
-## Planned: house commands on the Pi
+## Built: house commands on the Pi
 
 **Built** ([house commands on the Pi](home.md#house-commands-on-the-pi), `[home] commands_on_pi`, off by default):
 phrases made from the house's devices, a request that's exactly one done with the home tool and no model, replies made
@@ -425,7 +425,7 @@ of a stage's services fail, TARS says it couldn't, and the Status page shows whi
    model, a voice from Piper (whose voices the wake word was already trained with), and a small local model for the
    brain, limited to the house tool, timers and reminders, with web search, sending and the browser turned off and
    said so. House commands may already work offline by then, from [house commands on the
-   Pi](#planned-house-commands-on-the-pi).
+   Pi](#built-house-commands-on-the-pi).
 2. **Where it runs.** A Pi 4 is too slow for a useful local model. Either a Pi 5 with an AI accelerator, or a small
    home server on the network (an old laptop, a mini PC), which the Pi calls the way it calls a provider today. The
    choice is measured: time to first sound and how often it picks the right device, on step 1's recorded requests.
@@ -477,7 +477,7 @@ The body decides nothing: it does what it's asked and says what happened.
   that's been taken over can't open the door.
 - **When the brain can't be reached** (the internet, or the server, down): the body still hears its name, says it
   can't reach its brain, and does what it can on its own: [house commands on the
-  Pi](#planned-house-commands-on-the-pi) from a fixed phrase list, and later [working offline](#later-working-offline).
+  Pi](#built-house-commands-on-the-pi) from a fixed phrase list, and later [working offline](#later-working-offline).
   **When the body is down:** the brain carries on in chats, and the house tools say plainly that the house is
   offline.
 - **More rooms, other homes.** Each room can have a body of its own (a Pi Zero with a microphone, or an old phone);

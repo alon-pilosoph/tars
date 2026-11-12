@@ -7,19 +7,22 @@ A request that's exactly one of them (as speech to text wrote it, or as Vosk hea
 cloud can't be reached) becomes the home tool's own call, with the same checks: done only when the device says so,
 and never unlocking, which stays with the model and its challenge. Anything else goes on to the model as ever.
 
-TARS answers in its own voice from a few lines for each outcome, made ahead and kept on disk, never the same one twice
-running. The exchange joins the conversation, so "and the boiler" can follow.
+TARS answers in its own voice from a few lines for each outcome (done, on its way, sent, not confirmed, couldn't),
+made ahead and kept on disk, never the same one twice running when there's another. The exchange joins the
+conversation, so "and the boiler" can follow.
 """
 
 import random
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from .home import LOCK, OFF, ON, SET
+from .home import LOCK, OFF, ON, SET, Request
 
-DRY_FROM_HUMOR = 50  # [llm] humor, percent: the replies with a joke in them, from here on
+WITTY_FROM_HUMOR = 50  # [llm] humor, percent: the replies with a joke in them, from here on
 ON_PI = "pi"  # answered_by for a turn handled here, as the turns table keeps it
+# A fixed range, not each device's own: anything else goes to the model, and a device that can't take one of these
+# answers with an error, said as "couldn't".
 TEMPERATURES = range(16, 31)
 NUMBER_WORDS = {
     16: "sixteen", 17: "seventeen", 18: "eighteen", 19: "nineteen", 20: "twenty", 21: "twenty one",
@@ -35,15 +38,45 @@ VERBS = {
 }
 SET_TEMPERATURE = ("set {d} to {t}", "{d} to {t}", "turn {d} to {t}", "put {d} on {t}", "set {d} to {t} degrees",
                    "{d} to {t} degrees")  # fmt: skip
-DONE = ("done", "sent", "started")
-REPLIES = {
-    ON: ["{label}'s on.", "{label} on.", "On it. {label}'s on."],
-    OFF: ["{label}'s off.", "{label} off.", "Done. {label}'s off."],
-    LOCK: ["{label}'s locked.", "Locked.", "Locked. Fort Knox has nothing on us."],
-    SET: ["{label} to {t} degrees.", "{t} degrees it is.", "Set. {label} to {t}."],
+# What the home tool's answer starts with (home.Device): each outcome has its own lines. Anything else is said as not
+# confirmed, which claims neither way.
+DONE, STARTED, SENT, NOT_CONFIRMED, COULDNT = "done", "started", "sent", "not confirmed", "couldn't"
+OUTCOMES = {"done": DONE, "started": STARTED, "sent": SENT, "not confirmed": NOT_CONFIRMED, "error": COULDNT,
+            "refused": COULDNT}  # fmt: skip
+WITTY = {
+    DONE: {
+        ON: ["{label}'s on.", "{label} on.", "On it. {label}'s on."],
+        OFF: ["{label}'s off.", "{label} off.", "Done. {label}'s off."],
+        LOCK: ["{label}'s locked.", "Locked.", "Locked. Fort Knox has nothing on us."],
+        SET: ["{label} to {t} degrees.", "{t} degrees it is.", "Set. {label} to {t}."],
+    },
+    STARTED: {
+        ON: ["{label}'s turning on.", "{label}'s on its way."],
+        OFF: ["{label}'s turning off.", "{label}'s switching off."],
+        LOCK: ["{label}'s locking.", "Locking. Give it a second."],
+        SET: ["{label}'s going to {t} degrees.", "{t} degrees, on its way."],
+    },
+    SENT: ["Sent it to the {mid}.", "Sent to the {mid}. It doesn't tell me if it took."],
+    NOT_CONFIRMED: ["The {mid} didn't confirm it. Check it, or ask me again.", "The {mid} didn't answer. Try again."],
+    COULDNT: ["Couldn't do that with the {mid}.", "No luck with the {mid}. Nothing done."],
 }
-PLAIN = {ON: ["{label}'s on."], OFF: ["{label}'s off."], LOCK: ["{label}'s locked."], SET: ["{label} to {t} degrees."]}
-FAILED = ["The {mid} didn't confirm it. Check it, or ask me again.", "The {mid} didn't answer. Try again."]
+PLAIN = {
+    DONE: {
+        ON: ["{label}'s on."],
+        OFF: ["{label}'s off."],
+        LOCK: ["{label}'s locked."],
+        SET: ["{label} to {t} degrees."],
+    },
+    STARTED: {
+        ON: ["{label}'s turning on."],
+        OFF: ["{label}'s turning off."],
+        LOCK: ["{label}'s locking."],
+        SET: ["{label}'s going to {t} degrees."],
+    },
+    SENT: ["Sent it to the {mid}."],
+    NOT_CONFIRMED: ["The {mid} didn't confirm it. Check it, or ask me again."],
+    COULDNT: ["Couldn't do that with the {mid}."],
+}
 
 
 @dataclass(frozen=True)
@@ -74,11 +107,17 @@ def normalize(text: str) -> str:
 class Commands:
     """The phrases for `devices`: (name, label, actions, takes a temperature) each."""
 
-    devices: Iterable[tuple[str, str, tuple[str, ...], bool]]
-    phrases: dict[str, Command] = field(default_factory=dict, init=False)
+    devices: Sequence[tuple[str, str, tuple[str, ...], bool]]
+    phrases: dict[str, Command | None] = field(default_factory=dict, init=False)
 
     def __post_init__(self):
-        self._acronyms = {label.lower() for _, label, _, _ in self.devices if label.isupper() and label.isalpha()}
+        # Every all-caps word of a label, said a letter at a time: "Fire TV" is "fire t v".
+        self._acronyms = {
+            word.lower()
+            for _, label, _, _ in self.devices
+            for word in label.split()
+            if word.isupper() and word.isalpha()
+        }
         self._names: dict[str, set[str]] = {}  # each device's names, as phrases have them
         for name, label, actions, warm in self.devices:
             for said in {name.lower(), label.lower()}:
@@ -135,26 +174,30 @@ class Commands:
 
 
 class Replies:
-    """What TARS says after a command, in its voice: a few lines an outcome, never the same one twice running."""
+    """What TARS says after a command, in its voice: a few lines an outcome, never the same one twice running when
+    there's another. `witty`: the lines with a joke in them too."""
 
-    def __init__(self, labels: dict[str, str], dry: bool = True, choose: Callable[[list[str]], str] = random.choice):
-        self._labels, self._dry, self._choose = labels, dry, choose
+    def __init__(self, labels: dict[str, str], witty: bool = True, choose: Callable[[list[str]], str] = random.choice):
+        self._labels, self._witty, self._choose = labels, witty, choose
         self._last: str | None = None
 
     def lines(self, command: Command) -> list[str]:
         """Every line it might say for `command`, to make ahead."""
-        return self._options(command, done=True) + self._options(command, done=False)
+        return [line for outcome in dict.fromkeys(OUTCOMES.values()) for line in self._options(command, outcome)]
 
     def say(self, command: Command, result: str) -> str:
-        options = self._options(command, done=result.startswith(DONE))
+        outcome = next((o for prefix, o in OUTCOMES.items() if result.startswith(prefix)), NOT_CONFIRMED)
+        options = self._options(command, outcome)
         fresh = [o for o in options if o != self._last] or options
         self._last = self._choose(fresh)
         return self._last
 
-    def _options(self, command: Command, done: bool) -> list[str]:
+    def _options(self, command: Command, outcome: str) -> list[str]:
         label = self._labels.get(command.device, command.device)
         mid = label if label.isupper() else label.lower()  # "the AC", "the front door"
-        table = (REPLIES if self._dry else PLAIN)[command.action] if done else FAILED
+        table = (WITTY if self._witty else PLAIN)[outcome]
+        if isinstance(table, dict):
+            table = table[command.action]
         return [line.format(label=label[:1].upper() + label[1:], mid=mid, t=command.temperature) for line in table]
 
 
@@ -170,7 +213,7 @@ class HouseCommands:
 
     commands: Commands
     replies: Replies
-    call: Callable[[dict, object], str]
+    call: Callable[[dict, Request], str]
     hear: Callable[[bytes], str] | None = None
     local_first: bool = False  # [home] local_first: the turn's speech to text is LocalFirstSession
 
