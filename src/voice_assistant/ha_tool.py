@@ -30,7 +30,7 @@ from . import history as past
 from .ha_setup import ACTIONS as SETUP_ACTIONS
 from .ha_setup import RULES as SETUP_RULES
 from .hass import HomeAssistant
-from .home import HomeError, Request
+from .home import HomeError, Request, set_off_by_door
 
 FIND, STATE, HISTORY, STATISTICS, LOGBOOK, SERVICES, CALL = (
     "find",
@@ -177,8 +177,9 @@ TOOL = {
 
 
 class HAAccess:
-    """`may_unlock(request)`: why this turn may not unlock, or None if it may (HomeTools'). `lock`: held while a
-    change is made, the home tool's, so the two never change the house at once."""
+    """`may_unlock(request)`: why this turn may not unlock, or None if it may (HomeTools'); asked once a call, as an
+    answer to an unlock challenge uses it up. `lock`: held while a change is made, the home tool's, so the two never
+    change the house at once."""
 
     tool, rules, can, needs = TOOL, RULES, CAN, NEEDS
 
@@ -346,8 +347,15 @@ class HAAccess:
             return "error: data must be a JSON object"
         if any(k in fields for k in TARGETS):
             return "error: name the entities in entity_ids; data can't aim it at a device, a room or a label"
+        what = f"{service} on {', '.join(ids)}" if ids else service
+        return request.answered(what, self._change(service, domain, name, ids, fields, request))
+
+    def _change(self, service: str, domain: str, name: str, ids: list[str], fields: dict, request: Request) -> str:
+        """A call that's well formed, made unless something holds it back."""
         if request.read_the_web:
             return "refused: this reply searched the web, so it changes nothing in the house; they can ask on its own"
+        if refused := set_off_by_door(request):
+            return refused
         if refused := self._unlock_check(domain, name, {**fields, "entity_id": ids}, request):
             return refused
         if not request.go_ahead():
@@ -365,7 +373,7 @@ class HAAccess:
 
     def _unlock_check(self, domain: str, name: str, data: dict, request: Request) -> str | None:
         """Why this call (its data, entity_id included) may not be made, if it would unlock (HomeTools.may_unlock),
-        or None."""
+        or None. The rules are asked once a call: answering an unlock challenge uses it up."""
         if domain == "lock":
             return None if name == "lock" else self._may_unlock(request)  # locking is never held back
         if (why := self.doors.opening(domain, name, data)) and (refused := self._may_unlock(request)):

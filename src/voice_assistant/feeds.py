@@ -22,6 +22,8 @@ from typing import NamedTuple
 from urllib.parse import urljoin
 
 import httpx
+from defusedxml import DefusedXmlException
+from defusedxml.ElementTree import fromstring
 
 from .events import person_key
 from .store import Store
@@ -136,8 +138,8 @@ def when(raw: str | None) -> float | None:
 def parse(source: str, body: bytes) -> Parsed:
     """An RSS or Atom feed's stories, newest first. NotAFeed for anything else."""
     try:
-        root = ET.fromstring(body)
-    except ET.ParseError as e:
+        root = fromstring(body)  # a feed is anyone's XML: no entities, no expansion bombs
+    except (ET.ParseError, DefusedXmlException) as e:
         raise NotAFeed(f"not a feed ({e})") from None
     stories, full = [], 0
     if root.tag.startswith(ATOM):

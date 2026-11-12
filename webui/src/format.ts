@@ -98,6 +98,7 @@ export function timingLine(t: Turn) {
   if (x?.total != null) {
     const parts = [
       x.end_of_speech != null ? `${secs(x.end_of_speech)} s of silence` : "",
+      x.head_start ? `the answer started ${secs(x.head_start)} s before that silence ended` : "",
       x.stt != null ? `${secs(x.stt)} s to write down what was said` : "",
       x.llm != null ? `${secs(x.llm)} s to think of the first sentence` : "",
       x.tts != null ? `${secs(x.tts)} s to start speaking` : "",

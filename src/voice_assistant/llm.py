@@ -43,6 +43,9 @@ FOLLOW_UP_TAG = "[Follow-up, no wake word]"
 ASKED_TAG = "[Reply to your 'Did you call me?']"
 SKIP = "<skip>"
 SKIPS = (SKIP, _escaped(SKIP))
+# Said instead when the model skips what was said to it by name, or written in a chat: "New zone." heard for "news on"
+# can look overheard, but someone was talking to TARS, and the tag itself is never theirs to hear.
+PARDON = "Sorry, I didn't catch that. Say it again?"
 SKIP_RULES = (
     f"Messages starting with {FOLLOW_UP_TAG} were overheard right after your last reply, without anyone "
     f"addressing you. If one isn't meant for you (people talking to each other, or unrelated to your "
@@ -50,6 +53,11 @@ SKIP_RULES = (
     f'asked nor asks you for anything ("eight hours.", a name) is overheard too, often from the TV: skip it. Never '
     f"set a timer, change a device or do anything else on a follow-up unless it plainly asks for it, or answers "
     f"your question.\n"
+    f'When you just asked them to choose ("11 or 12?", "the kitchen or the bedroom?"), a short follow-up is their '
+    f'pick, often with its first sound cut off: take the choice it sounds like ("well" or "elve" is twelve, '
+    f'"leven" is eleven, "chen" is the kitchen) and do it, never skip it. Only where a wrong pick is harmless and '
+    f"easily put right, like a channel or a room; if the choice opens, unlocks, buys, sends or deletes something, "
+    f"ask again unless it plainly names one.\n"
     f"Messages starting with {ASKED_TAG} answer the question you just asked because you weren't sure someone "
     f"said your name. If they ask for something, just do it; if it's a bare yes, ask briefly what they need; "
     f"if it's a no, or clearly not meant for you, reply with exactly {SKIP} and nothing else."
@@ -120,7 +128,9 @@ REMIND_RULES = (
     "You can set timers, reminders and messages for people in the house with the remind tool; TARS says them aloud "
     'when they\'re due. A reminder or message is for the person named ("remind me" is whoever is speaking, by '
     'the [Speaker: name] tag; "remind Stacey" is Stacey). Something to tell someone ("tell Stacey dinner\'s at '
-    "eight\") is a message, for them; a reminder is something to do. A message always needs someone it's for. Give the "
+    'eight") is a message, for them; a reminder is something for them to do (what you can do yourself later, '
+    "like turning the AC back on, you do, unless they ask to be reminded). A message always needs someone it's "
+    "for. Give the "
     'time as in_minutes for "in ten minutes", or for a clock time, time as HH:MM on a 24-hour clock, with day as '
     'it was said ("friday", "tomorrow"; null if no day was said): never work out a date yourself. Morning is 9:00, '
     "afternoon 15:00, evening 19:00 and tonight 20:00, unless a time was said. Use when_back "
@@ -261,6 +271,19 @@ QUICK_SEND_TOOL = {
 SEARCHING = "Looking it up."
 # Said the moment a question goes to the thinking model, which can take a while before its first word.
 THINKING = "Let me think about that for a moment."
+# What TARS says the moment a question is handed to OpenAI: the news, a feed or the house can take several seconds
+# before its first word, and silence leaves the person wondering whether TARS heard them at all. The quick model picks
+# the one that fits; a fixed few, so each is made ahead and plays at once. LETS_SEE when it picks none.
+LETS_SEE = "Let's see."
+FILLERS = (LETS_SEE, "Let me check.", SEARCHING, "On it.")
+_FILLER_WORDS = {f.rstrip(".").lower() for f in FILLERS}
+
+
+def only_filler(text: str) -> bool:
+    """Whether `text` is just one of the FILLERS, however it ends ("Let me check", "Let me check...")."""
+    return text.strip().rstrip(".…!").lower() in _FILLER_WORDS
+
+
 FILE_TYPES = {".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".ics": "text/calendar"}
 # A backstop, not a budget: a request that checks and then acts on a few things (two feeds previewed, then followed)
 # takes several rounds, and a model only uses the rounds it needs. A call repeating one that failed is stopped sooner.
@@ -356,9 +379,16 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
     parts = [f"What you can do yourself: {'; '.join(can)}."] if can else []
     for marker, intro, needs, examples in hand_offs:
         quoted = " or ".join(f'"{e}"' for e in examples)
+        reply = f"reply with exactly {marker} and nothing else"
+        if marker == LOOK_UP:
+            lines = ", ".join(f'"{f}"' for f in FILLERS)
+            reply = (
+                f"reply with exactly one of these lines, whichever fits, then {marker}, and nothing else: {lines} "
+                f'(like "Let me check. {marker}" for whether the door is locked, or "Let\'s see. {marker}" for '
+                "what's new)"
+            )
         parts.append(
-            f"{intro} When a message needs any of them, reply with exactly {marker} and nothing else, and it "
-            "answers instead:\n"
+            f"{intro} When a message needs any of them, {reply}, and it answers instead:\n"
             + "\n".join(f"- {n}" for n in needs)
             + f"\nFor example, {quoted} get{'s' * (len(examples) == 1)} {marker}."
         )
@@ -366,13 +396,14 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
         parts.append(
             "Never say you can't do something you can hand over, or that you'll look it up or think it over: hand it "
             "over. Answer everything else yourself."
+            + " The line before a hand-off is the only exception."
+            * (LOOK_UP in [m for m, *_ in hand_offs])
         )
     if hand_offs and can:
-        markers = " or ".join(marker for marker, *_ in hand_offs)
         parts.append(
             "When one message asks for something you can do and something you hand over, do your part first, with your "
-            f"tools, then reply with exactly {markers} and nothing else, without starting on the rest yourself: "
-            "whoever answers next sees what you did, and answers the rest."
+            "tools, then hand the rest over as above, without starting on it yourself, however much of it you could "
+            "answer: whoever answers next sees what you did, and answers the rest."
         )
     parts.append(
         f"You can't {', '.join(cant)}. Before you say you can't do anything, these or something else, see whether "
@@ -1087,6 +1118,13 @@ class QuickChat(OpenAIChat):
                 print(f"({service.name} said nothing)")
                 writing.quick_service = None
             break
+        # Only when it did nothing itself: "On it." is the whole reply once it has started the TV on a film.
+        if not handed_off and only_filler(answer) and LOOK_UP in self._markers and not writing.quick_calls:
+            print(f"({writing.quick_service} said {answer.strip()!r} and stopped; OpenAI answers)")
+            handed_off, writing.answered_by = LOOK_UP, LOOKED_UP  # "Let me check." alone would leave them hanging
+            if not answer[-1].isspace():
+                answer += " "
+                yield " "
         if not handed_off and answer.strip() and not cut_off:
             self._remember(answer, writing)
             return
@@ -1100,10 +1138,13 @@ class QuickChat(OpenAIChat):
         if not handed_off:
             handed_off, writing.answered_by = LOOK_UP, FALLBACK
         context.extend(writing.quick_calls)  # what Qwen's tools already did, so it isn't done twice
-        if handed_off == PONDER:
+        if handed_off == PONDER and not only_filler(answer):  # one waiting line, not two
             thinking = f"{' ' * bool(answer.strip() and not answer[-1].isspace())}{THINKING} "
             answer += thinking
             yield thinking
+        elif handed_off == LOOK_UP and writing.answered_by == LOOKED_UP and not answer.strip():
+            answer += f"{LETS_SEE} "  # the quick model picked no line; and so no "One moment." after it either
+            yield f"{LETS_SEE} "
         if answer.strip():  # OpenAI carries on from what TARS already said, rather than repeating it
             context.append({"role": "assistant", "content": answer.strip()})
         if handed_off != PONDER:

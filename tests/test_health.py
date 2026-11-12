@@ -3,6 +3,7 @@ answers), the services are asked with their keys and read from their own status 
 never for longer than ASK_DEADLINE_S), and the machine's numbers are read, the Pi's throttling included."""
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -48,6 +49,15 @@ def test_a_process_that_beat_lately_is_running_and_one_that_stopped_isnt(tmp_pat
     assert not web["running"] and web["beat"] is None and web["unit_state"] == "inactive"  # never seen
     later = time.time() + HEARTBEAT_EVERY_S * 4
     assert not processes(tmp_path, ["assistant"], unit_state, later)[0]["running"]  # it stopped beating
+
+
+def test_a_running_process_is_known_by_its_pid_and_one_that_stopped_or_never_beat_isnt(tmp_path):
+    Heartbeat(tmp_path, "telegram").beat()
+    assert health.running(tmp_path, "telegram") == os.getpid()
+    assert health.running(tmp_path, "telegram", time.time() + HEARTBEAT_EVERY_S * 4) is None
+    assert health.running(tmp_path, "assistant") is None
+    (tmp_path / "heartbeats" / "assistant.json").write_text(json.dumps({"beat": time.time(), "pid": "4242"}))
+    assert health.running(tmp_path, "assistant") is None  # a pid that isn't one is no process to wait for
 
 
 def test_a_beat_from_before_the_clock_was_set_back_is_no_sign_of_life(tmp_path):

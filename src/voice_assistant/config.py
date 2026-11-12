@@ -162,9 +162,17 @@ class WebConfig:
     # More names the web UI may be reached by, besides IP addresses, localhost, *.local, *.ts.net and single-label
     # names (which always work). Requests to any other name are refused.
     allowed_hosts: list[str] = field(default_factory=list)
-    # Where a phone opens the web UI, for the links TARS sends (recording sessions): "http://homepi.local:8080".
-    # "": this machine's Tailscale address if it has one, else its address at home, on the web UI's port.
+    # Where a phone opens the web UI, for the links TARS sends (recording sessions, sign-in invites):
+    # "https://homepi.tailnet.ts.net:8080". "": this machine's Tailscale address if it has one, else its address at
+    # home, on the web UI's port.
     link: str = ""
+    # Signing in with a passkey (docs/web-ui.md#signing-in): every page and API needs a session, made with a passkey
+    # from a one-time invite (voice-assistant --web-invite NAME). Passkeys need HTTPS: tls_cert and tls_key.
+    sign_in: bool = False
+    # Serve the web UI over HTTPS with this certificate and its key, paths from the project folder (a Tailscale one:
+    # tailscale cert). "": plain HTTP.
+    tls_cert: str = ""
+    tls_key: str = ""
 
 
 @dataclass
@@ -224,6 +232,9 @@ class HomeConfig:
     unlock_voices: list[str] = field(default_factory=list)
     # How sure speaker ID must be that it's them, to unlock (0-1): stricter than [speaker] threshold.
     unlock_threshold: float = 0.6
+    # Before unlocking by voice, TARS asks for a few random digits, said back by the same voice within half a minute:
+    # a recording of someone saying "unlock" can't answer a number it's never heard (docs/home.md#unlocking).
+    unlock_challenge: bool = True
     # Who may unlock from their own Telegram chat, by their names in [telegram] people, when their own message says
     # "unlock". Empty = nobody.
     unlock_chats: list[str] = field(default_factory=list)
@@ -258,6 +269,9 @@ TECHNICOLOR, XIAOMI = "technicolor", "xiaomi"
 ROUTER_KINDS = (TECHNICOLOR, XIAOMI)
 _MAC = re.compile(r"[0-9a-f]{2}(:[0-9a-f]{2}){5}")
 _DASHED = re.compile(r"[0-9a-f]{1,2}(-[0-9a-f]{1,2}){3,}")
+_DOOR_KEY = re.compile(r"(key|code):\d+")
+MQTT_SETTINGS = ("address", "port", "user", "secret")
+_MQTT_USER = re.compile(r"[A-Za-z0-9_.-]+")  # what Mosquitto's passwords file and ACL take as a name, safely
 _SECRET = re.compile(r"[A-Z][A-Z0-9_]*")
 
 
@@ -266,7 +280,9 @@ class PresenceConfig:
     # Who's home, from whose phone is on the home Wi-Fi, as the routers see it (docs/presence.md). Runs in the
     # assistant; needs [learning] log_events, where it's kept for the other processes.
     enabled: bool = False
-    # Each person, and their phone as the routers know it: hardware addresses, or names a router lists it under.
+    # Each person, and their phone as the routers know it: hardware addresses, or names a router lists it under. A
+    # door lock's key for them may be listed too: "key:<the app's auth id>" or "code:<a keypad code's id>"; keys
+    # nobody lists are learned (docs/presence.md#the-front-door).
     people: dict[str, list[str]] = field(default_factory=dict)
     # [[presence.routers]]: each router to ask, { kind = "technicolor" | "xiaomi", address, user, secret }, secret
     # being the name of its password in .env.
@@ -277,6 +293,13 @@ class PresenceConfig:
     # Someone whose phone no router has seen for this long has gone out. A phone asleep on a table drops off Wi-Fi
     # now and then, for a few minutes, so this is longer than that.
     away_after_min: float = 10.0
+    # [[presence.doors]]: each door whose lock says who opened it, { name = "front door", topic = "nuki/4224E764" },
+    # topic being a Nuki's MQTT topic (its ID in hex). Someone opening it from outside is home at once.
+    doors: list[dict] = field(default_factory=list)
+    # [presence.mqtt]: the MQTT broker the locks publish to, { address = "localhost", port = 1883, user, secret },
+    # TARS's own user there, and secret the name of its password in .env; both needed with doors. Needs the door
+    # extra (paho-mqtt).
+    mqtt: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -340,6 +363,23 @@ class HouseholdConfig:
 
 
 @dataclass
+class WishesConfig:
+    # Wishes that come true (docs/wishes.md): what TARS was asked for and couldn't do, built by Claude Code on GitHub
+    # once a maintainer taps Build it, and told to whoever asked once it's installed. Needs [household] maintainers on
+    # Telegram, [updates] on, and a fine-grained GitHub token for `repo` only (Issues read and write, Pull requests
+    # read-only, Metadata read-only; nothing else), in .env under `secret`.
+    enabled: bool = False
+    # The repository to build in, as owner/name; its .github/workflows/wish.yml hands a labelled issue to Claude Code.
+    repo: str = ""
+    secret: str = "GITHUB_TOKEN"
+    label: str = "wish"
+    # How many times a pull request whose CI fails is sent back to be fixed, before the wish is given up on.
+    tries: int = 3
+    # The most builds started in 30 days: TARS can't see what a run costs, so it caps how many there are.
+    monthly: int = 4
+
+
+@dataclass
 class UpdatesConfig:
     # TARS updates itself (docs/deployment.md#updates): what's merged into `branch` is installed by itself, at a quiet
     # moment, checked, and taken back if it fails; one that changes the database waits for a maintainer's tap, and one
@@ -368,6 +408,7 @@ class Config:
     feeds: FeedsConfig
     household: HouseholdConfig
     updates: UpdatesConfig
+    wishes: WishesConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
@@ -590,7 +631,27 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
-    return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence)
+    if bool(cfg.web.tls_cert) != bool(cfg.web.tls_key):
+        problems.append("[web] tls_cert and tls_key go together: the certificate and its key")
+    return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence) + _wishes_problems(cfg)
+
+
+def _wishes_problems(cfg: Config) -> list[str]:
+    """What's wrong with [wishes]."""
+    w, problems = cfg.wishes, []
+    if w.enabled and not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", w.repo):
+        problems.append('[wishes] repo must be the repository to build in, as owner/name, like "alon-pilosoph/tars"')
+    if w.enabled and not cfg.household.maintainers:
+        problems.append("[wishes] needs [household] maintainers: only they say what gets built")
+    if not _SECRET.fullmatch(w.secret):
+        problems.append('[wishes] secret must be the name of the GitHub token in .env, like "GITHUB_TOKEN"')
+    if not re.fullmatch(r"[A-Za-z0-9_. -]+", w.label):
+        problems.append('[wishes] label must be the issue label the workflow builds on, like "wish"')
+    if not 0 <= w.tries <= 10:
+        problems.append("[wishes] tries must be between 0 and 10")
+    if not 0 <= w.monthly <= 50:
+        problems.append("[wishes] monthly must be between 0 and 50")
+    return problems
 
 
 def _presence_problems(p: PresenceConfig) -> list[str]:
@@ -610,6 +671,8 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
         if not ids or any(not i.strip() for i in ids):
             problems.append(f"[presence] people {name!r} needs their phone's address or name, none empty")
         for i in ids:
+            if _DOOR_KEY.fullmatch(i.strip().lower()):  # a door lock's key for them (doors.py)
+                continue
             meant = ":" in i or _DASHED.fullmatch(i.strip().lower())  # an address, not a name like Alons-iPhone
             if meant and not _MAC.fullmatch(i.strip().lower().replace("-", ":")):
                 problems.append(f"[presence] people {name!r}: {i!r} isn't a hardware address like aa:bb:cc:dd:ee:ff")
@@ -629,6 +692,34 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
         if "user" in r and not (isinstance(r["user"], str) and r["user"].strip()):
             problems.append(f"{where}: user must be the admin's name, like admin")
         problems += [f"{where} has no setting {k}" for k in r if k not in ("kind", "address", "user", "secret")]
+    names: set[str] = set()
+    for i, d in enumerate(p.doors, 1):
+        where = f"[[presence.doors]] #{i}"
+        if not (isinstance(d.get("name"), str) and d["name"].strip()):
+            problems.append(f'{where} needs name, what the household calls it, like "front door"')
+        elif d["name"].strip().lower() in names:
+            problems.append(f"{where}: two doors are called {d['name']!r}")
+        else:
+            names.add(d["name"].strip().lower())
+        if not (isinstance(d.get("topic"), str) and re.fullmatch(r"[A-Za-z0-9_./-]+", d["topic"])):
+            problems.append(f'{where} needs topic, its lock\'s MQTT topic, like "nuki/4224E764"')
+        problems += [f"{where} has no setting {k}" for k in d if k not in ("name", "topic")]
+    if p.doors and not (isinstance(p.mqtt.get("address"), str) and p.mqtt["address"].strip()):
+        problems.append('[presence] doors need [presence.mqtt] address, the locks\' MQTT broker, like "localhost"')
+    # A broker anyone may publish to could say any door was opened: TARS signs in as itself, and the broker's ACL
+    # keeps the locks' topics to the locks (docs/presence.md#the-front-door).
+    if p.doors and not (p.mqtt.get("user") and p.mqtt.get("secret")):
+        problems.append(
+            "[presence] doors need [presence.mqtt] user and secret: TARS signs in to the broker as itself, like "
+            'user = "tars", secret = "MQTT_PASSWORD"'
+        )
+    if "user" in p.mqtt and not (isinstance(p.mqtt["user"], str) and _MQTT_USER.fullmatch(p.mqtt["user"])):
+        problems.append('[presence.mqtt] user must be TARS\'s name on the broker, letters and digits, like "tars"')
+    if "port" in p.mqtt and not (isinstance(p.mqtt["port"], int) and 0 < p.mqtt["port"] < 65536):
+        problems.append("[presence.mqtt] port must be a port number, like 1883")
+    if "secret" in p.mqtt and not (isinstance(p.mqtt["secret"], str) and _SECRET.fullmatch(p.mqtt["secret"])):
+        problems.append('[presence.mqtt] secret must be the name of its password in .env, like "MQTT_PASSWORD"')
+    problems += [f"[presence.mqtt] has no setting {k}" for k in p.mqtt if k not in MQTT_SETTINGS]
     if not 5 <= p.every_s <= 120:
         problems.append("[presence] every_s must be between 5 and 120")
     if not 1 <= p.away_after_min <= 240:

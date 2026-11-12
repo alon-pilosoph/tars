@@ -8,7 +8,7 @@ import types
 import numpy as np
 import pytest
 
-from voice_assistant import events
+from voice_assistant import events, store
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
 from voice_assistant.events import (
     ASKED,
@@ -336,7 +336,9 @@ class ScriptedTrigger(FakeTrigger):
 
 def verifier_saying(*outcomes):
     answers = iter(outcomes)
-    return types.SimpleNamespace(decide=lambda pcm: next(answers), last_confidence=0.5, use_check=lambda spec: None)
+    return types.SimpleNamespace(
+        decide=lambda pcm: next(answers), last_confidence=0.5, name_end_s=lambda pcm: None, use_check=lambda spec: None
+    )
 
 
 def test_trigger_logs_near_misses_and_every_wake(log):
@@ -402,3 +404,22 @@ def test_assistant_records_what_followed_each_wake(log, speaker):
     assistant.converse(follow_up_s=4.0)
     journal.flush()
     assert log.get(noise)["follow"] == SAID_NOTHING and log.get(noise)["utterance_audio"]
+
+
+def test_a_wishes_table_from_before_builds_gains_their_columns_and_keeps_its_wishes(tmp_path, monkeypatch):
+    folder = tmp_path / "events"
+    EventLog(folder)
+    with sqlite3.connect(folder / "events.db") as db:
+        db.execute("DROP TABLE wishes")
+        db.execute(
+            "CREATE TABLE wishes (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, person TEXT, "
+            "via TEXT NOT NULL, asked TEXT NOT NULL, why TEXT NOT NULL, granted REAL)"
+        )
+        db.execute("INSERT INTO wishes (at, via, asked, why) VALUES (1, 'voice', 'dim the hall', 'no hall light')")
+        step = next(i for i, m in enumerate(MIGRATIONS) if "ALTER TABLE wishes ADD COLUMN build TEXT" in m)
+        db.execute(f"PRAGMA user_version={step}")  # just before wishes gained their columns
+    monkeypatch.setattr(store, "MIGRATIONS", MIGRATIONS[: step + 1])  # later steps may come after it
+    log = EventLog(folder)
+    (wish,) = log.store.rows("SELECT * FROM wishes")
+    assert wish["asked"] == "dim the hall" and wish["tries"] == 0
+    assert {"build", "issue", "pr", "sha", "checked", "built_at", "head", "moved"} <= set(wish)

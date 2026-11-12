@@ -128,6 +128,10 @@
               <li>“Remind me to call the bank at nine.”</li>
               <li>“Set a pasta timer for twelve minutes.”</li>
               <li>“Tell Stacey dinner's ready when she's back.”</li>
+              <li>
+                “Turn off the AC now and back on at 5am.” TARS does that one itself, as it was set, and tells you if it
+                couldn't.
+              </li>
             </ul>
             <div class="rules">
               <div>
@@ -203,7 +207,8 @@
               <h3>Unlocking is for voices it trusts</h3>
               <p>
                 The door unlocks only for a voice TARS knows and trusts with it, recognised from the request itself, and
-                only when it heard “unlock”. Anyone can lock.
+                only when it heard “unlock”. Then TARS asks for three random digits, said back by the same voice: a
+                recording can't answer them. Anyone can lock.
               </p>
             </div>
             <div>
@@ -268,6 +273,18 @@
               </p>
             </div>
             <div>
+              <h3>The front door knows first</h3>
+              <p>
+                When the Nuki lock opens by Auto Unlock or its keypad, whoever's key it was is home at once, before
+                their phone finds the Wi-Fi.<span class="d">
+                  Whose key is whose is learned: a key that opens the door from outside as one person's phone comes
+                  home, on two separate arrivals and never anyone else's, is theirs. The lock's word only ever says who
+                  came in: a skill it sets off greets them and changes nothing in the house, and only the lock may say
+                  it, the broker's ACL keeping its topics to it.</span
+                >
+              </p>
+            </div>
+            <div>
               <h3>Two routers, no official API</h3>
               <p>
                 An ISP's Technicolor gateway and a Xiaomi access point, each signed into as its own sign-in page does
@@ -314,6 +331,19 @@
                 “What's new?” is answered from TARS's own update history, “how do I teach you a skill?” from its own
                 docs, and “why did you do that?” from its records of what was said and done.<span class="d">
                   Each person's chats are theirs alone to ask about; what was said aloud is the household's.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>What it couldn't do, built</h3>
+              <p>
+                Something TARS was asked for and couldn't do goes to its maintainers with a Build it button. A tap has
+                Claude Code build it and open a pull request; once it's reviewed, merged and installed, whoever asked is
+                told “I can do it now”.<span class="d">
+                  TARS follows the pull request through CI and sends a failing one back to be fixed. The maintainer sees
+                  exactly what's posted before tapping; the coding agent gets the repository and none of the house's
+                  secrets, CI fails it if it touches the workflows, the installer or the safety guards, and nothing
+                  merges without a person's review.</span
                 >
               </p>
             </div>
