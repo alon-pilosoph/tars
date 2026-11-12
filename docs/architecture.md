@@ -267,6 +267,10 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
   TARS keeps for them, each only to its own site. The person's mailbox is read over IMAP, read-only, for sign-in
   emails from the site being signed in to. A one-time page for a missing login is served on this machine
   (`[browser] login_port`) while it waits, on the home network or Tailscale ([TARS's browser](browser.md#what-leaves-the-machine)).
+- **A house recording session made with `--cloud`:** its takes go to Deepgram's endpoint for recordings when
+  `tools/commands_bench.py --cloud` measures them, as the session's page told the person before they recorded. Every
+  other recording session's takes stay on the machine: the bench leaves them to Vosk, and the backup doesn't copy them
+  ([recording sessions](web-ui.md#recording-sessions)).
 - **When the web UI's Status page is opened,** each service TARS uses is asked for something small with its key (a
   model, the voices, the key's or the bot's own details: no conversation, no tokens), and each one's public status
   page is read (nothing is sent to it).

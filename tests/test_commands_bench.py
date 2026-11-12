@@ -46,9 +46,10 @@ def test_every_command_the_house_script_asks_for_is_one_of_the_phrases():
                 assert commands.match(p.say) == want, p.say
 
 
-def take(prompt, say, means, problem=None):
+def take(prompt, say, means, problem=None, cloud=True):
+    """`cloud`: its session was made with --cloud, so the cloud may hear it."""
     return {"session": 1, "prompt": prompt, "say": say, "means": means, "pcm": say.encode(), "seconds": 1.5,
-            "problem": problem}  # fmt: skip
+            "problem": problem, "cloud": cloud}  # fmt: skip
 
 
 def test_takes_are_right_missed_or_wrong_and_a_wrong_one_is_called_out():
@@ -115,6 +116,39 @@ def test_the_cloud_failing_on_a_take_is_kept_and_the_run_goes_on():
     said = summary(results)
     assert "matched: 1 right, 0 missed, 0 wrong" in said and "the cloud failed on 1 takes" in said
     assert not any_wrong(results)
+
+
+def test_a_take_whose_session_stays_on_the_pi_is_never_sent_to_the_cloud():
+    sent = []
+
+    def cloud(pcm):
+        sent.append(pcm)
+        return pcm.decode()
+
+    takes = [take("h1", "Turn on the AC.", "AC|on", cloud=False), take("h2", "Lock the front door.", "front door|lock")]
+    results = score(takes, Commands(DEVICES), NAMES, lambda pcm: "", cloud=cloud)
+    assert sent == [b"Lock the front door."]
+    assert results[0].stays and results[0].cloud_text is None and results[0].cloud_outcome is None
+    assert not results[1].stays and results[1].cloud_outcome == "right"
+    said = summary(results)
+    assert "1 takes not sent to the cloud: their sessions were made to stay on the Pi" in said
+    assert "matched: 1 right, 0 missed, 0 wrong" in said
+
+
+def test_without_the_cloud_no_take_counts_as_kept_from_it():
+    results = score([take("h1", "Turn on the AC.", "AC|on", cloud=False)], Commands(DEVICES), NAMES, lambda pcm: "")
+    assert not results[0].stays and "not sent to the cloud" not in summary(results)
+
+
+def test_takes_say_whether_their_session_lets_them_go_to_the_cloud(tmp_path):
+    log = EventLog(tmp_path / "events")
+    sessions = Sessions(log.store)
+    prompt = Prompt("h1", "Turn on the AC.", means="AC|on")
+    for cloud in (False, True):
+        session = sessions.open(sessions.create(HOUSE, "Alon", [prompt], cloud=cloud))
+        sessions.add_take(session, prompt, b"\1\0" * 16000, "silence")
+    takes, _ = read_takes(log.store, None)
+    assert [t["cloud"] for t in takes] == [False, True]
 
 
 def test_takes_are_read_from_house_sessions_with_what_each_prompt_meant(tmp_path):

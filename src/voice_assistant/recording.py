@@ -5,7 +5,8 @@ A session is a script of prompts (the exact words, and how to say them) for one 
 key, good for LINK_HOURS or until the last prompt is done. The assistant does the recording, since it holds the
 speakerphone (Assistant.take, over control.py); the web UI keeps each take here, after `check` has listened for what
 would make it worth doing again. Two scripts so far: the person's voice (for speaker ID), and the house's commands
-(for measuring house commands on the Pi, tools/commands_bench.py).
+(for measuring house commands on the Pi, tools/commands_bench.py). A house session's takes stay on the Pi unless it
+was made with --cloud, which its page says before it starts: then the bench may send them to Deepgram too.
 """
 
 import json
@@ -35,6 +36,7 @@ SILENCE, TAP, NO_SPEECH = "silence", "tap", "nobody"
 # What `check` can find wrong with a take (types.ts Problem).
 NOTHING, QUIET, LOUD, CUT_OFF, SHORT = "nothing", "quiet", "loud", "cut_off", "short"
 
+HOUSE_PURPOSE = "To measure TARS doing the house's commands on the Pi, and hearing them offline, before it's turned on."
 ABOUT = {
     VOICE: (
         "Your voice",
@@ -43,10 +45,31 @@ ABOUT = {
     ),
     HOUSE: (
         "House commands",
-        "To measure TARS doing the house's commands on the Pi, and hearing them offline, before it's turned on.",
-        "They're kept on the Pi, and played back to TARS to check it never mistakes one for another.",
+        f"{HOUSE_PURPOSE} Your recordings stay on the Pi: none of them is sent anywhere.",
+        "They're kept on the Pi, and played back to TARS there to check it never mistakes one for another.",
     ),
 }
+# A house session made with --cloud: when its takes are measured (tools/commands_bench.py --cloud), each is also sent
+# to Deepgram's speech to text, and the person is told so before they start. Without it, the bench never sends them.
+ABOUT_CLOUD = {
+    HOUSE: (
+        "House commands",
+        (
+            f"{HOUSE_PURPOSE} Your recordings are kept on the Pi, and when they're measured each one is also sent to "
+            "Deepgram, a speech to text service in the cloud, to compare how it hears them."
+        ),
+        (
+            "They're kept on the Pi and played back to TARS there to check it never mistakes one for another; when "
+            "they're measured, each one is also sent to Deepgram, in the cloud, to compare how it hears them."
+        ),
+    ),
+}
+
+
+def about(kind: str, cloud: bool = False) -> tuple[str, str, str]:
+    """A session's title, what it's for and where its recordings go (said before it starts), and what's said once
+    it's done. `cloud`: a house session whose takes are also sent to Deepgram when they're measured."""
+    return ABOUT_CLOUD[kind] if cloud else ABOUT[kind]
 
 
 @dataclass(frozen=True)
@@ -204,14 +227,18 @@ class Sessions:
     def __init__(self, store: Store, clock: Callable[[], float] = time.time):
         self.store, self._clock = store, clock
 
-    def create(self, kind: str, person: str, prompts: list[Prompt]) -> str:
+    def create(self, kind: str, person: str, prompts: list[Prompt], cloud: bool = False) -> str:
+        """`cloud`: a house session whose takes may also be sent to Deepgram when they're measured, as its page says;
+        without it, they never leave the Pi."""
         if kind not in KINDS:
             raise ValueError(f"no such session: {kind!r} (one of {', '.join(KINDS)})")
+        if cloud and kind not in ABOUT_CLOUD:
+            raise ValueError(f"a {kind} session's takes never go to the cloud")
         token = secrets.token_urlsafe(16)
         now = self._clock()
         self.store.write(
-            "INSERT INTO sessions (token, kind, person, created, expires, prompts) VALUES (?, ?, ?, ?, ?, ?)",
-            (token, kind, person, now, now + LINK_HOURS * 3600, json.dumps([asdict(p) for p in prompts])),
+            "INSERT INTO sessions (token, kind, person, created, expires, prompts, cloud) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (token, kind, person, now, now + LINK_HOURS * 3600, json.dumps([asdict(p) for p in prompts]), int(cloud)),
         )
         return token
 
@@ -278,13 +305,13 @@ class Sessions:
 
     def public(self, session: dict) -> dict:
         """What the page gets (types.ts Session): the words and how to say them, not what a command means."""
-        title, about, after = ABOUT[session["kind"]]
+        title, said_first, after = about(session["kind"], bool(session["cloud"]))
         prompts = self.prompts(session)
         return {
             "kind": session["kind"],
             "title": title,
             "person": session["person"],
-            "about": about,
+            "about": said_first,
             "after": after,
             "prompts": [{"id": p.id, "say": p.say, "how": p.how} for p in prompts],
             "takes": [public_take(t) for t in self.takes(session["id"])],

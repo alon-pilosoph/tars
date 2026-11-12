@@ -260,9 +260,10 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     )
 
 
-def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -> None:
+def record_session(cfg: Config, root: Path, kind: str, person: str, port: int, cloud: bool = False) -> None:
     """--record-session: a recording session for `person` (recording.py), its link printed and sent to their
-    Telegram chat if they have one."""
+    Telegram chat if they have one. `cloud` (--cloud): a house session whose takes may also be sent to Deepgram when
+    they're measured, as its page and the message say."""
     import random
 
     from .browser.login_page import reachable_address
@@ -273,17 +274,21 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
     if log is None:
         raise ConfigError("Recording sessions keep their takes in the event log: set [learning] log_events = true.")
     prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
-    token = Sessions(log.store).create(kind, person, prompts)
+    token = Sessions(log.store).create(kind, person, prompts, cloud)
     url = f"{cfg.web.link.rstrip('/') or f'http://{reachable_address()}:{port}'}/?session={token}"
     minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
     print(f"{ABOUT[kind][0]} for {person}, {len(prompts)} phrases (about {minutes} minutes):\n{url}")
+    if cloud:
+        print("(its takes may also go to Deepgram, when tools/commands_bench.py --cloud measures them)")
+    where = " Its recordings are kept on TARS, and also sent to Deepgram, in the cloud, when they're measured."
+    where = where if cloud else ""
     chat = next((chat for name, chat in cfg.telegram.people.items() if name.lower() == person.lower()), None)
     if not (cfg.telegram.enabled and chat):
         print(f"({person} has no Telegram chat in [telegram] people: open the link on their phone.)")
         return
     text = (
-        f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes. "
-        f"Open it when you're near TARS; the link works for a day.\n{url}"
+        f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes."
+        f"{where} Open it when you're near TARS; the link works for a day.\n{url}"
     )
     try:
         Bot(api_key(root / ".env", TELEGRAM_KEY)).call("sendMessage", chat_id=chat, text=text)
@@ -370,6 +375,11 @@ def main() -> None:
     )
     parser.add_argument("--for", dest="person", metavar="NAME", help="whose --record-session it is")
     parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="with --record-session house: its takes may also be sent to Deepgram when measured, and its page says so",
+    )
+    parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
     )
     parser.add_argument("--port", type=int, default=WEB_PORT)
@@ -435,6 +445,8 @@ def main() -> None:
         parser.error("--delete-anyway goes with --backup")
     if bool(args.record_session) != bool(args.person):
         parser.error("--record-session and --for NAME go together")
+    if args.cloud and args.record_session != "house":
+        parser.error("--cloud goes with --record-session house")
 
     if args.list_devices:
         list_devices()
@@ -465,7 +477,7 @@ def main() -> None:
             web_ui(cfg, root, args.host, args.port)
             return
         if args.record_session:
-            record_session(cfg, root, args.record_session, args.person, args.port)
+            record_session(cfg, root, args.record_session, args.person, args.port, args.cloud)
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)

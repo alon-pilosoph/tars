@@ -195,6 +195,29 @@ def test_the_page_isnt_told_what_a_command_means(sessions):
     assert public["minutes"] >= 1 and public["takes"] == [] and public["skipped"] == []
 
 
+def test_a_house_session_says_its_recordings_stay_on_the_pi(sessions):
+    public = sessions.public(sessions.open(sessions.create(HOUSE, "Alon", house_script(DEVICES, random.Random(3)))))
+    assert "Your recordings stay on the Pi: none of them is sent anywhere." in public["about"]
+    assert "kept on the Pi" in public["after"]
+    assert "Deepgram" not in public["about"] + public["after"] and "cloud" not in public["about"] + public["after"]
+
+
+def test_a_house_session_made_for_the_cloud_says_before_it_starts_its_recordings_go_to_deepgram(sessions):
+    token = sessions.create(HOUSE, "Alon", house_script(DEVICES, random.Random(3)), cloud=True)
+    public = sessions.public(sessions.open(token))
+    assert public["title"] == "House commands"
+    assert "kept on the Pi" in public["about"] and "stay on the Pi" not in public["about"]
+    assert "each one is also sent to Deepgram, a speech to text service in the cloud" in public["about"]
+    assert "when they're measured" in public["about"]  # when: not while they're recorded
+    assert "kept on the Pi" in public["after"]
+    assert "when they're measured, each one is also sent to Deepgram, in the cloud" in public["after"]
+
+
+def test_a_voice_session_never_goes_to_the_cloud(sessions):
+    with pytest.raises(ValueError, match="never go to the cloud"):
+        sessions.create(VOICE, "Alon", voice_script()[:3], cloud=True)
+
+
 def test_an_unknown_kind_of_session_is_refused(sessions):
     with pytest.raises(ValueError):
         sessions.create("karaoke", "Alon", [])

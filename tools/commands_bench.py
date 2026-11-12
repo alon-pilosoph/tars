@@ -1,17 +1,18 @@
 """House commands on the Pi, measured on the household's own recorded takes (docs/home.md#house-commands-on-the-pi).
 
     uv run python tools/commands_bench.py                  # every house recording session's takes, Vosk only: free
-    uv run python tools/commands_bench.py --cloud          # also the cloud's speech to text for whole recordings
+    uv run python tools/commands_bench.py --cloud          # also the cloud's, for sessions made with --cloud
     uv run python tools/commands_bench.py --session TOKEN  # one session's
 
 Each take from a house recording session (voice-assistant --record-session house --for NAME) is played to Vosk,
 limited to the house's phrases as commands_on_pi builds them, and what it heard is matched as TARS would. Against
 what the take means, it's right (the command it is, or nothing for words that mustn't count), missed (a command
 heard as nothing: it goes to the model, which costs time, not a mistake) or wrong (the one failure that matters: a
-command it isn't). With --cloud, each take also goes to Deepgram's endpoint for whole recordings, timed: what
-local_first adds for a request that isn't a command, and the transcript commands_on_pi matches when the cloud is
-there. About $0.004 a minute of takes. A missed command is also matched as written, to tell words the phrases don't have
-from words Vosk didn't hear.
+command it isn't). With --cloud, each take of a session made with --cloud (--record-session house --cloud, whose
+page told the person so) also goes to Deepgram's endpoint for whole recordings, timed: what local_first adds for a
+request that isn't a command, and the transcript commands_on_pi matches when the cloud is there. A session made
+without it said its takes stay on the Pi, so they're never sent: only Vosk hears them. About $0.004 a minute of takes
+sent. A missed command is also matched as written, to tell words the phrases don't have from words Vosk didn't hear.
 
 Every take's result is saved (voice_data/bench/commands/<time>.jsonl), with what it was run on; a take whose audio is
 missing or damaged is skipped and counted. The exit code is 1 if any take was wrong, heard by Vosk or by the cloud.
@@ -59,6 +60,7 @@ class Result:
     cloud_outcome: str | None = None
     cloud_ms: float | None = None
     cloud_error: str | None = None
+    stays: bool = False  # in a run with the cloud, not sent to it: its session was made to stay on the Pi
 
 
 def expected(means: str, names: dict[str, str]) -> Command | None:
@@ -90,8 +92,9 @@ def score(
     hear: Callable[[bytes], str],
     cloud: Callable[[bytes], str] | None = None,
 ) -> list[Result]:
-    """Each take ({session, prompt, say, means, pcm, seconds, problem}) heard by `hear(pcm)` and, given `cloud(pcm)`,
-    by the cloud too. The cloud failing on a take is kept on its result, not the end of the run."""
+    """Each take ({session, prompt, say, means, pcm, seconds, problem, cloud}) heard by `hear(pcm)` and, given
+    `cloud(pcm)`, by the cloud too, if its session was made for that (its `cloud`); never otherwise. The cloud failing
+    on a take is kept on its result, not the end of the run."""
     results = []
     for t in takes:
         want = expected(t["means"], names)
@@ -101,7 +104,9 @@ def score(
         got = commands.match(heard) if heard else None
         r = Result(t["session"], t["prompt"], t["say"], t["means"], text(want), heard, text(got), outcome(want, got),
                    round(vosk_ms, 1), t["seconds"], t.get("problem"), text(commands.match(t["say"])))  # fmt: skip
-        if cloud:
+        if cloud and not t.get("cloud"):
+            r.stays = True
+        elif cloud:
             start = time.perf_counter()
             try:
                 r.cloud_text = cloud(t["pcm"])
@@ -150,6 +155,8 @@ def summary(results: list[Result], skipped: int = 0) -> str:
         lines.append(f"the cloud's transcripts, matched: {counted(timed, lambda r: r.cloud_outcome)}")
     if failed := sum(r.cloud_error is not None for r in results):
         lines.append(f"the cloud failed on {failed} takes (each one's error is kept with its result)")
+    if stays := sum(r.stays for r in results):
+        lines.append(f"{stays} takes not sent to the cloud: their sessions were made to stay on the Pi")
     for r in results:
         if r.outcome == "wrong" or r.cloud_outcome == "wrong":
             problem = f" ({r.problem})" if r.problem else ""
@@ -162,8 +169,8 @@ def summary(results: list[Result], skipped: int = 0) -> str:
 
 def read_takes(store, session_token: str | None) -> tuple[list[dict], list[str]]:
     """Every house session's takes that have audio (or one session's, by its token), with what each prompt said and
-    meant; and why each take whose audio couldn't be read was left out. A token no house session has is a
-    LookupError."""
+    meant and whether its session lets it go to the cloud; and why each take whose audio couldn't be read was left
+    out. A token no house session has is a LookupError."""
     query = "SELECT * FROM sessions WHERE kind = ?" + (" AND token = ?" if session_token else "")
     sessions = store.rows(query, (HOUSE, session_token) if session_token else (HOUSE,))
     if session_token and not sessions:
@@ -182,7 +189,7 @@ def read_takes(store, session_token: str | None) -> tuple[list[dict], list[str]]
                 skipped.append(f"session {s['id']}, {t['prompt']}: {e}")
                 continue
             takes.append({"session": s["id"], "prompt": t["prompt"], "say": p["say"], "means": p["means"], "pcm": pcm,
-                          "seconds": t["seconds"], "problem": t["problem"]})  # fmt: skip
+                          "seconds": t["seconds"], "problem": t["problem"], "cloud": bool(s["cloud"])})  # fmt: skip
     return takes, skipped
 
 
@@ -190,7 +197,11 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--config", type=Path, default=REPO / "config.toml")
     p.add_argument("--session", help="one session's takes, by its link's token")
-    p.add_argument("--cloud", action="store_true", help="also time the cloud's speech to text (paid)")
+    p.add_argument(
+        "--cloud",
+        action="store_true",
+        help="also time the cloud's speech to text, for sessions made with --cloud (paid)",
+    )
     p.add_argument("--save", type=Path, help="where to keep the results (default voice_data/bench/commands/)")
     args = p.parse_args()
 
@@ -218,12 +229,15 @@ def main() -> int:
     if not takes:
         print("No house takes yet: voice-assistant --record-session house --for NAME")
         return 2
-    minutes = sum(t["seconds"] for t in takes) / 60
     cloud: Callable[[bytes], str] | None = None
-    if args.cloud:
+    sent = [t for t in takes if t["cloud"]] if args.cloud else []
+    if args.cloud and not sent:
+        print("(no session here was made with --cloud: their takes stay on the Pi, so only Vosk hears them)")
+    elif sent:
         from voice_assistant.stt import DeepgramFileTranscriber, transcribe_recording
 
-        print(f"{len(takes)} takes, {minutes:.1f} minutes: about ${minutes * PRICE_A_MINUTE:.2f} at Deepgram")
+        minutes = sum(t["seconds"] for t in sent) / 60
+        print(f"{len(sent)} takes to Deepgram, {minutes:.1f} minutes: about ${minutes * PRICE_A_MINUTE:.2f}")
         deepgram = DeepgramFileTranscriber(api_key(root / ".env", DEEPGRAM_KEY), cfg.stt)
         cloud = functools.partial(transcribe_recording, deepgram)
 
