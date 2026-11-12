@@ -1,13 +1,17 @@
 """Auto-lock that knows whether the door is shut (autolock.py): the rules, each with a clock TARS moves itself."""
 
+import inspect
+
 import pytest
 
+from voice_assistant import __main__ as main
 from voice_assistant.autolock import (
     LOCK_SETTLE_S,
     MAX_TRIES,
     RESYNC_S,
     RETRY_S,
     SENSOR_GRACE_S,
+    Asked,
     AutoLock,
     AutoLockDevice,
     Off,
@@ -22,14 +26,16 @@ LOCK, DOOR = "lock.front_door", "binary_sensor.front_door"
 class House:
     """Home Assistant as the auto-lock sees it, a clock, and whatever was said, posted and told."""
 
-    def __init__(self, tmp_path, door="off", lock="locked", anyone_home=True, settings=None):
+    def __init__(self, tmp_path, door="off", lock="locked", anyone_home=True, settings=None, changing=None):
         self.t, self.states = 0.0, {LOCK: lock, DOOR: door}
         self.locked, self.said, self.posted, self.told = 0, [], [], []
         self.home, self.jammed, self.failing, self.call_s, self.answer = anyone_home, False, 0, 0.0, None
         self.off = Off(tmp_path, LOCK, clock=lambda: 1_800_000_000.0 + self.t)
+        self.asked = Asked(tmp_path, LOCK, clock=lambda: 1_800_000_000.0 + self.t)
         self.auto = AutoLock(
             "front door", LOCK, DOOR, settings or Settings(), self.off, self.read, self.lock, self.said.append,
-            self.posted.append, self.told.append, lambda: self.home, clock=lambda: self.t,
+            self.posted.append, self.told.append, lambda: self.home, clock=lambda: self.t, asked=self.asked,
+            changing=changing,
         )  # fmt: skip
         self.auto.resync()  # as the first step does
 
@@ -252,6 +258,86 @@ def test_any_way_from_locked_to_unlocked_is_a_new_unlocking(tmp_path, path):
         h.set(LOCK, state)
     h.wait(60)
     assert h.locked == 2 and len(h.told) == 1
+
+
+def test_tars_asked_to_unlock_a_door_already_unlocked_counts_never_opened_from_then(tmp_path):
+    """Auto Unlock had it unlocked 50 s before: Home Assistant has nothing new to say, and the count starts again."""
+    h = House(tmp_path)
+    h.set(LOCK, "unlocked")
+    h.wait(50)
+    h.asked.mark()  # the house's tools, as they unlock it: seen at the next step
+    h.wait(60)
+    assert h.locked == 0  # it would have been, at 60 s
+    h.wait(1)
+    assert h.locked == 1  # a minute after it was asked
+
+
+def test_tars_asked_to_unlock_a_locked_door_counts_from_home_assistant_saying_unlocked(tmp_path):
+    h = House(tmp_path)
+    h.asked.mark()  # before the unlock: it's locked, so nothing yet
+    h.wait(30)
+    h.set(LOCK, "unlocked")
+    h.wait(59)
+    assert h.locked == 0
+    h.wait(1)
+    assert h.locked == 1
+
+
+def test_tars_asked_to_unlock_after_a_lock_that_didnt_lock_tries_again(tmp_path):
+    h = House(tmp_path)
+    h.jammed = True
+    h.set(LOCK, "unlocked")
+    h.wait(60 + LOCK_SETTLE_S)
+    assert h.locked == 1 and len(h.told) == 1
+    h.jammed = False
+    h.asked.mark()
+    h.wait(1 + 60)
+    assert h.locked == 2 and h.states[LOCK] == "locked"
+
+
+def test_an_unlock_asked_before_tars_started_isnt_news(tmp_path):
+    Asked(tmp_path, LOCK, clock=lambda: 1_800_000_000.0 - 30).mark()
+    h = House(tmp_path, lock="unlocked")
+    h.wait(60)
+    assert h.locked == 1
+
+
+class UnlockUnderWay:
+    """The house's lock (HomeTools.changing), as auto-lock takes it: the first time, someone was unlocking the door
+    by voice, and the house's tools marked it as they did."""
+
+    def __init__(self):
+        self.house, self.taken = None, 0
+
+    def __enter__(self):
+        self.taken += 1
+        if self.taken == 1:
+            self.house.asked.mark()
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_locking_waits_for_the_houses_lock_and_an_unlock_made_meanwhile_starts_the_count_again(tmp_path):
+    held = UnlockUnderWay()
+    h = held.house = House(tmp_path, changing=held)
+    h.set(LOCK, "unlocked")
+    h.wait(60)
+    assert held.taken == 1 and h.locked == 0  # due, but not once it had the lock
+    h.wait(59)
+    assert h.locked == 0
+    h.wait(1)
+    assert held.taken == 2 and h.locked == 1
+
+
+def test_auto_lock_can_only_lock(tmp_path):
+    """Nothing it's given can unlock: TARS's only call to the lock is lock.lock."""
+    assert {"lock", "read"} <= set(inspect.signature(AutoLock).parameters)
+    assert not any("unlock" in p or "open" in p for p in inspect.signature(AutoLock).parameters)
+    source = inspect.getsource(main.start_auto_locks)
+    assert source.count("hass.call(") == 1 and 'hass.call("lock.lock"' in source
+    module = inspect.getsource(inspect.getmodule(AutoLock))
+    assert not any(s in module for s in ("lock.unlock", "lock.open", "hass.call", "call_service"))
 
 
 def test_a_door_left_open_is_said_aloud_once_or_posted_when_nobodys_home(tmp_path):

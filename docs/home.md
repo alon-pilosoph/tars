@@ -101,6 +101,7 @@ voice assistant):
 |---|---|
 | Unlocked, the door opened, then shut | locks it 10 s after it shut (`after_shut_s`, 3 at least: a door pulled to can bounce off the frame); opened again meanwhile, the count starts over |
 | Unlocked, and the door never opened (Auto Unlock as someone walks past) | locks it after a minute (`unopened_s`) |
+| Someone asks TARS to unlock it (a trusted voice, a chat), already unlocked or not | counts that minute again from then, so it doesn't lock seconds after TARS said "unlocked"; its call to lock waits for any change TARS is making to the house, an unlock included, and asks again whether it's due once it has its turn |
 | The door open | never locks it; reads the door again just before locking, and locks only if that says shut |
 | The lock doesn't lock (jammed, the door not quite shut) | tells the maintainers, once, if it isn't locked 20 s after the call returned; tries again only when it's next unlocked |
 | The lock out of reach and back (its Bluetooth, Home Assistant restarting), or unlatched | isn't a new unlocking: only locked to unlocked (or unlocked as TARS starts) is, so a lock that didn't lock isn't tried again on its account |

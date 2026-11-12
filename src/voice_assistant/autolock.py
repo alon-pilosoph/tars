@@ -12,6 +12,8 @@ jamming, or unlatching (unlocked, open, unlocked) isn't a new unlocking, so it i
 1. The door opened and shut again: locked `after_shut_s` (10 s) after it shut, if it's still shut. Opened again
    meanwhile, the count starts over when it shuts.
 2. Unlocked and never opened (an Auto Unlock as someone walks past, the app): locked `unopened_s` (60 s) after.
+   Someone asking TARS to unlock it (the house's tools, either process: Asked) starts that count again, the lock
+   already unlocked included, as Home Assistant then has nothing new to say.
 3. Only when the door reads shut, just before: anything but "off" (open, unknown, unavailable, or Home Assistant not
    answering) and it isn't locked.
 4. A try that never reached the lock (the door couldn't be read, or Home Assistant didn't take the call) is tried
@@ -27,6 +29,9 @@ jamming, or unlatching (unlocked, open, unlocked) isn't a new unlocking, so it i
    being open, until it's back on; it comes back by itself. Kept in a file beside the event log, so a chat's process
    can turn it off and the assistant, which locks, reads it.
 
+The call to lock is made holding the house's own lock (HomeTools.changing), as the home tool's changes are, so it's
+never made in the middle of an unlock in this process; once it has it, whether it's still due is asked again.
+
 What it knows comes from following both in Home Assistant, and from reading both again (REST) each time that's
 taken up, the first and after every reconnect, and every RESYNC_S besides: a change missed while nothing was
 followed is caught, as if it had just happened.
@@ -35,6 +40,7 @@ TARS down means nothing locks the door: the lock's own auto-lock, with a long ti
 any code here close the last window, a door opened between the read and the bolt moving (docs/home.md#auto-lock).
 """
 
+import contextlib
 import json
 import os
 import threading
@@ -48,6 +54,7 @@ from .home import OFF, ON, STATUS, Device, HomeError, Request, set_off_by_door
 from .reminders import twelve_hour
 
 FILE = "auto_lock.json"  # in the event log's folder: { lock entity: off until (a time), ... }
+ASKED_FILE = "auto_lock_asked.json"  # beside it: { lock entity: when TARS was last asked to unlock it, ... }
 UNLOCKED = ("unlocked", "open")  # Home Assistant's lock states for not locked; "open" is unlatched
 SETTLED = ("locked", *UNLOCKED)  # where a lock stays: not locking, unlocking, opening, jammed, nor out of reach
 SHUT, OPEN = "off", "on"  # a door sensor's states in Home Assistant; anything else isn't known
@@ -96,25 +103,26 @@ def problems(value, where: str) -> list[str]:
     return found
 
 
-class Off:
-    """Whether a lock's auto-lock is turned off, and until when: a file both processes read and write."""
+class Kept:
+    """A time for each lock, in a file both processes read and write (beside the event log)."""
+
+    name = FILE
 
     def __init__(self, folder: Path, entity: str, clock: Callable[[], float] = time.time):
-        self.path, self.entity, self._clock = folder / FILE, entity, clock
+        self.path, self.entity, self._clock = folder / self.name, entity, clock
 
-    def until(self) -> float | None:
-        """When it comes back on, while it's off; None while it's on."""
-        until = self._read().get(self.entity)
-        return until if isinstance(until, int | float) and until > self._clock() else None
+    def _when(self) -> float | None:
+        found = self._read().get(self.entity)
+        return found if isinstance(found, int | float) and not isinstance(found, bool) else None
 
-    def set(self, until: float | None) -> None:
+    def _keep(self, when: float | None) -> None:
         found = self._read()
-        if until is None:
+        if when is None:
             found.pop(self.entity, None)
         else:
-            found[self.entity] = until
+            found[self.entity] = when
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        part = self.path.with_name(f".{FILE}.{os.getpid()}")
+        part = self.path.with_name(f".{self.name}.{os.getpid()}")
         part.write_text(json.dumps(found))
         part.replace(self.path)
 
@@ -124,6 +132,31 @@ class Off:
         except OSError, ValueError:
             return {}
         return found if isinstance(found, dict) else {}
+
+
+class Off(Kept):
+    """Whether a lock's auto-lock is turned off, and until when."""
+
+    def until(self) -> float | None:
+        """When it comes back on, while it's off; None while it's on."""
+        until = self._when()
+        return until if until is not None and until > self._clock() else None
+
+    def set(self, until: float | None) -> None:
+        self._keep(until)
+
+
+class Asked(Kept):
+    """When someone last asked TARS to unlock a lock, the house's tools in either process: auto-lock counts its
+    "never opened" time again from then. Only ever a later lock: nothing here unlocks."""
+
+    name = ASKED_FILE
+
+    def at(self) -> float | None:
+        return self._when()
+
+    def mark(self) -> None:
+        self._keep(self._clock())
 
 
 class AutoLockDevice(Device):
@@ -193,10 +226,16 @@ class AutoLock:
         tell: Callable[[str], None],
         anyone_home: Callable[[], bool | None] = lambda: None,
         clock: Callable[[], float] = time.monotonic,
+        asked: Asked | None = None,
+        changing: contextlib.AbstractContextManager | None = None,
     ):
+        """`asked`: when TARS was last asked to unlock it. `changing`: held while the lock is called, the house's
+        own lock (HomeTools.changing)."""
         self.door, self.lock_entity, self.sensor, self.settings, self.off = door, lock_entity, sensor, settings, off
         self._read, self._lock, self._say, self._post, self._tell = read, lock, say, post, tell
         self._anyone_home, self._clock = anyone_home, clock
+        self._asked, self._changing = asked, changing or contextlib.nullcontext()
+        self._asked_seen = asked.at() if asked else None  # one from before TARS started isn't news
         self._mutex = threading.Lock()
         self.lock_state = ""
         self.lock_settled = ""  # its last settled state (SETTLED); "" until one's heard
@@ -296,6 +335,7 @@ class AutoLock:
         TICK_S."""
         if self._resync.is_set() or self._synced_at is None or self._clock() - self._synced_at >= RESYNC_S:
             self.resync()
+        self._take_asked()
         now = self._clock()
         off = self.off.until() is not None
         with self._mutex:
@@ -361,8 +401,34 @@ class AutoLock:
         due = shut_at + s.after_shut_s if self.opened else self.unlocked_at + s.unopened_s
         return now >= due
 
+    def _take_asked(self) -> None:
+        """Someone asked TARS to unlock it since last looked: an unlocking under way counts from now, as if it had
+        just been unlocked. While it's locked, Home Assistant's "unlocked" starts the count, as ever."""
+        if self._asked is None or (at := self._asked.at()) is None:
+            return
+        if self._asked_seen is not None and at <= self._asked_seen:
+            return
+        self._asked_seen, now = at, self._clock()
+        with self._mutex:
+            if self.unlocked_at is None:
+                return
+            self.unlocked_at, self.opened = now, self.door_state != SHUT
+            self.shut_at = now if self.door_state == SHUT else None
+            self.asked_at, self.tries, self.retry_at, self.gave_up = None, 0, None, False
+        print(f"(auto-lock: someone asked for the {self.door} unlocked: counting from now)")
+
     def _lock_now(self) -> None:
-        """Reads the door again and locks only if it reads shut; otherwise it's tried again later, or never."""
+        """Holding the house's lock, asks again whether it's due, then reads the door again and locks only if it
+        reads shut; otherwise it's tried again later, or never."""
+        with self._changing:
+            self._take_asked()
+            off = self.off.until() is not None
+            with self._mutex:
+                due = not off and self._lock_due(self._clock())
+            if due:
+                self._read_and_lock()
+
+    def _read_and_lock(self) -> None:
         with self._mutex:
             heard = self._heard[self.sensor]
         try:
