@@ -83,7 +83,9 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs the system packages in
 [`deploy/pi-packages.txt`](../deploy/pi-packages.txt) (PortAudio, and Chromium on a virtual screen for
 [TARS's browser](browser.md#on-the-pi)) and uv, the Python packages (every one has a
-ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node),
+ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node), gives
+TARS its own user on the household's Mosquitto when there are doors to listen to
+([the front door](presence.md#the-front-door)),
 downloads the models, lists the audio devices, and installs and starts the systemd user units, at boot too: the
 assistant and the web UI, TARS on Telegram with `[telegram]` on ([setting it up](telegram.md#setting-it-up)), and the
 backup's timer with `[backup]` on ([backing up to S3](backup.md)). Then it runs `voice-assistant --check`.

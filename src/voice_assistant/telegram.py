@@ -710,7 +710,9 @@ class TelegramTars:
         print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, in {chat.person}'s chat)", flush=True)
         try:
             asked = on_its_own(skill, due.when, SKIP, due.why)
-            skipped, pieces = split_skip(brain.stream_reply(asked, Request(speaker=chat.person, by_chat=True)))
+            # One a door's lock set off changes nothing in the house (home.Request.by_door).
+            request = Request(speaker=chat.person, by_chat=True, by_door=due.door)
+            skipped, pieces = split_skip(brain.stream_reply(asked, request))
             reply = tidy("".join(pieces))
         except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
             brain.forget_last()

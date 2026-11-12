@@ -705,9 +705,13 @@ def buttons(
 
 
 def routers_now(
-    cfg: Config, secret: Callable[[str], str | None], make_router: Callable | None = None
+    cfg: Config,
+    secret: Callable[[str], str | None],
+    make_router: Callable | None = None,
+    broker: Callable[[dict, str | None, list[str]], tuple[str, str]] | None = None,
 ) -> Result | list[Result]:
-    """--check's: each router in [[presence.routers]], signed into now, and whose phone it sees."""
+    """--check's: each router in [[presence.routers]], signed into now, and whose phone it sees; and the broker the
+    doors' locks publish to ([[presence.doors]]), connected to now, and whether it keeps the locks' topics to them."""
     from .presence import People
     from .routers import RouterError, make
 
@@ -732,6 +736,21 @@ def routers_now(
         here = sorted(people.names[p] for p in people.whose(seen))
         phones = f"; sees the phone of {', '.join(here)}" if here else "; sees nobody's phone just now"
         results.append(Result(where, OK, f"{len(seen)} devices connected{phones}"))
+    if cfg.presence.doors:
+        from .doors import broker_answers
+
+        mqtt, names = cfg.presence.mqtt, ", ".join(d["name"] for d in cfg.presence.doors)
+        topics = [d["topic"] for d in cfg.presence.doors]
+        password = secret(mqtt["secret"]) if mqtt.get("secret") else None
+        problem, open_to_all = (broker or broker_answers)(mqtt, password, topics)
+        fix = "check [presence.mqtt] and its password in .env; docs/presence.md#the-front-door"
+        if problem:
+            results.append(Result("Doors", FAIL, f"the MQTT broker at {mqtt['address']}: {problem}", fix))
+        elif open_to_all:
+            acl = "give the broker deploy/home-assistant/mosquitto/acl's rules; docs/presence.md#the-front-door"
+            results.append(Result("Doors", WARN, f"the MQTT broker at {mqtt['address']}: {open_to_all}", acl))
+        else:
+            results.append(Result("Doors", OK, f"listening to the {names} on the MQTT broker at {mqtt['address']}"))
     return results
 
 

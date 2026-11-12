@@ -608,16 +608,67 @@ def make_presence(cfg: Config, root: Path, events):
     return presence_from(cfg.presence, events.store, lambda name: dotenv_values(env).get(name) or None)
 
 
-def start_presence(presence, reminders=None) -> None:
-    """The assistant's: asks the routers from now on, and says waiting messages once their person is home."""
+def start_presence(cfg: Config, root: Path, presence, reminders=None) -> None:
+    """The assistant's: asks the routers from now on, listens to the doors' locks, and says waiting messages once
+    their person is home."""
     if presence is None:
         return
     from .reminders import on_arrival
 
     for line in presence.left_out:
         print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
-    if presence.watch(on_arrival(reminders.reminders) if reminders else None):
+    doors = make_doors(cfg, presence)
+    changes = [
+        c for c in (on_arrival(reminders.reminders) if reminders else None, doors and doors.phone_came_home) if c
+    ]
+
+    def changed(person: str, home: bool) -> None:
+        for change in changes:
+            change(person, home)
+
+    watcher = presence.watch(changed if changes else None)
+    if watcher:
         print(f"(presence: asking {len(presence.routers)} router(s) every {presence.every_s:.0f} s)")
+    if doors:
+        doors.watcher = watcher
+        if watcher is None:
+            print("(doors: no router to watch, so the doors are only recorded: nobody is marked home by them)")
+        listen_to_doors(cfg, root, doors)
+
+
+def make_doors(cfg: Config, presence):
+    """[[presence.doors]]: what their locks say is kept, and learned from; None without any."""
+    if not cfg.presence.doors:
+        return None
+    from . import maintainers
+    from .doors import DoorLog, Doors
+
+    store = presence.board.store
+    return Doors(DoorLog(store, presence.people), None, lambda text: maintainers.tell(cfg, store, text))
+
+
+def listen_to_doors(cfg: Config, root: Path, doors) -> None:
+    """Listens to the locks on the broker, from now on: the log says when it's listening, and the maintainers are
+    told if it can't for long (doors.Link)."""
+    from .doors import Link, listen
+
+    mqtt = cfg.presence.mqtt
+    password = None
+    if mqtt.get("secret"):
+        password = dotenv_values(root / ".env").get(mqtt["secret"]) or None
+        if password is None:
+            print(f"(doors: leaving out the MQTT broker at {mqtt['address']}: no {mqtt['secret']} in .env)")
+            return
+    try:
+        import paho.mqtt.client  # noqa: F401 - the door extra
+    except ImportError:
+        print("(doors: off: listening to the locks needs the door extra: uv sync --extra door)")
+        return
+    names = ", ".join(d["name"] for d in cfg.presence.doors)
+    print(f"(doors: connecting to the MQTT broker at {mqtt['address']}, for the {names})")
+    doors.link = Link(mqtt["address"], names, doors.tell)
+    listen(mqtt, password, cfg.presence.doors, doors.heard, doors.link)
+    doors.start()
 
 
 def make_chat_when_out(cfg: Config, presence, reminders):
@@ -687,17 +738,22 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
     devices and who's home for the skills that run on something happening, and a trigger saved is checked against
     the devices and people there are. With `myself` (myself.py), the skills that run on TARS being updated are told
     when it is, and what changed."""
+    from .events import person_key
     from .home import Request
     from .skills import Clock
 
     if not skills:
         return None
-    people = status = None
+    people = status = came_by = None
     if presence:
         names = presence.board.people.names  # by person_key: as they're written
 
         def people() -> dict[str, bool | None]:
             return {names[key]: state.home for key, state in presence.board.states().items()}
+
+        def came_by(name: str) -> str | None:
+            state = presence.board.states().get(person_key(name))
+            return state.via if state and state.home else None
 
         skills.people = lambda: set(names)
     if home:
@@ -711,7 +767,8 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
     if myself:
         updates = {"version": myself.version, "between": myself.between}
         updates |= {"seen": skills.seen_version, "see": skills.see_version}
-    return Clock(skills.all, say, people=people, status=status, record=skills.ran, **updates).start()
+    clock = Clock(skills.all, say, people=people, came_by=came_by, status=status, record=skills.ran, **updates)
+    return clock.start()
 
 
 def own_speaker(cfg: Config):
@@ -1439,7 +1496,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     presence = make_presence(cfg, root, events)
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
-    start_presence(presence, reminders)
+    start_presence(cfg, root, presence, reminders)
     announcements = Announcements()
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)

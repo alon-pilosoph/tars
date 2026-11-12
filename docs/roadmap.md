@@ -14,7 +14,7 @@ being right.
 | 2 | [Security](#2-security) | anyone at home can open the web UI until sign-in is on, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts; passkey sign-in built |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
 | 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
-| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting left |
+| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting to try for a week |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
 Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
@@ -95,7 +95,8 @@ button that orders or pays until the person taps Order ([browser](browser.md#nev
 is encrypted, with the key beside it. `.env` is for TARS's user alone, and a reply that read web search results
 changes nothing in the house, nor reads its past or TARS's records. Home Assistant's setup, with its integrations'
 passwords, goes to the backup only sealed with a key kept on the Pi. The speakerphone's own mute is TARS's: while
-it's red, the wake model doesn't run.
+it's red, the wake model doesn't run. The doors' MQTT broker lets in only users with a password, and its ACL keeps the
+locks' topics to the locks; what a lock says only ever puts someone at home, and changes nothing in it.
 
 What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device)
 can play every recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs
@@ -241,8 +242,12 @@ skill and preference, where it came from and what it did. Limits are in code: un
 - **Editing on the page.** Pausing, changing and deleting from the Skills page needs step 2's sign-in first.
 - **Habits offered**, not only asked for: [noticing routines](#planned-noticing-routines).
 
-**The first one:** the arrival greeting. The Nuki's own events say who unlocked; with who's home, TARS greets them by
-name as they come in and says what's waiting ([who's home, not yet](presence.md#not-yet)).
+**The first one:** the arrival greeting. Built: the Nuki's own events say who unlocked, and whoever opens it from
+outside is home at once, so a skill asked for in plain words ("when someone comes home, welcome them by name and tell
+them what's waiting") runs as they walk in, told "Stacey just came home, opening the front door"
+([the front door](presence.md#the-front-door)). The lock's word only ever puts someone at home: a skill it sets off
+greets and reads the house, and changes nothing in it. Left: turning on the lock's MQTT on the Pi (deploy/install-pi.sh
+gives TARS its broker user, and Mosquitto its ACL), and a week of it.
 
 **Measure:** a set of phrasings turned into rules, checked for the rule they should make; dry runs over recorded
 event logs; and a rule built to unlock or order must be refused. **Done when** the arrival greeting and three

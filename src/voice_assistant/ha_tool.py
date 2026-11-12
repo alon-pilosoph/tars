@@ -28,7 +28,7 @@ from . import history as past
 from .ha_setup import ACTIONS as SETUP_ACTIONS
 from .ha_setup import RULES as SETUP_RULES
 from .hass import HomeAssistant
-from .home import HomeError, Request
+from .home import HomeError, Request, set_off_by_door
 
 FIND, STATE, HISTORY, STATISTICS, LOGBOOK, SERVICES, CALL = (
     "find",
@@ -317,6 +317,8 @@ class HAAccess:
             return "error: name the entities in entity_ids; data can't aim it at a device, a room or a label"
         if request.read_the_web:
             return "refused: this reply searched the web, so it changes nothing in the house; they can ask on its own"
+        if refused := set_off_by_door(request):
+            return refused
         if refused := self._unlock_check(domain, name, ids, request):
             return refused
         if not request.go_ahead():

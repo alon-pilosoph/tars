@@ -419,7 +419,11 @@ About half an hour, on the Pi (or the Mac while you try it).
    ```
 
    It asks for each one's password. A device added later: the same command with just its user, then
-   `docker restart mosquitto`. Then `docker compose --profile mqtt up -d`, and add the MQTT integration.
+   `docker restart mosquitto`. Then `docker compose --profile mqtt up -d`, and add the MQTT integration. Each user
+   may only read and write what [`mosquitto/acl`](../deploy/home-assistant/mosquitto/acl) says: Home Assistant
+   everything; a device only the topics under its own user's name (so name the Nuki's user `nuki`, as its topics are
+   `nuki/...`), and Home Assistant's discovery. A device whose topics are under another name needs its own lines
+   there. TARS's own user, for [the front door](presence.md#the-front-door), is added by `deploy/install-pi.sh`.
 2. **A token for TARS.** In Home Assistant: your profile, Security, Long-lived access tokens, Create token. Put it in
    `.env` as `HOME_ASSISTANT_TOKEN`. A separate Home Assistant user for TARS, not an administrator, limits what the
    token can do.

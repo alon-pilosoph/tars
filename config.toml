@@ -307,6 +307,8 @@ enabled = false
 # it's the same on every band and router) or the name a router shows it under ("Alons-iPhone").
 people = {}
 # people = { Alon = ["ca:fe:00:00:00:01"], Stacey = ["staceys-iphone", "ca:fe:00:00:00:02"] }
+# A door lock's key for someone can be listed with their phone: "key:<an app's auth id>" or "code:<a keypad code's
+# id>". Keys nobody lists are learned from whose phone comes home as the door opens (docs/presence.md#the-front-door).
 # How often the routers are asked, from 5 to 120 seconds.
 every_s = 30
 # Someone whose phone no router has seen for this long, while every router answered, has gone out. A phone asleep on a
@@ -326,6 +328,22 @@ away_after_min = 10
 # kind = "xiaomi"
 # address = "192.168.1.160"
 # secret = "XIAOMI_PASSWORD"
+
+# One [[presence.doors]] for each door whose lock says who opened it: a Nuki with MQTT turned on, by its topic (its ID
+# in hex). Someone opening it from outside (Auto Unlock, the keypad) is home at once. [presence.mqtt] is the broker the
+# locks publish to, and TARS's own user there (both user and secret are needed); secret is the name of its password
+# in .env. deploy/install-pi.sh makes that user, and the password, on deploy/home-assistant's Mosquitto. Needs the door
+# extra: uv sync --extra door.
+#
+# [[presence.doors]]
+# name = "front door"
+# topic = "nuki/4224E764"
+#
+# [presence.mqtt]
+# address = "localhost"
+# port = 1883
+# user = "tars"
+# secret = "MQTT_PASSWORD"
 
 [backup]
 # Back up what TARS keeps to an Amazon S3 bucket (docs/backup.md): the audio, the files it sent, and every six hours

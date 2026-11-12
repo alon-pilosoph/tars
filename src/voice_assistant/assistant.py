@@ -583,7 +583,8 @@ class Assistant:
             skill = due.skill
             print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'})")
             try:
-                whose = Request(speaker=None if skill.household else skill.owner)  # their feeds and preferences
+                # Their feeds and preferences; and one a door's lock set off changes nothing in the house.
+                whose = Request(speaker=None if skill.household else skill.owner, by_door=due.door)
                 asked = on_its_own(skill, due.when, SKIP, due.why)
                 skipped, pieces = split_skip(self.brain.stream_reply(asked, whose))
                 text = "".join(pieces).strip()

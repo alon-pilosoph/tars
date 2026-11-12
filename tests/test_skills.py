@@ -343,6 +343,7 @@ class House:
 
     def __init__(self):
         self.home = {"Alon": True, "Stacey": False}
+        self.doors: dict[str, str] = {}  # who came home by opening a door, and which
         self.statuses = {"front door": "front door: locked", "air quality": "air quality: CO2 800 ppm, PM2.5 4"}
 
     def clock(self, *skills, now=None):
@@ -351,6 +352,7 @@ class House:
             lambda: list(skills),
             ALOUD,
             people=lambda: dict(self.home),
+            came_by=lambda person: self.doors.get(person),
             status=lambda d: self.statuses[d],
             clock=lambda: ticks[0],
         )
@@ -376,6 +378,39 @@ def test_someone_coming_home_sets_off_the_skills_waiting_for_them():
         ("a", "Stacey just came home"),
         ("b", "Stacey just came home"),
     ]
+
+
+def test_someone_who_came_home_by_opening_the_door_is_said_to_have():
+    house = House()
+    clock = house.clock(on({"event": "arrives", "who": "stacey"}, "welcome"))
+    clock.look(SUNDAY)
+    house.home["Stacey"], house.doors["Stacey"] = True, "front door"
+    clock.look(SUNDAY)
+    (due,) = clock.take()
+    assert (due.why, due.door) == ("Stacey just came home, opening the front door", "front door")
+
+
+def test_someone_who_came_home_by_their_phone_sets_off_a_skill_that_may_change_the_house():
+    house = House()
+    clock = house.clock(on({"event": "arrives", "who": "everyone"}, "lights"))
+    house.home["Alon"] = False
+    clock.look(SUNDAY)
+    house.home["Stacey"] = True
+    clock.look(SUNDAY)
+    (due,) = clock.take()
+    assert due.why == "Stacey just came home (nobody was home)" and due.door == ""
+
+
+def test_a_skill_a_doors_lock_set_off_runs_reading_the_house_only(speaker):
+    house = House()
+    clock = house.clock(on({"event": "arrives", "who": "stacey"}, "welcome"))
+    clock.look(SUNDAY)
+    house.home["Stacey"], house.doors["Stacey"] = True, "front door"
+    clock.look(SUNDAY)
+    assistant, brain = make_assistant(speaker, [None], [], replies=["Welcome home, Stacey."])
+    assistant._skill_clock = clock
+    assistant.run_skills(follow_up_s=4.0)
+    assert brain.requests[0].by_door == "front door"  # home.py refuses its changes
 
 
 def test_everyone_is_the_last_one_out_and_the_first_one_home():
