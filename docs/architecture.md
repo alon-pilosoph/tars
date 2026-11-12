@@ -77,7 +77,10 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    when what it overheard wasn't meant for it, or is a fragment that asks for nothing ("eight hours."), and TARS
    stays quiet and forgets it. A `<skip>` for a request said by name, or a chat message, is forgotten too, but
    answered with "Sorry, I didn't catch that. Say it again?", and so is an answer to TARS's question that comes out
-   as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
+   as no words, once. Once said (or typed back, or posted), that line is part of the conversation, so what comes next
+   is taken as the answer to it, not as an untethered follow-up to skip. What nobody heard isn't part of it: a reply,
+   or a skill's line, that couldn't be said or posted is forgotten. The conversation is sent to the LLM until it's
+   been quiet for `memory_minutes`.
 
 The conversation (`assistant.py`) reaches the room only through its **body** (`body.py`), which does a few things
 for it: wait for a wake, and say what woke it (its name, a near miss, or something due), with the audio that woke it,
@@ -128,7 +131,7 @@ the rest of the code only sees the setup that runs:
 | Cerebras | OpenAI's model answers everything |
 | Deepgram | OpenAI transcribes once you've stopped (the local rules decide when). Cartesia still speaks; with `[tts] provider = "deepgram"`, OpenAI's voice speaks instead |
 | Cartesia | Deepgram's Flux voice Wes speaks, or OpenAI's without Deepgram |
-| OpenAI | Deepgram hears (Flux) and Cartesia speaks; Qwen answers everything itself, hard questions included, with no web search or speech-to-text backup; it's told it can't look things up, so asked to, it says so |
+| OpenAI | Deepgram hears (Flux) and Cartesia speaks; Qwen answers everything itself, hard questions included, with no web search or speech-to-text backup; it's told it can't look things up, nor set reminders or send without its own tools (`quick_tools`), so asked to, it says so |
 
 Each change prints one line at startup ("no OPENAI_API_KEY: Qwen answers everything, with no web search, thinking
 model or backup"). TARS stops, naming the keys, only when hearing, thinking or speaking has no service left. `--check`
@@ -146,10 +149,12 @@ that describe them, and, for `abilities()`, what they let a model do and what a 
 model's calls go through the one `Toolbox`, by name, and each model is offered its part of it: OpenAI's model all of
 it, Qwen with `quick_tools` the reminders, send without links, and the house. Every `Tool` says what calling it may
 change, with no default, so none is offered without saying: `READS`, nothing; `CHANGES`, something at once, which the
-toolbox refuses in a reply that read the web and makes only once the turn goes ahead (a plugin's tool with
-`changes=True`); `COLLECTS`, only what it puts on the turn (sent items, reminder changes), made once the reply is kept;
-`ITS_OWN`, for a tool that tells reads from changes action by action and holds back each change in its own code (the
-house's unlock rules and a door's own turn, Home Assistant's, an errand waiting for the turn, TARS's settings). Only a
+toolbox refuses in a reply that read the web and in a turn a door's lock set off (`Request.by_door`), and makes only
+once the turn goes ahead (`held_back`; a plugin's tool with `changes=True`); `COLLECTS`, only what it puts on the turn
+(sent items, reminder changes), made once the reply is kept; `ITS_OWN`, for a tool that tells reads from changes
+action by action and holds back each change in its own code, at least as `held_back` does (the house's unlock rules,
+Home Assistant's, an errand, a feed followed, a skill taught, TARS's settings and wishes: [which guard holds
+what](security.md#what-each-tool-may-change)). Only a
 `COLLECTS` tool is called holding the conversation; the rest may wait, so it's released meanwhile. Web search isn't
 in the toolbox: it's OpenAI's own, run on its side, and the brain marks the reply that used it
 (`Request.read_the_web`) for every tool to go by. A new tool is a provider with a `toolset()`, given to the brain
@@ -187,7 +192,8 @@ in the toolbox: it's OpenAI's own, run on its side, and the brain marks the repl
   its own person's to read (the others are counted, not shown), what was said aloud is the household's, the log's
   chat lines are left out, and neither is read in a reply that searched the web. Its rules also tell every model to
   look before saying it can't tell something about itself. `wish`, `wishes`, `granted`: what someone asked for that
-  TARS really couldn't do is noted, with what stopped it and what would make it possible (the `wishes` table), and
+  TARS really couldn't do is noted (once the turn is over, and never in a reply that searched the web nor in a turn
+  a door's lock set off, as for a change), with what stopped it and what would make it possible (the `wishes` table), and
   posted at once to the Telegram chat of each of TARS's maintainers (`[household] maintainers`, as a message the
   Telegram service posts, whichever process noted it; never back to the one who asked); "what did people ask for that
   you couldn't do?" lists them, and only a maintainer marks one granted (with none named, anyone TARS knows). With
@@ -198,7 +204,8 @@ in the toolbox: it's OpenAI's own, run on its side, and the brain marks the repl
   or the models. A change is written as its own line in `config.local.toml`, the rest of the file as it was, kept only
   if the whole config still loads, logged with who asked and what it was (`settings_log`), and applied by a restart of
   TARS's services eight seconds later (`systemd-run`), once the reply's been said. Only for someone TARS knows, or
-  someone asking aloud at home, and never in a reply that searched the web.
+  someone asking aloud at home, only once the turn is over, and never in a reply that searched the web nor in a turn
+  a door's lock set off.
 
 Requests to OpenAI use `store=False`. The send tool is off in `--text` mode and when logging is off, since there'd
 be nowhere to put what it sends.

@@ -45,6 +45,29 @@ def test_the_talk_button_wakes_it_and_it_greets_at_once(conversations):
     assert conversations(assistant) == [ALWAYS, PAUSE]  # the button, then its name as usual
 
 
+def test_the_talk_button_greets_nobody_by_name_since_a_press_carries_no_voice(monkeypatch):
+    """The wake model's last audio is the last time TARS's name was said, maybe by someone else: a press isn't anyone's
+    voice. Who's asking is still told from what's said next (speaker ID on the request)."""
+    import numpy as np
+
+    assistant, _ = make_assistant([], [])
+    last_name = np.ones(16_000, np.int16)  # "hey TARS", said by Stacey a while ago
+
+    def talk(due):
+        assistant.talk()
+        due()
+        return Wake(None, audio=last_name)  # what the body's wait hands back: the trigger's last audio
+
+    assistant.body.wakes = [talk]
+    woken = []
+    monkeypatch.setattr(assistant, "converse", lambda follow_up_s, **kw: woken.append(kw))
+    monkeypatch.setattr(assistant, "prepare_phrases", lambda: None)
+    with pytest.raises(Asleep):
+        assistant.run_forever("Say 'hey tars'...")
+    (kw,) = woken
+    assert kw["greet"] == ALWAYS and kw.get("wake", Wake()).audio is None
+
+
 def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(conversations):
     assistant, _ = make_assistant([], [])
     assistant.mute(True)

@@ -8,6 +8,9 @@ Kept in code:
 - A Telegram chat's conversations are only its own person's to read; what was said aloud at home is the household's.
 - The log's lines with chat messages in them are left out: the records have those, under the rule above.
 - In a reply that read web search results, the records and the log aren't read: a page could ask for them.
+- What changes something (a setting set, a wish noted or granted) is held back as any change is: refused in a reply
+  that read the web and in a turn a door's lock set off, and made only once the turn goes ahead. A wish's words can
+  become an issue a coding agent builds (wishes.py), so a page's words mustn't write one.
 """
 
 import re
@@ -116,7 +119,8 @@ class Myself:
 
     def toolset(self) -> toolbox.Toolset:
         """The tars tool for the brain (toolbox.py). A reply that read the web reads none of its records or log, and
-        neither it nor a turn a door's lock set off changes its settings (call, set)."""
+        neither it nor a turn a door's lock set off changes its settings or notes or grants a wish; each of those
+        waits for the turn to go ahead (set, wish, granted)."""
         return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't look ({e!r})")
 
     def call(self, args: dict, request) -> str:
@@ -255,6 +259,8 @@ class Myself:
             return "error: TARS keeps no wishes here ([learning] log_events is off)"
         if not asked or not why:
             return "error: wish needs what they wanted (query) and what stopped you (why)"
+        if refused := toolbox.held_back(request):
+            return refused
         via = "chat" if getattr(request, "by_chat", False) else "voice"
         person = getattr(request, "speaker", None)
         number = self._events.store.write(
@@ -311,6 +317,8 @@ class Myself:
             return "refused: only TARS's maintainers mark what was asked for as done"
         if not number.strip().isdigit():
             return "error: granted needs the wish's number, as wishes lists them"
+        if refused := toolbox.held_back(request):
+            return refused
         with self._events.store.transaction() as db:
             done = db.execute(
                 "UPDATE wishes SET granted=? WHERE id=? AND granted IS NULL", (time.time(), int(number))
@@ -336,6 +344,8 @@ class Myself:
             )
         if not (getattr(request, "speaker", None) or getattr(request, "by_voice", False)):
             return "refused: TARS changes its settings only for someone it knows, or someone at home asking aloud"
+        if refused := toolbox.held_back(request):  # a draft thrown away, because someone kept talking, sets nothing
+            return refused
         try:
             return self._settings().set(name, value, getattr(request, "speaker", None))
         except SettingsError as e:

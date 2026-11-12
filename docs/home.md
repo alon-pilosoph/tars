@@ -308,7 +308,7 @@ in the voice's log, with what it did.
 | Button | Does |
 |---|---|
 | **Volume up and down** | Turn TARS's speaker 10% a press (with `own_speaker`), by the same rules as asking: never muted, never below 10%. Held, a step every 0.3 s. |
-| **Talk** | TARS listens, as if called by name, and says "Yes?" at once. |
+| **Talk** | TARS listens, as if called by name, and says "Yes?" at once: never a name, since a press is nobody's voice (who's asking is told from what they say next). |
 | **Stop** | What TARS is saying stops now, the reply being written with it, and it doesn't wait for a follow-up. A reminder whose line had begun counts as acknowledged, and a timer ringing on goes off; one stopped before its line is said again later, never acknowledged unheard. |
 | **Mute** | The speakerphone's own mute (below): its mic off, its light red. Again, on. |
 
@@ -437,7 +437,8 @@ def setup(settings: dict, context: Context) -> dict:
 **Tools of its own.** `setup` may return `Provides(kinds, tools)` instead, with `PluginTool`s: a name, a description and
 parameters (a JSON schema) as the model sees them, and `call(args, request)` that answers in the tool's words, as a
 device's `call` does. One with `changes=True` waits for the turn to be over, is called one change at a time with the
-house's, and isn't called at all by a reply that read the web: it's a tool like TARS's own, held back by the brain's
+house's, and isn't called at all by a reply that read the web, nor in a turn a door's lock set off ([the front
+door](presence.md#the-front-door)): it's a tool like TARS's own, held back by the brain's
 toolbox as every tool that changes something is ([the LLM's tools](architecture.md#the-llms-tools)). `rules` adds a
 line to the model's instructions. A tool can't take a name TARS or another plugin already has: the plugin that comes
 second doesn't load.
@@ -681,6 +682,9 @@ maintainers`; none named: nobody; looking is for anyone):
   as a camera's live link is), and a password someone types to TARS anyway isn't passed on.
 - **Twice for what's hard to take back.** Removing an integration, or undoing a change, takes two turns: the first
   says what would happen, and only a later message from the same person, within ten minutes, does it.
+- **Held back as the house's changes are.** A change to the setup waits for the turn to be over, so a draft thrown
+  away changes nothing (nor counts as the first of the two turns), and none is made in a reply that searched the web
+  or in a turn a door's lock set off.
 - **Every change kept.** With `[home] config_dir`, each change is committed to [Home Assistant's setup
   history](#home-assistants-own-setup), before and after, and the reply says it can be undone; "undo" restores the
   commit before it.

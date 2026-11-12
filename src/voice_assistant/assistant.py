@@ -472,7 +472,9 @@ class Assistant:
                 if not self.muted:
                     self._woke_at, self._greet_s = time.monotonic(), None
                     print("Listening...  (the talk button)")
-                    self.converse(follow_up_s, greet=ALWAYS, wake=Wake(audio=wake.audio))  # greeted as who woke it last
+                    # A press carries no voice: the wake's audio is the last time its name was said, maybe by someone
+                    # else, so it's greeted without a name; who's asking is told from what's said next.
+                    self.converse(follow_up_s, greet=ALWAYS)
                 if woke != DUE:
                     continue
             if self.muted and woke != DUE:
@@ -604,7 +606,9 @@ class Assistant:
         word, for an answer to what it asked. A one-off's try that didn't happen isn't said: it's tried again, or
         given up and whoever asked is told (skills.Clock.settle). One to answer in a chat, run here because Telegram
         isn't running, is posted in their chat once Telegram is back, and one done whose answer can't be said now is
-        said with the reminders (skills.Clock.hand_over)."""
+        said with the reminders (skills.Clock.hand_over). What a turn sent, and asked of the reminders, is made once
+        its line is kept, said or handed over, as an ordinary turn's is once it's heard (_skill_did); never for one
+        skipped, one that didn't happen, or one nobody heard."""
         clock = self._skill_clock
         for due in clock.take() if clock else []:
             skill, house = due.skill, Answers()
@@ -620,6 +624,7 @@ class Assistant:
                 if skill.once is not None:
                     clock.settle(due, house, e)
                 continue
+            sent, changes = list(self.brain.sent), list(self.brain.changes)  # the brain forgets them with the turn
             if skill.once is not None and happened(house)[0]:
                 print(f"(skill {skill.name}: not said, since it didn't happen: {text!r})")
                 written.drop()
@@ -633,11 +638,14 @@ class Assistant:
             if skill.say != ALOUD:  # not the room's to hear, nor part of its conversation
                 written.drop()
                 clock.hand_over(due, text)
+                self._skill_did(sent, changes, whose.speaker)
                 continue
             audio = self._made_now([text])
-            if text not in audio:
+            if text not in audio:  # nobody heard it: not part of the conversation, as a reply that isn't heard
+                written.drop()
                 if skill.once is not None:  # done all the same: its answer waits for the voice
                     clock.hand_over(due, text)
+                    self._skill_did(sent, changes, whose.speaker)
                 continue
             clock.record(due, text)
             self.journal.unprompted()
@@ -645,6 +653,7 @@ class Assistant:
             print(f"Bot:  {text}  (skill {skill.name})")
             self._play(audio[text])
             self.journal.said(text)
+            self._skill_did(sent, changes, whose.speaker)
             with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
                 heard = (
                     self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(text))
@@ -655,6 +664,14 @@ class Assistant:
                     self.journal.nobody_spoke()
                     continue
                 self.converse(0.0 if answer_s else follow_up_s, first=heard, asked=text)
+
+    def _skill_did(self, sent: list[SentItem], changes: list[Change], who: str | None) -> None:
+        """What a skill's own turn sent, and asked of the reminders, once its line is kept: kept for the TARS page
+        (and `who`'s chat, as anything sent at home for them), and made, from `who`, as an ordinary turn's are."""
+        for item in sent:
+            print(f"(sent to the TARS page: {item.kind} '{item.title}')")
+        self.journal.sent(sent, who)
+        self._change_reminders(changes, who)
 
     def say_reminders(self, follow_up_s: float = 0.0) -> None:
         """Says what's due, after a chime, and listens a moment for "got it" if any of it waits for that."""
@@ -1077,10 +1094,12 @@ class Assistant:
             quick_service=said.quick_service,
         )
         acks = answer.written.acks if answer.written else None
+        # The brain's changes are its last reply's; a house command done on the Pi is none of its replies.
+        changes = [] if answer.on_pi else self.brain.changes
         if acks is not None and self.reminders:
             # One the reply also put off or cancelled is that change's: acknowledged, it couldn't be put off.
-            self._ack(acks, name, changed={c.id for c in self.brain.changes if c.id is not None})
-        self._change_reminders(self.brain.changes, name)
+            self._ack(acks, name, changed={c.id for c in changes if c.id is not None})
+        self._change_reminders(changes, name)
         return True
 
     def _change_reminders(self, changes: list[Change], who: str | None) -> None:
@@ -1102,13 +1121,14 @@ class Assistant:
         if answer:
             self._measure(answer, answer.t_asked, None)
         asked = bool(answer and answer.t_asked)
+        on_pi = bool(answer and answer.on_pi)  # no model answered it: the brain's are its last reply's
         self.journal.failed(
             text,
             failed_at(e),
             f"{type(e).__name__}: {e}",
             dict(self.timings),
-            answered_by=self.brain.answered_by if asked else None,
-            quick_service=self.brain.quick_service if asked else None,
+            answered_by=ON_PI if on_pi else self.brain.answered_by if asked else None,
+            quick_service=self.brain.quick_service if asked and not on_pi else None,
         )
 
     def _draft(
@@ -1232,10 +1252,13 @@ class Assistant:
         answer = self._start_reply(Answer(text, NOBODY, 0.0), text, may_skip=False)
         self.timings = {}
         try:
-            return self._speak(answer, answer.t_asked)
+            said = self._speak(answer, answer.t_asked)
         except BaseException:
             self._discard(answer)
             raise
+        if answer.written and answer.written.pardoned:  # as aloud: what's typed next answers it
+            self.brain.remember_said(PARDON)
+        return said
 
     def _speak(self, answer: Answer, t_start: float) -> Said:
         first_audio: list[float] = []

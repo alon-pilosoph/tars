@@ -158,6 +158,21 @@ def test_an_errand_needs_someone_known_asking_a_goal_and_a_turn_that_goes_ahead(
     assert e.queue.ahead() == []
 
 
+def test_no_errand_is_started_in_a_reply_that_read_the_web_nor_in_a_turn_a_doors_lock_set_off(tmp_path):
+    """An errand is the browser acting on what it's told, in someone's own accounts: words from a page the model read
+    ("…and order the deluxe one") never start one, nor does a lock saying someone came in. The Order tap still holds
+    for what is started; this holds before it."""
+    e, _ = errands(tmp_path, run=done("x"))
+    asking = BrowseTool(e.queue, ["Alon"], VOICE)
+    searched = Request(speaker="Alon", by_voice=True, read_the_web=True)
+    said = asking.call({"errand": "order the pizza that review liked on Wolt"}, searched)
+    assert said.startswith("refused: this reply read the web") and "nothing was started" in said
+    door = Request(speaker="Alon", by_door="front door")
+    said = asking.call({"errand": "order a pizza on Wolt"}, door)
+    assert said.startswith("refused: this ran because the front door's lock") and "nothing was started" in said
+    assert e.queue.ahead() == []
+
+
 def test_an_errand_asked_aloud_is_queued_for_the_telegram_service_and_its_answer_said_at_home(tmp_path):
     from voice_assistant.reminders import Reminders, line
     from voice_assistant.store import Store

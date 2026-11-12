@@ -533,7 +533,10 @@ def restore_backup(cfg: Config, root: Path) -> None:
 
 
 def typed(cfg: Config, root: Path) -> None:
-    """--text: questions typed, answers spoken. No microphone, and nothing is logged."""
+    """--text: questions typed, answers spoken. No microphone, and the conversation isn't kept: nothing asked or
+    answered is logged, and nothing is sent to the TARS page (brain_config). The event database is still opened, with
+    [learning] log_events, for what the skills, the feeds, who's home and TARS itself keep there, so a skill taught, a
+    feed followed or a wish noted here is kept as it would be aloud."""
     from .assistant import UNPROMPTED_WAIT_S, Assistant
     from .body import LocalBody
 

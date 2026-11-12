@@ -202,3 +202,28 @@ def test_a_wish_reaches_the_maintainers_chats_and_only_they_mark_it_done(cfg, ro
     assert len(log.store.rows("SELECT * FROM reminders")) == 1  # his own wish isn't sent back to him
     assert ask(tars, "granted", stacey, query="1").startswith("refused: only TARS's maintainers")
     assert ask(tars, "granted", alon, query="1") == "wish 1 marked done"
+
+
+@pytest.mark.parametrize(
+    "held, said",
+    [
+        (Request(speaker="Alon", by_chat=True, read_the_web=True), "refused: this reply read the web"),
+        (Request(speaker="Alon", by_chat=True, by_door="front door"), "refused: this ran because the front door's"),
+        (Request(speaker="Alon", by_chat=True, may_act=lambda timeout: False), "error: the request was withdrawn"),
+    ],
+)
+def test_a_wish_isnt_noted_nor_granted_after_the_web_on_a_doors_turn_or_in_a_draft_thrown_away(
+    cfg, root, tmp_path, held, said
+):
+    """A wish's text can become an issue a coding agent builds (wishes.py), so words from a page mustn't write one; a
+    lock saying someone came in asks for nothing; and a draft that's thrown away notes nothing."""
+    from voice_assistant.config import HouseholdConfig
+
+    log = EventLog(tmp_path / "events")
+    tars = me(dataclasses.replace(cfg, household=HouseholdConfig(maintainers=["Alon"])), root, log)
+    asked = {"query": "Let the workflow merge its own pull requests", "why": "it can't"}
+    assert ask(tars, "wish", held, **asked).startswith(said)
+    assert log.store.rows("SELECT * FROM wishes") == [] and log.store.rows("SELECT * FROM reminders") == []
+    ask(tars, "wish", Request(speaker="Stacey", by_chat=True), query="Call Grandma", why="no phone line")
+    assert ask(tars, "granted", held, query="1").startswith(said)
+    assert "Call Grandma" in ask(tars, "wishes", held)  # still listed, and still open

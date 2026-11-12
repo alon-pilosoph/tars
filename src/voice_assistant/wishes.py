@@ -218,7 +218,8 @@ class Wishes:
         return f"Asked for it: {url}. I'll tell you when there's a pull request to look at."
 
     def follow(self) -> None:
-        """One pass over the wishes being built, merged or waiting to be told."""
+        """One pass over the wishes being built, merged or waiting to be told. One that can't be followed now (GitHub
+        failing, or answering without what's always in its answer) is tried again on the next pass; the rest go on."""
         for wish in self.store.rows(
             "SELECT * FROM wishes WHERE build IN (?, ?, ?) AND granted IS NULL", (BUILDING, READY, MERGED)
         ):
@@ -229,6 +230,8 @@ class Wishes:
                     self._watch(wish)
             except GitHubError as e:
                 print(f"(wishes: couldn't follow wish {wish['id']}: {e})")
+            except (KeyError, TypeError, ValueError) as e:  # GitHub's answer, malformed: a missing key, a wrong type
+                print(f"(wishes: couldn't follow wish {wish['id']}: GitHub's answer wasn't as expected: {e!r})")
 
     def _watch(self, wish: dict) -> None:
         github, now = self._gh(), self._clock()

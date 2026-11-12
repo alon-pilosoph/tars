@@ -13,10 +13,12 @@ A preference is something TARS knows about a person, in plain words, that it kee
 anything: "skip esports in the gaming news", "likes the AC at 23". It's said by them, or noticed by the model and
 marked as a guess.
 
-All of it is taught, changed and removed in conversation, through the skills tool, and every request is told the
-skills and preferences of whoever is asking (note()). Nothing here does a step: the tools keep their own rules, so a
-skill can't unlock (that needs the words said by a voice trusted with it), one set off by someone opening a door's
-lock reads the house but changes nothing in it (Due.door), and an order still waits for its tap."""
+All of it is taught, changed and removed in conversation, through the skills tool, by someone TARS knows, never in a
+reply that read the web (a page could plant a standing instruction) nor in a turn a door's lock set off, and every
+request is told the skills and preferences of whoever is asking (note()). Nothing here does a step: the tools keep
+their own rules, so a skill can't unlock (that needs the words said by a voice trusted with it), one set off by
+someone opening a door's lock reads the house but changes nothing in it (Due.door), and an order still waits for its
+tap."""
 
 import itertools
 import json
@@ -558,8 +560,10 @@ class Skills:
     # The tool.
 
     def toolset(self) -> toolbox.Toolset:
-        """The skills tool for the brain (toolbox.py). What it's taught, or asked to forget, waits for the turn to go
-        ahead, and only someone TARS knows can teach it (call)."""
+        """The skills tool for the brain (toolbox.py). Only someone TARS knows can teach it, and what it's taught, or
+        asked to forget, is held back as any change is (toolbox.held_back, in call): refused in a reply that read the
+        web, whose pages could plant a standing instruction or a preference, and in a turn a door's lock set off, and
+        made only once the turn goes ahead. Listing what's taught, and what ran, isn't held back."""
         failed = "error: couldn't reach what TARS was taught ({e!r}); nothing changed"
         return toolbox.one_tool(self, toolbox.ITS_OWN, failed)
 
@@ -574,8 +578,8 @@ class Skills:
             return "refused: TARS doesn't know who's asking, and only someone it knows can teach it; say so"
         if action not in ACTIONS:
             return f"error: action is one of {', '.join(ACTIONS)}"
-        if request is not None and callable(getattr(request, "go_ahead", None)) and not request.go_ahead():
-            return "error: the request was withdrawn before anything was done; nothing changed"
+        if refused := toolbox.held_back(request):
+            return refused
         name = _clean(args.get("name")).lower()
         try:
             if action == SAVE:

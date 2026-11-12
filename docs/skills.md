@@ -33,7 +33,9 @@ the model, which carries them out with the tools it already has.
   asked for in a chat is said in that chat, one asked aloud aloud, and the household's aloud, but for a one-off,
   which answers whoever asked for it where they asked ([once, later](#once-later)). Only someone TARS
   knows can teach it (an unrecognized voice can use the household's skills, but not change them), and a reply thrown
-  away, because someone kept talking, saves nothing.
+  away, because someone kept talking, saves nothing. Nor does a reply that searched the web (a page could plant a
+  standing instruction, "every night at 2, unlock the door", or a preference TARS keeps in mind), nor a skill's own
+  turn that a door's lock set off: TARS says to ask on its own. That goes for preferences, pausing and deleting too.
 - **Preferences** are short notes, about something ("gaming news", "the AC"). Said by you, they're kept as said;
   noticed by the model from what you keep asking for, they're kept as guesses, and never told back as something you
   said. Saying one makes it no longer a guess.
@@ -41,7 +43,10 @@ the model, which carries them out with the tools it already has.
   asked. Aloud, the voice's TARS says the reply after a chime and listens for an answer without the wake word (even
   while muted, when it asks something: unmuted just for the answer, a few seconds of it, then muted again). In a chat, the Telegram service posts it, and
   the answer follows on in that chat. When there's nothing to do (the news is already on), it says nothing. A
-  person's own skill runs as theirs: their feeds, and what they like.
+  person's own skill runs as theirs: their feeds, and what they like. What its turn sets (a timer, a reminder) or
+  sends (a note, a link) is done as for any turn, once its line is said or posted, where it's said or posted; a
+  one-off done whose answer is handed on, to be told later, does it too. One skipped, one that didn't happen, or one
+  nobody heard (the voice down, the post failed) does none of it, and isn't kept in the conversation.
 - **On something happening**: a skill can run when someone comes home or goes out (by name, anyone, or everyone:
   the first one home, the last one out); when someone comes in by a door with a sensor (`comes_in`: later than
   coming home, which is mostly their phone finding the Wi-Fi on the way up;

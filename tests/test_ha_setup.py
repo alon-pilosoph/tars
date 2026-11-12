@@ -164,3 +164,16 @@ def test_undo_puts_back_the_setup_before_a_change_on_a_second_message(setup):
     yes = Request(speaker="Alon", by_chat=True, heard="yes, undo it")
     assert do(setup, "undo", yes, target=change).startswith('done: undid "Renamed a device to Front door')
     assert setup.history.restored == [f"{setup.history.history(1)[0].commit}^"]
+
+
+def test_a_change_to_the_setup_waits_for_the_turn_and_a_draft_thrown_away_changes_nothing(setup):
+    """As the house's own changes do (home.Request.go_ahead): a reply still being drafted may yet be thrown away."""
+    withdrawn = Request(speaker="Alon", by_chat=True, heard="call it the front door", may_act=lambda timeout: False)
+    for action, target, query in [("rename", "d1", "Front door"), ("area", "d1", "Hall"), ("setup", "", "shelly")]:
+        said = do(setup, action, withdrawn, target=target, query=query)
+        assert said.startswith("error: the request was withdrawn"), action
+    assert do(setup, "remove", withdrawn, target="e1").startswith("error: the request was withdrawn")
+    yes = Request(speaker="Alon", by_chat=True, heard="yes, remove it")
+    assert do(setup, "remove", yes, target="e1").startswith("not yet")  # the thrown-away turn never asked
+    assert setup.ha.renamed == [] and setup.ha.removed == [] and setup.history.commits == []
+    assert do(setup, "discovered", withdrawn).startswith("found")  # looking doesn't wait

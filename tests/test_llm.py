@@ -641,6 +641,17 @@ def test_without_openai_qwen_is_told_it_cant_send_links_or_set_what_it_has_no_to
     assert LOOK_UP not in system and llm.CANT_REMIND in system and "<ack>" in system
 
 
+def test_without_openai_or_its_own_send_tool_qwen_is_told_it_cant_send_not_to_hand_it_over():
+    """There's no OpenAI to hand sending to, as there's none to hand reminders to (CANT_REMIND)."""
+    groq = fake_cerebras(lambda m: "Okay.")
+    cfg = LLMConfig(web_search=False, think_effort="", quick_tools=False, send=True)
+    brain = QuickChat(None, cfg, [QuickService("Groq", groq, "qwen")])
+    "".join(brain.stream_reply("send me the recipe"))
+    system = groq.requests[0]["messages"][0]["content"]
+    assert llm.CANT_SEND in system and llm.NEEDS_SENDING not in system and LOOK_UP not in system
+    assert "add batteries to my to-do list" not in system and "tools" not in groq.requests[0]
+
+
 def test_a_service_that_ends_without_a_word_doesnt_win_over_one_that_answers():
     brain, _, _ = groq_then_cerebras(lambda m: "")
     assert "".join(brain.stream_reply("hi")) == "From Cerebras." and brain.quick_service == "Cerebras"

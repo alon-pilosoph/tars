@@ -69,7 +69,8 @@ broker hands it on `<topic>/lockActionEvent` as the lock's word ([the front door
   phone, before it is).
 - **What it can't do:** unlock, or change anything else. A skill a door's lock sets off reads the house but changes
   nothing in it: every change is refused for that run, an unlock first (`Request.by_door`, refused in `home.py`,
-  `ha_tool.py`, `ha_setup.py`, and for TARS's own settings in `myself.py`), and an unlock needs a trusted voice
+  `ha_tool.py`, `ha_setup.py`, for a plugin's own tools in `toolbox.py`, and for TARS's own settings in `myself.py`),
+  and an unlock needs a trusted voice
   saying "unlock" anyway. TARS publishes nothing to the broker, so nothing it hears there goes back to the lock. A
   lock never marks anyone out: leaving is still by the phone, hurried only by a door sensor
   ([below](#a-door-sensor-that-says-the-door-moved-when-it-didnt)).
@@ -88,6 +89,8 @@ broker hands it on `<topic>/lockActionEvent` as the lock's word ([the front door
     in Nuki's order is read at all.
 - **Tests:** `tests/test_home.py::test_a_turn_a_doors_lock_set_off_reads_the_house_and_changes_nothing_in_it`;
   `tests/test_ha_tool.py::test_a_turn_a_doors_lock_set_off_reads_but_changes_nothing`;
+  `tests/test_toolbox.py::test_a_tool_that_changes_something_is_refused_on_a_turn_a_doors_lock_set_off_and_reads_still_go`,
+  `::test_what_holds_a_change_back_is_the_web_then_a_door_then_the_turn`;
   `tests/test_ha_setup.py::test_someone_else_cant_confirm_a_removal_and_only_maintainers_may_change_it`;
   `tests/test_settings.py` (the settings tool's refusals);
   `tests/test_skills.py::test_a_skill_a_doors_lock_set_off_runs_reading_the_house_only`,
@@ -229,9 +232,10 @@ instructions and…". A model may believe them, so what matters is what code all
     applied or made with the lock in it, a script handed the lock, a script running one that unlocks), and counts
     what it can't see into as if it would: a room, a floor or a label, a template, a setup it can't read, code,
     `rest_command`, a raw command to a device (`ha_tool.py`).
-  - **A reply that searched the web changes nothing in the house.** From the moment a search starts, the house
-    tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in
-    `home.py`).
+  - **A reply that searched the web changes nothing.** From the moment a search starts, the house tool only reads
+    devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in `home.py`), and no other
+    tool changes anything either: no errand is started, no feed followed, no skill or preference taught, no setting
+    set and no wish noted ([what each tool may change](#what-each-tool-may-change)).
   - **A Telegram chat works the house as the voice does** (`wiring.py`, `chat_home()`): only people in
     `[telegram] people` reach it at all, it unlocks only as above, and a chat's reply that searched the web changes
     nothing either. A chat can mute and unmute TARS's microphone at home
@@ -277,6 +281,9 @@ or message it read, may have steered ("…and while you're there, let the workfl
 what's merged is installed on the Pi by the updater.
 
 - **Defenses:**
+  - **Words from outside never note one.** A reply that searched the web notes no wish, nor does a turn a door's lock
+    set off, and a wish waits for the turn to be over, so a draft thrown away notes none (`myself.py`,
+    `toolbox.held_back`). What a person says, or a chat writes, still can: the next defense is for that.
   - **Only a maintainer's tap posts it, after seeing it whole.** The offer in the maintainers' chats shows the issue's
     title and body exactly as they'd be posted, and the tap posts that same text (`wishes.py`, `Wishes.offer`,
     `Wishes.build`). What was asked for is capped at 300 characters and what stopped TARS at 1,200 (`ASKED_MAX`,
@@ -306,7 +313,8 @@ what's merged is installed on the Pi by the updater.
   - **A person merges.** `main` must carry a branch ruleset (required, in [setting it up](wishes.md#setting-it-up)):
     a pull request with one approval, CI and `wish fence` passing, no force pushes, and only the repository admin may
     bypass.
-- **Tests:** `tests/test_wishes.py::test_what_a_maintainer_is_shown_is_all_of_what_is_posted_however_long_the_wish`,
+- **Tests:** `tests/test_myself.py::test_a_wish_isnt_noted_nor_granted_after_the_web_on_a_doors_turn_or_in_a_draft_thrown_away`;
+  `tests/test_wishes.py::test_what_a_maintainer_is_shown_is_all_of_what_is_posted_however_long_the_wish`,
   `::test_whats_posted_names_nobody_and_says_what_stopped_tars`, `::test_only_a_maintainers_tap_builds_it`,
   `::test_no_more_builds_than_monthly_allows_in_30_days`,
   `::test_only_claude_codes_own_pull_request_for_the_issue_is_followed`,
@@ -360,8 +368,8 @@ what's merged is installed on the Pi by the updater.
   - without `ha_admin`, it never administers Home Assistant (`ADMIN`); running code there needs both.
 
   The other devices are read-only views that unlock only with `unlock`, and then only as the home tool allows. A
-  plugin tool that changes something waits for the turn and isn't called by a reply that read the web, and can't take
-  another tool's name ([plugins](home.md#plugins)).
+  plugin tool that changes something waits for the turn, isn't called by a reply that read the web nor in a turn a
+  door's lock set off, and can't take another tool's name ([plugins](home.md#plugins)).
 - **Tests:** `tests/test_plugins.py`: a plugin needing more than its grant doesn't load; an ungranted key is refused;
   `::test_each_grant_is_checked_on_its_own` (every combination of `unlock` and `ha_admin` against an unlock, an
   administering, an ordinary and a both-needing call); every route that opens the house is refused without `unlock`
@@ -369,7 +377,7 @@ what's merged is installed on the Pi by the updater.
   applied or made, the room, the template, the service that can't be seen into),
   `::test_what_cant_be_read_counts_as_opening_the_door`, and a service is only ever a plain name; the client and its
   setup aren't handed over; another device can't be unlocked through its view; a changing tool waits for the turn and
-  refuses a reply that read the web; `--check` warns on a grant of TARS's own keys.
+  refuses a reply that read the web and a turn a door's lock set off; `--check` warns on a grant of TARS's own keys.
 - **Open:** grants hold at the interface, not in a sandbox: a plugin is Python in TARS's process and could reach
   around them, and every plugin keeps `root`, so it can read the project's files, `.env` included. One is installed
   only after being read. A plugin with no `grant` set loads with everything (as before grants), with a `--check`
@@ -429,6 +437,47 @@ local_first`, only once the request is over and isn't a house command, which Vos
 with `--cloud` has its takes sent to Deepgram when they're measured, which its page says before anything is
 recorded; any other session's takes stay on the machine ([recording sessions](web-ui.md#recording-sessions)).
 Trusting those services with what they're sent is accepted: TARS can't work without them, and each one is optional.
+
+## What each tool may change
+
+Every tool the models are offered says what calling it may change (`toolbox.py`), and the guards below are in code,
+whatever the model decides. "The turn" is the draft rule: a change waits until the person has finished and the reply
+is kept (`Request.go_ahead`), so one thrown away, because they kept talking, changes nothing. "The web" is a reply
+that searched it (`Request.read_the_web`): from the search on, its pages may be steering the model. "A door" is a
+skill's own turn that a door's lock set off (`Request.by_door`): a lock only ever says who came in. A `CHANGES` tool
+is held to all three by the toolbox itself (`toolbox.held_back`); an `ITS_OWN` tool tells its reads from its changes
+and holds each change at least as `held_back` does. Reading is never held back, except where the table says.
+
+| Tool | What it may change | Waits for the turn | Refused after the web | Refused on a door's turn | Also held by |
+|---|---|---|---|---|---|
+| `home` | a listed device: on, off, set, press, lock, unlock, open, close, play, the TV agent's errand, a camera's picture or link | yes | yes | yes | unlocking only for a trusted voice, recognised surely, or a trusted chat, saying "unlock", then the three digits; "done" only when the device reports it; one change at a time |
+| `home_assistant` | any entity, through a service; and Home Assistant's setup (add, rename, room, remove, undo) | yes | yes; nor is the house's past read (history, statistics, logbook) | yes | a call that could open a door, as unlocking; no administering Home Assistant; the setup only for maintainers, never a secret through a chat, removing or undoing on a second message |
+| a plugin's tool | what the plugin's code does, when it declares `changes=True`; one that doesn't is called as a read | yes | yes | yes | its grants; one change at a time with the house's |
+| `browse` | an errand queued, run in the person's own accounts | yes | yes | yes | only for someone known with a chat; nothing ordered, booked, paid or sent without their tap on Order, at the amounts shown |
+| `feeds` | a feed followed or dropped (reading marks what was told) | yes | yes | yes | each person's own |
+| `skills` | a skill saved, changed, paused, resumed or deleted; a preference remembered or forgotten | yes | yes | yes | only someone TARS knows; a skill does each step through the tools above, under their rules |
+| `tars` | a setting set (`config.local.toml`, then a restart); a wish noted (to the maintainers, maybe a GitHub issue) or granted | yes | yes; nor are the records or the log read | yes | a setting only for someone known or asking aloud, only what `ADJUSTABLE` lists, within bounds; granting only for maintainers; a wish's issue posted only on a maintainer's tap |
+| `send` | an item on the TARS page and the asker's chat | made only once the reply is kept | no: links come from the web | no | a link must be http(s), a file a known type |
+| `remind`, `cancel_reminder`, `snooze_reminder` | a reminder, timer or message set, cancelled or put off | made only once the reply is kept | no | no | checked when asked; for whom, by the names TARS knows |
+| web search | nothing here: it's OpenAI's, run on its side | | | | marks the reply as having read the web, for every tool above |
+
+`send` and the reminders only put what they make on the turn (`COLLECTS`), so a reply that's dropped or skipped makes
+none of it; a skill's own turn makes it once its line is said or posted (or, a one-off done, handed on to be told),
+and not when it was skipped, didn't happen, or nobody heard it. They aren't refused after the web or on a door's turn: what they make is said or shown to the household,
+and changes nothing in the house.
+
+- **Tests:** `tests/test_toolbox.py` (the toolbox's guards on a `CHANGES` tool, and `held_back`'s order);
+  `tests/test_plugins.py::test_a_plugins_tools_reach_the_brain_and_one_that_changes_waits_for_the_turn`;
+  `tests/test_home.py`, `tests/test_ha_tool.py`, `tests/test_ha_setup.py` (above);
+  `tests/test_browser_errands.py::test_no_errand_is_started_in_a_reply_that_read_the_web_nor_in_a_turn_a_doors_lock_set_off`,
+  `::test_an_errand_needs_someone_known_asking_a_goal_and_a_turn_that_goes_ahead`;
+  `tests/test_feeds.py::test_following_waits_for_the_turn_and_isnt_done_after_the_web_or_on_a_doors_turn_but_reading_is`;
+  `tests/test_skills.py::test_nothing_is_taught_or_forgotten_after_the_web_or_on_a_doors_turn_but_its_still_told`,
+  `::test_a_turn_thrown_away_teaches_nothing`;
+  `tests/test_myself.py::test_a_wish_isnt_noted_nor_granted_after_the_web_on_a_doors_turn_or_in_a_draft_thrown_away`;
+  `tests/test_settings.py::test_the_tars_tool_changes_one_only_for_someone_known_or_at_home_and_never_after_a_search`.
+- **Open:** a reminder or a message can be set in a reply that read the web, so a page could word one ("remind
+  Stacey to call this number"); it's only ever said, or posted, to the household.
 
 ## The services on the machine
 

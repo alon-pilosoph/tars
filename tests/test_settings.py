@@ -118,6 +118,9 @@ def test_the_tars_tool_changes_one_only_for_someone_known_or_at_home_and_never_a
     assert ask(searched, query="llm.humor", value="10").startswith("refused: this reply searched the web")
     by_door = Request(speaker="Alon", by_chat=True, by_door="front door")
     assert ask(by_door, query="llm.humor", value="10").startswith("refused: this ran because the front door's lock")
+    thrown_away = Request(by_voice=True, may_act=lambda timeout: False)  # a draft: someone kept talking
+    assert ask(thrown_away, query="llm.humor", value="10").startswith("error: the request was withdrawn")
+    assert "llm.humor = 10" not in tars.call({"action": "settings"}, Request())
     assert ask(Request(by_voice=True), query="llm.humor", value="10").startswith("done: llm.humor is 10")
     assert ask(Request(speaker="Alon"), query="home.unlock_voices", value="x").startswith("error: only these")
     assert "llm.humor = 10" in tars.call({"action": "settings"}, Request())

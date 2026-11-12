@@ -25,6 +25,11 @@ talking to it, aloud or in a chat:
   story in several feeds is a bigger one. Nothing new: it says so, and offers the latest again.
 - **Each person's own**: who's asking is the voice TARS recognized, or the chat's person. When the voice wasn't
   recognized, `[feeds] default_person`'s; without one, TARS says it doesn't know whose. Previewing is anyone's.
+- **Following is held back as any change is.** Following or dropping a feed waits for the turn to be over, so a
+  reply thrown away follows nothing. It's never done in a reply that searched the web, whose pages could name a feed
+  to follow: TARS suggests feeds in one turn and follows what was picked in the next, as above, and if it searched
+  again meanwhile, it says to ask once more. Nor in a turn a door's lock set off. Reading, previewing and listing are
+  never held back.
 - Feeds are read when asked, all at once (about a second), and kept three minutes. Each "what's new?" is one model
   turn reading a few thousand words of headlines and summaries.
 

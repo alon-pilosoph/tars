@@ -165,10 +165,20 @@ class Journal:
             if conversation
             else None
         )
+        self._keep_sent(conversation, tars_turn, sent, asker)
+
+    def sent(self, sent: list[SentItem], asker: str | None) -> None:
+        """What TARS sent on its own, with nobody asking (a skill's own turn, once its line was said): kept for the
+        TARS page, in no conversation, for `asker`, whose skill it was, or the household's."""
+        self.flush()
+        if self.conversations is not None:
+            self._keep_sent(None, None, sent, asker)
+
+    def _keep_sent(self, conversation: int | None, turn: int | None, sent: list[SentItem], asker: str | None) -> None:
         for item in sent:
             # "For whoever asked" needs a known asker; otherwise it's the household's.
             item = item if asker else dataclasses.replace(item, scope=HOUSEHOLD)
-            self._safe(self.conversations.add_item, conversation, tars_turn, item, for_name=asker)
+            self._safe(self.conversations.add_item, conversation, turn, item, for_name=asker)
 
     def failed(
         self,

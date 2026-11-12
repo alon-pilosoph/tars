@@ -1075,10 +1075,11 @@ class QuickChat(OpenAIChat):
         # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.
         own_home = (cfg.quick_tools or client is None) and bool(self._home)
         owned = [t for t, own in ((self._reminding, own_remind), (SENDING, own_send), (self._house, own_home)) if own]
-        # Handed over to OpenAI's model when there is one; sending is, either way.
-        handed = [t for t in self._toolbox.toolsets if t not in owned and (client is not None or t is SENDING)]
+        # Handed over to OpenAI's model when there is one; without it, what Qwen has no tool for it can't do at all.
+        handed = [t for t in self._toolbox.toolsets if t not in owned and client is not None]
+        hands_sending = cfg.send and not own_send and client is not None
         look_up = [NEEDS_THE_WEB] * cfg.web_search + [need for t in handed for need in t.needs]
-        examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * (cfg.send and not own_send)
+        examples = ["how much is a flight to Rome?"] + ["add batteries to my to-do list"] * hands_sending
         hand_offs = [(LOOK_UP, LOOK_UP_INTRO, look_up, examples)] if look_up else []
         if cfg.think_effort:
             ponder = ["plan three days in Rome for us", "should we lease the car or buy it?"]
@@ -1094,7 +1095,9 @@ class QuickChat(OpenAIChat):
         self._quick_tools = [_chat_tool(t) for t in mine.specs]
         rules = [*home_rule(cfg), SKIP_RULES, *self._reminder_rules(tools=own_remind), *mine.rules]
         can = mine.can
-        cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and client is None)
+        alone = client is None  # nobody to hand a turn to: what Qwen can't do itself, it can't do
+        cant = self._cant() + [CANT_REMIND] * (bool(reminders) and not own_remind and alone)
+        cant += [CANT_SEND] * (cfg.send and not own_send and alone)
         rules.append(abilities(can, hand_offs, cant))
         self._quick_instructions = "\n\n".join([self._system_prompt, *rules, *self._channel_rules])
         effort = cfg.quick_reasoning_effort or cfg.reasoning_effort
