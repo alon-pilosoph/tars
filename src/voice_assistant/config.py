@@ -6,6 +6,7 @@ import re
 import tomllib
 import typing
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
@@ -300,8 +301,16 @@ class PresenceConfig:
     # now and then, for a few minutes, so this is longer than that.
     away_after_min: float = 10.0
     # [[presence.doors]]: each door whose lock says who opened it, { name = "front door", topic = "nuki/4224E764" },
-    # topic being a Nuki's MQTT topic (its ID in hex). Someone opening it from outside is home at once.
+    # topic being a Nuki's MQTT topic (its ID in hex). Someone opening it from outside is home at once. With sensor,
+    # a Home Assistant binary_sensor that's on while the door is open (a Shelly BLU Door/Window): whoever let
+    # themselves in is greeted as the door shuts behind them, and the routers are asked at once whenever it moves, so
+    # someone leaving by it is out in a minute or two (docs/presence.md#the-door-sensor). Needs [home] url.
     doors: list[dict] = field(default_factory=list)
+    # Say "Welcome home, <name>" when someone lets themselves in by a door with a sensor, then their waiting messages.
+    greet: bool = True
+    # When nothing is said aloud for someone coming home, "22:00-07:00" (the house's local time; "" for never): no
+    # greeting, and their waiting messages wait for them to speak to TARS.
+    quiet: str = "22:00-07:00"
     # [presence.mqtt]: the MQTT broker the locks publish to, { address = "localhost", port = 1883, user, secret },
     # TARS's own user there, and secret the name of its password in .env; both needed with doors. Needs the door
     # extra (paho-mqtt).
@@ -641,6 +650,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[home] local_first hears house commands first: it needs commands_on_pi = true")
     if bool(cfg.web.tls_cert) != bool(cfg.web.tls_key):
         problems.append("[web] tls_cert and tls_key go together: the certificate and its key")
+    if any("sensor" in d for d in cfg.presence.doors) and not cfg.home.url:
+        problems.append("[[presence.doors]] sensor is read from Home Assistant: set [home] url")
     return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence) + _wishes_problems(cfg)
 
 
@@ -711,7 +722,11 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
             names.add(d["name"].strip().lower())
         if not (isinstance(d.get("topic"), str) and re.fullmatch(r"[A-Za-z0-9_./-]+", d["topic"])):
             problems.append(f'{where} needs topic, its lock\'s MQTT topic, like "nuki/4224E764"')
-        problems += [f"{where} has no setting {k}" for k in d if k not in ("name", "topic")]
+        if "sensor" in d and not (
+            isinstance(d["sensor"], str) and _ENTITY.fullmatch(d["sensor"]) and d["sensor"].startswith("binary_sensor.")
+        ):
+            problems.append(f"{where}: sensor must be its door sensor's binary_sensor.* entity, not {d['sensor']!r}")
+        problems += [f"{where} has no setting {k}" for k in d if k not in ("name", "topic", "sensor")]
     if p.doors and not (isinstance(p.mqtt.get("address"), str) and p.mqtt["address"].strip()):
         problems.append('[presence] doors need [presence.mqtt] address, the locks\' MQTT broker, like "localhost"')
     # A broker anyone may publish to could say any door was opened: TARS signs in as itself, and the broker's ACL
@@ -732,7 +747,31 @@ def _presence_problems(p: PresenceConfig) -> list[str]:
         problems.append("[presence] every_s must be between 5 and 120")
     if not 1 <= p.away_after_min <= 240:
         problems.append("[presence] away_after_min must be between 1 and 240")
+    if p.quiet and quiet_hours(p.quiet) is None:
+        problems.append(f'[presence] quiet must be hours like "22:00-07:00", or "" for never, not {p.quiet!r}')
     return problems
+
+
+def quiet_hours(spec: str) -> tuple[int, int] | None:
+    """[presence] quiet, "22:00-07:00", as minutes of the day (from, until); None if it isn't that."""
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*", spec)
+    if not m:
+        return None
+    h1, m1, h2, m2 = (int(g) for g in m.groups())
+    if h1 > 23 or h2 > 23 or m1 > 59 or m2 > 59 or (h1, m1) == (h2, m2):
+        return None
+    return h1 * 60 + m1, h2 * 60 + m2
+
+
+def is_quiet(spec: str, at: float) -> bool:
+    """Whether `at` (a time, as time.time()) is within [presence] quiet, in the house's local time. Hours across
+    midnight wrap."""
+    hours = quiet_hours(spec) if spec else None
+    if hours is None:
+        return False
+    local = datetime.fromtimestamp(at).astimezone()
+    start, end, minute = *hours, local.hour * 60 + local.minute
+    return start <= minute < end if start < end else minute >= start or minute < end
 
 
 def _home_problems(home: HomeConfig) -> list[str]:

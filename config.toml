@@ -324,6 +324,12 @@ every_s = 30
 # Someone whose phone no router has seen for this long, while every router answered, has gone out. A phone asleep on a
 # table drops off the Wi-Fi now and then for a few minutes, so this is longer than that.
 away_after_min = 10
+# With a door sensor on a door below: "Welcome home, <name>" when someone lets themselves in by it, then their waiting
+# messages.
+greet = true
+# Hours nothing is said aloud for someone coming home (the house's local time; "" for never): no greeting, and their
+# waiting messages wait until they next speak to TARS.
+quiet = "22:00-07:00"
 
 # One [[presence.routers]] for each router phones connect to: a Technicolor (Vantiva) Homeware gateway, as ISPs hand
 # out, or a Xiaomi router or access point. secret is the name of its admin password in .env.
@@ -343,11 +349,14 @@ away_after_min = 10
 # in hex). Someone opening it from outside (Auto Unlock, the keypad) is home at once. [presence.mqtt] is the broker the
 # locks publish to, and TARS's own user there (both user and secret are needed); secret is the name of its password
 # in .env. deploy/install-pi.sh makes that user, and the password, on deploy/home-assistant's Mosquitto. Needs the door
-# extra: uv sync --extra door.
+# extra: uv sync --extra door. sensor is the door's own sensor in Home Assistant, a binary_sensor that's on while it's
+# open (a Shelly BLU Door/Window, over Bluetooth): whoever let themselves in is welcomed as it shuts behind them, and
+# the routers are asked at once as it moves, so someone leaving by it is out in a minute or two. Needs [home] url.
 #
 # [[presence.doors]]
 # name = "front door"
 # topic = "nuki/4224E764"
+# sensor = "binary_sensor.front_door_window"
 #
 # [presence.mqtt]
 # address = "localhost"

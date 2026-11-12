@@ -955,3 +955,57 @@ def camera_device(name: str, spec: dict, hass: HomeAssistant, **timing) -> Camer
     """The device for a [[home.devices]] camera entry. `timing` is ignored (a camera waits for nothing), taken only
     so it's made like the others."""
     return Camera(name, spec, hass)
+
+
+FOLLOW_RETRY_S = (1.0, 5.0, 30.0, 60.0)  # waits between tries to follow Home Assistant again, the last kept
+
+
+def follow(
+    url: str,
+    token: str,
+    entities: list[str],
+    on_state: Callable[[str, str], None],
+    stop: Callable[[], bool] = lambda: False,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Follows `entities` over Home Assistant's websocket API, calling on_state(entity, state) each time one's state
+    changes ("on", "off"; never unknown or unavailable, nor a change of attributes alone), until `stop()`.
+    Reconnects by itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's
+    thread."""
+    wanted, address = set(entities), "ws" + url.rstrip("/").removeprefix("http") + "/api/websocket"
+    tries, down = 0, ""
+    while not stop():
+        started = clock()
+        try:
+            with connect(address, open_timeout=HTTP_TIMEOUT_S, close_timeout=1) as ws:
+                ws.recv(timeout=HTTP_TIMEOUT_S)  # auth_required
+                ws.send(json.dumps({"type": "auth", "access_token": token}))
+                if json.loads(ws.recv(timeout=HTTP_TIMEOUT_S)).get("type") != "auth_ok":
+                    raise HomeError(f"Home Assistant refused the token ({TOKEN_KEY} in .env)")
+                ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
+                print(f"(home: {'following' if not down else 'following again'} {', '.join(sorted(wanted))})")
+                down = ""
+                while not stop():
+                    try:
+                        message = json.loads(ws.recv(timeout=HTTP_TIMEOUT_S))
+                    except TimeoutError:
+                        continue
+                    data = (message.get("event") or {}).get("data") or {}
+                    if data.get("entity_id") not in wanted:
+                        continue
+                    new, old = (data.get("new_state") or {}).get("state"), (data.get("old_state") or {}).get("state")
+                    if new in UNKNOWN or new is None or new == old:
+                        continue
+                    try:
+                        on_state(data["entity_id"], new)
+                    except Exception as e:  # noqa: BLE001 - one change's trouble never stops the following
+                        print(f"(home: couldn't act on {data['entity_id']} {new}: {e!r})")
+        except (OSError, WebSocketException, ValueError, HomeError) as e:
+            why = str(e) if isinstance(e, HomeError) else f"Home Assistant didn't answer ({type(e).__name__})"
+            if not down:  # once an outage, however its tries fail
+                print(f"(home: can't follow {', '.join(sorted(wanted))}: {why}; trying again until it answers)")
+            down = why
+        if clock() - started > 60:
+            tries = 0  # a connection that lasted starts the waits over
+        time.sleep(FOLLOW_RETRY_S[min(tries, len(FOLLOW_RETRY_S) - 1)])
+        tries += 1

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as clock_time
 
-from .config import RemindersConfig
+from .config import RemindersConfig, is_quiet
 from .events import DAY_S, known_as, person_key
 from .store import Store
 
@@ -67,6 +67,7 @@ SAME_TIME_S = 60.0
 # A phone joins the Wi-Fi a little before its person is through the door ([presence]): a message waiting for them is
 # said this long after their phone comes home, unless they speak to TARS first.
 ARRIVAL_GRACE_S = 60.0
+WELCOME_GAP_S = 2.0  # after "Welcome home", their waiting messages
 
 
 @dataclass
@@ -311,15 +312,18 @@ class Reminders:
             (TELEGRAM, reminder_id, VOICE, *ACTIVE),
         )
 
-    def arrived(self, name: str, at: float) -> list[int]:
+    def arrived(self, name: str, at: float, sooner: bool = False) -> list[int]:
         """`name` just came home ([presence]): their messages waiting until they're back are due at `at`, said aloud
-        like any reminder, unless they're heard first. The ids scheduled now."""
+        like any reminder, unless they're heard first. `sooner`: ones already due later (their phone came home a
+        moment ago) are brought forward to `at` too. The ids scheduled now."""
         scheduled = []
+        later = " OR next_at > ?" if sooner else ""
         with self.store.transaction() as db:
             for r in self.held_for(name):
                 changed = db.execute(
-                    "UPDATE reminders SET next_at=? WHERE id=? AND status=? AND due IS NULL AND next_at IS NULL",
-                    (at, r["id"], SCHEDULED),
+                    "UPDATE reminders SET next_at=? WHERE id=? AND status=? AND due IS NULL "
+                    f"AND (next_at IS NULL{later})",
+                    (at, r["id"], SCHEDULED, *([at] if sooner else [])),
                 ).rowcount
                 scheduled += [r["id"]] * changed
         return scheduled
@@ -731,12 +735,37 @@ class ChatWhenOut:
         return True
 
 
-def on_arrival(reminders: Reminders, grace_s: float = ARRIVAL_GRACE_S) -> Callable[[str, bool], None]:
+def on_arrival(
+    reminders: Reminders, grace_s: float = ARRIVAL_GRACE_S, quiet: str = "", clock: Callable[[], float] = time.time
+) -> Callable[[str, bool], None]:
     """What to do when someone comes home or goes out ([presence]): their messages waiting until they're back are said
-    `grace_s` after they come home."""
+    `grace_s` after they come home; in [presence] quiet's hours, not aloud: they wait to be said when they speak."""
 
     def changed(person: str, home: bool) -> None:
-        if home and (ids := reminders.arrived(person, time.time() + grace_s)):
+        if not home:
+            return
+        now = clock()
+        if is_quiet(quiet, now):
+            if reminders.held_for(person):
+                print(f"(reminders: {person} is home in the quiet hours: their waiting messages wait for them)")
+            return
+        if ids := reminders.arrived(person, now + grace_s):
             print(f"(reminders: {person} is home: their waiting messages {ids} are said in {grace_s:.0f} s)")
 
     return changed
+
+
+def welcome(
+    reminders: Reminders | None, announce: Callable[[str], None], clock: Callable[[], float] = time.time
+) -> Callable[[list[str]], None]:
+    """doors.Doors' greet: "Welcome home, Stacey." aloud, then each one's messages waiting until they're back."""
+
+    def greet(names: list[str]) -> None:
+        both = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+        announce(f"Welcome home, {both}.")
+        print(f"(doors: welcomed {both} home)")
+        for name in names if reminders else []:
+            if ids := reminders.arrived(name, clock() + WELCOME_GAP_S, sooner=True):
+                print(f"(reminders: {name} was welcomed home: their waiting messages {ids} are said next)")
+
+    return greet

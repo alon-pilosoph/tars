@@ -9,6 +9,8 @@ routers already know which phones are connected, and TARS signs into them and as
 | A reminder due for Stacey while she's out | it goes to her Telegram chat instead of being said to an empty room |
 | "Tell Stacey dinner's at eight when she's back" | said soon after her phone comes home, or as soon as she next speaks to TARS, whichever is first |
 | Stacey's phone opens the Nuki by Auto Unlock | she's home at once, and a skill waiting for her is told "Stacey just came home, opening the front door" ([the front door](#the-front-door)) |
+| ...and she comes in and the door shuts behind her | "Welcome home, Stacey", then her waiting messages; nothing aloud between 22:00 and 07:00 ([the door sensor](#the-door-sensor)) |
+| Alon opens the door from inside and his phone drops off the Wi-Fi | he's out a minute and a half later, not ten ([the door sensor](#the-door-sensor)) |
 | `voice-assistant --check` | signs into each router and says whose phone it sees, and connects to the locks' MQTT broker and checks it keeps their topics to them |
 | The locks' broker gone for ten minutes | the maintainers are told in their chats what to check, and again when it's back |
 | The web UI's Status page | how each router last answered, and who's home |
@@ -163,6 +165,42 @@ device, and writes only under its own name (`nuki/...` for the lock's user `nuki
 So a device's password, if it leaks, can't speak for the lock. A device whose topics aren't under its own user's name
 needs lines of its own there.
 
+## The door sensor
+
+A sensor on the door itself (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) says when it opens and
+shuts. TARS follows it in Home Assistant as it changes (`hass.follow`, over the websocket API) and, in `doors.py`:
+
+- **Welcomes whoever let themselves in.** Someone the lock let in from outside (Auto Unlock or the keypad, as above)
+  within two minutes of the door opening, or while it's open, is welcomed as it shuts behind them: "Welcome home,
+  Stacey", aloud after a chime, then her messages waiting until she's back, brought forward if her phone had already
+  set them for a minute later. Two let in together are welcomed together. Nobody is welcomed twice in half an hour
+  (out with the rubbish and back), nor between [presence] `quiet`'s hours, 22:00 to 07:00 unless set otherwise; then
+  their messages, even ones their phone's coming home would have said, wait until they next speak to TARS. Someone
+  let in by a person inside, or by the app, isn't welcomed: the lock can't say who they are.
+- **Asks the routers at once** each time the door moves, then every 10 seconds for three minutes, so whoever's phone
+  comes or goes with it is seen in seconds, not at the next round.
+- **Sees someone leaving by it.** The door opened with nobody let in from outside is someone inside using it: a phone
+  that was on the Wi-Fi up to two minutes before, and that every router then answers without for a minute and a half,
+  all within five minutes of the door, has left by it, out from when it was last seen. Without the door, a phone
+  dropping off still waits `away_after_min`: it may be asleep on a table.
+
+The lock still says who; the sensor only says when. A door sensor alone puts nobody at home, and its own readings
+never work the house.
+
+Setting it up: pair the sensor with Home Assistant (its Bluetooth integration, then BTHome finds it; a Shelly BLU
+pairs for a minute after four presses of its button), and name its binary_sensor on the door:
+
+```toml
+[[presence.doors]]
+name = "front door"
+topic = "nuki/4224E764"
+sensor = "binary_sensor.front_door_window"
+```
+
+TARS's log then says `(home: following binary_sensor.front_door_window)`, and `(doors: the front door opened)` and
+`(doors: welcomed Stacey home)` as it happens. The same sensor can go on the lock in [the house](home.md) too
+(`door = ...` on its [[home.devices]]), so "is the front door open?" is answered and it won't lock an open door.
+
 ## Where it's used
 
 **"Who's home?"** is a device in the [home tool](home.md), `who's home`, with only a status: the model asks it, and
@@ -204,10 +242,7 @@ marked out for it, and the watching goes on. A device page with no devices on it
 
 ## Not yet
 
-- **A door sensor** (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) to tell a phone that went to
-  sleep from someone who left: the door opening, then a phone dropping off, is someone leaving now, not ten minutes
-  later.
-- **Leaving by the door.** The lock's actions from inside, then a phone dropping off, could say someone left now;
-  for now it's the phone's ten minutes.
+- **Leaving without a door sensor.** The lock's actions from inside, then a phone dropping off, could say someone left
+  now; without a [door sensor](#the-door-sensor) it's the phone's ten minutes.
 - **Phones on a second access point show on the main router as wired devices**, counted present while it gives them
   an IP address. It's been seen to clear that for a device that's gone, but not yet watched as someone leaves.

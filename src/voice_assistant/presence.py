@@ -39,6 +39,12 @@ ROUTERS_KEY = "presence_routers"  # the meta row with how each router last answe
 # The table says who's home only while the assistant keeps writing it: older than this, it's not known now. Longer
 # than [presence] every_s can be, plus a round of routers that don't answer.
 STALE_AFTER_S = 5 * 60.0
+# A door sensor moving (doors.py): the routers are asked every HURRY_EVERY_S for HURRY_S, so whoever's phone comes or
+# goes with it is seen within seconds, not at the next round.
+HURRY_S, HURRY_EVERY_S = 3 * 60.0, 10.0
+# Leaving by the door: a phone seen up to LEFT_SEEN_S before the door was opened from inside, and then by no router
+# for LEFT_AFTER_S, all within LEFT_WINDOW_S of the door, is someone who's left now, not away_after_min later.
+LEFT_SEEN_S, LEFT_AFTER_S, LEFT_WINDOW_S = 2 * 60.0, 90.0, 5 * 60.0
 _MAC = re.compile(r"[0-9a-f]{2}([-:][0-9a-f]{2}){5}")
 
 
@@ -92,6 +98,7 @@ class Tracker:
         self.states = {p: replace(last[p]) if last and p in last else State() for p in people}
         self._detected_at: dict[str, float] = {}  # monotonic
         self._watching_since = started  # every router has answered, every round, since then
+        self._door_used_at: float | None = None  # monotonic: a door last opened from inside (door_used)
 
     def update(self, here: set[str], complete: bool, now: float, wall: float) -> list[tuple[str, bool]]:
         """One round: `here`, the people detected; `complete`, whether every source answered. `now` is monotonic,
@@ -108,11 +115,24 @@ class Tracker:
                 s.home, s.last_seen = True, wall
                 continue
             unseen_since = max(self._detected_at.get(person, 0.0), self._watching_since)
-            if s.home is not False and now - unseen_since >= self.away_after_s:
+            if s.home is not False and (now - unseen_since >= self.away_after_s or self._left_by_door(person, now)):
                 if s.home:
                     changes.append((person, False))
                 s.home, s.since = False, s.last_seen
         return changes
+
+    def door_used(self, now: float) -> None:
+        """A door was opened from inside, not by someone let in from outside (doors.py): whoever's phone drops off
+        just after has left by it."""
+        self._door_used_at = now
+
+    def _left_by_door(self, person: str, now: float) -> bool:
+        """Whether `person` left by the door just used: their phone was about when it was opened, and every router
+        has answered without it for LEFT_AFTER_S since, within LEFT_WINDOW_S of the door."""
+        door, seen = self._door_used_at, self._detected_at.get(person)
+        if door is None or seen is None or now - door > LEFT_WINDOW_S or seen < door - LEFT_SEEN_S:
+            return False
+        return now - max(seen, self._watching_since) >= LEFT_AFTER_S
 
     def arrived(self, person: str, door: str, now: float, wall: float) -> bool:
         """`person` opened `door` from outside: home now, and counted as seen. True if they'd been out."""
@@ -231,6 +251,8 @@ class Watcher:
         self._clock, self._monotonic = clock, monotonic
         self.statuses = {r.address: RouterStatus(r.address, r.kind) for r in routers}
         self._lock = threading.Lock()  # the tracker and the board: rounds here, doors on the MQTT thread
+        self._wake = threading.Event()  # set by hurry(): a round now
+        self._hurry_until = 0.0  # monotonic: rounds every HURRY_EVERY_S until then
 
     def start(self) -> None:
         def loop():
@@ -239,9 +261,21 @@ class Watcher:
                     self.round()
                 except Exception as e:  # noqa: BLE001 - nothing stops the watching thread; the next round tries again
                     print(f"(presence: a round failed: {e!r})")
-                time.sleep(self.every_s)
+                hurried = self._monotonic() < self._hurry_until
+                self._wake.wait(min(self.every_s, HURRY_EVERY_S) if hurried else self.every_s)
+                self._wake.clear()
 
         threading.Thread(target=loop, daemon=True, name="presence").start()
+
+    def hurry(self, inside: bool = False) -> None:
+        """A door moved (doors.py): a round now, and every HURRY_EVERY_S for HURRY_S. `inside`: it was opened from
+        inside, so a phone that drops off now has left by it (Tracker.door_used)."""
+        now = self._monotonic()
+        with self._lock:
+            if inside:
+                self.tracker.door_used(now)
+            self._hurry_until = now + HURRY_S
+        self._wake.set()
 
     def round(self) -> list[tuple[str, bool]]:
         """Asks every router once, and says who came home or went out. A router that fails is noted, never raised."""

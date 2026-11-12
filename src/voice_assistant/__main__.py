@@ -664,19 +664,19 @@ def make_presence(cfg: Config, root: Path, events):
     return presence_from(cfg.presence, events.store, lambda name: dotenv_values(env).get(name) or None)
 
 
-def start_presence(cfg: Config, root: Path, presence, reminders=None) -> None:
-    """The assistant's: asks the routers from now on, listens to the doors' locks, and says waiting messages once
-    their person is home."""
+def start_presence(cfg: Config, root: Path, presence, reminders=None, announce=None) -> None:
+    """The assistant's: asks the routers from now on, listens to the doors' locks and sensors, says waiting messages
+    once their person is home, and, with `announce` (said aloud at home), welcomes whoever lets themselves in."""
     if presence is None:
         return
-    from .reminders import on_arrival
+    from .reminders import on_arrival, welcome
 
     for line in presence.left_out:
         print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
-    doors = make_doors(cfg, presence)
-    changes = [
-        c for c in (on_arrival(reminders.reminders) if reminders else None, doors and doors.phone_came_home) if c
-    ]
+    greet = welcome(reminders and reminders.reminders, announce) if announce and cfg.presence.greet else None
+    doors = make_doors(cfg, presence, greet)
+    arrival = on_arrival(reminders.reminders, quiet=cfg.presence.quiet) if reminders else None
+    changes = [c for c in (arrival, doors and doors.phone_came_home) if c]
 
     def changed(person: str, home: bool) -> None:
         for change in changes:
@@ -690,9 +690,10 @@ def start_presence(cfg: Config, root: Path, presence, reminders=None) -> None:
         if watcher is None:
             print("(doors: no router to watch, so the doors are only recorded: nobody is marked home by them)")
         listen_to_doors(cfg, root, doors)
+        follow_door_sensors(cfg, root, doors)
 
 
-def make_doors(cfg: Config, presence):
+def make_doors(cfg: Config, presence, greet=None):
     """[[presence.doors]]: what their locks say is kept, and learned from; None without any."""
     if not cfg.presence.doors:
         return None
@@ -700,7 +701,34 @@ def make_doors(cfg: Config, presence):
     from .doors import DoorLog, Doors
 
     store = presence.board.store
-    return Doors(DoorLog(store, presence.people), None, lambda text: maintainers.tell(cfg, store, text))
+    return Doors(
+        DoorLog(store, presence.people),
+        None,
+        lambda text: maintainers.tell(cfg, store, text),
+        greet=greet,
+        quiet=cfg.presence.quiet,
+    )
+
+
+def follow_door_sensors(cfg: Config, root: Path, doors) -> None:
+    """Each [[presence.doors]] sensor, followed in Home Assistant from now on (doors.Doors.sensed)."""
+    sensors = {d["sensor"]: d["name"] for d in cfg.presence.doors if d.get("sensor")}
+    if not sensors:
+        return
+    from .hass import follow
+    from .home import TOKEN_KEY
+
+    token = dotenv_values(root / ".env").get(TOKEN_KEY)
+    if not (cfg.home.url and token):
+        print(f"(doors: the door sensors are read from Home Assistant: set [home] url, and {TOKEN_KEY} in .env)")
+        return
+
+    def changed(entity: str, state: str) -> None:
+        if state in ("on", "off"):
+            doors.sensed(sensors[entity], state == "on")
+
+    run = functools.partial(follow, cfg.home.url, token, list(sensors), changed)
+    threading.Thread(target=run, daemon=True, name="door-sensors").start()
 
 
 def listen_to_doors(cfg: Config, root: Path, doors) -> None:
@@ -1622,8 +1650,8 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     speaker_id = make_speaker_id(cfg, root) if cfg.speaker.enabled else None
     presence = make_presence(cfg, root, events)
     reminders = make_reminders(cfg, events, push_to_talk, speaker_id, presence)
-    start_presence(cfg, root, presence, reminders)
     announcements = Announcements()
+    start_presence(cfg, root, presence, reminders, announcements.add)
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
     browser = voice_errands(cfg, events)

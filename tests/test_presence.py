@@ -396,6 +396,54 @@ def test_after_a_restart_it_starts_from_what_was_last_known():
     assert t.states["alon"] == State(True, NOW - 7200, NOW)  # still home, since when they came home
 
 
+def test_a_phone_dropping_off_just_after_the_door_is_opened_from_inside_is_someone_leaving_now():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    t.door_used(30.0)
+    assert t.update(ALON, True, 60.0, NOW + 60) == []  # off a few seconds: the lift, or a phone asleep
+    assert t.update(ALON, True, 30 + 90.0, NOW + 120) == [("stacey", False)]  # a minute and a half since
+    assert t.states["stacey"] == State(False, NOW, NOW)
+
+
+def test_without_the_door_or_long_after_it_a_phone_dropping_off_waits_the_whole_away_after():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    assert t.update(ALON, True, 5 * MIN, NOW + 5 * MIN) == []  # no door: asleep, perhaps
+    t.door_used(6 * MIN)
+    assert t.update(ALON, True, 8 * MIN, NOW + 8 * MIN) == []  # unseen since before the door: not leaving by it
+    assert t.update(ALON, True, 10 * MIN, NOW + 10 * MIN) == [("stacey", False)]  # the usual ten minutes
+
+
+def test_a_phone_seen_after_the_door_and_then_gone_past_its_window_isnt_left_by_it():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    t.door_used(0)
+    t.update(BOTH, True, 4 * MIN, NOW + 4 * MIN)  # still home four minutes on
+    assert t.update(ALON, True, 5 * MIN + 31, NOW + 5 * MIN + 31) == []  # the door's five minutes are up
+    assert t.states["stacey"].home is True
+
+
+def test_a_router_not_answering_after_the_door_doesnt_send_anyone_out_by_it():
+    t = tracker()
+    t.update(BOTH, True, 0, NOW)
+    t.door_used(10.0)
+    assert t.update(ALON, False, 120.0, NOW + 120) == []
+    assert t.update(ALON, True, 150.0, NOW + 150) == []  # every router answered only since 120 s
+    assert t.update(ALON, True, 210.0, NOW + 210) == [("stacey", False)]
+
+
+def test_a_door_moving_asks_the_routers_at_once_and_often_for_a_while():
+    from voice_assistant.presence import HURRY_EVERY_S, HURRY_S
+
+    now = [0.0]
+    w = Watcher([], PEOPLE, tracker(), Board.__new__(Board), 30, monotonic=lambda: now[0])
+    w.hurry(inside=True)
+    assert w._wake.is_set() and w._hurry_until == HURRY_S and w.tracker._door_used_at == 0.0
+    assert HURRY_EVERY_S < 30
+    w.hurry()
+    assert w.tracker._door_used_at == 0.0  # shut, or opened to let someone in: not someone leaving
+
+
 # The board: what the assistant writes, and every process reads.
 
 
@@ -614,6 +662,36 @@ def test_going_out_or_coming_home_again_doesnt_reschedule_it(reminders):
     first = reminders.get(rid)["next_at"]
     assert reminders.arrived("stacey", first + 600) == []  # only what it scheduled now
     assert reminders.get(rid)["next_at"] == first
+
+
+def quiet_now() -> str:
+    """[presence] quiet: the hour NOW is in, in this machine's time zone."""
+    from datetime import datetime
+
+    hour = datetime.fromtimestamp(NOW).astimezone().hour
+    return f"{hour:02d}:00-{(hour + 1) % 24:02d}:00"
+
+
+def test_coming_home_in_the_quiet_hours_leaves_their_messages_for_when_they_speak(reminders, capsys):
+    rid = message_for_when_back(reminders)
+    on_arrival(reminders, grace_s=60, quiet=quiet_now(), clock=lambda: NOW)("Stacey", True)
+    assert reminders.get(rid)["next_at"] is None and [r["id"] for r in reminders.held_for("stacey")] == [rid]
+    assert "in the quiet hours" in capsys.readouterr().out
+    on_arrival(reminders, grace_s=60, quiet="", clock=lambda: NOW)("Stacey", True)
+    assert reminders.get(rid)["next_at"] == NOW + 60
+
+
+def test_a_welcome_home_is_said_and_their_messages_right_after_even_ones_their_phone_set_for_later(reminders):
+    from voice_assistant.reminders import WELCOME_GAP_S, welcome
+
+    rid = message_for_when_back(reminders)
+    on_arrival(reminders, grace_s=60, clock=lambda: NOW)("Stacey", True)  # her phone, on the stairs
+    said = []
+    welcome(reminders, said.append, clock=lambda: NOW + 20)(["Stacey", "Alon"])
+    assert said == ["Welcome home, Stacey and Alon."]
+    assert reminders.get(rid)["next_at"] == NOW + 20 + WELCOME_GAP_S
+    welcome(None, said.append)(["Alon"])
+    assert said[-1] == "Welcome home, Alon."
 
 
 def test_someone_known_only_by_their_phone_can_be_left_a_message_for_when_theyre_back(reminders):
