@@ -124,7 +124,11 @@ instructions and…". A model may believe them, so what matters is what code all
   - **Unlocking is decided by code, from what was heard or written.** By voice, only for a voice in `[home]
     unlock_voices` recognised at `unlock_threshold` or better; from a Telegram chat, only for a person in `[home]
     unlock_chats`; either way only when the person's own words (transcribed, or their message) say "unlock". A model
-    asking to unlock for any other reason is refused (`home.py`).
+    asking to unlock for any other reason is refused (`home.py`). The `home_assistant` tool holds every call that
+    [could open a door](home.md#what-opens-a-door) to the same rule, reading the call's data at any depth (a scene
+    applied or made with the lock in it, a script handed the lock, a script running one that unlocks), and counts
+    what it can't see into as if it would: a room, a floor or a label, a template, a setup it can't read, code,
+    `rest_command`, a raw command to a device (`ha_tool.py`).
   - **A reply that searched the web changes nothing in the house.** From the moment a search starts, the house
     tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in
     `home.py`).
@@ -146,6 +150,8 @@ instructions and…". A model may believe them, so what matters is what code all
   `::test_a_key_on_what_commits_is_refused`; `tests/test_browser.py::test_what_commits_is_stopped`,
   `::test_a_real_approval_presses_only_on_a_yes_with_the_same_total`;
   `tests/test_browser_errands.py::test_an_order_is_approved_only_by_a_tap_on_order_in_the_persons_own_chat`;
+  `tests/test_ha_tool.py::test_unlocking_keeps_the_home_tools_rules_however_its_asked`,
+  `::test_a_door_reached_through_a_calls_data_keeps_the_unlock_rules`;
   `tests/test_home.py::test_a_chat_unlocks_only_for_someone_named_who_wrote_unlock`,
   `tests/test_presence.py::test_a_chat_works_the_house_and_unlocks_only_when_named`; `tests/test_homenet.py`;
   `tests/test_browser_chrome.py::test_a_password_on_the_page_is_never_shown_to_the_model`,
@@ -158,6 +164,9 @@ instructions and…". A model may believe them, so what matters is what code all
     (a passcode, two-step verification) is what stands in the way.
   - No set of injection attempts is run against the models to show these hold in practice (it would call the models,
     so it's run on request with a cost estimate).
+  - A door the `home_assistant` tool can't see being opened: an automation that a change sets off by itself (an
+    `input_boolean` an automation watches, to unlock), a template entity whose own action unlocks, Node-RED, an
+    integration's own service not in `OPAQUE` ([not caught](home.md#what-opens-a-door)).
 
 ### A wish, built by a coding agent
 
@@ -238,11 +247,36 @@ what's merged is installed on the Pi by the updater.
 
 ### A plugin
 
-- **Defenses:** a plugin is code someone chose to name in `[home.plugins]`; one that fails to load costs only its own
-  devices.
-- **Tests:** none for what it may do.
-- **Open:** a plugin runs inside TARS with everything TARS has. `context.secret(name)` gives it any key in `.env`, and
-  nothing declares or limits what it touches. Today the only plugin is the household's own (`examples/my_house`).
+- **Defenses:** a plugin is code someone chose to name in `[home.plugins]`, and declares what it needs; with `grant`
+  set, one that needs more doesn't load, and its context holds only what was granted: other keys in `.env` are
+  refused, Home Assistant, speaking and telling are absent unless granted. It gets Home Assistant's reading methods,
+  never the client, and each of its calls is checked against each grant on its own, so neither brings the other:
+  - without `unlock`, Home Assistant refuses whatever [could open a door](home.md#what-opens-a-door) by the same
+    check as the `home_assistant` tool, read at any depth of the call's data (a lock or its unlatch button, a scene
+    applied or made with the lock in it, a group or a device with it, a script, automation or scene that would unlock
+    or runs one that would), and whatever can't be seen into (a room, a floor or a label, a template, a setup that
+    can't be read, code, `rest_command`, a raw command to a device); opening a garage, door or gate, and disarming,
+    too;
+  - without `ha_admin`, it never administers Home Assistant (`ADMIN`); running code there needs both.
+
+  The other devices are read-only views that unlock only with `unlock`, and then only as the home tool allows. A
+  plugin tool that changes something waits for the turn and isn't called by a reply that read the web, and can't take
+  another tool's name ([plugins](home.md#plugins)).
+- **Tests:** `tests/test_plugins.py`: a plugin needing more than its grant doesn't load; an ungranted key is refused;
+  `::test_each_grant_is_checked_on_its_own` (every combination of `unlock` and `ha_admin` against an unlock, an
+  administering, an ordinary and a both-needing call); every route that opens the house is refused without `unlock`
+  (`::test_whatever_could_reach_the_lock_however_its_nested_needs_the_unlock_grant`: each nested shape, the scene
+  applied or made, the room, the template, the service that can't be seen into),
+  `::test_what_cant_be_read_counts_as_opening_the_door`, and a service is only ever a plain name; the client and its
+  setup aren't handed over; another device can't be unlocked through its view; a changing tool waits for the turn and
+  refuses a reply that read the web; `--check` warns on a grant of TARS's own keys.
+- **Open:** grants hold at the interface, not in a sandbox: a plugin is Python in TARS's process and could reach
+  around them, and every plugin keeps `root`, so it can read the project's files, `.env` included. One is installed
+  only after being read. A plugin with no `grant` set loads with everything (as before grants), with a `--check`
+  warning. Network access isn't limited. What the `home_assistant` tool doesn't catch, a plugin's Home Assistant
+  doesn't either: an automation a change sets off by itself, a template entity whose own action unlocks, anything
+  outside Home Assistant listening for a change, an integration's own service not in `OPAQUE`
+  ([not caught](home.md#what-opens-a-door)).
 
 ### A stolen Pi, or its SD card
 

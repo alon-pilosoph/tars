@@ -13,7 +13,7 @@ being right.
 | 1 | [A week of real use](#1-a-week-of-real-use) | the first real wakes, voices and conversations; everything after learns from them | no code, a checklist |
 | 2 | [Security](#2-security) | anyone at home can open the web UI until sign-in is on, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts; passkey sign-in built |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
-| 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
+| 4 | [Plugins and updates](#4-plugins-and-updates) | plugins react to nothing yet, and updating takes SSH | large |
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting to try for a week |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
@@ -99,9 +99,9 @@ it's red, the wake model doesn't run. The doors' MQTT broker lets in only users 
 locks' topics to the locks; what a lock says only ever puts someone at home, and changes nothing in it.
 
 What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device)
-can play every recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs
-inside TARS with everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins
-are trusted. The systemd services run unconfined.
+can play every recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin gets
+only what it's granted, but it's code in TARS's process that can read the project's files, and one with no `grant` set
+gets everything (with a `--check` warning). The systemd services run unconfined.
 
 **Plan, most worth it first:**
 
@@ -118,9 +118,11 @@ are trusted. The systemd services run unconfined.
    must all fail (it calls the models: cost estimate first). No tool lets a model read the recordings, `.env` or
    someone else's conversations. Against a replayed or cloned voice: built, three random digits said back by the same
    voice before unlocking ([unlocking](home.md#unlocking)).
-4. **What plugins and automations may do.** Each declares what it needs (the secrets by name, the devices, network
-   access) and gets only that from `context`; the actions that matter most (unlock, send something out of the house,
-   order) are never theirs unless granted by name. Step 4 builds on this; step 5's rules go through the same checks.
+4. **What plugins and automations may do.** Built for plugins: each declares what it needs (keys by name, Home
+   Assistant, the other devices, speaking, telling) and gets only that from `context`; Home Assistant's unlock, open
+   and disarm are never theirs unless granted by name ([plugins](home.md#plugins)). Left: network access (a plugin
+   is code in TARS's process, so that needs the services' sandboxing, item 5), and step 5's rules through the same
+   checks.
 5. **The Pi.** SSH only over Tailscale, keys only; a firewall that drops anything incoming by default; automatic
    security updates. systemd sandboxing for each service (NoNewPrivileges, ProtectSystem=strict, PrivateTmp,
    RestrictAddressFamilies, IPAddressDeny for the web UI), the web UI as its own user that can't read `.env` or reach
@@ -194,20 +196,22 @@ should (the wake model is tiny), but it's the first time both run together.
 **Goal:** someone else's code can add to TARS without forking it, and TARS and its plugins update themselves safely.
 
 **Where it stands.** A plugin is a Python module named in `[home.plugins]` whose `setup(settings, context)` returns
-kinds of device for the house tool, with `BACKUP_FILES` for what it learned
-([your own devices](home.md#your-own-devices)); `examples/my_house` is the household's. It can only add devices: no
-tool of its own, nothing it reacts to, and no version. Updating is `git pull && deploy/install-pi.sh` over SSH
-([deployment](deployment.md)); the database upgrades itself.
+kinds of device for the house tool and tools of its own, with `BACKUP_FILES` for what it learned ([your own
+devices](home.md#your-own-devices)); `examples/my_house` is the household's. It declares its version and what it needs,
+and gets only what its `grant` gives it ([plugins](home.md#plugins)); nothing it reacts to yet. Updating is `git pull &&
+deploy/install-pi.sh` over SSH ([deployment](deployment.md)); the database upgrades itself.
 
 **Plan:**
 
-1. **Plugins beyond devices.** A plugin may also add a tool the brain can call, events others can react to ("someone
-   unlocked the door", "the washing machine finished"), and `--check` lines, besides devices. Built-in parts send
-   events the same way: who's home (arrived, left), a device's state changing, a time of day.
-2. **Declared, versioned, granted.** Each plugin says its name, version, what it adds and what it needs (step 2's
-   item 4); TARS loads only what's granted in config, and `--check` lists each plugin, its version and what it may
-   do. Installed as a package or from a git URL, pinned.
-3. **`examples/my_house` moves onto it first,** which shows the plugin interface covers a real household.
+1. **Plugins beyond devices.** Built: a plugin may add tools the brain can call, besides devices and `--check` lines
+   ([plugins](home.md#plugins)). Left: events others can react to ("the washing machine finished"), which skills'
+   triggers would take as they take a device's change.
+2. **Declared, versioned, granted.** Built: each plugin declares its version and what it needs; one that needs more
+   than its `grant` doesn't load, and its context holds only what was granted, never Home Assistant's unlock without
+   the `unlock` grant; `--check` lists each plugin, its version and its grant. Left: installing one as a package or
+   from a git URL, pinned.
+3. **`examples/my_house` moves onto it first.** Built: it declares its six needs, and loads with them granted from
+   the Pi's own config (checked there); with less, it refuses. Left: setting its `grant` on the Pi.
 4. **Updates.** Built from the branch rather than releases ([deployment](deployment.md#updates)): what's merged into
    `main` installs itself at a quiet moment, checked silently, and is taken back with its database and config if it
    fails; one that changes the database waits for a maintainer's tap, and one that needs sudo is left to them. Left:

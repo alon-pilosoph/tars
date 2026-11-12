@@ -10,18 +10,20 @@ What the model may do is still kept in code, not in the prompt:
 - A change waits for the turn to be over (Request.go_ahead), like the home tool's, and none is made in a reply that
   read web search results. Nor is the house's past read in one: history, statistics and the logbook say who was home
   and when, and a page could ask for that.
-- Unlocking follows the home tool's rules (HomeTools.may_unlock), whether it's a lock's own service or a script, an
-  automation or a scene that would unlock one. One whose setup can't be read is treated as if it would.
+- Unlocking follows the home tool's rules (HomeTools.may_unlock), whether it's a lock's own service, a lock named
+  anywhere in a call's data (a scene applied or made on the spot), or a script, an automation or a scene that would
+  unlock one (Doors). What can't be seen into is treated as if it would: a setup that can't be read, a template where
+  the target is, a room, a floor or a label, and a service that runs code or sends a device a raw command (OPAQUE).
 - Home Assistant itself isn't administered: restarting it, updating it, its integrations, users, backups and
   recorder, or running code (ADMIN). That's for a person, in Home Assistant.
 """
 
-import functools
 import json
 import re
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from . import history as past
@@ -68,6 +70,27 @@ ADMIN = frozenset(
 )
 # What runs other actions, and so could unlock a door: its setup is read first.
 RUNS_OTHERS = ("script", "automation", "scene")
+SCRIPT_OWN = ("turn_on", "turn_off", "toggle", "reload")  # script's own services: any other script.<name> runs it
+MAX_NESTED = 5  # a script running a script running...: deeper than this counts as if it would unlock
+# What runs something TARS can't read, and so could open a door as well as anything else: code, a request to another
+# server, a command sent straight to a device's radio or bus. By domain, or domain.service; treated as if it would.
+OPAQUE = frozenset(
+    {
+        "shell_command",
+        "python_script",
+        "pyscript",
+        "command_line",
+        "rest_command",
+        "hassio.addon_stdin",
+        "mqtt",
+        "zwave_js",
+        "zha",
+        "deconz",
+        "esphome",
+        "knx",
+        "modbus",
+    }
+)
 UNLOCKING = ("unlock", "open")  # a lock's services that let someone in
 # Besides a lock's own entity: what else opens a door. A smart lock often has buttons of its own (a Nuki's "unlatch"),
 # on the same device; and one that isn't, named so.
@@ -75,6 +98,15 @@ DOOR_WORDS = re.compile(r"unlock|unlatch", re.IGNORECASE)
 DOORS_KEPT_S = 60.0  # how long the door entities found are trusted before they're read again
 # What in a call's data would aim it at more than the entities named (a whole device, room or label).
 TARGETS = ("entity_id", "target", "device_id", "area_id", "floor_id", "label_id")
+# A cover's services that never let anyone in (for Doors that count garage, door and gate covers).
+CLOSING = ("close_cover", "close_cover_tilt", "stop_cover", "stop_cover_tilt")
+# Read in a call's data, or in a setup, at any depth: where a service it runs is named; what aims it at a room, a
+# floor or a label, whose entities can't be told from it; and what says what's acted on, where a template could name
+# anything.
+SERVICE_KEYS = ("action", "service", "service_template")
+WIDE = ("area_id", "floor_id", "label_id")
+AIMING = ("entity_id", "target", "device_id", *WIDE, "entities", "snapshot_entities", "scene")
+ENTITY = re.compile(r"[a-z_][a-z0-9_]*\.[a-z0-9_]+")
 MAX_FOUND, MAX_CHANGES, MAX_LOGBOOK, MAX_CHARS = 80, 60, 80, 4000
 HISTORY_KEPT = timedelta(days=10)  # Home Assistant's default: older state history is gone
 
@@ -163,7 +195,7 @@ class HAAccess:
         self._hass, self._may_unlock, self._now = hass, may_unlock, now
         self._lock = lock or threading.Lock()
         self._setup = setup
-        self._doors: tuple[float, set[str]] = (-DOORS_KEPT_S, set())
+        self.doors = Doors(hass)
 
     def call(self, args: dict, request: Request) -> str:
         args = args if isinstance(args, dict) else {}
@@ -324,7 +356,7 @@ class HAAccess:
             return "refused: this reply searched the web, so it changes nothing in the house; they can ask on its own"
         if refused := set_off_by_door(request):
             return refused
-        if refused := self._unlock_check(domain, name, ids, request):
+        if refused := self._unlock_check(domain, name, {**fields, "entity_id": ids}, request):
             return refused
         if not request.go_ahead():
             return "error: the request was withdrawn before anything was done; nothing changed"
@@ -339,26 +371,138 @@ class HAAccess:
             return f"done: {service}; now {_states(moved)}"
         return f"sent: Home Assistant took {service}, but {', '.join(ids)} didn't change state yet"
 
-    def _unlock_check(self, domain: str, name: str, ids: list[str], request: Request) -> str | None:
-        """Why this call may not be made, if it would unlock (HomeTools.may_unlock), or None. The rules are asked once a
-        call: answering an unlock challenge uses it up."""
-        may_unlock = functools.cache(lambda: self._may_unlock(request))
+    def _unlock_check(self, domain: str, name: str, data: dict, request: Request) -> str | None:
+        """Why this call (its data, entity_id included) may not be made, if it would unlock (HomeTools.may_unlock),
+        or None. The rules are asked once a call: answering an unlock challenge uses it up."""
         if domain == "lock":
-            return None if name == "lock" else may_unlock()  # locking is never held back
-        doors = self._door_entities()
-        opening = [e for e in ids if e in doors or e.startswith("lock.")]
-        if opening and (refused := may_unlock()):
-            return f"{refused} ({', '.join(opening)} can open a door)"
-        if domain in RUNS_OTHERS:
-            for entity in ids or ([f"{domain}.{name}"] if domain == "script" else []):
-                if self._could_unlock(entity) and (refused := may_unlock()):
-                    return f"{refused} (it can unlock: {entity})"
+            return None if name == "lock" else self._may_unlock(request)  # locking is never held back
+        if (why := self.doors.opening(domain, name, data)) and (refused := self._may_unlock(request)):
+            return f"{refused} ({why})"
         return None
 
-    def _door_entities(self) -> set[str]:
-        """What can open a door: every lock, every entity on a lock's own device (a Nuki's unlatch button), and any
-        entity named for unlocking or unlatching. Read again after DOORS_KEPT_S."""
-        at, found = self._doors
+
+@dataclass
+class Named:
+    """What a call's data, or an automation's, script's or scene's setup, names at any depth: entities (as a value,
+    or as a key, as scene.apply's entities are), the services it runs, devices, the domains it's aimed at all of
+    (entity_id all), and why what it acts on can't be told from it (a room, a floor, a label, a template where the
+    target is, or all of what's not known)."""
+
+    entities: set[str] = field(default_factory=set)
+    services: set[str] = field(default_factory=set)
+    devices: set[str] = field(default_factory=set)
+    every: set[str] = field(default_factory=set)
+    unseen: list[str] = field(default_factory=list)
+
+
+def named(data, domain: str = "") -> Named:
+    """What `data` names (Named). `domain`: the service's it's for, whose entities entity_id all means; a step in a
+    setup that names its own service is that one's."""
+    found = Named()
+
+    def text(value: str, key: str, aiming: bool, domain: str):
+        said = value.strip().lower()
+        if (aiming or key in SERVICE_KEYS) and ("{{" in said or "{%" in said):
+            found.unseen.append(f"a template in {key} could name any door")
+        elif key in SERVICE_KEYS:
+            found.services.add(said)
+        elif key == "device_id":
+            found.devices.add(said)
+        elif key == "entity_id" and said == "all":
+            if domain:
+                found.every.add(domain)
+            else:
+                found.unseen.append("entity_id all could take in a door")
+        else:
+            found.entities |= {t for t in re.findall(r"[a-z0-9_.]+", said) if ENTITY.fullmatch(t)}
+
+    def walk(value, key: str, aiming: bool, domain: str):
+        if isinstance(value, dict):
+            runs = [v for k, v in value.items() if str(k).lower() in SERVICE_KEYS and isinstance(v, str)]
+            domain = runs[0].strip().lower().partition(".")[0] if runs else domain
+            for k, v in value.items():
+                k = str(k).lower()
+                if k in WIDE:
+                    found.unseen.append(f"{k} {v} could take in a door without naming it")
+                # A key can be what's acted on: {"lock.front_door": "unlocked"}; under a step's action, it's a field.
+                text(k, "" if key in SERVICE_KEYS else key, aiming, domain)
+                walk(v, k, aiming or k in AIMING, domain)
+        elif isinstance(value, list | tuple):
+            for v in value:
+                walk(v, key, aiming, domain)
+        elif isinstance(value, str):
+            text(value, key, aiming, domain)
+
+    walk(data, "", False, domain)
+    return found
+
+
+def _opaque(domain: str, name: str) -> bool:
+    return domain in OPAQUE or f"{domain}.{name}" in OPAQUE
+
+
+class Doors:
+    """What in Home Assistant can open a door, read from it: the home_assistant tool's check, and the Home Assistant
+    a plugin is given (plugins.GuardedHass). `covers`: the device classes of cover that count as a door too (a
+    plugin's: garage, door, gate), opened by anything but CLOSING."""
+
+    def __init__(self, hass: HomeAssistant, covers: tuple[str, ...] = ()):
+        self._hass, self._covers = hass, covers
+        self._found: tuple[float, set[str]] = (-DOORS_KEPT_S, set())
+        self._devices: set[str] | None = set()
+
+    def opening(self, domain: str, name: str, data: dict) -> str | None:
+        """How calling domain.name with `data` (its entity_id and every other field) could open a door, or None: a
+        lock's service other than lock; a service that runs what can't be seen into (OPAQUE); an entity that opens
+        one, or a device it's on, named anywhere in the data; or a script, automation or scene that would. Aimed at
+        a room, a floor, a label or all, or by a template, it can't be told, so it counts as if it would."""
+        if domain == "lock":
+            return None if name == "lock" else f"lock.{name} can open a door"
+        if _opaque(domain, name):
+            return f"{domain}.{name} runs what TARS can't see into"
+        found = named(data, domain)
+        if domain == "script" and name not in SCRIPT_OWN:
+            found.entities.add(f"script.{name}")
+        return self._reaches(found, frozenset(), closing=domain == "cover" and name in CLOSING)
+
+    def _reaches(self, found: Named, seen: frozenset[str], closing: bool = False) -> str | None:
+        """How what `found` names could open a door, or None. `seen`: the scripts, automations and scenes it's
+        inside of, being read already. `closing`: a cover's closing, which a cover counted as a door lets through."""
+        if found.unseen:
+            return found.unseen[0]
+        for service in sorted(found.services):
+            domain, _, name = service.partition(".")
+            if (domain == "lock" and name != "lock") or _opaque(domain, name):
+                return f"it runs {service}"
+            if domain == "script" and name not in SCRIPT_OWN:
+                found.entities.add(service)
+        doors = self.entities()
+        # homeassistant.turn_on and its like act on any entity, so all of theirs is every script and scene too.
+        if every := sorted(found.every.intersection({"lock", "homeassistant", *RUNS_OTHERS})):
+            return f"it's aimed at every {every[0]}"
+        found.entities |= {e for e in doors if e.partition(".")[0] in found.every}
+        if opening := sorted(
+            e
+            for e in found.entities
+            if (e in doors or e.startswith("lock.")) and not (closing and e.startswith("cover."))
+        ):
+            return f"{', '.join(opening)} can open a door"
+        if found.devices:
+            if self._devices is None:
+                return "it's aimed at a device, and which devices open a door can't be read"
+            if on_doors := sorted(found.devices & self._devices):
+                return f"device {', '.join(on_doors)} can open a door"
+        for entity in sorted(found.entities):
+            if self.could_unlock(entity, seen):
+                return f"it can unlock: {entity}"
+        return None
+
+    def entities(self) -> set[str]:
+        """What can open a door: every lock, every entity on a lock's own device (a Nuki's unlatch button), any
+        entity named for unlocking or unlatching, the covers counted, and a group (or anything else whose entity_id
+        attribute lists what it's made of, as a scene's does) with any of these in it. Read again after
+        DOORS_KEPT_S, with the devices they're on."""
+        at, found = self._found
         if time.monotonic() - at < DOORS_KEPT_S:
             return found
         states = self._hass.states()
@@ -368,32 +512,54 @@ class HAAccess:
             if DOOR_WORDS.search(name):
                 found.add(s["entity_id"])
         try:
-            registry = self._hass.entity_entries()
+            registry, readable = self._hass.entity_entries(), True
         except HomeError:
-            registry = []
+            registry, readable = [], False
         lock_devices = {r.get("device_id") for r in registry if r.get("entity_id") in found and r.get("device_id")}
         found |= {r["entity_id"] for r in registry if r.get("device_id") in lock_devices}
-        self._doors = (time.monotonic(), found)
+        found |= {
+            s["entity_id"]
+            for s in states
+            if s.get("entity_id", "").startswith("cover.")
+            and (s.get("attributes") or {}).get("device_class") in self._covers
+        }
+        devices = {str(r["device_id"]).lower() for r in registry if r.get("entity_id") in found and r.get("device_id")}
+        made_of = {s.get("entity_id", ""): _listed((s.get("attributes") or {}).get("entity_id")) for s in states}
+        while grown := {e for e, parts in made_of.items() if e not in found and parts & found}:
+            found |= grown
+        self._found, self._devices = (time.monotonic(), found), devices if readable else None
         return found
 
-    def _could_unlock(self, entity: str) -> bool:
-        """Whether an automation, script or scene can open a door, from its setup (it names a lock, or anything else
-        that opens one); True if that can't be read."""
+    def could_unlock(self, entity: str, seen: frozenset[str] = frozenset()) -> bool:
+        """Whether an automation, script or scene can open a door, from its setup: it names a lock or anything else
+        that opens one, runs one that would, or is aimed where that can't be told (Doors.opening); True if its setup
+        can't be read, or it's nested deeper than MAX_NESTED. `seen`: those it's inside of, being read already."""
         kind, _, object_id = entity.partition(".")
-        if kind not in RUNS_OTHERS:
+        if kind not in RUNS_OTHERS or entity in seen:
             return False
+        if len(seen) >= MAX_NESTED:
+            return True
         try:
             key = object_id
             if kind != "script":  # automations and scenes are kept by their own id, in their attributes
                 key = str((self._hass.state(entity).get("attributes") or {}).get("id") or "")
             if not key:
                 return True
-            setup = json.dumps(self._hass.config_of(kind, key)).lower()
+            setup = self._hass.config_of(kind, key)
         except HomeError:
             return True
-        doors = self._door_entities()
+        said, doors = json.dumps(setup).lower(), self.entities()
         # Any lock or door entity it names: it may unlock it, or set it as a scene says.
-        return "lock." in setup or bool(DOOR_WORDS.search(setup)) or any(e.lower() in setup for e in doors)
+        if "lock." in said or DOOR_WORDS.search(said) or any(e.lower() in said for e in doors):
+            return True
+        return self._reaches(named(setup), seen | {entity}) is not None
+
+
+def _listed(value) -> set[str]:
+    """An entity_id attribute's entities: a list of them, or one, or none."""
+    if isinstance(value, str):
+        return {value.strip().lower()}
+    return {str(e).strip().lower() for e in value} if isinstance(value, list | tuple) else set()
 
 
 def _changes(rows: list[dict], start: datetime, end: datetime) -> str:

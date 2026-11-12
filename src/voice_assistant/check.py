@@ -40,6 +40,7 @@ from .config import (
 )
 from .echo import MAX_DELAY_S
 from .errors import SERVICE_FAILURES
+from .plugins import TARS_KEYS, Loaded
 
 if TYPE_CHECKING:
     from .backup import Backup
@@ -623,7 +624,8 @@ def house(built, hass_ok: bool) -> list[Result]:
     from .hass import Entity
     from .home import HomeError
 
-    results = [Result(name, FAIL, why, "docs/home.md") for name, why in built.unavailable.items()]
+    results = [plugin_result(p) for p in (built.plugins or {}).values()]
+    results += [Result(name, FAIL, why, "docs/home.md") for name, why in built.unavailable.items()]
     for name, device in (built.tools.devices if built.tools else {}).items():
         if isinstance(device, Entity) and not hass_ok:
             results.append(Result(name, SKIP, "needs Home Assistant"))
@@ -634,6 +636,25 @@ def house(built, hass_ok: bool) -> list[Result]:
             found = [(FAIL, str(e), "")]
         results += [Result(name, status, detail, fix) for status, detail, fix in found] or [Result(name, OK, "ready")]
     return results
+
+
+def plugin_result(p: Loaded) -> Result:
+    """A plugin, as it loaded: its version and what it was granted."""
+    name, fix = f"Plugin {p.name}", "docs/home.md#plugins"
+    if p.error:
+        return Result(name, FAIL, f"{p.version + ': ' if p.version else ''}didn't load: {p.error}", fix)
+    if p.granted is None:
+        needs = ", ".join(f'"{n}"' for n in p.needs)
+        return Result(
+            name,
+            WARN,
+            f"{p.version}: given everything, since no grant is set",
+            f"pin what it may use: grant = [{needs}] under [home.plugins.{p.name}]" if p.needs else fix,
+        )
+    granted = f"{p.version}: granted {', '.join(p.granted) or 'nothing'}"
+    if own := sorted(TARS_KEYS.intersection(p.granted)):
+        return Result(name, WARN, f"{granted}; {', '.join(own)} is TARS's own", "give it a key of its own in .env")
+    return Result(name, OK, granted)
 
 
 def own_speaker(cfg: Config, mixer: Callable[[str], Mixer]) -> Result | list[Result]:

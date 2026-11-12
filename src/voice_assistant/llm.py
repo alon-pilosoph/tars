@@ -895,6 +895,11 @@ class OpenAIChat:
         if self._home and self._home.ha and call.name == self._home.ha.tool["name"]:
             failed = "error: couldn't reach Home Assistant ({e!r}); nothing is known to have changed"
             return self._outside_lock(self._home.call_ha, args, writing, failed)
+        if self._home and call.name in self._home.plugin_tools:
+            failed = "error: the plugin's tool failed ({e!r}); nothing is known to have changed"
+            return self._outside_lock(
+                lambda a, request: self._home.call_plugin(call.name, a, request), args, writing, failed
+            )
         if self._home and call.name == "home":
             # A device can take seconds (a bolt turning), and a change first waits for the turn to be over.
             failed = "error: couldn't reach the device ({e!r}); nothing is known to have changed"

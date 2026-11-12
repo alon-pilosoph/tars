@@ -24,12 +24,15 @@ import secrets
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
+
+if TYPE_CHECKING:
+    from .plugins import Loaded, PluginTool
 
 TOKEN_KEY = "HOME_ASSISTANT_TOKEN"
 STATUS, ON, OFF, SET, PRESS = "status", "on", "off", "set", "press"
@@ -242,6 +245,10 @@ class Context:
     maintainers: list[str] = field(default_factory=list)  # [household] maintainers: who looks after TARS
     # Tells the maintainers something, in their chats (maintainers.tell): a device that's stopped answering.
     tell: Callable[[str], None] | None = None
+    # The plugin that made each device, by its name in lower case: a plugin granted devices gets its own as they are.
+    plugin_of: dict[str, str] = field(default_factory=dict)
+    # HomeTools.may_unlock, once the house is built: a plugin granted unlock unlocks another device only as it allows.
+    may_unlock: Callable[[Request], str | None] | None = None
     # This process does the house's background work (the voice assistant's): watching a device. Only one may, or
     # its maintainers would be told everything twice.
     background: bool = False
@@ -250,6 +257,7 @@ class Context:
 class Built(NamedTuple):
     tools: HomeTools | None
     unavailable: dict[str, str]  # a device in config.toml that couldn't be made, by its name there: why
+    plugins: dict[str, Loaded] | None = None  # each plugin in [home.plugins], as it loaded, by its name
 
 
 def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = None) -> Built:
@@ -257,6 +265,7 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     already (TARS's own, like who's home). Like every service, optional: a device that can't be made (no token, a
     missing extra, a plugin's own problem) is left out with why, and TARS starts without it."""
     from . import androidtv, hass
+    from .plugins import Loaded, admit, provided
 
     unavailable: dict[str, str] = {}
     # As people call them ("AC", "front door"), and without label, which is how each is written, the same for all.
@@ -265,13 +274,22 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
     if context.hass is None and cfg.url and context.secret(TOKEN_KEY):
         context.hass = hass.HomeAssistant(cfg.url, context.secret(TOKEN_KEY))
     makers: dict[str, Callable[[dict], Device]] = {}
+    plugin_tools: list[PluginTool] = []
+    loaded: dict[str, Loaded] = {}
     for plugin, settings in cfg.plugins.items():
         try:
-            kinds = load_plugin(settings["module"], context.root).setup(
-                {k: v for k, v in settings.items() if k != "module"}, context
+            module = load_plugin(settings["module"], context.root)
+            given, loaded[plugin] = admit(plugin, module, settings.get("grant"), context)
+            made = provided(
+                module.setup({k: v for k, v in settings.items() if k not in ("module", "grant")}, given),
+                plugin,
+                {t.name for t in plugin_tools},
             )
-            makers |= {f"{plugin}.{kind}": make for kind, make in kinds.items()}
+            makers |= {f"{plugin}.{kind}": make for kind, make in made.kinds.items()}
+            plugin_tools += made.tools
         except Exception as e:  # noqa: BLE001 - a plugin that won't load costs its devices, not TARS
+            had = loaded.get(plugin)
+            loaded[plugin] = Loaded(plugin, had.version if had else "", had.needs if had else (), None, str(e))
             for name, d in specs:
                 if str(d.get("kind", "")).startswith(f"{plugin}."):
                     unavailable[name] = f"the plugin {plugin} didn't load: {e}"
@@ -300,6 +318,7 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
                 device = spotify.make(name, d, context)
             elif kind in makers:
                 device = makers[kind](d | {"name": name})
+                context.plugin_of[name.lower()] = kind.partition(".")[0]
             else:
                 raise ValueError(f"its plugin has no kind {kind.partition('.')[2]!r}")
         except Exception as e:  # noqa: BLE001 - one device that can't be made never stops the others
@@ -309,14 +328,24 @@ def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = N
         context.devices[name.lower()] = device
     for name, device in (extra or {}).items():
         context.devices[name.lower()] = device
-    made = context.devices or context.hass is not None
+    made = context.devices or context.hass is not None or plugin_tools
     history = None
     if cfg.config_dir and context.hass is not None:
         from .haconfig import HAConfig
 
         history = HAConfig(context.root / cfg.config_dir, cfg.container)
-    tools = HomeTools(cfg, dict(context.devices), context.hass, history, context.maintainers) if made else None
-    return Built(tools, unavailable)
+    tools = None
+    if made:
+        tools = HomeTools(
+            cfg,
+            dict(context.devices),
+            hass=context.hass,
+            ha_config=history,
+            maintainers=context.maintainers,
+            plugin_tools=plugin_tools,
+        )
+        context.may_unlock = tools._may_unlock
+    return Built(tools, unavailable, loaded)
 
 
 def load_plugin(module: str, root: Path):
@@ -398,6 +427,7 @@ class HomeTools:
         hass=None,
         ha_config=None,
         maintainers: list[str] = (),
+        plugin_tools: Sequence[PluginTool] = (),
         digits: Callable[[], str] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
@@ -409,6 +439,7 @@ class HomeTools:
         from .ha_tool import HAAccess
 
         self._cfg = cfg
+        self.plugin_tools = {t.name: t for t in plugin_tools}  # plugins.PluginTool, by name
         self._challenges: dict[str, Challenge] = {}  # by whose voice was asked
         self._clock = clock
         self._digits = digits or (lambda: "".join(secrets.choice("123456789") for _ in range(CHALLENGE_DIGITS)))
@@ -425,7 +456,8 @@ class HomeTools:
     @property
     def tools(self) -> list[dict]:
         """The house's tools for the brain: home, for the devices listed, and home_assistant, for all the rest."""
-        return [self.tool] * bool(self.devices) + ([self.ha.tool] if self.ha else [])
+        own = [t.spec for t in self.plugin_tools.values()]
+        return [self.tool] * bool(self.devices) + ([self.ha.tool] if self.ha else []) + own
 
     @property
     def names(self) -> set[str]:
@@ -439,7 +471,21 @@ class HomeTools:
             said += list(dict.fromkeys(r for d in self.devices.values() if (r := d.rules())))
         if self.ha:
             said.append(self.ha.rules)
+        said += [t.rules for t in self.plugin_tools.values() if t.rules]
         return "\n".join(said)
+
+    def call_plugin(self, name: str, args: dict, request: Request) -> str:
+        """A plugin's own tool. One that changes something waits for the turn to be over, and isn't called by a
+        reply that read the web; the changes are made one at a time with the house's, under the same lock."""
+        tool = self.plugin_tools[name]
+        if not tool.changes:
+            return tool.call(args, request)
+        if request.read_the_web:
+            return "refused: this reply read the web, so it changes nothing; they can ask again on its own"
+        if not request.go_ahead():
+            return "error: the request was withdrawn before anything was done; nothing changed"
+        with self._lock:
+            return tool.call(args, request)
 
     def call_ha(self, args: dict, request: Request) -> str:
         """The home_assistant tool. Its changes are made one at a time with the home tool's, under the same lock."""
