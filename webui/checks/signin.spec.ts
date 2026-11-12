@@ -93,6 +93,8 @@ for (const [next, to] of [
   ["/\\evil.example", "/"], // a backslash is a slash to the browser: //evil.example
   ["//evil.example", "/"],
   ["https://evil.example/", "/"],
+  ["/.//evil.example", "/"], // resolves to this site's //evil.example: a path that would be read as another site's
+  [`${SIGN_IN_URL}//evil.example`, "/"],
   ["javascript:document.title='pwned'", "/"],
   ["/?tab=reminders#soon", "/?tab=reminders#soon"],
   [`${SIGN_IN_URL}/?tab=models`, "/?tab=models"], // this site's own address, in full

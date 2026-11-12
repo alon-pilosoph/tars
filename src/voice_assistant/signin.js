@@ -25,7 +25,8 @@ async function post(path, body) {
 
 // Where ?next= sends the person once they're in: a page of this site only, else Home. It's resolved the way the
 // browser would resolve it, so "/\evil.example" (a backslash counts as a slash), "//evil.example", another site's
-// address and "javascript:" all go Home; and only the path, query and fragment are used, never a scheme or host.
+// address and "javascript:" all go Home. What's followed is the resolved address in full, scheme and host included:
+// a path alone could start with two slashes ("/.//evil.example" resolves to one) and be read as another site's.
 function back(next) {
   if (!next) return "/";
   let url;
@@ -34,7 +35,7 @@ function back(next) {
   } catch {
     return "/";
   }
-  return url.origin === location.origin ? url.pathname + url.search + url.hash : "/";
+  return url.origin === location.origin && !url.pathname.startsWith("//") ? url.href : "/";
 }
 
 function answer(c) {
