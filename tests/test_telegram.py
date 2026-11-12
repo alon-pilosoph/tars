@@ -169,6 +169,14 @@ def test_a_message_from_someone_in_people_is_answered_with_their_name_on_it():
     assert bot.said() == ["Nine o'clock."]
 
 
+def test_a_skip_in_a_chat_is_never_posted_and_asks_again():
+    from voice_assistant.llm import PARDON, SKIP
+
+    bot, brain = FakeBot(), ScriptedBrain([SKIP])
+    tars(bot, [brain]).handle(message("new zone"))
+    assert bot.said() == [PARDON] and brain.forgotten == 1
+
+
 @pytest.mark.parametrize(
     "update",
     [

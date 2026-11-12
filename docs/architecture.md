@@ -71,8 +71,9 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    your turn is confirmed over (see [response time](latency.md)).
 6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, or is a fragment that asks for nothing ("eight hours."), and TARS
-   stays quiet and forgets it. The conversation is sent to the
-   LLM until it's been quiet for `memory_minutes`.
+   stays quiet and forgets it. A `<skip>` for a request said by name, or a chat message, is forgotten too, but
+   answered with "Sorry, I didn't catch that. Say it again?", and so is an answer to TARS's question that comes out
+   as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
 
 Every stage sits behind a small interface (`Trigger`, `Transcriber`, `Brain`, `Voice`), so a local model is one new
 class and a config change. Latency is printed for every turn, by stage, and `tools/latency_bench.py` measures it end
