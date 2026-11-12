@@ -449,7 +449,7 @@ class HomeTools:
         self.tool = home_tool(devices)
         self._lock = threading.Lock()
         # Told the entity of a lock someone's asked to unlock, before and after: auto-lock counts from then
-        # (autolock.Asked, set in __main__.make_home). It can only delay a lock.
+        # (autolock.Asked, set in wiring.make_home). It can only delay a lock.
         self.unlock_asked: Callable[[str], None] | None = None
         self.ha = None
         if hass is not None:

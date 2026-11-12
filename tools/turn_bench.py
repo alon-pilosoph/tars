@@ -26,11 +26,11 @@ import soundfile as sf
 sys.path.insert(0, str(Path(__file__).parent))
 from latency_bench import RoomTone
 
-from voice_assistant.__main__ import api_key
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
 from voice_assistant.config import STTConfig, load_config
 from voice_assistant.recorder import BACKSTOP_S, make_recorder
 from voice_assistant.stt import FLUX_EAGER_EOT, FLUX_EOT, FLUX_TIMEOUT_MS, FluxTranscriber
+from voice_assistant.wiring import api_key
 
 REPO = Path(__file__).parents[1]
 UNFINISHED = {

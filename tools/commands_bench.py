@@ -205,9 +205,9 @@ def main() -> int:
     p.add_argument("--save", type=Path, help="where to keep the results (default voice_data/bench/commands/)")
     args = p.parse_args()
 
-    from voice_assistant.__main__ import DEEPGRAM_KEY, api_key, make_event_log, make_home
     from voice_assistant.commands import device_words, vosk_hearing
     from voice_assistant.config import load_config
+    from voice_assistant.wiring import DEEPGRAM_KEY, api_key, make_event_log, make_home
 
     cfg = load_config(args.config)
     root = args.config.resolve().parent

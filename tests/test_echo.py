@@ -113,7 +113,7 @@ def test_a_canceller_that_fails_hands_back_what_the_mic_heard_and_stays_off():
 
 
 def test_tars_starts_without_echo_cancellation_when_it_cant_load(monkeypatch, capsys):
-    from voice_assistant import __main__ as cli
+    from voice_assistant import wiring as cli
     from voice_assistant.config import AudioConfig
 
     def missing():

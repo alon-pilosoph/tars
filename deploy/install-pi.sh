@@ -52,7 +52,7 @@ echo "== Python packages (uv installs its own Python)"
 echo "== API keys (TARS uses the services there are keys for, and says what it does without the others)"
 [ -e .env ] || cp .env.example .env
 chmod 600 .env  # the keys are for TARS's user only
-if ! "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.__main__ import keyed; \
+if ! "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.wiring import keyed; \
 from voice_assistant.config import load_config; keyed(load_config(Path('config.toml')), Path('.'))"; then
   echo "!! Put the keys in $REPO/.env (see .env.example), then run this again"
   exit 1
@@ -67,7 +67,7 @@ echo "== Models (the double-check's recognizer, the speech detectors and the spe
 "$UV" run --frozen python -c "
 from pathlib import Path
 from voice_assistant.config import load_config
-from voice_assistant.__main__ import make_trigger, make_speaker_id
+from voice_assistant.wiring import make_trigger, make_speaker_id
 from voice_assistant.recorder import make_recorder
 root = Path('.').resolve(); cfg = load_config(root / 'config.toml')
 make_trigger(cfg, False, root)

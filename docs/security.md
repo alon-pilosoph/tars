@@ -232,7 +232,7 @@ instructions and…". A model may believe them, so what matters is what code all
   - **A reply that searched the web changes nothing in the house.** From the moment a search starts, the house
     tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in
     `home.py`).
-  - **A Telegram chat works the house as the voice does** (`__main__.py`, `chat_home()`): only people in
+  - **A Telegram chat works the house as the voice does** (`wiring.py`, `chat_home()`): only people in
     `[telegram] people` reach it at all, it unlocks only as above, and a chat's reply that searched the web changes
     nothing either. A chat can mute and unmute TARS's microphone at home
     (`mic_mute.py`): asked over a socket only TARS's user can open (`control.py`).

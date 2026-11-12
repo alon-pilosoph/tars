@@ -153,7 +153,7 @@ def test_sealed_only_the_key_opens_it_and_a_wrong_or_broken_one_says_so():
 
 
 def pass_setup(setup, monkeypatch):
-    from voice_assistant import __main__ as cli
+    from voice_assistant import entrypoints as cli
 
     cfg = dataclasses.replace(shipped_config(), home=HomeConfig(config_dir="config"))
     root = setup.folder.parent

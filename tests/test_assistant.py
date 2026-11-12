@@ -337,8 +337,8 @@ def test_a_reminders_line_is_made_ahead_and_let_go_once_its_done(speaker, tmp_pa
 
 
 def test_a_new_voice_makes_its_lines_again(tmp_path):
-    from voice_assistant.__main__ import phrase_folder
     from voice_assistant.config import TTSConfig
+    from voice_assistant.wiring import phrase_folder
 
     before = phrase_folder(types.SimpleNamespace(tts=TTSConfig(voice="alloy")), tmp_path)
     assert phrase_folder(types.SimpleNamespace(tts=TTSConfig(voice="onyx")), tmp_path) != before

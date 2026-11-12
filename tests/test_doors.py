@@ -239,8 +239,8 @@ def test_someone_let_in_by_the_door_counts_as_seen_then(log):
 
 
 def test_without_a_router_the_doors_are_only_recorded_and_say_so(log, tmp_path, monkeypatch, capsys):
-    from voice_assistant import __main__ as cli
     from voice_assistant import doors
+    from voice_assistant import wiring as cli
 
     monkeypatch.setattr(doors, "listen", lambda *a: None)
     monkeypatch.setattr(Doors, "start", lambda self: self)
@@ -259,8 +259,8 @@ def test_without_a_router_the_doors_are_only_recorded_and_say_so(log, tmp_path, 
 
 
 def test_a_brokers_password_missing_from_env_leaves_the_doors_out(log, tmp_path, monkeypatch, capsys):
-    from voice_assistant import __main__ as cli
     from voice_assistant import doors
+    from voice_assistant import wiring as cli
 
     listened = []
     monkeypatch.setattr(doors, "listen", lambda *a: listened.append(a))
@@ -631,7 +631,7 @@ def test_the_door_sensors_are_followed_for_their_moves_only(tmp_path, monkeypatc
     import types
 
     import voice_assistant.hass as hass_module
-    from voice_assistant.__main__ import follow_door_sensors
+    from voice_assistant.wiring import follow_door_sensors
 
     (tmp_path / ".env").write_text("HOME_ASSISTANT_TOKEN=t\n")
     followed, done = [], threading.Event()

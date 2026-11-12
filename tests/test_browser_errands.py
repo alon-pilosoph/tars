@@ -167,7 +167,7 @@ def test_an_errand_asked_aloud_is_queued_for_the_telegram_service_and_its_answer
     said = voice.call({"errand": "On Wolt, order a margherita"}, Request(speaker="Alon", by_voice=True))
     assert said.startswith("started") and "phone" in said and "phone" in voice.rules
     reminders = Reminders(store)
-    from voice_assistant.__main__ import errand_said_aloud
+    from voice_assistant.wiring import errand_said_aloud
 
     e, told = errands(tmp_path, done("The checkout is ready: ₪62, approve it on your phone.", "It's ready: ₪62."),
                       store=store, say_aloud=errand_said_aloud(reminders))  # fmt: skip
@@ -181,9 +181,9 @@ def test_an_errand_asked_aloud_is_queued_for_the_telegram_service_and_its_answer
 
 
 def test_the_answer_isnt_said_at_home_to_someone_out(tmp_path):
-    from voice_assistant.__main__ import errand_said_aloud
     from voice_assistant.reminders import Reminders
     from voice_assistant.store import Store
+    from voice_assistant.wiring import errand_said_aloud
 
     store = Store(tmp_path / "db")
     reminders = Reminders(store)
@@ -518,9 +518,9 @@ def test_a_mailbox_is_never_a_login_for_a_page(tmp_path):
 
 
 def test_the_telegram_service_makes_errands_only_with_browser_on(tmp_path):
-    from voice_assistant.__main__ import browse_tool, errand_queue, make_errands
     from voice_assistant.config import ConfigError, load_config
     from voice_assistant.events import EventLog
+    from voice_assistant.wiring import browse_tool, errand_queue, make_errands
 
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     events = EventLog(tmp_path / "events")

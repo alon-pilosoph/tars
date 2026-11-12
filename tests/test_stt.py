@@ -403,8 +403,8 @@ def test_a_recording_is_read_as_16_khz_samples_whatever_it_was():
 def test_voice_messages_go_to_deepgram_then_openai_as_requests_at_home_do(tmp_path, monkeypatch):
     from pathlib import Path
 
-    from voice_assistant.__main__ import make_recording_transcriber
     from voice_assistant.config import load_config, with_keys
+    from voice_assistant.wiring import make_recording_transcriber
 
     asked = []
     deepgram_up = [True]

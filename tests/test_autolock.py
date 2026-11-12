@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from voice_assistant import __main__ as main
+from voice_assistant import wiring as main
 from voice_assistant.autolock import (
     LOCK_SETTLE_S,
     MAX_TRIES,
