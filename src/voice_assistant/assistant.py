@@ -21,6 +21,7 @@ from typing import NamedTuple
 import numpy as np
 
 from .audio import AudioDeviceError, Microphone, Speaker, chime
+from .body import LocalBody
 from .commands import ON_PI, Command, HouseCommands, sentences
 from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
 from .control import Op, Refused
@@ -275,10 +276,7 @@ class Assistant:
         `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
         reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out). `skill_clock`: the
         skills due to run by themselves (skills.py)."""
-        self.mic = mic
-        self.speaker = speaker
-        self.trigger = trigger
-        self.recorder = recorder
+        self.body = LocalBody(mic, speaker, trigger, recorder)
         self.transcriber = transcriber
         self.brain = brain
         self.voice = voice
@@ -316,6 +314,12 @@ class Assistant:
         self._unmuted.set()
         # A recording session (recording.py) holds TARS and asks for takes from the control thread (control.py).
         self.takes = TakeDesk()
+
+    # The body's parts, while the conversation still reaches for them itself.
+    mic = property(lambda self: self.body.mic, lambda self, mic: setattr(self.body, "mic", mic))
+    speaker = property(lambda self: self.body.speaker, lambda self, speaker: setattr(self.body, "speaker", speaker))
+    trigger = property(lambda self: self.body.trigger, lambda self, trigger: setattr(self.body, "trigger", trigger))
+    recorder = property(lambda self: self.body.recorder, lambda self, rec: setattr(self.body, "recorder", rec))
 
     def use_reminders(self, tools: ReminderTools | None) -> None:
         self.reminder_tools = tools
