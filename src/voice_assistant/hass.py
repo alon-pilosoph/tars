@@ -967,13 +967,18 @@ def follow(
     on_state: Callable[[str, str], None],
     stop: Callable[[], bool] = lambda: False,
     clock: Callable[[], float] = time.monotonic,
+    unknown_too: bool = False,
     moves_only: bool = False,
+    on_subscribed: Callable[[], None] | None = None,
 ) -> None:
     """Follows `entities` over Home Assistant's websocket API, calling on_state(entity, state) each time one's state
-    changes ("on", "off"; never unknown or unavailable, nor a change of attributes alone), until `stop()`.
+    changes ("on", "off"; never a change of attributes alone, and unknown or unavailable only with `unknown_too`),
+    until `stop()`.
     `moves_only`: only a change from one known state to another; one from unknown or unavailable, or from nothing
     (Home Assistant starting, a Bluetooth sensor heard again), says where it is, not that it moved. Reconnects by
-    itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's thread."""
+    itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's thread.
+    `on_subscribed()`: called each time Home Assistant has taken the subscription, the first and after every
+    reconnect, so a caller can read what changed while nothing was followed (nothing here says it)."""
     wanted, address = set(entities), "ws" + url.rstrip("/").removeprefix("http") + "/api/websocket"
     tries, down = 0, ""
     while not stop():
@@ -995,11 +1000,18 @@ def follow(
                         message = json.loads(ws.recv(timeout=HTTP_TIMEOUT_S))
                     except TimeoutError:
                         continue
+                    if message.get("id") == 1 and message.get("type") == "result":
+                        try:
+                            if message.get("success") and on_subscribed:
+                                on_subscribed()
+                        except Exception as e:  # noqa: BLE001 - as for a change, it never stops the following
+                            print(f"(home: couldn't act on following again: {e!r})")
+                        continue
                     data = (message.get("event") or {}).get("data") or {}
                     if data.get("entity_id") not in wanted:
                         continue
                     new, old = (data.get("new_state") or {}).get("state"), (data.get("old_state") or {}).get("state")
-                    if new in UNKNOWN or new is None or new == old:
+                    if new is None or new == old or (new in UNKNOWN and not unknown_too):
                         continue
                     if moves_only and (old is None or old in UNKNOWN):
                         continue

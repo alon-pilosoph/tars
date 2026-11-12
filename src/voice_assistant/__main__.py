@@ -805,7 +805,11 @@ def make_home(
     for own in (speaker, mic):
         if own:
             extra[own.name] = own
+    for device in auto_lock_devices(cfg, root):
+        extra[device.name] = device
     built = build(cfg.home, context, extra)
+    if built.tools and (asked := {d["entity"]: a for d, _, _, a in auto_locks(cfg, root)}):
+        built.tools.unlock_asked = lambda entity: asked[entity].mark() if entity in asked else None
     for name, why in built.unavailable.items():
         print(f"(home: the {name} isn't connected: {why}; see docs/home.md)")
     if built.tools and built.tools.devices:
@@ -813,6 +817,92 @@ def make_home(
     if built.tools and built.tools.ha:
         print("(home: and all of Home Assistant, with the home_assistant tool)")
     return built.tools
+
+
+def auto_locks(cfg: Config, root: Path) -> list[tuple[dict, object, object, object]]:
+    """Each lock in [home] with auto_lock and its door sensor: (its [[home.devices]], autolock.Settings,
+    autolock.Off, autolock.Asked)."""
+    from .autolock import Asked, Off, Settings
+
+    found = []
+    for d in cfg.home.devices:
+        settings = Settings.of(d.get("auto_lock"))
+        if settings and d.get("door") and str(d.get("entity", "")).startswith("lock."):
+            folder = root / cfg.learning.folder
+            found.append((d, settings, Off(folder, d["entity"]), Asked(folder, d["entity"])))
+    return found
+
+
+def auto_lock_devices(cfg: Config, root: Path) -> list:
+    """The home tool's "<door> auto-lock" for each lock with one: on, or off for a while."""
+    from .autolock import AutoLockDevice
+
+    return [AutoLockDevice(d["name"].strip(), settings, off) for d, settings, off, _ in auto_locks(cfg, root)]
+
+
+def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, home=None) -> None:
+    """The assistant's: locks each lock with auto_lock once its door is shut (autolock.py). `say(text)`: aloud at
+    home. `home`: the house's tools (HomeTools), whose lock it holds to lock, as they do to change anything."""
+    locks = auto_locks(cfg, root)
+    if not locks:
+        return
+    from .autolock import AutoLock
+    from .hass import HomeAssistant, follow
+    from .home import TOKEN_KEY
+    from .maintainers import tell
+    from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
+
+    token = dotenv_values(root / ".env").get(TOKEN_KEY)
+    if not (cfg.home.url and token):
+        print(f"(auto-lock: off: it works the lock through Home Assistant: set [home] url, and {TOKEN_KEY} in .env)")
+        return
+    store = events.store if events else None
+
+    def post(text: str) -> None:
+        """To everyone's Telegram chat."""
+        for name in cfg.telegram.people if cfg.telegram.enabled and store else []:
+            try:
+                Reminders(store).add(
+                    NewReminder(MESSAGE, text, for_name=name, due=time.time(), needs_ack=False, max_tries=1),
+                    set_via=VOICE,
+                    channel=TELEGRAM,
+                    phones=[name],
+                )
+            except ValueError as e:
+                print(f"(auto-lock: couldn't post to {name}: {e})")
+        if not (cfg.telegram.enabled and store):
+            say(text)
+
+    def tell_maintainers(text: str) -> None:
+        if not (store and tell(cfg, store, text)):
+            print(f"(auto-lock: no maintainer's chat to tell: {text})")
+
+    def anyone_home() -> bool | None:
+        if not presence:
+            return None
+        states = [s.home for s in presence.board.states().values()]
+        return True if any(states) else False if states and all(h is False for h in states) else None
+
+    changing = home.changing if home else None
+    for d, settings, off, asked in locks:
+        hass = HomeAssistant(cfg.home.url, token)
+        entity = d["entity"]
+
+        def read(e: str, hass=hass) -> str:
+            return str(hass.state(e).get("state", ""))
+
+        def lock(hass=hass, entity=entity) -> bool:
+            return hass.call("lock.lock", {"entity_id": entity})
+
+        auto = AutoLock(
+            d["name"].strip(), entity, d["door"], settings, off, read, lock, say, post, tell_maintainers, anyone_home,
+            asked=asked, changing=changing,
+        )  # fmt: skip
+        auto.start(
+            lambda entities, changed, subscribed: follow(
+                cfg.home.url, token, entities, changed, unknown_too=True, on_subscribed=subscribed
+            )
+        )
 
 
 def make_skills(events):
@@ -1680,6 +1770,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     start_presence(cfg, root, presence, reminders, lambda names, door: [c.nudge() for c in clocks])
     volume = own_speaker(cfg)
     home = make_home(cfg, root, announcements.add, presence, volume, events=events, background=True)
+    start_auto_locks(cfg, root, announcements.add, presence, events, home)
     browser = voice_errands(cfg, events)
     skills = make_skills(events)
     if skills and any(d.get("sensor") for d in cfg.presence.doors):

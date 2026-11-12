@@ -8,7 +8,8 @@ until it has a defense and a test, or is accepted as a risk on purpose. What's n
 
 ## What's worth protecting
 
-- **The house:** the front door's lock above all, then everything else TARS works (the boiler, the AC, the TV).
+- **The house:** the front door's lock above all (TARS works it by itself, with auto-lock), then everything else
+  TARS works (the boiler, the AC, the TV).
 - **What TARS keeps:** recordings of every wake and request, every conversation, the voiceprints, who's home and when
   (`voice_data/`, and the backup's bucket).
 - **The keys in `.env`:** each service's API key (some with money behind them), the bot's token, the router and Home
@@ -155,6 +156,54 @@ that state, or what Home Assistant hears from the sensor, speaks for the door:
   - With encryption on, a recorded advertisement replayed is still for Home Assistant's BTHome integration to
     refuse; that hasn't been tried here.
   - Home Assistant's administrators, and its automations, can set the sensor's state as they can work the lock.
+
+### Auto-lock: TARS working the front door's lock on its own
+
+With `auto_lock` on a lock ([auto-lock](home.md#auto-lock), `autolock.py`), TARS locks the front door by itself,
+from what Home Assistant says of the lock and its door sensor: the one thing it does to the lock that nobody asked
+for. Whoever can make Home Assistant say the door is shut, or open, steers it (as for
+[the door sensor](#a-door-sensor-that-says-the-door-moved-when-it-didnt) above).
+
+- **It only ever locks.** Its one call is `lock.lock`; nothing it's given can unlock, unlatch or open, whatever it's
+  told. At worst it locks the door, or leaves it unlocked.
+- **What a forged "shut" could do:** with the door open and unlocked, get it locked: the bolt thrown into the open
+  door, out against the frame when someone shuts it. Nobody is let in by that, but the door won't shut until the
+  bolt is turned back by hand or in the app.
+- **What a forged "open" could do,** or a sensor kept unavailable: keep TARS from locking. The door stays unlocked
+  until someone locks it or the lock's own timer does; kept unavailable, the maintainers are told after a minute.
+- **The sensor down:** nothing is locked until it's back, whatever it said last; the maintainers are told once it's
+  been out a minute, and once it's back, and the lock's own auto-lock is the backstop. A read just before locking
+  that Home Assistant doesn't answer is tried three times, then told; it's never taken as shut.
+- **Turning it off:** any voice in the room, or any household chat, can turn it off for up to 12 hours with the home
+  tool's `<door> auto-lock`. That's held back by the guards every change has (a draft thrown away, a reply that read
+  the web, a run a door's lock set off: `home.py`'s `_change` and the device's own `set_off_by_door`), but not by
+  the trusted-voice rule unlocking has. That's on purpose: off unlocks nothing, it only leaves the door as it is,
+  and anyone who can speak to TARS is inside, where the thumb-turn leaves the door unlocked just as well. Off comes
+  back on by itself, at most 12 hours later, and the lock's own timer still locks meanwhile. A trusted voice for it
+  would make stepping out to the bins (the [lockout](home.md#auto-lock)) a three-digit challenge for the guest or
+  the child who needs it, for no door kept safer.
+- **Defenses:** the rule above (lock only on a sensor read "shut" just before, `AutoLock._read_and_lock`); a
+  sensor out, or Home Assistant not answering, never counts as shut; the lock and the door read again over REST each
+  time following is taken up and every 30 s, so a change missed isn't acted on as it was; a read never undoes a
+  newer change; only locked to unlocked is a new unlocking, so a flapping lock isn't tried again and again; 3 s at
+  least between the door shutting and the bolt. Turn on the sensor's BTHome encryption (a bindkey), as the
+  [door sensor's setup](presence.md#the-door-sensor) says: then only something with the key can say "shut" for it
+  over Bluetooth.
+- **Tests:** `tests/test_autolock.py::test_a_sensor_gone_quiet_while_the_door_is_open_never_gets_it_locked`,
+  `::test_the_door_read_as_anything_but_shut_just_before_locking_isnt_locked`,
+  `::test_a_door_that_cant_be_read_just_before_locking_isnt_locked_and_is_tried_again_then_told`,
+  `::test_a_lock_dropping_out_of_reach_and_back_isnt_a_new_unlocking`,
+  `::test_a_read_again_never_undoes_a_newer_change`, `::test_auto_lock_can_only_lock`,
+  `::test_a_door_opened_between_the_read_and_the_bolt_still_gets_it_thrown_and_nothing_more_is_sent`,
+  `::test_the_device_turns_it_off_for_a_while_and_back_on_and_a_doors_lock_cant`.
+- **Open:**
+  - The moment between the read and the bolt turning can't be covered: a door opened then gets the bolt thrown
+    ([why](home.md#auto-lock)).
+  - Home Assistant's administrators and automations can set the sensor's state, as they can work the lock.
+  - TARS can't tell whether the sensor's BTHome encryption is on (as above).
+  - A chat's unlock is made in the chat's process, which doesn't share the assistant's lock on the house: its mark
+    before the call holds auto-lock back, but a lock already on its way as the chat unlocks isn't stopped. A
+    plugin's unlock, or a script's, doesn't start auto-lock's minute again.
 
 ### A web page elsewhere, through someone's browser at home
 

@@ -353,6 +353,28 @@ def test_following_hands_on_each_change_of_the_door_and_comes_back_after_home_as
     assert out.count("can't follow") == 1  # said once, however long it takes
 
 
+def test_following_says_each_time_its_subscribed_and_hands_on_unknown_with_unknown_too(monkeypatch):
+    """on_subscribed: the first time and after a reconnect, so what changed meanwhile can be read."""
+    import voice_assistant.hass as hass_module
+
+    door = "binary_sensor.front_door"
+    taken = {"id": 1, "type": "result", "success": True, "result": None}
+    sockets = [
+        FakeSocket([taken, changed(door, "unavailable")]),
+        FakeSocket([{"id": 1, "type": "result", "success": False}, taken, changed(door, "off", old="unavailable")]),
+    ]
+    monkeypatch.setattr(hass_module, "connect", lambda url, **kw: sockets.pop(0))
+    monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
+    seen = []
+    on_state = lambda e, s: seen.append(s)
+    on_subscribed = lambda: seen.append("subscribed")
+    hass_module.follow(
+        "http://ha:8123", "token", [door], on_state, lambda: not sockets and "off" in seen,
+        unknown_too=True, on_subscribed=on_subscribed,
+    )  # fmt: skip
+    assert seen == ["subscribed", "unavailable", "subscribed", "off"]
+
+
 def test_a_token_home_assistant_refuses_is_said(monkeypatch, capsys):
     import voice_assistant.hass as hass_module
 
