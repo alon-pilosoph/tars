@@ -525,7 +525,7 @@ def test_a_door_moving_asks_the_routers_at_once_and_often_for_a_while():
     assert w.tracker._doors_used == [0.0]  # shut, or opened to let someone in: not someone leaving
     now[0] = 100.0
     w.hurry(inside=True, opened=w._clock() - 20)  # decided as it shut, 20 s after it opened
-    assert w.tracker._doors_used == [0.0, 80.0]
+    assert w.tracker._doors_used == [0.0, pytest.approx(80.0, abs=0.1)]  # the time of day moves on meanwhile
 
 
 def rounds_while(
