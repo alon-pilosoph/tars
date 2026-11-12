@@ -56,9 +56,6 @@ class People:
         self.names = {person_key(n): n.strip() for n in people}
         self._ids = {person_key(n): {identifier(i) for i in ids} for n, ids in people.items()}
 
-    def key_of(self, name: str) -> str:
-        return person_key(name)
-
     def whose_key(self, key: str) -> str | None:
         """The person (as person_key) a door's key is, as [presence] people names it."""
         key = identifier(key)
@@ -124,7 +121,7 @@ class Tracker:
         came = s.home is False
         if came:
             s.since, s.via = wall, door
-        s.home = True
+        s.home, s.last_seen = True, wall
         return came
 
 

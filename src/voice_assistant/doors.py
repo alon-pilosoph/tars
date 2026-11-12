@@ -3,8 +3,9 @@
 A Nuki with MQTT turned on publishes every lock action to `<topic>/lockActionEvent` as "action,trigger,auth id,code
 id,auto unlock": which app (the auth id) or keypad code (the code id) did what, and whether the phone's Auto Unlock
 did it. Each one is kept in the door_events table. Whose key is whose comes from [presence] people ("key:<auth id>",
-"code:<code id>") or is learned: a key nobody's named that opens the door while exactly one person's phone comes home,
-twice and never while someone else's does, is theirs from then on, and the maintainers are told.
+"code:<code id>") or is learned: a key nobody's named that opens the door from outside while exactly one person's phone
+comes home, on two separate arrivals and never while someone else's does, is theirs from then on, and the maintainers
+are told.
 
 Someone opening the door from outside (Auto Unlock, or the keypad) is home at once, before their phone has found the
 Wi-Fi: presence.Watcher.at_door. Opening it from the app alone doesn't count: that can be done from anywhere.
@@ -15,6 +16,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .events import person_key
 from .presence import People, Watcher
 from .store import Store
 
@@ -32,7 +34,7 @@ ACTIONS = {
 }
 # A key whose door opening came this near a phone coming home is guessed to be that phone's person's.
 LEARN_WINDOW_S = 10 * 60.0
-LEARN_AFTER = 2  # guesses, all the same person, before a key is taken to be theirs
+LEARN_AFTER = 2  # arrivals guessed, all the same person, before a key is taken to be theirs
 SETTLE_EVERY_S = 30.0
 
 
@@ -99,30 +101,31 @@ class DoorLog:
         )
 
     def unsettled(self, before: float) -> list[dict]:
-        """Openings by a key nobody's named, from before `before`, not yet compared with who came home."""
+        """Openings from outside by a key nobody's named, from before `before`, not yet compared with who came home.
+        key:0 is the lock's own button or knob, nobody's key."""
         return self.store.rows(
-            "SELECT * FROM door_events WHERE person IS NULL AND settled = 0 AND at < ? AND action IN (?, ?)",
+            "SELECT * FROM door_events WHERE person IS NULL AND settled = 0 AND at < ? AND action IN (?, ?) "
+            "AND (auto_unlock = 1 OR key LIKE 'code:%') AND key != 'key:0'",
             (before, *OPENS),
         )
 
-    def settle(self, event_id: int, guess: str | None) -> str | None:
-        """Keeps the guess (or that there was none) for one opening; returns the person if its key is now learned."""
+    def settle(self, event_id: int, guess: str | None, arrived: float | None = None) -> str | None:
+        """Keeps the guess (or that there was none) for one opening, with when the guessed person's phone came home;
+        returns the person if its key is now learned."""
         with self.store.transaction() as db:
-            db.execute("UPDATE door_events SET settled = 1, guess = ? WHERE id = ?", (guess, event_id))
+            db.execute(
+                "UPDATE door_events SET settled = 1, guess = ?, guess_at = ? WHERE id = ?", (guess, arrived, event_id)
+            )
             key = db.execute("SELECT key FROM door_events WHERE id = ?", (event_id,)).fetchone()["key"]
             if guess is None or db.execute("SELECT 1 FROM door_keys WHERE key = ?", (key,)).fetchone():
                 return None
-            guesses = [
-                r["guess"]
-                for r in db.execute("SELECT guess FROM door_events WHERE key = ? AND guess IS NOT NULL", (key,))
-            ]
-            if len(guesses) < LEARN_AFTER or set(guesses) != {guess}:
+            rows = db.execute("SELECT guess, guess_at FROM door_events WHERE key = ? AND guess IS NOT NULL", (key,))
+            guesses = [(r["guess"], r["guess_at"]) for r in rows]
+            # An unlock and an unlatch in one homecoming are one arrival.
+            if len({at for _, at in guesses}) < LEARN_AFTER or {p for p, _ in guesses} != {guess}:
                 return None
             db.execute("INSERT INTO door_keys (key, person, learned) VALUES (?, ?, ?)", (key, guess, time.time()))
             return guess
-
-    def last(self, door: str) -> dict | None:
-        return self.store.row("SELECT * FROM door_events WHERE door = ? ORDER BY at DESC LIMIT 1", (door,))
 
 
 class Doors:
@@ -163,9 +166,9 @@ class Doors:
         with self._lock:
             arrivals = list(self._arrivals)
         for row in self.log.unsettled(now - LEARN_WINDOW_S):
-            near = {p for p, t in arrivals if abs(t - row["at"]) <= LEARN_WINDOW_S}
-            guess = self.log.people.key_of(near.pop()) if len(near) == 1 else None
-            if learned := self.log.settle(row["id"], guess):
+            near = {p: t for p, t in arrivals if abs(t - row["at"]) <= LEARN_WINDOW_S}
+            guess, arrived = next(iter(near.items())) if len(near) == 1 else (None, None)
+            if learned := self.log.settle(row["id"], person_key(guess), arrived):
                 name = self.log.people.names[learned]
                 print(f"(doors: {row['key']} on the {row['door']} is {name}'s)")
                 self._tell(
@@ -196,14 +199,26 @@ def listen(mqtt: dict, password: str | None, doors: list[dict], on_event: Callab
     if mqtt.get("user"):
         client.username_pw_set(mqtt["user"], password)
 
+    lost = [False]
+
     def connected(client, userdata, flags, reason, properties=None):
         if reason.is_failure:
             print(f"(doors: the MQTT broker at {mqtt['address']} refused TARS: {reason})")
             return
+        if lost[0]:
+            lost[0] = False
+            print(f"(doors: the MQTT broker at {mqtt['address']} is back)")
         for topic in topics:
             client.subscribe(topic, qos=1)
 
+    def disconnected(client, userdata, flags, reason, properties=None):
+        if not lost[0]:
+            lost[0] = True
+            print(f"(doors: lost the MQTT broker at {mqtt['address']} ({reason}); trying again until it's back)")
+
     def message(client, userdata, msg):
+        if msg.retain:
+            return  # the broker's copy of an old event, sent on (re)connecting
         door = topics.get(msg.topic)
         e = parse(door, msg.payload.decode(errors="replace"), time.time()) if door else None
         if e is None:
@@ -213,7 +228,7 @@ def listen(mqtt: dict, password: str | None, doors: list[dict], on_event: Callab
         except Exception as ex:  # noqa: BLE001 - one event's trouble never stops the listening
             print(f"(doors: couldn't act on the {door}: {ex!r})")
 
-    client.on_connect, client.on_message = connected, message
+    client.on_connect, client.on_disconnect, client.on_message = connected, disconnected, message
     client.reconnect_delay_set(1, 60)
     client.connect_async(mqtt["address"], int(mqtt.get("port", 1883)))
     client.loop_start()

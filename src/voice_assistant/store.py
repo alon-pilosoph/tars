@@ -158,6 +158,7 @@ TABLES = {
     auto_unlock INTEGER NOT NULL,    -- 1: the phone's Auto Unlock did it
     person TEXT,                     -- whose key it is (person_key), as known then; NULL: nobody's named it
     guess TEXT,                      -- an unnamed key's opening: whose phone came home around then, if just one did
+    guess_at REAL,                   -- when that phone came home: two openings in one homecoming are one arrival
     settled INTEGER NOT NULL DEFAULT 0  -- 1: compared with who came home (guess is final)
 )""",
     "door_keys": """CREATE TABLE door_keys (
@@ -381,7 +382,7 @@ MIGRATIONS = [
         (
             "CREATE TABLE door_events (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, door TEXT NOT NULL, "
             "action INTEGER NOT NULL, trigger INTEGER NOT NULL, key TEXT NOT NULL, auto_unlock INTEGER NOT NULL, "
-            "person TEXT, guess TEXT, settled INTEGER NOT NULL DEFAULT 0)"
+            "person TEXT, guess TEXT, guess_at REAL, settled INTEGER NOT NULL DEFAULT 0)"
         ),
         "CREATE TABLE door_keys (key TEXT PRIMARY KEY, person TEXT NOT NULL, learned REAL NOT NULL)",
         "CREATE INDEX door_events_key ON door_events(key)",

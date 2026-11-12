@@ -1,10 +1,13 @@
 """Doors whose locks say who opened them (doors.py): a Nuki's lockActionEvent, who's home, and keys learned."""
 
+import dataclasses
+from pathlib import Path
+
 import pytest
 
-from voice_assistant.config import PresenceConfig, _presence_problems
+from voice_assistant.config import PresenceConfig, _presence_problems, load_config
 from voice_assistant.doors import LEARN_WINDOW_S, DoorEvent, DoorLog, Doors, parse
-from voice_assistant.presence import Board, People, RouterStatus, State, Tracker, Watcher
+from voice_assistant.presence import Board, People, RouterStatus, State, Tracker, Watcher, make_presence
 
 NOW = 1_800_000_000.0
 MIN = 60.0
@@ -154,6 +157,33 @@ def test_a_phone_coming_home_long_after_the_door_isnt_taken_for_whose_key_it_was
     assert doors.log.who("key:444") is None
 
 
+@pytest.mark.parametrize("payload", ["1,2,0,0,1", "1,1,0,0,0", "1,0,555,0,0"])  # its button, its knob, the app
+def test_a_door_opened_from_inside_as_someone_comes_home_teaches_nothing(log, payload):
+    clock, told = Clock(), []
+    doors = learning(log, clock, told)
+    for day in range(3):
+        clock.t = NOW + day * 86400
+        doors.phone_came_home("Alon", True)
+        doors.heard(event(payload, at=clock.t + MIN))
+        clock.t += LEARN_WINDOW_S + 2 * MIN
+        doors.settle()
+    assert doors.log.who(event(payload).key) is None and told == []
+
+
+def test_an_unlock_and_an_unlatch_in_one_homecoming_are_one_arrival_not_two(log):
+    clock, told = Clock(), []
+    doors = learning(log, clock, told)
+    for day in range(2):
+        clock.t = NOW + day * 86400
+        doors.phone_came_home("Stacey", True)
+        doors.heard(event("1,0,999,0,1", at=clock.t + 5))
+        doors.heard(event("3,0,999,0,1", at=clock.t + 8))
+        clock.t += LEARN_WINDOW_S + MIN
+        doors.settle()
+        assert (doors.log.who("key:999") is None) == (day == 0)
+    assert len(told) == 1
+
+
 def test_a_key_named_in_the_settings_needs_no_learning_and_a_learned_one_survives_a_restart(log):
     clock, told = Clock(), []
     doors = learning(log, clock, told)
@@ -187,6 +217,51 @@ def test_the_doors_settings_are_checked():
     assert any("port must be" in p for p in problems) and any(
         "[presence.mqtt] has no setting password" in p for p in problems
     )
+
+
+def test_someone_let_in_by_the_door_counts_as_seen_then(log):
+    t = Tracker(PEOPLE.names, 10 * MIN, 0.0, {"alon": State(False, NOW - 86400, NOW - 86400)})
+    assert t.arrived("alon", "front door", 1000.0, NOW)
+    assert t.update(set(), True, 1000.0 + 10 * MIN + 1, NOW + 10 * MIN + 1) == [("alon", False)]
+    assert t.states["alon"].since == NOW  # out since they were last seen: at the door, not yesterday
+
+
+def test_without_a_router_the_doors_are_only_recorded_and_say_so(log, tmp_path, monkeypatch, capsys):
+    from voice_assistant import __main__ as cli
+    from voice_assistant import doors
+
+    monkeypatch.setattr(doors, "listen", lambda *a: None)
+    monkeypatch.setattr(Doors, "start", lambda self: self)
+    presence = dataclasses.replace(
+        load_config(Path(__file__).parents[1] / "config.toml", local=False).presence,
+        enabled=True,
+        people={"Alon": ["key:111"]},
+        doors=[{"name": "front door", "topic": "nuki/4224E764"}],
+        mqtt={"address": "localhost"},
+    )
+    cfg = dataclasses.replace(load_config(Path(__file__).parents[1] / "config.toml", local=False), presence=presence)
+    cli.start_presence(cfg, tmp_path, make_presence(presence, log.store, lambda name: None))
+    out = capsys.readouterr().out
+    assert "(doors: no router to watch, so the doors are only recorded" in out
+    assert "(doors: listening to the front door on the MQTT broker at localhost)" in out
+
+
+def test_a_brokers_password_missing_from_env_leaves_the_doors_out(log, tmp_path, monkeypatch, capsys):
+    from voice_assistant import __main__ as cli
+    from voice_assistant import doors
+
+    listened = []
+    monkeypatch.setattr(doors, "listen", lambda *a: listened.append(a))
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    presence = dataclasses.replace(
+        cfg.presence,
+        doors=[{"name": "front door", "topic": "nuki/4224E764"}],
+        mqtt={"address": "localhost", "user": "tars", "secret": "MQTT_PASSWORD"},
+    )
+    (tmp_path / ".env").write_text("OTHER=x\n")
+    cli.listen_to_doors(dataclasses.replace(cfg, presence=presence), tmp_path, None)
+    assert listened == []
+    assert "(doors: leaving out the MQTT broker at localhost: no MQTT_PASSWORD in .env" in capsys.readouterr().out
 
 
 def test_the_board_keeps_how_someone_came_home(log):
@@ -229,10 +304,41 @@ def test_listening_subscribes_to_each_doors_lock_and_hands_on_what_it_says(monke
     client = listen(mqtt, "hunter2", [{"name": "front door", "topic": "nuki/4224E764/"}], heard.append)
     ok = type("Reason", (), {"is_failure": False})()
     client.on_connect(client, None, None, ok)
-    msg = type("Msg", (), {"topic": "nuki/4224E764/lockActionEvent", "payload": b"1,0,111,0,1"})()
-    client.on_message(client, None, msg)
-    client.on_message(client, None, type("Msg", (), {"topic": "nuki/4224E764/state", "payload": b"1"})())
+
+    def msg(topic, payload, retain=False):
+        return type("Msg", (), {"topic": topic, "payload": payload, "retain": retain})()
+
+    client.on_message(client, None, msg("nuki/4224E764/lockActionEvent", b"1,0,999,0,1", retain=True))  # old news
+    client.on_message(client, None, msg("nuki/4224E764/lockActionEvent", b"1,0,111,0,1"))
+    client.on_message(client, None, msg("nuki/4224E764/state", b"1"))
     assert client.subscribed == ["nuki/4224E764/lockActionEvent"] and client.auth == ("tars", "hunter2")
     assert client.at == ("localhost", 1883) and [(e.door, e.key, e.from_outside) for e in heard] == [
         ("front door", "key:111", True)
     ]
+
+
+def test_losing_the_broker_and_getting_it_back_are_each_said_once(monkeypatch, capsys):
+    paho = pytest.importorskip("paho.mqtt.client")
+
+    class FakeClient:
+        def __init__(self, *args, **kw):
+            pass
+
+        def subscribe(self, topic, qos=0):
+            pass
+
+        reconnect_delay_set = connect_async = loop_start = lambda self, *a: None
+
+    monkeypatch.setattr(paho, "Client", FakeClient)
+    from voice_assistant.doors import listen
+
+    client = listen({"address": "localhost"}, None, [{"name": "front door", "topic": "nuki/1"}], print)
+    ok = type("Reason", (), {"is_failure": False})()
+    client.on_connect(client, None, None, ok)
+    client.on_disconnect(client, None, None, "unspecified error")
+    client.on_disconnect(client, None, None, "unspecified error")
+    client.on_connect(client, None, None, ok)
+    client.on_connect(client, None, None, ok)
+    out = capsys.readouterr().out
+    assert out.count("(doors: lost the MQTT broker at localhost") == 1
+    assert out.count("(doors: the MQTT broker at localhost is back)") == 1

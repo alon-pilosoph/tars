@@ -107,12 +107,13 @@ whether the phone's Auto Unlock did. TARS listens (`doors.py`), keeps each actio
   opening the front door". From outside means Auto Unlock or the keypad. Opening it in the app doesn't count, since
   that can be done from anywhere; nor do the lock's own button and knob, which are inside, or TARS and Home Assistant
   opening it over MQTT. Leaving is still by the phone: a door that's opened from inside says nothing about who left.
-- **Whose key is whose is learned.** A key nobody's named, that opens the door from outside while exactly one
-  person's phone comes home (within ten minutes either way), is a guess that it's theirs; two such guesses, and none
-  for anyone else, and it is. The maintainers are told in their chats ("I can tell when Stacey opens the front door
-  now..."). Two people coming home together guess nothing. Keys can also be named in `[presence] people`, beside the
-  phone: `"key:<auth id>"` for an app, `"code:<code id>"` for a keypad code. The ids are in `door_events`, and in
-  Nuki Web's list of authorizations.
+- **Whose key is whose is learned.** A key nobody's named, that opens the door from outside (Auto Unlock or the
+  keypad) while exactly one person's phone comes home (within ten minutes either way), is a guess that it's theirs;
+  guesses on two separate arrivals, and none for anyone else, and it is. An unlock and an unlatch as someone comes in
+  are one arrival, and the lock's own button and knob, or the app from inside, are never anyone's key. The maintainers
+  are told in their chats ("I can tell when Stacey opens the front door now..."). Two people coming home together
+  guess nothing. Keys can also be named in `[presence] people`, beside the phone: `"key:<auth id>"` for an app,
+  `"code:<code id>"` for a keypad code. The ids are in `door_events`, and in Nuki Web's list of authorizations.
 
 Setting it up:
 
@@ -168,9 +169,10 @@ out) and so would Google's or Apple's location sharing; the routers know only ho
 and they're already there. Nothing leaves the house.
 
 **Detected, not how.** The rules (`Tracker`) take the set of people detected in a round, not router answers, and a
-door's lock feeds them too (`Watcher.at_door`, from the MQTT client's thread, under the same lock as the rounds). Minutes are counted on a monotonic clock: a Pi has no clock of its own
-while it's off, and its time of day jumps when it sets itself after a boot. After a restart, the rules start from what
-was last written, if it's fresh, so someone out when TARS restarted who comes home soon after has come home.
+door's lock feeds them too (`Watcher.at_door`, from the MQTT client's thread, under the same lock as the rounds).
+Minutes are counted on a monotonic clock: a Pi has no clock of its own while it's off, and its time of day jumps when it
+sets itself after a boot. After a restart, the rules start from what was last written, if it's fresh, so someone out
+when TARS restarted who comes home soon after has come home.
 
 **A router that can't be read is a router that didn't answer.** Whatever goes wrong (no answer, a refused password, a
 page this doesn't understand, even a bug in one router's code) is that router not answering for the round: nobody is

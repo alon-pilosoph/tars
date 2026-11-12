@@ -562,6 +562,8 @@ def start_presence(cfg: Config, root: Path, presence, reminders=None) -> None:
         print(f"(presence: asking {len(presence.routers)} router(s) every {presence.every_s:.0f} s)")
     if doors:
         doors.watcher = watcher
+        if watcher is None:
+            print("(doors: no router to watch, so the doors are only recorded: nobody is marked home by them)")
         listen_to_doors(cfg, root, doors)
 
 
@@ -580,7 +582,12 @@ def listen_to_doors(cfg: Config, root: Path, doors) -> None:
     from .doors import listen
 
     mqtt = cfg.presence.mqtt
-    password = dotenv_values(root / ".env").get(mqtt["secret"]) if mqtt.get("secret") else None
+    password = None
+    if mqtt.get("secret"):
+        password = dotenv_values(root / ".env").get(mqtt["secret"]) or None
+        if password is None:
+            print(f"(doors: leaving out the MQTT broker at {mqtt['address']}: no {mqtt['secret']} in .env)")
+            return
     try:
         listen(mqtt, password, cfg.presence.doors, doors.heard)
     except ImportError:
