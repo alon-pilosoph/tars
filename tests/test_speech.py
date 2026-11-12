@@ -2,6 +2,7 @@
 
 import threading
 import types
+from concurrent.futures import Future
 
 import numpy as np
 import pytest
@@ -89,3 +90,13 @@ def test_the_half_sentence_left_when_a_reply_is_stopped_never_reaches_the_voice(
     made.append(StreamedReply(pieces(), voice, lambda sentence: None))
     constructed.set()
     assert list(made[0]) == [] and asked == []
+
+
+def test_a_line_made_ahead_plays_as_it_is_and_the_rest_go_to_the_voice():
+    asked = []
+    voice = types.SimpleNamespace(stream=lambda text: asked.append(text) or iter([b"live"]))
+    made: Future = Future()
+    made.set_result([b"kept"])
+    lines = {"Let's see.": made}
+    reply = StreamedReply(iter(["Let's see. The news."]), voice, lambda sentence: None, lines.get)
+    assert list(reply) == [b"kept", b"live"] and asked == ["The news."]

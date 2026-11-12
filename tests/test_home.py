@@ -425,7 +425,7 @@ def test_without_quick_tools_the_house_is_handed_to_openai():
 
     openai = fake_openai_chat(lambda m: "It's on." if m[-1].get("type") else "", calls_for)
     brain = QuickChat(openai, LLMConfig(), [QuickService("Cerebras", cerebras, "qwen")], home=h.tools)
-    assert "".join(brain.stream_reply("turn the boiler on", ALON)) == "It's on."
+    assert "".join(brain.stream_reply("turn the boiler on", ALON)) == "Let's see. It's on."
     assert brain.answered_by == llm.LOOKED_UP and h.ha.state("switch.boiler") == "on"
 
 

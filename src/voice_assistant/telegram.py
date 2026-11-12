@@ -37,7 +37,7 @@ from .control import Refused, Unavailable
 from .conversations import FILE, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
-from .llm import PARDON, REMIND_TOOLS, SEARCHING, SKIP, THINKING, Brain, split_ack, split_skip
+from .llm import FILLERS, PARDON, REMIND_TOOLS, SKIP, THINKING, Brain, split_ack, split_skip
 from .mic_mute import DEVICE as MIC
 from .reminders import (
     ACKNOWLEDGED,
@@ -318,7 +318,13 @@ def _clock(at: float) -> str:
 def tidy(reply: str) -> str:
     """A reply written to be heard, for reading: without the lines said while a slow answer comes ("Looking it
     up."), which a chat shows as "typing..." instead."""
-    text = reply.strip().removeprefix(SEARCHING).replace(THINKING, "", 1)
+    text = reply.strip()
+    # Only with more after them: "On it." can be the whole reply.
+    filler = next((f for f in FILLERS if text.startswith(f)), "")
+    if text[len(filler) :].strip():
+        text = text[len(filler) :]
+    if text.replace(THINKING, "", 1).strip():
+        text = text.replace(THINKING, "", 1)
     return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 

@@ -20,8 +20,10 @@ Median over 8 spoken questions, three runs, on the development Mac ([method](#ho
 | The voice's first audio | ~0.3 s | Cartesia's Sonic voice James, a sentence at a time (Deepgram's Aura-2 Zeus from its EU servers: ~0.4 s; OpenAI's Onyx: ~1.1 s) |
 | **From you stopping to TARS's first sound** | **~1.2-1.5 s** | the answer is prepared during the wait, so these overlap |
 
-A turn that needs the web adds Qwen's hand-off (about 0.3 s) and a web search, and TARS says "Looking it up." as it
-starts.
+A turn that needs the web adds Qwen's hand-off (about 0.3 s) and a web search. Any turn Qwen hands to OpenAI to look
+up (the web, the news, the house) starts with a short line Qwen picks as it hands over ("Let's see.", "Let me
+check."), made ahead so it plays at once, so the few seconds before OpenAI's first word aren't silent; a question
+handed to the thinking model starts with "Let me think about that for a moment." instead.
 
 ## How the stages overlap
 

@@ -218,7 +218,7 @@ class RecordingBrain:
 class SilentReply:
     """A StreamedReply that reads the whole reply at once and makes no audio."""
 
-    def __init__(self, pieces, voice, on_sentence):
+    def __init__(self, pieces, voice, on_sentence, made_ahead=None):
         list(pieces)
 
     def __iter__(self):
