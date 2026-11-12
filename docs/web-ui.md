@@ -34,9 +34,19 @@ Every page, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo
 
 A page of its own, opened from a link TARS sends, that has one person say a list of phrases into TARS's own
 speakerphone, one at a time: their voice, so speaker ID knows them from the start, or the house's commands, for
-testing offline recognizers on them ([roadmap](roadmap.md)). `voice-assistant --record-session voice|house --for NAME`
+measuring [house commands on the Pi](home.md#house-commands-on-the-pi) on the household's own voices: each thing each
+device does, asked the way people ask, from across the room and quietly too, words that name a device without asking
+for anything, and plain requests. `voice-assistant --record-session voice|house --for NAME`
 makes one and sends its link to NAME's Telegram chat (or prints it). The link is the session's only key, and works for
 a day or until the last phrase is done.
+
+Where the recordings go is said on the first page, before anything is recorded, and again at the end. A voice
+session's, and a house session's by default, stay on the Pi: none is sent anywhere (the backup doesn't copy them
+either). A house session made with `--cloud` (`--record-session house --cloud --for NAME`) says instead that its
+recordings are kept on the Pi and that, when they're measured, each one is also sent to Deepgram, a speech to text
+service in the cloud, to compare how it hears them; the Telegram message says so too. Only such a session's takes are
+ever sent: `tools/commands_bench.py --cloud` leaves every other session's to Vosk on the Pi
+([measuring house commands](home.md#house-commands-on-the-pi)).
 
 Each phrase is shown as it should be said, with how to say it ("From across the room", "Quietly"). A tap, a beep from
 the speakerphone, and TARS records until you stop talking (or a second tap). Each take is checked straight away, and

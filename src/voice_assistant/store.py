@@ -175,7 +175,8 @@ TABLES = {
     expires REAL NOT NULL,
     prompts TEXT NOT NULL,           -- JSON: what to say, in order (recording.Prompt)
     skipped TEXT NOT NULL DEFAULT '[]', -- JSON: the prompts skipped, by id
-    finished REAL                    -- when the last prompt was done; the link works no more
+    finished REAL,                   -- when the last prompt was done; the link works no more
+    cloud INTEGER NOT NULL DEFAULT 0 -- 1: a house session whose takes may also go to Deepgram, as its page said
 )""",
     "takes": """CREATE TABLE takes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -447,6 +448,7 @@ MIGRATIONS = [
         "ALTER TABLE wishes ADD COLUMN head TEXT",
         "ALTER TABLE wishes ADD COLUMN moved REAL",
     ],
+    ["ALTER TABLE sessions ADD COLUMN cloud INTEGER NOT NULL DEFAULT 0"],
 ]
 
 

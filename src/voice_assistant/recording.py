@@ -5,7 +5,8 @@ A session is a script of prompts (the exact words, and how to say them) for one 
 key, good for LINK_HOURS or until the last prompt is done. The assistant does the recording, since it holds the
 speakerphone (Assistant.take, over control.py); the web UI keeps each take here, after `check` has listened for what
 would make it worth doing again. Two scripts so far: the person's voice (for speaker ID), and the house's commands
-(for testing offline recognizers on them, docs/roadmap.md).
+(for measuring house commands on the Pi, tools/commands_bench.py). A house session's takes stay on the Pi unless it
+was made with --cloud, which its page says before it starts: then the bench may send them to Deepgram too.
 """
 
 import json
@@ -14,11 +15,15 @@ import secrets
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .audio import SAMPLE_RATE
 from .store import Store
+
+if TYPE_CHECKING:
+    from .commands import DeviceWords
 
 VOICE, HOUSE = "voice", "house"
 KINDS = (VOICE, HOUSE)
@@ -31,6 +36,7 @@ SILENCE, TAP, NO_SPEECH = "silence", "tap", "nobody"
 # What `check` can find wrong with a take (types.ts Problem).
 NOTHING, QUIET, LOUD, CUT_OFF, SHORT = "nothing", "quiet", "loud", "cut_off", "short"
 
+HOUSE_PURPOSE = "To measure TARS doing the house's commands on the Pi, and hearing them offline, before it's turned on."
 ABOUT = {
     VOICE: (
         "Your voice",
@@ -39,10 +45,31 @@ ABOUT = {
     ),
     HOUSE: (
         "House commands",
-        "To test which offline recognizer hears the house commands best, before TARS relies on one.",
-        "They're kept on the Pi for comparing the recognizers.",
+        f"{HOUSE_PURPOSE} Your recordings stay on the Pi: none of them is sent anywhere.",
+        "They're kept on the Pi, and played back to TARS there to check it never mistakes one for another.",
     ),
 }
+# A house session made with --cloud: when its takes are measured (tools/commands_bench.py --cloud), each is also sent
+# to Deepgram's speech to text, and the person is told so before they start. Without it, the bench never sends them.
+ABOUT_CLOUD = {
+    HOUSE: (
+        "House commands",
+        (
+            f"{HOUSE_PURPOSE} Your recordings are kept on the Pi, and when they're measured each one is also sent to "
+            "Deepgram, a speech to text service in the cloud, to compare how it hears them."
+        ),
+        (
+            "They're kept on the Pi and played back to TARS there to check it never mistakes one for another; when "
+            "they're measured, each one is also sent to Deepgram, in the cloud, to compare how it hears them."
+        ),
+    ),
+}
+
+
+def about(kind: str, cloud: bool = False) -> tuple[str, str, str]:
+    """A session's title, what it's for and where its recordings go (said before it starts), and what's said once
+    it's done. `cloud`: a house session whose takes are also sent to Deepgram when they're measured."""
+    return ABOUT_CLOUD[kind] if cloud else ABOUT[kind]
 
 
 @dataclass(frozen=True)
@@ -97,13 +124,6 @@ PHRASINGS = {
     "open": ["open the {n}", "raise the {n}"],
     "close": ["close the {n}", "lower the {n}"],
 }
-ACTIONS = {
-    "lock": ["lock", "unlock", "locked"],
-    "climate": ["on", "off", "set"],
-    "cover": ["open", "close"],
-    "sensor": [],
-    "binary_sensor": [],
-}
 OPENINGS = ["", "", "hey TARS, ", "can you ", "please "]
 # Words that name a device and an action but ask for neither: the ones a wrong match would come from.
 NOT_COMMANDS = [
@@ -111,27 +131,34 @@ NOT_COMMANDS = [
     "I'll {c} myself later",
     "don't {c} yet",
 ]
+# Plain requests, which go on to the model: for how long they take when nothing is sent until the turn is over.
 CHATTER = [
     "what's the weather like tomorrow",
     "how long is left on the timer",
     "tell me a joke about robots",
+    "remind me to call my mother at six",
+    "what's on my shopping list",
+    "who's home",
 ]
 HOUSE_HOWS = ["", FAR, "", SOFTLY, FAST, ""]
 MOST_COMMANDS = 36
 
 
-def house_script(devices: list[dict], rng: random.Random) -> list[Prompt]:
+def house_script(devices: list[DeviceWords], rng: random.Random) -> list[Prompt]:
     """Each thing each device does, in one of the ways people ask, from a few places and voices; then words that
-    name devices without asking for anything, which must not count. At most MOST_COMMANDS commands."""
+    name devices without asking for anything, which must not count, and plain requests. `devices`: as the house made
+    them (commands.device_words), each said by its label. At most MOST_COMMANDS commands."""
     commands: list[tuple[str, str, str]] = []  # (how it opens, the words, what they mean)
-    for device in devices:
-        name = str(device.get("name", "")).strip()
+    for _, name, actions, warm in devices:
+        name = name.strip()
         if not name:
             continue
-        domain = str(device.get("entity", "")).partition(".")[0] or str(device.get("kind", ""))
-        for action in ACTIONS.get(domain, ["on", "off"]):
+        said = name if name.isupper() else name.lower()  # "the AC", "the front door"
+        asked = [a for a in ("on", "off", "lock", "unlock", "open", "close") if a in actions]
+        asked += ["locked"] * ("lock" in actions) + ["set"] * (warm and "set" in actions)
+        for action in asked:
             t = rng.choice([21, 22, 23, 24, 25]) if action == "set" else None
-            words = rng.choice(PHRASINGS[action]).format(n=name, t=t)
+            words = rng.choice(PHRASINGS[action]).format(n=said, t=t)
             commands.append((rng.choice(OPENINGS), words, f"{name}|{action}" + (f":{t}" if t else "")))
     rng.shuffle(commands)
     commands = commands[:MOST_COMMANDS]
@@ -200,14 +227,18 @@ class Sessions:
     def __init__(self, store: Store, clock: Callable[[], float] = time.time):
         self.store, self._clock = store, clock
 
-    def create(self, kind: str, person: str, prompts: list[Prompt]) -> str:
+    def create(self, kind: str, person: str, prompts: list[Prompt], cloud: bool = False) -> str:
+        """`cloud`: a house session whose takes may also be sent to Deepgram when they're measured, as its page says;
+        without it, they never leave the Pi."""
         if kind not in KINDS:
             raise ValueError(f"no such session: {kind!r} (one of {', '.join(KINDS)})")
+        if cloud and kind not in ABOUT_CLOUD:
+            raise ValueError(f"a {kind} session's takes never go to the cloud")
         token = secrets.token_urlsafe(16)
         now = self._clock()
         self.store.write(
-            "INSERT INTO sessions (token, kind, person, created, expires, prompts) VALUES (?, ?, ?, ?, ?, ?)",
-            (token, kind, person, now, now + LINK_HOURS * 3600, json.dumps([asdict(p) for p in prompts])),
+            "INSERT INTO sessions (token, kind, person, created, expires, prompts, cloud) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (token, kind, person, now, now + LINK_HOURS * 3600, json.dumps([asdict(p) for p in prompts]), int(cloud)),
         )
         return token
 
@@ -274,13 +305,13 @@ class Sessions:
 
     def public(self, session: dict) -> dict:
         """What the page gets (types.ts Session): the words and how to say them, not what a command means."""
-        title, about, after = ABOUT[session["kind"]]
+        title, said_first, after = about(session["kind"], bool(session["cloud"]))
         prompts = self.prompts(session)
         return {
             "kind": session["kind"],
             "title": title,
             "person": session["person"],
-            "about": about,
+            "about": said_first,
             "after": after,
             "prompts": [{"id": p.id, "say": p.say, "how": p.how} for p in prompts],
             "takes": [public_take(t) for t in self.takes(session["id"])],

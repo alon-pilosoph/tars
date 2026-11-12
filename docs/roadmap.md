@@ -353,7 +353,8 @@ weeks without being undone, and the unusual has been said at least once when it 
 phrases made from the house's devices, a request that's exactly one done with the home tool and no model, replies made
 ahead in TARS's voice, and Vosk hearing them when the cloud is out of reach. `local_first` is built too
 ([local first](home.md#local-first)). **Left:** hanging up the cloud stream early once Vosk is sure (today the
-transcript is the cloud's when it's there), and the measurement below on the household's own recorded voices.
+transcript is the cloud's when it's there), and running the measurement below on the household's own recorded voices:
+the bench for it (`tools/commands_bench.py`) is built.
 
 **Goal:** "lock the door", "AC to 23", "turn off the TV" handled on the Pi itself: answered at once, nearly free, and
 still working when the internet is down. Anything else goes on to the cloud as it does today. It's the house part

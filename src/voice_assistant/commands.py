@@ -14,13 +14,14 @@ conversation, so "and the boiler" can follow.
 
 import random
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from .home import LOCK, OFF, ON, SET, Request
 
 if TYPE_CHECKING:
+    from .home import Device
     from .stt import Session, Transcriber
 
 WITTY_FROM_HUMOR = 50  # [llm] humor, percent: the replies with a joke in them, from here on
@@ -40,11 +41,11 @@ POLITE_BEFORE = ("", "please ", "can you ", "could you ", "tars ", "hey tars ")
 POLITE_AFTER = ("", " please")
 VERBS = {
     ON: ("turn on {d}", "turn {d} on", "switch on {d}", "switch {d} on", "put on {d}", "put {d} on"),
-    OFF: ("turn off {d}", "turn {d} off", "switch off {d}", "switch {d} off"),
+    OFF: ("turn off {d}", "turn {d} off", "switch off {d}", "switch {d} off", "{d} off"),
     LOCK: ("lock {d}",),
 }
 SET_TEMPERATURE = ("set {d} to {t}", "{d} to {t}", "turn {d} to {t}", "put {d} on {t}", "set {d} to {t} degrees",
-                   "{d} to {t} degrees")  # fmt: skip
+                   "{d} to {t} degrees", "make {d} {t} degrees")  # fmt: skip
 # What the home tool's answer starts with (home.Device): each outcome has its own lines. Anything else is said as not
 # confirmed, which claims neither way.
 DONE, STARTED, SENT, NOT_CONFIRMED, COULDNT = "done", "started", "sent", "not confirmed", "couldn't"
@@ -99,6 +100,24 @@ class Command:
         )
 
 
+class DeviceWords(NamedTuple):
+    """A device as house commands say it: its name in config.toml, its label, what it does and whether it takes a
+    temperature."""
+
+    name: str
+    label: str
+    actions: tuple[str, ...]
+    takes_temperature: bool
+
+
+def device_words(devices: Mapping[str, Device]) -> list[DeviceWords]:
+    """The house's devices (Home.devices), as house commands and house recording sessions say them."""
+    return [
+        DeviceWords(name, d.display, tuple(d.actions), SET in d.actions and d.takes_temperature)
+        for name, d in devices.items()
+    ]
+
+
 def normalize(text: str) -> str:
     """Lower case, no punctuation, numbers as digits and spoken numbers too: "Set the AC to twenty-three." is
     "set the ac to 23"."""
@@ -114,7 +133,7 @@ def normalize(text: str) -> str:
 class Commands:
     """The phrases for `devices`: (name, label, actions, takes a temperature) each."""
 
-    devices: Sequence[tuple[str, str, tuple[str, ...], bool]]
+    devices: Sequence[DeviceWords]
     phrases: dict[str, Command | None] = field(default_factory=dict, init=False)
 
     def __post_init__(self):

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .backup import S3, Backup
+    from .commands import DeviceWords
     from .events import EventLog
     from .health import Report
     from .llm import QuickService
@@ -262,9 +263,10 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     )
 
 
-def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -> None:
+def record_session(cfg: Config, root: Path, kind: str, person: str, port: int, cloud: bool = False) -> None:
     """--record-session: a recording session for `person` (recording.py), its link printed and sent to their
-    Telegram chat if they have one."""
+    Telegram chat if they have one. `cloud` (--cloud): a house session whose takes may also be sent to Deepgram when
+    they're measured, as its page and the message say."""
     import random
 
     from .recording import ABOUT, HOUSE, SECONDS_A_PROMPT, Sessions, house_script, voice_script
@@ -272,16 +274,18 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int) -
     log = make_event_log(cfg, root)
     if log is None:
         raise ConfigError("Recording sessions keep their takes in the event log: set [learning] log_events = true.")
-    if kind == HOUSE and not cfg.home.devices:
-        raise ConfigError("There are no [[home.devices]] in config.toml to make house commands from.")
-    prompts = house_script(cfg.home.devices, random.Random()) if kind == HOUSE else voice_script()
-    token = Sessions(log.store).create(kind, person, prompts)
+    prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
+    token = Sessions(log.store).create(kind, person, prompts, cloud)
     url = f"{web_link(cfg, port)}/?session={token}"
     minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
     print(f"{ABOUT[kind][0]} for {person}, {len(prompts)} phrases (about {minutes} minutes):\n{url}")
+    if cloud:
+        print("(its takes may also go to Deepgram, when tools/commands_bench.py --cloud measures them)")
+    where = " Its recordings are kept on TARS, and also sent to Deepgram, in the cloud, when they're measured."
+    where = where if cloud else ""
     text = (
-        f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes. "
-        f"Open it when you're near TARS; the link works for a day.\n{url}"
+        f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes."
+        f"{where} Open it when you're near TARS; the link works for a day.\n{url}"
     )
     send_link(cfg, root, person, text, "their phone")
 
@@ -308,6 +312,16 @@ def send_link(cfg: Config, root: Path, person: str, text: str, open_on: str) -> 
         print(f"(couldn't send it on Telegram: {e})")
         return
     print(f"Sent to {person} on Telegram.")
+
+
+def house_actions(cfg: Config, root: Path, events: EventLog | None) -> list[DeviceWords]:
+    """The house's devices as it makes them: what a house recording session asks for."""
+    from .commands import device_words
+
+    home = make_home(cfg, root, events=events)
+    if home is None or not home.devices:
+        raise ConfigError("There are no devices in the house to make house commands from (docs/home.md).")
+    return device_words(home.devices)
 
 
 def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
@@ -418,6 +432,11 @@ def main() -> None:
     )
     parser.add_argument("--for", dest="person", metavar="NAME", help="whose --record-session it is")
     parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="with --record-session house: its takes may also be sent to Deepgram when measured, and its page says so",
+    )
+    parser.add_argument(
         "--web-invite", metavar="NAME", help="a one-time link for NAME to make a passkey for the web UI ([web] sign_in)"
     )
     parser.add_argument(
@@ -489,6 +508,8 @@ def main() -> None:
         parser.error("--delete-anyway goes with --backup")
     if bool(args.record_session) != bool(args.person):
         parser.error("--record-session and --for NAME go together")
+    if args.cloud and args.record_session != "house":
+        parser.error("--cloud goes with --record-session house")
 
     if args.list_devices:
         list_devices()
@@ -519,7 +540,7 @@ def main() -> None:
             web_ui(cfg, root, args.host, args.port)
             return
         if args.record_session:
-            record_session(cfg, root, args.record_session, args.person, args.port)
+            record_session(cfg, root, args.record_session, args.person, args.port, args.cloud)
             return
         if args.web_invite:
             web_invite(cfg, root, args.web_invite, args.port)
@@ -599,9 +620,9 @@ def house_commands(cfg: Config, root: Path, home):
     it's off or there's nothing to command."""
     if not (cfg.home.commands_on_pi and home and home.devices):
         return None
-    from .commands import WITTY_FROM_HUMOR, Commands, HouseCommands, Replies, vosk_hearing
+    from .commands import WITTY_FROM_HUMOR, Commands, HouseCommands, Replies, device_words, vosk_hearing
 
-    commands = Commands([(name, d.display, tuple(d.actions), d.takes_temperature) for name, d in home.devices.items()])
+    commands = Commands(device_words(home.devices))
     replies = Replies({name: d.display for name, d in home.devices.items()}, cfg.llm.humor >= WITTY_FROM_HUMOR)
     try:
         hear = vosk_hearing(commands.grammar(), root / "models")

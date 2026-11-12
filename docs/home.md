@@ -170,7 +170,7 @@ job (an integration for its make); TARS only shows what Home Assistant already h
 
 With `[home] commands_on_pi`, the plainest requests skip the model: "lock the front door", "turn off the boiler",
 "switch the TV on", "set the AC to 23". The phrases are made from the house's own devices (`commands.py`): verbs ("turn
-on", "switch off", "put on", "lock"), each device by its name and its label, 16 to 30 degrees for one that takes a
+on", "switch off", "put on", "lock", "make it ... degrees", or just "boiler off"), each device by its name and its label, 16 to 30 degrees for one that takes a
 temperature (a fixed range: a device that doesn't go that far says it couldn't), and the polite bits ("please", "can
 you", "hey TARS"). A request that's exactly one of them, as speech to text wrote it, is done at once:
 
@@ -193,6 +193,17 @@ session): Vosk, limited to the phrases alone, heard "Don't turn on the fire TV y
 with an unknown word in it is refused: 0 wrong of 21, all 12 near-misses and plain requests refused, at the cost of 5
 of 9 commands missed (a miss goes to the model, or with the cloud out of reach isn't done). About 140 ms a take. It's
 off by default until the household's own voices, recorded, have no wrong match.
+
+To measure it: `voice-assistant --record-session house --for Alon` sends a link to a [recording
+session](web-ui.md#recording-sessions) made from the house's own devices (about 6 minutes), and
+`uv run python tools/commands_bench.py` plays every house session's takes to Vosk, as the Pi would hear them, and
+scores each against what it means: right, missed or wrong, with the time each took. A session's recordings stay on
+the Pi, and its page says so. To compare with the cloud, make the session with `--cloud` (`--record-session house
+--cloud --for Alon`): its page then says, before anything is recorded, that each recording is also sent to Deepgram
+when it's measured. The bench's `--cloud` sends only those sessions' takes to Deepgram's endpoint for whole
+recordings, timing it (what `local_first` adds for a plain request) and matching its transcripts (about $0.004 a
+minute of takes sent); every other session's takes are heard by Vosk alone, and counted as kept from the cloud. Each
+run is kept in `voice_data/bench/commands/`, and one with a wrong match, Vosk's or the cloud's, exits 1.
 
 <a id="local-first"></a>**Local first** (`[home] local_first`, with `commands_on_pi`): nothing goes to the cloud's
 speech to text until the request is over and Vosk has heard it isn't a house command. TARS's own rules say when the turn

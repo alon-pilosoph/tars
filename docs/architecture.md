@@ -270,6 +270,10 @@ copied to an S3 bucket, and a request's audio leaves the machine after a month, 
   TARS keeps for them, each only to its own site. The person's mailbox is read over IMAP, read-only, for sign-in
   emails from the site being signed in to. A one-time page for a missing login is served on this machine
   (`[browser] login_port`) while it waits, on the home network or Tailscale ([TARS's browser](browser.md#what-leaves-the-machine)).
+- **A house recording session made with `--cloud`:** its takes go to Deepgram's endpoint for recordings when
+  `tools/commands_bench.py --cloud` measures them, as the session's page told the person before they recorded. Every
+  other recording session's takes stay on the machine: the bench leaves them to Vosk, and the backup doesn't copy them
+  ([recording sessions](web-ui.md#recording-sessions)).
 - **When the web UI's Status page is opened,** each service TARS uses is asked for something small with its key (a
   model, the voices, the key's or the bot's own details: no conversation, no tokens), and each one's public status
   page is read (nothing is sent to it).
@@ -341,7 +345,7 @@ The assistant is `src/voice_assistant/`:
 Around it: `training/` (the scripts that made the wake models, [training/README.md](../training/README.md)),
 `tools/` (benchmarks: `latency_bench.py`, `turn_bench.py`, `wakeword_bench.py`, `verifier_bench.py`;
 `capability_bench.py` and `router_bench.py` for the quick model's tools and hand-offs; `echo_bench.py` for echo
-cancellation in the room), `evals/` (whole conversations played through the brain, hand-offs followed through,
-[docs/evals.md](evals.md)), `deploy/` (the Pi's install script and services, and `home-assistant/`: Home Assistant in
-Docker), `examples/` (plugins: one household's own devices, [examples/my_house](../examples/my_house/README.md)) and
-`tests/`.
+cancellation in the room; `commands_bench.py` for house commands on the Pi, on house recording sessions' takes),
+`evals/` (whole conversations played through the brain, hand-offs followed through, [docs/evals.md](evals.md)),
+`deploy/` (the Pi's install script and services, and `home-assistant/`: Home Assistant in Docker), `examples/`
+(plugins: one household's own devices, [examples/my_house](../examples/my_house/README.md)) and `tests/`.

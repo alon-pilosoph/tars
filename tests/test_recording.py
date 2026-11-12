@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from voice_assistant import control
 from voice_assistant.audio import SAMPLE_RATE, MicrophoneError
+from voice_assistant.commands import DeviceWords
 from voice_assistant.control import Refused
 from voice_assistant.recording import (
     CUT_OFF,
@@ -92,13 +93,13 @@ def test_quiet_is_fine_when_the_prompt_asks_for_it():
 
 # ---------- Scripts ----------
 
-DEVICES = [
-    {"name": "front door", "entity": "lock.front_door"},
-    {"name": "AC", "kind": "my_house.ac"},
-    {"name": "bedroom AC", "entity": "climate.bedroom"},
-    {"name": "TV", "kind": "androidtv", "address": "10.0.0.5"},
-    {"name": "boiler", "entity": "switch.boiler"},
-    {"name": "temperature", "entity": "sensor.temperature"},
+DEVICES = [  # as the house made them (commands.device_words)
+    DeviceWords("front_door", "front door", ("status", "lock", "unlock"), False),
+    DeviceWords("ac", "AC", ("status", "on", "off", "set"), True),  # a plugin's, which says it takes a temperature
+    DeviceWords("bedroom_ac", "bedroom AC", ("status", "on", "off", "set"), True),
+    DeviceWords("tv", "TV", ("status", "on", "off", "do"), False),
+    DeviceWords("boiler", "boiler", ("status", "on", "off"), False),
+    DeviceWords("temperature", "temperature", ("status", "history"), False),
 ]
 
 
@@ -108,7 +109,7 @@ def test_the_house_script_asks_for_everything_each_device_does_and_mixes_in_what
     means = {p.means.split(":")[0] for p in commands}
     assert means == {
         "front door|lock", "front door|unlock", "front door|locked",
-        "AC|on", "AC|off",
+        "AC|on", "AC|off", "AC|set",
         "bedroom AC|on", "bedroom AC|off", "bedroom AC|set",
         "TV|on", "TV|off",
         "boiler|on", "boiler|off",
@@ -118,12 +119,12 @@ def test_the_house_script_asks_for_everything_each_device_does_and_mixes_in_what
         assert name.lower() in p.say.lower()
     assert len({p.id for p in prompts}) == len(prompts)
     not_commands = [p for p in prompts if p.means == ""]
-    assert len(not_commands) == 6  # three that name a device without asking, three of plain chatter
+    assert len(not_commands) == 9  # three that name a device without asking, six plain requests
     assert any(p.how for p in commands) and all(p.quiet == (p.how.startswith(("Quietly", "From"))) for p in prompts)
 
 
 def test_a_big_house_is_sampled_not_recorded_whole():
-    devices = [{"name": f"light {n}", "entity": f"light.l{n}"} for n in range(40)]
+    devices = [DeviceWords(f"light_{n}", f"light {n}", ("status", "on", "off"), False) for n in range(40)]
     assert len([p for p in house_script(devices, random.Random(2)) if p.means]) == MOST_COMMANDS
 
 
@@ -192,6 +193,29 @@ def test_the_page_isnt_told_what_a_command_means(sessions):
     assert public["title"] == "House commands" and public["person"] == "Alon"
     assert all(set(p) == {"id", "say", "how"} for p in public["prompts"])
     assert public["minutes"] >= 1 and public["takes"] == [] and public["skipped"] == []
+
+
+def test_a_house_session_says_its_recordings_stay_on_the_pi(sessions):
+    public = sessions.public(sessions.open(sessions.create(HOUSE, "Alon", house_script(DEVICES, random.Random(3)))))
+    assert "Your recordings stay on the Pi: none of them is sent anywhere." in public["about"]
+    assert "kept on the Pi" in public["after"]
+    assert "Deepgram" not in public["about"] + public["after"] and "cloud" not in public["about"] + public["after"]
+
+
+def test_a_house_session_made_for_the_cloud_says_before_it_starts_its_recordings_go_to_deepgram(sessions):
+    token = sessions.create(HOUSE, "Alon", house_script(DEVICES, random.Random(3)), cloud=True)
+    public = sessions.public(sessions.open(token))
+    assert public["title"] == "House commands"
+    assert "kept on the Pi" in public["about"] and "stay on the Pi" not in public["about"]
+    assert "each one is also sent to Deepgram, a speech to text service in the cloud" in public["about"]
+    assert "when they're measured" in public["about"]  # when: not while they're recorded
+    assert "kept on the Pi" in public["after"]
+    assert "when they're measured, each one is also sent to Deepgram, in the cloud" in public["after"]
+
+
+def test_a_voice_session_never_goes_to_the_cloud(sessions):
+    with pytest.raises(ValueError, match="never go to the cloud"):
+        sessions.create(VOICE, "Alon", voice_script()[:3], cloud=True)
 
 
 def test_an_unknown_kind_of_session_is_refused(sessions):
