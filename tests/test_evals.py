@@ -173,7 +173,7 @@ def test_cited_sources_are_checked_as_heard_not_as_written():
     turn = {"say": "weather?", "route": "look-up"}
     result, _ = run([turn], lambda m: "<look-up>", "Sunny. ([BBC](https://bbc.co.uk/weather))")
     assert result.ok, result.turns[0].wrong
-    assert result.turns[0].said == "Sunny."
+    assert result.turns[0].said == "Let's see. Sunny."
 
 
 def test_a_failure_sends_the_turn_to_openai_and_the_service_sits_out_its_cooldown():
@@ -442,14 +442,16 @@ HOME_CALL = dict.fromkeys(SETTINGS)
 
 
 def test_a_house_scenario_plays_the_real_home_tool_and_checks_what_changed():
-    # Asked to unlock, Qwen unlocks: the real tool's rules let a trusted voice, heard asking, through.
+    # Asked to unlock, Qwen asks for the challenge's digits, and saying them unlocks: the real tool's rules let a
+    # trusted voice, heard asking, then heard saying the digits, through.
     def qwen(messages):
         if after_tool(messages):
-            return "It's unlocked."
+            return "Say four, seven, two." if "challenge:" in str(messages[-1]) else "It's unlocked."
         return [("home", HOME_CALL | {"device": "front door", "action": "unlock"})]
 
-    turn = {"say": "unlock the front door", "home": [{"device": "front door", "action": "unlock"}]}
-    result, _ = run([turn], qwen, house={"lock": "locked"})
+    asked = {"say": "unlock the front door", "home": [], "says": ["four, seven, two"]}
+    answered = {"say": "four seven two", "home": [{"device": "front door", "action": "unlock"}]}
+    result, _ = run([asked, answered], qwen, house={"lock": "locked"})
     assert result.ok, [t.wrong for t in result.turns]
 
 
@@ -479,6 +481,29 @@ def test_a_house_change_nobody_asked_for_is_caught():
     assert "didn't turn on the boiler (minutes 40)" in t.wrong
     assert any(w.startswith("also did: turn on the boiler") for w in t.wrong)
     assert t.changes == ["home: turn on the boiler"]
+
+
+def test_a_lock_that_jams_still_counts_as_asked_to_lock():
+    def qwen(messages):
+        if after_tool(messages):
+            return "The door jammed."
+        return [("home", HOME_CALL | {"device": "front door", "action": "lock"})]
+
+    turn = {"say": "lock the door", "home": [{"device": "front door", "action": "lock"}], "says": ["jam"]}
+    result, _ = run([turn], qwen, house={"lock": "unlocked", "jams": True})
+    assert result.ok, [t.wrong for t in result.turns]
+
+
+@pytest.mark.parametrize("action", ["on", "set"])
+def test_a_scenario_can_take_either_of_two_actions(action):
+    def qwen(messages):
+        if after_tool(messages):
+            return "Sent."
+        return [("home", HOME_CALL | {"device": "ac", "action": action, "temperature": 22})]
+
+    turn = {"say": "AC on at 22", "home": [{"device": "ac", "action": "on|set", "temperature": 22}]}
+    result, _ = run([turn], qwen, house={"ac": "off"})
+    assert result.ok, [t.wrong for t in result.turns]
 
 
 def test_a_scenario_that_checks_the_house_needs_one(tmp_path):

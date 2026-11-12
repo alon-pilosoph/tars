@@ -6,9 +6,11 @@ phrases, has to pick which one it heard, so it can.
 
 import json
 import tempfile
+import threading
 import zipfile
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+from concurrent.futures import Future
 from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -25,6 +27,7 @@ if TYPE_CHECKING:
 
 MODEL_NAME = "vosk-model-small-en-us-0.15"  # 40 MB download, runs fine on a Raspberry Pi
 MODEL_URL = f"https://alphacephei.com/vosk/models/{MODEL_NAME}.zip"
+MODEL_SHA256 = "30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"  # 41,205,931 bytes
 
 # Gives the recognizer somewhere else to put a lookalike. The learned layer scores each of these
 # (training/stage2/train_check.py) and its weights follow this order, so append only.
@@ -103,7 +106,9 @@ ANSWER, ASK, IGNORE = "answer", "ask", "ignore"
 def ensure_model(models_dir: Path) -> Path:
     path = models_dir / MODEL_NAME
     if not path.exists():
-        archive = fetch(models_dir / f"{MODEL_NAME}.zip", MODEL_URL, "the speech recognizer for wake checks")
+        archive = fetch(
+            models_dir / f"{MODEL_NAME}.zip", MODEL_URL, "the speech recognizer for wake checks", MODEL_SHA256
+        )
         with tempfile.TemporaryDirectory(dir=models_dir) as unpacked, zipfile.ZipFile(archive) as z:
             z.extractall(unpacked)
             (Path(unpacked) / MODEL_NAME).rename(path)
@@ -125,6 +130,12 @@ class PhraseVerifier:
         self._accept = [a.split() for a in spec["accept"]]
         self._ask_after_hey = set(spec["ask_after_hey"])
         self._ask_alone = set(spec["ask_alone"])
+        # What may follow "hey" as the name, where the name ends; None for a phrase without "hey".
+        self._names = (
+            {a[1] for a in self._accept if a[0] == "hey" and len(a) > 1} | self._ask_after_hey
+            if any(a[0] == "hey" for a in self._accept)
+            else None
+        )
         self.last_confidence: float | None = None
         self._tuned: TunedCheck | None = None
         self.use_check(json.loads(check_path.read_text()) if check_path else None)
@@ -135,6 +146,16 @@ class PhraseVerifier:
 
     def heard(self, pcm: np.ndarray) -> str:
         return self._recognize(pcm, alternatives=0)["text"]
+
+    def name_end_s(self, pcm: np.ndarray) -> float | None:
+        """Where the name ends in `pcm`, in seconds; None if it can't tell. A pass of its own: asking for word times
+        changes the check's alternatives, and so its confidence."""
+        from vosk import KaldiRecognizer
+
+        recognizer = KaldiRecognizer(self._model, SAMPLE_RATE, self._grammar)
+        recognizer.SetWords(True)
+        recognizer.AcceptWaveform(np.asarray(pcm, dtype=np.int16).tobytes())
+        return end_of_name(json.loads(recognizer.FinalResult()).get("result", []), self._names)
 
     def _recognize(self, pcm: np.ndarray, alternatives: int) -> dict:
         from vosk import KaldiRecognizer
@@ -165,6 +186,27 @@ class PhraseVerifier:
             w in self._ask_alone for w in words
         )
         return (ASK if close else IGNORE), heard
+
+
+def end_of_name(words: list[dict], names: Collection[str] | None = None) -> float | None:
+    """Where the name ends, in seconds into the audio. With `names` (a phrase that starts with "hey"): the end of the
+    word straight after the last "hey", if it's one of them; anything else there may be the request itself. Without:
+    the end of the last word recognized. None when it can't tell."""
+    if names is None:
+        known = [w for w in words if w.get("word") != "[unk]"]
+        return known[-1]["end"] if known else None
+    heys = [i for i, w in enumerate(words) if w.get("word") == "hey"]
+    if not heys or heys[-1] + 1 == len(words) or (name := words[heys[-1] + 1])["word"] not in names:
+        return None
+    return name["end"]
+
+
+def after_name(audio: np.ndarray, end_s: float | None) -> np.ndarray:
+    """What the wake window holds after the name: "hey TARS, what's new" said in one breath has "what" there, read
+    off the mic before the wake fired. Nothing if the name's end isn't known."""
+    if end_s is None:
+        return np.zeros(0, dtype=np.int16)
+    return audio[min(len(audio), round(end_s * SAMPLE_RATE)) :]
 
 
 class TunedCheck:
@@ -244,6 +286,8 @@ class NearMisses:
 
 class VerifiedTrigger:
     last_audio: np.ndarray | None = None  # what woke it, for speaker ID
+    # On a confirmed wake, what followed the name in the wake window: found while TARS gets on with it.
+    after_name: Future[np.ndarray] | None = None
     pair: Pair
 
     def __init__(
@@ -265,6 +309,7 @@ class VerifiedTrigger:
     def wait(self, mic: Microphone, due: Due | None = None) -> str:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite, DUE when `due` says a
         reminder is due."""
+        self.after_name = None
         mic.clear()
 
         def fresh() -> tuple[RecentAudio, NearMisses, None]:
@@ -303,8 +348,24 @@ class VerifiedTrigger:
                 )
             if outcome != IGNORE:
                 self.last_audio = audio
+                self.after_name = self._find_after_name(audio) if outcome == ANSWER else None
                 return outcome
             print(f"(heard '{heard}', not '{self.phrase}'; still listening)")
+
+    def _find_after_name(self, audio: np.ndarray) -> Future[np.ndarray]:
+        """Where the name ends takes a recognizer pass (about 0.25 s on a Pi 4): made on the side, so the greeting
+        doesn't wait for it. The mic keeps what's said meanwhile."""
+        found: Future[np.ndarray] = Future()
+        verifier = self._verifier
+
+        def find() -> None:
+            try:
+                found.set_result(after_name(audio, verifier.name_end_s(audio)))
+            except Exception as e:  # noqa: BLE001 - the request is heard from the mic alone
+                found.set_exception(e)
+
+        threading.Thread(target=find, daemon=True, name="after-name").start()
+        return found
 
     def _follow_versions(self, quiet: bool = False) -> bool:
         """Switches to the pair in use if it changed; True if it did. A pair that won't load gives way to the

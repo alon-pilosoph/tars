@@ -27,6 +27,7 @@ unlock_voices = ["alon"]
 
 [home.plugins.my_house]
 module = "examples.my_house"
+grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
 blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.5", control_type = 2 }
 
 [[home.devices]]

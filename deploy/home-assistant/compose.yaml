@@ -3,7 +3,7 @@
 #   cd deploy/home-assistant && docker compose up -d
 #
 # With devices that report over MQTT (a Nuki lock, Zigbee2MQTT), start the broker too, once mosquitto/passwords is made
-# (docs/home.md; without it Docker makes a folder there, and Mosquitto won't start):
+# (docs/home.md; without it Mosquitto won't start). mosquitto/acl says what each user may read and write:
 #
 #   docker compose --profile mqtt up -d
 services:
@@ -26,6 +26,7 @@ services:
     ports:
       - "1883:1883"
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto/passwords:/mosquitto/config/passwords:ro
+      # The folder, not each file: its conf, acl and passwords are replaced whole when they change (by git, and
+      # deploy/install-pi.sh), and a file mounted on its own would stay the old one.
+      - ./mosquitto:/mosquitto/config:ro
       - ./mosquitto/data:/mosquitto/data

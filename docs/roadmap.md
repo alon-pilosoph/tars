@@ -1,8 +1,9 @@
 # What's next
 
 Six steps, in this order. Real use comes first because it costs no code, runs alongside the rest, and everything
-after learns from it. Security is next: the web UI has no accounts, and the steps after it widen what TARS does with
-nobody watching (plugins run others' code, automations act on their own), so what they may do is settled first.
+after learns from it. Security is next: the web UI's sign-in is built but not yet on at home, and the steps after it
+widen what TARS does with nobody watching (plugins run others' code, automations act on their own), so what they may
+do is settled first.
 Interrupting starts with one measurement on the speakerphone, which decides how big it is. Plugins and updates come
 before automations and skills, which hook into the events plugins bring. Memory is last, and leans on speaker ID
 being right.
@@ -10,15 +11,15 @@ being right.
 | | Step | Why now | Size |
 |---|---|---|---|
 | 1 | [A week of real use](#1-a-week-of-real-use) | the first real wakes, voices and conversations; everything after learns from them | no code, a checklist |
-| 2 | [Security](#2-security) | the web UI has no accounts, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts |
+| 2 | [Security](#2-security) | anyone at home can open the web UI until sign-in is on, and steps 4 and 5 widen what TARS can do unwatched | medium, in parts; passkey sign-in built |
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
-| 4 | [Plugins and updates](#4-plugins-and-updates) | plugins only add devices today, and updating takes SSH | large |
-| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; the arrival greeting and dry runs left |
+| 4 | [Plugins and updates](#4-plugins-and-updates) | plugins react to nothing yet, and updating takes SSH | large |
+| 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting to try for a week |
 | 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
 
 Planned alongside the steps: [house commands on the Pi](#planned-house-commands-on-the-pi), small and independent of
-them; [wishes that come true](#planned-wishes-that-come-true), where something TARS couldn't do becomes a pull request
-and, once merged, a message to whoever asked; and [noticing routines](#planned-noticing-routines), where TARS learns
+them; [wishes that come true](#built-wishes-that-come-true) (built), where something TARS couldn't do becomes a pull
+request and, once merged, a message to whoever asked; and [noticing routines](#planned-noticing-routines), where TARS learns
 the household's habits from Home Assistant's history and offers to take them over. Benched for now: [learning from
 how conversations go](#benched-learning-from-how-conversations-go). Later, after the six: [working
 offline](#later-working-offline), [a brain anywhere, a body at home](#later-a-brain-anywhere-a-body-at-home) (TARS
@@ -60,7 +61,7 @@ requests, or records a [voice session](web-ui.md#recording-sessions) on the spea
 | False wakes (TV, talk) | Review | at most one or two a day, none answered |
 | Wrong names | Home, a conversation's "who was talking" | rare once voiceprints come from the speakerphone |
 | Cut off mid-sentence | your notes | never |
-| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 1.2-1.5 s ([response time](latency.md)) |
+| Slow replies | under each answer in Home, with the model that wrote it (and `timings` in the `turns` table) | about 2 s in use on the Pi (1.2-1.5 s on a benchmark; [response time](latency.md)) |
 | Turns Cerebras couldn't take | `answered_by = 'fallback'` in the `turns` table | rare |
 | Hard questions handed over | `answered_by = 'ponder'` in the `turns` table, and the time to "Let me think" | rare, never for a simple question, and "Let me think" as quick as any first sound |
 | Failed answers | Home, in red: where it failed (speech to text, the answer, the voice) and why | rare, and no one stage over and over |
@@ -94,32 +95,36 @@ button that orders or pays until the person taps Order ([browser](browser.md#nev
 is encrypted, with the key beside it. `.env` is for TARS's user alone, and a reply that read web search results
 changes nothing in the house, nor reads its past or TARS's records. Home Assistant's setup, with its integrations'
 passwords, goes to the backup only sealed with a key kept on the Pi. The speakerphone's own mute is TARS's: while
-it's red, the wake model doesn't run.
+it's red, the wake model doesn't run. The doors' MQTT broker lets in only users with a password, and its ACL keeps the
+locks' topics to the locks; what a lock says only ever puts someone at home, and changes nothing in it.
 
-What's open: the web UI has no accounts, so anyone on the home network (a guest, a compromised device) can play every
-recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin runs inside TARS with
-everything TARS has, `context.secret()` gives it any key in `.env`, and nothing says which plugins are trusted. The
-systemd services are sandboxed, but as one user, so each can read `.env`, and most can still reach the user's service
-manager or Docker, either of which gets out of the sandbox ([still open](security.md#the-services-on-the-machine)).
+What's open: until passkey sign-in is turned on at home, anyone on the home network (a guest, a compromised device)
+can play every recording and read every conversation. The browser's one-time login page is plain HTTP. A plugin gets
+only what it's granted, but it's code in TARS's process that can read the project's files, and one with no `grant` set
+gets everything (with a `--check` warning). The systemd services are sandboxed, but as one user, so each can read
+`.env`, and most can still reach the user's service manager or Docker, either of which gets out of the sandbox
+([still open](security.md#the-services-on-the-machine)).
 
 **Plan, most worth it first:**
 
 1. **The threat model.** Written: [security](security.md) lists who might attack, the defense and test for each,
    and what's open, and [SECURITY.md](../SECURITY.md) says how to report a vulnerability. It's kept current as each
    item below lands.
-2. **The web UI.** Passkey sign-in per household member, with HttpOnly, SameSite=Strict session cookies; HTTPS from
-   `tailscale cert` (the browser's login page too); served on the tailnet only, not the LAN, with Tailscale's access
-   rules as the outer wall. A test that walks every route and fails if one answers without a session, so a new
-   endpoint can't forget it. Step 5's page to edit automations needs this first.
+2. **The web UI.** Built: passkey sign-in per household member from one-time invites, HttpOnly, SameSite=Strict
+   session cookies, HTTPS from `tailscale cert`, and a test that walks every route and fails if one answers without a
+   session ([signing in](web-ui.md#signing-in)). Left: turning it on at home, the browser's login page on HTTPS too,
+   and serving on the tailnet only, not the LAN, with Tailscale's access rules as the outer wall.
 3. **The AI's own risks.** Started: a reply that read the web changes nothing and reads no one's past, and a chat
    reads only its own person's conversations. Still: no text from outside (web search results, a web page the browser reads, Telegram, a sent
    file) can lead to an unlock, turning off an alarm or sending data out; an eval set of injection attempts that
    must all fail (it calls the models: cost estimate first). No tool lets a model read the recordings, `.env` or
-   someone else's conversations. Against a replayed or cloned voice: a spoken challenge (a code word or a random
-   number) before unlocking.
-4. **What plugins and automations may do.** Each declares what it needs (the secrets by name, the devices, network
-   access) and gets only that from `context`; the actions that matter most (unlock, send something out of the house,
-   order) are never theirs unless granted by name. Step 4 builds on this; step 5's rules go through the same checks.
+   someone else's conversations. Against a replayed or cloned voice: built, three random digits said back by the same
+   voice before unlocking ([unlocking](home.md#unlocking)).
+4. **What plugins and automations may do.** Built for plugins: each declares what it needs (keys by name, Home
+   Assistant, the other devices, speaking, telling) and gets only that from `context`; Home Assistant's unlock, open
+   and disarm are never theirs unless granted by name ([plugins](home.md#plugins)). Left: network access (a plugin
+   is code in TARS's process, so that needs the services' sandboxing, item 5), and step 5's rules through the same
+   checks.
 5. **The Pi.** SSH only over Tailscale, keys only; a firewall that drops anything incoming by default; automatic
    security updates. Built: systemd sandboxing for each service, checked on the Pi (exposure 9.6 → about 3 for the
    voice assistant, web UI and backup; [the services](security.md#the-services-on-the-machine)). Left: the web UI as
@@ -132,8 +137,9 @@ manager or Docker, either of which gets out of the sandbox ([still open](securit
    overwritten files for a while, and a key that can't delete old versions or change that rule, so a stolen key
    can't wipe the backup. Disk encryption on a Pi with no secure key store is weak (the key has to be on it to boot
    unattended): written down as an accepted risk.
-7. **Supply chain.** pip-audit (or Dependabot), bandit or semgrep, and an SBOM in CI, alongside `uv.lock`'s hashes;
-   signed releases for step 4's updates.
+7. **Supply chain.** Built: pip-audit, `npm audit` and bandit fail CI, and each run keeps SBOMs (Python and web
+   UI), alongside `uv.lock`'s hashes ([security](security.md#the-code-tars-runs-its-dependencies)). Left: a scheduled
+   audit between pushes, and signed releases for step 4's updates.
 8. **The mic itself.** A hardware mute switch (built: the speakerphone's mute stops TARS listening at all), and a
    light while audio is leaving the house.
 
@@ -193,20 +199,22 @@ should (the wake model is tiny), but it's the first time both run together.
 **Goal:** someone else's code can add to TARS without forking it, and TARS and its plugins update themselves safely.
 
 **Where it stands.** A plugin is a Python module named in `[home.plugins]` whose `setup(settings, context)` returns
-kinds of device for the house tool, with `BACKUP_FILES` for what it learned
-([your own devices](home.md#your-own-devices)); `examples/my_house` is the household's. It can only add devices: no
-tool of its own, nothing it reacts to, and no version. Updating is `git pull && deploy/install-pi.sh` over SSH
-([deployment](deployment.md)); the database upgrades itself.
+kinds of device for the house tool and tools of its own, with `BACKUP_FILES` for what it learned ([your own
+devices](home.md#your-own-devices)); `examples/my_house` is the household's. It declares its version and what it needs,
+and gets only what its `grant` gives it ([plugins](home.md#plugins)); nothing it reacts to yet. Updating is `git pull &&
+deploy/install-pi.sh` over SSH ([deployment](deployment.md)); the database upgrades itself.
 
 **Plan:**
 
-1. **Plugins beyond devices.** A plugin may also add a tool the brain can call, events others can react to ("someone
-   unlocked the door", "the washing machine finished"), and `--check` lines, besides devices. Built-in parts send
-   events the same way: who's home (arrived, left), a device's state changing, a time of day.
-2. **Declared, versioned, granted.** Each plugin says its name, version, what it adds and what it needs (step 2's
-   item 4); TARS loads only what's granted in config, and `--check` lists each plugin, its version and what it may
-   do. Installed as a package or from a git URL, pinned.
-3. **`examples/my_house` moves onto it first,** which shows the plugin interface covers a real household.
+1. **Plugins beyond devices.** Built: a plugin may add tools the brain can call, besides devices and `--check` lines
+   ([plugins](home.md#plugins)). Left: events others can react to ("the washing machine finished"), which skills'
+   triggers would take as they take a device's change.
+2. **Declared, versioned, granted.** Built: each plugin declares its version and what it needs; one that needs more
+   than its `grant` doesn't load, and its context holds only what was granted, never Home Assistant's unlock without
+   the `unlock` grant; `--check` lists each plugin, its version and its grant. Left: installing one as a package or
+   from a git URL, pinned.
+3. **`examples/my_house` moves onto it first.** Built: it declares its six needs, and loads with them granted from
+   the Pi's own config (checked there); with less, it refuses. Left: setting its `grant` on the Pi.
 4. **Updates.** Built from the branch rather than releases ([deployment](deployment.md#updates)): what's merged into
    `main` installs itself at a quiet moment, checked silently, and is taken back with its database and config if it
    fails; one that changes the database waits for a maintainer's tap, and one that needs sudo is left to them. Left:
@@ -214,8 +222,8 @@ tool of its own, nothing it reacts to, and no version. Updating is `git pull && 
    same way.
 
 **Later:** TARS writing a plugin itself when asked for something it can't do, tested in a sandbox against recorded
-events and opened as a pull request for a person to review: planned now as
-[wishes that come true](#planned-wishes-that-come-true).
+events and opened as a pull request for a person to review: built as
+[wishes that come true](#built-wishes-that-come-true).
 
 **Done when** `my_house` runs as a declared plugin with only the grants it needs, an update and a rollback have both
 been done on the Pi without SSH, and a plugin that asks for more than it was granted fails to load.
@@ -235,13 +243,18 @@ skill and preference, where it came from and what it did. Limits are in code: un
 
 **Left:**
 
-- **Dry runs.** Checked against the last weeks of the event log before it's kept, said only when it matters ("that
-  would have gone off 30 times last week"), so a trigger that's too eager is caught before it's annoying.
+- **Dry runs.** Built for device triggers: replayed over the device's last week of Home Assistant history before
+  it's kept, and said only when it matters ("that would have gone off 30 times last week")
+  ([skills](skills.md)). Left: who's home keeps no history yet, so coming-and-going triggers aren't dry-run.
 - **Editing on the page.** Pausing, changing and deleting from the Skills page needs step 2's sign-in first.
 - **Habits offered**, not only asked for: [noticing routines](#planned-noticing-routines).
 
-**The first one:** the arrival greeting. The Nuki's own events say who unlocked; with who's home, TARS greets them by
-name as they come in and says what's waiting ([who's home, not yet](presence.md#not-yet)).
+**The first one:** the arrival greeting. Built: the Nuki's own events say who unlocked, and whoever opens it from
+outside is home at once, so a skill asked for in plain words ("when someone comes home, welcome them by name and tell
+them what's waiting") runs as they walk in, told "Stacey just came home, opening the front door"
+([the front door](presence.md#the-front-door)). The lock's word only ever puts someone at home: a skill it sets off
+greets and reads the house, and changes nothing in it. Left: turning on the lock's MQTT on the Pi (deploy/install-pi.sh
+gives TARS its broker user, and Mosquitto its ACL), and a week of it.
 
 **Measure:** a set of phrasings turned into rules, checked for the rule they should make; dry runs over recorded
 event logs; and a rule built to unlock or order must be refused. **Done when** the arrival greeting and three
@@ -293,42 +306,12 @@ one person's memory never reaches another's answer.
 **Open question:** what TARS offers to remember. Too eager and it's a nag; the week of real use will show which
 facts come up again.
 
-## Planned: wishes that come true
+## Built: wishes that come true
 
-**Goal:** Stacey asks for something TARS can't do yet. A week later TARS tells her, unprompted: "Remember you asked me
-to read you the kindergarten's WhatsApp updates? I can now." In between, the only person who did anything was the one
-who reviewed a pull request.
-
-**What's there already:** the `tars` tool notes a real "can't" as a wish, with what stopped TARS and what would make
-it possible ([architecture](architecture.md)); skills can run when TARS is updated, told what changed
-([skills](skills.md)); and `changes` tells what's new from the checkout's own history.
-
-**Design:**
-
-1. **A wish goes to TARS's maintainers** (`[household] maintainers`: built, each wish is already posted to their
-   chats as it's noted), in plain words, and asks: "Stacey asked me to read her the kindergarten's WhatsApp updates;
-   I can't reach WhatsApp. Want me to have it built?" With a cost guess, since building isn't free. Nothing is built
-   without that yes.
-2. **On a yes, a coding agent builds it:** a cloud Claude Code session on the repository, started by TARS with the
-   wish, what stopped it, the docs, and the rules the repository keeps (its tests, its docs, one pull request,
-   household specifics only in `examples/`). It never gets `.env`, `config.local.toml` or the database: what it knows
-   of the house is the wish's sentence. It opens a pull request and stops; it can't merge.
-3. **TARS follows the pull request,** and tells the maintainer in their chat what it does, in plain words, when CI is
-   green; a failing run is sent back to the session to fix, a few times at most.
-4. **Merged is deployed:** until step 4's updates, a timer on the Pi pulls `main` and runs `deploy/install-pi.sh`
-   between conversations when it moved, and `--check` decides whether it stays (or goes back).
-5. **Whoever asked is told.** The wish is marked granted by the pull request that answered it; the next start, which
-   is an update, runs the person's own "tell me what's new" or, without one, says it to them once, in their chat or
-   aloud: what they can now ask for, never how.
-
-**Limits held in code:** only the maintainer's yes starts a build; the session's repository access is the only
-access it has (no keys, no house); nothing merges itself; the wish text sent out is a sentence, not the chat it came
-from; a build that fails three times is reported, not retried forever; and a monthly cost cap.
-
-**Measure:** a set of wishes of different sizes (a new feed source, a new device kind, a new tool), each run through
-to a pull request on a branch, judged by whether it passes CI, follows the repository's rules, and does what was
-wished. **Done when** a real wish from the household has gone from "I can't" to "I can now" with nobody touching the
-code but the reviewer.
+Something TARS couldn't do goes to the maintainers with a Build it button; a tap has Claude Code build it on GitHub
+and open a pull request, which TARS follows through CI; once it's merged and installed, whoever asked is told "I can
+do it now" ([wishes that come true](wishes.md)). Left: the GitHub token, the Claude GitHub App and the branch ruleset
+on `main` that setting it up requires, and the first real wish through it.
 
 ## Planned: noticing routines
 

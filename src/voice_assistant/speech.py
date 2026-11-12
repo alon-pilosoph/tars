@@ -5,6 +5,7 @@ import queue
 import re
 import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
+from concurrent.futures import Future
 
 from .conversations import LLM, OTHER, TTS
 from .tts import Voice
@@ -98,19 +99,31 @@ class StreamedReply:
     """A reply's audio as one continuous PCM stream, produced from the moment this is created.
 
     Each sentence goes to TTS as soon as it's complete, so later sentences synthesize while earlier ones play and a
-    reply prepared ahead of time is ready to play.
+    reply prepared ahead of time is ready to play. `made_ahead`: a line's audio if it was made ahead ("Let's see."),
+    played as it is rather than made again.
     """
 
-    def __init__(self, pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]):
+    def __init__(
+        self,
+        pieces: Iterable[str],
+        voice: Voice,
+        on_sentence: Callable[[str], None],
+        made_ahead: Callable[[str], Future[list[bytes]] | None] = lambda sentence: None,
+    ):
         self._playlist: queue.Queue = queue.Queue()
         self._stop = threading.Event()
+        self._made_ahead = made_ahead
         threading.Thread(target=self._produce, args=(pieces, voice, on_sentence), daemon=True, name="reply").start()
 
     def _produce(self, pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]) -> None:
         try:
             for sentence in split_sentences(self._until_stopped(pieces)):
                 on_sentence(sentence)
-                self._playlist.put(_Prefetch(voice, sentence, self._stop))
+                made = self._made_ahead(sentence)
+                if made and made.done() and not made.exception():
+                    self._playlist.put(made.result())
+                else:
+                    self._playlist.put(_Prefetch(voice, sentence, self._stop))
         except Exception as e:  # noqa: BLE001 - raised again where the audio is played
             mark_failed_at(e, LLM)  # writing the reply; the voice's errors come from _Prefetch
             self._playlist.put(e)

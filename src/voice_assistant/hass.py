@@ -5,6 +5,7 @@ Every change is read back from what the entity reports afterwards, so the answer
 so. An entity whose state Home Assistant only assumes (an IR-controlled AC or TV, which can't report back) answers
 "sent" instead: the request went out, and nothing can tell whether it worked."""
 
+import copy
 import json
 import re
 import time
@@ -113,15 +114,15 @@ class HomeAssistant:
         text = self._text("POST", "/api/template", {"template": template})
         return {e: a for e, _, a in (line.partition("\t") for line in text.splitlines()) if a}
 
-    def history(self, entities: list[str], start: datetime, end: datetime) -> list[list[dict]]:
+    def history(
+        self, entities: list[str], start: datetime, end: datetime, attributes: bool = False
+    ) -> list[list[dict]]:
         """Each entity's states from start to end (the one it was in at the start first): a list of
-        {"state", "last_changed"} for each, as Home Assistant's history keeps them (about ten days)."""
-        query = {
-            "filter_entity_id": ",".join(entities),
-            "end_time": end.isoformat(),
-            "minimal_response": "",
-            "no_attributes": "",
-        }
+        {"state", "last_changed"} for each, as Home Assistant's history keeps them; with `attributes`, whole states
+        (entity_id and attributes too)."""
+        query = {"filter_entity_id": ",".join(entities), "end_time": end.isoformat()}
+        if not attributes:
+            query |= {"minimal_response": "", "no_attributes": ""}
         found = self._send("GET", f"/api/history/period/{start.isoformat()}", params=query).get("result")
         return found if isinstance(found, list) else []
 
@@ -338,6 +339,38 @@ class Entity(Device):
         self.details: list[str] = list(spec.get("details", []))
         self._hass, self._clock, self._sleep = hass, clock, sleep
 
+    def past(self, start: float, end: float) -> list[tuple[float, str]]:
+        """Its status as it was after each change from start to end, from Home Assistant's history of its entities,
+        worded as status() words it now: (when, status), each a change from the one before."""
+        entities = [self.entity, *self._entities(), *self.details]
+        found = self._hass.history(
+            entities,
+            datetime.fromtimestamp(start).astimezone(),
+            datetime.fromtimestamp(end).astimezone(),
+            attributes=True,
+        )
+        changes = sorted(
+            (
+                (datetime.fromisoformat(s.get("last_updated") or s["last_changed"]).timestamp(), s["entity_id"], s)
+                for states in found
+                for s in states
+                if s.get("entity_id") in entities and (s.get("last_updated") or s.get("last_changed"))
+            ),
+            key=lambda change: change[:2],
+        )
+        then = _Then()
+        replay = copy.copy(self)
+        replay._hass = then
+        statuses: list[tuple[float, str]] = []
+        for at, entity, state in changes:
+            then.states[entity] = state
+            if self.entity not in then.states:
+                continue
+            said = replay.status()
+            if not statuses or statuses[-1][1] != said:
+                statuses.append((at, said))
+        return statuses
+
     def status(self) -> str:
         found = self._hass.state(self.entity)
         guess = " (Home Assistant's guess: it can't report back)" if _assumed(found) else ""
@@ -410,6 +443,19 @@ class Entity(Device):
             if self._clock() >= deadline:
                 return False, found
             self._sleep(POLL_S)
+
+
+class _Then:
+    """Home Assistant as it was at one moment, for Entity.past: each entity's state as replayed so far. It answers
+    only `state`: a status() that reads Home Assistant any other way can't be replayed (no dry run)."""
+
+    def __init__(self):
+        self.states: dict[str, dict] = {}
+
+    def state(self, entity: str) -> dict:
+        if entity not in self.states:
+            raise HomeError(f"{entity} has no state then")
+        return self.states[entity]
 
 
 def _assumed(found: dict) -> bool:
@@ -570,7 +616,7 @@ class Climate(Entity):
         if bad:
             return bad[0]
         if all(r.startswith("sent") for r in results):
-            asked = _said_settings(action, mode, temperature, fan)
+            asked = _said_settings(ON if turn_on else action, mode, temperature, fan)
             return f"sent: asked the {self.name} to {asked}; it can't report back, so nothing can tell if it did"
         return f"done: {self.status()} (it says so itself)"
 

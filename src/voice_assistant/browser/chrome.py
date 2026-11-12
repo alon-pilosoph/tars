@@ -94,7 +94,7 @@ def close(port: int = PORT) -> None:
     from websockets.sync.client import connect
 
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1) as answer:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1) as answer:  # nosec B310  # Chrome on localhost
             socket_url = json.load(answer)["webSocketDebuggerUrl"]
     except OSError:
         return
@@ -108,7 +108,7 @@ def close(port: int = PORT) -> None:
 
 def answers(port: int) -> bool:
     try:
-        urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1)
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1)  # nosec B310  # Chrome on localhost
         return True
     except OSError:
         return False

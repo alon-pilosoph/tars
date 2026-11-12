@@ -8,7 +8,9 @@ routers already know which phones are connected, and TARS signs into them and as
 | "Who's home?" (aloud or in a chat) | "Alon's home, and Stacey's been out since about two." |
 | A reminder due for Stacey while she's out | it goes to her Telegram chat instead of being said to an empty room |
 | "Tell Stacey dinner's at eight when she's back" | said soon after her phone comes home, or as soon as she next speaks to TARS, whichever is first |
-| `voice-assistant --check` | signs into each router and says whose phone it sees |
+| Stacey's phone opens the Nuki by Auto Unlock | she's home at once, and a skill waiting for her is told "Stacey just came home, opening the front door" ([the front door](#the-front-door)) |
+| `voice-assistant --check` | signs into each router and says whose phone it sees, and connects to the locks' MQTT broker and checks it keeps their topics to them |
+| The locks' broker gone for ten minutes | the maintainers are told in their chats what to check, and again when it's back |
 | The web UI's Status page | how each router last answered, and who's home |
 
 ## Setting it up
@@ -94,6 +96,73 @@ They lean towards "still home", never towards a false "gone":
 So it goes by phones: someone home without theirs shows as out, and someone who just left shows as home for up to ten
 minutes. The model is told so, and says it's going by their phone when that matters.
 
+## The front door
+
+A phone joins the Wi-Fi somewhere near the door, and not always first. A Nuki smart lock knows exactly: with its MQTT
+API turned on, it publishes every lock action as `action,trigger,auth id,code id,auto unlock` to
+`<topic>/lockActionEvent`, saying which app's authorization (the auth id) or keypad code (the code id) did it, and
+whether the phone's Auto Unlock did. TARS listens (`doors.py`), keeps each action in the `door_events` table, and:
+
+- **Someone who opens the door from outside is home at once**, before their phone has found the Wi-Fi, and comes
+  home "by the front door": "who's home?" says so, and a skill waiting for them is told "Stacey just came home,
+  opening the front door". From outside means Auto Unlock or the keypad. Opening it in the app doesn't count, since
+  that can be done from anywhere; nor do the lock's own button and knob, which are inside, or TARS and Home Assistant
+  opening it over MQTT. Leaving is still by the phone: a door that's opened from inside says nothing about who left.
+- **Whose key is whose is learned.** A key nobody's named, that opens the door from outside (Auto Unlock or the
+  keypad) while exactly one person's phone comes home (within ten minutes either way), is a guess that it's theirs;
+  guesses on two separate arrivals, and none for anyone else, and it is. An unlock and an unlatch as someone comes in
+  are one arrival, and the lock's own button and knob, or the app from inside, are never anyone's key. The maintainers
+  are told in their chats ("I can tell when Stacey opens the front door now..."). Two people coming home together
+  guess nothing. Keys can also be named in `[presence] people`, beside the phone: `"key:<auth id>"` for an app,
+  `"code:<code id>"` for a keypad code. The ids are in `door_events`, and in Nuki Web's list of authorizations.
+- **The lock's word only ever puts someone at home.** It never works the house: a skill it sets off (someone coming
+  home by the door) greets them and reads the house, but every change, an unlock above all, is refused for that
+  run (`Request.by_door`, checked in `home.py`, `ha_tool.py`, `ha_setup.py` and TARS's settings). So "when Stacey
+  gets home, turn on the hall light" doesn't turn it on when she lets herself in by the door: her phone coming home
+  later isn't a new arrival. TARS publishes nothing to the broker. What a forged message could do, and what stops
+  one, is in [security](security.md#a-device-on-the-home-network-speaking-for-the-front-door).
+- **When TARS can't hear the locks, it says so.** The broker not answering (TARS starting before it, Mosquitto
+  stopped), refusing TARS (a wrong password) or lost is in the log when it starts, once, not at every retry; nobody is
+  let in by the door until it's back. Ten minutes of it and the maintainers are told in their chats what to check, and
+  again when it's back; a broker restarting tells nobody.
+
+Setting it up:
+
+1. In the Nuki app, turn on MQTT for the lock (Settings > Features & Configuration > MQTT) and point it at the
+   household's broker (`deploy/home-assistant` runs Mosquitto for Home Assistant), as the user `nuki`, the one
+   [the house](home.md) makes for it. Home Assistant finds it as the lock it works.
+2. Say which door and which broker, in `config.local.toml`. TARS signs in as its own user, `tars`, with the password
+   `.env` has under `secret`'s name; doors without `user` and `secret` are a mistake in the config:
+
+   ```toml
+   [[presence.doors]]
+   name = "front door"
+   topic = "nuki/4224E764"     # the lock's ID in hex, as the Nuki app and Home Assistant show it
+
+   [presence.mqtt]
+   address = "localhost"
+   user = "tars"
+   secret = "MQTT_PASSWORD"
+   ```
+
+3. Run `deploy/install-pi.sh`. With doors, and the broker on this machine (`localhost`) set up as
+   [the house](home.md) says, it gives TARS its user: a random password in `.env` as `MQTT_PASSWORD` if there isn't
+   one yet, TARS's line in Mosquitto's passwords (`python -m voice_assistant.mosquitto`, through Mosquitto's own
+   image, as the file must be Mosquitto's), and Mosquitto brought up to date and told to read its passwords and ACL
+   again. It installs the door extra too (`uv sync --extra door` elsewhere). A broker on another machine is set up by
+   hand: a user for TARS, its password in `.env`, and the ACL's rules below.
+4. Check it: `--check` connects to the broker and warns if TARS may write on a lock's topics (no ACL); TARS's log
+   says `(doors: connecting to the MQTT broker at localhost, for the front door)`, then
+   `(doors: listening to the front door on the MQTT broker at localhost)`, and
+   `(doors: the front door unlocked by Auto Unlock, by Stacey)` as it happens.
+
+**Only the lock may say the door was opened.** The broker lets in only the users in its passwords file (no one
+without), and [`mosquitto/acl`](../deploy/home-assistant/mosquitto/acl) says what each may do: Home Assistant reads
+and writes everything (it works the lock anyway); TARS only reads `nuki/+/lockActionEvent`; every other user is a
+device, and writes only under its own name (`nuki/...` for the lock's user `nuki`) and Home Assistant's discovery.
+So a device's password, if it leaks, can't speak for the lock. A device whose topics aren't under its own user's name
+needs lines of its own there.
+
 ## Where it's used
 
 **"Who's home?"** is a device in the [home tool](home.md), `who's home`, with only a status: the model asks it, and
@@ -122,10 +191,11 @@ opened would be the same again.
 out) and so would Google's or Apple's location sharing; the routers know only home or not, which is what TARS needs,
 and they're already there. Nothing leaves the house.
 
-**Detected, not how.** The rules (`Tracker`) take the set of people detected in a round, not router answers, so a
-door or a lock can feed them as well as a phone. Minutes are counted on a monotonic clock: a Pi has no clock of its own
-while it's off, and its time of day jumps when it sets itself after a boot. After a restart, the rules start from what
-was last written, if it's fresh, so someone out when TARS restarted who comes home soon after has come home.
+**Detected, not how.** The rules (`Tracker`) take the set of people detected in a round, not router answers, and a
+door's lock feeds them too (`Watcher.at_door`, from the MQTT client's thread, under the same lock as the rounds).
+Minutes are counted on a monotonic clock: a Pi has no clock of its own while it's off, and its time of day jumps when it
+sets itself after a boot. After a restart, the rules start from what was last written, if it's fresh, so someone out
+when TARS restarted who comes home soon after has come home.
 
 **A router that can't be read is a router that didn't answer.** Whatever goes wrong (no answer, a refused password, a
 page this doesn't understand, even a bug in one router's code) is that router not answering for the round: nobody is
@@ -137,7 +207,7 @@ marked out for it, and the watching goes on. A device page with no devices on it
 - **A door sensor** (a Shelly BLU Door/Window, read by Home Assistant over Bluetooth) to tell a phone that went to
   sleep from someone who left: the door opening, then a phone dropping off, is someone leaving now, not ten minutes
   later.
-- **The Nuki lock's own events**, which say who unlocked it, so TARS can greet them by name as they come in, and say
-  what's waiting for them.
+- **Leaving by the door.** The lock's actions from inside, then a phone dropping off, could say someone left now;
+  for now it's the phone's ten minutes.
 - **Phones on a second access point show on the main router as wired devices**, counted present while it gives them
   an IP address. It's been seen to clear that for a device that's gone, but not yet watched as someone leaves.

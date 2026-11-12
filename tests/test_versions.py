@@ -203,6 +203,9 @@ class RecordingVerifier:
     def decide(self, pcm):
         return ANSWER, "hey tars"
 
+    def name_end_s(self, pcm):
+        return None
+
 
 class LoadedTriggers:
     """Stands in for loading a wake model: records what was loaded, and fires at the given blocks. A version in
