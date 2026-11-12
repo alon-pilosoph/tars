@@ -177,6 +177,14 @@ def test_first_request_is_never_treated_as_overheard(tmp_path):
     assert assistant.body.timeouts == [None, 4.0]  # and the answer is listened for
 
 
+def test_a_typed_question_that_comes_back_as_a_skip_is_asked_again_and_that_remembered():
+    """As aloud: the pardon is part of the conversation, so what's typed next answers it."""
+    assistant, brain = make_assistant([], [], replies=["<skip>"])
+    said = assistant.answer_text("new zone")
+    assert said.text == assistant_module.PARDON and brain.forgotten == 1
+    assert brain.remembered == [assistant_module.PARDON]
+
+
 def failing(assistant, error):
     def fail(heard):
         raise error

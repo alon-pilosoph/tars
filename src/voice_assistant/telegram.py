@@ -635,6 +635,8 @@ class TelegramTars:
                 reply = tidy(written.read())
             if reply:
                 self._send(chat.chat_id, reply, tries=SEND_TRIES)
+            if written.pardoned:  # as aloud: what they write next answers it, and isn't skipped
+                brain.remember_said(reply)
         except Exception as e:  # noqa: BLE001 - said in the chat, kept in the log, and forgotten by the brain
             if written:  # posting it failed: one that failed before is forgotten already
                 written.drop()

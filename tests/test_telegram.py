@@ -177,6 +177,15 @@ def test_a_skip_in_a_chat_is_never_posted_and_asks_again():
     bot, brain = FakeBot(), ScriptedBrain([SKIP])
     tars(bot, [brain]).handle(message("new zone"))
     assert bot.said() == [PARDON] and brain.forgotten == 1
+    assert brain.remembered == [PARDON]  # as aloud: what's written next answers it
+
+
+def test_a_pardon_that_couldnt_be_posted_isnt_remembered():
+    from voice_assistant.llm import SKIP
+
+    bot, brain = FakeBot(failing=99), ScriptedBrain([SKIP])
+    tars(bot, [brain]).handle(message("new zone"))
+    assert brain.remembered == []
 
 
 @pytest.mark.parametrize(

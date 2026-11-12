@@ -266,6 +266,15 @@ def test_a_skill_with_nothing_to_do_says_nothing_and_is_forgotten():
     assert played == [] and brain.forgotten == 1
 
 
+def test_a_skill_whose_line_cant_be_said_isnt_kept_in_the_conversation_unsaid(monkeypatch):
+    """As a chat's skill whose post fails, and any reply nobody heard: the brain forgets it."""
+    assistant, brain = make_assistant([], [], replies=["Alon, should I put the news on?"])
+    monkeypatch.setattr(assistant, "_made_now", lambda lines: {})  # the voice can't be reached
+    assistant._skill_clock = due(NEWS)
+    assistant.run_skills(follow_up_s=4.0)
+    assert assistant.body.played == [] and brain.forgotten == 1
+
+
 def test_a_skill_whose_turn_fails_waits_for_its_next_time():
     assistant, brain = make_assistant([], [])
 
@@ -1003,6 +1012,7 @@ def test_a_one_off_done_whose_answer_cant_be_said_now_is_said_with_the_reminders
     clock.look()
     assistant.run_skills(follow_up_s=4.0)
     assert tonight.all() == [] and messages(tonight) == [("Alon", VOICE, "Done: the AC's back on.")]
+    assert assistant.brain.forgotten == 1  # unsaid now: said with the reminders, not part of this conversation
 
 
 def test_the_model_is_told_to_do_it_later_itself_not_remind_them_and_put_back_what_was_there():

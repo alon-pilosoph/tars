@@ -635,7 +635,8 @@ class Assistant:
                 clock.hand_over(due, text)
                 continue
             audio = self._made_now([text])
-            if text not in audio:
+            if text not in audio:  # nobody heard it: not part of the conversation, as a reply that isn't heard
+                written.drop()
                 if skill.once is not None:  # done all the same: its answer waits for the voice
                     clock.hand_over(due, text)
                 continue
@@ -1235,10 +1236,13 @@ class Assistant:
         answer = self._start_reply(Answer(text, NOBODY, 0.0), text, may_skip=False)
         self.timings = {}
         try:
-            return self._speak(answer, answer.t_asked)
+            said = self._speak(answer, answer.t_asked)
         except BaseException:
             self._discard(answer)
             raise
+        if answer.written and answer.written.pardoned:  # as aloud: what's typed next answers it
+            self.brain.remember_said(PARDON)
+        return said
 
     def _speak(self, answer: Answer, t_start: float) -> Said:
         first_audio: list[float] = []

@@ -77,7 +77,10 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    when what it overheard wasn't meant for it, or is a fragment that asks for nothing ("eight hours."), and TARS
    stays quiet and forgets it. A `<skip>` for a request said by name, or a chat message, is forgotten too, but
    answered with "Sorry, I didn't catch that. Say it again?", and so is an answer to TARS's question that comes out
-   as no words, once. The conversation is sent to the LLM until it's been quiet for `memory_minutes`.
+   as no words, once. Once said (or typed back, or posted), that line is part of the conversation, so what comes next
+   is taken as the answer to it, not as an untethered follow-up to skip. What nobody heard isn't part of it: a reply,
+   or a skill's line, that couldn't be said or posted is forgotten. The conversation is sent to the LLM until it's
+   been quiet for `memory_minutes`.
 
 The conversation (`assistant.py`) reaches the room only through its **body** (`body.py`), which does a few things
 for it: wait for a wake, and say what woke it (its name, a near miss, or something due), with the audio that woke it,

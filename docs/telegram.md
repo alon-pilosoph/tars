@@ -116,7 +116,8 @@ with `brain = "quick"`, Qwen answers first as by voice. There's no backup the ot
 says so.
 
 **A chat is always meant for TARS.** Nothing in it is overheard, so a `<skip>` from the model is never posted and
-never kept: the chat gets "Sorry, I didn't catch that. Say it again?".
+never kept: the chat gets "Sorry, I didn't catch that. Say it again?", which is (once posted), so the next message
+is taken as the answer to it, as aloud.
 
 **One thread, many conversations.** In Telegram a chat is one long thread; TARS splits it by time, as by voice.
 Each person has their own brain, so their own history: everything said since the conversation started (up to its
