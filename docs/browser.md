@@ -273,17 +273,27 @@ evals.
 Some things only a person can do: a robot check (Wolt answers a new browser's sign-in with hCaptcha), signing in
 with Google or Apple. On a Sprite, TARS hands the screen over for them. The agent calls `hand_over` with what's
 needed; the person gets a link in their chat, with Done and Give up buttons; the link opens the Sprite's Chrome,
-live, in their phone's browser, where they tap and type as on any page; on Done, the agent carries on from the page
-as they left it. A sign-in done this way stays in their profile on the Sprite, as any sign-in does.
+live, in their phone's browser; on Done, the agent carries on from the page as they left it. A sign-in done this way
+stays in their profile on the Sprite, as any sign-in does.
+
+- **It looks like the site on their phone.** For the hand-over, Chrome takes a phone's user agent and is fitted to
+  the phone's screen: the Sprite's screen is [KasmVNC](https://github.com/kasmtech/KasmVNC)'s, whose web viewer
+  sizes it to the phone when it connects (and when it turns), and TARS then fills it with the page alone, Chrome's
+  bars just above the top edge. So the site serves its phone pages, full screen. Afterwards the window is put back
+  as it was.
+- **A tap is a click and a drag scrolls,** as with any remote screen; typing goes through the viewer's keyboard
+  button (the tab on the left edge).
 
 - **The Sprite's address is public** (`https://<sprite>-<org>.sprites.app`, set by `setup.sh`), since a phone isn't
   signed in to Fly. Behind it is only the control service's gate ([`control.py`](../deploy/browser-host/control.py)),
   which answers nothing at all unless a hand-over is on.
-- **A hand-over lets in one browser.** Its link carries a token made for it; the first browser to open it gets a
-  cookie of its own and is passed through to the screen; the link then lets in nobody else. TARS says in the chat
-  when the screen is opened, so an opening that wasn't the person's shows.
-- **The screen runs only during a hand-over.** The VNC server (on the Sprite's localhost) and noVNC's viewer are
-  started for it and stopped when it ends: on Done or Give up, after 15 minutes, or when the errand ends.
+- **A hand-over lets in one browser at a time.** Its link carries a token made for it; the browser that opens it
+  gets a cookie of its own and is passed through to the screen. Opening it again, in another browser (Telegram's
+  own opens first), takes over from the last one, whose connection is closed. TARS says in the chat when the screen
+  is opened, so an opening that wasn't the person's shows.
+- **The screen is reachable only during a hand-over.** KasmVNC's viewer listens on the Sprite's localhost; the gate
+  passes nothing to it otherwise, and closes every connection when the hand-over ends: on Done or Give up, after 15
+  minutes, or when the errand ends.
 - **Whoever is at the screen is the person.** It's the browser itself, so nothing there is stopped by TARS's gate:
   an order they press is placed.
 
@@ -335,7 +345,7 @@ uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off
   and the checkout is a picture worth seeing.
 - **Errands at once.** One runs at a time: there's one browser. A browser per person could run theirs side by side.
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.
-- **A screen sized for the phone.** A hand-over shows the whole 1280-pixel window shrunk to the phone's width:
-  readable, but small to tap a captcha in. A narrower window during a hand-over would fit it.
+- **Touch as on a phone.** A hand-over's taps are clicks and its drags scroll; real touch events, pinch, and the
+  phone's own keyboard would take a viewer of Chrome's own screencast instead of a remote screen.
 - **Handing over on the Pi.** The same screen, served from the Pi, would need a way for the phone to reach it from
   outside the home.

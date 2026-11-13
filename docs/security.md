@@ -422,26 +422,29 @@ they're typed. What else they could reach is what this section is about.
   - *The Sprite's name* goes into ssh's `ProxyCommand`, which a shell runs: it's held to lower-case letters, digits
     and dashes in the config check and again where the command is made.
   - *Its public address,* for [handing over](browser.md#handing-over), reaches only the control service's gate.
-    Without a hand-over on, it answers 404 to everything and nothing else runs behind it. During one, it lets in
-    the first browser that brings that hand-over's token (32 random bytes, sent only in the person's chat) and no
-    other, through a cookie made for that browser (`Secure`, `HttpOnly`, `SameSite=Strict`); the VNC server listens
-    on the Sprite's localhost, and it and the viewer are stopped when the hand-over ends (Done, Give up, 15
-    minutes, or the errand's end), which drops the connection. TARS says in the chat when the screen is opened.
+    Without a hand-over on, it answers 404 to everything and passes nothing on. During one, it lets in the browser
+    that brings that hand-over's token (32 random bytes, sent only in the person's chat), one browser at a time,
+    through a cookie made for that browser (`Secure`, `HttpOnly`, `SameSite=Strict`): the newest to open the link
+    takes over, and the last one's connections are closed. The screen (KasmVNC, without a password of its own:
+    the gate is the lock) listens on the Sprite's localhost only, with no VNC port. When the hand-over ends (Done,
+    Give up, 15 minutes, or the errand's end), the gate closes every connection. TARS says in the chat each time
+    the screen is opened.
 - **Tests:** `tests/test_browser_way_out.py` (each refusal, then real SOCKS5 conversations: home refused on the wire,
   the checked address is the one connected to); `tests/test_browser_sprite.py` (the control service's key and profile
   names, the link forwarding three ports and running nothing, a Sprite's name that would reach the shell). By hand on
   a real Sprite: a command, sftp and an unlisted forward refused; with the policy on, the Sprite's own requests fail by
   name and by address, while the browser loads pages from the home's address and is refused the router, the Sprite's
-  localhost and its own debugging port. The gate: `tests/test_browser_sprite.py` (nothing without a hand-over, one
-  browser per token, the end of one); by hand on the Sprite, through `sprite proxy`: the screen shown in a
-  phone-sized browser, a second browser with the same link refused, 404 once it ended.
+  localhost and its own debugging port. The gate: `tests/test_browser_sprite.py` (nothing without a hand-over, the
+  token's browser in and no guess, a second opening taking over and closing the first, the end of one); by hand on
+  the Sprite: the public address answering 404 to everything with no hand-over, and a phone opening the link.
 - **Open:** whoever takes the Sprite over can browse the public web from the home's address on ports 80 and 443 while
   a link is open, as the browser itself can. The Fly token on this machine can reach the Sprite (run commands on it,
   read the profiles): it's guarded like the vault's key, in TARS's user's own folder. Fly, which runs it, is trusted
   with what the browser sees. During a hand-over, whoever holds the link (a forwarded message, the person's unlocked
   phone) can work the browser as the person, orders included, until it ends; the chat says when it's opened. Anyone
-  can wake the Sprite for a moment by asking its address, which costs seconds of its time. The gate and noVNC's
-  viewer are on the internet during a hand-over: a flaw in either would be reachable for those minutes.
+  can wake the Sprite for a moment by asking its address, which costs seconds of its time. The gate is on the
+  internet all the time, KasmVNC's viewer through it during a hand-over: a flaw in the gate, or in KasmVNC for
+  whoever holds the link, would be reachable.
 
 ### A stolen key
 

@@ -105,8 +105,8 @@ class Control:
     def close(self) -> None:
         self.ask("/close", {}, timeout=15.0)
 
-    def view(self, clip: str = "") -> dict:
-        return self.ask("/view", {"clip": clip})
+    def view(self) -> dict:
+        return self.ask("/view", {})
 
     def view_status(self) -> dict:
         return self.ask("/view", timeout=5.0)
@@ -122,17 +122,22 @@ class Screen:
     def __init__(self, control: Control, address: str):
         self.control, self.address = control, address.rstrip("/")
 
-    def open(self, clip: str = "") -> tuple[str, int]:
-        """The link, which lets in the first browser to open it, and how many minutes it lasts. `clip`: the part of
-        the screen it shows (as_phone's)."""
-        given = self.control.view(clip)
-        return f"{self.address}/view?t={given['token']}", int(given["minutes"])
+    def open(self) -> tuple[str, int]:
+        """The link, which lets in one browser at a time (the latest to open it), and how many minutes it lasts; with
+        Guacamole's login after it, which it asks for first."""
+        given = self.control.view()
+        login = f"\n\n(Log in as  tars  /  {LOGIN.read_text().strip()} )" if LOGIN.exists() else ""
+        return f"{self.address}/view?t={given['token']}{login}", int(given["minutes"])
 
     def opened(self) -> bool:
+        return bool(self.status().get("opened"))
+
+    def status(self) -> dict:
+        """Whether the link has been opened, and the size the person's phone gave the screen ("screen": [w, h])."""
         try:
-            return bool(self.control.view_status().get("opened"))
+            return self.control.view_status()
         except OSError:
-            return False
+            return {}
 
     def close(self) -> None:
         try:
@@ -166,39 +171,61 @@ def sprite_chrome(
                 pass  # the link went; the Sprite's Chrome goes when it sleeps
 
 
-PHONE = (390, 780)  # the page as a phone shows it, in CSS pixels: what a hand-over is laid out for
+PHONE_WIDTH = 390  # the page's width in CSS pixels during a hand-over: a phone's
+PHONE_SCREEN = (585, 1266)  # the Sprite's screen during a hand-over, in pixels: control.PHONE_SCREEN
+LOGIN = FOLDER / "sprite-viewer-password"  # Guacamole's, for the person's link (setup.sh)
 PHONE_AGENT = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) "
                "Chrome/157.0.0.0 Mobile Safari/537.36")  # fmt: skip
 DESKTOP = (1280, 1000)  # chrome.WINDOW, put back after
+CHROME_MIN_WIDTH = 500  # Chrome's windows don't go narrower; what's past the screen's edge isn't seen
+
+
+class Phone:
+    """The browser's tab laid out as a phone's for a hand-over (as_phone). KasmVNC's viewer sizes the virtual
+    screen to the person's phone when it connects; `fit` then fills that screen with the page alone: Chrome's bars
+    sit just above its top edge, and the page is drawn at the screen's own sharpness."""
+
+    def __init__(self, page):
+        self.page = page
+        self.cdp = page.context.new_cdp_session(page)
+        self.window = self.cdp.send("Browser.getWindowForTarget")["windowId"]
+        self.agent = page.evaluate("navigator.userAgent")
+        self.bars = page.evaluate("window.outerHeight - window.innerHeight")
+        self.size: tuple[int, int] = (0, 0)
+
+    def fit(self, width: int, height: int) -> None:
+        """Fills a `width` x `height` screen (pixels) with the page, `PHONE_WIDTH` CSS pixels across."""
+        if (width, height) == self.size or width < 200 or height < 200:
+            return
+        self.size = (width, height)
+        self.cdp.send("Browser.setWindowBounds", {"windowId": self.window, "bounds": {"windowState": "normal"}})
+        bounds = {"left": 0, "top": -self.bars, "width": max(width, CHROME_MIN_WIDTH), "height": height + self.bars}
+        self.cdp.send("Browser.setWindowBounds", {"windowId": self.window, "bounds": bounds})
+        self.cdp.send("Emulation.setDeviceMetricsOverride", {
+            "width": width, "height": height, "deviceScaleFactor": 1, "mobile": True,
+            "screenWidth": width, "screenHeight": height})  # fmt: skip
+
+    def undo(self) -> None:
+        self.cdp.send("Emulation.clearDeviceMetricsOverride")
+        self.cdp.send("Emulation.setUserAgentOverride", {"userAgent": self.agent})
+        self.cdp.send("Browser.setWindowBounds", {"windowId": self.window, "bounds": {
+            "left": 0, "top": 0, "width": DESKTOP[0], "height": DESKTOP[1]}})  # fmt: skip
+        self.cdp.detach()
 
 
 @contextmanager
-def as_phone(page) -> Iterator[str]:
-    """The browser's tab laid out as a phone's for a hand-over, the site's own phone pages included (it's reloaded
-    with a phone's user agent), and put back after; yields the part of the screen the page is in (WxH+X+Y), for the
-    view to show that alone, without Chrome's bars."""
-    cdp = page.context.new_cdp_session(page)
-    window = cdp.send("Browser.getWindowForTarget")["windowId"]
-    agent = page.evaluate("navigator.userAgent")
-    bars = page.evaluate("window.outerHeight - window.innerHeight")
-    width, height = PHONE
-    cdp.send("Browser.setWindowBounds", {"windowId": window, "bounds": {"windowState": "normal"}})
-    cdp.send("Browser.setWindowBounds", {"windowId": window,
-                                         "bounds": {"left": 0, "top": 0, "width": max(width, 500),
-                                                    "height": height + bars}})  # fmt: skip
-    cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1,
-                                                    "mobile": True})  # fmt: skip
-    cdp.send("Emulation.setUserAgentOverride", {"userAgent": PHONE_AGENT, "platform": "Android"})
+def as_phone(page) -> Iterator[Phone]:
+    """The browser's tab as a phone's for a hand-over, the site's own phone pages included (reloaded with a phone's
+    user agent), and put back after."""
+    phone = Phone(page)
+    phone.cdp.send("Emulation.setUserAgentOverride", {"userAgent": PHONE_AGENT, "platform": "Android"})
+    phone.fit(*PHONE_SCREEN)  # the screen's shape during a hand-over (control.py)
     page.reload(wait_until="domcontentloaded")
     try:
-        yield f"{width}x{height}+0+{bars}"
+        yield phone
     finally:
         try:
-            cdp.send("Emulation.clearDeviceMetricsOverride")
-            cdp.send("Emulation.setUserAgentOverride", {"userAgent": agent})
-            cdp.send("Browser.setWindowBounds", {"windowId": window,
-                                                 "bounds": {"width": DESKTOP[0], "height": DESKTOP[1]}})  # fmt: skip
-            cdp.detach()
+            phone.undo()
         except Exception as e:  # noqa: BLE001 - a page the person closed: the next errand's Chrome starts afresh
             print(f"(browser: couldn't put the window back after a hand-over: {type(e).__name__})")
 

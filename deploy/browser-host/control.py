@@ -11,16 +11,19 @@ as errands are one at a time.
     POST /open  {"profile": "profile-0a1b2c3d4e5f"}   start Chrome with that profile; answers once its port does
     POST /close                                        shut it
     GET  /health                                       {"ok": true, "chrome": false}
-    POST /view  {"clip": "390x780+0+85"}               a hand-over: {"token": "...", "minutes": 15}
-    GET  /view                                         {"active": true, "opened": false}
+    POST /view                                         a hand-over: {"token": "...", "minutes": 15}
+    GET  /view                                         {"active": true, "opened": false, "opens": 0}
     POST /view/end                                     end it
 
 A hand-over is the person taking over this Chrome's screen from their phone, for what only a person can do (a
-captcha, signing in with Google). The Sprite's public address (https://<sprite>.sprites.app) is served by the gate
-below, which answers nothing at all unless a hand-over is on. Then it lets in one browser, the first to bring the
-hand-over's token, and only that browser: it starts the screen's VNC server (on localhost only) and noVNC's viewer
-behind it, and passes that browser's requests through to them. The hand-over ends when the Telegram service says so
-(the person tapped Done), or after VIEW_S, and the VNC server and viewer are stopped, which drops the connection."""
+captcha, signing in with Google). The screen is seen through Apache Guacamole (setup.sh: guacd and its web app in
+Tomcat, on the Sprite's localhost only, over x11vnc), and takes a phone's shape for the hand-over. The Sprite's
+public address (https://<sprite>.sprites.app) is served by the gate below, which answers nothing at all unless a
+hand-over is on.
+Then it lets in the browser that brings the hand-over's token, one browser at a time (opening the link again, in
+another browser, takes it over from the last one), and passes that browser's requests through to the viewer. The
+hand-over ends when the Telegram service says so (the person tapped Done), or after VIEW_S, and the connections are
+closed."""
 
 import hmac
 import json
@@ -36,6 +39,7 @@ import sys
 import threading
 import time
 import urllib.request
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -52,26 +56,12 @@ PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")  # a folder name and nothi
 START_S = 15.0
 STOP_S = 10.0
 GATE_PORT = 8080  # the Sprite's public address is routed here (setup.sh: the control service's --http-port)
-VNC_PORT, VIEWER_PORT = 5900, 6080  # both on localhost, and only while a hand-over is on
+VIEWER_PORT = 8081  # Guacamole, in Tomcat, on localhost (setup.sh)
 VIEW_S = 15 * 60.0  # the longest a hand-over lasts
 COOKIE = "tars-view"
 HEAD_MAX = 16384  # the most of a request's head the gate reads
-VIEWER_PAGE = "/vnc.html?autoconnect=1&resize=scale&reconnect=1&show_dot=1&path=websockify"
-CLIP = re.compile(r"\d{2,4}x\d{2,4}\+\d{1,4}\+\d{1,4}")  # the part of the screen shown: WxH+X+Y, the page alone
-
-
-def vnc_command(clip: str = "") -> list[str]:
-    shown = ["-clip", clip] if clip and CLIP.fullmatch(clip) else []
-    return ["/usr/bin/x11vnc", "-display", DISPLAY, "-localhost", "-rfbport", str(VNC_PORT), "-forever",
-            "-nopw", "-quiet", "-noxdamage", *shown]  # fmt: skip
-
-
-def viewer_command() -> list[str]:
-    return ["/usr/bin/websockify", "--web", "/usr/share/novnc", f"127.0.0.1:{VIEWER_PORT}", f"127.0.0.1:{VNC_PORT}"]
-
-
-def start_quietly(command: list[str]) -> subprocess.Popen:
-    return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+VIEWER_PAGE = "/guacamole/"
+PHONE_SCREEN, DESKTOP_SCREEN = "585x1266", "1280x1000"  # the screen during a hand-over, and otherwise
 
 
 def chrome_command(profile: Path, chrome: str = "/usr/bin/google-chrome") -> list[str]:
@@ -145,29 +135,31 @@ class Host:
         return self.process is not None and self.process.poll() is None
 
 
-class View:
-    """The hand-over there is, if any: its token, whether a browser has come with it, and what that browser was
-    given to come back with. `launch` and `clock` stand in for starting the VNC server and the viewer, and the time,
-    in the tests."""
+def reshape(size: str) -> None:
+    """The virtual screen to `size` (WxH): a phone's for a hand-over, so the viewer fills the phone with it."""
+    subprocess.run(["xrandr", "--fb", size], env={**os.environ, "DISPLAY": DISPLAY}, capture_output=True, timeout=10,
+                   check=False)  # fmt: skip
 
-    def __init__(self, launch=start_quietly, clock=time.monotonic):
-        self.launch, self.clock = launch, clock
+
+class View:
+    """The hand-over there is, if any: its token, the browser that came with it last, and the connections that
+    browser has through the gate. `clock` stands in for the time in the tests."""
+
+    def __init__(self, clock=time.monotonic, reshape=reshape):
+        self.clock, self.reshape = clock, reshape
         self.lock = threading.Lock()
         self.token = self.secret = ""
         self.until = 0.0
-        self.opened = False
-        self.processes: list[subprocess.Popen] = []
+        self.opens = 0
+        self.connections: set[socket.socket] = set()
 
-    def start(self, clip: str = "") -> str:
-        """A new hand-over, ending any other: its token, for the person's link. `clip`: the part of the screen to show
-        (the page, without Chrome's own bars), WxH+X+Y; all of it if not given."""
-        if clip and not CLIP.fullmatch(clip):
-            raise ValueError("not a part of the screen")
+    def start(self) -> str:
+        """A new hand-over, ending any other: its token, for the person's link."""
         self.end()
+        self.reshape(PHONE_SCREEN)
         with self.lock:
-            self.token, self.secret, self.opened = secrets.token_urlsafe(32), "", False
+            self.token, self.secret, self.opens = secrets.token_urlsafe(32), "", 0
             self.until = self.clock() + VIEW_S
-            self.processes = [self.launch(vnc_command(clip)), self.launch(viewer_command())]
             return self.token
 
     def active(self) -> bool:
@@ -177,13 +169,15 @@ class View:
             return bool(self.token)
 
     def admit(self, token: str) -> str | None:
-        """The secret a browser comes back with, for the first to bring the token; None for anyone else."""
+        """The secret a browser that brings the token comes back with. Each one takes over from the last: its
+        connections are closed, and its secret no longer lets it in. None for a wrong token."""
         if not self.active():
             return None
         with self.lock:
-            if self.opened or not hmac.compare_digest(token.encode(), self.token.encode()):
+            if not hmac.compare_digest(token.encode(), self.token.encode()):
                 return None
-            self.opened, self.secret = True, secrets.token_urlsafe(32)
+            self._drop()
+            self.opens, self.secret = self.opens + 1, secrets.token_urlsafe(32)
             return self.secret
 
     def allowed(self, secret: str) -> bool:
@@ -192,31 +186,47 @@ class View:
         with self.lock:
             return bool(self.secret) and hmac.compare_digest(secret.encode(), self.secret.encode())
 
+    def hold(self, connection: socket.socket) -> bool:
+        """Counts `connection` as the current browser's, to be closed when it's taken over or the hand-over ends."""
+        with self.lock:
+            if not self.token:
+                return False
+            self.connections.add(connection)
+            return True
+
+    def let_go(self, connection: socket.socket) -> None:
+        with self.lock:
+            self.connections.discard(connection)
+
     def status(self) -> dict:
         active = self.active()
         with self.lock:
-            return {"active": active, "opened": self.opened}
+            return {"active": active, "opened": self.opens > 0, "opens": self.opens}
 
     def end(self) -> None:
         with self.lock:
+            was = bool(self.token)
             self._end()
+        if was:
+            self.reshape(DESKTOP_SCREEN)
 
     def _end(self) -> None:
         self.token = self.secret = ""
-        self.opened = False
-        for process in self.processes:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-        self.processes = []
+        self.opens = 0
+        self._drop()
+
+    def _drop(self) -> None:
+        for connection in self.connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        self.connections = set()
 
 
 class Gate(socketserver.ThreadingTCPServer):
-    """What the Sprite's public address reaches. Nothing, unless a hand-over is on; then /view?t=<token> once, which
-    gives that browser a cookie and sends it to the viewer, and every request with that cookie is passed through to
+    """What the Sprite's public address reaches. Nothing, unless a hand-over is on; then /view?t=<token>, which gives
+    that browser a cookie and sends it to the viewer, and every request with the current cookie is passed through to
     the viewer as it came (its pages, and the screen's WebSocket)."""
 
     daemon_threads = True
@@ -249,7 +259,7 @@ class _GateHandler(socketserver.BaseRequestHandler):
             secret = view.admit(parse_qs(target.query).get("t", [""])[0])
             if secret is None:
                 return _plain(client, 403)
-            print("control: the screen was opened", file=sys.stderr, flush=True)
+            print(f"control: the screen was opened ({view.status()['opens']})", file=sys.stderr, flush=True)
             cookie = f"{COOKIE}={secret}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age={int(VIEW_S)}"
             return _plain(client, 302, [("Location", VIEWER_PAGE), ("Set-Cookie", cookie)])
         if not view.allowed(_cookie(rest, COOKIE)):
@@ -258,9 +268,15 @@ class _GateHandler(socketserver.BaseRequestHandler):
             viewer = _connect_when_up(self.server.viewer_port)
         except OSError:
             return _plain(client, 503)
-        with viewer:
-            viewer.sendall(head)
-            _pump(client, viewer)
+        if not view.hold(client):
+            viewer.close()
+            return _plain(client, 404)
+        try:
+            with viewer:
+                viewer.sendall(head)
+                _pump(client, viewer)
+        finally:
+            view.let_go(client)
 
 
 def _head(client: socket.socket) -> bytes:
@@ -288,7 +304,7 @@ def _cookie(headers: bytes, name: str) -> str:
 
 
 def _plain(client: socket.socket, status: int, headers: list[tuple[str, str]] = ()) -> None:
-    reason = {302: "Found", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 503: "Unavailable"}[status]
+    reason = HTTPStatus(status).phrase
     lines = [f"HTTP/1.1 {status} {reason}", "Content-Length: 0", "Connection: close", "Cache-Control: no-store",
              *(f"{k}: {v}" for k, v in headers)]  # fmt: skip
     try:
@@ -355,7 +371,7 @@ def handler(host: Host, key: bytes, view: View | None = None):
                     view.end()
                     host.close()
                 elif self.path == "/view":
-                    self.answer(200, {"token": view.start(str(asked.get("clip", ""))), "minutes": int(VIEW_S // 60)})
+                    self.answer(200, {"token": view.start(), "minutes": int(VIEW_S // 60)})
                     return
                 elif self.path == "/view/end":
                     view.end()

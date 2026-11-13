@@ -69,9 +69,9 @@ def hand_over(session: Session, reason: str, person: Person) -> str:
 
     screen = session.screen
     site = urlsplit(session.page.url).hostname or "the site"
-    with as_phone(session.page) as clip:
+    with as_phone(session.page):
         try:
-            link, minutes = screen.open(clip)
+            link, minutes = screen.open()
         except (OSError, KeyError, ValueError) as e:
             return (f"the screen couldn't be opened for the person ({type(e).__name__}): call done and say a person "
                     f"is needed on {site} for: {reason}")  # fmt: skip

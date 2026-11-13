@@ -233,26 +233,10 @@ def test_chrome_is_closed_as_a_person_closes_it_before_the_control_service_stops
 # The hand-over: the gate on the Sprite's public address, and TARS's side
 
 
-class FakeProcess:
-    def __init__(self):
-        self.stopped = False
-
-    def poll(self):
-        return 0 if self.stopped else None
-
-    def terminate(self):
-        self.stopped = True
-
-    def wait(self, timeout=None):
-        return 0
-
-    def kill(self):
-        self.stopped = True
-
-
 @pytest.fixture
-def gate(monkeypatch):
-    """The gate on a free port, with an echoing server where the viewer would be; the view's clock is the test's."""
+def gate():
+    """The gate on a free port, with a server where the viewer would be that answers each request and keeps the
+    connection open (as the screen's WebSocket does); the view's clock is the test's."""
     viewer = socket.create_server(("127.0.0.1", 0))
 
     def serve():
@@ -261,98 +245,115 @@ def gate(monkeypatch):
                 connection, _ = viewer.accept()
             except OSError:
                 return
-            with connection:
-                head = connection.recv(65536)
-                connection.sendall(
-                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok" if head else b""
-                )
+            threading.Thread(target=answer, args=(connection,), daemon=True).start()
+
+    def answer(connection):
+        with connection:
+            while connection.recv(65536):
+                connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
 
     threading.Thread(target=serve, daemon=True).start()
-    now, launched = [0.0], []
-
-    def launch(command):
-        launched.append(command[0])
-        made = FakeProcess()
-        launched.append(made)
-        return made
-
-    view = control.View(launch=launch, clock=lambda: now[0])
+    now = [0.0]
+    view = control.View(clock=lambda: now[0], reshape=lambda size: None)
     server = control.Gate(view, port=0, viewer_port=viewer.getsockname()[1])
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield server.server_address[1], view, now, launched
+    yield server.server_address[1], view, now
     server.shutdown()
     server.server_close()
     viewer.close()
 
 
-def get(port: int, path: str, cookie: str = "") -> tuple[int, dict, bytes]:
-    with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
-        extra = f"Cookie: {cookie}\r\n" if cookie else ""
-        s.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\n{extra}\r\n".encode())
-        got = b""
-        while chunk := s.recv(65536):
-            got += chunk
+def request(port: int, path: str, cookie: str = "") -> tuple[socket.socket, int, dict, bytes]:
+    """A request to the gate, its connection left open: (the connection, status, headers, body)."""
+    s = socket.create_connection(("127.0.0.1", port), timeout=5)
+    extra = f"Cookie: {cookie}\r\n" if cookie else ""
+    s.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\n{extra}\r\n".encode())
+    got = b""
+    while b"\r\n\r\n" not in got:
+        got += s.recv(65536)
     head, _, body = got.partition(b"\r\n\r\n")
     lines = head.decode().split("\r\n")
     headers = dict(line.split(": ", 1) for line in lines[1:])
-    return int(lines[0].split()[1]), headers, body
+    while len(body) < int(headers.get("Content-Length", 0)):
+        body += s.recv(65536)
+    return s, int(lines[0].split()[1]), headers, body
+
+
+def get(port: int, path: str, cookie: str = "") -> tuple[int, dict, bytes]:
+    s, status, headers, body = request(port, path, cookie)
+    s.close()
+    return status, headers, body
+
+
+def closed(s: socket.socket) -> bool:
+    s.settimeout(5)
+    try:
+        return s.recv(1) == b""
+    except OSError:
+        return True
 
 
 def test_the_gate_answers_nothing_without_a_hand_over(gate):
-    port, _, _, launched = gate
+    port, _, _ = gate
     assert get(port, "/")[0] == 404
     assert get(port, "/view?t=anything")[0] == 404
-    assert get(port, "/vnc.html")[0] == 404
-    assert launched == []  # no VNC server or viewer running
+    assert get(port, "/index.html")[0] == 404
 
 
-def test_the_first_browser_with_the_token_gets_in_and_no_other(gate):
-    port, view, _, launched = gate
+def test_the_browser_with_the_token_gets_in_and_nothing_else_does(gate):
+    port, view, _ = gate
     token = view.start()
-    assert [x for x in launched if isinstance(x, str)] == ["/usr/bin/x11vnc", "/usr/bin/websockify"]
-    assert get(port, "/vnc.html")[0] == 403  # no cookie
+    assert get(port, "/")[0] == 403  # no cookie
     assert get(port, "/view?t=wrong")[0] == 403
     status, headers, _ = get(port, f"/view?t={token}")
-    assert status == 302 and headers["Location"].startswith("/vnc.html")
-    cookie = headers["Set-Cookie"].split(";")[0]
+    assert status == 302 and headers["Location"].startswith("/")
     assert "Secure" in headers["Set-Cookie"] and "HttpOnly" in headers["Set-Cookie"]
-    assert get(port, "/vnc.html", cookie)[2] == b"ok"  # passed through to the viewer
-    assert get(port, f"/view?t={token}")[0] == 403  # the link lets in one browser only
-    assert get(port, "/vnc.html", "tars-view=guess")[0] == 403
-    assert view.status() == {"active": True, "opened": True}
+    cookie = headers["Set-Cookie"].split(";")[0]
+    assert get(port, "/", cookie)[2] == b"ok"  # passed through to the viewer
+    assert get(port, "/", "tars-view=guess")[0] == 403
+    assert view.status()["opened"]
+
+
+def test_opening_the_link_again_takes_over_from_the_last_browser(gate):
+    port, view, _ = gate
+    token = view.start()
+    first = get(port, f"/view?t={token}")[1]["Set-Cookie"].split(";")[0]
+    held, status, _, _ = request(port, "/", first)
+    assert status == 200
+    second = get(port, f"/view?t={token}")[1]["Set-Cookie"].split(";")[0]  # another browser on the phone
+    assert closed(held)  # the first one's connection is dropped
+    assert get(port, "/", first)[0] == 403 and get(port, "/", second)[2] == b"ok"
+    assert view.status()["opens"] == 2
 
 
 def test_a_hand_over_ends_when_told_or_at_its_time(gate):
-    port, view, now, launched = gate
+    port, view, now = gate
     view.start()
-    secret = view.admit(view.token)
+    held, _, _, _ = request(port, "/", f"tars-view={view.admit(view.token)}")
     view.end()
-    assert get(port, "/vnc.html", f"tars-view={secret}")[0] == 404
-    assert all(p.stopped for p in launched if isinstance(p, FakeProcess))
+    assert closed(held)
+    assert get(port, "/", "tars-view=x")[0] == 404
     view.start()
     secret = view.admit(view.token)
     now[0] += control.VIEW_S + 1
-    assert get(port, "/vnc.html", f"tars-view={secret}")[0] == 404
-    assert view.status() == {"active": False, "opened": False}
-
-
-def test_the_vnc_server_listens_on_the_sprites_localhost_only():
-    assert "-localhost" in control.vnc_command()
-    assert all(a.startswith("127.0.0.1:") for a in control.viewer_command()[-2:])
+    assert get(port, "/", f"tars-view={secret}")[0] == 404
+    assert not view.status()["active"]
 
 
 class FakeScreen:
     def __init__(self, fails=False):
         self.fails, self.closed = fails, False
 
-    def open(self, clip=""):
-        self.clip = clip
+    def open(self):
         if self.fails:
             raise OSError("no link")
         return "https://s.example/view?t=abc", 15
 
     def opened(self):
         return True
+
+    def status(self):
+        return {"opened": True, "screen": [585, 1266]}
 
     def close(self):
         self.closed = True
@@ -367,10 +368,14 @@ def test_handing_over_asks_the_person_and_always_ends_the_hand_over(monkeypatch)
 
     laid_out = []
 
+    class Phone:
+        def fit(self, width, height):
+            laid_out.append(("fit", width, height))
+
     @contextmanager
     def as_phone(page):
         laid_out.append("phone")
-        yield "390x780+0+87"
+        yield Phone()
         laid_out.append("back")
 
     monkeypatch.setattr(sprite, "as_phone", as_phone)
@@ -384,8 +389,8 @@ def test_handing_over_asks_the_person_and_always_ends_the_hand_over(monkeypatch)
     session = type("S", (), {"page": FakePage(), "screen": FakeScreen()})()
     said = hand_over(session, "solve the robot check", Person())
     assert asked == [("wolt.com", "solve the robot check", "https://s.example/view?t=abc", 15, True)]
-    assert "carry on" in said and session.screen.closed and laid_out == ["phone", "back"]
-    assert session.screen.clip == "390x780+0+87"  # the view shows the page alone
+    assert "carry on" in said and session.screen.closed
+    assert laid_out == ["phone", "back"]
 
     session.screen = FakeScreen(fails=True)
     assert "call done" in hand_over(session, "solve the robot check", Person())
@@ -397,12 +402,3 @@ def test_with_no_screen_the_model_is_told_to_say_what_stopped_it():
     session = type("S", (), {"page": FakePage(), "screen": None})()
     did = Tools(session, approver=None, hand_over=lambda s, r: "never").call("hand_over", {"reason": "captcha"})
     assert did.trouble and "say exactly what" in did.said
-
-
-def test_a_hand_over_shows_only_the_part_of_the_screen_its_given_and_nothing_odd():
-    assert control.vnc_command("390x780+0+87")[-2:] == ["-clip", "390x780+0+87"]
-    assert "-clip" not in control.vnc_command()
-    view = control.View(launch=lambda command: FakeProcess())
-    with pytest.raises(ValueError):
-        view.start("390x780+0+87; rm -rf /")
-    assert not view.active()
