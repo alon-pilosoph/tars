@@ -90,7 +90,9 @@ class Host:
         raise RuntimeError("Chrome didn't start")
 
     def close(self) -> None:
-        """Chrome on Linux saves its profile and quits on SIGTERM, as on being closed."""
+        """Stops Chrome if it's still running. The Telegram service closes it first through its debugging port, as a
+        person closes it, which is what saves the cookies it was given; SIGTERM here loses the newest of them, so
+        it's for a Chrome that didn't go."""
         if self.process is None:
             return
         if self.process.poll() is None:

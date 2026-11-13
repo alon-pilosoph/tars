@@ -29,6 +29,7 @@ from pathlib import Path
 
 from ..config import SPRITE_NAME
 from .chrome import PROFILE
+from .chrome import close as close_chrome
 from .way_out import WayOut
 
 FOLDER = PROFILE.parent  # beside the vault, in the folder only TARS's user can read (vault.private_folder)
@@ -116,6 +117,13 @@ def sprite_chrome(
         try:
             yield f"http://127.0.0.1:{chrome}"
         finally:
+            # Closed as a person closes it, through its own debugging port: Chrome then saves the cookies it was
+            # given this errand (a sign-in). Stopped with a signal instead, it loses the newest ones. The control
+            # service's close is for a Chrome that didn't go.
+            try:
+                close_chrome(chrome)
+            except OSError:
+                pass
             try:
                 control.close()
             except OSError:

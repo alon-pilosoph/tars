@@ -8,6 +8,7 @@ import subprocess
 import threading
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from http.server import HTTPServer
 from pathlib import Path
 
@@ -203,3 +204,25 @@ def test_check_says_how_the_sprite_is():
 
     failed = sprite_browser(cfg, "dry runs", reach=unreachable)
     assert failed.status == FAIL and "setup.sh tars-browser" in failed.fix
+
+
+def test_chrome_is_closed_as_a_person_closes_it_before_the_control_service_stops_it(keys, monkeypatch):
+    """Through its debugging port first, which saves the cookies an errand was given; a signal loses the newest."""
+    said = []
+
+    class FakeControl:
+        def open(self, profile):
+            said.append(("open", profile))
+
+        def close(self):
+            said.append(("control close",))
+
+    @contextmanager
+    def fake_link(sprite_name, home, run):
+        yield FakeControl(), 41000
+
+    monkeypatch.setattr(sprite, "link", fake_link)
+    monkeypatch.setattr(sprite, "close_chrome", lambda port: said.append(("chrome close", port)))
+    with sprite.sprite_chrome("tars-browser", Path("/x/profile-0a1b2c3d4e5f")) as address:
+        assert address == "http://127.0.0.1:41000"
+    assert said == [("open", "profile-0a1b2c3d4e5f"), ("chrome close", 41000), ("control close",)]

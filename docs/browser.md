@@ -242,7 +242,13 @@ the Telegram service still runs the errand, the agent and the model calls, asks 
 - **The link's key does three things only:** reach Chrome's port, reach the control service, and offer the way out.
   No command, no file transfer, no other forward.
 - **The profiles are on the Sprite** (`~/profiles`, one per person, as on the Pi), cookies and all; they survive its
-  sleeping. The vault isn't: logins are typed through the link from here.
+  sleeping. The vault isn't: logins are typed through the link from here. Chrome is closed through its debugging
+  port at the end of each errand, as a person closes it: stopped with a signal instead, it loses the cookies it was
+  given last, a sign-in among them.
+- **A new profile has to be signed in to.** A fresh browser on a data centre's machine signing in by itself is
+  what sites challenge: Wolt answered TARS's sign-in there with hCaptcha, which nobody can solve on the Sprite.
+  A session signed in elsewhere carries over, though: Wolt's cookies copied from a signed-in desktop profile into
+  the Sprite's worked, across restarts, and an errand on the Sprite then read the order history.
 
 Setting it up, from the machine that runs the Telegram service:
 
@@ -308,5 +314,7 @@ uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off
   and the checkout is a picture worth seeing.
 - **Errands at once.** One runs at a time: there's one browser. A browser per person could run theirs side by side.
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.
-- **Signing in by hand on the Sprite.** `signin` opens a window on this machine; for the Sprite there's no view of
-  its screen yet (a VNC server on its localhost, through the same link, is the plan).
+- **Signing in for the Sprite.** A person signs in once where they are, and TARS carries the session over: shown
+  by hand for Wolt (cookies from a desktop profile, read and set through Chrome's debugging port), not yet a
+  command. And for a challenge in the middle of an errand, a view of the Sprite's screen, opened from a link in the
+  chat.
