@@ -89,6 +89,9 @@ uv run voice-assistant                 # say "hey TARS", then ask something
 uv run voice-assistant --web           # in a second terminal: the web UI at http://127.0.0.1:8080
 ```
 
+No microphone or speaker? TARS also runs chat-only, on Telegram and the web UI, from a Docker image or with
+`uv sync` and no extras: [without a microphone](docs/deployment.md#without-a-microphone).
+
 Also `--ptt` (press Enter instead of the wake word), `--text` (type, hear answers) and `--list-devices`. On a Pi,
 `deploy/install-pi.sh` does it all ([at home](docs/deployment.md)). Keep the web UI on your network, and turn on its
 passkey sign-in ([signing in](docs/web-ui.md#signing-in)).

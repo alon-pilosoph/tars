@@ -1,0 +1,8 @@
+# deploy/docker/Dockerfile's build context, the repository: the code, its lock and config.toml, nothing of this machine's.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!config.toml
+!src/
+src/**/__pycache__

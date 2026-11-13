@@ -508,6 +508,8 @@ an evening, then keep it updated without SSH.
 agent can follow over SSH, checking each step with `--check`. Every paid service is optional, and the household's own
 devices are a plugin (`examples/my_house`). What's missing for anyone else: an image to flash, a setup that doesn't
 assume a terminal, updates (step 4), sign-in for the web UI (step 2), and the keys, which each home brings itself.
+A home without a microphone already runs: chat-only, on Telegram and the web UI, from a Docker image or `uv sync`
+with no extras ([without a microphone](deployment.md#without-a-microphone)).
 
 **Plan:**
 

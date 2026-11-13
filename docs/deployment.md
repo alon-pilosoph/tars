@@ -73,23 +73,46 @@ time; if TARS hears nothing, check System Settings → Privacy & Security → Mi
 
 ## Without a microphone
 
-TARS can run with no microphone or speaker at all, on Telegram and the web UI only:
-
-```toml
-[audio]
-enabled = false
-```
-
-Run `voice-assistant --telegram` and `voice-assistant --web` (the voice assistant itself refuses to start, saying
-so). `--check` skips the audio checks with one line, the Status page doesn't expect the voice assistant, the web UI
-has no pages about hearing, and a reminder due aloud goes to its person's Telegram chat
-([reminders](reminders.md#on-telegram)). Settings that are for a microphone or speaker (`[audio] echo_cancel`,
-`[home] own_speaker`, `commands_on_pi`, `remote`) are refused with it off.
+TARS can run with no microphone or speaker at all, on Telegram and the web UI only: on a small server, a laptop or
+any machine with Docker. `[audio] enabled = false` says so. Then the voice assistant refuses to start (saying so),
+`--check` skips the audio checks with one line, the Status page doesn't expect the voice assistant, the web UI has no
+pages about hearing, and a reminder due aloud goes to its person's Telegram chat ([reminders](reminders.md#on-telegram)).
+Settings that are for a microphone or speaker (`[audio] echo_cancel`, `[home] own_speaker`, `commands_on_pi`,
+`remote`) are refused with it off.
 
 It needs none of the voice's packages: `uv sync --frozen` without extras installs TARS without them (the optional
 extra `voice`: the sound devices, which need PortAudio, the wake word and its check, and the models that hear), on a
 machine with no sound card. A command that does need them (`voice-assistant`, `--mic-test`, `--list-devices`,
 `--enroll`, `--text`) says so and how to get them.
+
+### With Docker
+
+[`deploy/docker/`](../deploy/docker/) has an image of chat-only TARS and a `compose.yaml` that runs its Telegram and
+web UI processes over one folder. From nothing:
+
+1. **A bot.** On Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, pick a name and a username
+   ending in `bot`, and keep the token.
+2. **A model key.** An OpenAI API key: it answers, and writes down voice messages.
+3. **Your chat id.** Open the bot and send it anything, then open `https://api.telegram.org/bot<token>/getUpdates` in
+   a browser: it's under `message.chat.id`.
+4. **Four files' worth**, next to `deploy/docker/compose.yaml` (or in a folder of your own with a copy of it):
+
+   ```bash
+   cd deploy/docker
+   printf 'OPENAI_API_KEY=sk-...\nTELEGRAM_BOT_TOKEN=123456:ABC...\n' > .env
+   printf '[audio]\nenabled = false\n\n[telegram]\nenabled = true\npeople = { Alon = 123456789 }\n' > config.local.toml
+   mkdir -m 700 voice_data      # TARS's folder: the container runs as uid 1000, so on Linux: sudo chown 1000 voice_data
+   ```
+
+5. **Start it.** `docker compose up -d --build`, then `docker compose run --rm telegram --check`, which should pass
+   with no audio warnings.
+6. **Say hello.** Send the bot "hi": TARS answers. The web UI is at <http://127.0.0.1:8080> on that machine.
+
+`docker compose logs -f telegram` follows it. The image runs as a user of its own with a read-only filesystem, no
+capabilities and nothing written outside `voice_data/`, and the web UI listens on this machine only: to reach it from
+elsewhere, put it behind a proxy with HTTPS and turn on [sign-in](web-ui.md#signing-in). TARS's own updater
+(`[updates]`) is for a git checkout on a Pi and stays off: a container is updated by building or pulling a new image
+(`git pull && docker compose up -d --build`). Not yet measured: how long these steps take on a clean machine.
 
 ## Install on the Pi
 
