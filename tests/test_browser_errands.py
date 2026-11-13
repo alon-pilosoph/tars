@@ -269,6 +269,43 @@ def test_cancel_says_nothing_was_ordered():
     assert answers == [False] and "Cancelled: nothing done." in bot.said()
 
 
+def test_a_hand_over_waits_for_done_from_the_persons_own_chat_and_says_when_the_screen_is_opened(monkeypatch):
+    monkeypatch.setattr("voice_assistant.telegram_errands.LOOK_OPENED_S", 0.02)
+    bot = ButtonBot()
+    t = tars(bot, [ScriptedBrain()])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
+    opened, answers = [False], []
+    link = "https://s.example/view?t=abc"
+    asking = threading.Thread(target=lambda: answers.append(chats.take_over(
+        "Alon", "wolt.com", "solve the robot check", link, 15, lambda: opened[0])))  # fmt: skip
+    asking.start()
+    until(lambda: bot.buttons)
+    chat_id, text, buttons = bot.buttons[0]
+    assert chat_id == ALON and "https://s.example/view?t=abc" in text and "robot check" in text
+    opened[0] = True
+    until(lambda: any("screen is open" in m for m in bot.said()))
+    nonce = buttons[0][1].split(":")[1]
+    t.handle(tap(f"done:{nonce}", from_id=999))  # someone else's tap
+    assert asking.is_alive()
+    t.handle(tap(f"done:{nonce}"))
+    asking.join(2)
+    assert answers == [True] and bot.dropped == [1]
+
+
+def test_giving_up_a_hand_over_stops_there():
+    bot = ButtonBot()
+    t = tars(bot, [ScriptedBrain()])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
+    answers = []
+    asking = threading.Thread(target=lambda: answers.append(chats.take_over(
+        "Alon", "wolt.com", "sign in with Google", "https://s.example/view?t=abc", 15, lambda: False)))  # fmt: skip
+    asking.start()
+    until(lambda: bot.buttons)
+    t.handle(tap(bot.buttons[0][2][1][1]))
+    asking.join(2)
+    assert answers == [False] and "Stopped there." in bot.said()
+
+
 def test_a_code_sent_back_goes_to_the_sign_in_and_not_to_the_brain():
     bot, brain = ButtonBot(), ScriptedBrain(["Hi!"])
     t = tars(bot, [brain])

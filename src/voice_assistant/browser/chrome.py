@@ -46,13 +46,14 @@ def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[s
     """TARS's Chrome with Playwright attached, as a Session (session.py), for as long as it's needed, then shut:
     this machine's, or on `sprite` with the same profile's name ([browser] sprite, sprite.py). `home`: the house's
     own names, never opened (homenet.py)."""
-    if sprite:
-        from .sprite import sprite_chrome
+    if not sprite:
+        with own_chrome(profile, port) as address, attached(address, home) as session:
+            yield session
+        return
+    from .sprite import sprite_chrome
 
-        chrome = sprite_chrome(sprite, profile, home)
-    else:
-        chrome = own_chrome(profile, port)
-    with chrome as address, attached(address, home) as session:
+    with sprite_chrome(sprite, profile, home) as (address, screen), attached(address, home) as session:
+        session.screen = screen
         yield session
 
 

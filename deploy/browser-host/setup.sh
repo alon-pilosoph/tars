@@ -11,6 +11,10 @@
 # nothing else, and the control service (control.py), each a Sprite service. Its network policy denies everything,
 # lifted only while this script installs packages. Here, in ~/.cache/tars-browser beside the vault: the link's key,
 # the Sprite's host key, and the control service's key.
+#
+# The Sprite's address (https://<sprite>-<org>.sprites.app) is made public, for a hand-over: the person opens the
+# browser's screen from their phone, which isn't signed in to Fly. Behind it is only control.py's gate, which answers
+# nothing unless a hand-over is on, and then lets in the one browser with its token (docs/browser.md#handing-over).
 set -euo pipefail
 
 SPRITE="${1:-}"
@@ -23,6 +27,7 @@ FOLDER="$HOME/.cache/tars-browser"
 LINK_KEY="$FOLDER/sprite-link"
 KNOWN_HOSTS="$FOLDER/sprite-known-hosts"
 CONTROL_KEY="$FOLDER/sprite-control-key"
+ADDRESS="$FOLDER/sprite-address"
 CLI="$(command -v sprite || echo "$HOME/.local/bin/sprite")"
 [[ -x "$CLI" ]] || { echo "no sprite command: curl -fsSL https://sprites.dev/install.sh | sh; sprite login" >&2; exit 1; }
 
@@ -49,10 +54,12 @@ echo "== packages (the network policy lifted until they're in)"
 trap 'policy "$DENY_ALL" || echo "COULD NOT RESTORE THE DENY-ALL POLICY ON $SPRITE: set it by hand" >&2' EXIT
 policy '{"rules":[]}'
 on 'set -e
-if ! command -v google-chrome >/dev/null || ! command -v Xvfb >/dev/null || ! [ -x /usr/sbin/sshd ]; then
+if ! command -v google-chrome >/dev/null || ! command -v Xvfb >/dev/null || ! [ -x /usr/sbin/sshd ] \
+   || ! command -v x11vnc >/dev/null || ! command -v websockify >/dev/null || ! [ -d /usr/share/novnc ]; then
   curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
   sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/chrome.deb xvfb openssh-server >/dev/null
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /tmp/chrome.deb xvfb openssh-server \
+    x11vnc novnc python3-websockify >/dev/null
   rm -f /tmp/chrome.deb
 fi
 google-chrome --version'
@@ -100,11 +107,11 @@ sudo usermod -p "*" sprite
 sudo mkdir -p /run/sshd'
 
 echo "== services"
-on 'for s in control chrome sshd xvfb; do sprite-env services delete "$s" >/dev/null 2>&1 || true; done
+on 'for s in control chrome sshd xvfb vnc view; do sprite-env services delete "$s" >/dev/null 2>&1 || true; done
 pkill -x Xvfb || true; rm -f /tmp/.X99-lock
 sprite-env services create xvfb --cmd /usr/bin/Xvfb --args :99,-screen,0,1280x1000x24,-nolisten,tcp --no-stream
 sprite-env services create sshd --cmd /usr/sbin/sshd --args -D,-e,-f,/home/sprite/ssh/sshd_config --no-stream
-sprite-env services create control --needs xvfb --cmd /usr/bin/python3 \
+sprite-env services create control --needs xvfb --http-port 8080 --cmd /usr/bin/python3 \
   --args -I,/home/sprite/browser-host/control.py --no-stream
 sleep 2
 sprite-env services list | python3 -c "import json,sys; [print(\" \", s[\"name\"], s[\"state\"][\"status\"]) for s in json.load(sys.stdin)]"'
@@ -112,6 +119,12 @@ sprite-env services list | python3 -c "import json,sys; [print(\" \", s[\"name\"
 echo "== the Sprite's host key, recorded here"
 printf '%s %s\n' "$SPRITE" "$(on 'cut -d" " -f1,2 ~/ssh/host_ed25519.pub')" > "$KNOWN_HOSTS"
 chmod 600 "$KNOWN_HOSTS"
+
+echo "== its address, public, with nothing behind it but the gate"
+"$CLI" config update -s "$SPRITE" --url-auth public >/dev/null
+"$CLI" info -s "$SPRITE" | sed -n 's/^URL: *//p' > "$ADDRESS"
+chmod 600 "$ADDRESS"
+cat "$ADDRESS"
 
 echo "== the network policy"
 "$CLI" api -s "$SPRITE" /policy/network -- -sS 2>/dev/null

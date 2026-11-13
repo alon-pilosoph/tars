@@ -50,6 +50,11 @@ class Terminal:
             return answer.code
         return input(f"\n{site} has sent {self.name} a sign-in code. The code: ").strip() or None
 
+    def take_over(self, site: str, reason: str, link: str, minutes: int, opened) -> bool:
+        print(f"\nOn {site}, only a person can do this: {reason}. Open the browser's screen (the link works once, for "
+              f"{minutes} minutes):\n{link}")  # fmt: skip
+        return input("Done? [y/N] ").strip().lower() in ("y", "yes")
+
 
 def vault_command(args: argparse.Namespace) -> None:
     vault = Vault()

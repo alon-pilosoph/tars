@@ -4,6 +4,7 @@ Chrome, and ssh is replaced by a process that forwards nothing."""
 
 import importlib.util
 import json
+import socket
 import subprocess
 import threading
 import urllib.error
@@ -223,6 +224,165 @@ def test_chrome_is_closed_as_a_person_closes_it_before_the_control_service_stops
 
     monkeypatch.setattr(sprite, "link", fake_link)
     monkeypatch.setattr(sprite, "close_chrome", lambda port: said.append(("chrome close", port)))
-    with sprite.sprite_chrome("tars-browser", Path("/x/profile-0a1b2c3d4e5f")) as address:
-        assert address == "http://127.0.0.1:41000"
+    monkeypatch.setattr(sprite, "ADDRESS", Path("/nowhere/sprite-address"))
+    with sprite.sprite_chrome("tars-browser", Path("/x/profile-0a1b2c3d4e5f")) as (address, screen):
+        assert address == "http://127.0.0.1:41000" and screen is None
     assert said == [("open", "profile-0a1b2c3d4e5f"), ("chrome close", 41000), ("control close",)]
+
+
+# The hand-over: the gate on the Sprite's public address, and TARS's side
+
+
+class FakeProcess:
+    def __init__(self):
+        self.stopped = False
+
+    def poll(self):
+        return 0 if self.stopped else None
+
+    def terminate(self):
+        self.stopped = True
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        self.stopped = True
+
+
+@pytest.fixture
+def gate(monkeypatch):
+    """The gate on a free port, with an echoing server where the viewer would be; the view's clock is the test's."""
+    viewer = socket.create_server(("127.0.0.1", 0))
+
+    def serve():
+        while True:
+            try:
+                connection, _ = viewer.accept()
+            except OSError:
+                return
+            with connection:
+                head = connection.recv(65536)
+                connection.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok" if head else b""
+                )
+
+    threading.Thread(target=serve, daemon=True).start()
+    now, launched = [0.0], []
+
+    def launch(command):
+        launched.append(command[0])
+        made = FakeProcess()
+        launched.append(made)
+        return made
+
+    view = control.View(launch=launch, clock=lambda: now[0])
+    server = control.Gate(view, port=0, viewer_port=viewer.getsockname()[1])
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield server.server_address[1], view, now, launched
+    server.shutdown()
+    server.server_close()
+    viewer.close()
+
+
+def get(port: int, path: str, cookie: str = "") -> tuple[int, dict, bytes]:
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+        extra = f"Cookie: {cookie}\r\n" if cookie else ""
+        s.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\n{extra}\r\n".encode())
+        got = b""
+        while chunk := s.recv(65536):
+            got += chunk
+    head, _, body = got.partition(b"\r\n\r\n")
+    lines = head.decode().split("\r\n")
+    headers = dict(line.split(": ", 1) for line in lines[1:])
+    return int(lines[0].split()[1]), headers, body
+
+
+def test_the_gate_answers_nothing_without_a_hand_over(gate):
+    port, _, _, launched = gate
+    assert get(port, "/")[0] == 404
+    assert get(port, "/view?t=anything")[0] == 404
+    assert get(port, "/vnc.html")[0] == 404
+    assert launched == []  # no VNC server or viewer running
+
+
+def test_the_first_browser_with_the_token_gets_in_and_no_other(gate):
+    port, view, _, launched = gate
+    token = view.start()
+    assert [x for x in launched if isinstance(x, str)] == ["/usr/bin/x11vnc", "/usr/bin/websockify"]
+    assert get(port, "/vnc.html")[0] == 403  # no cookie
+    assert get(port, "/view?t=wrong")[0] == 403
+    status, headers, _ = get(port, f"/view?t={token}")
+    assert status == 302 and headers["Location"].startswith("/vnc.html")
+    cookie = headers["Set-Cookie"].split(";")[0]
+    assert "Secure" in headers["Set-Cookie"] and "HttpOnly" in headers["Set-Cookie"]
+    assert get(port, "/vnc.html", cookie)[2] == b"ok"  # passed through to the viewer
+    assert get(port, f"/view?t={token}")[0] == 403  # the link lets in one browser only
+    assert get(port, "/vnc.html", "tars-view=guess")[0] == 403
+    assert view.status() == {"active": True, "opened": True}
+
+
+def test_a_hand_over_ends_when_told_or_at_its_time(gate):
+    port, view, now, launched = gate
+    view.start()
+    secret = view.admit(view.token)
+    view.end()
+    assert get(port, "/vnc.html", f"tars-view={secret}")[0] == 404
+    assert all(p.stopped for p in launched if isinstance(p, FakeProcess))
+    view.start()
+    secret = view.admit(view.token)
+    now[0] += control.VIEW_S + 1
+    assert get(port, "/vnc.html", f"tars-view={secret}")[0] == 404
+    assert view.status() == {"active": False, "opened": False}
+
+
+def test_the_vnc_server_listens_on_the_sprites_localhost_only():
+    assert "-localhost" in control.vnc_command()
+    assert all(a.startswith("127.0.0.1:") for a in control.viewer_command()[-2:])
+
+
+class FakeScreen:
+    def __init__(self, fails=False):
+        self.fails, self.closed = fails, False
+
+    def open(self):
+        if self.fails:
+            raise OSError("no link")
+        return "https://s.example/view?t=abc", 15
+
+    def opened(self):
+        return True
+
+    def close(self):
+        self.closed = True
+
+
+class FakePage:
+    url = "https://wolt.com/en/login"
+
+
+def test_handing_over_asks_the_person_and_always_ends_the_hand_over():
+    from voice_assistant.browser.run import hand_over
+
+    asked = []
+
+    class Person:
+        def take_over(self, site, reason, link, minutes, opened):
+            asked.append((site, reason, link, minutes, opened()))
+            return True
+
+    session = type("S", (), {"page": FakePage(), "screen": FakeScreen()})()
+    said = hand_over(session, "solve the robot check", Person())
+    assert asked == [("wolt.com", "solve the robot check", "https://s.example/view?t=abc", 15, True)]
+    assert "carry on" in said and session.screen.closed
+
+    session.screen = FakeScreen(fails=True)
+    assert "call done" in hand_over(session, "solve the robot check", Person())
+
+
+def test_with_no_screen_the_model_is_told_to_say_what_stopped_it():
+    from voice_assistant.browser.tools import Tools
+
+    session = type("S", (), {"page": FakePage(), "screen": None})()
+    did = Tools(session, approver=None, hand_over=lambda s, r: "never").call("hand_over", {"reason": "captcha"})
+    assert did.trouble and "say exactly what" in did.said

@@ -170,6 +170,8 @@ class Chats(Protocol):
 
     def code(self, person: str, site: str, answer: Answer) -> str | None: ...
 
+    def take_over(self, person: str, site: str, reason: str, link: str, minutes: int, opened) -> bool: ...
+
 
 @dataclass
 class ByChat:
@@ -189,6 +191,9 @@ class ByChat:
 
     def code(self, site: str, answer: Answer) -> str | None:
         return self.chats.code(self.name, site, answer)
+
+    def take_over(self, site: str, reason: str, link: str, minutes: int, opened) -> bool:
+        return self.chats.take_over(self.name, site, reason, link, minutes, opened)
 
 
 def profile_for(person: str, first: str) -> Path:

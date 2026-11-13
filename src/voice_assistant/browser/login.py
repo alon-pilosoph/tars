@@ -134,6 +134,11 @@ class Person(Protocol):
         neither came."""
         ...
 
+    def take_over(self, site: str, reason: str, link: str, minutes: int, opened: Callable[[], bool]) -> bool:
+        """Has them take over the browser's screen at `link` (good for `minutes`) to do `reason` on `site`: True once
+        they say they're done, False if they give up or don't answer. `opened()`: whether the link has been opened."""
+        ...
+
 
 class Unattended:
     """A person nobody can ask (an eval, a run with no one at it): the vault's logins and mail are used, and nothing
@@ -147,6 +152,9 @@ class Unattended:
 
     def code(self, site: str, answer: Answer) -> str | None:
         return answer.wait(MAIL_WAIT_S) if answer.mail else None
+
+    def take_over(self, site: str, reason: str, link: str, minutes: int, opened: Callable[[], bool]) -> bool:
+        return False
 
 
 class WrongSite(Exception):

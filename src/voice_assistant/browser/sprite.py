@@ -36,6 +36,7 @@ FOLDER = PROFILE.parent  # beside the vault, in the folder only TARS's user can 
 LINK_KEY = FOLDER / "sprite-link"  # the SSH key the link signs in with; its .pub is on the Sprite
 KNOWN_HOSTS = FOLDER / "sprite-known-hosts"  # the Sprite's host key, recorded by setup.sh: a different one is refused
 CONTROL_KEY = FOLDER / "sprite-control-key"  # what the control service asks for besides the link
+ADDRESS = FOLDER / "sprite-address"  # the Sprite's public address, for a hand-over's link (setup.sh)
 SSH_PORT, CHROME_PORT, CONTROL_PORT, WAY_OUT_PORT = 2222, 9333, 9334, 1080  # all on the Sprite's localhost
 UP_S = 60.0  # how long the Sprite is given to wake and its control service to answer
 OPEN_S = 30.0  # how long Chrome is given to start there
@@ -104,18 +105,52 @@ class Control:
     def close(self) -> None:
         self.ask("/close", {}, timeout=15.0)
 
+    def view(self) -> dict:
+        return self.ask("/view", {})
+
+    def view_status(self) -> dict:
+        return self.ask("/view", timeout=5.0)
+
+    def view_end(self) -> None:
+        self.ask("/view/end", {}, timeout=15.0)
+
+
+class Screen:
+    """A person taking over the Sprite's Chrome from their phone (a hand-over, docs/browser.md#handing-over): a
+    one-time link to its screen, whether it has been opened, and the end of it."""
+
+    def __init__(self, control: Control, address: str):
+        self.control, self.address = control, address.rstrip("/")
+
+    def open(self) -> tuple[str, int]:
+        """The link, which lets in the first browser to open it, and how many minutes it lasts."""
+        given = self.control.view()
+        return f"{self.address}/view?t={given['token']}", int(given["minutes"])
+
+    def opened(self) -> bool:
+        try:
+            return bool(self.control.view_status().get("opened"))
+        except OSError:
+            return False
+
+    def close(self) -> None:
+        try:
+            self.control.view_end()
+        except OSError:
+            pass  # the link went: the Sprite ends it when it sleeps, or at its time
+
 
 @contextmanager
 def sprite_chrome(
     sprite: str, profile: Path, home: frozenset[str] = frozenset(), run=subprocess.Popen
-) -> Iterator[str]:
+) -> Iterator[tuple[str, Screen | None]]:
     """TARS's Chrome on `sprite` with `profile`'s name, for as long as it's needed, then shut and the link closed;
-    yields the address Playwright attaches to, as chrome.own_chrome does. `home`: the house's own names, which the
-    way out refuses besides any home network's."""
+    yields the address Playwright attaches to, as chrome.own_chrome does, and the Screen a person can take over, if
+    any. `home`: the house's own names, which the way out refuses besides any home network's."""
     with link(sprite, home, run) as (control, chrome):
         control.open(profile.name)
         try:
-            yield f"http://127.0.0.1:{chrome}"
+            yield f"http://127.0.0.1:{chrome}", screen_for(control)
         finally:
             # Closed as a person closes it, through its own debugging port: Chrome then saves the cookies it was
             # given this errand (a sign-in). Stopped with a signal instead, it loses the newest ones. The control
@@ -128,6 +163,12 @@ def sprite_chrome(
                 control.close()
             except OSError:
                 pass  # the link went; the Sprite's Chrome goes when it sleeps
+
+
+def screen_for(control: Control) -> Screen | None:
+    """The hand-over for this Sprite, if its address was recorded (setup.sh): none otherwise."""
+    address = ADDRESS.read_text().strip() if ADDRESS.exists() else ""
+    return Screen(control, address) if address.startswith("https://") else None
 
 
 def reachable(sprite: str, run=subprocess.Popen) -> dict:
