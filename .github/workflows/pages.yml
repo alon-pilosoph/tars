@@ -23,7 +23,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
-    runs-on: ubuntu-latest
+    # 24.04, not ubuntu-latest: 26.04's PortAudio needs a PulseAudio server, so importing sounddevice fails in CI
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.tip.outputs.sha }}
     steps:
@@ -46,7 +47,7 @@ jobs:
   deploy:
     needs: newest
     if: needs.newest.outputs.sha != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
