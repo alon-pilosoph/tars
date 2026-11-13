@@ -425,26 +425,36 @@ they're typed. What else they could reach is what this section is about.
     Without a hand-over on, it answers 404 to everything and passes nothing on. During one, it lets in the browser
     that brings that hand-over's token (32 random bytes, sent only in the person's chat), one browser at a time,
     through a cookie made for that browser (`Secure`, `HttpOnly`, `SameSite=Strict`): the newest to open the link
-    takes over, and the last one's connections are closed. The screen (KasmVNC, without a password of its own:
-    the gate is the lock) listens on the Sprite's localhost only, with no VNC port. When the hand-over ends (Done,
-    Give up, 15 minutes, or the errand's end), the gate closes every connection. TARS says in the chat each time
-    the screen is opened.
+    takes over, and the last one's connections are closed. Every request is checked: each goes to Guacamole on a
+    connection of its own (`Connection: close`; the screen's WebSocket is its own connection anyway), since Fly's
+    proxy reuses a connection to the Sprite for whoever comes next, and a check of a connection's first request
+    alone let a request without a cookie through on one the person had opened (found on the real Sprite, fixed,
+    and tested). Behind the gate, Guacamole asks for its own login (user `tars`, a random password made by
+    `setup.sh`, sent with each link). Guacamole (Tomcat, with no shutdown port and none of its sample apps), guacd
+    and the VNC server (x11vnc, without a password: the gate and Guacamole are the locks) listen on the Sprite's
+    localhost only. When the hand-over ends (Done, Give up, 15 minutes, or the errand's end), the gate closes every
+    connection. TARS says in the chat each time the screen is opened.
 - **Tests:** `tests/test_browser_way_out.py` (each refusal, then real SOCKS5 conversations: home refused on the wire,
   the checked address is the one connected to); `tests/test_browser_sprite.py` (the control service's key and profile
   names, the link forwarding three ports and running nothing, a Sprite's name that would reach the shell). By hand on
   a real Sprite: a command, sftp and an unlisted forward refused; with the policy on, the Sprite's own requests fail by
   name and by address, while the browser loads pages from the home's address and is refused the router, the Sprite's
   localhost and its own debugging port. The gate: `tests/test_browser_sprite.py` (nothing without a hand-over, the
-  token's browser in and no guess, a second opening taking over and closing the first, the end of one); by hand on
-  the Sprite: the public address answering 404 to everything with no hand-over, and a phone opening the link.
+  token's browser in and no guess, a request riding on an allowed connection never reaching Guacamole, a second
+  opening taking over and closing the first, the end of one). Over the real public address: 404 to everything with
+  no hand-over; during one, the link's browser in, Guacamole's login with its password and not with a wrong one,
+  a guessed cookie and none refused five times out of five, a second browser taking over, 404 after; a phone-sized
+  browser logging in and seeing the screen.
 - **Open:** whoever takes the Sprite over can browse the public web from the home's address on ports 80 and 443 while
   a link is open, as the browser itself can. The Fly token on this machine can reach the Sprite (run commands on it,
   read the profiles): it's guarded like the vault's key, in TARS's user's own folder. Fly, which runs it, is trusted
   with what the browser sees. During a hand-over, whoever holds the link (a forwarded message, the person's unlocked
   phone) can work the browser as the person, orders included, until it ends; the chat says when it's opened. Anyone
   can wake the Sprite for a moment by asking its address, which costs seconds of its time. The gate is on the
-  internet all the time, KasmVNC's viewer through it during a hand-over: a flaw in the gate, or in KasmVNC for
-  whoever holds the link, would be reachable.
+  internet all the time, Guacamole through it during a hand-over: a flaw in the gate, or in Guacamole or Tomcat for
+  whoever holds the link, would be reachable. Guacamole's password is the same for every hand-over until `setup.sh`
+  makes a new one (delete `sprite-viewer-password` first), and it's in every link's message. Guacamole and Tomcat are
+  pinned versions, updated by editing `install-viewer.sh` and running `setup.sh` again.
 
 ### A stolen key
 

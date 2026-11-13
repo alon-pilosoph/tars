@@ -276,13 +276,18 @@ needed; the person gets a link in their chat, with Done and Give up buttons; the
 live, in their phone's browser; on Done, the agent carries on from the page as they left it. A sign-in done this way
 stays in their profile on the Sprite, as any sign-in does.
 
-- **It looks like the site on their phone.** For the hand-over, Chrome takes a phone's user agent and is fitted to
-  the phone's screen: the Sprite's screen is [KasmVNC](https://github.com/kasmtech/KasmVNC)'s, whose web viewer
-  sizes it to the phone when it connects (and when it turns), and TARS then fills it with the page alone, Chrome's
-  bars just above the top edge. So the site serves its phone pages, full screen. Afterwards the window is put back
-  as it was.
-- **A tap is a click and a drag scrolls,** as with any remote screen; typing goes through the viewer's keyboard
-  button (the tab on the left edge).
+- **The screen is seen through [Apache Guacamole](https://guacamole.apache.org/),** the remote-desktop web client:
+  the link opens its login (user `tars`, the password sent with the link), and then the Sprite's screen. Its menu
+  (swipe in from the left edge) has the touch modes: Touchscreen for taps where the finger is, and Text input for
+  the phone's own keyboard.
+- **It looks like the site on a phone.** For the hand-over the Sprite's screen takes a phone's shape (585 by 1266),
+  and Chrome a phone's user agent, filling it with the page alone, its bars just above the top edge. So the site
+  serves its phone pages. Afterwards the screen and the window are put back. On a phone whose shape differs, the
+  view has bars at the sides.
+- **How it's built** ([`setup.sh`](../deploy/browser-host/setup.sh),
+  [`install-viewer.sh`](../deploy/browser-host/install-viewer.sh)): the display Chrome draws to is KasmVNC's
+  `Xvnc`; x11vnc shows it on the Sprite's localhost; Guacamole's `guacd` (built from source: Ubuntu has no package)
+  reads that, and its web app runs in Tomcat 9, on localhost too. Only the gate is reachable from outside.
 
 - **The Sprite's address is public** (`https://<sprite>-<org>.sprites.app`, set by `setup.sh`), since a phone isn't
   signed in to Fly. Behind it is only the control service's gate ([`control.py`](../deploy/browser-host/control.py)),
@@ -291,9 +296,10 @@ stays in their profile on the Sprite, as any sign-in does.
   gets a cookie of its own and is passed through to the screen. Opening it again, in another browser (Telegram's
   own opens first), takes over from the last one, whose connection is closed. TARS says in the chat when the screen
   is opened, so an opening that wasn't the person's shows.
-- **The screen is reachable only during a hand-over.** KasmVNC's viewer listens on the Sprite's localhost; the gate
-  passes nothing to it otherwise, and closes every connection when the hand-over ends: on Done or Give up, after 15
-  minutes, or when the errand ends.
+- **The screen is reachable only during a hand-over.** Guacamole listens on the Sprite's localhost; the gate passes
+  nothing to it otherwise, and closes every connection when the hand-over ends: on Done or Give up, after 15
+  minutes, or when the errand ends. Each request goes through on a connection of its own, since Fly's proxy reuses
+  its connections to the Sprite for whoever comes next.
 - **Whoever is at the screen is the person.** It's the browser itself, so nothing there is stopped by TARS's gate:
   an order they press is placed.
 
@@ -345,7 +351,11 @@ uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off
   and the checkout is a picture worth seeing.
 - **Errands at once.** One runs at a time: there's one browser. A browser per person could run theirs side by side.
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.
-- **Touch as on a phone.** A hand-over's taps are clicks and its drags scroll; real touch events, pinch, and the
-  phone's own keyboard would take a viewer of Chrome's own screencast instead of a remote screen.
+- **Touch as on a phone.** Guacamole shows a remote screen: a tap is a click. The hosted browsers' live views
+  (Browserbase, Browserless) stream Chrome's own screencast and send touch to the tab instead, which feels more like
+  the site on the phone; that's the way to it if Guacamole's isn't enough.
+- **The screen fitted to each phone.** A phone shaped unlike 585 by 1266 sees bars at the sides.
+- **No second login.** Guacamole's own password is sent with every link; the gate could sign the browser in to
+  Guacamole itself (its header authentication), so the link alone is enough.
 - **Handing over on the Pi.** The same screen, served from the Pi, would need a way for the phone to reach it from
   outside the home.

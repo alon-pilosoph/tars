@@ -133,7 +133,7 @@ sudo mkdir -p /run/sshd'
 echo "== services"
 # KasmVNC is the display, its viewer on localhost only, behind the control service's gate: no VNC port, no password
 # of its own (the gate is the lock), and no UDP (it would look its public address up, which the policy denies).
-on 'for s in control chrome sshd screen xvfb vnc view guacd tomcat; do sprite-env services delete "$s" >/dev/null 2>&1 || true; done
+on 'for s in control tomcat guacd vnc view chrome sshd screen xvfb; do sprite-env services delete "$s" >/dev/null 2>&1 || true; done
 pkill -x Xvfb || true; pkill -x Xvnc || true; rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 sprite-env services create screen --cmd /usr/bin/Xvnc --args \
   :99,-geometry,1280x1000,-depth,24,-interface,127.0.0.1,-websocketPort,6080,-rfbport,0,-SecurityTypes,None,-disableBasicAuth,-sslOnly,0,-httpd,/usr/share/kasmvnc/www,-AlwaysShared,-UseIPv6,0,-publicIP,127.0.0.1 \

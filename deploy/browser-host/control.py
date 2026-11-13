@@ -59,6 +59,7 @@ GATE_PORT = 8080  # the Sprite's public address is routed here (setup.sh: the co
 VIEWER_PORT = 8081  # Guacamole, in Tomcat, on localhost (setup.sh)
 VIEW_S = 15 * 60.0  # the longest a hand-over lasts
 COOKIE = "tars-view"
+HOP_BY_HOP = {b"connection", b"keep-alive", b"proxy-connection"}
 HEAD_MAX = 16384  # the most of a request's head the gate reads
 VIEWER_PAGE = "/guacamole/"
 PHONE_SCREEN, DESKTOP_SCREEN = "585x1266", "1280x1000"  # the screen during a hand-over, and otherwise
@@ -273,10 +274,23 @@ class _GateHandler(socketserver.BaseRequestHandler):
             return _plain(client, 404)
         try:
             with viewer:
-                viewer.sendall(head)
+                viewer.sendall(_one_request(head))
                 _pump(client, viewer)
         finally:
             view.let_go(client)
+
+
+def _one_request(head: bytes) -> bytes:
+    """`head` made to be the only request on its connection. Fly's proxy reuses its connections to the Sprite for
+    whoever comes next, and the gate checks a connection's first request only: so every request but the screen's
+    WebSocket (an upgrade, a connection of its own) goes on with Connection: close, which makes Tomcat answer it alone
+    and close, and tells Fly's proxy not to reuse the connection."""
+    headers, _, body = head.partition(b"\r\n\r\n")
+    lines = headers.split(b"\r\n")
+    if any(line.lower().replace(b" ", b"") == b"upgrade:websocket" for line in lines[1:]):
+        return head
+    kept = [line for line in lines[1:] if line.split(b":", 1)[0].strip().lower() not in HOP_BY_HOP]
+    return b"\r\n".join([lines[0], *kept, b"Connection: close"]) + b"\r\n\r\n" + body
 
 
 def _head(client: socket.socket) -> bytes:

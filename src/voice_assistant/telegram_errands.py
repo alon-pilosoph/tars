@@ -146,8 +146,8 @@ class TelegramErrands:
         self._taps[nonce] = waiting
         try:
             text = (f"On {site}, I need you for something only a person can do: {reason}.\n\nOpen my browser's "
-                    f"screen here and do it, then tap Done (the link lets in one phone, for {minutes} minutes):\n"
-                    f"{link}")  # fmt: skip
+                    f"screen here and do it, then tap Done (the link works for {minutes} minutes, in one browser at a "
+                    f"time):\n{link}")  # fmt: skip
             with chat.busy:
                 message = self.tars.bot.send_buttons(chat.chat_id, text, [("Done", f"done:{nonce}"),
                                                                           ("Give up", f"giveup:{nonce}")])  # fmt: skip

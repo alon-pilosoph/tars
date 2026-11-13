@@ -248,13 +248,19 @@ def gate():
             threading.Thread(target=answer, args=(connection,), daemon=True).start()
 
     def answer(connection):
+        """As Tomcat does: each request answered, and the connection closed after one that asks for it."""
         with connection:
-            while connection.recv(65536):
+            while got := connection.recv(65536):
+                seen.append(got)
                 connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                if b"connection: close" in got.lower():
+                    return
 
+    seen = []
     threading.Thread(target=serve, daemon=True).start()
     now = [0.0]
     view = control.View(clock=lambda: now[0], reshape=lambda size: None)
+    view.seen = seen  # what reached the viewer, for the tests
     server = control.Gate(view, port=0, viewer_port=viewer.getsockname()[1])
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield server.server_address[1], view, now
@@ -402,3 +408,36 @@ def test_with_no_screen_the_model_is_told_to_say_what_stopped_it():
     session = type("S", (), {"page": FakePage(), "screen": None})()
     did = Tools(session, approver=None, hand_over=lambda s, r: "never").call("hand_over", {"reason": "captcha"})
     assert did.trouble and "say exactly what" in did.said
+
+
+def test_a_request_riding_on_an_allowed_connection_never_reaches_the_viewer(gate):
+    """Fly's proxy reuses its connections to the Sprite for whoever comes next: a request with no cookie, sent on the
+    connection an allowed request opened, must not get through on it."""
+    port, view, _ = gate
+    secret = view.admit(view.start())
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+        s.sendall(f"GET /guacamole/ HTTP/1.1\r\nHost: x\r\nCookie: tars-view={secret}\r\nConnection: keep-alive\r\n\r\n"
+                  "GET /guacamole/api/session HTTP/1.1\r\nHost: x\r\n\r\n".encode())  # fmt: skip
+        s.settimeout(5)
+        got = b""
+        while chunk := s.recv(65536):
+            got += chunk
+    assert got.count(b"HTTP/1.1 200") == 1  # the first answered, then the connection closed
+    forwarded = b"".join(view.seen)
+    assert b"Connection: close" in forwarded and b"keep-alive" not in forwarded
+
+
+def test_the_screens_websocket_keeps_its_connection():
+    head = b"GET /guacamole/websocket-tunnel HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+    assert control._one_request(head) == head
+    plain = control._one_request(b"GET / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\nKeep-Alive: 5\r\n\r\n")
+    assert plain == b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+
+
+def test_a_hand_over_gives_the_screen_a_phones_shape_and_puts_it_back():
+    shapes = []
+    view = control.View(reshape=shapes.append)
+    view.start()
+    view.end()
+    view.end()  # nothing to put back the second time
+    assert shapes == [control.PHONE_SCREEN, control.DESKTOP_SCREEN]
