@@ -20,6 +20,7 @@ from typing import NamedTuple
 
 import numpy as np
 
+from . import usage
 from .audio import AudioDeviceError, chime
 from .body import NO_WAKE, Body, Wake
 from .commands import ON_PI, Command, HouseCommands, sentences
@@ -611,59 +612,60 @@ class Assistant:
         skipped, one that didn't happen, or one nobody heard."""
         clock = self._skill_clock
         for due in clock.take() if clock else []:
-            skill, house = due.skill, Answers()
-            print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'})")
-            # Their feeds and preferences; what the house answers, for whether a one-off happened; and one a door's
-            # lock set off changes nothing in the house.
-            whose = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
-            try:
-                written = Reply(self.brain, on_its_own(skill, due.when, SKIP, due.why), whose)
-                text = written.read()
-            except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
-                print(f"(skill {skill.name} didn't run: {e!r})")
-                if skill.once is not None:
-                    clock.settle(due, house, e)
-                continue
-            sent, changes = list(self.brain.sent), list(self.brain.changes)  # the brain forgets them with the turn
-            if skill.once is not None and happened(house)[0]:
-                print(f"(skill {skill.name}: not said, since it didn't happen: {text!r})")
-                written.drop()
-                clock.settle(due, house)
-                continue
-            if not text:  # skipped, or nothing at all
-                print(f"(skill {skill.name}: nothing to do now)")
-                written.drop()
-                clock.record(due, "")
-                continue
-            if skill.say != ALOUD:  # not the room's to hear, nor part of its conversation
-                written.drop()
-                clock.hand_over(due, text)
-                self._skill_did(sent, changes, whose.speaker)
-                continue
-            audio = self._made_now([text])
-            if text not in audio:  # nobody heard it: not part of the conversation, as a reply that isn't heard
-                written.drop()
-                if skill.once is not None:  # done all the same: its answer waits for the voice
+            with usage.turn(None if due.skill.household else due.skill.owner, usage.SKILL):
+                skill, house = due.skill, Answers()
+                print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'})")
+                # Their feeds and preferences; what the house answers, for whether a one-off happened; and one a door's
+                # lock set off changes nothing in the house.
+                whose = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
+                try:
+                    written = Reply(self.brain, on_its_own(skill, due.when, SKIP, due.why), whose)
+                    text = written.read()
+                except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
+                    print(f"(skill {skill.name} didn't run: {e!r})")
+                    if skill.once is not None:
+                        clock.settle(due, house, e)
+                    continue
+                sent, changes = list(self.brain.sent), list(self.brain.changes)  # the brain forgets them with the turn
+                if skill.once is not None and happened(house)[0]:
+                    print(f"(skill {skill.name}: not said, since it didn't happen: {text!r})")
+                    written.drop()
+                    clock.settle(due, house)
+                    continue
+                if not text:  # skipped, or nothing at all
+                    print(f"(skill {skill.name}: nothing to do now)")
+                    written.drop()
+                    clock.record(due, "")
+                    continue
+                if skill.say != ALOUD:  # not the room's to hear, nor part of its conversation
+                    written.drop()
                     clock.hand_over(due, text)
                     self._skill_did(sent, changes, whose.speaker)
-                continue
-            clock.record(due, text)
-            self.journal.unprompted()
-            self._chime()
-            print(f"Bot:  {text}  (skill {skill.name})")
-            self._play(audio[text])
-            self.journal.said(text)
-            self._skill_did(sent, changes, whose.speaker)
-            with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
-                heard = (
-                    self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(text))
-                    if follow_up_s
-                    else None
-                )
-                if heard is None:
-                    self.journal.nobody_spoke()
                     continue
-                self.converse(0.0 if answer_s else follow_up_s, first=heard, asked=text)
+                audio = self._made_now([text])
+                if text not in audio:  # nobody heard it: not part of the conversation, as a reply that isn't heard
+                    written.drop()
+                    if skill.once is not None:  # done all the same: its answer waits for the voice
+                        clock.hand_over(due, text)
+                        self._skill_did(sent, changes, whose.speaker)
+                    continue
+                clock.record(due, text)
+                self.journal.unprompted()
+                self._chime()
+                print(f"Bot:  {text}  (skill {skill.name})")
+                self._play(audio[text])
+                self.journal.said(text)
+                self._skill_did(sent, changes, whose.speaker)
+                with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
+                    heard = (
+                        self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(text))
+                        if follow_up_s
+                        else None
+                    )
+                    if heard is None:
+                        self.journal.nobody_spoke()
+                        continue
+                    self.converse(0.0 if answer_s else follow_up_s, first=heard, asked=text)
 
     def _skill_did(self, sent: list[SentItem], changes: list[Change], who: str | None) -> None:
         """What a skill's own turn sent, and asked of the reminders, once its line is kept: kept for the TARS page
@@ -941,7 +943,8 @@ class Assistant:
         self.voice.warm()
         self.prepare_phrases()
         try:
-            self._converse(follow_up_s, first, greet_after_s, greet, wake, asked)
+            with usage.turn(None, usage.VOICE):  # whose, once handle() knows the voice
+                self._converse(follow_up_s, first, greet_after_s, greet, wake, asked)
         finally:
             self._just_said = []
             self.journal.end_conversation()
@@ -1052,6 +1055,7 @@ class Assistant:
             if heard.echo_of and not answer.text:
                 name, score, embedding = None, None, None
             self._last_who = name
+            usage.identified(name)
             who = f" ({name or 'unknown'})" if self.speaker_id else ""
             print(f"You{who}:  {answer.text!r}")
             # Only the request right after the wake says whether the wake was real.

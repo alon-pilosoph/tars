@@ -80,10 +80,12 @@ def quiet_block(rng=QUIET_RNG):
     return rng.normal(0, 30, BLOCK_SAMPLES).astype(np.int16)
 
 
-def fake_openai_chat(reply_for, calls_for=None, search_for=None):
+def fake_openai_chat(reply_for, calls_for=None, search_for=None, used=None):
     """A Responses API client. Each request streams `reply_for(messages)` as one text delta, where `messages` is
     the system prompt followed by the input; `calls_for(messages)` can add tool calls: [(name, arguments dict)], and
     `search_for(messages)` web-search event types that come first. tool_choice="none" suppresses the calls.
+    `used(messages)`: the response's usage, (input, output, reasoning, cached) tokens, which comes with its last event
+    and the web searches it made; without it, the response says nothing of what it used.
     Every request's keyword arguments are kept in `.requests`."""
     requests = []
 
@@ -99,7 +101,21 @@ def fake_openai_chat(reply_for, calls_for=None, search_for=None):
                 type="function_call", call_id=f"call_{len(requests)}_{i}", name=name, arguments=json.dumps(args)
             )
             events.append(types.SimpleNamespace(type="response.output_item.done", item=item))
-        events.append(types.SimpleNamespace(type="response.completed"))
+        if used:
+            tokens_in, tokens_out, reasoning, cached = used(messages)
+            searched = [e for e in events if e.type == "response.web_search_call.completed"]
+            usage = types.SimpleNamespace(
+                input_tokens=tokens_in,
+                output_tokens=tokens_out,
+                output_tokens_details=types.SimpleNamespace(reasoning_tokens=reasoning),
+                input_tokens_details=types.SimpleNamespace(cached_tokens=cached),
+            )
+            response = types.SimpleNamespace(
+                usage=usage, output=[types.SimpleNamespace(type="web_search_call")] * len(searched)
+            )
+            events.append(types.SimpleNamespace(type="response.completed", response=response))
+        else:
+            events.append(types.SimpleNamespace(type="response.completed"))
         return events
 
     client = types.SimpleNamespace(responses=types.SimpleNamespace(create=create))

@@ -251,7 +251,8 @@ short lines made ahead ("Yes?", "Did you call me?", the error lines) are kept in
 `[tts]` setup, so TARS can still say something went wrong after a restart with the network down. After changing the
 voice effect's code (`effects.py`), delete that folder so the lines are made again. With `[backup]` on, all of it is
 copied to an S3 bucket, and a request's audio leaves the machine after a month, living on in the bucket
-([backing up to S3](backup.md)).
+([backing up to S3](backup.md)). What each call used of the paid services is a row in the event database's `usage` table, kept
+400 days ([usage](usage.md)).
 
 ## What leaves the machine
 
@@ -373,7 +374,7 @@ The assistant is `src/voice_assistant/`:
 | Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), `doors.py` (a Nuki's lock actions over MQTT, someone opening the door from outside home at once, whose key is whose, learned, and the broker watched), `mosquitto.py` (TARS's own user on the household's Mosquitto, from the installer), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people at a terminal), `recording.py` (recording sessions: scripts, checks, takes), `takes.py` (the assistant's side of them), `control.py` (the socket the web UI asks the assistant over) |
 | The main loop | `assistant.py` (the conversation, through its body: wake, listen, answer, follow-ups, errors, timing), `__main__.py` (the command line), `entrypoints.py` (what each option runs: the assistant, `--text`, `--web`, `--telegram`, `--backup` and the rest), `wiring.py` (each part made from `config.toml`, and the `Household`: the parts the processes share), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
-| What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
+| What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `usage.py` and `prices.toml` (what each call used of the paid services, and the cost: [usage](usage.md)), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
 | Downloads | `models.py` (the small local models, on first use) |
 | Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, the services and Telegram, voice, mic, storage, the web UI, Home Assistant and each device in the house, each router, the backup, and systemd's services) |
 | Is it all running | `health.py` (heartbeats, today's counts, the services and their status pages, the machine: what the Status page shows) |

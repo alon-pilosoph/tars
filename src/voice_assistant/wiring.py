@@ -122,6 +122,21 @@ def make_event_log(cfg: Config, root: Path):
     return EventLog(root / cfg.learning.folder)
 
 
+def start_metering(events: EventLog | None) -> None:
+    """What this process uses of the paid services, counted in the event log (usage.py), the oldest rows pruned; with
+    no event log, nothing is counted."""
+    from . import usage
+
+    if events is None:
+        return
+    meter = usage.Meter(events.store)
+    try:
+        meter.prune()
+    except Exception as e:  # noqa: BLE001 - counting goes on
+        print(f"(usage: couldn't prune the oldest rows: {e!r})")
+    usage.install(meter)
+
+
 def start_heartbeat(events: EventLog | None, process: str, root: Path) -> None:
     """The heartbeat the web UI's Status page reads for this process (health.py), kept with the event log."""
     if events is None:

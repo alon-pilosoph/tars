@@ -120,7 +120,7 @@ Each fix is its own pull request, measured with these scenarios before and after
 | Every scenario that wasn't 100% | escaped markers recognized, no repeats within or across a hand-off, clearer send, link, message and "which one?" rules, Groq's capped replies written on Cerebras when nothing was said yet, and three checks that failed fine answers made fair | 15 of 29 scenarios below 100% | 1 |
 
 With all of them, 5 runs of each of the 29 scenarios: **143/145** (95% interval 95-100%), for about $1.53 at
-`evals/prices.toml`'s prices: $0.886 on OpenAI (78 web searches are $0.78 of it) and $0.648 for Qwen on Cerebras.
+`src/voice_assistant/prices.toml`'s prices: $0.886 on OpenAI (78 web searches are $0.78 of it) and $0.648 for Qwen on Cerebras.
 The one scenario left, a reminder and a hard question in one request, is 3/5: Qwen starts working the question out
 itself after setting the reminder, instead of handing it over. (The run's line in `results.jsonl` says `cost_usd`
 0.886, OpenAI's part alone: Qwen's price wasn't in `prices.toml` yet when it ran, so its tokens counted as nothing.)

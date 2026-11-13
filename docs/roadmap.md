@@ -517,8 +517,8 @@ assume a terminal, updates (step 4), sign-in for the web UI (step 2), and the ke
    tested), which services to use with links to get each key, and the house (Home Assistant found on the network, or
    set up), ending with `--check` in plain words.
 3. **A tested parts list:** the Pi, a speakerphone that works full- or half-duplex as measured in step 3, a case,
-   optional Bluetooth proxies; and what each service costs a month at typical use (from the [evals'](evals.md) usage
-   profile).
+   optional Bluetooth proxies; and what each service costs a month at typical use (from homes' own [usage](usage.md), and the
+   [evals'](evals.md) usage profile).
 4. **Plugins people can share:** a catalogue of declared, versioned plugins (step 4) for common devices, each with
    the grants it asks for shown before it's installed.
 5. **Licensing settled:** the wake models' non-commercial license, and any provider terms, checked for what a

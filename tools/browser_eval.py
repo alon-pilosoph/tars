@@ -28,7 +28,7 @@ TASKS = ROOT / "evals/browser/tasks.toml"
 OUT = ROOT / "voice_data/browser/evals"
 SPEND = OUT / "spend.json"
 TURNS = re.compile(r"(?:done in|stuck after|stopped after) (\d+) steps")
-PRICES = tomllib.loads((ROOT / "evals/prices.toml").read_text())["models"]
+PRICES = tomllib.loads((ROOT / "src/voice_assistant/prices.toml").read_text())["models"]
 
 
 def cost(model: str, tokens_in: int, tokens_out: int, cached: int = 0) -> float:
@@ -164,7 +164,7 @@ def main() -> None:
     parser.add_argument("--notes", choices=("use", "write", "off"), default="use", help=notes_help)
     parser.add_argument("--relearn", type=Path, help="write the site notes again from this run's traces, and stop")
     browser = BrowserConfig()  # TARS's own defaults, as config.toml ships them
-    parser.add_argument("--model", default=browser.model, help="the new agent's model (priced in evals/prices.toml)")
+    parser.add_argument("--model", default=browser.model, help="the new agent's model (priced in prices.toml)")
     parser.add_argument("--effort", default=browser.effort, choices=EFFORTS, help="its reasoning")
     parser.add_argument("--runs", type=int, default=1, help="each task this many times")
     history_help = "TARS's agent: every page and its reasoning kept (full), or the newest page only (short)"
@@ -174,7 +174,7 @@ def main() -> None:
     if args.agent == "claude" and args.model == "gpt-6-luna":
         args.model, args.effort = "claude-opus-5-5", "medium" if args.effort == "low" else args.effort
     if args.agent != "claude" and args.model not in PRICES:
-        raise SystemExit(f"no price for {args.model} in evals/prices.toml")
+        raise SystemExit(f"no price for {args.model} in src/voice_assistant/prices.toml")
     if args.relearn:
         relearn(args.relearn)
         return

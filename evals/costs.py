@@ -1,5 +1,6 @@
-"""What a run costs: the prices in evals/prices.toml applied to its usage, and an estimate before it starts, from what
-the same scenarios used in earlier runs (their transcripts in evals/runs/)."""
+"""What a run costs: the prices in src/voice_assistant/prices.toml (the ones TARS itself counts its use with, usage.py)
+applied to its usage, and an estimate before it starts, from what the same scenarios used in earlier runs (their
+transcripts in evals/runs/)."""
 
 import json
 import statistics
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from .scenarios import Scenario
 
-PRICES = Path(__file__).parent / "prices.toml"
+PRICES = Path(__file__).parents[1] / "src/voice_assistant/prices.toml"  # shared with TARS itself (usage.py)
 RUNS = Path(__file__).parent / "runs"
 # What one run of each scenario used, on average, as of the last saved result (--save): for estimates where there are
 # no transcripts to go on, like a fresh clone or CI.

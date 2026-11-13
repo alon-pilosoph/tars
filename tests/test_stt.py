@@ -450,7 +450,7 @@ def test_the_choices_just_offered_go_to_deepgram_as_keyterms(monkeypatch):
 
     urls = []
     monkeypatch.setattr(stt, "FluxSession", lambda url, key, has_backup=False: urls.append(url))
-    monkeypatch.setattr(stt, "DeepgramSession", lambda url, key: urls.append(url))
+    monkeypatch.setattr(stt, "DeepgramSession", lambda url, key, model="": urls.append(url))
     stt.FluxTranscriber("k", STTConfig(provider="flux")).session(("12", "twelve"))
     stt.FluxTranscriber("k", STTConfig(provider="flux")).session()
     stt.DeepgramTranscriber("k", STTConfig(provider="deepgram", model="nova-2")).session(("12",))

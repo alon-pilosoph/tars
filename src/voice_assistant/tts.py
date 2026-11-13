@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from openai import OpenAI, Timeout
 
+from . import usage
 from .config import TTSConfig
 from .errors import ServiceError
 from .stt import deepgram_connect
@@ -51,6 +52,7 @@ class OpenAISpeech:
         pass  # shares the brain's OpenAI connection, which the brain warms
 
     def stream(self, text: str) -> Iterator[bytes]:
+        usage.tts("openai", self._cfg.model, len(text))
         with self._client.audio.speech.with_streaming_response.create(
             model=self._cfg.model,
             voice=self._cfg.voice,
@@ -73,6 +75,8 @@ class WarmSockets:
     connect, send a sentence and read its audio.
     """
 
+    model = ""  # the voice, as what it says is counted (usage.py): set by each
+
     sample_rate = 24_000
     READY = 2  # connections open before the reply: its first sentence, and the one after
     KEEP = 3  # the most kept idle (a long reply synthesizes several sentences at once)
@@ -91,6 +95,7 @@ class WarmSockets:
     def stream(self, text: str) -> Iterator[bytes]:
         from websockets.exceptions import WebSocketException
 
+        usage.tts(self.name, self.model, len(text))  # billed by what's sent to be said
         with self._turns:
             try:
                 yield from self._stream(text)
@@ -174,6 +179,7 @@ class DeepgramSpeech(WarmSockets):
 
     def __init__(self, api_key: str, cfg: TTSConfig):
         super().__init__()
+        self.model = cfg.model
         version = "v2" if cfg.model.startswith("flux-") else "v1"
         params = {"model": cfg.model, "encoding": "linear16", "sample_rate": self.sample_rate}
         self._url = f"{SPEAK_URL.format(host=cfg.deepgram_host, version=version)}?{urlencode(params)}"
@@ -209,6 +215,7 @@ class CartesiaSpeech(WarmSockets):
 
     def __init__(self, api_key: str, cfg: TTSConfig):
         super().__init__()
+        self.model = cfg.model
         self._url = f"{CARTESIA_URL}?{urlencode({'cartesia_version': CARTESIA_VERSION})}"
         self._key = api_key
         self._request = {
