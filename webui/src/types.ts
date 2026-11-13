@@ -127,6 +127,24 @@ export interface MachineHealth {
   uptime_s: number;
 }
 
+export interface UsageLine {
+  name: string; // "openai gpt-6-luna", or a person ("": nobody known)
+  calls: number;
+  cost: number;
+  unpriced: number; // calls with no price in prices.toml, not in `cost`
+}
+
+export interface MonthUsage {
+  month: string; // YYYY-MM
+  cost: number;
+  cap: number; // 0: none
+  checked: string; // when prices.toml's prices were checked
+  unpriced: number;
+  unreported: number;
+  by_service: UsageLine[];
+  by_person: UsageLine[];
+}
+
 export interface Health {
   now: number;
   processes: ProcessHealth[];
@@ -134,6 +152,7 @@ export interface Health {
   services: ServiceHealth[];
   services_asked: number;
   backup: CheckLine[] | null; // null: the backup is off
+  usage: MonthUsage | null; // null: it couldn't be added up
   machine: MachineHealth;
 }
 

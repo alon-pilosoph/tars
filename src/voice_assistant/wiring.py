@@ -229,7 +229,8 @@ def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
     from .health import Health, Services, expected
 
     services = Services(lambda: service_checks(cfg, root).listed())
-    return Health(log, expected(cfg), services, systemd_state, backup_enabled=cfg.backup.enabled).report
+    cap = cfg.usage.monthly_cap_usd
+    return Health(log, expected(cfg), services, systemd_state, backup_enabled=cfg.backup.enabled, cap_usd=cap).report
 
 
 def make_reminders(cfg: Config, household: Household, push_to_talk: bool):

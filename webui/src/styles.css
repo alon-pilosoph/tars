@@ -1916,6 +1916,32 @@ details.how {
 .health-counts {
   margin-top: 24px;
 }
+.usage-total.bad {
+  color: var(--accent);
+}
+.cmp.usage td:first-child {
+  width: auto;
+  white-space: normal;
+}
+.cmp.usage .model {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+}
+.cmp.usage th:not(:first-child),
+.cmp.usage td:not(:first-child) {
+  width: 6em;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.cmp.usage td .model {
+  white-space: normal;
+}
+.cmp.usage th:last-child,
+.cmp.usage td:last-child {
+  padding-right: 0;
+}
 
 /* ---------- Recording session (record/Record.tsx): a page of its own, opened from TARS's link ---------- */
 .rec {

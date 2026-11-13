@@ -6,6 +6,7 @@ import type {
   Item,
   Label,
   MachineHealth,
+  MonthUsage,
   Metric,
   ProcessHealth,
   Reminder,
@@ -243,6 +244,36 @@ export function memoryLine(m: MachineHealth) {
 export function diskLine(m: MachineHealth) {
   const used = Math.round((1 - m.disk_free / m.disk_total) * 100);
   return `${fmtSize(m.disk_free)} free of ${fmtSize(m.disk_total)} (${used}% used)`;
+}
+
+const SERVICES: Record<string, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  cerebras: "Cerebras",
+  groq: "Groq",
+  deepgram: "Deepgram",
+  cartesia: "Cartesia",
+};
+
+/** A usage line's "openai gpt-6-luna" as the service's own name and the model. */
+export function serviceModel(name: string): { service: string; model: string } {
+  const [service, ...model] = name.split(" ");
+  return { service: SERVICES[service] ?? service, model: model.join(" ") };
+}
+
+/** Dollars as the Status page says them: "$3.42", and "under $0.01" for a little that isn't nothing. */
+export function dollars(n: number): string {
+  return n > 0 && n < 0.005 ? "under $0.01" : `$${n.toFixed(2)}`;
+}
+
+/** This month's use against the cap: "$3.42 so far in November", or "$17.10 of the $20.00 cap (86%)", bad from 80%. */
+export function usageLine(u: MonthUsage): HealthLine {
+  const month = new Date(`${u.month}-01T12:00:00`).toLocaleString("en", { month: "long" });
+  if (!u.cap) return { text: `${dollars(u.cost)} so far in ${month}`, bad: false };
+  const share = u.cost / u.cap;
+  const said = `${dollars(u.cost)} of the ${dollars(u.cap)} cap for ${month} (${Math.round(share * 100)}%)`;
+  if (share >= 1) return { text: `${said}: the paid services are off until the month ends`, bad: true };
+  return { text: `${said}, ${dollars(u.cap - u.cost)} left`, bad: share >= 0.8 };
 }
 
 const SAID = { real: "“hey TARS”", not_real: "“Not it”" } as const;

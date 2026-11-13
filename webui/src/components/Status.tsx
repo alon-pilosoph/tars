@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 import {
   ago,
   checkLine,
@@ -10,9 +10,13 @@ import {
   processorLine,
   temperatureLine,
   time,
+  dollars,
+  personName,
+  serviceModel,
+  usageLine,
 } from "../format";
 import { loadHealth, useStore } from "../store";
-import type { CheckLine, Health } from "../types";
+import type { CheckLine, Health, MonthUsage, UsageLine } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
 import { LoadError, Loading } from "./States";
@@ -131,6 +135,8 @@ function Body({ h }: { h: Health }) {
         </table>
       )}
 
+      {h.usage && <Usage u={h.usage} />}
+
       {h.backup && (
         <>
           <SecHead title="Backup" />
@@ -173,5 +179,72 @@ function Body({ h }: { h: Health }) {
         <dd>{duration(m.uptime_s)}</dd>
       </dl>
     </>
+  );
+}
+
+function Usage({ u }: { u: MonthUsage }) {
+  const line = usageLine(u);
+  return (
+    <>
+      <SecHead title="Paid services this month">
+        <span className="muted">{`Prices checked ${u.checked}`}</span>
+      </SecHead>
+      <p className={line.bad ? "usage-total bad" : "usage-total"}>{line.text}</p>
+      {u.by_service.length === 0 ? (
+        <p className="muted">Nothing used yet this month.</p>
+      ) : (
+        <>
+          <UsageTable what="Service" lines={u.by_service} name={serviceCell} />
+          <UsageTable what="Person" lines={u.by_person} name={personCell} />
+        </>
+      )}
+      {u.unpriced > 0 && (
+        <p className="hint">{`${u.unpriced} ${u.unpriced === 1 ? "call" : "calls"} to something with no price in prices.toml aren't in the cost.`}</p>
+      )}
+      {u.unreported > 0 && (
+        <p className="hint">{`${u.unreported} ${u.unreported === 1 ? "call was" : "calls were"} cut off before the provider said what it used, so ${u.unreported === 1 ? "it's" : "they're"} counted as nothing.`}</p>
+      )}
+      <p className="hint">Estimates from TARS's own count, not a bill: the providers' dashboards are.</p>
+    </>
+  );
+}
+
+function serviceCell(name: string) {
+  const { service, model } = serviceModel(name);
+  return (
+    <>
+      {service}
+      <span className="model">{model}</span>
+    </>
+  );
+}
+
+function personCell(name: string) {
+  return name ? personName(name) : <span className="muted">Nobody known</span>;
+}
+
+function UsageTable({ what, lines, name }: { what: string; lines: UsageLine[]; name: (name: string) => ReactNode }) {
+  return (
+    <table className="cmp health usage">
+      <thead>
+        <tr>
+          <th>{what}</th>
+          <th>Calls</th>
+          <th>Cost</th>
+        </tr>
+      </thead>
+      <tbody>
+        {lines.map(l => (
+          <tr key={l.name}>
+            <td>{name(l.name)}</td>
+            <td>{l.calls.toLocaleString("en")}</td>
+            <td>
+              {dollars(l.cost)}
+              {l.unpriced > 0 && <span className="model">and some not priced</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
