@@ -136,6 +136,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         finished=functools.partial(enroll_from_session, speaker_id, log.store),
         accounts=Accounts(log.store) if cfg.web.sign_in else None,
         tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
+        aloud=cfg.audio.enabled,
     )
 
 
@@ -149,6 +150,8 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int, c
 
     if not cfg.learning.log_events:
         raise ConfigError("Recording sessions record audio, which [learning] log_events = false says not to.")
+    if not cfg.audio.enabled:
+        raise ConfigError("Recording sessions are said into TARS's microphone, which this chat-only home has none of.")
     log = make_event_log(cfg, root)
     prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
     token = Sessions(log.store).create(kind, person, prompts, cloud)
@@ -300,7 +303,8 @@ def telegram(cfg: Config, root: Path) -> None:
         if told:
             told[0].announce(line)
 
-    home = chat_home(cfg, root, presence, events, announce)
+    aloud = cfg.audio.enabled  # chat-only: no microphone to mute, nothing to say /say with
+    home = chat_home(cfg, root, presence, events if aloud else None, announce)
     client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
     llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
@@ -335,9 +339,10 @@ def telegram(cfg: Config, root: Path) -> None:
         transcriber=make_recording_transcriber(cfg, env, client),
         env=env,
         home=home,
-        say=functools.partial(ask_to_say, events.store.folder),
+        say=functools.partial(ask_to_say, events.store.folder) if aloud else None,
         spotify_login=spotify_login(cfg, root, env),
         skill_clock=skill_clock(skills, "chat", home, presence, myself),
+        aloud=aloud,
     )
     told.append(tars)
     if cfg.updates.enabled:
@@ -582,6 +587,11 @@ def typed(cfg: Config, root: Path) -> None:
 
 
 def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
+    if not cfg.audio.enabled:
+        raise ConfigError(
+            "This home is chat-only ([audio] enabled = false): TARS runs as voice-assistant --telegram and --web here. "
+            "Set [audio] enabled = true in config.local.toml for its microphone and speaker."
+        )
     from .assistant import Announcements, Assistant
     from .journal import Journal
 

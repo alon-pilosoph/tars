@@ -71,6 +71,22 @@ decides when you're done, and TARS prepares the answer meanwhile ([response time
 to OpenAI (the web, the news) starts with a short "Let's see." or the like. macOS asks for microphone access the first
 time; if TARS hears nothing, check System Settings → Privacy & Security → Microphone for your terminal.
 
+## Without a microphone
+
+TARS can run with no microphone or speaker at all, on Telegram and the web UI only:
+
+```toml
+[audio]
+enabled = false
+```
+
+Run `voice-assistant --telegram` and `voice-assistant --web` (the voice assistant itself refuses to start, saying
+so). `--check` skips the audio checks with one line, the Status page doesn't expect the voice assistant, the web UI
+has no pages about hearing, and a reminder due aloud goes to its person's Telegram chat
+([reminders](reminders.md#on-telegram)). Settings that are for a microphone or speaker (`[audio] echo_cancel`,
+`[home] own_speaker`, `commands_on_pi`, `remote`) are refused with it off. The audio packages are still installed for
+now.
+
 ## Install on the Pi
 
 On Raspberry Pi OS (64-bit, Bookworm or later), with the speakerphone plugged in:

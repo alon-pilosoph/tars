@@ -53,6 +53,9 @@ GREETS = ("pause", "always", "never")  # [recorder] greet
 
 @dataclass
 class AudioConfig:
+    # TARS's own microphone and speaker at home: the voice assistant. Off, this home is chat-only: TARS runs as its
+    # Telegram and web UI processes, a reminder due aloud goes to its person's chat, and nothing listens or speaks.
+    enabled: bool = True
     input_device: str = ""
     output_device: str = ""
     playback_prebuffer_s: float = 0.3
@@ -666,6 +669,11 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[web] tls_cert and tls_key go together: the certificate and its key")
     if any("sensor" in d for d in cfg.presence.doors) and not cfg.home.url:
         problems.append("[[presence.doors]] sensor is read from Home Assistant: set [home] url")
+    if not cfg.audio.enabled:
+        heard = {"[audio] echo_cancel": cfg.audio.echo_cancel, "[home] own_speaker": cfg.home.own_speaker,
+                 "[home] commands_on_pi": cfg.home.commands_on_pi, "[home] remote": bool(cfg.home.remote)}  # fmt: skip
+        problems += [f"{name} is for TARS's microphone and speaker, which [audio] enabled = false says this home has "
+                     "none of" for name, on in heard.items() if on]  # fmt: skip
     return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence) + _wishes_problems(cfg)
 
 

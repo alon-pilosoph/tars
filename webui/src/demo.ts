@@ -1064,15 +1064,18 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
   const event = (id: number) => d.events.find(e => e.id === id);
   const convWake = (id: number) => d.convs.find(c => c.wake?.event_id === id)?.wake;
   const item = (id: number) => d.items.find(i => i.id === id);
+  // A chat-only home records nothing it hears: no wakes, and no voice on anyone's turn.
+  const heard = DEMO_LINK.chatOnly ? { has_audio: false } : {};
   const withItems = (c: DemoConv) => ({
     ...clone(c),
-    turns: c.turns.map(t => ({ ...clone(t), items: (t.items || []).filter(id => item(id)) })),
+    turns: c.turns.map(t => ({ ...clone(t), ...heard, items: (t.items || []).filter(id => item(id)) })),
   });
   const p = new URL(path, "http://demo").pathname;
   if (method === "GET" && DEMO_LINK.failed.some(part => LOADED_FROM[part] === p))
     throw new Error("Internal Server Error");
   let m: RegExpMatchArray | null;
 
+  if (p === "/api/events" && DEMO_LINK.chatOnly) return [];
   if (p === "/api/events") {
     const answered = d.events.filter(e => e.kind === "wake" && e.outcome === "answer").map(e => e.ts);
     return (
@@ -1098,7 +1101,7 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
       .sort((a, b) => b.size - a.size);
   }
   if (p === "/api/models") return d.models;
-  if (p === "/api/status") return { clustering: true, enroll_at: 5, health: true };
+  if (p === "/api/status") return { aloud: !DEMO_LINK.chatOnly, clustering: true, enroll_at: 5, health: true };
   if (p === "/api/health") return demoHealth(Date.now() / 1000);
   if (p === "/api/conversations") return d.convs.map(withItems).sort((a, b) => b.started - a.started);
   if ((m = p.match(/^\/api\/conversations\/(\d+)$/))) {

@@ -44,6 +44,7 @@ from voice_assistant.telegram import (
     MAX_VOICE_S,
     MIC,
     NO_ALOUD,
+    NO_SPEAKER,
     NO_SPOTIFY,
     NO_VOICE,
     NO_WORDS,
@@ -1363,3 +1364,52 @@ def test_one_asked_aloud_done_here_does_what_it_asked_of_the_reminders_as_by_voi
     tars(bot, [ScriptedBrain([]), own], None, tools, skill_clock=clock).deliver()
     (reminder,) = [r for r in tools.reminders.active() if r["kind"] == REMINDER]
     assert (reminder["from_name"], reminder["channel"], reminder["set_via"]) == ("Alon", VOICE, VOICE)
+
+
+# A chat-only home ([audio] enabled = false): no speaker or microphone at home
+
+
+def test_a_chat_only_home_says_hello_without_say():
+    bot = FakeBot()
+    tars(bot, [ScriptedBrain()], aloud=False).handle(message("/start"))
+    assert "/say" not in bot.said()[0] and "Hello, Alon" in bot.said()[0]
+
+
+@pytest.mark.parametrize("command", ["/say dinner's ready", "/volume 40", "/mute", "/unmute"])
+def test_a_chat_only_home_says_it_has_no_speaker_or_microphone(command):
+    bot, said = FakeBot(), []
+    tars(bot, [ScriptedBrain()], aloud=False, say=said.append).handle(message(command))
+    assert bot.said() == [NO_SPEAKER] and said == []
+
+
+def test_in_a_chat_only_home_a_reminder_due_aloud_is_posted_to_its_persons_chat(convos):
+    bot = FakeBot()
+    tools = tools_with(convos)
+    now = time.time()
+    rid = tools.reminders.add(NewReminder(REMINDER, "call mum", "Alon", due=now + 60), WEB, now=now)  # aloud
+    tars(bot, [ScriptedBrain()], convos, tools, clock=lambda: now + 61, aloud=False).deliver()
+    assert len(bot.said()) == 1 and "call mum" in bot.said()[0]
+    assert tools.reminders.get(rid)["channel"] == TELEGRAM
+
+
+def test_with_a_speaker_a_reminder_due_aloud_stays_for_the_voice(convos):
+    bot = FakeBot()
+    tools = tools_with(convos)
+    now = time.time()
+    rid = tools.reminders.add(NewReminder(REMINDER, "call mum", "Alon", due=now + 60), WEB, now=now)
+    tars(bot, [ScriptedBrain()], convos, tools, clock=lambda: now + 61).deliver()
+    assert bot.said() == [] and tools.reminders.get(rid)["channel"] == VOICE
+
+
+def test_a_chat_only_homes_menu_has_no_commands_about_the_speaker():
+    bot = FakeBot()
+    t = tars(bot, [ScriptedBrain()], aloud=False)
+    t._bot.updates = lambda *a, **kw: (_ for _ in ()).throw(KeyboardInterrupt)  # the menu, then stop
+    with pytest.raises(KeyboardInterrupt):
+        t.run_forever({"username": "hey_tars_bot"})
+    assert {c["command"] for c in bot.commands} == {c["command"] for c in COMMANDS} - {
+        "say",
+        "volume",
+        "mute",
+        "unmute",
+    }

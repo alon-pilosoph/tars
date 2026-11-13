@@ -36,6 +36,10 @@ client, which its terms forbid.
 
 ## What it does
 
+In a chat-only home (`[audio] enabled = false`), the commands about TARS at home (`/say`, `/volume`, `/mute`,
+`/unmute`) aren't in the menu, and answer that there's no speaker or microphone here; a reminder due aloud comes to
+the chat instead.
+
 | Sent in the chat | What happens |
 |---|---|
 | "what's 17 times 23?" | TARS answers in the chat |
