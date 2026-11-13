@@ -170,13 +170,17 @@ later: the requests that did the work, replayed by code.
    really_order = false   # true once you trust it: an approved order is then placed
    ```
 
-2. `OPENAI_API_KEY` in `.env`, and the browser's packages: `uv sync --all-extras`. On the Pi, `deploy/install-pi.sh`
-   also installs Debian's Chromium and the virtual screen it draws to (`voice-assistant-display`).
-3. The logins, ahead of time (`vault add`, `vault mail`, above), or when they're first needed.
-4. Restart the Telegram service and the assistant, then `voice-assistant --check`: it has a line for the browser
-   (its model, the Chromium it found), the errands waiting, and the display service.
+2. `OPENAI_API_KEY` in `.env`, and the browser's packages: `uv sync --all-extras`.
+3. **The Sprite the browser runs on** ([On a Sprite](#on-a-sprite)): on the Pi, `deploy/install-pi.sh` installs the
+   `sprite` command; sign it in once (`sprite login`), run `deploy/browser-host/setup.sh tars-browser`, and set
+   `sprite = "tars-browser"` under `[browser]`.
+4. The logins, ahead of time (`vault add`, `vault mail`, above), or when they're first needed.
+5. Restart the Telegram service and the assistant, then `voice-assistant --check`: it has a line for the browser
+   (its model, and the Sprite answering) and the errands waiting.
 
-To run the browser on a Fly Sprite instead of this machine, see [On a Sprite](#on-a-sprite).
+**The browser runs on the Sprite.** A browser on the machine itself (`sprite` left empty) is for developing it, on a
+Mac with Chrome: the evals, `run` and `view` below, Claude Code as its brain. On the Pi, `--check` fails without a
+Sprite.
 
 ## Running it
 
@@ -189,25 +193,14 @@ uv run python -m voice_assistant.browser view https://wolt.com --shot wolt.jpg  
 `run` asks in the terminal before anything is committed, and even then presses nothing without `--really-commit`;
 a login or a code it lacks is asked for there too.
 
-## On the Pi
+## On a desktop, for development
 
-The same code, with three differences that come from the Pi having no screen
-([`chrome.py`](../src/voice_assistant/browser/chrome.py)):
-
-- **Debian's Chromium on a virtual screen.** Google Chrome has no build for the Pi; Chromium runs as a normal window
-  on Xvfb ([`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service)), not headless,
-  which says so in every request (`HeadlessChrome`) and some sites refuse. WebGL is drawn in software (SwiftShader):
-  a browser without it is a bot to Cloudflare.
-- **Logins without a keyring.** Pi OS Lite has none, so Chromium keeps them with `--password-store=basic`: the
-  profile (`~/.cache/tars-browser`) is only as safe as its folder, which only TARS's user may read, and which the
-  backup leaves out.
-- **Nobody sees its screen.** TARS signs in from its vault (above): `vault add` over ssh puts a login in ahead of
-  time. A site that asks whether you're a robot (rail.co.il's Cloudflare check, on Linux Chromium) can't be
-  answered, and TARS says so rather than trying to get past it.
-
-[`deploy/sim`](simulator.md) tries all of it on a simulated Pi first. At about a
-Pi 4's speed there, a page takes 1-4 s to load and 1.5-5 s to read (most of it waiting for a busy page to stop
-moving), so an errand takes longer than on a Mac, mostly in the browser: the model is in the cloud either way.
+With `sprite` left empty the browser is Chrome on the machine itself
+([`chrome.py`](../src/voice_assistant/browser/chrome.py)): a real window, not headless, which says so in every
+request (`HeadlessChrome`) and some sites refuse, with its own profile beside the vault in `~/.cache/tars-browser`.
+That's for working on the browser on a Mac. On Linux it would be Debian's Chromium on a virtual screen, with logins
+kept with `--password-store=basic` (no keyring), as on the [simulated Pi](simulator.md) the evals ran on, where a page
+took 1-4 s to load and 1.5-5 s to read. The Pi itself no longer installs a browser: its errands run on the Sprite.
 
 ## On a Sprite
 

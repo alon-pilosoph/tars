@@ -81,8 +81,8 @@ git clone https://github.com/alon-pilosoph/tars.git ~/voice-assistant
 ```
 
 [`deploy/install-pi.sh`](../deploy/install-pi.sh) installs the system packages in
-[`deploy/pi-packages.txt`](../deploy/pi-packages.txt) (PortAudio, and Chromium on a virtual screen for
-[TARS's browser](browser.md#on-the-pi)) and uv, the Python packages (every one has a
+[`deploy/pi-packages.txt`](../deploy/pi-packages.txt) (PortAudio and ALSA's tools; TARS's browser runs on a
+[Fly Sprite](browser.md#on-a-sprite), for which it installs the `sprite` command) and uv, the Python packages (every one has a
 ready-made build for the Pi, so nothing compiles; the web UI's build is committed, so the Pi needs no Node), gives
 TARS its own user on the household's Mosquitto when there are doors to listen to
 ([the front door](presence.md#the-front-door)),
@@ -107,8 +107,8 @@ cable that only charges. A speakerphone that's heard but silent (`--check` says 
 on: the PowerConf's light is red then.
 
 Each service is sandboxed ([the services](security.md#the-services-on-the-machine)): it writes only to the project's
-folder and `~/.cache` (Telegram also to Chromium's `~/.config/chromium` and `~/.config/chromium-headless`), can't use
-`sudo`, and has a `/tmp` of its own; the browser's screen alone writes to the shared `/tmp`, for its socket. Something
+folder and `~/.cache` (Telegram also to `~/.sprites`, the `sprite` command's login, for the browser's link), can't use
+`sudo`, and has a `/tmp` of its own. Something
 of your own that writes elsewhere (a plugin's files outside `voice_data/`) gets "Read-only file system": keep it under
 the project's folder. What the services make is readable by their user alone (`UMask=0077`): to read their files as
 someone else, use that user.
@@ -116,7 +116,6 @@ someone else, use that user.
 By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant.service`](../deploy/voice-assistant.service),
 [`deploy/voice-assistant-web.service`](../deploy/voice-assistant-web.service),
-[`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service) (the browser's screen),
 [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
 [`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
 [`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer), and
@@ -210,8 +209,8 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   the mic (3 s of listening: muted, too quiet or fine), storage, the web UI, Home Assistant and each device in the
   house (with `[home]` devices), TARS's own speaker (with `[home] own_speaker`: its volume, or why it can't be
   turned), each router (with `[presence]`: signed into, and whose phone it sees), the backup (the bucket, and how the
-  last pass went), the browser (with `[browser]`: its model, the Chromium it found, errands waiting while nothing runs
-  them, and its virtual screen's service; with `[browser] sprite`, the link to the Sprite instead, which wakes it) and the systemd services. Each problem comes with what to do about it, and
+  last pass went), the browser (with `[browser]`: its model, the link to its Sprite, which wakes it, and errands waiting
+  while nothing runs them) and the systemd services. Each problem comes with what to do about it, and
   it exits 1 if anything is broken. It never hangs on a device: one that
   doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same when
   it's opened or refreshed: whether each process is running, the services with their own status pages, Home

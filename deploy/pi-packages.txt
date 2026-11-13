@@ -7,9 +7,4 @@ libportaudio2
 libatomic1
 alsa-utils
 
-# The browser (docs/browser.md): Debian's Chromium (Google Chrome has no build for the Pi), a virtual screen to draw
-# to, and fonts for the pages it reads (Hebrew among them).
-chromium
-xvfb
-fonts-noto-core
-fonts-noto-color-emoji
+# No browser here: TARS's runs on a Fly Sprite ([browser] sprite, docs/browser.md#on-a-sprite).

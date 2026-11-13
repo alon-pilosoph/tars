@@ -6,10 +6,11 @@ gives itself away (it says HeadlessChrome, and its screen is smaller than its wi
 an "I am human" check. A profile can be open in one Chrome at a time, so a Chrome already running on the port is
 closed first, the way quitting it would (so its profile is saved).
 
-On Linux (the Pi) it's Debian's Chromium, drawing to a virtual screen (Xvfb, `deploy/voice-assistant-display.service`)
-when there's no real one: the same window as on a desktop, which nothing shows. Pi OS Lite has no desktop keyring
-either, so Chromium keeps its logins with `--password-store=basic`: encrypted with a fixed key, so the profile is only
-as safe as its folder (TARS's user only, and kept out of the backup). TARS signs in itself, from its vault
+This machine's Chrome is for developing the browser (a Mac, the simulated Pi): in use, TARS's browser runs on a Fly
+Sprite (sprite.py), and the Pi installs none. On Linux it's Debian's Chromium, drawing to a virtual screen (Xvfb, as
+deploy/sim starts one) when there's no real one: the same window as on a desktop, which nothing shows. With no
+desktop keyring, Chromium keeps its logins with `--password-store=basic`: encrypted with a fixed key, so the profile
+is only as safe as its folder (TARS's user only, and kept out of the backup). TARS signs in itself, from its vault
 (vault.py, login.py)."""
 
 import json
@@ -28,7 +29,7 @@ from .vault import private_folder
 PROFILE = Path.home() / ".cache/tars-browser/profile"
 PORT = 9333
 WINDOW = (1280, 1000)  # the window, for every run alike: the page then lays out the same way each time
-DISPLAY = ":99"  # the virtual screen on Linux, when there's no other (voice-assistant-display.service)
+DISPLAY = ":99"  # the virtual screen on Linux, when there's no other (deploy/sim's)
 MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 

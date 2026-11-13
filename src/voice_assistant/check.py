@@ -58,7 +58,6 @@ MODELS_S = 300.0  # long enough to download every local model on a slow line, th
 READY = "TARS is ready."
 STALE_BACKUP_S = 3600.0  # the timer runs a pass every 15 minutes: an hour without a good one is worth a look
 BACKUP_CHECK_S = 20.0  # S3's client retries a bucket that doesn't answer; --check never waits longer than this
-DISPLAY_UNIT = "voice-assistant-display"  # the browser's virtual screen, on a machine with none (the Pi)
 OVERDUE_S = 3 * 60.0  # a reminder Telegram should have posted this long ago is waiting for it
 PRESENCE = "Who's home"
 ROUTER_FIX = "check its address, user, and its password in .env (the name under secret); docs/presence.md"
@@ -443,6 +442,9 @@ def browser(cfg: Config) -> Result:
     orders = "orders once approved" if cfg.browser.really_order else "approved orders are a dry run"
     if cfg.browser.sprite:
         return sprite_browser(cfg, orders)
+    if platform.system() != "Darwin":  # the Pi: a browser here is for developing it, on a desktop
+        fix = "deploy/browser-host/setup.sh <name>, then [browser] sprite (docs/browser.md#on-a-sprite)"
+        return Result("Browser", FAIL, "it runs on a Fly Sprite, and [browser] sprite isn't set", fix)
     try:
         found = executable()
     except RuntimeError:
@@ -1088,7 +1090,6 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
             "check the network and run it again",
         )
 
-    screen = cfg.browser.enabled and not cfg.browser.sprite  # a Sprite has its own virtual screen
     checks: list[tuple[str, Check]] = [
         ("API keys", services.keys),
         ("Input device", lambda: audio_device("input")),
@@ -1119,7 +1120,6 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ("Errands", lambda: errands_waiting(cfg, root / cfg.learning.folder)),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),
-        *([(DISPLAY_UNIT, lambda: systemd(DISPLAY_UNIT, systemd_state))] if screen else []),
     ]
     print("Checking TARS...\n", flush=True)
     results = run(checks)

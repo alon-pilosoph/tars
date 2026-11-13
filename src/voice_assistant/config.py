@@ -360,8 +360,9 @@ class BrowserConfig:
     # home network or Tailscale ("": its Tailscale address if it has one, else its address at home).
     login_host: str = ""
     login_port: int = 8091
-    # Run the browser on this Fly Sprite instead of this machine ("": here). Its pages still load from home: every
-    # connection comes back through the link to this machine. Set up with deploy/browser-host/setup.sh.
+    # The Fly Sprite the browser runs on; must be set on the Pi. Its pages still load from home: every connection comes
+    # back through the link to this machine. Set up with deploy/browser-host/setup.sh. "": Chrome on this machine, for
+    # developing the browser on a Mac.
     sprite: str = ""
 
 
