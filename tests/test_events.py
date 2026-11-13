@@ -10,6 +10,7 @@ import pytest
 
 from voice_assistant import events, store
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
+from voice_assistant.conversations import ConversationLog
 from voice_assistant.events import (
     ASKED,
     NEAR_MISS,
@@ -421,3 +422,38 @@ def test_a_wishes_table_from_before_builds_gains_their_columns_and_keeps_its_wis
     (wish,) = log.store.rows("SELECT * FROM wishes")
     assert wish["asked"] == "dim the hall" and wish["tries"] == 0
     assert {"build", "issue", "pr", "sha", "checked", "built_at", "head", "moved"} <= set(wish)
+
+
+# Recording off ([learning] log_events = false): the database is there, wakes and audio aren't kept
+
+
+def audio_files(folder) -> list:
+    return [p for p in (folder / "audio").rglob("*") if p.is_file()] if (folder / "audio").exists() else []
+
+
+def test_with_recording_off_a_conversation_is_kept_as_text_and_no_wake_or_audio_is_written(tmp_path):
+    quiet = EventLog(tmp_path / "events", record=False)
+    journal = Journal(quiet)
+    journal.near_miss(AUDIO, 0.7, "m.tflite")
+    journal.wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9, "m.tflite", "")
+    journal.heard(speech(), "what time is it", "Alon", 0.8, None, first=True)
+    journal.answered("It's ten.", [], "Alon")
+    journal.flush()
+    assert quiet.events() == []  # no wake, no near-miss
+    [conversation] = ConversationLog(quiet).conversations()
+    turns = ConversationLog(quiet).get(conversation["id"])["turns"]
+    assert [t["text"] for t in turns] == ["what time is it", "It's ten."]
+    assert not any(t.get("has_audio") for t in turns) and audio_files(quiet.folder) == []  # TARS's turns have none
+
+
+def test_with_recording_off_a_voice_message_is_kept_as_text_without_its_audio(tmp_path):
+    quiet = ConversationLog(EventLog(tmp_path / "events", record=False))
+    conversation = quiet.start(None, via="telegram")
+    turn = quiet.add_person_turn(conversation, "remind me at five", speech(), "Alon")
+    assert quiet.turn(turn)["audio"] is None and audio_files(quiet.events.folder) == []
+
+
+def test_with_recording_on_the_same_turn_keeps_its_audio(tmp_path):
+    kept = ConversationLog(EventLog(tmp_path / "events"))
+    turn = kept.add_person_turn(kept.start(None, via="telegram"), "remind me at five", speech(), "Alon")
+    assert kept.turn(turn)["audio"] and len(audio_files(kept.events.folder)) == 1

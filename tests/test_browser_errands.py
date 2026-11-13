@@ -586,8 +586,6 @@ def test_the_telegram_service_makes_errands_only_with_browser_on(tmp_path):
     on = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
     with pytest.raises(ConfigError):
         errand_queue(on, events, has_openai=False)
-    with pytest.raises(ConfigError):  # the queue is in the event database
-        errand_queue(on, None, has_openai=True)
     queue = errand_queue(on, events, has_openai=True)
     made = make_errands(on, tmp_path, object(), queue, tars(ButtonBot(), [ScriptedBrain()]))
     assert isinstance(made, Errands) and isinstance(made.chats, TelegramErrands)

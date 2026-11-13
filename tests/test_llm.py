@@ -445,8 +445,9 @@ def test_a_failed_reply_is_an_error_not_silence(event):
         "".join(brain.stream_reply("hi"))
 
 
-@pytest.mark.parametrize("log_events, typed, sends", [(True, False, True), (False, False, False), (True, True, False)])
+@pytest.mark.parametrize("log_events, typed, sends", [(True, False, True), (False, False, True), (True, True, False)])
 def test_tars_only_sends_things_when_they_can_be_kept(tmp_path, log_events, typed, sends):
+    """Sent items are kept in the database, which recording off ([learning] log_events) leaves on."""
     from voice_assistant.config import load_config
     from voice_assistant.wiring import brain_config
 

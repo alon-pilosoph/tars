@@ -162,7 +162,7 @@ in the toolbox: it's OpenAI's own, run on its side, and the brain marks the repl
 
 - **Web search** (OpenAI's built-in tool, `[llm] web_search`): for current questions and real links. When the
   model starts a search with nothing said yet, TARS says "Looking it up." so the wait isn't silent.
-- **Send** (`[llm] send`, needs `[learning] log_events`): a strict function tool for a link, a note (short
+- **Send** (`[llm] send`): a strict function tool for a link, a note (short
   markdown), a list, or a text file (`.txt`, `.md`, `.csv`, `.ics`), for whoever asked or for the household. The
   assistant checks every call (links must be http(s), a file needs a known type and its text) and returns errors to
   the model (see tool rounds below). Sent

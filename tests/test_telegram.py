@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import tempfile
 import threading
 import time
 import types
@@ -14,7 +15,8 @@ import pytest
 
 from voice_assistant.config import ConfigError, LLMConfig
 from voice_assistant.control import Refused, Unavailable
-from voice_assistant.conversations import FILE, LIST, NOTE, OTHER, SentItem
+from voice_assistant.conversations import FILE, LIST, NOTE, OTHER, ConversationLog, SentItem
+from voice_assistant.events import EventLog
 from voice_assistant.llm import SEARCHING, THINKING, OpenAIChat
 from voice_assistant.reminders import (
     ADD,
@@ -144,9 +146,11 @@ def message(text, chat_id=ALON, sent_at=None, kind="private", update_id=1):
 
 
 def tars(bot, brains, convos=None, tools=None, people=None, **kw) -> TelegramTars:
-    """A TelegramTars whose people get the given brains, in order."""
+    """A TelegramTars whose people get the given brains, in order; its conversations in a database of its own when
+    the test doesn't look at them."""
     made = iter(brains)
     kw.setdefault("sleep", lambda s: None)
+    convos = convos or ConversationLog(EventLog(Path(tempfile.mkdtemp(prefix="tars-telegram-"))))
     return TelegramTars(bot, people or PEOPLE, lambda: next(made), convos, tools, typing=False, **kw)
 
 
