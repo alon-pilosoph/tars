@@ -396,6 +396,42 @@ what's merged is installed on the Pi by the updater.
   on a Pi without a secure key store means keeping the key on it to boot unattended, which buys little. What limits the
   damage is revoking: each key in `.env` can be revoked at its service, and the browser's sites signed out.
 
+### The browser's Sprite, or Fly
+
+With `[browser] sprite`, the browser runs on a Fly Sprite ([on a Sprite](browser.md#on-a-sprite)). Whoever takes it
+over, or Fly itself, has what the browser has while it runs: the pages, each person's cookies, and the logins as
+they're typed. What else they could reach is what this section is about.
+
+- **Defenses:**
+  - *The home network.* The Sprite's only way out is the link back to the way out on this machine
+    (`browser/way_out.py`), which refuses home names, the names TARS is set up with, every address that isn't
+    public (an IPv4 address written as IPv6 included), and every port but 80 and 443. It resolves a name once,
+    checks every address, and connects to the one it checked, so a name can't answer differently the second time.
+    The Sprite's own localhost is sent there too (`<-loopback>`), and refused.
+  - *Everything else.* The Sprite's network policy denies every name and address. It's set from outside through
+    Fly's API and can't be changed from inside, so a Sprite taken over still reaches only the way out.
+  - *The link.* It's opened from here, through `sprite proxy`; the Sprite has no port on the internet. The Sprite's
+    sshd listens on its localhost only and accepts one key, which may forward Chrome's port and the control
+    service's and offer the way out, and nothing else: no command (`command=`, `ForceCommand`), no file transfer, no
+    other forward. This machine checks the Sprite's host key against the one `setup.sh` recorded.
+  - *Chrome's debugging port,* which has no password and gives whoever reaches it every signed-in account in the
+    profile, listens on the Sprite's localhost only, reached from here through the link.
+  - *The control service* listens on the Sprite's localhost, wants a key besides, and takes only a profile name made
+    of letters, digits and dashes.
+  - *The vault* never goes to the Sprite: logins are typed through the link, as they're typed into a local Chrome.
+  - *The Sprite's name* goes into ssh's `ProxyCommand`, which a shell runs: it's held to lower-case letters, digits
+    and dashes in the config check and again where the command is made.
+- **Tests:** `tests/test_browser_way_out.py` (each refusal, then real SOCKS5 conversations: home refused on the wire,
+  the checked address is the one connected to); `tests/test_browser_sprite.py` (the control service's key and profile
+  names, the link forwarding three ports and running nothing, a Sprite's name that would reach the shell). By hand on
+  a real Sprite: a command, sftp and an unlisted forward refused; with the policy on, the Sprite's own requests fail by
+  name and by address, while the browser loads pages from the home's address and is refused the router, the Sprite's
+  localhost and its own debugging port.
+- **Open:** whoever takes the Sprite over can browse the public web from the home's address on ports 80 and 443 while
+  a link is open, as the browser itself can. The Fly token on this machine can reach the Sprite (run commands on it,
+  read the profiles): it's guarded like the vault's key, in TARS's user's own folder. Fly, which runs it, is trusted
+  with what the browser sees.
+
 ### A stolen key
 
 - **Defenses:** the backup's AWS user is limited to its one bucket ([backup](backup.md)). The bot answers only the

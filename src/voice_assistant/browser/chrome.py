@@ -42,10 +42,17 @@ def executable() -> str:
 
 
 @contextmanager
-def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[str] = frozenset()):
-    """TARS's Chrome with Playwright attached, as a Session (session.py), for as long as it's needed, then shut.
-    `home`: the house's own names, never opened (homenet.py)."""
-    with own_chrome(profile, port) as address, attached(address, home) as session:
+def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[str] = frozenset(), sprite: str = ""):
+    """TARS's Chrome with Playwright attached, as a Session (session.py), for as long as it's needed, then shut:
+    this machine's, or on `sprite` with the same profile's name ([browser] sprite, sprite.py). `home`: the house's
+    own names, never opened (homenet.py)."""
+    if sprite:
+        from .sprite import sprite_chrome
+
+        chrome = sprite_chrome(sprite, profile, home)
+    else:
+        chrome = own_chrome(profile, port)
+    with chrome as address, attached(address, home) as session:
         yield session
 
 

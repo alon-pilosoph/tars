@@ -113,7 +113,7 @@ def main() -> None:
         settings = Settings(model=browser.model, effort=browser.effort, turns=args.turns,
                             really_commit=args.really_commit)  # fmt: skip
         you = Terminal(args.person)
-        run = run_task(args.goal, you, trace_to=args.trace, settings=settings, person=you)
+        run = run_task(args.goal, you, trace_to=args.trace, settings=settings, person=you, sprite=browser.sprite)
         print(json.dumps(run.record(), ensure_ascii=False, indent=2))
         return
     if args.command == "vault":

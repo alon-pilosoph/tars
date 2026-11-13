@@ -45,6 +45,7 @@ QUICK_PROVIDERS = (
 
 
 WEB_PORT = 8080  # the web UI's, unless --port says otherwise
+SPRITE_NAME = r"[a-z0-9][a-z0-9-]{0,62}"  # a Fly Sprite's name ([browser] sprite): it goes into an ssh command line
 
 
 GREETS = ("pause", "always", "never")  # [recorder] greet
@@ -359,6 +360,9 @@ class BrowserConfig:
     # home network or Tailscale ("": its Tailscale address if it has one, else its address at home).
     login_host: str = ""
     login_port: int = 8091
+    # Run the browser on this Fly Sprite instead of this machine ("": here). Its pages still load from home: every
+    # connection comes back through the link to this machine. Set up with deploy/browser-host/setup.sh.
+    sprite: str = ""
 
 
 @dataclass
@@ -629,6 +633,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[browser] model must be an OpenAI model: errands read sign-in emails and site notes with it")
     if not 1024 <= w.login_port <= 65535:
         problems.append("[browser] login_port must be between 1024 and 65535")
+    if w.sprite and not re.fullmatch(SPRITE_NAME, w.sprite):
+        problems.append(f"[browser] sprite must be a Sprite's name (lower case, digits, dashes), not {w.sprite!r}")
     b = cfg.backup
     if b.enabled and not b.bucket:
         problems.append("[backup] bucket must name the S3 bucket to back up to")

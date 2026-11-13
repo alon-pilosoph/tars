@@ -211,7 +211,7 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   house (with `[home]` devices), TARS's own speaker (with `[home] own_speaker`: its volume, or why it can't be
   turned), each router (with `[presence]`: signed into, and whose phone it sees), the backup (the bucket, and how the
   last pass went), the browser (with `[browser]`: its model, the Chromium it found, errands waiting while nothing runs
-  them, and its virtual screen's service) and the systemd services. Each problem comes with what to do about it, and
+  them, and its virtual screen's service; with `[browser] sprite`, the link to the Sprite instead, which wakes it) and the systemd services. Each problem comes with what to do about it, and
   it exits 1 if anything is broken. It never hangs on a device: one that
   doesn't open in time is a failure. Without a terminal, the web UI's **Status** page shows much of the same when
   it's opened or refreshed: whether each process is running, the services with their own status pages, Home

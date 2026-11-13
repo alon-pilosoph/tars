@@ -113,11 +113,13 @@ def run_task(
     vault: Vault | None = None,
     openai=None,
     home: frozenset[str] = frozenset(),
+    sprite: str = "",
 ) -> Run:
     """Runs the agent on `goal` in a fresh TARS Chrome (run_in), then shuts it. `openai`: the OpenAI client to use,
     if there is one already (TARS's own), else one from .env. `home`: the names the house is reached by ([web]
-    allowed_hosts, [home] url), which the browser never opens."""
+    allowed_hosts, [home] url), which the browser never opens. `sprite`: the Fly Sprite the Chrome runs on ([browser]
+    sprite), or "" for this machine."""
     settings = settings or Settings()
-    with browser_session(profile, port, home) as session:
+    with browser_session(profile, port, home, sprite) as session:
         return run_in(session, goal, approver, model_client(settings, openai), settings, trace_to, notes, person,
                       vault)  # fmt: skip

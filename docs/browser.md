@@ -176,6 +176,8 @@ later: the requests that did the work, replayed by code.
 4. Restart the Telegram service and the assistant, then `voice-assistant --check`: it has a line for the browser
    (its model, the Chromium it found), the errands waiting, and the display service.
 
+To run the browser on a Fly Sprite instead of this machine, see [On a Sprite](#on-a-sprite).
+
 ## Running it
 
 ```bash
@@ -207,6 +209,59 @@ The same code, with three differences that come from the Pi having no screen
 Pi 4's speed there, a page takes 1-4 s to load and 1.5-5 s to read (most of it waiting for a busy page to stop
 moving), so an errand takes longer than on a Mac, mostly in the browser: the model is in the cloud either way.
 
+## On a Sprite
+
+The browser can run on a [Fly Sprite](https://docs.fly.io/sprites/) instead of the machine TARS runs on: a Linux
+machine of its own that sleeps when it's not used and is billed only while it runs. The errands then don't need a
+desktop at home, and the Sprite runs Google Chrome on x86-64, which the Pi can't. Everything else stays where it was:
+the Telegram service still runs the errand, the agent and the model calls, asks before an order, and keeps the vault
+([`sprite.py`](../src/voice_assistant/browser/sprite.py)).
+
+```
+ This machine (the Pi)                                      The Sprite (tars-browser)
+ ─────────────────────                                      ─────────────────────────
+ the errand, the model, the vault                           control service :9334 ─ starts Chrome per profile
+ Playwright ──────────── SSH, through `sprite proxy` ─────► Chrome's debugging port :9333
+ the way out (way_out.py) ◄──────── same connection ─────── Chrome's proxy, socks5://localhost:1080
+   │                                                        (everything else: denied by its network policy)
+   └─► the site, from the home's address
+```
+
+- **One SSH connection per errand, opened from here.** Through `sprite proxy`, so the Sprite has no port on the
+  internet; opening it wakes the Sprite, closing it lets it sleep. A host key other than the one recorded at setup
+  ends it.
+- **Pages load from home.** The Sprite's Chrome sends every connection back through the link to the way out
+  ([`way_out.py`](../src/voice_assistant/browser/way_out.py)), a small proxy here that makes the connection to the
+  site, so sites see the home's address (Wolt, KSP, Booking and rail.co.il treat a data centre's badly). Names are
+  looked up here too.
+- **Home stays out of reach.** The way out refuses home names (`router`, `.local`, the names TARS is set up with),
+  any address that isn't a public one, and ports other than 80 and 443, and connects only to the address it checked.
+  The Sprite's own localhost goes through it too, and is refused.
+- **The Sprite can reach nothing by itself.** Its network policy denies every name and address, and it can't change
+  that from inside. A Chrome that skipped its proxy would load nothing.
+- **The link's key does three things only:** reach Chrome's port, reach the control service, and offer the way out.
+  No command, no file transfer, no other forward.
+- **The profiles are on the Sprite** (`~/profiles`, one per person, as on the Pi), cookies and all; they survive its
+  sleeping. The vault isn't: logins are typed through the link from here.
+
+Setting it up, from the machine that runs the Telegram service:
+
+```bash
+curl -fsSL https://sprites.dev/install.sh | sh && sprite login     # once: the sprite command, signed in to Fly
+deploy/browser-host/setup.sh tars-browser                          # makes or updates the Sprite; safe to rerun
+```
+
+then `sprite = "tars-browser"` under `[browser]` in `config.local.toml`, and `voice-assistant --check`: its browser
+line opens the link and asks the control service, which wakes the Sprite for a moment. The keys are in
+`~/.cache/tars-browser`, beside the vault: `sprite-link` (the link's), `sprite-known-hosts` (the Sprite's host key)
+and `sprite-control-key`. [`setup.sh`](../deploy/browser-host/setup.sh) installs Chrome and the virtual screen,
+locks sshd down, runs the [control service](../deploy/browser-host/control.py), and lifts the network policy only
+while it installs packages.
+
+Measured from a Mac at home to a Sprite: about 3 s from asking to Playwright attached (waking it, the link, Chrome
+starting), and a simple page in about a second. Not yet measured: the Pi as the home end, a whole errand, and the
+evals.
+
 ## What leaves the machine
 
 - **To OpenAI,** for each errand: the goal, and the pages the browser works as the model reads them (their text, and
@@ -220,6 +275,9 @@ moving), so an errand takes longer than on a Mac, mostly in the browser: the mod
   (`[browser] login_port`), plain HTTP: better reached over Tailscale.
 - **To Telegram,** the checkout's screenshot and what an order commits to, to approve, and the codes sent back
   ([TARS on Telegram](telegram.md#what-it-sends-telegram)).
+- **To the Sprite,** with `[browser] sprite`: the browser itself. It sees the pages, the cookies, and the keystrokes,
+  logins included as they're typed, as any machine running the browser must; it keeps each person's profile. The
+  vault file and its key stay here. Fly, which runs the Sprite, could see all of that too.
 
 The browser never opens an address on this machine or the home network (TARS's web UI, the router), whatever a
 page asks: a page can say anything to a model, and those don't ask for a password.
@@ -250,3 +308,5 @@ uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off
   and the checkout is a picture worth seeing.
 - **Errands at once.** One runs at a time: there's one browser. A browser per person could run theirs side by side.
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.
+- **Signing in by hand on the Sprite.** `signin` opens a window on this machine; for the Sprite there's no view of
+  its screen yet (a VNC server on its localhost, through the same link, is the plan).

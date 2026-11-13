@@ -439,6 +439,8 @@ Unix socket (`control.py`). But all three assume the hardware and the home netwo
 conversation's side of the boundary is in place for the room's audio: the assistant hears and speaks only through a
 `Body` (`body.py`), in-process, the Pi's being `LocalBody` (its wake word, mic, recorder and speaker), chosen where the
 assistant is made (`wiring.local_body`). The buttons, and everything on the home network, aren't behind it yet.
+The browser has already moved: it can run on a Fly Sprite, reached by a link this machine opens, its pages still
+loading from home ([on a Sprite](browser.md#on-a-sprite)), the pattern the rest follows.
 
 **The split:**
 
@@ -454,8 +456,8 @@ The body decides nothing: it does what it's asked and says what happened.
 
 **Design:**
 
-- **The body dials out.** One long-lived connection to the brain, over Tailscale or a WebSocket with a key at each
-  end; nothing at home opens a port, as with Telegram today. Events go up (a wake confirmed, with the audio after it;
+- **The body dials out.** One long-lived connection to the brain, a WebSocket with a key at each end; nothing at
+  home opens a port, as with Telegram today, and no VPN (Tailscale) is needed for any of it. Events go up (a wake confirmed, with the audio after it;
   a button; a phone coming home; a device changing), calls come down ("play Channel 12 on the TV"), each answered as
   the home tool's are now, and the reply's audio streams down to the speakerphone.
 - **A voice turn:** the wake word and its check on the Pi, as now; the request streamed to speech to text, from the
@@ -484,7 +486,7 @@ The body decides nothing: it does what it's asked and says what happened.
    routers.
 2. **Two processes on the Pi.** The body becomes its own service, and the brain talks to it over a socket, as
    `control.py` does now; the body's own unlock check lands here.
-3. **The brain moves.** Pointed at a server, the two joined over Tailscale; the body's fallback when the brain can't
+3. **The brain moves.** Pointed at a server, the body dialling out to it; the body's fallback when the brain can't
    be reached; the backup and `--check` follow the brain.
 4. **A second body**, in another room, to prove the split holds.
 

@@ -440,12 +440,28 @@ def browser(cfg: Config) -> Result:
         from .browser.chrome import executable
     except ImportError:
         return Result("Browser", FAIL, 'no optional extra "browser"', "uv sync --all-extras")
+    orders = "orders once approved" if cfg.browser.really_order else "approved orders are a dry run"
+    if cfg.browser.sprite:
+        return sprite_browser(cfg, orders)
     try:
         found = executable()
     except RuntimeError:
         return Result("Browser", FAIL, "no Chrome or Chromium", "sudo apt install chromium (install-pi.sh does)")
-    orders = "orders once approved" if cfg.browser.really_order else "approved orders are a dry run"
     return Result("Browser", OK, f"{cfg.browser.model} at {cfg.browser.effort} effort, in {found}; {orders}")
+
+
+def sprite_browser(cfg: Config, orders: str, reach=None) -> Result:
+    """The browser on a Fly Sprite ([browser] sprite): the link opens and the control service there answers. Wakes
+    the Sprite for a moment."""
+    from .browser.sprite import SpriteUnreachable, reachable
+
+    sprite = cfg.browser.sprite
+    try:
+        (reach or reachable)(sprite)
+    except SpriteUnreachable as e:
+        return Result("Browser", FAIL, f"on the Sprite {sprite}: {e}", f"deploy/browser-host/setup.sh {sprite}")
+    said = f"{cfg.browser.model} at {cfg.browser.effort} effort, on the Sprite {sprite}; {orders}"
+    return Result("Browser", OK, said)
 
 
 def errands_waiting(cfg: Config, folder: Path, now: float | None = None) -> Result:
@@ -1072,6 +1088,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
             "check the network and run it again",
         )
 
+    screen = cfg.browser.enabled and not cfg.browser.sprite  # a Sprite has its own virtual screen
     checks: list[tuple[str, Check]] = [
         ("API keys", services.keys),
         ("Input device", lambda: audio_device("input")),
@@ -1102,7 +1119,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ("Errands", lambda: errands_waiting(cfg, root / cfg.learning.folder)),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),
-        *([(DISPLAY_UNIT, lambda: systemd(DISPLAY_UNIT, systemd_state))] if cfg.browser.enabled else []),
+        *([(DISPLAY_UNIT, lambda: systemd(DISPLAY_UNIT, systemd_state))] if screen else []),
     ]
     print("Checking TARS...\n", flush=True)
     results = run(checks)

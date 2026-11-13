@@ -273,7 +273,7 @@ class Errands:
             run_task = self._run or _run_task()
             run = run_task(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai,
                            home=self._home, profile=profile_for(person, self._people[0]),
-                           notes=_notes(self._folder.parent))  # fmt: skip
+                           notes=_notes(self._folder.parent), sprite=self._cfg.sprite)  # fmt: skip
             text, status = _told(run.result), DONE if run.result.ended == "done" else FAILED
         except Exception as e:  # noqa: BLE001 - an errand that broke is said so, never left hanging
             traceback.print_exc()
