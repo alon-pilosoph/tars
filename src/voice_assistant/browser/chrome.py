@@ -45,11 +45,19 @@ def executable() -> str:
 def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[str] = frozenset()):
     """TARS's Chrome with Playwright attached, as a Session (session.py), for as long as it's needed, then shut.
     `home`: the house's own names, never opened (homenet.py)."""
+    with own_chrome(profile, port) as address, attached(address, home) as session:
+        yield session
+
+
+@contextmanager
+def attached(address: str, home: frozenset[str] = frozenset()):
+    """Playwright attached to the Chrome whose debugging port is at `address`, as a Session: this machine's own
+    (own_chrome) or one elsewhere, reached through a forwarded port. `home`: as browser_session's."""
     from playwright.sync_api import sync_playwright
 
     from .session import Session
 
-    with own_chrome(profile, port) as address, sync_playwright() as p:
+    with sync_playwright() as p:
         yield Session(p.chromium.connect_over_cdp(address).contexts[0], home=home)
 
 

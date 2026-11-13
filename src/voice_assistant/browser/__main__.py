@@ -14,15 +14,12 @@ import getpass
 import json
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
 from ..config import load_config
 from .agent import Settings
-from .chrome import PROFILE, own_chrome
+from .chrome import PROFILE, attached, own_chrome
 from .login import MAIL_WAIT_S, Answer
 from .login_page import Field
 from .run import ROOT, run_task
-from .session import Session
 from .vault import GMAIL, Vault, household_person, origin
 
 
@@ -124,9 +121,7 @@ def main() -> None:
             parser.error(f"vault {args.action} needs a site")
         vault_command(args)
         return
-    with own_chrome(PROFILE) as address, sync_playwright() as p:
-        context = p.chromium.connect_over_cdp(address).contexts[0]
-        session = Session(context)
+    with own_chrome(PROFILE) as address, attached(address) as session:
         if args.command == "signin":
             session.page.goto(args.url)
             print("Sign in by hand in that Chrome window (tick 'Keep me signed in'), then press Enter here.")
