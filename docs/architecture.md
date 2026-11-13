@@ -363,7 +363,7 @@ The assistant is `src/voice_assistant/`:
 
 | Area | Files |
 |---|---|
-| Audio in and out | `body.py` (the body the conversation hears and speaks through, and `LocalBody`, the Pi's), `audio.py` (mic stream, devices by name, playback), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
+| Audio in and out | `body.py` (the body the conversation hears and speaks through, and `LocalBody`, the Pi's), `audio.py` (mic stream, devices by name, playback: the devices need the optional extra `voice`, imported only where one is opened; the WAV helpers serve the chat side too), `effects.py` (the TARS speaker box), `echo.py` (the WebRTC echo canceller that takes TARS's greeting back out of what the mic heard), `mic_test.py` (the `--mic-test` meter) |
 | Hearing "hey TARS" | `wake.py` (stage 1, push-to-talk), `verify.py` (stage 2), `versions.py` (trained pairs, which is in use, switching live) |
 | Hearing when you're done | `stt.py` (Flux), `recorder.py`, `vad.py` (Silero), `turn.py` (Smart Turn, the fallback) |
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model, and `Reply`, a turn's reply and its markers), `toolbox.py` (the brain's tools, from whoever provides them, each saying what it may change), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |

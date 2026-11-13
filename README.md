@@ -81,7 +81,7 @@ Needs [uv](https://docs.astral.sh/uv/). On Linux (a Pi included), first `sudo ap
 
 ```bash
 git clone https://github.com/alon-pilosoph/tars.git && cd tars
-uv sync --all-extras                   # every extra: echo cancellation, Claude, Android TV, the IR blaster, S3 backup
+uv sync --all-extras                   # every extra: the voice, echo cancellation, Claude, Android TV, the IR blaster, S3 backup
 cp .env.example .env                   # then your API keys: OpenAI, Deepgram, Cartesia, Cerebras, or some
 uv run voice-assistant --check         # keys, devices, models, services, voice and mic: what's wrong, what to do
 uv run voice-assistant --mic-test      # loudness, speech and wake-word meters; no API key needed
@@ -145,7 +145,8 @@ npm run site                                 # the site (How it works, Features)
 ```
 
 CI runs the tests with every extra installed, lint and format checks, a check that the committed web build is
-current, and an end-to-end run; the site deploys only after CI passes on `main`.
+current, an end-to-end run, and a check that a chat-only install (no extras, no PortAudio) imports none of the voice's
+packages; the site deploys only after CI passes on `main`.
 
 ## License
 

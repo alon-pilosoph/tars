@@ -7,7 +7,6 @@ run on onnxruntime to avoid PyTorch.
 import io
 from pathlib import Path
 
-import kaldi_native_fbank as knf
 import numpy as np
 
 from .audio import SAMPLE_RATE
@@ -25,6 +24,8 @@ MIN_SPEECH_S = 0.8
 
 def _fbank(pcm: np.ndarray) -> np.ndarray:
     """80-bin Kaldi filterbank with mean normalization: the features the model was trained on."""
+    import kaldi_native_fbank as knf  # with the voice extra, loaded only when a voice is heard
+
     opts = knf.FbankOptions()
     opts.frame_opts.dither = 0.0
     opts.frame_opts.samp_freq = SAMPLE_RATE

@@ -84,8 +84,12 @@ Run `voice-assistant --telegram` and `voice-assistant --web` (the voice assistan
 so). `--check` skips the audio checks with one line, the Status page doesn't expect the voice assistant, the web UI
 has no pages about hearing, and a reminder due aloud goes to its person's Telegram chat
 ([reminders](reminders.md#on-telegram)). Settings that are for a microphone or speaker (`[audio] echo_cancel`,
-`[home] own_speaker`, `commands_on_pi`, `remote`) are refused with it off. The audio packages are still installed for
-now.
+`[home] own_speaker`, `commands_on_pi`, `remote`) are refused with it off.
+
+It needs none of the voice's packages: `uv sync --frozen` without extras installs TARS without them (the optional
+extra `voice`: the sound devices, which need PortAudio, the wake word and its check, and the models that hear), on a
+machine with no sound card. A command that does need them (`voice-assistant`, `--mic-test`, `--list-devices`,
+`--enroll`, `--text`) says so and how to get them.
 
 ## Install on the Pi
 

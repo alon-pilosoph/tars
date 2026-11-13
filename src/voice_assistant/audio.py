@@ -1,7 +1,10 @@
 """Audio devices: one microphone stream read in 80 ms blocks, one speaker stream that stays open, and the 16 kHz WAV
 format every recording is kept in. A device that only works at its own rate (the Anker PowerConf takes 48 kHz and
 nothing else on Linux, where nothing converts for it) is opened at that rate, and TARS converts. A device that stops
-working raises AudioDeviceError, which ends the process so a supervisor can restart it."""
+working raises AudioDeviceError, which ends the process so a supervisor can restart it.
+
+The devices need sounddevice (PortAudio), from the optional extra "voice": it's imported only where a device is
+opened or listed, so the WAV helpers here serve the chat side (Telegram, the web UI) without it."""
 
 import io
 import math
@@ -15,7 +18,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 import numpy as np
-import sounddevice as sd
 
 if TYPE_CHECKING:
     from .echo import EchoCanceller
@@ -97,6 +99,8 @@ def sound_ms(pcm: np.ndarray) -> float:
 
 def find_device(name: str, kind: str) -> int | None:
     """By name substring, so config survives index changes across machines and boots."""
+    import sounddevice as sd  # PortAudio: only with the voice extra, loaded only here
+
     if not name:
         return None
     channels_key = "max_input_channels" if kind == "input" else "max_output_channels"
@@ -108,6 +112,8 @@ def find_device(name: str, kind: str) -> int | None:
 
 def device_names() -> tuple[list[str], int, int]:
     """Every device's name, by index, and the system's default input and output."""
+    import sounddevice as sd  # PortAudio: only with the voice extra, loaded only here
+
     default_in, default_out = sd.default.device
     return [d["name"] for d in sd.query_devices()], default_in, default_out
 
@@ -116,6 +122,8 @@ def device_rate(device: int | None, kind: str, wanted: int) -> int:
     """The rate to open `device` (None: the system's default) at for `kind` ("input" or "output") audio: `wanted` if
     it takes it, its own default rate if not. One that can't be asked about at all gets `wanted`, so opening it says
     what's wrong."""
+    import sounddevice as sd  # PortAudio: only with the voice extra, loaded only here
+
     check = sd.check_input_settings if kind == "input" else sd.check_output_settings
     try:
         check(device=device, samplerate=wanted, channels=1, dtype="int16")
@@ -168,6 +176,8 @@ class Resampler:
 
 
 def list_devices() -> None:
+    import sounddevice as sd  # PortAudio: only with the voice extra, loaded only here
+
     default_in, default_out = sd.default.device
     for index, device in enumerate(sd.query_devices()):
         roles = []
@@ -221,6 +231,8 @@ ECHO_TAIL_S = 0.1
 class Microphone:
     def __init__(self, device: int | None, echo: EchoCanceller | None = None):
         """`echo`: takes TARS's own sound out of what's heard, so the mic can stay open while TARS makes one."""
+        import sounddevice as sd  # PortAudio: only with the voice extra, loaded only here
+
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=200)
         self._muted = False
         self._last_audio = time.monotonic()  # when the device last called back: what `discard` looks at
@@ -318,6 +330,8 @@ class Speaker:
 
     def __init__(self, device: int | None, sample_rate: int, prebuffer_s: float, echo: EchoCanceller | None = None):
         """`echo`: told everything played, silence too, so it can take it back out of what the mic hears."""
+        import sounddevice as sd  # PortAudio: only with the voice extra, loaded only here
+
         self.sample_rate = sample_rate
         self._rate = device_rate(device, "output", sample_rate)  # the device's: what the buffer holds
         self._echo = echo

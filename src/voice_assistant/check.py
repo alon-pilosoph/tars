@@ -989,8 +989,6 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
 
 def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
     """`silent`: nothing played, nothing listened to: the voice is made and not said."""
-    import sounddevice as sd
-
     from . import wiring
     from .audio import BLOCK_SECONDS, Microphone, NoDeviceError, Speaker, device_names, find_device
     from .haconfig import KEY_NAME
@@ -1096,12 +1094,16 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         return echo_delay(device_delay("input"), device_delay("output"))
 
     def device_delay(kind: str) -> float:
+        import sounddevice as sd
+
         wanted = cfg.audio.input_device if kind == "input" else cfg.audio.output_device
         return sd.query_devices(find_device(wanted, kind), kind)[f"default_high_{kind}_latency"]
 
     def speakers():
         if not cfg.speaker.enabled:
             return Result("Voiceprints", SKIP, "speaker ID is off")
+        if not aloud:  # chat-only, or the voice's packages missing: no voices to know
+            return Result("Voiceprints", SKIP, "nothing heard here to know voices by")
         why = "the speaker model didn't load in time (a download that stalled?)"
         return within(
             MODELS_S,
@@ -1114,6 +1116,18 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
     aloud = cfg.audio.enabled  # chat-only ([audio] enabled = false): nothing to hear with or speak from
     no_audio = "chat-only ([audio] enabled = false): no microphone, speaker or wake word to check"
     chat_only: list[tuple[str, Check]] = [("Audio", lambda: Result("Audio", SKIP, no_audio))]
+    if aloud:
+        try:
+            wiring.need_voice()
+        except ConfigError as e:  # no devices to look at without them: one line for all of it
+            aloud, fix = False, "uv sync --all-extras, or [audio] enabled = false for a chat-only home"
+            missing = e.code.split("(")[1].split(")")[0] if "(" in e.code else "the voice's packages"
+            chat_only = [
+                (
+                    "Audio",
+                    lambda: Result("Audio", FAIL, f'the optional extra "voice" isn\'t installed ({missing})', fix),
+                )
+            ]
     checks: list[tuple[str, Check]] = [
         ("API keys", services.keys),
         *(

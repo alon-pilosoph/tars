@@ -2472,24 +2472,17 @@ name = "voice-assistant"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "ai-edge-litert" },
     { name = "defusedxml" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "kaldi-native-fbank" },
     { name = "numpy" },
-    { name = "onnxruntime" },
     { name = "openai" },
-    { name = "openwakeword" },
     { name = "psutil" },
     { name = "pydantic" },
-    { name = "pymicro-features" },
     { name = "python-dotenv" },
     { name = "scipy" },
-    { name = "sounddevice" },
     { name = "soundfile" },
     { name = "uvicorn" },
-    { name = "vosk" },
     { name = "webauthn" },
     { name = "websockets" },
 ]
@@ -2521,6 +2514,15 @@ my-house = [
 tv = [
     { name = "adb-shell" },
 ]
+voice = [
+    { name = "ai-edge-litert" },
+    { name = "kaldi-native-fbank" },
+    { name = "onnxruntime" },
+    { name = "openwakeword" },
+    { name = "pymicro-features" },
+    { name = "sounddevice" },
+    { name = "vosk" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -2547,7 +2549,7 @@ training = [
 [package.metadata]
 requires-dist = [
     { name = "adb-shell", marker = "extra == 'tv'", specifier = ">=0.4.4" },
-    { name = "ai-edge-litert", specifier = ">=2.2.0" },
+    { name = "ai-edge-litert", marker = "extra == 'voice'", specifier = ">=2.2.0" },
     { name = "anthropic", marker = "extra == 'claude'", specifier = ">=1" },
     { name = "bleak", marker = "extra == 'my-house'", specifier = ">=1" },
     { name = "boto3", marker = "extra == 'backup'", specifier = ">=1.40" },
@@ -2556,30 +2558,30 @@ requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "kaldi-native-fbank", specifier = ">=1.20" },
+    { name = "kaldi-native-fbank", marker = "extra == 'voice'", specifier = ">=1.20" },
     { name = "livekit", marker = "extra == 'echo'", specifier = ">=1.1" },
     { name = "mcp", marker = "extra == 'browser'", specifier = ">=1.20" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "onnxruntime", specifier = ">=1.20" },
+    { name = "onnxruntime", marker = "extra == 'voice'", specifier = ">=1.20" },
     { name = "openai", specifier = ">=1.60" },
-    { name = "openwakeword", specifier = ">=0.6.0" },
+    { name = "openwakeword", marker = "extra == 'voice'", specifier = ">=0.6.0" },
     { name = "paho-mqtt", marker = "extra == 'door'", specifier = ">=2.1" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.64.1" },
     { name = "psutil", specifier = ">=7" },
     { name = "publicsuffixlist", marker = "extra == 'browser'", specifier = ">=1.0" },
     { name = "pydantic", specifier = ">=2" },
-    { name = "pymicro-features", specifier = ">=2" },
+    { name = "pymicro-features", marker = "extra == 'voice'", specifier = ">=2" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "scipy", specifier = ">=1.11" },
-    { name = "sounddevice", specifier = ">=0.4.7" },
+    { name = "sounddevice", marker = "extra == 'voice'", specifier = ">=0.4.7" },
     { name = "soundfile", specifier = ">=0.14.0" },
     { name = "tinytuya", marker = "extra == 'my-house'", specifier = ">=1.17" },
     { name = "uvicorn", specifier = ">=0.30" },
-    { name = "vosk", specifier = "==0.3.44" },
+    { name = "vosk", marker = "extra == 'voice'", specifier = "==0.3.44" },
     { name = "webauthn", specifier = ">=3.0.1" },
     { name = "websockets", specifier = ">=14" },
 ]
-provides-extras = ["claude", "echo", "backup", "tv", "door", "my-house", "browser"]
+provides-extras = ["voice", "claude", "echo", "backup", "tv", "door", "my-house", "browser"]
 
 [package.metadata.requires-dev]
 dev = [
