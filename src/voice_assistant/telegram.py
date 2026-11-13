@@ -518,7 +518,8 @@ class TelegramTars:
             self._send(chat_id, off)
             return
         if voice:
-            self.listen(chat, voice)
+            if not self._over_the_cap(chat_id):
+                self.listen(chat, voice)
             return
         command = text.split()[0].split("@")[0]
         if command == "/start":
@@ -538,7 +539,16 @@ class TelegramTars:
         if command == "/spotify":
             self.spotify(chat_id)
             return
-        self.answer(chat, text)
+        if not self._over_the_cap(chat_id):
+            self.answer(chat, text)
+
+    def _over_the_cap(self, chat_id: int) -> bool:
+        """Past the month's cap ([usage] monthly_cap_usd): said in the chat, and nothing paid for is started. The
+        commands done by code (/home, /volume, /mute) still work."""
+        if not usage.capped():
+            return False
+        self._send(chat_id, usage.CAPPED_LINE)
+        return True
 
     def spotify(self, chat_id: int) -> None:
         """/spotify: a sign-in from this chat, in a thread of its own, since it waits minutes for the page."""
@@ -559,6 +569,8 @@ class TelegramTars:
             return SAY_HOW
         if self._say is None:
             return NO_ALOUD
+        if usage.capped():  # said in a voice that's paid for
+            return usage.CAPPED_LINE
         try:
             self._say(text)
         except Unavailable, Refused:
@@ -762,6 +774,8 @@ class TelegramTars:
             if chat:
                 self._new_if_quiet(chat, self._clock())
             try:
+                if usage.capped():
+                    raise usage.Capped()
                 written = Reply(brain, on_its_own(skill, due.when, SKIP, due.why), request)
                 reply = tidy(written.read())
             except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time

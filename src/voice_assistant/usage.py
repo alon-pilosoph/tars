@@ -283,6 +283,123 @@ def _dollars(line: Line) -> str:
     return said + (" + not priced" if line.unpriced else "")
 
 
+# The cap
+
+
+WARN_SHARE = 80  # percent of the cap at which the maintainers are told it's near
+CAP_RECHECK_S = 60.0  # how long what's been spent is trusted before it's added up again
+CAPPED_LINE = "I've used up this month's budget for the services I think with, so that has to wait for next month."
+
+
+class Capped(Exception):
+    """A turn not started: this month's use has reached [usage] monthly_cap_usd."""
+
+    def __init__(self):
+        super().__init__("this month's cap on the paid services is reached")
+
+
+@dataclass
+class Spent:
+    month: str
+    cost: float
+    cap: float
+    checked: str  # the date prices.toml's prices were checked
+
+    @property
+    def share(self) -> float:
+        return self.cost / self.cap if self.cap else 0.0
+
+    @property
+    def reached(self) -> bool:
+        return bool(self.cap) and self.cost >= self.cap
+
+
+class Cap:
+    """[usage] monthly_cap_usd: past it, no turn starts that would call a paid service. What's been spent this month
+    is added up from `store` at most every CAP_RECHECK_S, so asking costs nothing per turn. The maintainers are told
+    once a month at WARN_SHARE percent and once when it's reached (`tell(text)`), whichever process sees it first: the
+    usage_told table remembers."""
+
+    def __init__(
+        self,
+        store,
+        cap_usd: float,
+        tell: Callable[[str], object],
+        prices: Prices | None = None,
+        clock: Callable[[], float] = time.time,
+    ):
+        self.store, self.cap_usd, self._tell, self._clock = store, cap_usd, tell, clock
+        self._prices = prices or load_prices()
+        self._lock = threading.Lock()
+        self._spent: Spent | None = None
+        self._added_at = float("-inf")
+
+    def spent(self) -> Spent:
+        """This month so far, at most CAP_RECHECK_S old."""
+        with self._lock:
+            now = self._clock()
+            fresh = self._spent and now - self._added_at < CAP_RECHECK_S
+            if not fresh or month_bounds(now=now)[2] != self._spent.month:
+                m = month(self.store, prices=self._prices, now=now)
+                self._spent, self._added_at = Spent(m.month, m.cost, self.cap_usd, m.checked), now
+                self._told_of(self._spent)
+            return self._spent
+
+    def reached(self) -> bool:
+        try:
+            return self.spent().reached
+        except Exception as e:  # noqa: BLE001 - a cap that can't be added up never stops TARS
+            print(f"(usage: couldn't add up this month's use for the cap: {e!r})")
+            return False
+
+    def _told_of(self, spent: Spent) -> None:
+        share = 100 if spent.reached else WARN_SHARE if spent.share * 100 >= WARN_SHARE else 0
+        if not share:
+            return
+        with self.store.transaction() as db:
+            first = db.execute(
+                "INSERT OR IGNORE INTO usage_told (month, share, at) VALUES (?, ?, ?)",
+                (spent.month, share, self._clock()),
+            ).rowcount
+        if first:
+            self._tell(told(spent))
+
+
+def told(spent: Spent) -> str:
+    """What the maintainers are told when this month's use nears the cap, or reaches it."""
+    used = f"${spent.cost:,.2f} of its ${spent.cap:,.2f} monthly cap"
+    if spent.reached:
+        return (
+            f"TARS has used {used} for {spent.month}, so it's stopped using the paid services until the month ends: "
+            "it says so when asked, still does house commands it hears itself, and still says the reminders already "
+            "set. Raise [usage] monthly_cap_usd to start again sooner."
+        )
+    return f"TARS has used {used} for {spent.month} ({spent.share:.0%}). It stops using the paid services at the cap."
+
+
+_cap: Cap | None = None
+
+
+def install_cap(cap: Cap | None) -> None:
+    """This process's cap, which capped() asks; None: no cap."""
+    global _cap
+    _cap = cap
+
+
+def has_cap() -> bool:
+    return _cap is not None
+
+
+def capped() -> bool:
+    """Whether this month's use has reached the cap: a turn that would call a paid service isn't started."""
+    return _cap is not None and _cap.reached()
+
+
+def spent() -> Spent | None:
+    """This month's use against the cap, or None without one."""
+    return _cap.spent() if _cap else None
+
+
 # The providers' streams, counted as they're read
 
 

@@ -43,6 +43,23 @@ not read from Deepgram. Spoken characters are what TARS sent to be said.
 Speech is priced by the minute of audio sent, which is what Deepgram and OpenAI bill. Voices are priced per million
 characters, by the start of the voice's name (`aura-2`, `flux-`, `sonic`).
 
+## A monthly cap
+
+`[usage] monthly_cap_usd` in `config.toml` caps a month's estimated cost (0, the default, is no cap). The maintainers
+(`[household]`) are told in their Telegram chats once when the month reaches 80% of it, and once when it reaches the
+cap. Past it, until the month ends:
+
+- **Said aloud,** TARS answers "I've used up this month's budget for the services I think with, so that has to wait
+  for next month." The recording isn't sent anywhere. The line was made ahead while there was budget, so saying it
+  costs nothing. A house command it can hear on the Pi itself (`[home] commands_on_pi`) is still done.
+- **In a chat,** the same line is the answer. The commands done by code (`/home`, `/volume`, `/mute`) still work;
+  `/say` doesn't, since its voice is paid for.
+- **Skills** don't run: a one-off is tried again or given up, as when its service fails.
+- **Reminders already set are still said**, from lines made ahead.
+
+The cap is checked as a turn starts, never part-way through a reply, so a month can end a little over it. What's been
+spent is added up again at most once a minute. `voice-assistant --check` has a line for it: a warning from 80%.
+
 ## Kept
 
 Rows are kept for 400 days, so this month can be set against the same month last year; older ones are deleted when

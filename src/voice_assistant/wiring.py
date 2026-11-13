@@ -122,10 +122,11 @@ def make_event_log(cfg: Config, root: Path):
     return EventLog(root / cfg.learning.folder)
 
 
-def start_metering(events: EventLog | None) -> None:
-    """What this process uses of the paid services, counted in the event log (usage.py), the oldest rows pruned; with
-    no event log, nothing is counted."""
+def start_metering(cfg: Config, events: EventLog | None) -> None:
+    """What this process uses of the paid services, counted in the event log (usage.py), the oldest rows pruned, and
+    [usage] monthly_cap_usd held to; with no event log, nothing is counted or capped."""
     from . import usage
+    from .maintainers import tell
 
     if events is None:
         return
@@ -135,6 +136,13 @@ def start_metering(events: EventLog | None) -> None:
     except Exception as e:  # noqa: BLE001 - counting goes on
         print(f"(usage: couldn't prune the oldest rows: {e!r})")
     usage.install(meter)
+    if cfg.usage.monthly_cap_usd:
+
+        def tell_maintainers(text: str) -> None:
+            if not tell(cfg, events.store, text):
+                print(f"(usage: no maintainer's chat to tell: {text})")
+
+        usage.install_cap(usage.Cap(events.store, cfg.usage.monthly_cap_usd, tell_maintainers))
 
 
 def start_heartbeat(events: EventLog | None, process: str, root: Path) -> None:

@@ -166,6 +166,12 @@ TABLES = {
     characters INTEGER NOT NULL DEFAULT 0, -- text spoken, for tts
     reported INTEGER NOT NULL DEFAULT 1    -- 0: the provider said nothing of it (a call cut off): counted, not measured
 )""",
+    "usage_told": """CREATE TABLE usage_told (
+    month TEXT NOT NULL,             -- YYYY-MM
+    share INTEGER NOT NULL,          -- the cap's percent the maintainers were told of: 80 or 100 (usage.py)
+    at REAL NOT NULL,
+    PRIMARY KEY (month, share)
+)""",
     "door_events": """CREATE TABLE door_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at REAL NOT NULL,
@@ -488,6 +494,12 @@ MIGRATIONS = [
     reported INTEGER NOT NULL DEFAULT 1    -- 0: the provider said nothing of it (a call cut off): counted, not measured
 )""",
         "CREATE INDEX usage_at ON usage(at)",
+        """CREATE TABLE usage_told (
+    month TEXT NOT NULL,             -- YYYY-MM
+    share INTEGER NOT NULL,          -- the cap's percent the maintainers were told of: 80 or 100 (usage.py)
+    at REAL NOT NULL,
+    PRIMARY KEY (month, share)
+)""",
     ],
 ]
 

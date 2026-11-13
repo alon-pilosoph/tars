@@ -4,13 +4,14 @@ it cost, worked out from prices.toml when it's read."""
 import threading
 import types
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
 from voice_assistant import usage
 from voice_assistant.config import LLMConfig
 from voice_assistant.llm import OpenAIChat
-from voice_assistant.usage import LLM, STT, TTS, Meter, Prices
+from voice_assistant.usage import LLM, STT, TTS, Cap, Meter, Prices
 
 from .conftest import fake_openai_chat
 
@@ -211,3 +212,126 @@ def test_a_row_that_cant_be_written_never_reaches_the_caller(log, capsys):
     finally:
         usage.install(None)
     assert "couldn't keep what a call used" in capsys.readouterr().out
+
+
+# The cap
+
+
+@pytest.fixture
+def capped_at():
+    """The process's cap, reached or not as the test says."""
+    state = {"reached": False}
+    usage.install_cap(types.SimpleNamespace(reached=lambda: state["reached"]))
+    yield state
+    usage.install_cap(None)
+
+
+def spend(meter, dollars: float, at: float = NOW) -> None:
+    """`dollars` spent on gpt-6-luna input at PRICES', at `at`."""
+    meter._clock = lambda: at
+    usage.llm("openai", "gpt-6-luna", input=round(dollars / 0.10 * 1e6))
+    meter.flush()
+
+
+def test_the_maintainers_are_told_once_near_the_cap_and_once_at_it_whichever_process_sees_it(meter):
+    told, now = [], [NOW]
+    voice, chat = (Cap(meter.store, 1.0, told.append, PRICES, clock=lambda: now[0]) for _ in range(2))
+    spend(meter, 0.5)
+    assert not voice.reached() and told == []
+    spend(meter, 0.35)
+    now[0] += usage.CAP_RECHECK_S  # what was added up is trusted this long
+    assert not voice.reached() and not chat.reached()
+    assert len(told) == 1 and "$0.85 of its $1.00 monthly cap" in told[0] and "(85%)" in told[0]
+    spend(meter, 0.2)
+    now[0] += usage.CAP_RECHECK_S
+    assert chat.reached() and voice.reached()
+    assert len(told) == 2 and "stopped using the paid services" in told[1]
+
+
+def test_whats_spent_is_added_up_again_only_after_a_while(meter):
+    now = [NOW]
+    cap = Cap(meter.store, 1.0, lambda text: None, PRICES, clock=lambda: now[0])
+    assert not cap.reached()
+    spend(meter, 2.0)
+    assert not cap.reached()
+    now[0] += usage.CAP_RECHECK_S
+    assert cap.reached()
+
+
+def test_a_new_month_starts_with_nothing_spent(meter):
+    told, now = [], [NOW]
+    cap = Cap(meter.store, 1.0, told.append, PRICES, clock=lambda: now[0])
+    spend(meter, 2.0)
+    assert cap.reached() and len(told) == 1  # at it: one message, not two
+    now[0] = datetime(2026, 12, 1, 0, 5).astimezone().timestamp()
+    assert not cap.reached() and cap.spent().month == "2026-12"
+
+
+def test_a_cap_that_cant_be_added_up_never_stops_tars(capsys):
+    broken = types.SimpleNamespace(rows=lambda *a: (_ for _ in ()).throw(OSError("locked")))
+    assert not Cap(broken, 1.0, print, PRICES).reached()
+    assert "couldn't add up this month's use" in capsys.readouterr().out
+
+
+def test_past_the_cap_a_voice_request_is_said_to_wait_and_nothing_is_sent(capped_at):
+    from .conftest import make_assistant
+
+    assistant, brain = make_assistant([b"q", None], ["what's the weather like"])
+    assistant.voice.stream = lambda text: iter([text.encode()])
+    assistant.prepare_phrases()  # at the start, with budget left: the line is made then
+    assistant.phrases.drain()
+    capped_at["reached"] = True
+    played = assistant.body.played
+    assistant.converse(follow_up_s=4.0)
+    assert brain.asked == [] and [chunk.decode() for chunk in played] == [usage.CAPPED_LINE]
+    assert assistant.transcriber.expected == [] and assistant.transcriber.heard == []  # the recording never left
+
+
+def test_past_the_cap_a_house_command_is_still_heard_on_the_pi_and_done(capped_at):
+    from voice_assistant.home import LOCK
+
+    from .conftest import make_assistant
+    from .test_commands import house
+
+    assistant, brain = make_assistant([b"q", None], ["lock the front door"])
+    calls = []
+    assistant.commands = house(calls, "done: front door reports locked", hear=lambda pcm: "lock front door")
+    assistant.commands.local_first = True  # Vosk would have heard it in the turn's speech to text, which is skipped
+    capped_at["reached"] = True
+    assistant.converse(follow_up_s=4.0)
+    assert calls[0][0] == {"device": "front door", "action": LOCK} and brain.asked == []
+
+
+def test_past_the_cap_a_chat_is_told_and_the_house_commands_still_work(capped_at):
+    from .test_telegram import PEOPLE, FakeBot, FakeHouse, ScriptedBrain, message, tars
+
+    bot, brain = FakeBot(), ScriptedBrain(["Sunny."])
+    t = tars(bot, [brain], home=FakeHouse({}), people=PEOPLE)
+    capped_at["reached"] = True
+    t.handle(message("what's the weather like"))
+    t.handle(message("/home", update_id=2))
+    assert bot.said() == [usage.CAPPED_LINE, "AC: off"] and brain.asked == []
+
+
+@pytest.mark.parametrize(
+    "cap, status, said",
+    [(0, "skip", "with no cap"), (10.0, "ok", "$1.00 of the $10.00 cap (10%)"), (1.2, "warn", "near it"),
+     (0.5, "warn", "off until the month ends")],
+)  # fmt: skip
+def test_check_says_this_month_against_the_cap(tmp_path, cap, status, said):
+    import dataclasses
+
+    from voice_assistant.check import usage_cap
+    from voice_assistant.config import UsageConfig, load_config
+    from voice_assistant.events import EventLog
+
+    events = EventLog(tmp_path / "events")
+    events.store.write(
+        "INSERT INTO usage (at, service, kind, model, input) VALUES (?, 'openai', 'llm', 'gpt-6.1-sol', ?)",
+        (NOW, 1),
+    )
+    priced = usage.load_prices().of(row(LLM, "gpt-6.1-sol", input=1_000_000))
+    events.store.write("UPDATE usage SET input = ?", (round(1_000_000 / priced),))  # $1.00 at the shipped price
+    cfg = dataclasses.replace(load_config(Path("config.toml"), local=False), usage=UsageConfig(cap))
+    result = usage_cap(cfg, tmp_path / "events", now=NOW)
+    assert result.status == status and said in result.detail

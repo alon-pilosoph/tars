@@ -51,12 +51,13 @@ from .skills import ALOUD, Answers, happened, on_its_own
 from .skills import Clock as SkillClock
 from .speaker import SpeakerID
 from .speech import StreamedReply, failed_at, mark_failed_at
-from .stt import Session, Transcriber
+from .stt import BufferedSession, Session, Transcriber
 from .takes import MUTED, Take, TakeDesk, level
 from .tts import Voice
 from .verify import ASK
 from .wake import DUE
 
+CAPPED_LINE = usage.CAPPED_LINE
 ASK_PHRASE = "Did you call me?"
 ASK_TIMEOUT_S = 5.0  # how long to wait for an answer to it
 # Made ahead and kept on disk like the greetings, so they play even when the voice service itself failed.
@@ -501,6 +502,8 @@ class Assistant:
         people enrolled since and retry lines that failed."""
         names = list(self.speaker_id.voiceprints) if self.speaker_id else []
         lines = [ASK_PHRASE, PARDON, greeting(None), *self.error_lines, *FILLERS, THINKING, ONE_MOMENT]
+        if usage.has_cap():  # made while there's budget, so it's said for free once there isn't
+            lines.append(CAPPED_LINE)
         for line in lines + [greeting(n) for n in names]:
             self.phrases.get(line, ahead=True)
         for line in self.commands.lines() if self.commands else []:
@@ -551,6 +554,14 @@ class Assistant:
         line = random.choice(ready)
         print(f"Bot:  {line}")
         self.say(line)
+
+    def say_capped(self) -> None:
+        """That the month's cap is reached, from the line made ahead; with none, nothing is made now to say it."""
+        print(f"Bot:  {CAPPED_LINE}  (past the month's cap)")
+        if self.phrases.made_ahead(CAPPED_LINE):
+            self.say(CAPPED_LINE)
+        else:
+            print("(couldn't say it: the line wasn't made ahead)")
 
     def _prepare_reminders(self, active: list[dict]) -> None:
         """Makes each active reminder's line ahead, so it plays at once when it's due."""
@@ -619,6 +630,8 @@ class Assistant:
                 # lock set off changes nothing in the house.
                 whose = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
                 try:
+                    if usage.capped():
+                        raise usage.Capped()
                     written = Reply(self.brain, on_its_own(skill, due.when, SKIP, due.why), whose)
                     text = written.read()
                 except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
@@ -873,7 +886,8 @@ class Assistant:
         end. `max_s`: the longest it records, instead of the configured longest. `after_name`: what followed the wake
         word in the wake window: a request said in one breath with the name starts there. `expect`: words likely
         said, the choices TARS just offered."""
-        session = self.transcriber.session(expect)
+        # Past the month's cap, nothing goes out: the recording is kept here, for a house command heard on the Pi.
+        session = BufferedSession(_over_the_cap) if usage.capped() else self.transcriber.session(expect)
         draft: Draft[Answer] | None = None
 
         def paused(pcm: bytes) -> None:
@@ -941,7 +955,8 @@ class Assistant:
         # While they're still talking, get the reply's connections ready.
         threading.Thread(target=self.brain.warm, daemon=True, name="brain-warm").start()
         self.voice.warm()
-        self.prepare_phrases()
+        if not usage.capped():  # a line made now would be paid for
+            self.prepare_phrases()
         try:
             with usage.turn(None, usage.VOICE):  # whose, once handle() knows the voice
                 self._converse(follow_up_s, first, greet_after_s, greet, wake, asked)
@@ -981,6 +996,9 @@ class Assistant:
             except Exception as e:  # noqa: BLE001 - one failed request shouldn't take the assistant down
                 if self._stop.is_set():  # the stop button cut the reply off: that's no failure to say
                     print("(stopped)")
+                    return
+                if isinstance(e, usage.Capped):
+                    self.say_capped()
                     return
                 print(f"Error: {e!r}")
                 if not isinstance(e, SERVICE_FAILURES):  # a service failing is no bug to trace
@@ -1151,11 +1169,13 @@ class Assistant:
             text = without_echo(session.transcript(), echo_of)
         except Exception as e:
             # With the cloud out of reach, a house command can still be heard on the Pi.
-            text = "" if draft.cancelled else self._heard_on_pi(pcm)
+            capped = isinstance(e, usage.Capped)
+            text = "" if draft.cancelled else self._heard_on_pi(pcm, capped)
             if not text:
                 mark_failed_at(e, STT)
                 raise
-            print(f"(speech to text didn't answer ({e!r}); heard a house command on the Pi)")
+            why = "past the month's cap" if capped else f"speech to text didn't answer ({e!r})"
+            print(f"({why}; heard a house command on the Pi)")
         stt_s = time.perf_counter() - t
         answer = Answer(text, self._who(identifying), stt_s)
         if not text or draft.cancelled:
@@ -1172,9 +1192,10 @@ class Assistant:
             answer.error = e  # already forgotten
             return answer
 
-    def _heard_on_pi(self, pcm: bytes) -> str:
-        """A house command Vosk heard in the recording, or "". Local first, Vosk has listened already."""
-        if not (self.commands and self.commands.hear) or self.commands.local_first:
+    def _heard_on_pi(self, pcm: bytes, capped: bool = False) -> str:
+        """A house command Vosk heard in the recording, or "". Local first, Vosk has listened already, unless the
+        recording never went through it (`capped`: past the month's cap)."""
+        if not (self.commands and self.commands.hear) or (self.commands.local_first and not capped):
             return ""
         try:
             heard = self.commands.hear(pcm)
@@ -1332,3 +1353,8 @@ def _tee(pieces: Iterator[str], into: list[str]) -> Iterator[str]:
     for piece in pieces:
         into.append(piece)
         yield piece
+
+
+def _over_the_cap(pcm: bytes) -> str:
+    """A turn's speech to text past the month's cap: nothing sent, and nothing heard but a house command on the Pi."""
+    raise usage.Capped()
