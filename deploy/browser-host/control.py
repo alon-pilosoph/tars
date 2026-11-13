@@ -11,7 +11,7 @@ as errands are one at a time.
     POST /open  {"profile": "profile-0a1b2c3d4e5f"}   start Chrome with that profile; answers once its port does
     POST /close                                        shut it
     GET  /health                                       {"ok": true, "chrome": false}
-    POST /view                                         a hand-over: {"token": "...", "minutes": 15}
+    POST /view  {"clip": "390x780+0+85"}               a hand-over: {"token": "...", "minutes": 15}
     GET  /view                                         {"active": true, "opened": false}
     POST /view/end                                     end it
 
@@ -56,12 +56,14 @@ VNC_PORT, VIEWER_PORT = 5900, 6080  # both on localhost, and only while a hand-o
 VIEW_S = 15 * 60.0  # the longest a hand-over lasts
 COOKIE = "tars-view"
 HEAD_MAX = 16384  # the most of a request's head the gate reads
-VIEWER_PAGE = "/vnc.html?autoconnect=1&resize=scale&reconnect=1&path=websockify"
+VIEWER_PAGE = "/vnc.html?autoconnect=1&resize=scale&reconnect=1&show_dot=1&path=websockify"
+CLIP = re.compile(r"\d{2,4}x\d{2,4}\+\d{1,4}\+\d{1,4}")  # the part of the screen shown: WxH+X+Y, the page alone
 
 
-def vnc_command() -> list[str]:
+def vnc_command(clip: str = "") -> list[str]:
+    shown = ["-clip", clip] if clip and CLIP.fullmatch(clip) else []
     return ["/usr/bin/x11vnc", "-display", DISPLAY, "-localhost", "-rfbport", str(VNC_PORT), "-forever",
-            "-nopw", "-quiet", "-noxdamage"]  # fmt: skip
+            "-nopw", "-quiet", "-noxdamage", *shown]  # fmt: skip
 
 
 def viewer_command() -> list[str]:
@@ -156,13 +158,16 @@ class View:
         self.opened = False
         self.processes: list[subprocess.Popen] = []
 
-    def start(self) -> str:
-        """A new hand-over, ending any other: its token, for the person's link."""
+    def start(self, clip: str = "") -> str:
+        """A new hand-over, ending any other: its token, for the person's link. `clip`: the part of the screen to show
+        (the page, without Chrome's own bars), WxH+X+Y; all of it if not given."""
+        if clip and not CLIP.fullmatch(clip):
+            raise ValueError("not a part of the screen")
         self.end()
         with self.lock:
             self.token, self.secret, self.opened = secrets.token_urlsafe(32), "", False
             self.until = self.clock() + VIEW_S
-            self.processes = [self.launch(vnc_command()), self.launch(viewer_command())]
+            self.processes = [self.launch(vnc_command(clip)), self.launch(viewer_command())]
             return self.token
 
     def active(self) -> bool:
@@ -350,7 +355,7 @@ def handler(host: Host, key: bytes, view: View | None = None):
                     view.end()
                     host.close()
                 elif self.path == "/view":
-                    self.answer(200, {"token": view.start(), "minutes": int(VIEW_S // 60)})
+                    self.answer(200, {"token": view.start(str(asked.get("clip", ""))), "minutes": int(VIEW_S // 60)})
                     return
                 elif self.path == "/view/end":
                     view.end()

@@ -105,8 +105,8 @@ class Control:
     def close(self) -> None:
         self.ask("/close", {}, timeout=15.0)
 
-    def view(self) -> dict:
-        return self.ask("/view", {})
+    def view(self, clip: str = "") -> dict:
+        return self.ask("/view", {"clip": clip})
 
     def view_status(self) -> dict:
         return self.ask("/view", timeout=5.0)
@@ -122,9 +122,10 @@ class Screen:
     def __init__(self, control: Control, address: str):
         self.control, self.address = control, address.rstrip("/")
 
-    def open(self) -> tuple[str, int]:
-        """The link, which lets in the first browser to open it, and how many minutes it lasts."""
-        given = self.control.view()
+    def open(self, clip: str = "") -> tuple[str, int]:
+        """The link, which lets in the first browser to open it, and how many minutes it lasts. `clip`: the part of
+        the screen it shows (as_phone's)."""
+        given = self.control.view(clip)
         return f"{self.address}/view?t={given['token']}", int(given["minutes"])
 
     def opened(self) -> bool:
@@ -163,6 +164,43 @@ def sprite_chrome(
                 control.close()
             except OSError:
                 pass  # the link went; the Sprite's Chrome goes when it sleeps
+
+
+PHONE = (390, 780)  # the page as a phone shows it, in CSS pixels: what a hand-over is laid out for
+PHONE_AGENT = ("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) "
+               "Chrome/157.0.0.0 Mobile Safari/537.36")  # fmt: skip
+DESKTOP = (1280, 1000)  # chrome.WINDOW, put back after
+
+
+@contextmanager
+def as_phone(page) -> Iterator[str]:
+    """The browser's tab laid out as a phone's for a hand-over, the site's own phone pages included (it's reloaded
+    with a phone's user agent), and put back after; yields the part of the screen the page is in (WxH+X+Y), for the
+    view to show that alone, without Chrome's bars."""
+    cdp = page.context.new_cdp_session(page)
+    window = cdp.send("Browser.getWindowForTarget")["windowId"]
+    agent = page.evaluate("navigator.userAgent")
+    bars = page.evaluate("window.outerHeight - window.innerHeight")
+    width, height = PHONE
+    cdp.send("Browser.setWindowBounds", {"windowId": window, "bounds": {"windowState": "normal"}})
+    cdp.send("Browser.setWindowBounds", {"windowId": window,
+                                         "bounds": {"left": 0, "top": 0, "width": max(width, 500),
+                                                    "height": height + bars}})  # fmt: skip
+    cdp.send("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1,
+                                                    "mobile": True})  # fmt: skip
+    cdp.send("Emulation.setUserAgentOverride", {"userAgent": PHONE_AGENT, "platform": "Android"})
+    page.reload(wait_until="domcontentloaded")
+    try:
+        yield f"{width}x{height}+0+{bars}"
+    finally:
+        try:
+            cdp.send("Emulation.clearDeviceMetricsOverride")
+            cdp.send("Emulation.setUserAgentOverride", {"userAgent": agent})
+            cdp.send("Browser.setWindowBounds", {"windowId": window,
+                                                 "bounds": {"width": DESKTOP[0], "height": DESKTOP[1]}})  # fmt: skip
+            cdp.detach()
+        except Exception as e:  # noqa: BLE001 - a page the person closed: the next errand's Chrome starts afresh
+            print(f"(browser: couldn't put the window back after a hand-over: {type(e).__name__})")
 
 
 def screen_for(control: Control) -> Screen | None:

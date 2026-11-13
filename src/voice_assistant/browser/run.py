@@ -65,17 +65,20 @@ def model_client(settings: Settings, openai=None, env: Path = ROOT / ".env"):
 def hand_over(session: Session, reason: str, person: Person) -> str:
     """Has `person` take over the browser's screen for `reason` (a robot check, a Google sign-in): a one-time link to
     it in their chat, ended when they say they're done or give up. What to tell the model."""
+    from .sprite import as_phone
+
     screen = session.screen
     site = urlsplit(session.page.url).hostname or "the site"
-    try:
-        link, minutes = screen.open()
-    except (OSError, KeyError, ValueError) as e:
-        return (f"the screen couldn't be opened for the person ({type(e).__name__}): call done and say a person is "
-                f"needed on {site} for: {reason}")  # fmt: skip
-    try:
-        finished = person.take_over(site, reason, link, minutes, screen.opened)
-    finally:
-        screen.close()
+    with as_phone(session.page) as clip:
+        try:
+            link, minutes = screen.open(clip)
+        except (OSError, KeyError, ValueError) as e:
+            return (f"the screen couldn't be opened for the person ({type(e).__name__}): call done and say a person "
+                    f"is needed on {site} for: {reason}")  # fmt: skip
+        try:
+            finished = person.take_over(site, reason, link, minutes, screen.opened)
+        finally:
+            screen.close()
     if finished:
         return "the person says they're done: look at the page as they left it and carry on"
     return (f"the person didn't take over (gave up, or no answer in time): call done and say a person is needed for: "

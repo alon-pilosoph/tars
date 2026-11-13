@@ -345,7 +345,8 @@ class FakeScreen:
     def __init__(self, fails=False):
         self.fails, self.closed = fails, False
 
-    def open(self):
+    def open(self, clip=""):
+        self.clip = clip
         if self.fails:
             raise OSError("no link")
         return "https://s.example/view?t=abc", 15
@@ -361,9 +362,18 @@ class FakePage:
     url = "https://wolt.com/en/login"
 
 
-def test_handing_over_asks_the_person_and_always_ends_the_hand_over():
+def test_handing_over_asks_the_person_and_always_ends_the_hand_over(monkeypatch):
     from voice_assistant.browser.run import hand_over
 
+    laid_out = []
+
+    @contextmanager
+    def as_phone(page):
+        laid_out.append("phone")
+        yield "390x780+0+87"
+        laid_out.append("back")
+
+    monkeypatch.setattr(sprite, "as_phone", as_phone)
     asked = []
 
     class Person:
@@ -374,7 +384,8 @@ def test_handing_over_asks_the_person_and_always_ends_the_hand_over():
     session = type("S", (), {"page": FakePage(), "screen": FakeScreen()})()
     said = hand_over(session, "solve the robot check", Person())
     assert asked == [("wolt.com", "solve the robot check", "https://s.example/view?t=abc", 15, True)]
-    assert "carry on" in said and session.screen.closed
+    assert "carry on" in said and session.screen.closed and laid_out == ["phone", "back"]
+    assert session.screen.clip == "390x780+0+87"  # the view shows the page alone
 
     session.screen = FakeScreen(fails=True)
     assert "call done" in hand_over(session, "solve the robot check", Person())
@@ -386,3 +397,12 @@ def test_with_no_screen_the_model_is_told_to_say_what_stopped_it():
     session = type("S", (), {"page": FakePage(), "screen": None})()
     did = Tools(session, approver=None, hand_over=lambda s, r: "never").call("hand_over", {"reason": "captcha"})
     assert did.trouble and "say exactly what" in did.said
+
+
+def test_a_hand_over_shows_only_the_part_of_the_screen_its_given_and_nothing_odd():
+    assert control.vnc_command("390x780+0+87")[-2:] == ["-clip", "390x780+0+87"]
+    assert "-clip" not in control.vnc_command()
+    view = control.View(launch=lambda command: FakeProcess())
+    with pytest.raises(ValueError):
+        view.start("390x780+0+87; rm -rf /")
+    assert not view.active()
