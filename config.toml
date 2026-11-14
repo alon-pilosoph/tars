@@ -408,6 +408,11 @@ really_order = false
 # Tailscale (encrypted) is better than the home Wi-Fi.
 login_host = ""
 login_port = 8091
+# The Fly Sprite the browser runs on (docs/browser.md#on-a-sprite): on the Pi, it must be set. The pages still load
+# from home: every connection the Sprite's Chrome makes comes back through the link to this machine, which refuses
+# anything at home. The logins stay here; the Sprite keeps each person's cookies. Set it up first with
+# deploy/browser-host/setup.sh <name>. "": Chrome on this machine, for developing the browser on a Mac.
+sprite = ""
 
 [feeds]
 # RSS feeds, followed by talking to TARS: "find me good feeds about gaming", "what's new in gaming?" (docs/feeds.md).

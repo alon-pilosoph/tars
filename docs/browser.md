@@ -170,11 +170,17 @@ later: the requests that did the work, replayed by code.
    really_order = false   # true once you trust it: an approved order is then placed
    ```
 
-2. `OPENAI_API_KEY` in `.env`, and the browser's packages: `uv sync --all-extras`. On the Pi, `deploy/install-pi.sh`
-   also installs Debian's Chromium and the virtual screen it draws to (`voice-assistant-display`).
-3. The logins, ahead of time (`vault add`, `vault mail`, above), or when they're first needed.
-4. Restart the Telegram service and the assistant, then `voice-assistant --check`: it has a line for the browser
-   (its model, the Chromium it found), the errands waiting, and the display service.
+2. `OPENAI_API_KEY` in `.env`, and the browser's packages: `uv sync --all-extras`.
+3. **The Sprite the browser runs on** ([On a Sprite](#on-a-sprite)): on the Pi, `deploy/install-pi.sh` installs the
+   `sprite` command; sign it in once (`sprite login`), run `deploy/browser-host/setup.sh tars-browser`, and set
+   `sprite = "tars-browser"` under `[browser]`.
+4. The logins, ahead of time (`vault add`, `vault mail`, above), or when they're first needed.
+5. Restart the Telegram service and the assistant, then `voice-assistant --check`: it has a line for the browser
+   (its model, and the Sprite answering) and the errands waiting.
+
+**The browser runs on the Sprite.** A browser on the machine itself (`sprite` left empty) is for developing it, on a
+Mac with Chrome: the evals, `run` and `view` below, Claude Code as its brain. On the Pi, `--check` fails without a
+Sprite.
 
 ## Running it
 
@@ -187,25 +193,110 @@ uv run python -m voice_assistant.browser view https://wolt.com --shot wolt.jpg  
 `run` asks in the terminal before anything is committed, and even then presses nothing without `--really-commit`;
 a login or a code it lacks is asked for there too.
 
-## On the Pi
+## On a desktop, for development
 
-The same code, with three differences that come from the Pi having no screen
-([`chrome.py`](../src/voice_assistant/browser/chrome.py)):
+With `sprite` left empty the browser is Chrome on the machine itself
+([`chrome.py`](../src/voice_assistant/browser/chrome.py)): a real window, not headless, which says so in every
+request (`HeadlessChrome`) and some sites refuse, with its own profile beside the vault in `~/.cache/tars-browser`.
+That's for working on the browser on a Mac. On Linux it would be Debian's Chromium on a virtual screen, with logins
+kept with `--password-store=basic` (no keyring), as on the [simulated Pi](simulator.md) the evals ran on, where a page
+took 1-4 s to load and 1.5-5 s to read. The Pi itself no longer installs a browser: its errands run on the Sprite.
 
-- **Debian's Chromium on a virtual screen.** Google Chrome has no build for the Pi; Chromium runs as a normal window
-  on Xvfb ([`deploy/voice-assistant-display.service`](../deploy/voice-assistant-display.service)), not headless,
-  which says so in every request (`HeadlessChrome`) and some sites refuse. WebGL is drawn in software (SwiftShader):
-  a browser without it is a bot to Cloudflare.
-- **Logins without a keyring.** Pi OS Lite has none, so Chromium keeps them with `--password-store=basic`: the
-  profile (`~/.cache/tars-browser`) is only as safe as its folder, which only TARS's user may read, and which the
-  backup leaves out.
-- **Nobody sees its screen.** TARS signs in from its vault (above): `vault add` over ssh puts a login in ahead of
-  time. A site that asks whether you're a robot (rail.co.il's Cloudflare check, on Linux Chromium) can't be
-  answered, and TARS says so rather than trying to get past it.
+## On a Sprite
 
-[`deploy/sim`](simulator.md) tries all of it on a simulated Pi first. At about a
-Pi 4's speed there, a page takes 1-4 s to load and 1.5-5 s to read (most of it waiting for a busy page to stop
-moving), so an errand takes longer than on a Mac, mostly in the browser: the model is in the cloud either way.
+The browser can run on a [Fly Sprite](https://docs.fly.io/sprites/) instead of the machine TARS runs on: a Linux
+machine of its own that sleeps when it's not used and is billed only while it runs. The errands then don't need a
+desktop at home, and the Sprite runs Google Chrome on x86-64, which the Pi can't. Everything else stays where it was:
+the Telegram service still runs the errand, the agent and the model calls, asks before an order, and keeps the vault
+([`sprite.py`](../src/voice_assistant/browser/sprite.py)).
+
+```
+ This machine (the Pi)                                      The Sprite (tars-browser)
+ ─────────────────────                                      ─────────────────────────
+ the errand, the model, the vault                           control service :9334 ─ starts Chrome per profile
+ Playwright ──────────── SSH, through `sprite proxy` ─────► Chrome's debugging port :9333
+ the way out (way_out.py) ◄──────── same connection ─────── Chrome's proxy, socks5://localhost:1080
+   │                                                        (everything else: denied by its network policy)
+   └─► the site, from the home's address
+```
+
+- **One SSH connection per errand, opened from here.** Through `sprite proxy`, so the Sprite has no port on the
+  internet; opening it wakes the Sprite, closing it lets it sleep. A host key other than the one recorded at setup
+  ends it.
+- **Pages load from home.** The Sprite's Chrome sends every connection back through the link to the way out
+  ([`way_out.py`](../src/voice_assistant/browser/way_out.py)), a small proxy here that makes the connection to the
+  site, so sites see the home's address (Wolt, KSP, Booking and rail.co.il treat a data centre's badly). Names are
+  looked up here too.
+- **Home stays out of reach.** The way out refuses home names (`router`, `.local`, the names TARS is set up with),
+  any address that isn't a public one, and ports other than 80 and 443, and connects only to the address it checked.
+  The Sprite's own localhost goes through it too, and is refused.
+- **The Sprite can reach nothing by itself.** Its network policy denies every name and address, and it can't change
+  that from inside. A Chrome that skipped its proxy would load nothing.
+- **The link's key does three things only:** reach Chrome's port, reach the control service, and offer the way out.
+  No command, no file transfer, no other forward.
+- **The profiles are on the Sprite** (`~/profiles`, one per person, as on the Pi), cookies and all; they survive its
+  sleeping. The vault isn't: logins are typed through the link from here. Chrome is closed through its debugging
+  port at the end of each errand, as a person closes it: stopped with a signal instead, it loses the cookies it was
+  given last, a sign-in among them.
+- **A new profile has to be signed in to.** A fresh browser on a data centre's machine signing in by itself is
+  what sites challenge: Wolt answered TARS's sign-in there with hCaptcha, which nobody can solve on the Sprite.
+  A session signed in elsewhere carries over, though: Wolt's cookies copied from a signed-in desktop profile into
+  the Sprite's worked, across restarts, and an errand on the Sprite then read the order history.
+
+Setting it up, from the machine that runs the Telegram service:
+
+```bash
+curl -fsSL https://sprites.dev/install.sh | sh && sprite login     # once: the sprite command, signed in to Fly
+deploy/browser-host/setup.sh tars-browser                          # makes or updates the Sprite; safe to rerun
+```
+
+then `sprite = "tars-browser"` under `[browser]` in `config.local.toml`, and `voice-assistant --check`: its browser
+line opens the link and asks the control service, which wakes the Sprite for a moment. The keys are in
+`~/.cache/tars-browser`, beside the vault: `sprite-link` (the link's), `sprite-known-hosts` (the Sprite's host key)
+and `sprite-control-key`. [`setup.sh`](../deploy/browser-host/setup.sh) installs Chrome and the virtual screen,
+locks sshd down, runs the [control service](../deploy/browser-host/control.py), and lifts the network policy only
+while it installs packages.
+
+Measured from a Mac at home to a Sprite: about 3 s from asking to Playwright attached (waking it, the link, Chrome
+starting), and a simple page in about a second. Not yet measured: the Pi as the home end, a whole errand, and the
+evals.
+
+### Handing over
+
+Some things only a person can do: a robot check (Wolt answers a new browser's sign-in with hCaptcha), signing in
+with Google or Apple. On a Sprite, TARS hands the screen over for them. The agent calls `hand_over` with what's
+needed; the person gets a link in their chat, with Done and Give up buttons; the link opens the Sprite's Chrome,
+live, in their phone's browser; on Done, the agent carries on from the page as they left it. A sign-in done this way
+stays in their profile on the Sprite, as any sign-in does.
+
+- **The screen is seen through [Apache Guacamole](https://guacamole.apache.org/),** the remote-desktop web client:
+  the link opens its login (user `tars`, the password sent with the link), and then the Sprite's screen. Its menu
+  (swipe in from the left edge) has the touch modes: Touchscreen for taps where the finger is, and Text input for
+  the phone's own keyboard.
+- **It looks like the site on a phone.** For the hand-over the Sprite's screen takes a phone's shape (585 by 1266),
+  and Chrome a phone's user agent, filling it with the page alone, its bars just above the top edge. So the site
+  serves its phone pages. Afterwards the screen and the window are put back. On a phone whose shape differs, the
+  view has bars at the sides.
+- **How it's built** ([`setup.sh`](../deploy/browser-host/setup.sh),
+  [`install-viewer.sh`](../deploy/browser-host/install-viewer.sh)): the display Chrome draws to is KasmVNC's
+  `Xvnc`; x11vnc shows it on the Sprite's localhost; Guacamole's `guacd` (built from source: Ubuntu has no package)
+  reads that, and its web app runs in Tomcat 9, on localhost too. Only the gate is reachable from outside.
+
+- **The Sprite's address is public** (`https://<sprite>-<org>.sprites.app`, set by `setup.sh`), since a phone isn't
+  signed in to Fly. Behind it is only the control service's gate ([`control.py`](../deploy/browser-host/control.py)),
+  which answers nothing at all unless a hand-over is on.
+- **A hand-over lets in one browser at a time.** Its link carries a token made for it; the browser that opens it
+  gets a cookie of its own and is passed through to the screen. Opening it again, in another browser (Telegram's
+  own opens first), takes over from the last one, whose connection is closed. TARS says in the chat when the screen
+  is opened, so an opening that wasn't the person's shows.
+- **The screen is reachable only during a hand-over.** Guacamole listens on the Sprite's localhost; the gate passes
+  nothing to it otherwise, and closes every connection when the hand-over ends: on Done or Give up, after 15
+  minutes, or when the errand ends. Each request goes through on a connection of its own, since Fly's proxy reuses
+  its connections to the Sprite for whoever comes next.
+- **Whoever is at the screen is the person.** It's the browser itself, so nothing there is stopped by TARS's gate:
+  an order they press is placed.
+
+Without a Sprite (the Pi, a Mac), `hand_over` tells the agent nobody can take over, and it says what stopped it.
 
 ## What leaves the machine
 
@@ -220,6 +311,9 @@ moving), so an errand takes longer than on a Mac, mostly in the browser: the mod
   (`[browser] login_port`), plain HTTP: better reached over Tailscale.
 - **To Telegram,** the checkout's screenshot and what an order commits to, to approve, and the codes sent back
   ([TARS on Telegram](telegram.md#what-it-sends-telegram)).
+- **To the Sprite,** with `[browser] sprite`: the browser itself. It sees the pages, the cookies, and the keystrokes,
+  logins included as they're typed, as any machine running the browser must; it keeps each person's profile. The
+  vault file and its key stay here. Fly, which runs the Sprite, could see all of that too.
 
 The browser never opens an address on this machine or the home network (TARS's web UI, the router), whatever a
 page asks: a page can say anything to a model, and those don't ask for a password.
@@ -250,3 +344,11 @@ uv run --all-extras python tools/browser_eval.py --task wolt-options --notes off
   and the checkout is a picture worth seeing.
 - **Errands at once.** One runs at a time: there's one browser. A browser per person could run theirs side by side.
 - **Shortcuts.** A site's own API calls, learned from successful traces, for what's asked often.
+- **Touch as on a phone.** Guacamole shows a remote screen: a tap is a click. The hosted browsers' live views
+  (Browserbase, Browserless) stream Chrome's own screencast and send touch to the tab instead, which feels more like
+  the site on the phone; that's the way to it if Guacamole's isn't enough.
+- **The screen fitted to each phone.** A phone shaped unlike 585 by 1266 sees bars at the sides.
+- **No second login.** Guacamole's own password is sent with every link; the gate could sign the browser in to
+  Guacamole itself (its header authentication), so the link alone is enough.
+- **Handing over on the Pi.** The same screen, served from the Pi, would need a way for the phone to reach it from
+  outside the home.

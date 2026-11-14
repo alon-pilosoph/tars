@@ -1,6 +1,7 @@
 #!/bin/sh
-# What the device's services and its install script do, for the container: the virtual screen up (as
-# voice-assistant-display.service), the browser's profile folder private, TARS's packages installed; then the command.
+# What the device's services and its install script do, for the container: a virtual screen up (for developing the
+# browser here: on the Pi it runs on a Fly Sprite), the browser's profile folder private, TARS's packages installed;
+# then the command.
 set -e
 rm -f /tmp/tars-sim-ready  # a restarted device isn't ready until its packages are in again
 if command -v Xvfb >/dev/null; then

@@ -35,10 +35,10 @@ if ! cmp -s deploy/tars-system "$HELPER" || ! sudo -n -l "$HELPER" >/dev/null 2>
   rm -f "$rule"
 fi
 sudo -n "$HELPER"  # packages from deploy/pi-packages.txt, device rules, lingering
-# The browser's profile keeps the sites' logins with a fixed key (no desktop keyring): only TARS's user may read it.
+# The browser's vault and the keys to its Sprite (docs/browser.md#on-a-sprite): only TARS's user may read them.
 mkdir -p "$HOME/.cache/tars-browser" && chmod 700 "$HOME/.cache/tars-browser"
-# Chromium's own folders, made here: Telegram's sandbox lets it write to them, not make them.
-mkdir -p -m 700 "$HOME/.config/chromium" "$HOME/.config/chromium-headless"
+# The sprite command's own folder, made here: Telegram's sandbox lets it write to it, not make it.
+mkdir -p -m 700 "$HOME/.sprites"
 
 echo "== uv (the services run it from ~/.local/bin)"
 UV="$HOME/.local/bin/uv"
@@ -84,15 +84,16 @@ cp deploy/voice-assistant.service deploy/voice-assistant-web.service "$HOME/.con
 systemctl --user daemon-reload
 systemctl --user enable voice-assistant voice-assistant-web
 systemctl --user restart voice-assistant voice-assistant-web  # new code on a rerun
-# The browser's virtual screen, if [browser] is on (docs/browser.md).
+# The browser runs on a Fly Sprite, reached with the sprite command, if [browser] is on (docs/browser.md#on-a-sprite).
+# Signing it in to Fly, and setting the Sprite up, take a person once: sprite login, then deploy/browser-host/setup.sh.
 if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \
 raise SystemExit(0 if load_config(Path('config.toml')).browser.enabled else 1)"; then
-  cp deploy/voice-assistant-display.service "$HOME/.config/systemd/user/"
-  systemctl --user daemon-reload
-  systemctl --user enable voice-assistant-display
-  systemctl --user restart voice-assistant-display
-elif [ -e "$HOME/.config/systemd/user/voice-assistant-display.service" ]; then
+  [ -x "$HOME/.local/bin/sprite" ] || curl -fsSL https://sprites.dev/install.sh | sh
+fi
+# The virtual screen the browser used to draw to here, before it moved to the Sprite.
+if [ -e "$HOME/.config/systemd/user/voice-assistant-display.service" ]; then
   systemctl --user disable --now voice-assistant-display || true
+  unlink "$HOME/.config/systemd/user/voice-assistant-display.service"
 fi
 # TARS on Telegram, if [telegram] is on in config.toml (docs/telegram.md).
 if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \

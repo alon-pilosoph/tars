@@ -1,6 +1,7 @@
 """voice-assistant --check: each check's verdict and what it says to do, and that the run never stops or hangs."""
 
 import dataclasses
+import platform
 import time
 from pathlib import Path
 
@@ -487,7 +488,18 @@ def test_the_browser_is_checked_only_when_it_is_on(tmp_path, cfg):
     from voice_assistant.browser import chrome
 
     found = browser(on)
-    assert found.status == (OK if _has_chrome(chrome) else FAIL)
+    assert found.status == (OK if _has_chrome(chrome) and platform.system() == "Darwin" else FAIL)
+
+
+def test_on_the_pi_the_browser_is_the_sprites_and_a_local_one_is_for_development_only(cfg, monkeypatch):
+    from voice_assistant.check import browser
+    from voice_assistant.config import BrowserConfig
+
+    monkeypatch.setattr(check.platform, "system", lambda: "Linux")
+    found = browser(dataclasses.replace(cfg, browser=BrowserConfig(enabled=True)))
+    assert found.status == FAIL and "[browser] sprite" in found.detail and "setup.sh" in found.fix
+    monkeypatch.setattr(check, "sprite_browser", lambda cfg, orders: check.Result("Browser", OK, "on the Sprite"))
+    assert browser(dataclasses.replace(cfg, browser=BrowserConfig(enabled=True, sprite="tars-browser"))).status == OK
 
 
 def _has_chrome(chrome) -> bool:

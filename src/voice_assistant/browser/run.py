@@ -5,6 +5,7 @@ import traceback
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..check import env_value
 from . import mail
@@ -61,6 +62,29 @@ def model_client(settings: Settings, openai=None, env: Path = ROOT / ".env"):
     return openai or client(env)
 
 
+def hand_over(session: Session, reason: str, person: Person) -> str:
+    """Has `person` take over the browser's screen for `reason` (a robot check, a Google sign-in): a one-time link to
+    it in their chat, ended when they say they're done or give up. What to tell the model."""
+    from .sprite import as_phone
+
+    screen = session.screen
+    site = urlsplit(session.page.url).hostname or "the site"
+    with as_phone(session.page):
+        try:
+            link, minutes = screen.open()
+        except (OSError, KeyError, ValueError) as e:
+            return (f"the screen couldn't be opened for the person ({type(e).__name__}): call done and say a person "
+                    f"is needed on {site} for: {reason}")  # fmt: skip
+        try:
+            finished = person.take_over(site, reason, link, minutes, screen.opened)
+        finally:
+            screen.close()
+    if finished:
+        return "the person says they're done: look at the page as they left it and carry on"
+    return (f"the person didn't take over (gave up, or no answer in time): call done and say a person is needed for: "
+            f"{reason}")  # fmt: skip
+
+
 def run_in(
     session: Session,
     goal: str,
@@ -83,7 +107,8 @@ def run_in(
     mailer = functools.partial(mail.wait_for_sign_in, read=mail.model_reader(model, settings.model)) if openai else None
     agent = Agent(model, session, approver, settings, trace=trace_to, notes=notes,
                   sign_in=lambda s: sign_in(s.page, vault, person, goal, hide=s.secrets.add,
-                                            wait_for_mail=mailer))  # fmt: skip
+                                            wait_for_mail=mailer),
+                  hand_over=lambda s, reason: hand_over(s, reason, person))  # fmt: skip
     try:
         result = agent.run(goal)
     except Exception as e:  # noqa: BLE001 - a crash is a result like any other, and the trace says where
@@ -113,11 +138,13 @@ def run_task(
     vault: Vault | None = None,
     openai=None,
     home: frozenset[str] = frozenset(),
+    sprite: str = "",
 ) -> Run:
     """Runs the agent on `goal` in a fresh TARS Chrome (run_in), then shuts it. `openai`: the OpenAI client to use,
     if there is one already (TARS's own), else one from .env. `home`: the names the house is reached by ([web]
-    allowed_hosts, [home] url), which the browser never opens."""
+    allowed_hosts, [home] url), which the browser never opens. `sprite`: the Fly Sprite the Chrome runs on ([browser]
+    sprite), or "" for this machine."""
     settings = settings or Settings()
-    with browser_session(profile, port, home) as session:
+    with browser_session(profile, port, home, sprite) as session:
         return run_in(session, goal, approver, model_client(settings, openai), settings, trace_to, notes, person,
                       vault)  # fmt: skip

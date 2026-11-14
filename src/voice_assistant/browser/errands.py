@@ -170,6 +170,8 @@ class Chats(Protocol):
 
     def code(self, person: str, site: str, answer: Answer) -> str | None: ...
 
+    def take_over(self, person: str, site: str, reason: str, link: str, minutes: int, opened) -> bool: ...
+
 
 @dataclass
 class ByChat:
@@ -189,6 +191,9 @@ class ByChat:
 
     def code(self, site: str, answer: Answer) -> str | None:
         return self.chats.code(self.name, site, answer)
+
+    def take_over(self, site: str, reason: str, link: str, minutes: int, opened) -> bool:
+        return self.chats.take_over(self.name, site, reason, link, minutes, opened)
 
 
 def profile_for(person: str, first: str) -> Path:
@@ -273,7 +278,7 @@ class Errands:
             run_task = self._run or _run_task()
             run = run_task(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai,
                            home=self._home, profile=profile_for(person, self._people[0]),
-                           notes=_notes(self._folder.parent))  # fmt: skip
+                           notes=_notes(self._folder.parent), sprite=self._cfg.sprite)  # fmt: skip
             text, status = _told(run.result), DONE if run.result.ended == "done" else FAILED
         except Exception as e:  # noqa: BLE001 - an errand that broke is said so, never left hanging
             traceback.print_exc()

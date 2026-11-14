@@ -6,10 +6,11 @@ gives itself away (it says HeadlessChrome, and its screen is smaller than its wi
 an "I am human" check. A profile can be open in one Chrome at a time, so a Chrome already running on the port is
 closed first, the way quitting it would (so its profile is saved).
 
-On Linux (the Pi) it's Debian's Chromium, drawing to a virtual screen (Xvfb, `deploy/voice-assistant-display.service`)
-when there's no real one: the same window as on a desktop, which nothing shows. Pi OS Lite has no desktop keyring
-either, so Chromium keeps its logins with `--password-store=basic`: encrypted with a fixed key, so the profile is only
-as safe as its folder (TARS's user only, and kept out of the backup). TARS signs in itself, from its vault
+This machine's Chrome is for developing the browser (a Mac, the simulated Pi): in use, TARS's browser runs on a Fly
+Sprite (sprite.py), and the Pi installs none. On Linux it's Debian's Chromium, drawing to a virtual screen (Xvfb, as
+deploy/sim starts one) when there's no real one: the same window as on a desktop, which nothing shows. With no
+desktop keyring, Chromium keeps its logins with `--password-store=basic`: encrypted with a fixed key, so the profile
+is only as safe as its folder (TARS's user only, and kept out of the backup). TARS signs in itself, from its vault
 (vault.py, login.py)."""
 
 import json
@@ -28,7 +29,7 @@ from .vault import private_folder
 PROFILE = Path.home() / ".cache/tars-browser/profile"
 PORT = 9333
 WINDOW = (1280, 1000)  # the window, for every run alike: the page then lays out the same way each time
-DISPLAY = ":99"  # the virtual screen on Linux, when there's no other (voice-assistant-display.service)
+DISPLAY = ":99"  # the virtual screen on Linux, when there's no other (deploy/sim's)
 MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 
@@ -42,14 +43,30 @@ def executable() -> str:
 
 
 @contextmanager
-def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[str] = frozenset()):
-    """TARS's Chrome with Playwright attached, as a Session (session.py), for as long as it's needed, then shut.
-    `home`: the house's own names, never opened (homenet.py)."""
+def browser_session(profile: Path = PROFILE, port: int = PORT, home: frozenset[str] = frozenset(), sprite: str = ""):
+    """TARS's Chrome with Playwright attached, as a Session (session.py), for as long as it's needed, then shut:
+    this machine's, or on `sprite` with the same profile's name ([browser] sprite, sprite.py). `home`: the house's
+    own names, never opened (homenet.py)."""
+    if not sprite:
+        with own_chrome(profile, port) as address, attached(address, home) as session:
+            yield session
+        return
+    from .sprite import sprite_chrome
+
+    with sprite_chrome(sprite, profile, home) as (address, screen), attached(address, home) as session:
+        session.screen = screen
+        yield session
+
+
+@contextmanager
+def attached(address: str, home: frozenset[str] = frozenset()):
+    """Playwright attached to the Chrome whose debugging port is at `address`, as a Session: this machine's own
+    (own_chrome) or one elsewhere, reached through a forwarded port. `home`: as browser_session's."""
     from playwright.sync_api import sync_playwright
 
     from .session import Session
 
-    with own_chrome(profile, port) as address, sync_playwright() as p:
+    with sync_playwright() as p:
         yield Session(p.chromium.connect_over_cdp(address).contexts[0], home=home)
 
 

@@ -406,7 +406,7 @@ def test_a_step_that_failed_isnt_tried_again_and_a_run_that_changes_nothing_stop
 
 def test_the_tools_say_what_they_take():
     names = {t["name"] for t in agents.TOOLS}
-    assert names == {"act", "find", "look", "request_approval", "sign_in", "done"}
+    assert names == {"act", "find", "look", "request_approval", "sign_in", "hand_over", "done"}
     assert "{goal}" in agents.HEADER and "{language}" in agents.HEADER and "{{" not in agents.RULES
 
 

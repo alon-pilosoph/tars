@@ -1,12 +1,14 @@
 """What an errand in TARS's browser needs of the person, on Telegram (browser/errands.py's Chats): an order to approve
 (the checkout's screenshot, what it commits them to, Order and Cancel buttons), a link to a one-time page for a login
-TARS lacks (browser/login_page.py), a sign-in code sent back in the chat, and the errand's answer.
+TARS lacks (browser/login_page.py), a sign-in code sent back in the chat, a link to take over the browser's screen
+for what only a person can do (a hand-over, with Done and Give up buttons), and the errand's answer.
 
 It sees each update before the chats do (TelegramTars.listen_first): a tap on one of its buttons, and a code while a
 sign-in waits for one, are its own, and never part of the conversation, the brain or its log."""
 
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 
 from .browser.codes import one_time_code
@@ -16,6 +18,8 @@ from .telegram import TelegramError, TelegramTars
 
 APPROVE_WAIT_S = 10 * 60.0  # how long an order waits for a tap on Order or Cancel
 CODE_WAIT_S = 5 * 60.0  # how long a sign-in waits for the code a site sent
+TAPS = ("order", "cancel", "done", "giveup")  # this one's buttons: an order's, and a hand-over's
+LOOK_OPENED_S = 3.0  # how often a hand-over checks whether its link has been opened
 
 
 @dataclass
@@ -131,10 +135,46 @@ class TelegramErrands:
             self.tars.post(chat, "No code came in time, so I stopped signing in.", tries=1)
         return code
 
+    def take_over(self, person: str, site: str, reason: str, link: str, minutes: int, opened) -> bool:
+        """Sends `person` the link to the browser's screen, to do `reason` on `site` themselves: True once they tap
+        Done, on this very message, from their own chat, within `minutes`. Says so in the chat when the link is
+        opened, so an opening that wasn't theirs shows."""
+        chat = self.tars.chat_for(person)
+        if chat is None:
+            return False
+        nonce, waiting = secrets.token_hex(8), _Tap(chat.chat_id)
+        self._taps[nonce] = waiting
+        try:
+            text = (f"On {site}, I need you for something only a person can do: {reason}.\n\nOpen my browser's "
+                    f"screen here and do it, then tap Done (the link works for {minutes} minutes, in one browser at a "
+                    f"time):\n{link}")  # fmt: skip
+            with chat.busy:
+                message = self.tars.bot.send_buttons(chat.chat_id, text, [("Done", f"done:{nonce}"),
+                                                                          ("Give up", f"giveup:{nonce}")])  # fmt: skip
+            deadline, told = time.monotonic() + minutes * 60, False
+            while not waiting.tapped.wait(LOOK_OPENED_S) and time.monotonic() < deadline:
+                if not told and opened():
+                    told = True
+                    self.tars.post(chat, "The screen is open. (Not you? Tap Give up.)", tries=1)
+            try:
+                self.tars.bot.drop_buttons(chat.chat_id, message)
+            except TelegramError:
+                pass
+            done = waiting.answer == "done"
+            said = "Thanks, carrying on." if done else ("Stopped there." if waiting.tapped.is_set() else
+                                                        "No answer in time, so I stopped there.")  # fmt: skip
+            self.tars.post(chat, said, tries=1)
+            return done
+        except TelegramError as e:
+            print(f"(Telegram: couldn't hand {person} the screen: {e})")
+            return False
+        finally:
+            self._taps.pop(nonce, None)
+
     def _take(self, update: dict) -> bool:
         """Whether `update` is this one's: a tap on one of its buttons, or a code a sign-in waits for."""
         if tap := update.get("callback_query"):
-            if str(tap.get("data", "")).partition(":")[0] not in ("order", "cancel"):
+            if str(tap.get("data", "")).partition(":")[0] not in TAPS:
                 return False  # another's button (an update's Install)
             self._tapped(tap)
             return True
@@ -153,14 +193,14 @@ class TelegramErrands:
         return True
 
     def _tapped(self, tap: dict) -> None:
-        """A tap on Order or Cancel: counted only on the message it was sent with, from the chat it was sent to."""
+        """A tap on one of its buttons: counted only on the message it was sent with, from the chat it was sent to."""
         kind, _, nonce = str(tap.get("data", "")).partition(":")
         waiting = self._taps.get(nonce)
         try:
             self.tars.bot.answer_tap(tap["id"])
         except TelegramError, KeyError:
             pass  # only the button's spinner
-        if waiting is None or (tap.get("from") or {}).get("id") != waiting.chat_id or kind not in ("order", "cancel"):
+        if waiting is None or (tap.get("from") or {}).get("id") != waiting.chat_id or kind not in TAPS:
             return
         if not waiting.tapped.is_set():
             waiting.answer = kind

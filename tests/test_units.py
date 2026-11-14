@@ -66,19 +66,21 @@ def test_no_unit_counts_on_a_device_filter_a_user_manager_cant_load(name):
     assert not {"DevicePolicy", "DeviceAllow"} & service(name).keys()
 
 
-def test_telegram_leaves_chromium_its_own_sandbox():
+def test_telegram_isnt_yet_given_the_kernel_limits_chromium_once_needed_left_off():
     got = service("voice-assistant-telegram")
     assert [k for k in CHROMIUM_SANDBOX_NEEDS if k in got] == []
 
 
-@pytest.mark.parametrize("name", ["voice-assistant", "voice-assistant-web", "voice-assistant-backup"])
-def test_only_chromium_writes_to_config(name):
+@pytest.mark.parametrize(
+    "name", ["voice-assistant", "voice-assistant-web", "voice-assistant-backup", "voice-assistant-telegram"]
+)
+def test_nothing_writes_to_config(name):
     assert not any(p.lstrip("-").startswith("%h/.config") for p in service(name)["ReadWritePaths"].split())
 
 
-def test_telegram_writes_only_chromiums_config():
-    written = [p for p in service("voice-assistant-telegram")["ReadWritePaths"].split() if ".config" in p]
-    assert written == ["-%h/.config/chromium", "-%h/.config/chromium-headless"]
+def test_telegram_writes_its_folder_its_caches_and_the_sprite_commands_login():
+    written = service("voice-assistant-telegram")["ReadWritePaths"].split()
+    assert written == ["%h/voice-assistant", "-%h/.cache", "-%h/.sprites"]  # no browser here: it's on the Sprite
 
 
 @pytest.mark.parametrize(
@@ -88,23 +90,10 @@ def test_telegram_writes_only_chromiums_config():
         ("voice-assistant-telegram", set()),  # the same, and starts the updater
         ("voice-assistant-web", DOCKER),  # asks systemctl each unit's state
         ("voice-assistant-backup", BUS),  # Home Assistant's history runs in Docker
-        ("voice-assistant-display", DOCKER),  # ProtectHome=yes already hides /run/user
     ],
 )
 def test_each_service_reaches_only_the_managers_it_uses(name, without):
     assert hidden(name) == without
-
-
-def test_the_screen_writes_only_tmp_and_has_no_home():
-    got = service("voice-assistant-display")
-    assert (
-        got["ProtectHome"] == "yes" and got["ReadWritePaths"] == "/tmp" and got["RestrictAddressFamilies"] == "AF_UNIX"
-    )
-
-
-@pytest.mark.parametrize("name", ["voice-assistant-display", "voice-assistant-telegram"])
-def test_the_browser_and_screen_share_a_network_for_the_abstract_socket(name):
-    assert "PrivateNetwork" not in service(name)
 
 
 def test_the_updater_isnt_sandboxed_since_it_installs_as_root():
