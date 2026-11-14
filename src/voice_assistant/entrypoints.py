@@ -227,6 +227,34 @@ def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
     send_link(cfg, root, person, text, "their phone or computer")
 
 
+def bodies_command(cfg: Config, root: Path, add: str | None, listed: bool, remove: str | None) -> None:
+    """--body-add ROOM, --body-list and --body-remove ROOM: the network bodies paired (docs/bodies.md#pairing)."""
+    from .bodykeys import BodyKeys
+
+    keys = BodyKeys(make_event_log(cfg, root).store)
+    if add:
+        try:
+            key = keys.add(add)
+        except ValueError as e:
+            raise ConfigError(str(e)) from None
+        print(f"A body for {add.strip()}. Its key, shown this once (TARS keeps only what checks it):\n\n{key}\n")
+        print("Give it to the body (voice-assistant --body on that machine), and keep it like a password.")
+        if not cfg.bodies.enabled:
+            print("([bodies] is off: turn it on in config.local.toml for TARS to listen for it.)")
+    elif remove:
+        gone = keys.remove(remove)
+        print(f"{remove.strip()}'s body unpaired: its key is refused from now on." if gone else
+              f"No body is paired for {remove.strip()}.")  # fmt: skip
+    else:
+        rows = keys.listed()
+        if not rows:
+            print("No network bodies paired (voice-assistant --body-add ROOM).")
+        for r in rows:
+            last = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["last_seen"])) if r["last_seen"] else "never"
+            made = time.strftime("%Y-%m-%d", time.localtime(r["created"]))
+            print(f"{r['room']:<20} {r['device']:<24} paired {made}, last connected {last}")
+
+
 def web_sign_out(cfg: Config, root: Path, person: str) -> None:
     """--web-sign-out: `person` signed out of the web UI everywhere, their passkeys forgotten and unused invites voided
     (a lost phone)."""
