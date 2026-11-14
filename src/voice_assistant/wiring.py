@@ -772,12 +772,63 @@ def make_brain(client, llm: LLMConfig, env: Path, reminders=None, **channel):
 def chat_brain_config(cfg: Config, has_openai: bool) -> LLMConfig:
     """The brain's settings for a Telegram chat: [telegram]'s memory, and OpenAI's model alone, at [telegram]'s tier
     and reasoning effort, unless [telegram] brain is "quick" or there's no OpenAI key."""
-    llm = dataclasses.replace(brain_config(cfg, typed=False), memory_minutes=cfg.telegram.memory_minutes)
+    # The chat decides when its conversation ends (TelegramTars: memory_minutes, then keep_days with a check), so the
+    # brain keeps it as long as that may be.
+    memory = max(cfg.telegram.memory_minutes, cfg.telegram.keep_days * 24 * 60)
+    llm = dataclasses.replace(brain_config(cfg, typed=False), memory_minutes=memory)
     if cfg.telegram.brain != "openai" or not has_openai:
         return llm
     quick_off = {provider.setting: "" for provider in QUICK_PROVIDERS}
     tg = cfg.telegram
     return dataclasses.replace(llm, service_tier=tg.service_tier, reasoning_effort=tg.reasoning_effort, **quick_off)
+
+
+CONTINUITY_MAX_TOKENS = 400  # one word, with room for the quick model's reasoning before it
+
+
+def make_continuity(cfg: Config, env_path: Path, client):
+    """The check of whether a chat message carries its conversation on ([telegram] keep_days): the quick model, in
+    [llm]'s order, else OpenAI's; None with neither, or keep_days 0."""
+    if not cfg.telegram.keep_days:
+        return None
+    from .threads import Continuity
+
+    services = quick_services(cfg.llm, env_path)
+    effort = cfg.llm.quick_reasoning_effort or cfg.llm.reasoning_effort
+    if services:
+
+        def ask(messages: list[dict]) -> str:
+            failed: Exception | None = None
+            for service in services:
+                try:
+                    reply = service.client.chat.completions.create(
+                        model=service.model,
+                        messages=messages,
+                        max_completion_tokens=CONTINUITY_MAX_TOKENS,
+                        **({"reasoning_effort": effort} if effort else {}),
+                    )
+                    return reply.choices[0].message.content or ""
+                except Exception as e:  # noqa: BLE001 - the next one is asked
+                    failed = e
+            raise failed or RuntimeError("no quick service")
+
+        return Continuity(ask)
+    if client is None:
+        return None
+    reasoning = {"reasoning": {"effort": cfg.llm.reasoning_effort}} if cfg.llm.reasoning_effort else {}
+
+    def ask_openai(messages: list[dict]) -> str:
+        system, *rest = messages
+        reply = client.responses.create(
+            model=cfg.llm.model,
+            instructions=system["content"],
+            input=rest,
+            max_output_tokens=CONTINUITY_MAX_TOKENS,
+            **reasoning,
+        )
+        return reply.output_text
+
+    return Continuity(ask_openai)
 
 
 def listen_for_update_taps(cfg: Config, root: Path, tars) -> None:

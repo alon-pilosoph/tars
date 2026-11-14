@@ -45,6 +45,7 @@ ADJUSTABLE = {
         Adjustable("llm", "humor", int, "how jokey TARS is, in percent", 0, 100),
         Adjustable("llm", "memory_minutes", float, "how long a spoken conversation is remembered once quiet", 1, 240),
         Adjustable("telegram", "memory_minutes", float, "how long a chat is one conversation once quiet", 5, 1440),
+        Adjustable("telegram", "keep_days", float, "how many days a chat's conversation can be carried on", 0, 30),
         Adjustable("recorder", "follow_up_s", float, "how long TARS listens for more without the wake word", 0, 10),
         Adjustable("recorder", "end_silence_s", float, "how long a pause ends someone's turn, in seconds", 0.4, 2.5),
         Adjustable("recorder", "max_pause_s", float, "the longest pause mid-sentence TARS waits through", 0.8, 3.0),

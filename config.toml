@@ -207,9 +207,14 @@ people = {}
 # What TARS sends at home for someone here ("send me the recipe") also comes to their chat. A reminder set in a chat
 # comes to the chat of the person it's for, if they're here; otherwise it's said aloud at home.
 send_items = true
-# A chat is one conversation until it's been quiet this long, or someone sends /new; then the next message starts a
-# new one. Longer than [llm]'s, since a written reply often comes back much later.
+# A chat is one conversation until it's been quiet this long, or someone sends /new. Longer than [llm]'s, since a
+# written reply often comes back much later.
 memory_minutes = 60
+# After that, for up to this many days, a message that carries the conversation on ("try again", "and tomorrow?")
+# keeps it going, and one about something else starts a new one: the quick model reads the end of it and says which
+# (docs/telegram.md#one-conversation-or-a-new-one). A restart doesn't lose it either. 0 = always a new one after
+# memory_minutes.
+keep_days = 7
 # Who answers a chat: "openai" ([llm] model: web search, real links; Qwen when there's no OpenAI key) or "quick" (Qwen
 # first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing there.
 brain = "openai"

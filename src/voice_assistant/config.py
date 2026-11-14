@@ -199,9 +199,13 @@ class TelegramConfig:
     people: dict[str, int] = field(default_factory=dict)
     # Things TARS sends at home for someone here ("send me the recipe") also come to their chat.
     send_items: bool = True
-    # A chat is one conversation until it's been quiet this long (or someone sends /new); then the next message
-    # starts a new one. Longer than [llm] memory_minutes, since a written reply often comes back much later.
+    # A chat is one conversation until it's been quiet this long (or someone sends /new). Longer than [llm]
+    # memory_minutes, since a written reply often comes back much later.
     memory_minutes: float = 60.0
+    # After that, up to this many days, a quick model reads the end of the conversation and the new message, and says
+    # whether it carries it on or starts something new (docs/telegram.md#one-conversation-or-a-new-one). A chat's
+    # conversation is also read back after a restart, within this. 0 = a new one once memory_minutes have passed.
+    keep_days: float = 7.0
     # Who answers a chat: "openai" ([llm] model, which has web search and sends links; Qwen if there's no OpenAI key)
     # or "quick" (Qwen first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing.
     brain: str = "openai"
@@ -619,6 +623,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[telegram] people needs a name for each chat id")
     if cfg.telegram.memory_minutes <= 0:
         problems.append("[telegram] memory_minutes must be more than 0")
+    if cfg.telegram.keep_days < 0:
+        problems.append("[telegram] keep_days must be 0 or more")
     if cfg.telegram.brain not in ("openai", "quick"):
         problems.append(f"[telegram] brain must be openai or quick, not {cfg.telegram.brain!r}")
     if len(set(cfg.telegram.people.values())) < len(cfg.telegram.people):
