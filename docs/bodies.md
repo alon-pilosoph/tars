@@ -10,10 +10,44 @@ turns (when someone's done, the answer started during a pause, follow-ups, who's
 code as for the Pi's own speakerphone. That keeps a body small enough for an ESP32, and keeps one way of holding a
 conversation, not one per device.
 
-**Where it stands:** the brain's side of the link is built ([`bodylink.py`](../src/voice_assistant/bodylink.py)),
-tested against a fake body speaking the protocol over a real socket, and bodies can be paired. Still to come: the
-`--body` program for a second machine, and the brain serving one. Several bodies holding conversations at once is
-the step after.
+**Where it stands:** a second machine can be TARS's body in another room, for a brain with no microphone of its own:
+built and tested on one machine (each half over a real socket against the other), not yet tried across two in a real
+room. Several bodies holding conversations at once, and a body beside the Pi's own speakerphone, are the next step
+(rooms).
+
+## Running one
+
+On the brain (the Pi, or any machine running TARS):
+
+```toml
+# config.local.toml
+[audio]
+enabled = false   # until rooms: a brain serves either its own microphone or a body in another room
+
+[bodies]
+enabled = true
+```
+
+`uv run voice-assistant --body-add Kitchen` prints the body's key. Then `voice-assistant` (the voice process) listens
+on port 8766, waits for the body, holds conversations through it, and waits again whenever it goes: a body that
+drops is not a fault. The Status page expects the voice process with `[bodies]` on.
+
+On the body (a second Pi, a laptop: anything with a microphone, a speaker and TARS's repository installed with the
+voice extra):
+
+```bash
+echo 'TARS_BODY_KEY=tars-body-1:kitchen-...' >> .env    # the key --body-add printed
+uv run voice-assistant --body ws://homepi.local:8766
+```
+
+It uses its own `[audio]` devices and `[wake]` word, with the same double-check as the Pi, so it says `wake:
+verified` and nothing leaves the room before its name is confirmed there. It needs no model keys and no database.
+It makes the connection again when it drops (waiting 1, 2, 4... up to 30 s between tries), and when someone calls
+TARS while the brain can't be reached, it says one line it has with it: "I can't reach my brain right now. Give me
+a minute, then try again." `deploy/voice-assistant-body.service` runs it at boot, sandboxed like the voice
+assistant but tighter. Its protocol handling is [`bodyclient.py`](../src/voice_assistant/bodyclient.py)'s
+`BodyProtocol`, a small state machine with no devices in it: the ESP32 and the web page are held to the same
+behaviour.
 
 ## Pairing
 
@@ -73,7 +107,7 @@ its next try is even looked at. A body that connects again replaces its older co
 
 | From the body | Fields | Means |
 |---|---|---|
-| `wake` | `how` (`word`, `button`), `score`, `preroll_ms` | Someone wants to talk. Audio follows at once: first the pre-roll (the last `preroll_ms`, which had the name in it; up to 5 s), then live |
+| `wake` | `how` (`word`, `button`), `score`, `preroll_ms` | Someone wants to talk. Audio follows at once: first the pre-roll (the last `preroll_ms`, which had the name in it; up to 5 s, in whole 80 ms blocks), then live |
 | `played` | `id`, `cut` | That playback has finished leaving the speaker, or was cut short there |
 | `button` | `name` (`stop`, `mute`, `unmute`) | A button other than talk |
 | `gone_quiet` | | The body stopped streaming at its own limit |

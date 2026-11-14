@@ -206,9 +206,10 @@ def version(root: Path) -> str:
 
 
 def expected(cfg: Config) -> list[str]:
-    """The processes this setup runs (PROCESSES): the voice assistant's only with [audio] on, Telegram's only when
-    it's on."""
-    return [*(["assistant"] if cfg.audio.enabled else []), "web", *(["telegram"] if cfg.telegram.enabled else [])]
+    """The processes this setup runs (PROCESSES): the voice assistant's only with [audio] on, or [bodies] for a body
+    in another room; Telegram's only when it's on."""
+    voice = cfg.audio.enabled or cfg.bodies.enabled
+    return [*(["assistant"] if voice else []), "web", *(["telegram"] if cfg.telegram.enabled else [])]
 
 
 def processes(

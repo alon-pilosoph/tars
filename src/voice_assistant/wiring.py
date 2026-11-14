@@ -228,6 +228,39 @@ def local_body(
         yield LocalBody(mic, speaker, trigger, recorder), idle_message
 
 
+def network_bodies(cfg: Config, root: Path, store, sample_rate: int, journal) -> Iterator[tuple[object, str]]:
+    """[bodies] in a home with no microphone of its own: TARS's body is a network body (docs/bodies.md), the one that
+    connected last, given each time one connects (again), with what to show while it waits for its name. Its wakes
+    get the same double-check as the Pi's own (for a body that runs only the wake model), with this machine's
+    models. `sample_rate`: the voice's, which the body is told to play at."""
+    from .bodykeys import BodyKeys
+    from .bodylink import BodyListener, RemoteBody, welcome
+    from .homenet import address
+    from .recorder import make_recorder
+
+    keys = BodyKeys(store)
+
+    def at_home(peer: str) -> bool:
+        found = address(peer)
+        return found is not None and not found.is_global
+
+    listener = BodyListener(
+        keys.public_key,
+        lambda hello: welcome(keys.room_of(hello.device) or "", sample_rate),
+        allowed=at_home if cfg.bodies.plain_from_home else (lambda peer: False),
+        host=cfg.bodies.host,
+        port=cfg.bodies.port,
+        seen=keys.seen,
+    ).start()
+    print(f"(bodies: listening on port {listener.port} for {len(keys.listed())} paired)", flush=True)
+    recorder = make_recorder(cfg, root)
+    checker, _ = make_trigger(cfg, False, root, journal)
+    while True:
+        link = listener.any_connected()
+        room = keys.room_of(link.hello.device) or link.hello.device
+        yield RemoteBody(link, sample_rate, recorder, checker), f"Waiting for its name in the {room}..."
+
+
 def make_speaker_id(cfg: Config, root: Path):
     from .speaker import SpeakerID
 

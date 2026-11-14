@@ -5,6 +5,8 @@ config.local.toml
 __pycache__/
 *.pyc
 *.wav
+# Except the audio TARS ships: a body's line for when the brain can't be reached (bodyclient.py).
+!src/voice_assistant/assets/*.wav
 voice_data/
 # Models download on first use and models/personal/ is learned from the owner's voice: only the generic pair, the
 # optional large pair and their license are committed.
