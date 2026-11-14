@@ -104,15 +104,17 @@ web UI processes over one folder. From nothing:
    mkdir -m 700 voice_data      # TARS's folder: the container runs as uid 1000, so on Linux: sudo chown 1000 voice_data
    ```
 
-5. **Start it.** `docker compose up -d --build`, then `docker compose run --rm telegram --check`, which should pass
-   with no audio warnings.
+5. **Start it.** `docker compose up -d --build` (about two minutes the first time), then
+   `docker compose exec web voice-assistant --check`, which should pass with no audio warnings. (Run inside the web
+   UI's container, it can see the web UI; a container of its own can't.)
 6. **Say hello.** Send the bot "hi": TARS answers. The web UI is at <http://127.0.0.1:8080> on that machine.
 
 `docker compose logs -f telegram` follows it. The image runs as a user of its own with a read-only filesystem, no
 capabilities and nothing written outside `voice_data/`, and the web UI listens on this machine only: to reach it from
 elsewhere, put it behind a proxy with HTTPS and turn on [sign-in](web-ui.md#signing-in). TARS's own updater
 (`[updates]`) is for a git checkout on a Pi and stays off: a container is updated by building or pulling a new image
-(`git pull && docker compose up -d --build`). Not yet measured: how long these steps take on a clean machine.
+(`git pull && docker compose up -d --build`). On a Mac with Colima (`brew install colima docker docker-compose &&
+colima start`), the first build and start took under two minutes.
 
 ## Install on the Pi
 

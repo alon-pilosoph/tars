@@ -245,3 +245,14 @@ def test_the_voice_assistant_wont_start_in_a_chat_only_home(tmp_path):
 
     with pytest.raises(ConfigError, match="chat-only"):
         entrypoints.run(config(tmp_path, "[audio]\nenabled = false\n"), False, tmp_path)
+
+
+def test_a_chat_only_home_isnt_told_about_keys_only_the_voice_uses():
+    cfg = load_config(REPO_CONFIG, local=False)
+    chat_only = dataclasses.replace(cfg, audio=dataclasses.replace(cfg.audio, enabled=False))
+    _, notes = with_keys(chat_only, {"OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN"})
+    assert notes == []  # no Deepgram, Cartesia or Cerebras: chats go to OpenAI, and nothing speaks
+    _, aloud = with_keys(cfg, {"OPENAI_API_KEY", "TELEGRAM_BOT_TOKEN"})
+    assert any("voice speaks" in n for n in aloud) and any("Qwen doesn't run" in n for n in aloud)
+    quick = dataclasses.replace(chat_only, telegram=dataclasses.replace(cfg.telegram, brain="quick"))
+    assert any("Qwen doesn't run" in n for n in with_keys(quick, {"OPENAI_API_KEY"})[1])  # Qwen answers chats then
