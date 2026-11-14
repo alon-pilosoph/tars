@@ -117,6 +117,12 @@ COMMANDS = [
     {"command": "spotify", "description": "Sign TARS in to Spotify"},
     {"command": "new", "description": "Start a new conversation"},
 ]
+AT_HOME = {"say", "volume", "mute", "unmute"}  # the commands about TARS's speaker and microphone at home
+HELLO_CHAT_ONLY = (
+    "Hello, {name}. It's TARS. Ask me anything, have me set a timer or a reminder, work the house, or ask me to send "
+    "you something; the menu has the rest."
+)
+NO_SPEAKER = "This home has no speaker or microphone for me: here, I'm in this chat and on the web page only."
 SAY_HOW = "Send /say and what to say, like: /say dinner's ready"
 NO_ALOUD = "I can't say it: the voice assistant at home isn't running."
 VOLUME_HOW = "Send /volume and a level, up or down, like: /volume 40"
@@ -428,15 +434,18 @@ class TelegramTars:
         skill_clock=None,
         keep_s: float = 0.0,
         continuity: Continuity | None = None,
+        aloud: bool = True,
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
-        each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
+        each has their own conversation. `conversations`: where chats are kept for the web UI.
         `send_items`: also post what TARS sends at home for someone with a chat. `transcriber`: speech to text for
         voice messages (None: they're turned down). `env`: where the token is, for saying so when Telegram refuses it.
         `home`: the chat's house, for /home, /volume, /mute and /unmute. `say(text)`: has the assistant say it aloud
         at home, word for word, for /say; raises control.py's Unavailable or Refused when it can't.
         `spotify_login(send)`: signs in to Spotify for /spotify, telling them with `send` (spotify.page_login).
-        `skill_clock`: the skills due to run by themselves in their owner's chat (skills.Clock).
+        `skill_clock`: the skills due to run by themselves in their owner's chat (skills.Clock). `aloud`: this home
+        has TARS's microphone and speaker ([audio] enabled); without, the commands about them say there are none, and
+        a reminder due aloud is posted to its person's chat instead.
         `memory_s`: how long a chat is one conversation however quiet it's been. `keep_s`: after that, and up to this,
         a message the `continuity` check says carries it on keeps it going; the conversation is read back from the
         log after a restart too (0: never). `clock`, `typing` and `sleep` are for the tests."""
@@ -447,7 +456,7 @@ class TelegramTars:
         self._memory_s, self._send_items, self._clock, self._typing = memory_s, send_items, clock, typing
         self._sleep, self._transcriber, self._env, self._home, self._say = sleep, transcriber, env, home, say
         self._spotify_login = spotify_login
-        self._skill_clock = skill_clock
+        self._skill_clock, self._aloud = skill_clock, aloud
         self._keep_s, self._continuity = keep_s, continuity
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
@@ -461,7 +470,7 @@ class TelegramTars:
         names = ", ".join(c.person for c in self._chats.values())
         print(f"TARS is on Telegram as @{me.get('username')}, for {names}.", flush=True)
         try:
-            self._bot.set_commands(COMMANDS)
+            self._bot.set_commands(COMMANDS if self._aloud else [c for c in COMMANDS if c["command"] not in AT_HOME])
         except TelegramError as e:  # only the menu: /new works without it
             print(f"(Telegram: couldn't set the commands menu: {e})")
         threading.Thread(target=self._deliver_forever, daemon=True, name="telegram-deliver").start()
@@ -523,13 +532,16 @@ class TelegramTars:
             return
         command = text.split()[0].split("@")[0]
         if command == "/start":
-            self._send(chat_id, HELLO.format(name=chat.person))
+            self._send(chat_id, (HELLO if self._aloud else HELLO_CHAT_ONLY).format(name=chat.person))
             return
         if command == "/new":
             self.start_over(chat)
             self._send(chat_id, FRESH)
             return
         rest = text[len(text.split()[0]) :].strip()
+        if not self._aloud and command.lstrip("/") in AT_HOME:
+            self._send(chat_id, NO_SPEAKER)
+            return
         if command == "/say":
             self._send(chat_id, self.say_aloud(chat, rest))
             return
@@ -588,7 +600,7 @@ class TelegramTars:
         if command == "/volume":
             return self.volume(chat, rest)
         if MIC.lower() not in self._home.devices:
-            return "I can't reach my microphone from here: the voice assistant has no event log to meet me at."
+            return "I can't reach my microphone from here."
         action = OFF if command == "/mute" else ON
         said = self._home.call({"device": MIC, "action": action}, Request(speaker=chat.person, by_chat=True))
         if said.startswith("done"):
@@ -711,10 +723,14 @@ class TelegramTars:
         now = self._clock()
         if self._tools:
             reminders = self._tools.reminders
+            if not self._aloud:
+                self._to_chats(reminders, now)
             for r in reminders.due(now, channel=TELEGRAM):
                 chat = self._chat_for(r["for_name"] or r["from_name"])
-                if chat is None:  # their chat was taken out of [telegram] people since: said at home instead
+                if chat is None and self._aloud:  # their chat was taken out of [telegram] people since: said at home
                     reminders.say_aloud(r["id"])
+                    continue
+                if chat is None:  # and there's no home to say it at: it waits, should their chat come back
                     continue
                 with _free(chat) as free:
                     if free:
@@ -747,6 +763,13 @@ class TelegramTars:
                 with _free(chat) as free:
                     if free:
                         self._post_sent_at_home(chat, row, now)
+
+    def _to_chats(self, reminders, now: float) -> None:
+        """A chat-only home ([audio] enabled = false): what's due aloud, set on the web page or by a skill, is posted to
+        the chat of whoever it's for (or set it) instead, as one due when they're out is (reminders.to_chat)."""
+        for r in reminders.due(now, channel=VOICE):
+            if self._chat_for(r["for_name"] or r["from_name"]) is not None:
+                reminders.to_chat(r["id"])
 
     def _run_skill(self, chat: Chat | None, due) -> None:
         """A skill whose time has come, in its owner's chat: a turn of its own, with its instructions as the request,

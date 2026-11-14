@@ -23,6 +23,10 @@ palette).
 On a phone the pages are tabs along the bottom, Voices, Models and Status sit under the ⋯ at the top, and menus and
 dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
 
+In a chat-only home (`[audio] enabled = false`: no microphone or speaker, TARS only on Telegram and here), the pages
+about hearing aren't there: no Review, Voices or Models, and a link to one opens Home. Nothing is recorded there, so
+conversations have no recordings to play, and the Status page doesn't expect the voice assistant.
+
 | Home | Review, on a phone |
 |---|---|
 | ![Home](screenshots/home-desktop.png) | ![Review on a phone](screenshots/review-phone.png) |

@@ -244,12 +244,16 @@ function moreMenu(s: State) {
       <MenuItem icon="spark" act={() => setTab("skills")} checked={s.tab === "skills"}>
         Skills
       </MenuItem>
-      <MenuItem icon="voices" act={() => setTab("voices")} checked={s.tab === "voices"}>
-        Voices
-      </MenuItem>
-      <MenuItem icon="chip" act={() => setTab("models")} checked={s.tab === "models"}>
-        Models
-      </MenuItem>
+      {s.status.aloud && (
+        <MenuItem icon="voices" act={() => setTab("voices")} checked={s.tab === "voices"}>
+          Voices
+        </MenuItem>
+      )}
+      {s.status.aloud && (
+        <MenuItem icon="chip" act={() => setTab("models")} checked={s.tab === "models"}>
+          Models
+        </MenuItem>
+      )}
       {s.status.health && (
         <MenuItem icon="pulse" act={() => setTab("status")} checked={s.tab === "status"}>
           Status

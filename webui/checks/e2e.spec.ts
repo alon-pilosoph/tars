@@ -423,3 +423,16 @@ test("Agree with all answers each guessed wake with TARS's guess, and leaves the
   const after = await A.events();
   for (const e of guessed) expect(after.find(x => x.id === e.id)?.label).toBe(e.auto_label);
 });
+
+test("a chat-only home ([audio] enabled = false) has no pages about hearing, and a link to one opens Home", async () => {
+  await page.route("**/api/status", async route => {
+    const real = (await (await route.fetch()).json()) as Record<string, unknown>;
+    await route.fulfill({ json: { ...real, aloud: false } });
+  });
+  await page.goto("/?tab=review");
+  await expect(nav("Reminders")).toBeVisible();
+  for (const name of ["Review", "Voices", "Models"]) await expect(nav(name)).toHaveCount(0);
+  await expect(page.locator(".nudge")).toHaveCount(0);
+  await expect(page.locator(".conv").first()).toBeVisible(); // Home, not the Review page
+  await page.unroute("**/api/status");
+});

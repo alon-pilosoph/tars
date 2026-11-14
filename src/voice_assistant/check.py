@@ -1111,24 +1111,41 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
             "check the network and run it again",
         )
 
+    aloud = cfg.audio.enabled  # chat-only ([audio] enabled = false): nothing to hear with or speak from
+    no_audio = "chat-only ([audio] enabled = false): no microphone, speaker or wake word to check"
+    chat_only: list[tuple[str, Check]] = [("Audio", lambda: Result("Audio", SKIP, no_audio))]
     checks: list[tuple[str, Check]] = [
         ("API keys", services.keys),
-        ("Input device", lambda: audio_device("input")),
-        ("Output device", lambda: audio_device("output")),
-        ("Local models", models),
-        ("Echo cancellation", echo),
+        *(
+            [
+                ("Input device", lambda: audio_device("input")),
+                ("Output device", lambda: audio_device("output")),
+                ("Local models", models),
+                ("Echo cancellation", echo),
+            ]
+            if aloud
+            else chat_only
+        ),
         ("Voiceprints", speakers),
         *services.keyed,
         ("Telegram", services.telegram),
         ("Telegram reminders", services.telegram_reminders),
-        ("Voice", speaking),
-        ("Microphone", (lambda: Result("Microphone", SKIP, "not listened to (a silent check)")) if silent else listen),
+        *(
+            [
+                ("Voice", speaking),
+                (
+                    "Microphone",
+                    (lambda: Result("Microphone", SKIP, "not listened to (a silent check)")) if silent else listen,
+                ),
+            ]
+            if aloud
+            else []
+        ),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(functools.partial(http_status, verify=False), web_port(), cfg)),
         ("Home Assistant", hass_check),
         ("The house", devices),
-        ("TARS's speaker", speaker_volume),
-        (BUTTONS, lambda: buttons(cfg)),
+        *([("TARS's speaker", speaker_volume), (BUTTONS, lambda: buttons(cfg))] if aloud else []),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: wiring.make_backup(cfg, root))),
         (
