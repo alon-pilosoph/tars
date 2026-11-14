@@ -45,7 +45,7 @@ from typing import Protocol
 import numpy as np
 
 from .audio import BLOCK_SAMPLES, BLOCK_SECONDS, ECHO_TAIL_S, MIC_STALL_S, SPEAKER_STALL_S, silent_bytes
-from .body import LocalBody
+from .body import BodyGone, LocalBody
 from .bodykeys import verify
 from .verify import ANSWER, ASK, IGNORE
 from .wake import DUE, Due
@@ -61,11 +61,6 @@ PREROLL_MAX_MS = 5000  # a wake's pre-roll longer than this is cut to its last p
 FAIL_WAIT_S = 1.0  # after a failed hello from an address, each next one waits this much longer (up to FAIL_WAIT_MAX_S)
 FAIL_WAIT_MAX_S = 30.0
 WAKE_POLL_S = BLOCK_SECONDS  # how often a wait for a wake asks whether something's due
-
-
-class BodyGone(Exception):
-    """The network body went away (closed, lost, or silent while it should be streaming). Ends that body's
-    conversation, never TARS."""
 
 
 @dataclass
@@ -434,6 +429,20 @@ class BodyListener:
                 link = self._bodies.get(device)
                 if link is not None and not link.gone.is_set():
                     return link
+                left = None if deadline is None else deadline - self._clock()
+                if left is not None and left <= 0:
+                    return None
+                self._arrived.wait(left if left is not None else 1.0)
+
+    def any_connected(self, timeout: float | None = None) -> BodyConnection | None:
+        """The body that connected last (and is still here), once there's one; None if none comes within `timeout`.
+        Until rooms (P4), a brain holds conversations with one body at a time."""
+        deadline = None if timeout is None else self._clock() + timeout
+        with self._arrived:
+            while True:
+                here = [link for link in self._bodies.values() if not link.gone.is_set()]
+                if here:
+                    return here[-1]
                 left = None if deadline is None else deadline - self._clock()
                 if left is not None and left <= 0:
                     return None

@@ -22,7 +22,7 @@ import numpy as np
 
 from . import usage
 from .audio import AudioDeviceError, chime
-from .body import NO_WAKE, Body, Wake
+from .body import NO_WAKE, Body, BodyGone, Wake
 from .commands import ON_PI, Command, HouseCommands, sentences
 from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
 from .control import Op, Refused
@@ -991,7 +991,7 @@ class Assistant:
         while True:
             try:
                 answered = self.handle(heard)
-            except AudioDeviceError:
+            except AudioDeviceError, BodyGone:  # the device, or the room's body, is gone: not a request that failed
                 raise
             except Exception as e:  # noqa: BLE001 - one failed request shouldn't take the assistant down
                 if self._stop.is_set():  # the stop button cut the reply off: that's no failure to say
@@ -1102,7 +1102,7 @@ class Assistant:
         except BaseException as e:
             # Unheard, or only half heard: stop it, and leave the brain as if it was never asked.
             heard.draft.cancel()
-            if isinstance(e, Exception) and not isinstance(e, AudioDeviceError):
+            if isinstance(e, Exception) and not isinstance(e, (AudioDeviceError, BodyGone)):
                 self._log_failure(e, answer)
             raise
         finally:

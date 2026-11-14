@@ -49,6 +49,7 @@ from .wiring import (
     make_s3,
     make_speaker_id,
     need_voice,
+    network_bodies,
     own_speaker,
     phrase_folder,
     reminder_tools,
@@ -225,6 +226,23 @@ def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
     print(f"A link for {person} to make a passkey for the web UI, good for a day:\n{url}")
     text = f"A link to sign in to TARS's web page: it makes a passkey on your phone. It works once, for a day.\n{url}"
     send_link(cfg, root, person, text, "their phone or computer")
+
+
+def body(cfg: Config, root: Path, url: str) -> None:
+    """--body URL: this machine's microphone and speaker as a body for the brain at `url` (docs/bodies.md), with its
+    key from .env. No model keys and no database: everything but the wake word is the brain's."""
+    from .bodyclient import KEY_NAME, run_body
+    from .bodykeys import parse_key
+
+    if not url.startswith(("ws://", "wss://")):
+        raise ConfigError(f"--body needs the brain's address, like ws://homepi.local:{cfg.bodies.port}")
+    key = api_key(root / ".env", KEY_NAME)
+    try:
+        device, _ = parse_key(key)
+    except ValueError as e:
+        raise ConfigError(f"{KEY_NAME} in .env: {e}. Make one on the brain with --body-add ROOM.") from None
+    print(f"(body {device}: for the brain at {url})", flush=True)
+    run_body(cfg, root, url, key)
 
 
 def bodies_command(cfg: Config, root: Path, add: str | None, listed: bool, remove: str | None) -> None:
@@ -627,10 +645,14 @@ def typed(cfg: Config, root: Path) -> None:
 
 
 def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
-    if not cfg.audio.enabled:
+    """The voice assistant: on this machine's microphone and speaker, or, in a home with none of its own and [bodies]
+    on, on a network body in another room (docs/bodies.md)."""
+    network = not cfg.audio.enabled and cfg.bodies.enabled
+    if not (cfg.audio.enabled or network):
         raise ConfigError(
             "This home is chat-only ([audio] enabled = false): TARS runs as voice-assistant --telegram and --web here. "
-            "Set [audio] enabled = true in config.local.toml for its microphone and speaker."
+            "Set [audio] enabled = true in config.local.toml for its microphone and speaker, or [bodies] enabled for "
+            "one in another room."
         )
     need_voice()
     from .assistant import Announcements, Assistant
@@ -674,8 +696,9 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         print("(house commands: none, with no devices in the house; local_first is off, the cloud hears every request)")
     journal = Journal(events)
     journal.keep_pruning(cfg.learning.keep_audio_days)
-    with local_body(cfg, root, voice.sample_rate, push_to_talk, journal) as (body, idle_message):
-        assistant = Assistant(
+
+    def assistant_on(body) -> Assistant:
+        made = Assistant(
             body,
             transcriber,
             brain,
@@ -692,7 +715,30 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             skill_clock=(clock := skill_clock(skills, "aloud", home, presence, myself)),
             commands=commands,
         )
-        clocks += [clock] if clock else []
+        clocks.extend([clock] if clock else [])
+        return made
+
+    if network:
+        from .body import BodyGone
+
+        bodies = network_bodies(cfg, root, events.store, voice.sample_rate, journal)
+        body, idle_message = next(bodies)
+        assistant = assistant_on(body)
+        while True:  # a body that goes ends its conversation, never TARS: it's waited for again
+            try:
+                assistant.run_forever(
+                    idle_message,
+                    follow_up_s=cfg.recorder.follow_up_s,
+                    greet_after_s=cfg.recorder.greet_after_s,
+                    greet=cfg.recorder.greet,
+                )
+            except BodyGone as e:
+                print(f"(the body went: {e}; waiting for it to come back)", flush=True)
+                assistant.body, idle_message = next(bodies)
+    if cfg.bodies.enabled:
+        print("(bodies: this home has a microphone of its own: a body in another room waits for rooms; not listening)")
+    with local_body(cfg, root, voice.sample_rate, push_to_talk, journal) as (body, idle_message):
+        assistant = assistant_on(body)
         set_muted = body.set_muted = start_buttons(cfg, volume, assistant, root)
         if not push_to_talk:
             from .control import Server
