@@ -20,7 +20,9 @@ the household's own S3 bucket when the [backup](backup.md) is on.
 ## What it keeps
 
 Everything lives in `voice_data/events/` (gitignored): one SQLite database (`events.db`) and the audio and sent
-files next to it. `[learning] log_events` in `config.toml` turns all of it on or off.
+files next to it. The database is always there; `[learning] log_events` in `config.toml` turns recording on or off:
+off, no wake, near-miss or audio is kept (a conversation is kept as text, without what was said by voice), and
+everything else in the database goes on (reminders, sent items, skills, who's home, the web UI, the backup).
 
 | Record | Written when | Holds |
 |---|---|---|

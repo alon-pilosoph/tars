@@ -116,7 +116,7 @@ class LLMConfig:
     # models and the web search. Empty = not said (OpenAI's model then guesses, or asks for a city).
     home_city: str = ""
     home_country: str = ""  # a two-letter country code, like IL or GB
-    # Let it send links, notes, lists and text files to the web UI (needs [learning] log_events).
+    # Let it send links, notes, lists and text files to the web UI.
     send: bool = True
     # The quick model (Groq or Cerebras) sets reminders and sends notes, lists and files itself, with its own tools,
     # instead of handing those turns to `model`. Off until tools/capability_bench.py shows it gets them right.
@@ -151,8 +151,9 @@ class SpeakerConfig:
 
 @dataclass
 class LearningConfig:
-    # Keep every wake, near-miss, conversation and sent item (voice_data/events/) for the web UI and training.
-    # Off also turns off sending ([llm] send): sent items live there.
+    # Record every wake and near-miss, with its audio, and what was said by voice, as audio (voice_data/events/), for
+    # the web UI and training. Off, none of that is kept; the event database itself always is (conversations as text,
+    # reminders, sent items, skills, who's home), and so is everything that runs on it.
     log_events: bool = True
     folder: str = "voice_data/events"
     # Audio of events nothing labels (lonely near-misses, wakes nobody spoke after) is dropped after this many days.
@@ -179,7 +180,7 @@ class WebConfig:
 
 @dataclass
 class RemindersConfig:
-    # Timers, reminders and messages, set by voice or on the web UI (docs/reminders.md). Needs [learning] log_events.
+    # Timers, reminders and messages, set by voice or on the web UI (docs/reminders.md).
     enabled: bool = True
     # A reminder or message that waits for an acknowledgement is said again this often, at most this many times, then
     # it's missed.
@@ -290,7 +291,7 @@ _SECRET = re.compile(r"[A-Z][A-Z0-9_]*")
 @dataclass
 class PresenceConfig:
     # Who's home, from whose phone is on the home Wi-Fi, as the routers see it (docs/presence.md). Runs in the
-    # assistant; needs [learning] log_events, where it's kept for the other processes.
+    # assistant, and kept in the event log for the other processes.
     enabled: bool = False
     # Each person, and their phone as the routers know it: hardware addresses, or names a router lists it under. A
     # door lock's key for them may be listed too: "key:<the app's auth id>" or "code:<a keypad code's id>"; keys
@@ -350,7 +351,7 @@ EFFORTS = ("minimal", "low", "medium", "high", "xhigh")  # how hard an OpenAI mo
 class BrowserConfig:
     # TARS's own web browser, for errands asked in a Telegram chat or aloud: ordering, booking, looking something up
     # on a site (docs/browser.md). The Telegram service runs them, so it needs [telegram]; asked aloud, they're queued
-    # in the event database ([learning] log_events). And the browser extra and OPENAI_API_KEY.
+    # in the event database. And the browser extra and OPENAI_API_KEY.
     enabled: bool = False
     # The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
     model: str = "gpt-6-luna"

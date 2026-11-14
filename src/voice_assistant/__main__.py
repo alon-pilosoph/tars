@@ -189,10 +189,7 @@ def main() -> None:
             from . import usage
             from .wiring import make_event_log
 
-            events = make_event_log(cfg, root)
-            if events is None:
-                raise ConfigError("What TARS used is kept in the event log: [learning] log_events is off.")
-            print(usage.report(usage.month(events.store, args.month)))
+            print(usage.report(usage.month(make_event_log(cfg, root).store, args.month)))
             return
         if args.backup:
             backup_pass(cfg, root, delete_anyway=args.delete_anyway)

@@ -413,7 +413,7 @@ class TelegramTars:
         bot: Bot,
         people: dict[str, int],
         make_brain: Callable[[], Brain],
-        conversations: ConversationLog | None = None,
+        conversations: ConversationLog,
         reminder_tools: ReminderTools | None = None,
         memory_s: float = 600.0,
         send_items: bool = True,
@@ -695,8 +695,8 @@ class TelegramTars:
         turn = self._log_turn(conversation, reply, brain)
         for item in sent:
             delivered = self._post_item(chat.chat_id, item)
-            if self._conversations:  # kept even without a conversation, like those sent by voice
-                self._log(self._conversations.add_item, conversation, turn, item, chat.person, delivered=delivered)
+            # kept even without a conversation, like those sent by voice
+            self._log(self._conversations.add_item, conversation, turn, item, chat.person, delivered=delivered)
         if written.acks is not None and self._tools:
             self._ack(written.acks, chat.person, changed={c.id for c in changes if c.id is not None})
         for change in changes:
@@ -739,7 +739,7 @@ class TelegramTars:
                     continue
                 with chat.busy:  # due now: after an exchange in progress, not the next round
                     self._run_skill(chat, due)
-        if self._conversations and self._send_items:
+        if self._send_items:
             for row in self._conversations.undelivered(since=now - ITEMS_WITHIN_S):
                 chat = self._chat_for(row["for_name"])
                 if chat is None:
@@ -830,9 +830,9 @@ class TelegramTars:
         `person` (None: the household's), as by voice."""
         for item in sent:
             delivered = self._post_item(chat.chat_id, item) if chat and post else None
-            if self._conversations:  # kept even without a conversation, like those sent by voice
-                item = item if person else dataclasses.replace(item, scope=HOUSEHOLD)
-                self._log(self._conversations.add_item, conversation, turn, item, person, delivered=delivered)
+            # kept even without a conversation, like those sent by voice
+            item = item if person else dataclasses.replace(item, scope=HOUSEHOLD)
+            self._log(self._conversations.add_item, conversation, turn, item, person, delivered=delivered)
         for change in changes:
             if chat:
                 self._apply(change, chat, conversation)
@@ -994,8 +994,6 @@ class TelegramTars:
         """The chat's conversation for the web UI: the same one until it goes quiet for as long as the brain
         remembers, or someone deletes it there. Call with the lock held."""
         log = self._conversations
-        if log is None:
-            return None
         self._restore(chat)
         current = chat.conversation
         if current is not None and now - chat.last_at <= self._memory_s and self._log(log.exists, current):
@@ -1090,7 +1088,7 @@ class TelegramTars:
     def start_over(self, chat: Chat) -> None:
         """/new: the brain forgets the chat so far, and the next message starts a new conversation on the web UI."""
         with chat.busy, self._lock:
-            if chat.conversation is not None and self._conversations is not None:
+            if chat.conversation is not None:
                 self._log(self._conversations.end, chat.conversation, ts=chat.last_at or self._clock())
             chat.conversation, chat.last_at = None, 0.0
             chat.brain.start_over()

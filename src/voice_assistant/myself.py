@@ -24,6 +24,7 @@ from pathlib import Path
 from . import history as when
 from . import toolbox
 from .config import QUICK_PROVIDERS, Config
+from .events import EventLog
 from .health import PROCESSES, expected, processes
 
 ABOUT, CHANGES, DOCS, RECORDS, LOG = "about", "changes", "docs", "records", "log"
@@ -103,7 +104,7 @@ class Myself:
         self,
         cfg: Config,
         root: Path,
-        events=None,
+        events: EventLog,
         run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         unit_state: Callable[[str], str | None] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now().astimezone(),
@@ -179,12 +180,11 @@ class Myself:
         lines.append("on: " + ", ".join(k for k, v in on.items() if v))
         if off := [k for k, v in on.items() if not v]:
             lines.append("off: " + ", ".join(off))
-        if self._events is not None:
-            now = time.time()
-            for p in processes(self._events.folder, expected(cfg), self._unit_state, now):
-                since = time.strftime("%Y-%m-%d %H:%M", time.localtime(p["started"])) if p.get("started") else "?"
-                state = f"running since {since}" if p["running"] else "NOT running"
-                lines.append(f"{p['label']}: {state}")
+        now = time.time()
+        for p in processes(self._events.folder, expected(cfg), self._unit_state, now):
+            since = time.strftime("%Y-%m-%d %H:%M", time.localtime(p["started"])) if p.get("started") else "?"
+            state = f"running since {since}" if p["running"] else "NOT running"
+            lines.append(f"{p['label']}: {state}")
         return "\n".join(lines)
 
     def changes(self, since: str | None) -> str:
@@ -218,8 +218,6 @@ class Myself:
     # What it said and did.
 
     def records(self, query: str, since: str | None, until: str | None, request) -> str:
-        if self._events is None:
-            return "error: TARS keeps no records here ([learning] log_events is off)"
         start, end, _ = when.span(since, until, None, self._now())
         rows = self._events.store.rows(
             "SELECT t.conversation_id, t.ts, t.role, t.text, t.speaker, t.answered_by, t.failed_at, t.error, "
@@ -255,8 +253,6 @@ class Myself:
     # What it was asked for and couldn't do.
 
     def wish(self, asked: str, why: str, request) -> str:
-        if self._events is None:
-            return "error: TARS keeps no wishes here ([learning] log_events is off)"
         if not asked or not why:
             return "error: wish needs what they wanted (query) and what stopped you (why)"
         if refused := toolbox.held_back(request):
@@ -294,8 +290,6 @@ class Myself:
         return f"{person or 'Someone'} asked me: {asked.rstrip('.')}. I couldn't: {why.rstrip('.')}."
 
     def wishes(self) -> str:
-        if self._events is None:
-            return "error: TARS keeps no wishes here ([learning] log_events is off)"
         rows = self._events.store.rows(
             "SELECT * FROM wishes WHERE granted IS NULL ORDER BY id DESC LIMIT ?", (MAX_WISHES,)
         )
@@ -309,8 +303,6 @@ class Myself:
         return "\n".join(lines)
 
     def granted(self, number: str, request=None) -> str:
-        if self._events is None:
-            return "error: TARS keeps no wishes here ([learning] log_events is off)"
         maintainers = {m.strip().lower() for m in self._cfg.household.maintainers}
         asker = str(getattr(request, "speaker", "") or "").strip().lower()
         if maintainers and asker not in maintainers:
@@ -330,7 +322,7 @@ class Myself:
     def _settings(self):
         from .settings import Settings
 
-        return Settings(self._root, self._events.store if self._events is not None else None, run=self._run)
+        return Settings(self._root, self._events.store, run=self._run)
 
     def set(self, name: str, value: str, request) -> str:
         from .settings import SettingsError

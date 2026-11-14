@@ -161,8 +161,8 @@ later: the requests that did the work, replayed by code.
 
 ## Setting it up
 
-1. In `config.local.toml`, turn on `[browser]` (with `[telegram]` and `[learning] log_events`, which it needs: the
-   Telegram service runs the errands, and they're queued in the event database):
+1. In `config.local.toml`, turn on `[browser]` (with `[telegram]`, which it needs: the Telegram service runs the
+   errands):
 
    ```toml
    [browser]

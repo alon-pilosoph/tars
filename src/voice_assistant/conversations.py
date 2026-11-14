@@ -95,11 +95,13 @@ class ConversationLog:
         ts: float | None = None,
     ) -> int | None:
         """`audio` is already-stored audio (the request that came with the wake shares the wake's copy), else `pcm`
-        is saved. None if the conversation was deleted from the web UI meanwhile."""
+        is saved, unless nothing is recorded ([learning] log_events). None if the conversation was deleted from the
+        web UI meanwhile."""
         if not self.exists(conversation_id):
             return None
         ts = ts or time.time()
-        saved = self.store.save_audio(pcm, f"{int(ts * 1000)}_turn") if audio is None and pcm is not None else None
+        keep = audio is None and pcm is not None and self.events.record
+        saved = self.store.save_audio(pcm, f"{int(ts * 1000)}_turn") if keep else None
         with self.store.removed_on_failure(saved):
             turn = self._insert_turn(conversation_id, ts, ROLE_PERSON, text, audio=audio or saved, speaker=speaker)
         if turn is None:

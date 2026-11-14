@@ -9,10 +9,10 @@ from .config import Config
 
 def tell(cfg: Config, store, text: str, by_chat: bool = False, besides: str | None = None) -> list[str]:
     """`text` to each maintainer with a Telegram chat, except `besides` (the one it's about, who knows). `by_chat`:
-    it came from a chat rather than aloud. Who was told; nobody without [telegram] or a database."""
+    it came from a chat rather than aloud. Who was told; nobody without [telegram]."""
     from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
 
-    if not cfg.telegram.enabled or store is None:
+    if not cfg.telegram.enabled:
         return []
     chats = {name.strip().lower(): name for name in cfg.telegram.people}
     me = (besides or "").strip().lower()

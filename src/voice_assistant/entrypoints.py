@@ -106,8 +106,6 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
 
     household = Household(cfg, root)
     log = household.events
-    if log is None:
-        raise ConfigError("The web UI shows the event log: set log_events = true under [learning] in config.toml.")
     speaker_id = household.speaker_id
     try:
         pairs = pair_source(cfg, root)
@@ -150,9 +148,9 @@ def record_session(cfg: Config, root: Path, kind: str, person: str, port: int, c
 
     from .recording import ABOUT, HOUSE, SECONDS_A_PROMPT, Sessions, house_script, voice_script
 
+    if not cfg.learning.log_events:
+        raise ConfigError("Recording sessions record audio, which [learning] log_events = false says not to.")
     log = make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("Recording sessions keep their takes in the event log: set [learning] log_events = true.")
     prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
     token = Sessions(log.store).create(kind, person, prompts, cloud)
     url = f"{web_link(cfg, port)}/?session={token}"
@@ -209,8 +207,6 @@ def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
     from .signin import Accounts
 
     log = make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
     if not person.strip():
         raise ConfigError("--web-invite needs the person's name.")
     if cfg.web.tls_cert and not cfg.web.link:
@@ -232,8 +228,6 @@ def web_sign_out(cfg: Config, root: Path, person: str) -> None:
     from .signin import Accounts
 
     log = make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("Passkeys are kept in the event log: set [learning] log_events = true.")
     passkeys, sessions, invites = Accounts(log.store).remove(person)
     if not (passkeys or sessions or invites):
         print(f"Nobody called {person} has a passkey, a session or an invite for the web UI.")
@@ -334,7 +328,7 @@ def telegram(cfg: Config, root: Path) -> None:
             skills=skills,
             myself=myself,
         ),
-        ConversationLog(events) if events else None,
+        ConversationLog(events),
         tools,
         memory_s=cfg.telegram.memory_minutes * 60,
         keep_s=cfg.telegram.keep_days * 24 * 3600,
@@ -343,7 +337,7 @@ def telegram(cfg: Config, root: Path) -> None:
         transcriber=make_recording_transcriber(cfg, env, client),
         env=env,
         home=home,
-        say=functools.partial(ask_to_say, events.store.folder) if events else None,
+        say=functools.partial(ask_to_say, events.store.folder),
         spotify_login=spotify_login(cfg, root, env),
         skill_clock=skill_clock(skills, "chat", home, presence, myself),
     )
@@ -539,9 +533,9 @@ def restore_backup(cfg: Config, root: Path) -> None:
 
 def typed(cfg: Config, root: Path) -> None:
     """--text: questions typed, answers spoken. No microphone, and the conversation isn't kept: nothing asked or
-    answered is logged, and nothing is sent to the TARS page (brain_config). The event database is still opened, with
-    [learning] log_events, for what the skills, the feeds, who's home and TARS itself keep there, so a skill taught, a
-    feed followed or a wish noted here is kept as it would be aloud."""
+    answered is logged, and nothing is sent to the TARS page (brain_config). The event database is still opened for
+    what the skills, the feeds, who's home and TARS itself keep there, so a skill taught, a feed followed or a wish
+    noted here is kept as it would be aloud."""
     from .assistant import UNPROMPTED_WAIT_S, Assistant
     from .body import LocalBody
 
@@ -651,7 +645,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         )
         clocks += [clock] if clock else []
         set_muted = body.set_muted = start_buttons(cfg, volume, assistant, root)
-        if events and not push_to_talk:
+        if not push_to_talk:
             from .control import Server
 
             # Recording sessions, from the web UI; muting and unmuting, from a chat.

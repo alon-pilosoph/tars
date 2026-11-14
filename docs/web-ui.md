@@ -32,6 +32,8 @@ Every page, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo
 
 ## Recording sessions
 
+They record audio, so not with `[learning] log_events = false`, which says not to.
+
 A page of its own, opened from a link TARS sends, that has one person say a list of phrases into TARS's own
 speakerphone, one at a time: their voice, so speaker ID knows them from the start, or the house's commands, for
 measuring [house commands on the Pi](home.md#house-commands-on-the-pi) on the household's own voices: each thing each
