@@ -219,10 +219,14 @@ class Bot:
         for part in split_text(text):
             self.call("sendMessage", chat_id=chat_id, text=part)
 
-    def send_buttons(self, chat_id: int, text: str, buttons: list[tuple[str, str]]) -> int:
-        """`text` with a row of buttons under it, each (label, what a tap sends back); the message's id."""
+    def send_buttons(self, chat_id: int, text: str, buttons: list[tuple[str, str]], preview: bool = True) -> int:
+        """`text` with a row of buttons under it, each (label, what a tap sends back); the message's id. `preview`:
+        False sends a link in it without a preview, which Telegram makes by fetching the link itself."""
         markup = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in buttons]]}
-        return self.call("sendMessage", chat_id=chat_id, text=text[:MAX_TEXT], reply_markup=markup)["message_id"]
+        extra = {} if preview else {"link_preview_options": {"is_disabled": True}}
+        return self.call("sendMessage", chat_id=chat_id, text=text[:MAX_TEXT], reply_markup=markup, **extra)[
+            "message_id"
+        ]
 
     def drop_buttons(self, chat_id: int, message_id: int) -> None:
         self.call(

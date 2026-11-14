@@ -126,7 +126,9 @@ class Screen:
         """The link, which lets in one browser at a time (the latest to open it), and how many minutes it lasts; with
         Guacamole's login after it, which it asks for first."""
         given = self.control.view()
-        login = f"\n\n(Log in as  tars  /  {LOGIN.read_text().strip()} )" if LOGIN.exists() else ""
+        login = ""
+        if LOGIN.exists():
+            login = f"\n\nIt asks you to log in: username tars, password {LOGIN.read_text().strip()}"
         return f"{self.address}/view?t={given['token']}{login}", int(given["minutes"])
 
     def opened(self) -> bool:
