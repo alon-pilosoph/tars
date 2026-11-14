@@ -232,8 +232,9 @@ instructions and…". A model may believe them, so what matters is what code all
     applied or made with the lock in it, a script handed the lock, a script running one that unlocks), and counts
     what it can't see into as if it would: a room, a floor or a label, a template, a setup it can't read, code,
     `rest_command`, a raw command to a device (`ha_tool.py`).
-  - **A reply that searched the web changes nothing.** From the moment a search starts, the house tool only reads
-    devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in `home.py`), and no other
+  - **A reply that searched the web, or read the feeds, changes nothing.** From the moment a search starts, or a
+    feed's stories are read (a tool that says its answers are from `outside`), the house tool only reads devices for
+    the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in `home.py`), and no other
     tool changes anything either: no errand is started, no feed followed, no skill or preference taught, no setting
     set and no wish noted ([what each tool may change](#what-each-tool-may-change)).
   - **A Telegram chat works the house as the voice does** (`wiring.py`, `chat_home()`): only people in
@@ -514,7 +515,7 @@ and holds each change at least as `held_back` does. Reading is never held back, 
 | `home_assistant` | any entity, through a service; and Home Assistant's setup (add, rename, room, remove, undo) | yes | yes; nor is the house's past read (history, statistics, logbook) | yes | a call that could open a door, as unlocking; no administering Home Assistant; the setup only for maintainers, never a secret through a chat, removing or undoing on a second message |
 | a plugin's tool | what the plugin's code does, when it declares `changes=True`; one that doesn't is called as a read | yes | yes | yes | its grants; one change at a time with the house's |
 | `browse` | an errand queued, run in the person's own accounts | yes | yes | yes | only for someone known with a chat; nothing ordered, booked, paid or sent without their tap on Order, at the amounts shown |
-| `feeds` | a feed followed or dropped (reading marks what was told) | yes | yes | yes | each person's own |
+| `feeds` | a feed followed or dropped (reading marks what was told, by the reply's `<told>` marker) | yes | yes | yes | each person's own; reading marks the reply as having read the web |
 | `skills` | a skill saved, changed, paused, resumed or deleted; a preference remembered or forgotten | yes | yes | yes | only someone TARS knows; a skill does each step through the tools above, under their rules |
 | `tars` | a setting set (`config.local.toml`, then a restart); a wish noted (to the maintainers, maybe a GitHub issue) or granted | yes | yes; nor are the records or the log read | yes | a setting only for someone known or asking aloud, only what `ADJUSTABLE` lists, within bounds; granting only for maintainers; a wish's issue posted only on a maintainer's tap |
 | `send` | an item on the TARS page and the asker's chat | made only once the reply is kept | no: links come from the web | no | a link must be http(s), a file a known type |

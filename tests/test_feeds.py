@@ -9,7 +9,7 @@ import pytest
 from voice_assistant.config import LLMConfig
 from voice_assistant.feeds import Feeds, NotAFeed, Page, feed_links, parse, quality, told
 from voice_assistant.home import Request
-from voice_assistant.llm import OpenAIChat
+from voice_assistant.llm import OpenAIChat, _Unmarked
 from voice_assistant.store import Store
 
 from .test_llm import fake_openai_chat
@@ -171,17 +171,34 @@ def test_whats_new_is_whats_recent_and_not_told_before(feeds):
     ask(feeds, action="follow", url="https://toi/feed", category="israeli news")
     said = ask(feeds, action="read", category="israeli news").splitlines()
     assert said[0] == "From their israeli news feeds (Ynet, The Times of Israel): 2 recent, 2 new to them."
-    assert said[1] == "- [Ynet, 1 hours ago] Storm floods the Sharon: Record rain fell in Kadima-Tzoran. (https://y/1)"
-    assert said[2].startswith("- [The Times of Israel, 2 hours ago] Knesset convenes")
+    assert said[1] == "1. [Ynet, 1 hours ago] Storm floods the Sharon: Record rain fell in Kadima-Tzoran. (https://y/1)"
+    assert said[2].startswith("2. [The Times of Israel, 2 hours ago] Knesset convenes")
+    feeds.after_reply(types.SimpleNamespace(speaker="Alon"), [])  # a reply with no marker: all of it told
     again = ask(feeds, action="read", category="israeli news")
     assert "0 new to them" in again and "Nothing new since they last asked" in again
     assert "Storm floods" in ask(feeds, action="read", category="israeli news", everything=True)
+
+
+def test_only_the_stories_told_are_told_and_the_rest_stay_new(feeds):
+    ask(feeds, action="follow", url="https://ynet/rss", category="news")
+    ask(feeds, action="follow", url="https://toi/feed", category="news")
+    alon = types.SimpleNamespace(speaker="Alon")
+    ask(feeds, action="read")
+    feeds.after_reply(alon, ["2, 7"])  # a number past the list is no story
+    again = ask(feeds, action="read")
+    assert "1 new to them" in again and "Storm floods" in again and "Knesset" not in again
+    feeds.after_reply(alon, [""])  # a bare <told>: none of them
+    assert "1 new to them" in ask(feeds, action="read")
+    feeds.after_reply(alon, ["1"])
+    feeds.after_reply(alon, [])  # a reply that read nothing marks nothing
+    assert "0 new to them" in ask(feeds, action="read")
 
 
 def test_each_person_has_their_own_feeds_and_their_own_news(feeds):
     ask(feeds, action="follow", url="https://ynet/rss", category="news")
     ask(feeds, speaker="Stacey", action="follow", url="https://ynet/rss", category="news")
     ask(feeds, action="read")
+    feeds.after_reply(types.SimpleNamespace(speaker="Alon"), [])
     assert "1 new to them" in ask(feeds, speaker="Stacey", action="read")  # Alon's reading isn't hers
     ask(feeds, speaker="Stacey", action="unfollow", name="ynet")
     assert ask(feeds, speaker="Stacey", action="list") == "They follow no feeds yet."
@@ -240,6 +257,40 @@ def test_the_brain_has_the_feeds_tool_and_its_rules(feeds):
     assert "Storm floods the Sharon" in client.requests[1]["input"][-1]["output"]
 
 
+@pytest.mark.parametrize(
+    ("told", "still_new"),
+    [(" <told 2>", "Storm floods"), ("", None)],  # without a marker, all of it counts as told
+)
+def test_the_brain_takes_its_told_marker_out_and_only_those_are_told(feeds, told, still_new):
+    ask(feeds, action="follow", url="https://ynet/rss", category="news")
+    ask(feeds, action="follow", url="https://toi/feed", category="news")
+    client = fake_openai_chat(
+        lambda m: f"The Knesset meets Tuesday.{told}" if m[-1].get("type") == "function_call_output" else "",
+        lambda m: [("feeds", {"action": "read", "category": None})] if m[-1].get("role") == "user" else [],
+    )
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False), feeds=feeds)
+    assert "".join(brain.stream_reply("what's new?", Request(speaker="Alon"))) == "The Knesset meets Tuesday."
+    assert "<told" in client.requests[0]["instructions"]
+    after = ask(feeds, action="read")
+    assert (still_new in after) if still_new else "0 new to them" in after
+
+
+@pytest.mark.parametrize(
+    ("pieces", "words", "found"),
+    [
+        (["Two stories.", " <to", "ld 1, ", "3>"], "Two stories.", [" 1, 3"]),
+        (["Done. &lt;told 4&gt;"], "Done.", [" 4"]),
+        (["a <b> and a < c, ", "AT&", "T"], "a <b> and a < c, AT&T", []),  # held back a moment, then said
+        (["<told you so>"], "<told you so>", []),
+        (["Nothing new. <told>"], "Nothing new.", [""]),
+    ],
+)
+def test_the_told_marker_is_taken_out_of_a_streamed_reply_however_it_comes(feeds, pieces, words, found):
+    unmarked = _Unmarked(feeds.toolset().markers)
+    said = "".join(unmarked.feed(p) for p in pieces) + unmarked.flush()
+    assert (said, unmarked.found) == (words, [found])
+
+
 BOMB = (
     b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>'
     b"<rss><channel><title>&b;</title></channel></rss>"
@@ -275,3 +326,27 @@ def test_following_waits_for_the_turn_and_isnt_done_after_the_web_or_on_a_doors_
     assert [f["name"] for f in feeds.followed("alon")] == ["Ynet"]
     kept = Request(speaker="Alon", may_act=lambda timeout: True)
     assert feeds.call(full | {"action": "unfollow", "name": "ynet"}, kept) == "done: no longer following Ynet"
+
+
+def test_a_reply_that_read_the_feeds_only_reads_the_house_after(feeds):
+    from voice_assistant import toolbox
+
+    ask(feeds, action="follow", url="https://ynet/rss", category="news")
+    seen = []
+    spy = toolbox.Tool({"type": "function", "name": "spy", "parameters": {}}, toolbox.READS,
+                       lambda args, turn: seen.append(turn.request.read_the_web) or "ok")  # fmt: skip
+    other = types.SimpleNamespace(toolset=lambda: toolbox.Toolset([spy]))
+
+    def calls(messages):
+        if messages[-1].get("role") == "user":
+            return [("spy", {})]
+        if messages[-1].get("output") == "ok" and len(seen) == 1:
+            return [("feeds", {"action": "read", "category": "news"})]
+        if "Storm floods" in str(messages[-1].get("output")):
+            return [("spy", {})]
+        return []
+
+    client = fake_openai_chat(lambda m: "Done." if m[-1].get("output") == "ok" and len(seen) == 2 else "", calls)
+    brain = OpenAIChat(client, LLMConfig(web_search=False, send=False), feeds=feeds, tools=[other])
+    assert "".join(brain.stream_reply("what's new?", Request(speaker="Alon"))) == "Done."
+    assert seen == [False, True]  # before the feeds were read, and after

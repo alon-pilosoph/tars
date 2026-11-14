@@ -4,10 +4,15 @@ Everything about them is done by talking. "I want to follow gaming": the model l
 and previews each before suggesting it, since a feed is only worth following if it's live and its items carry a
 summary of their own (a headline and a link to a paywalled article tells nothing). They pick, and it follows those,
 in a category in their words. "What's new in gaming?" reads that category's feeds, all at once, and hands the model
-what it hasn't handed them before, for it to tell the few that matter. Each person's feeds are their own (the
+what they haven't been told before, for it to tell the few that matter. Each person's feeds are their own (the
 event database's feeds table), and so is what they've been told (feed_seen): who's asking is the voice TARS knows,
 or the chat, else [feeds] default_person. Following and unfollowing wait for the turn, and aren't done in a reply
-that read the web, nor in a turn a door's lock set off (toolbox.held_back)."""
+that read the web, nor in a turn a door's lock set off (toolbox.held_back).
+
+What they've been told is what the model says it told: it ends that reply with a marker, <told 2 5>, the numbers of
+the stories it told from the list it read, which never reaches them (the toolbox's markers: the brain takes it out).
+The rest stay new, for "what else?" or the next time they ask. A reply that read the news and has no marker counts
+as all of it told, so a model that forgets never has them hear the same stories again."""
 
 import html
 import re
@@ -43,6 +48,9 @@ USER_AGENT = "Mozilla/5.0 (TARS home assistant; feeds)"
 ATOM = "{http://www.w3.org/2005/Atom}"
 CONTENT = "{http://purl.org/rss/1.0/modules/content/}encoded"
 USUAL_PATHS = ("/feed", "/feed/", "/rss", "/rss/", "/feed.xml", "/rss.xml", "/rss/index.xml", "/atom.xml", "/index.xml")
+# How a reply that read the news says which stories it told, by number: taken out of it before anyone hears it.
+TOLD = re.compile(r"\s*(?:<|&lt;)told((?:[\s,]*\d+)*)\s*(?:>|&gt;)")
+TOLD_STARTS = ("<told", "&lt;told")
 LIST, READ, PREVIEW, FOLLOW, UNFOLLOW = "list", "read", "preview", "follow", "unfollow"
 ACTIONS = (LIST, READ, PREVIEW, FOLLOW, UNFOLLOW)
 
@@ -84,8 +92,11 @@ RULES = (
     '- What\'s new ("what\'s new?", "the news", "anything new in gaming?"): read that category (null: all of them). '
     "Pick the few stories that matter most to them; the same story in several feeds is a bigger one, told once. Tell "
     "each in a sentence or two, in your own words, from its summary, never reading out headlines. Aloud, three or "
-    "four; in a chat, up to six, each with its link. Then offer more, or more about one: for more than its summary "
-    "says, search the web. Nothing new since they last asked: say so, and offer the latest again (everything true).\n"
+    "four; in a chat, up to six, each with its link. End that reply with <told> and the numbers of the stories you "
+    'told, like "<told 2 5 9>": it\'s taken out before they hear it, and only those count as told; the rest stay new. '
+    "Then offer more, or more about one: for more than its summary says, search the web. More stories in a later "
+    "reply: read again, which gives the ones not yet told. Nothing new since they last asked: say so, and offer the "
+    "latest again (everything true).\n"
     '- Finding feeds ("I want to follow gaming", "any good feeds about cooking?"): search the web for the topic\'s '
     "best RSS feeds, and add those you know, then preview each before suggesting it. Suggest only feeds that answer, "
     "were updated lately and whose items carry real summaries, three or four, each with what it's good for in a few "
@@ -245,13 +256,17 @@ class Feeds:
         self.store, self.default_person = store, default_person.strip()
         self._get, self._clock = get, clock
         self._cache: dict[str, tuple[float, Page]] = {}
+        # The stories each person was last handed, by their number, until the reply that tells them is over.
+        self._handed: dict[str, list[str]] = {}
 
     def toolset(self) -> toolbox.Toolset:
         """The feeds tool for the brain (toolbox.py). Reading and previewing go through at once; following and
         unfollowing are held back as any change is (toolbox.held_back, in call): refused in a reply that read the web,
         whose pages could name a feed to follow, and in a turn a door's lock set off, and made only once the turn goes
-        ahead."""
-        return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't read the feeds ({e!r})")
+        ahead. What it answers is the feeds' words, from anywhere (outside): the reply only reads the house after. Its
+        marker, <told 2 5>, says which stories were told (after_reply)."""
+        told = toolbox.Marker(TOLD, TOLD_STARTS, self.after_reply)
+        return toolbox.one_tool(self, toolbox.ITS_OWN, "error: couldn't read the feeds ({e!r})", True, [told])
 
     def call(self, args: dict, request=None) -> str:
         args = args if isinstance(args, dict) else {}
@@ -351,15 +366,27 @@ class Feeds:
         seen = {r["link"] for r in self.store.rows("SELECT link FROM feed_seen WHERE person=?", (person,))}
         new = [s for s in found if s.link not in seen]
         shown = sorted(found if everything else new, key=lambda s: -(s.published or 0))[:MOST_STORIES]
-        self._saw(person, [s.link for s in shown])
+        self._handed[person] = [s.link for s in shown]
         where = f"their {category} feeds" if category else "all their feeds"
         lines = [f"From {where} ({', '.join(f['name'] for f in feeds)}): {len(found)} recent, {len(new)} new to them."]
         if failed:
             lines.append(f"Didn't answer: {'; '.join(failed)}.")
         if not shown:
             lines.append("Nothing new since they last asked: read again with everything true for the latest.")
-        lines += [f"- [{s.source}, {dated(s, now)}] {s.title}: {s.summary} ({s.link})" for s in shown]
+        lines += [
+            f"{n}. [{s.source}, {dated(s, now)}] {s.title}: {s.summary} ({s.link})" for n, s in enumerate(shown, 1)
+        ]
         return "\n".join(lines)
+
+    def after_reply(self, request, found: list[str]) -> None:
+        """A reply is over: of the stories it read, the ones it told (by number, in its <told> markers, `found`) are
+        told; without a marker, all of them. A reply that read none: nothing to do."""
+        numbers = [int(n) for marks in found for n in re.findall(r"\d+", marks)] if found else None
+        person = person_key(getattr(request, "speaker", None) or self.default_person)
+        handed = self._handed.pop(person, None) if person else None
+        if handed:
+            links = handed if numbers is None else [handed[n - 1] for n in numbers if 0 < n <= len(handed)]
+            self._saw(person, links)
 
     def preview(self, url: str) -> str:
         if not url:

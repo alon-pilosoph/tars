@@ -24,7 +24,7 @@ from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
 from .home import ONE_MOMENT, HomeTools, Request
 from .reminders import Change, ReminderTools
-from .toolbox import COLLECTS, Provider, Tool, Toolbox, Toolset, Turn
+from .toolbox import COLLECTS, Marker, Provider, Tool, Toolbox, Toolset, Turn
 
 # The whole conversation is sent until it goes quiet for `memory_minutes`; this only stops a marathon session from
 # growing the prompt forever.
@@ -646,6 +646,49 @@ class _UpTo:
             yield pending
 
 
+class _Unmarked:
+    """A reply's words without the toolbox's markers (toolbox.Marker: the feeds' <told 2 5>), held back only while
+    they could still be the start of one, and the space before one with it. `found`: what each marker carried, in
+    order, by the marker's place in `markers`."""
+
+    def __init__(self, markers: Sequence[Marker]):
+        self._markers, self._held = list(markers), ""
+        self.found: list[list[str]] = [[] for _ in self._markers]
+        self._starts = tuple(s for m in self._markers for s in m.starts)
+
+    def feed(self, piece: str) -> str:
+        text, out = self._held + piece, ""
+        while hits := [
+            (found.start(), i, found) for i, m in enumerate(self._markers) if (found := m.pattern.search(text))
+        ]:
+            _, i, found = min(hits, key=lambda hit: hit[0])
+            out += text[: found.start()].rstrip()  # the space before a marker goes with it
+            self.found[i].append(found.group(1))
+            text = text[found.end() :]
+        hold = next((i for i, c in enumerate(text) if c in "<&" and self._could_be(text[i:])), len(text))
+        hold = len(text[:hold].rstrip())  # trailing space waits for what comes after it
+        self._held = text[hold:]
+        return out + text[:hold]
+
+    def flush(self) -> str:
+        """What was held back, now that the round's words are over: not a marker after all."""
+        held, self._held = self._held, ""
+        return held
+
+    def _could_be(self, rest: str) -> bool:
+        if _could_become(rest, self._starts):
+            return True
+        return rest.startswith(self._starts) and ">" not in rest and "&gt;" not in rest and len(rest) < 80
+
+    def heard(self, request: Request | None) -> None:
+        """Each marker's provider told what the reply carried for it, now that it's over."""
+        for marker, found in zip(self._markers, self.found, strict=True):
+            try:
+                marker.heard(request, found)
+            except Exception as e:  # noqa: BLE001 - a provider that can't take it never costs the reply
+                print(f"(couldn't hand back a reply's marker: {e!r})")
+
+
 class _NoRepeat:
     """A tool round's words, without what an earlier round of the same reply already said: Qwen now and then says
     "Timer's set for 12:03." with its tool call, and again once it has the result. Held back only while they could
@@ -800,6 +843,7 @@ class OpenAIChat:
             instructions = f"{self._instructions}\n\n{THINK_RULES}"
         if said_first.strip():
             instructions = f"{instructions}\n\n{CARRY_ON.format(said=said_first.strip())}"
+        unmarked = _Unmarked(self._toolbox.markers)
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
             tools = {"tools": self._tools} if self._tools else {}
@@ -823,8 +867,9 @@ class OpenAIChat:
             for event in stream:
                 _check(writing)
                 if event.type == "response.output_text.delta" and event.delta:
-                    said += event.delta
-                    yield event.delta
+                    if piece := unmarked.feed(event.delta):
+                        said += piece
+                        yield piece
                 elif event.type.startswith("response.web_search_call"):
                     # What the search brings back can say anything: from here on, the house is only read.
                     writing.request = dataclasses.replace(writing.request, read_the_web=True)
@@ -837,6 +882,9 @@ class OpenAIChat:
                     # The SDK only raises for some of these; the rest would otherwise end the reply in silence.
                     raise ReplyFailed(f"{event.type}: {_why(event)}")
             writing.stream = None
+            if rest := unmarked.flush():
+                said += rest
+                yield rest
             answer += said
             if not calls:
                 break
@@ -860,6 +908,7 @@ class OpenAIChat:
                     context.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
         if not answer.strip() and not self.sent:
             raise ReplyFailed("the reply was empty")
+        unmarked.heard(writing.request)
         self._remember(answer, writing)
 
     def _reminder_rules(self, tools: bool = True) -> list[str]:
@@ -959,7 +1008,10 @@ class OpenAIChat:
         turn = Turn(writing.request, self.sent, self.changes, no_links)
         if tool.does == COLLECTS:
             return self._toolbox.call(tool, args, turn)
-        return self._outside_lock(lambda: self._toolbox.call(tool, args, turn), writing)
+        output = self._outside_lock(lambda: self._toolbox.call(tool, args, turn), writing)
+        if tool.outside:  # what it brought back can say anything, as a web search's results can: the house is only read
+            writing.request = dataclasses.replace(writing.request, read_the_web=True)
+        return output
 
     def _outside_lock(self, call: Callable[[], str], writing: _Writing) -> str:
         """`call()`, for a tool that may wait (for the turn to be over, a device, the network): the conversation isn't
