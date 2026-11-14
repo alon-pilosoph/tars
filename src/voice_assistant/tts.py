@@ -14,7 +14,7 @@ from openai import OpenAI, Timeout
 
 from . import usage
 from .config import TTSConfig
-from .errors import ServiceError
+from .errors import ServiceError, said, status_of
 from .stt import deepgram_connect
 
 # A reply's audio normally starts within a second. After this long with nothing, TARS gives up and says so in a
@@ -100,7 +100,7 @@ class WarmSockets:
             try:
                 yield from self._stream(text)
             except (WebSocketException, OSError, ValueError, KeyError) as e:  # ValueError, KeyError: a garbled message
-                raise ServiceError(f"{self.title}: {e!r}") from e
+                raise ServiceError(f"{self.title}: {said(e)}", status_of(e)) from e
 
     def _stream(self, text: str) -> Iterator[bytes]:
         from websockets.exceptions import ConnectionClosed

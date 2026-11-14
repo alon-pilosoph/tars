@@ -21,7 +21,7 @@ import numpy as np
 from . import usage
 from .audio import SAMPLE_RATE, wav_bytes
 from .config import DEEPGRAM_STT_MODEL, STTConfig
-from .errors import ServiceError
+from .errors import ServiceError, said, status_of
 
 if TYPE_CHECKING:
     import httpx
@@ -195,7 +195,7 @@ class DeepgramFileTranscriber:
             channels = response.json()["results"]["channels"]
             return channels[0]["alternatives"][0]["transcript"].strip() if channels else ""
         except (httpx.HTTPError, ValueError, KeyError, IndexError) as e:  # the last three: an answer garbled
-            raise ServiceError(f"Deepgram speech to text: {e!r}") from e
+            raise ServiceError(f"Deepgram speech to text: {said(e)}", status_of(e)) from e
 
 
 def transcribe_recording(transcriber: Transcriber, pcm: bytes | np.ndarray) -> str:
@@ -245,8 +245,8 @@ class DeepgramSession:
         with self._answered:
             self._answered.wait_for(lambda: self._got >= wanted or self._closed, FINAL_TIMEOUT_S)
             if self._got < wanted:
-                if self._error:
-                    raise ServiceError(f"Deepgram speech to text: {self._error!r}") from self._error
+                if error := self._error:
+                    raise ServiceError(f"Deepgram speech to text: {said(error)}", status_of(error)) from error
                 raise ServiceError("Deepgram speech to text: no transcript in time")
             return " ".join(self._final).strip()
 
@@ -363,7 +363,7 @@ class FluxSession:
                     lambda: self._state == TurnState.DONE or self._closed or self._error is not None, FLUX_LAST_WORDS_S
                 )
             if self._failed():
-                raise ServiceError(f"Flux: {self._error!r}") from self._error
+                raise ServiceError(f"Flux: {said(self._error)}", status_of(self._error)) from self._error
             if self._finished and self._state != TurnState.DONE and not self._closed and self._has_backup:
                 raise ServiceError("Flux: no last words in time")
             return self._text.strip()

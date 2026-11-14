@@ -39,7 +39,7 @@ from .config import (
     with_keys,
 )
 from .echo import MAX_DELAY_S
-from .errors import SERVICE_FAILURES
+from .errors import SERVICE_FAILURES, ServiceError, said, status_of
 from .plugins import TARS_KEYS, Loaded
 
 if TYPE_CHECKING:
@@ -111,7 +111,10 @@ def outcome(name: str, check: Check) -> list[Result]:
     try:
         got = check()
     except (Exception, SystemExit) as e:  # noqa: BLE001 - reported, and the rest still run
-        got = Result(name, FAIL, str(e) if isinstance(e, SystemExit) else f"{type(e).__name__}: {e}")
+        if isinstance(e, SERVICE_FAILURES):
+            got = service_error(name, e)
+        else:
+            got = Result(name, FAIL, str(e) if isinstance(e, SystemExit) else f"{type(e).__name__}: {e}")
         if not isinstance(e, (OSError, RuntimeError, ValueError, SystemExit, *SERVICE_FAILURES)):
             traceback.print_exc()
     return [got] if isinstance(got, Result) else list(got)
@@ -258,12 +261,18 @@ def timed(name: str, call: Callable[[], str | None]) -> Result:
 
 
 def service_error(name: str, e: Exception) -> Result:
-    status = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+    """A service's failure in a line, with what to do: never the whole response it came with."""
+    status = status_of(e)
+    what = str(e) if isinstance(e, ServiceError) else said(e)  # a ServiceError's says which service, briefly
     if status == 401:
         return Result(name, FAIL, "the API key was refused (401)", "check the key in .env")
+    if status == 402:
+        return Result(name, FAIL, f"out of credits: {what}", "top up, or raise the plan's limit, on the service's site")
     if status == 404:
         return Result(name, FAIL, "the model isn't available to this key (404)", "check the model in config.toml")
-    return Result(name, FAIL, f"{type(e).__name__}: {e}", "check the network, and the service's status page")
+    if status == 429:
+        return Result(name, FAIL, f"too many requests: {what}", "wait a minute; if it lasts, check the plan's limits")
+    return Result(name, FAIL, what, "check the network, and the service's status page")
 
 
 def has_model(models: Iterable, wanted: str) -> str:
