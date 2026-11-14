@@ -23,6 +23,8 @@ from voice_assistant.audio import (
     find_device,
 )
 
+sd = pytest.importorskip("sounddevice")  # the voice extra: patched here, imported by the devices when opened
+
 
 @pytest.fixture(autouse=True)
 def devices_take_any_rate(monkeypatch):
@@ -93,7 +95,7 @@ class DeadOutput(FakeOutput):
 
 @pytest.mark.parametrize("split_at", [None, 1, 4801, 24_000])  # chunks cut anywhere, mid-sample included
 def test_playback_is_from_the_first_sound_to_the_last_not_the_silence_around_them(monkeypatch, split_at):
-    monkeypatch.setattr(audio_module.sd, "RawOutputStream", FakeOutput)
+    monkeypatch.setattr(sd, "RawOutputStream", FakeOutput)
     padding = np.full(12_000, 50, np.int16).tobytes()  # half a second too quiet to hear
     voice = np.arange(1000, 3400, dtype=np.int16).tobytes()
     audio = padding + voice + padding
@@ -105,7 +107,7 @@ def test_playback_is_from_the_first_sound_to_the_last_not_the_silence_around_the
 
 
 def test_audio_that_runs_dry_mid_reply_waits_for_a_refill_instead_of_stuttering(monkeypatch):
-    monkeypatch.setattr(audio_module.sd, "RawOutputStream", FakeOutput)
+    monkeypatch.setattr(sd, "RawOutputStream", FakeOutput)
     first, late, rest = (
         np.arange(start, start + n, dtype=np.int16) for start, n in [(1000, 2400), (4000, 480), (5000, 2400)]
     )
@@ -127,7 +129,7 @@ def test_audio_that_runs_dry_mid_reply_waits_for_a_refill_instead_of_stuttering(
 
 
 def test_a_dead_speaker_raises_instead_of_hanging(monkeypatch):
-    monkeypatch.setattr(audio_module.sd, "RawOutputStream", DeadOutput)
+    monkeypatch.setattr(sd, "RawOutputStream", DeadOutput)
     monkeypatch.setattr(audio_module, "SPEAKER_STALL_S", 0.1)
     with Speaker(None, 24_000, prebuffer_s=0.1) as speaker, pytest.raises(SpeakerError):
         speaker.play_pcm_stream([np.full(2400, 1000, np.int16).tobytes()], 24_000)
@@ -135,16 +137,16 @@ def test_a_dead_speaker_raises_instead_of_hanging(monkeypatch):
 
 def test_no_device_to_open_says_plug_it_in(monkeypatch):
     def missing(**_):
-        raise audio_module.sd.PortAudioError("Error querying device -1")
+        raise sd.PortAudioError("Error querying device -1")
 
-    monkeypatch.setattr(audio_module.sd, "RawInputStream", missing)
-    monkeypatch.setattr(audio_module.sd, "RawOutputStream", missing)
+    monkeypatch.setattr(sd, "RawInputStream", missing)
+    monkeypatch.setattr(sd, "RawOutputStream", missing)
     with pytest.raises(NoDeviceError, match="No microphone to open .* Plug in the speakerphone"):
         Microphone(None)
     with pytest.raises(NoDeviceError, match="No speaker to open .* Plug in the speakerphone"):
         Speaker(None, 24_000, prebuffer_s=0.1)
     headphones_only = [{"name": "bcm2835 Headphones", "max_input_channels": 0}]
-    monkeypatch.setattr(audio_module.sd, "query_devices", lambda: headphones_only)
+    monkeypatch.setattr(sd, "query_devices", lambda: headphones_only)
     with pytest.raises(NoDeviceError, match="No input device matching 'PowerConf'"):
         find_device("PowerConf", "input")
 
@@ -191,7 +193,7 @@ class FakeInput:
 @pytest.mark.parametrize("rate", [48_000, 44_100])
 def test_a_microphone_at_its_own_rate_still_gives_80_ms_at_16_khz(monkeypatch, rate):
     monkeypatch.setattr(audio_module, "device_rate", lambda device, kind, wanted: rate)
-    monkeypatch.setattr(audio_module.sd, "RawInputStream", FakeInput)
+    monkeypatch.setattr(sd, "RawInputStream", FakeInput)
     mic = Microphone(None)
     assert mic._stream.opened["samplerate"] == rate
     heard = tone(rate, 1.0)
@@ -209,7 +211,7 @@ def test_a_microphone_at_its_own_rate_still_gives_80_ms_at_16_khz(monkeypatch, r
 
 def test_a_speaker_at_its_own_rate_plays_the_voice_converted(monkeypatch):
     monkeypatch.setattr(audio_module, "device_rate", lambda device, kind, wanted: 48_000)
-    monkeypatch.setattr(audio_module.sd, "RawOutputStream", FakeOutput)
+    monkeypatch.setattr(sd, "RawOutputStream", FakeOutput)
     played_for_echo = []
 
     class Echo:
@@ -234,26 +236,26 @@ def test_a_device_is_opened_at_the_rate_wanted_if_it_takes_it_and_its_own_if_not
 
     def check(device, samplerate, channels, dtype):
         if samplerate not in takes:
-            raise audio_module.sd.PortAudioError("Invalid sample rate")
+            raise sd.PortAudioError("Invalid sample rate")
 
-    monkeypatch.setattr(audio_module.sd, "check_input_settings", check)
-    monkeypatch.setattr(audio_module.sd, "check_output_settings", check)
-    monkeypatch.setattr(audio_module.sd, "query_devices", lambda device, kind: {"default_samplerate": 48000.0})
+    monkeypatch.setattr(sd, "check_input_settings", check)
+    monkeypatch.setattr(sd, "check_output_settings", check)
+    monkeypatch.setattr(sd, "query_devices", lambda device, kind: {"default_samplerate": 48000.0})
     assert device_rate(3, "input", 16_000) == 48_000
     assert device_rate(3, "output", 48_000) == 48_000
     takes.add(16_000)
     assert device_rate(3, "input", 16_000) == 16_000
 
     def nothing_there(device, kind):
-        raise audio_module.sd.PortAudioError("Error querying device -1")
+        raise sd.PortAudioError("Error querying device -1")
 
     takes.clear()
-    monkeypatch.setattr(audio_module.sd, "query_devices", nothing_there)
+    monkeypatch.setattr(sd, "query_devices", nothing_there)
     assert device_rate(None, "input", 16_000) == 16_000  # opening it then says what's wrong
 
 
 def test_a_stop_cuts_what_s_playing_and_takes_no_more_of_it_and_the_next_plays(monkeypatch):
-    monkeypatch.setattr(audio_module.sd, "RawOutputStream", FakeOutput)
+    monkeypatch.setattr(sd, "RawOutputStream", FakeOutput)
     taken = []
 
     def reply(speaker):  # streamed, and stopped after its first piece is in

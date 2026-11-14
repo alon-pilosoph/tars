@@ -114,6 +114,21 @@ def quick_services(llm: LLMConfig, env_path: Path) -> list[QuickService]:
     ]
 
 
+VOICE_PACKAGES = ("sounddevice", "openwakeword", "vosk", "onnxruntime", "kaldi_native_fbank", "ai_edge_litert")
+
+
+def need_voice() -> None:
+    """ConfigError, saying how to install them, if the voice's packages aren't (the optional extra "voice"): TARS's
+    microphone, speaker, wake word and the models that hear. Looked for, not imported: PortAudio starts on import."""
+    import importlib.util
+
+    if missing := [name for name in VOICE_PACKAGES if importlib.util.find_spec(name) is None]:
+        raise ConfigError(
+            f'TARS\'s microphone and speaker need the optional extra "voice" ({", ".join(missing)} missing): run '
+            "uv sync --all-extras (or --extra voice). A home without them is chat-only: [audio] enabled = false."
+        )
+
+
 def make_event_log(cfg: Config, root: Path) -> EventLog:
     """The event database, always there: reminders, conversations, Telegram's sends, the web UI and the backup are
     kept in it. [learning] log_events only says whether wakes and audio are recorded too."""
@@ -1145,8 +1160,10 @@ class Household:
 
     @functools.cached_property
     def speaker_id(self):
-        """The voiceprints (speaker.py), with [speaker] on; None otherwise."""
-        return make_speaker_id(self.cfg, self.root) if self.cfg.speaker.enabled else None
+        """The voiceprints (speaker.py), with [speaker] on in a home with TARS's microphone ([audio] enabled); None
+        otherwise: a chat-only home hears no voices, and a chat already knows who's writing."""
+        on = self.cfg.speaker.enabled and self.cfg.audio.enabled
+        return make_speaker_id(self.cfg, self.root) if on else None
 
     @functools.cached_property
     def reminders(self):

@@ -47,6 +47,7 @@ from .wiring import (
     make_reminders,
     make_s3,
     make_speaker_id,
+    need_voice,
     own_speaker,
     phrase_folder,
     reminder_tools,
@@ -595,6 +596,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             "This home is chat-only ([audio] enabled = false): TARS runs as voice-assistant --telegram and --web here. "
             "Set [audio] enabled = true in config.local.toml for its microphone and speaker."
         )
+    need_voice()
     from .assistant import Announcements, Assistant
     from .journal import Journal
 

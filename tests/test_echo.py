@@ -5,11 +5,12 @@ import types
 import numpy as np
 import pytest
 
-import voice_assistant.audio as audio_module
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE, Microphone, Speaker
 from voice_assistant.echo import EchoCanceller, without_echo
 
 from .test_audio import FakeInput, FakeOutput, devices_take_any_rate  # noqa: F401 - the fixture applies here too
+
+sd = pytest.importorskip("sounddevice")  # the voice extra: patched here, imported by the devices when opened
 
 
 @pytest.mark.parametrize(
@@ -70,7 +71,7 @@ class RecordingEcho:
 
 
 def test_the_speaker_tells_the_canceller_everything_it_plays_silence_included(monkeypatch):
-    monkeypatch.setattr(audio_module.sd, "RawOutputStream", FakeOutput)
+    monkeypatch.setattr(sd, "RawOutputStream", FakeOutput)
     echo = RecordingEcho()
     voice = np.arange(1000, 3400, dtype=np.int16).tobytes()
     with Speaker(None, 24_000, prebuffer_s=0.1, echo=echo) as speaker:
@@ -82,7 +83,7 @@ def test_the_speaker_tells_the_canceller_everything_it_plays_silence_included(mo
 
 
 def test_the_mic_keeps_cleaning_while_closed_so_the_canceller_keeps_learning(monkeypatch):
-    monkeypatch.setattr(audio_module.sd, "RawInputStream", FakeInput)
+    monkeypatch.setattr(sd, "RawInputStream", FakeInput)
     mic = Microphone(None, RecordingEcho())
     with mic.paused(tail_s=0):
         mic._stream.give(np.zeros(BLOCK_SAMPLES, np.int16))

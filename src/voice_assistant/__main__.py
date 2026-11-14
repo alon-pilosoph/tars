@@ -28,7 +28,7 @@ from .entrypoints import (
     web_sign_out,
     web_ui,
 )
-from .wiring import keyed
+from .wiring import keyed, need_voice
 
 # sysexits' EX_CONFIG: a setup that can't work, which systemd mustn't keep restarting (RestartPreventExitStatus).
 EX_CONFIG = 78
@@ -146,6 +146,11 @@ def main() -> None:
         parser.error("--cloud goes with --record-session house")
 
     if args.list_devices:
+        try:
+            need_voice()
+        except ConfigError as e:
+            print(e.code, file=sys.stderr)
+            raise SystemExit(EX_CONFIG) from None
         list_devices()
         return
 
@@ -156,6 +161,8 @@ def main() -> None:
             from .check import check_all
 
             raise SystemExit(check_all(cfg, root, silent=args.silent))
+        if args.mic_test or args.record_voice or args.enroll or args.text:
+            need_voice()  # each hears or speaks on this machine
         if args.mic_test:
             from .mic_test import mic_test
 
@@ -221,7 +228,11 @@ def main() -> None:
         if args.text:
             typed(keyed(cfg, root), root)
             return
-        run(keyed(cfg, root), args.ptt, root)
+        if cfg.audio.enabled:
+            need_voice()  # before the keys: what's missing first
+            run(keyed(cfg, root), args.ptt, root)
+        else:
+            run(cfg, args.ptt, root)  # says this home is chat-only
     except KeyboardInterrupt:
         print("\nBye.")
     except ConfigError as e:

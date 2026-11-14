@@ -9,20 +9,13 @@ license = "MIT"  # the code; the trained models in models/ are CC BY-NC-SA 4.0 (
 license-files = ["LICENSE"]
 dependencies = [
     "numpy>=1.26",
-    "sounddevice>=0.4.7",
-    "openwakeword>=0.6.0",
     "openai>=1.60",
     "python-dotenv>=1.0",
     "scipy>=1.11",
-    "kaldi-native-fbank>=1.20",
-    "pymicro-features>=2",
-    "ai-edge-litert>=2.2.0",
-    "vosk==0.3.44",  # the newest with an Apple Silicon build (0.3.45 is Linux and Windows only)
     "fastapi>=0.141.1",
     "pydantic>=2",
     "uvicorn>=0.30",
     "websockets>=14",
-    "onnxruntime>=1.20",
     "psutil>=7",  # the Status page's CPU, memory, temperature and uptime
     "soundfile>=0.14.0",  # reading voice messages (Opus in Ogg)
     "httpx>=0.28",  # Home Assistant, Telegram, Deepgram's endpoint for whole recordings, and the status pages
@@ -38,6 +31,17 @@ Repository = "https://github.com/alon-pilosoph/tars"
 voice-assistant = "voice_assistant.__main__:main"
 
 [project.optional-dependencies]
+# TARS's own microphone and speaker ([audio] enabled): the devices, the wake word and its double-check, speech
+# detection, end of turn and speaker ID, all on the machine. A chat-only home (Telegram and the web UI) needs none of it.
+voice = [
+    "sounddevice>=0.4.7",  # PortAudio, which needs a sound server or card to even import
+    "openwakeword>=0.6.0",
+    "kaldi-native-fbank>=1.20",
+    "pymicro-features>=2",
+    "ai-edge-litert>=2.2.0",
+    "vosk==0.3.44",  # the newest with an Apple Silicon build (0.3.45 is Linux and Windows only)
+    "onnxruntime>=1.20",
+]
 claude = [
     "anthropic>=1",
 ]

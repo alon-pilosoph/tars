@@ -54,9 +54,11 @@ jobs:
         working-directory: webui
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libportaudio2 libatomic1
+      - run: sudo apt-get update && sudo apt-get install -y libatomic1 # for Vosk; no PortAudio, on purpose
       - uses: astral-sh/setup-uv@v6
-      - run: uv sync --frozen
+      # The voice extra for the demo's voiceprints (tools/webui_demo.py builds them with the speaker model), but no
+      # PortAudio on the machine: the web UI never opens a sound device.
+      - run: uv sync --frozen --extra voice
         working-directory: .
       - uses: actions/setup-node@v4
         with:
@@ -72,6 +74,16 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test -c checks/e2e.config.ts
+
+  # A chat-only home (docs/deployment.md#without-a-microphone): no extras and no PortAudio, and the chat side (Telegram,
+  # the web UI) imports none of the voice's packages.
+  chat-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run --frozen pytest -q tests/test_chat_only_imports.py
 
   # Supply chain and code (docs/security.md#the-code-tars-runs-its-dependencies): known vulnerabilities in what's
   # locked, bandit over the code, and CycloneDX bills of materials kept with each run. Separate jobs, so one failing
