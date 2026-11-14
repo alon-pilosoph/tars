@@ -146,11 +146,11 @@ class TelegramErrands:
         self._taps[nonce] = waiting
         try:
             text = (f"On {site}, I need you for something only a person can do: {reason}.\n\nOpen my browser's "
-                    f"screen here and do it, then tap Done (the link works for {minutes} minutes, in one browser at a "
+                    f"screen here and do it, then tap Done (the link works for {_lasts(minutes)}, in one browser at a "
                     f"time):\n{link}")  # fmt: skip
-            with chat.busy:
-                message = self.tars.bot.send_buttons(chat.chat_id, text, [("Done", f"done:{nonce}"),
-                                                                          ("Give up", f"giveup:{nonce}")])  # fmt: skip
+            buttons = [("Done", f"done:{nonce}"), ("Give up", f"giveup:{nonce}")]
+            with chat.busy:  # no preview: Telegram would fetch the link to make one
+                message = self.tars.bot.send_buttons(chat.chat_id, text, buttons, preview=False)
             deadline, told = time.monotonic() + minutes * 60, False
             while not waiting.tapped.wait(LOOK_OPENED_S) and time.monotonic() < deadline:
                 if not told and opened():
@@ -205,3 +205,10 @@ class TelegramErrands:
         if not waiting.tapped.is_set():
             waiting.answer = kind
             waiting.tapped.set()
+
+
+def _lasts(minutes: int) -> str:
+    """How long a link lasts, in words: "an hour", "2 hours", "15 minutes"."""
+    if minutes % 60:
+        return f"{minutes} minutes"
+    return "an hour" if minutes == 60 else f"{minutes // 60} hours"

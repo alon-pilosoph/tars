@@ -42,7 +42,7 @@ import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 HOME = Path.home()
 PROFILES = HOME / "profiles"
@@ -57,11 +57,20 @@ START_S = 15.0
 STOP_S = 10.0
 GATE_PORT = 8080  # the Sprite's public address is routed here (setup.sh: the control service's --http-port)
 VIEWER_PORT = 8081  # Guacamole, in Tomcat, on localhost (setup.sh)
-VIEW_S = 15 * 60.0  # the longest a hand-over lasts
+VIEW_S = 60 * 60.0  # the longest a hand-over lasts
 COOKIE = "tars-view"
 HOP_BY_HOP = {b"connection", b"keep-alive", b"proxy-connection"}
 HEAD_MAX = 16384  # the most of a request's head the gate reads
 VIEWER_PAGE = "/guacamole/"
+# What opening the link shows: one button, whose POST takes the screen (see _GateHandler).
+OPEN_PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>TARS's browser</title>
+<style>body{{font:18px system-ui,sans-serif;background:#12161d;color:#e8e8e8;margin:0;display:grid;place-items:center;
+min-height:100vh;text-align:center}}button{{font:inherit;padding:14px 28px;border:0;border-radius:12px;
+background:#7aa2f7;color:#12161d}}</style>
+<form method="post" action="/view?t={token}"><p>TARS needs you on its browser.</p>
+<button>Open the screen</button></form>
+</html>"""
 PHONE_SCREEN, DESKTOP_SCREEN = "585x1266", "1280x1000"  # the screen during a hand-over, and otherwise
 
 
@@ -181,6 +190,13 @@ class View:
             self.opens, self.secret = self.opens + 1, secrets.token_urlsafe(32)
             return self.secret
 
+    def knows(self, token: str) -> bool:
+        """Whether `token` is the hand-over's, without letting anyone in."""
+        if not self.active():
+            return False
+        with self.lock:
+            return hmac.compare_digest(token.encode(), self.token.encode())
+
     def allowed(self, secret: str) -> bool:
         if not self.active():
             return False
@@ -257,7 +273,14 @@ class _GateHandler(socketserver.BaseRequestHandler):
         if not view.active():
             return _plain(client, 404)
         if target.path == "/view":
-            secret = view.admit(parse_qs(target.query).get("t", [""])[0])
+            token = parse_qs(target.query).get("t", [""])[0]
+            if parts[0] != "POST":
+                # Opening the link only shows a button: a link preview (Telegram's fetches every link it's sent) or
+                # a scanner that follows it must not take the screen, nor make it look opened.
+                if not view.knows(token):
+                    return _plain(client, 403)
+                return _page(client, OPEN_PAGE.format(token=quote(token, safe="")))
+            secret = view.admit(token)
             if secret is None:
                 return _plain(client, 403)
             print(f"control: the screen was opened ({view.status()['opens']})", file=sys.stderr, flush=True)
@@ -315,6 +338,17 @@ def _cookie(headers: bytes, name: str) -> str:
                 if k == name:
                     return v
     return ""
+
+
+def _page(client: socket.socket, html: str) -> None:
+    body = html.encode()
+    head = ["HTTP/1.1 200 OK", "Content-Type: text/html; charset=utf-8", f"Content-Length: {len(body)}",
+            "Connection: close", "Cache-Control: no-store", "Referrer-Policy: no-referrer",
+            "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'"]  # fmt: skip
+    try:
+        client.sendall(("\r\n".join(head) + "\r\n\r\n").encode("latin-1") + body)
+    except OSError:
+        return
 
 
 def _plain(client: socket.socket, status: int, headers: list[tuple[str, str]] = ()) -> None:

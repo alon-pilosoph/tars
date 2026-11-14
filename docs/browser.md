@@ -285,13 +285,16 @@ stays in their profile on the Sprite, as any sign-in does.
 - **The Sprite's address is public** (`https://<sprite>-<org>.sprites.app`, set by `setup.sh`), since a phone isn't
   signed in to Fly. Behind it is only the control service's gate ([`control.py`](../deploy/browser-host/control.py)),
   which answers nothing at all unless a hand-over is on.
-- **A hand-over lets in one browser at a time.** Its link carries a token made for it; the browser that opens it
-  gets a cookie of its own and is passed through to the screen. Opening it again, in another browser (Telegram's
-  own opens first), takes over from the last one, whose connection is closed. TARS says in the chat when the screen
-  is opened, so an opening that wasn't the person's shows.
+- **A hand-over lets in one browser at a time.** Its link carries a token made for it. Opening the link shows one
+  button, Open the screen: only pressing it (a POST) takes the screen, so something that merely fetches the link (a
+  link preview, a scanner) takes nothing and isn't counted as an opening. TARS sends the link with Telegram's preview
+  turned off too: Telegram fetches a link the moment it's sent, to make one. The browser that presses the button gets
+  a cookie of its own and is passed through to the screen. Pressing it again, in another browser (Telegram's own
+  opens first), takes over from the last one, whose connection is closed. TARS says in the chat when the screen is
+  opened, so an opening that wasn't the person's shows.
 - **The screen is reachable only during a hand-over.** Guacamole listens on the Sprite's localhost; the gate passes
-  nothing to it otherwise, and closes every connection when the hand-over ends: on Done or Give up, after 15
-  minutes, or when the errand ends. Each request goes through on a connection of its own, since Fly's proxy reuses
+  nothing to it otherwise, and closes every connection when the hand-over ends: on Done or Give up, after an
+  hour, or when the errand ends. Each request goes through on a connection of its own, since Fly's proxy reuses
   its connections to the Sprite for whoever comes next.
 - **Whoever is at the screen is the person.** It's the browser itself, so nothing there is stopped by TARS's gate:
   an order they press is placed.

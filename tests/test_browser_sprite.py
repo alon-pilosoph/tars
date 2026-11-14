@@ -269,11 +269,12 @@ def gate():
     viewer.close()
 
 
-def request(port: int, path: str, cookie: str = "") -> tuple[socket.socket, int, dict, bytes]:
+def request(port: int, path: str, cookie: str = "", method: str = "GET") -> tuple[socket.socket, int, dict, bytes]:
     """A request to the gate, its connection left open: (the connection, status, headers, body)."""
     s = socket.create_connection(("127.0.0.1", port), timeout=5)
     extra = f"Cookie: {cookie}\r\n" if cookie else ""
-    s.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\n{extra}\r\n".encode())
+    extra += "Content-Length: 0\r\n" if method == "POST" else ""
+    s.sendall(f"{method} {path} HTTP/1.1\r\nHost: x\r\n{extra}\r\n".encode())
     got = b""
     while b"\r\n\r\n" not in got:
         got += s.recv(65536)
@@ -287,6 +288,13 @@ def request(port: int, path: str, cookie: str = "") -> tuple[socket.socket, int,
 
 def get(port: int, path: str, cookie: str = "") -> tuple[int, dict, bytes]:
     s, status, headers, body = request(port, path, cookie)
+    s.close()
+    return status, headers, body
+
+
+def opened(port: int, token: str) -> tuple[int, dict, bytes]:
+    """The link opened and its button pressed: the button's POST."""
+    s, status, headers, body = request(port, f"/view?t={token}", method="POST")
     s.close()
     return status, headers, body
 
@@ -310,8 +318,8 @@ def test_the_browser_with_the_token_gets_in_and_nothing_else_does(gate):
     port, view, _ = gate
     token = view.start()
     assert get(port, "/")[0] == 403  # no cookie
-    assert get(port, "/view?t=wrong")[0] == 403
-    status, headers, _ = get(port, f"/view?t={token}")
+    assert get(port, "/view?t=wrong")[0] == 403 and opened(port, "wrong")[0] == 403
+    status, headers, _ = opened(port, token)
     assert status == 302 and headers["Location"].startswith("/")
     assert "Secure" in headers["Set-Cookie"] and "HttpOnly" in headers["Set-Cookie"]
     cookie = headers["Set-Cookie"].split(";")[0]
@@ -320,13 +328,28 @@ def test_the_browser_with_the_token_gets_in_and_nothing_else_does(gate):
     assert view.status()["opened"]
 
 
+def test_a_link_preview_fetching_the_link_takes_nothing_and_isnt_an_opening(gate):
+    """Telegram fetches every link it's sent, at once, to make a preview: that's no person opening the screen."""
+    port, view, _ = gate
+    token = view.start()
+    status, headers, page = get(port, f"/view?t={token}")
+    assert status == 200 and "Set-Cookie" not in headers and b"Open the screen" in page
+    assert f'action="/view?t={token}"'.encode() in page and b'method="post"' in page
+    assert not view.status()["opened"]
+    assert opened(port, token)[0] == 302 and view.status()["opens"] == 1
+
+
+def test_a_hand_over_lasts_an_hour():
+    assert control.VIEW_S == 3600
+
+
 def test_opening_the_link_again_takes_over_from_the_last_browser(gate):
     port, view, _ = gate
     token = view.start()
-    first = get(port, f"/view?t={token}")[1]["Set-Cookie"].split(";")[0]
+    first = opened(port, token)[1]["Set-Cookie"].split(";")[0]
     held, status, _, _ = request(port, "/", first)
     assert status == 200
-    second = get(port, f"/view?t={token}")[1]["Set-Cookie"].split(";")[0]  # another browser on the phone
+    second = opened(port, token)[1]["Set-Cookie"].split(";")[0]  # another browser on the phone
     assert closed(held)  # the first one's connection is dropped
     assert get(port, "/", first)[0] == 403 and get(port, "/", second)[2] == b"ok"
     assert view.status()["opens"] == 2
@@ -441,3 +464,16 @@ def test_a_hand_over_gives_the_screen_a_phones_shape_and_puts_it_back():
     view.end()
     view.end()  # nothing to put back the second time
     assert shapes == [control.PHONE_SCREEN, control.DESKTOP_SCREEN]
+
+
+def test_the_link_says_the_screens_login_in_plain_words(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from voice_assistant.browser import sprite
+
+    monkeypatch.setattr(sprite, "LOGIN", tmp_path / "password")
+    (tmp_path / "password").write_text("dad9cb8bfca5\n")
+    control = SimpleNamespace(view=lambda: {"token": "abc", "minutes": 60})
+    link, minutes = sprite.Screen(control, "https://s.example/").open()
+    assert minutes == 60
+    assert link == "https://s.example/view?t=abc\n\nIt asks you to log in: username tars, password dad9cb8bfca5"
