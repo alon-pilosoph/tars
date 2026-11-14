@@ -37,7 +37,7 @@ talking to it, aloud or in a chat:
 - Feeds are read when asked, all at once (about a second), and kept three minutes. Each "what's new?" is one model
   turn reading a few thousand words of headlines and summaries.
 
-Kept in the event database (`[learning] log_events`): the `feeds` table, and `feed_seen` (what each person was told,
+Kept in the event database: the `feeds` table, and `feed_seen` (what each person was told,
 for thirty days). The backup has them with the rest of the database.
 
 ## Setting it up

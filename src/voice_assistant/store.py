@@ -148,6 +148,30 @@ TABLES = {
     updated REAL NOT NULL,           -- when the assistant last wrote this row
     via TEXT                         -- home: the door they opened from outside to come in (doors.py); NULL: by phone
 )""",
+    "usage": """CREATE TABLE usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,                -- when the call ended
+    service TEXT NOT NULL,           -- openai, cerebras, groq, anthropic, deepgram, cartesia
+    kind TEXT NOT NULL,              -- llm, stt or tts (usage.py)
+    model TEXT NOT NULL,             -- the model, or the voice
+    person TEXT NOT NULL DEFAULT '', -- who it was for (person_key); '' when not known
+    channel TEXT NOT NULL DEFAULT '',-- voice, telegram, web, errand, skill or background
+    room TEXT NOT NULL DEFAULT '',   -- where it was heard, once there are rooms
+    input INTEGER NOT NULL DEFAULT 0,      -- tokens, for llm
+    output INTEGER NOT NULL DEFAULT 0,
+    reasoning INTEGER NOT NULL DEFAULT 0,  -- of output
+    cached INTEGER NOT NULL DEFAULT 0,     -- of input
+    searches INTEGER NOT NULL DEFAULT 0,   -- web searches made in the call
+    seconds REAL NOT NULL DEFAULT 0,       -- audio heard, for stt
+    characters INTEGER NOT NULL DEFAULT 0, -- text spoken, for tts
+    reported INTEGER NOT NULL DEFAULT 1    -- 0: the provider said nothing of it (a call cut off): counted, not measured
+)""",
+    "usage_told": """CREATE TABLE usage_told (
+    month TEXT NOT NULL,             -- YYYY-MM
+    share INTEGER NOT NULL,          -- the cap's percent the maintainers were told of: 80 or 100 (usage.py)
+    at REAL NOT NULL,
+    PRIMARY KEY (month, share)
+)""",
     "door_events": """CREATE TABLE door_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     at REAL NOT NULL,
@@ -297,6 +321,7 @@ INDEXES = [
     "CREATE UNIQUE INDEX feeds_person_url ON feeds(person, url)",
     "CREATE INDEX preferences_person ON preferences(person)",
     "CREATE INDEX door_events_key ON door_events(key)",
+    "CREATE INDEX usage_at ON usage(at)",
 ]
 # Step n brings a database from version n - 1 (PRAGMA user_version) to n; a new database is made at the latest
 # version from TABLES and INDEXES. A change to them needs a new step here, and a step that has shipped never changes.
@@ -449,6 +474,33 @@ MIGRATIONS = [
         "ALTER TABLE wishes ADD COLUMN moved REAL",
     ],
     ["ALTER TABLE sessions ADD COLUMN cloud INTEGER NOT NULL DEFAULT 0"],
+    [
+        """CREATE TABLE usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,                -- when the call ended
+    service TEXT NOT NULL,           -- openai, cerebras, groq, anthropic, deepgram, cartesia
+    kind TEXT NOT NULL,              -- llm, stt or tts (usage.py)
+    model TEXT NOT NULL,             -- the model, or the voice
+    person TEXT NOT NULL DEFAULT '', -- who it was for (person_key); '' when not known
+    channel TEXT NOT NULL DEFAULT '',-- voice, telegram, web, errand, skill or background
+    room TEXT NOT NULL DEFAULT '',   -- where it was heard, once there are rooms
+    input INTEGER NOT NULL DEFAULT 0,      -- tokens, for llm
+    output INTEGER NOT NULL DEFAULT 0,
+    reasoning INTEGER NOT NULL DEFAULT 0,  -- of output
+    cached INTEGER NOT NULL DEFAULT 0,     -- of input
+    searches INTEGER NOT NULL DEFAULT 0,   -- web searches made in the call
+    seconds REAL NOT NULL DEFAULT 0,       -- audio heard, for stt
+    characters INTEGER NOT NULL DEFAULT 0, -- text spoken, for tts
+    reported INTEGER NOT NULL DEFAULT 1    -- 0: the provider said nothing of it (a call cut off): counted, not measured
+)""",
+        "CREATE INDEX usage_at ON usage(at)",
+        """CREATE TABLE usage_told (
+    month TEXT NOT NULL,             -- YYYY-MM
+    share INTEGER NOT NULL,          -- the cap's percent the maintainers were told of: 80 or 100 (usage.py)
+    at REAL NOT NULL,
+    PRIMARY KEY (month, share)
+)""",
+    ],
 ]
 
 

@@ -40,6 +40,7 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
   To know someone from the start, TARS sends them a link to a short recording session on its own speakerphone
   ([recording sessions](docs/web-ui.md#recording-sessions)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
+- **Knows what it used and what that cost**, per service and per person (`--usage`, [usage](docs/usage.md)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:
   every part running, the services, the backup, the Pi ([web UI](docs/web-ui.md)).
 - **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it

@@ -82,8 +82,11 @@ def known_as(name: str | None, people: Collection[str]) -> str | None:
 
 
 class EventLog:
-    def __init__(self, folder: Path):
-        self.folder = folder
+    def __init__(self, folder: Path, record: bool = True):
+        """`record` ([learning] log_events): keep wakes, near-misses and their audio, and what was said by voice or
+        sent as a voice message, as audio. Off, none of it is written; the database, conversations as text and
+        everything else kept here go on."""
+        self.folder, self.record = folder, record
         self.store = Store(folder)
 
     def add_wake(
@@ -96,7 +99,10 @@ class EventLog:
         wake_model: str = "",
         check_model: str = "",
         ts: float | None = None,
-    ) -> int:
+    ) -> int | None:
+        """The wake's id; None when nothing is recorded."""
+        if not self.record:
+            return None
         ts = ts or time.time()
         audio = self.store.save_audio(pcm, f"{int(ts * 1000)}_wake")
         with self.store.removed_on_failure(audio):
@@ -106,7 +112,11 @@ class EventLog:
                 (ts, WAKE, wake_score, outcome, heard, confidence, wake_model, check_model, audio),
             )
 
-    def add_near_miss(self, pcm: np.ndarray, peak_score: float, wake_model: str = "", ts: float | None = None) -> int:
+    def add_near_miss(
+        self, pcm: np.ndarray, peak_score: float, wake_model: str = "", ts: float | None = None
+    ) -> int | None:
+        if not self.record:
+            return None
         ts = ts or time.time()
         audio = self.store.save_audio(pcm, f"{int(ts * 1000)}_near")
         with self.store.removed_on_failure(audio):
@@ -123,8 +133,11 @@ class EventLog:
         speaker: str | None,
         speaker_score: float | None,
         embedding: np.ndarray | None,
-    ) -> str:
-        """Returns where the request's audio is stored, so the conversation's first turn can point at it too."""
+    ) -> str | None:
+        """Returns where the request's audio is stored, so the conversation's first turn can point at it too; None
+        when nothing is recorded."""
+        if not self.record:
+            return None
         audio = self.store.save_audio(pcm, f"{int(time.time() * 1000)}_request")
         blob = np.asarray(embedding, dtype=np.float32).tobytes() if embedding is not None else None
         with self.store.removed_on_failure(audio):

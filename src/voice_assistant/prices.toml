@@ -1,5 +1,7 @@
-# What the evals cost, for the estimate before a run and for --budget. Dollars per million tokens, and per web search.
-# Prices change: check them against the providers' pages before trusting an estimate, and update the date.
+# What TARS's paid services cost, in dollars: for what TARS used (usage.py: the Status page, --usage, the monthly cap)
+# and for the evals' estimate before a run and --budget. Per million tokens, per web search, per minute of speech heard
+# and per million characters spoken. Prices change: check them against the providers' pages before trusting an
+# estimate, and update the date. A model or voice with no price here is shown as not priced, never as free.
 #   OpenAI: https://developers.openai.com/api/docs/pricing
 #   Cerebras: https://www.cerebras.ai/pricing
 checked = "2026-10-17"
@@ -40,3 +42,29 @@ cache_read = 0.20
 [models."qwen-3.8-27b"]
 input = 0.99
 output = 1.49
+
+# Speech to text, per minute of audio. OpenAI's pricing page, 2026-11-13. Deepgram's pricing page (pay-as-you-go),
+# 2026-11-13: https://deepgram.com/pricing. Some directories still show $0.0077 a minute for both of Deepgram's, the
+# price before a cut: check the page.
+[speech."gpt-4o-mini-transcribe"]
+per_minute = 0.003
+
+[speech."nova-3"]
+per_minute = 0.0048
+
+[speech."flux-general-en"]
+per_minute = 0.0065
+
+# Voices, per million characters, by the start of the voice's (or model's) name. Deepgram's pricing page, 2026-11-13:
+# Aura-2 $0.030 and Flux TTS $0.045 per 1,000 characters. Cartesia sells credits (one a character) by plan, not by the
+# character: about $49 per million on the Startup plan (Artificial Analysis's normalization, 2026-10-13), so check
+# your own plan. OpenAI's gpt-4o-mini-tts is priced by tokens of audio, not characters: not priced here.
+[voices."aura-2"]
+per_million_characters = 30.0
+
+[voices."flux-"]
+per_million_characters = 45.0
+
+[voices."sonic"]
+per_million_characters = 49.0
+

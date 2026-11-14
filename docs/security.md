@@ -10,8 +10,8 @@ until it has a defense and a test, or is accepted as a risk on purpose. What's n
 
 - **The house:** the front door's lock above all (TARS works it by itself, with auto-lock), then everything else
   TARS works (the boiler, the AC, the TV).
-- **What TARS keeps:** recordings of every wake and request, every conversation, the voiceprints, who's home and when
-  (`voice_data/`, and the backup's bucket).
+- **What TARS keeps:** recordings of every wake and request, every conversation, the voiceprints, who's home and when,
+  who used what of the paid services ([usage](usage.md)) (`voice_data/`, and the backup's bucket).
 - **The keys in `.env`:** each service's API key (some with money behind them), the bot's token, the router and Home
   Assistant logins, the backup's AWS key.
 - **The browser's logins and what they can buy:** the vault (`~/.cache/tars-browser/`), the browser's own profile
@@ -397,6 +397,66 @@ what's merged is installed on the Pi by the updater.
   on a Pi without a secure key store means keeping the key on it to boot unattended, which buys little. What limits the
   damage is revoking: each key in `.env` can be revoked at its service, and the browser's sites signed out.
 
+### The browser's Sprite, or Fly
+
+With `[browser] sprite`, the browser runs on a Fly Sprite ([on a Sprite](browser.md#on-a-sprite)). Whoever takes it
+over, or Fly itself, has what the browser has while it runs: the pages, each person's cookies, and the logins as
+they're typed. What else they could reach is what this section is about.
+
+- **Defenses:**
+  - *The home network.* The Sprite's only way out is the link back to the way out on this machine
+    (`browser/way_out.py`), which refuses home names, the names TARS is set up with, every address that isn't
+    public (an IPv4 address written as IPv6 included), and every port but 80 and 443. It resolves a name once,
+    checks every address, and connects to the one it checked, so a name can't answer differently the second time.
+    The Sprite's own localhost is sent there too (`<-loopback>`), and refused.
+  - *Everything else.* The Sprite's network policy denies every name and address. It's set from outside through
+    Fly's API and can't be changed from inside, so a Sprite taken over still reaches only the way out.
+  - *The link.* It's opened from here, through `sprite proxy`; the Sprite has no port on the internet. The Sprite's
+    sshd listens on its localhost only and accepts one key, which may forward Chrome's port and the control
+    service's and offer the way out, and nothing else: no command (`command=`, `ForceCommand`), no file transfer, no
+    other forward. This machine checks the Sprite's host key against the one `setup.sh` recorded.
+  - *Chrome's debugging port,* which has no password and gives whoever reaches it every signed-in account in the
+    profile, listens on the Sprite's localhost only, reached from here through the link.
+  - *The control service* listens on the Sprite's localhost, wants a key besides, and takes only a profile name made
+    of letters, digits and dashes.
+  - *The vault* never goes to the Sprite: logins are typed through the link, as they're typed into a local Chrome.
+  - *The Sprite's name* goes into ssh's `ProxyCommand`, which a shell runs: it's held to lower-case letters, digits
+    and dashes in the config check and again where the command is made.
+  - *Its public address,* for [handing over](browser.md#handing-over), reaches only the control service's gate.
+    Without a hand-over on, it answers 404 to everything and passes nothing on. During one, it lets in the browser
+    that brings that hand-over's token (32 random bytes, sent only in the person's chat), one browser at a time,
+    through a cookie made for that browser (`Secure`, `HttpOnly`, `SameSite=Strict`): the newest to open the link
+    takes over, and the last one's connections are closed. Every request is checked: each goes to Guacamole on a
+    connection of its own (`Connection: close`; the screen's WebSocket is its own connection anyway), since Fly's
+    proxy reuses a connection to the Sprite for whoever comes next, and a check of a connection's first request
+    alone let a request without a cookie through on one the person had opened (found on the real Sprite, fixed,
+    and tested). Behind the gate, Guacamole asks for its own login (user `tars`, a random password made by
+    `setup.sh`, sent with each link). Guacamole (Tomcat, with no shutdown port and none of its sample apps), guacd
+    and the VNC server (x11vnc, without a password: the gate and Guacamole are the locks) listen on the Sprite's
+    localhost only. When the hand-over ends (Done, Give up, 15 minutes, or the errand's end), the gate closes every
+    connection. TARS says in the chat each time the screen is opened.
+- **Tests:** `tests/test_browser_way_out.py` (each refusal, then real SOCKS5 conversations: home refused on the wire,
+  the checked address is the one connected to); `tests/test_browser_sprite.py` (the control service's key and profile
+  names, the link forwarding three ports and running nothing, a Sprite's name that would reach the shell). By hand on
+  a real Sprite: a command, sftp and an unlisted forward refused; with the policy on, the Sprite's own requests fail by
+  name and by address, while the browser loads pages from the home's address and is refused the router, the Sprite's
+  localhost and its own debugging port. The gate: `tests/test_browser_sprite.py` (nothing without a hand-over, the
+  token's browser in and no guess, a request riding on an allowed connection never reaching Guacamole, a second
+  opening taking over and closing the first, the end of one). Over the real public address: 404 to everything with
+  no hand-over; during one, the link's browser in, Guacamole's login with its password and not with a wrong one,
+  a guessed cookie and none refused five times out of five, a second browser taking over, 404 after; a phone-sized
+  browser logging in and seeing the screen.
+- **Open:** whoever takes the Sprite over can browse the public web from the home's address on ports 80 and 443 while
+  a link is open, as the browser itself can. The Fly token on this machine can reach the Sprite (run commands on it,
+  read the profiles): it's guarded like the vault's key, in TARS's user's own folder. Fly, which runs it, is trusted
+  with what the browser sees. During a hand-over, whoever holds the link (a forwarded message, the person's unlocked
+  phone) can work the browser as the person, orders included, until it ends; the chat says when it's opened. Anyone
+  can wake the Sprite for a moment by asking its address, which costs seconds of its time. The gate is on the
+  internet all the time, Guacamole through it during a hand-over: a flaw in the gate, or in Guacamole or Tomcat for
+  whoever holds the link, would be reachable. Guacamole's password is the same for every hand-over until `setup.sh`
+  makes a new one (delete `sprite-viewer-password` first), and it's in every link's message. Guacamole and Tomcat are
+  pinned versions, updated by editing `install-viewer.sh` and running `setup.sh` again.
+
 ### A stolen key
 
 - **Defenses:** the backup's AWS user is limited to its one bucket ([backup](backup.md)). The bot answers only the
@@ -489,14 +549,11 @@ TARS's systemd user services (`deploy/*.service`) run as the user who installed 
 | The voice assistant | write only its own folder and caches; a `/tmp` of its own; files it makes readable by its user alone (`UMask=0077`); no new privileges (no `sudo`); local, IPv4, IPv6 and netlink sockets only; no kernel tunables, modules, logs, cgroups, clock or hostname; no capabilities; system calls a service makes, and no others. Keeps the sound card, the IR remote's input device and Bluetooth (over D-Bus) | 9.6 → 3.4 |
 | The web UI | the same, and no Docker. Keeps the devices: the Status page's power and heat warnings come from the Pi's firmware, which `vcgencmd` asks through `/dev/vcio` | 9.6 → 3.4 |
 | The backup | the same, and no devices at all. It can't reach the user's service manager | 9.6 → 3.1 |
-| Telegram | the first half: its own folder and Chromium's two folders under `~/.config`, its own `/tmp`, files for its user alone, no new privileges, those sockets. Chromium's own sandbox, for errands, needs the namespaces and system calls the rest would take away | 9.6 → 8.3 |
-| The browser's screen (Xvfb) | writes only to `/tmp` (its lock and its socket), no home (so no service manager either), no Docker, no network but local sockets, no devices, the same kernel and system-call limits | 9.6 → 2.9 |
+| Telegram | the first half: its own folder, its caches and `~/.sprites` (the `sprite` command's login, for the browser's link to its Sprite), its own `/tmp`, files for its user alone, no new privileges, those sockets. Not yet the kernel and system-call limits: Chromium's sandbox needed them off when errands ran here, and now that they run on the Sprite they can go on once tried on the Pi | 9.6 → 8.3 |
 | The updater | not sandboxed: it runs `deploy/tars-system` through `sudo` and rewrites the checkout and these units | unchanged |
 
 Netlink is allowed because glibc asks the kernel for the machine's own addresses over it to order the answers when it
-looks a name up, and Chromium watches the network over it. The browser, in Telegram's `/tmp` of its own, can't see the
-screen's socket file: it reaches the screen over Xvfb's abstract socket, which belongs to the network namespace, so
-`PrivateNetwork=` on either unit would cut it off.
+looks a name up.
 
 The web UI isn't given just `/dev/vcio` (`DevicePolicy=closed` with `DeviceAllow=/dev/vcio`): systemd enforces those
 with a cgroup BPF program that only a service manager running as root loads, so in a user unit they'd do nothing. A
@@ -505,8 +562,9 @@ rather than showing nothing, as if it weren't a Pi.
 
 How it was checked: on the Pi (systemd 257), `voice-assistant --check` run inside the voice assistant's sandbox
 passes the same 35 checks as outside it (Home Assistant and every device, Telegram, the backup's bucket, the routers);
-the web UI serves its pages inside its own; Chromium launches inside Telegram's, and reaches the screen; and the screen
-makes its socket inside its own. A system call outside the filter fails with an error rather than killing the service.
+the web UI serves its pages inside its own; and Chromium launched inside Telegram's, when errands still ran on the
+Pi. Telegram's unit, now giving the `sprite` command `~/.sprites` in place of Chromium's folders, hasn't been tried on
+the Pi yet. A system call outside the filter fails with an error rather than killing the service.
 The web UI was checked with no devices (3.1); its 3.4 now is worked out, not measured: its unit differs from the voice
 assistant's only in hiding Docker, which `systemd-analyze` doesn't score.
 

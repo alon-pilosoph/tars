@@ -14,15 +14,12 @@ import getpass
 import json
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
 from ..config import load_config
 from .agent import Settings
-from .chrome import PROFILE, own_chrome
+from .chrome import PROFILE, attached, own_chrome
 from .login import MAIL_WAIT_S, Answer
 from .login_page import Field
 from .run import ROOT, run_task
-from .session import Session
 from .vault import GMAIL, Vault, household_person, origin
 
 
@@ -52,6 +49,11 @@ class Terminal:
             print(f"(the code {site} sent came by email)")
             return answer.code
         return input(f"\n{site} has sent {self.name} a sign-in code. The code: ").strip() or None
+
+    def take_over(self, site: str, reason: str, link: str, minutes: int, opened) -> bool:
+        print(f"\nOn {site}, only a person can do this: {reason}. Open the browser's screen (the link works once, for "
+              f"{minutes} minutes):\n{link}")  # fmt: skip
+        return input("Done? [y/N] ").strip().lower() in ("y", "yes")
 
 
 def vault_command(args: argparse.Namespace) -> None:
@@ -116,7 +118,7 @@ def main() -> None:
         settings = Settings(model=browser.model, effort=browser.effort, turns=args.turns,
                             really_commit=args.really_commit)  # fmt: skip
         you = Terminal(args.person)
-        run = run_task(args.goal, you, trace_to=args.trace, settings=settings, person=you)
+        run = run_task(args.goal, you, trace_to=args.trace, settings=settings, person=you, sprite=browser.sprite)
         print(json.dumps(run.record(), ensure_ascii=False, indent=2))
         return
     if args.command == "vault":
@@ -124,9 +126,7 @@ def main() -> None:
             parser.error(f"vault {args.action} needs a site")
         vault_command(args)
         return
-    with own_chrome(PROFILE) as address, sync_playwright() as p:
-        context = p.chromium.connect_over_cdp(address).contexts[0]
-        session = Session(context)
+    with own_chrome(PROFILE) as address, attached(address) as session:
         if args.command == "signin":
             session.page.goto(args.url)
             print("Sign in by hand in that Chrome window (tick 'Keep me signed in'), then press Enter here.")

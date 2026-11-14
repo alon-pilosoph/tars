@@ -95,11 +95,13 @@ class ConversationLog:
         ts: float | None = None,
     ) -> int | None:
         """`audio` is already-stored audio (the request that came with the wake shares the wake's copy), else `pcm`
-        is saved. None if the conversation was deleted from the web UI meanwhile."""
+        is saved, unless nothing is recorded ([learning] log_events). None if the conversation was deleted from the
+        web UI meanwhile."""
         if not self.exists(conversation_id):
             return None
         ts = ts or time.time()
-        saved = self.store.save_audio(pcm, f"{int(ts * 1000)}_turn") if audio is None and pcm is not None else None
+        keep = audio is None and pcm is not None and self.events.record
+        saved = self.store.save_audio(pcm, f"{int(ts * 1000)}_turn") if keep else None
         with self.store.removed_on_failure(saved):
             turn = self._insert_turn(conversation_id, ts, ROLE_PERSON, text, audio=audio or saved, speaker=speaker)
         if turn is None:
@@ -290,6 +292,24 @@ class ConversationLog:
         out = [_conversation(r, wakes.get(r["wake_event_id"]), voices[r["id"]], people) for r in rows]
         self._add_turns(out, people, voices)
         return out
+
+    def latest_with(self, person: str, via: str) -> int | None:
+        """The newest conversation `via` ("telegram") that `person` wrote in, if any."""
+        rows = self.store.rows(
+            "SELECT t.conversation_id FROM turns t JOIN conversations c ON c.id = t.conversation_id "
+            "WHERE c.via = ? AND t.role = ? AND t.speaker = ? ORDER BY t.ts DESC, t.id DESC LIMIT 1",
+            (via, ROLE_PERSON, person),
+        )
+        return rows[0]["conversation_id"] if rows else None
+
+    def turns_of(self, conversation_id: int) -> list[dict]:
+        """A conversation's turns, oldest first: role, what was said (as corrected, if it was), when, and whether
+        TARS's failed."""
+        return self.store.rows(
+            "SELECT role, COALESCE(corrected_text, text) AS text, ts, failed_at, audio IS NOT NULL AS spoken "
+            "FROM turns WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        )
 
     def get(self, conversation_id: int) -> dict | None:
         found = self.conversations(ids=[conversation_id])

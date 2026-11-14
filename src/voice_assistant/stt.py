@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 
 import numpy as np
 
+from . import usage
 from .audio import SAMPLE_RATE, wav_bytes
 from .config import DEEPGRAM_STT_MODEL, STTConfig
 from .errors import ServiceError
@@ -33,6 +34,14 @@ FILE_TIMEOUT_S = 30.0
 # A request said aloud ([home] local_first): seconds of audio, back in well under one.
 SPOKEN_FILE_TIMEOUT_S = 10.0
 FLUX_URL = "wss://{host}/v2/listen"
+FLUX_MODEL = "flux-general-en"
+
+
+def audio_seconds(size: int) -> float:
+    """How long `size` bytes of TARS's audio (16 kHz mono, 16-bit) last: what speech to text is billed by."""
+    return size / 2 / SAMPLE_RATE
+
+
 CONNECT_S = 5.0
 # How sure Flux must be that the turn is over, and how sure for an early "maybe" (where a draft starts).
 FLUX_EOT, FLUX_EAGER_EOT = 0.7, 0.5
@@ -123,6 +132,7 @@ class OpenAITranscriber:
             file=("speech.wav", wav_bytes(pcm), "audio/wav"),
             language=self._cfg.language or None,
         )
+        usage.stt("openai", self._cfg.model, audio_seconds(len(pcm)))
         return result.text.strip()
 
 
@@ -131,7 +141,7 @@ class DeepgramTranscriber:
     you stop."""
 
     def __init__(self, api_key: str, cfg: STTConfig):
-        self._key = api_key
+        self._key, self._model = api_key, cfg.model
         params = {
             "model": cfg.model,
             "encoding": "linear16",
@@ -146,7 +156,7 @@ class DeepgramTranscriber:
         self._keyterms = cfg.model.startswith("nova-3")  # the only Nova that takes them
 
     def session(self, expect: tuple[str, ...] = ()) -> Session:
-        return DeepgramSession(with_keyterms(self._url, expect if self._keyterms else ()), self._key)
+        return DeepgramSession(with_keyterms(self._url, expect if self._keyterms else ()), self._key, self._model)
 
 
 class DeepgramFileTranscriber:
@@ -158,6 +168,7 @@ class DeepgramFileTranscriber:
 
         self._key = api_key
         model = cfg.model if cfg.provider == "deepgram" else DEEPGRAM_STT_MODEL  # Flux has no file endpoint
+        self._model = model
         params = {"model": model, "smart_format": "true", "punctuate": "true"}
         if cfg.language:
             params["language"] = cfg.language
@@ -180,6 +191,7 @@ class DeepgramFileTranscriber:
                 headers={"Authorization": f"Token {self._key}", "Content-Type": "audio/wav"},
             )
             response.raise_for_status()
+            usage.stt("deepgram", self._model, audio_seconds(len(pcm)))
             channels = response.json()["results"]["channels"]
             return channels[0]["alternatives"][0]["transcript"].strip() if channels else ""
         except (httpx.HTTPError, ValueError, KeyError, IndexError) as e:  # the last three: an answer garbled
@@ -206,7 +218,9 @@ class DeepgramSession:
 
     turn_state = None
 
-    def __init__(self, url: str, key: str):
+    def __init__(self, url: str, key: str, model: str = ""):
+        """`model`: what the audio sent is counted as (usage.py), once it's closed."""
+        self._model, self._sent = model, 0
         self._outbox: queue.Queue[bytes | str | None] = queue.Queue()
         self._final: list[str] = []
         self._answered = threading.Condition()
@@ -218,6 +232,7 @@ class DeepgramSession:
 
     def feed(self, pcm: bytes) -> None:
         self._fed = True
+        self._sent += len(pcm)
         self._outbox.put(pcm)
 
     def transcript(self) -> str:
@@ -240,6 +255,9 @@ class DeepgramSession:
 
     def close(self) -> None:
         self._outbox.put(None)
+        if self._sent:  # what Deepgram bills: the audio it was sent
+            usage.stt("deepgram", self._model, audio_seconds(self._sent))
+            self._sent = 0
 
     def _run(self, url: str, key: str) -> None:
         try:
@@ -289,7 +307,7 @@ class FluxTranscriber:
     def __init__(self, api_key: str, cfg: STTConfig, has_backup: bool = False):
         self._key, self._has_backup = api_key, has_backup
         params = {
-            "model": "flux-general-en",
+            "model": FLUX_MODEL,
             "encoding": "linear16",
             "sample_rate": SAMPLE_RATE,
             "eot_threshold": FLUX_EOT,
@@ -309,6 +327,7 @@ class FluxSession:
 
     def __init__(self, url: str, key: str, has_backup: bool = False):
         self._has_backup = has_backup
+        self._model, self._sent = FLUX_MODEL, 0
         self._outbox: queue.Queue[bytes | None] = queue.Queue()
         self._changed = threading.Condition()
         self._state, self._text = TurnState.LISTENING, ""
@@ -318,6 +337,7 @@ class FluxSession:
 
     def feed(self, pcm: bytes) -> None:
         self._fed = True
+        self._sent += len(pcm)
         self._outbox.put(pcm)
 
     def turn_state(self) -> TurnState:
@@ -353,6 +373,9 @@ class FluxSession:
 
     def close(self) -> None:
         self._outbox.put(None)
+        if self._sent:  # what Deepgram bills: the audio it was sent
+            usage.stt("deepgram", self._model, audio_seconds(self._sent))
+            self._sent = 0
 
     def _run(self, url: str, key: str) -> None:
         try:

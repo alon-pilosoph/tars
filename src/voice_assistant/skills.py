@@ -1337,11 +1337,8 @@ def offer_welcome(skills: Skills) -> bool:
     return True
 
 
-def make(events) -> Skills | None:
-    """The skills, in the event database; None without one ([learning] log_events off)."""
-    if events is None:
-        print("(skills: off, since they're kept in the event database and [learning] log_events is off)")
-        return None
+def make(events) -> Skills:
+    """The skills, in the event database."""
     return Skills(events.store)
 
 

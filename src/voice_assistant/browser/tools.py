@@ -1,6 +1,6 @@
 """What a model can do with TARS's browser, whichever model it is: the calls (act, find, look, request_approval,
-sign_in, done), carried out on a session with everything that keeps them safe and keeps a model from going round in
-circles. TARS's own agent (agent.py) calls them in its loop; another agent (Claude Code) gets them as MCP tools
+sign_in, hand_over, done), carried out on a session with everything that keeps them safe and keeps a model from going
+round in circles. TARS's own agent (agent.py) calls them in its loop; another agent (Claude Code) gets them as MCP tools
 (mcp_server.py). Either way it's the same gate, the same approval and the same view of the page.
 
 - A step that already failed on a page isn't tried again there, and the same steps three times running aren't done a
@@ -23,6 +23,7 @@ from .session import Session, Step
 
 REPEATS = 3  # the same steps this many times in a row on one page: not done again
 SIGN_INS = 2  # a sign-in a task, and one more: the first may have been on the wrong page
+HAND_OVERS = 2  # times a task asks the person to take over the screen
 WAITS = {"wait", "scroll", "press", "hover", "back"}  # steps that change nothing the first time and may later
 
 
@@ -50,6 +51,8 @@ class Tools:
     really_commit: bool = False  # False: an approved commit is a dry run, and nothing is pressed
     sign_in: Callable[[Session], str] | None = None
     log: Callable[[dict[str, Any]], None] = lambda entry: None
+    hand_over: Callable[[Session, str], str] | None = None  # the person takes over the screen (run.hand_over)
+    handed_over: int = 0
     screenshots: int = 0
     commits_asked: list[str] = field(default_factory=list)
     committed: bool = False
@@ -85,6 +88,19 @@ class Tools:
                 return Did("TARS has no login for this site: call done and say it needs one", trouble=True)
             said = self.sign_in(session)
             session.network.clear()  # what the sign-in sent (the password, a code) never goes in the trace
+            session.look()
+            return Did(said, changed=True)
+        if name == "hand_over":
+            if self.hand_over is None or self.session.screen is None:
+                return Did("nobody can take over this browser's screen here: call done and say exactly what only a "
+                           "person can do (the robot check, the sign-in) and on which site", trouble=True)  # fmt: skip
+            if self.handed_over >= HAND_OVERS:
+                return Did("the person has already been asked to take over twice: call done and say what stopped it",
+                           trouble=True)  # fmt: skip
+            self.handed_over += 1
+            reason = " ".join(str(args.get("reason", "")).split())[:300] or "something only a person can do"
+            self.log({"event": "hand_over", "reason": reason})
+            said = self.hand_over(self.session, reason)
             session.look()
             return Did(said, changed=True)
         if name == "done":

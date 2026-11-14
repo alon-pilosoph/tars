@@ -36,6 +36,10 @@ client, which its terms forbid.
 
 ## What it does
 
+In a chat-only home (`[audio] enabled = false`), the commands about TARS at home (`/say`, `/volume`, `/mute`,
+`/unmute`) aren't in the menu, and answer that there's no speaker or microphone here; a reminder due aloud comes to
+the chat instead.
+
 | Sent in the chat | What happens |
 |---|---|
 | "what's 17 times 23?" | TARS answers in the chat |
@@ -119,14 +123,36 @@ says so.
 never kept: the chat gets "Sorry, I didn't catch that. Say it again?", which is (once posted), so the next message
 is taken as the answer to it, as aloud.
 
-**One thread, many conversations.** In Telegram a chat is one long thread; TARS splits it by time, as by voice.
+**One thread, many conversations.** In Telegram a chat is one long thread; TARS splits it into conversations.
 Each person has their own brain, so their own history: everything said since the conversation started (up to its
-last 50 exchanges), sent with each message, and nothing older. A conversation ends once the chat has been quiet for
-`[telegram] memory_minutes` (60, longer than by voice's 10, since a written reply often comes back much later), or
-when they send **/new**, for a change of subject; the next message starts a new one. What TARS posts by itself (a
-reminder that's due, how a message said at home went, what was sent at home for them) is part of the conversation
-too, so "remind me again in ten minutes" right after a reminder knows which, and snoozes it: a reminder posted in
-the chat is in the model's list, by number, for an hour after, and snoozed it's posted again at its new time. On the web UI, each conversation is its own, like one at home.
+last 50 exchanges), sent with each message, and nothing older. **/new** always starts a new one, for a change of
+subject.
+
+### One conversation or a new one
+
+People pick a chat up again hours or days later ("let's try again", "and for Friday?"), so a quiet chat doesn't end
+its conversation by the clock alone:
+
+- **Within `[telegram] memory_minutes`** (60) of the last message, it's the same conversation, as ever.
+- **After that, up to `[telegram] keep_days`** (7), the quick model (Qwen on Cerebras or Groq, in `[llm]`'s order;
+  OpenAI's model without either) reads the conversation's last 6 turns, how long it's been quiet, and the new message,
+  and says one word: `continued` or `new` ([`threads.py`](../src/voice_assistant/threads.py)). Continued, the brain
+  answers with the whole conversation as before; new, the brain starts over and the web UI starts a new
+  conversation. It takes a fraction of a second, and only on the first message after a quiet spell. A check that
+  fails (the service is down) carries the conversation on: losing the thread is worse than keeping an old one.
+- **After `keep_days`,** it's always a new one, without asking.
+- **What TARS posts by itself** after a quiet spell (a reminder that's due, a skill's message) starts a new
+  conversation, which a reply to it then carries on.
+- **A restart doesn't lose it.** The brain's history lives in memory, so after TARS restarts (an update does, every
+  time) each chat's last conversation is read back from the log the first time it's used, if it was within
+  `keep_days`: the exchanges as they were, without the ones that failed.
+
+`keep_days = 0` turns all this off: a new conversation once `memory_minutes` have passed, and nothing read back.
+
+What TARS posts by itself (a reminder that's due, how a message said at home went, what was sent at home for them) is
+part of the conversation too, so "remind me again in ten minutes" right after a reminder knows which, and snoozes it:
+a reminder posted in the chat is in the model's list, by number, for an hour after, and snoozed it's posted again at
+its new time. On the web UI, each conversation is its own, like one at home.
 
 **Never in the middle of an exchange.** Posting runs on its own thread, every 2 s. While TARS is answering
 someone, nothing it posts by itself goes to their chat: a reminder that comes due meanwhile is posted right after the
@@ -203,6 +229,10 @@ sign-in codes sent back. A login is never sent through Telegram: only a link to 
 home goes to Telegram except the things sent for someone with a chat. A voice message's recording also goes to speech to
 text, as a request at home does: Deepgram, or OpenAI if Deepgram fails. Telegram bot chats aren't end-to-end encrypted:
 Telegram's servers can read them, as they can any chat that isn't a secret chat.
+
+The check of whether a message carries a conversation on ([one conversation or a new
+one](#one-conversation-or-a-new-one)) sends the conversation's last 6 turns and the new message to the quick model's
+service, Cerebras or Groq (OpenAI's without either), even when `[telegram] brain` is `openai`.
 
 ## Not yet
 

@@ -1,7 +1,8 @@
 """What the web UI's Status page shows (docs/web-ui.md#the-status-page): whether each part of TARS is running, from
 the heartbeat each process writes; what TARS did today; the cloud services TARS uses, each asked with its own key (the
 same checks as --check) and each with its own status page, and Home Assistant; how the backup's last pass went, and its
-timer; and the machine: CPU, memory, temperature, throttling, disk and uptime.
+timer; this month's use of the paid services (docs/usage.md); and the machine: CPU, memory, temperature,
+throttling, disk and uptime.
 
 A heartbeat is a small file each long-running process rewrites every 30 seconds, under the event log's folder
 (heartbeats/<name>.json), from a thread of its own: the database isn't written to for it. A process that crashed, was
@@ -120,6 +121,24 @@ class MachineHealth(TypedDict):
     uptime_s: float
 
 
+class UsageLine(TypedDict):
+    name: str  # "openai gpt-6-luna", or a person ("": nobody known)
+    calls: int
+    cost: float
+    unpriced: int  # calls with no price in prices.toml, not in `cost`
+
+
+class MonthUsage(TypedDict):
+    month: str  # YYYY-MM
+    cost: float
+    cap: float  # [usage] monthly_cap_usd; 0: none
+    checked: str  # when prices.toml's prices were checked
+    unpriced: int
+    unreported: int
+    by_service: list[UsageLine]
+    by_person: list[UsageLine]
+
+
 class Report(TypedDict):
     now: float
     processes: list[ProcessHealth]
@@ -127,6 +146,7 @@ class Report(TypedDict):
     services: list[ServiceHealth]
     services_asked: float
     backup: list[CheckLine] | None  # None: [backup] is off
+    usage: MonthUsage | None  # None: it couldn't be added up
     machine: MachineHealth
 
 
@@ -186,8 +206,9 @@ def version(root: Path) -> str:
 
 
 def expected(cfg: Config) -> list[str]:
-    """The processes this setup runs (PROCESSES): Telegram's only when it's on."""
-    return ["assistant", "web", *(["telegram"] if cfg.telegram.enabled else [])]
+    """The processes this setup runs (PROCESSES): the voice assistant's only with [audio] on, Telegram's only when
+    it's on."""
+    return [*(["assistant"] if cfg.audio.enabled else []), "web", *(["telegram"] if cfg.telegram.enabled else [])]
 
 
 def processes(
@@ -281,6 +302,31 @@ def today(log: EventLog, conversations: ConversationLog, now: float) -> Today:
     midnight = time.mktime((day.tm_year, day.tm_mon, day.tm_mday, 0, 0, 0, 0, 0, -1))
     answers, failed = conversations.answers_since(midnight)
     return {"wakes": log.wakes_since(midnight), "answers": answers, "failed": failed, "last_wake": log.last_wake()}
+
+
+def month_usage(log: EventLog, cap_usd: float, now: float) -> MonthUsage | None:
+    """This month's use of the paid services so far, as --usage says it (docs/usage.md), against the cap."""
+    from .usage import month
+
+    try:
+        m = month(log.store, now=now)
+    except Exception as e:  # noqa: BLE001 - the rest of the page still shows
+        print(f"(status: couldn't add up this month's usage: {e!r})")
+        return None
+
+    def lines(of) -> list[UsageLine]:
+        return [{"name": line.name, "calls": line.calls, "cost": line.cost, "unpriced": line.unpriced} for line in of]
+
+    return {
+        "month": m.month,
+        "cost": m.cost,
+        "cap": cap_usd,
+        "checked": m.checked,
+        "unpriced": m.unpriced,
+        "unreported": m.unreported,
+        "by_service": lines(m.by_service),
+        "by_person": lines(m.by_person),
+    }
 
 
 def machine(folder: Path, read_throttled: Callable[[], int | str | None] | None = None) -> MachineHealth:
@@ -448,12 +494,13 @@ class Health:
         unit_state: Callable[[str], str | None],
         read_throttled: Callable[[], int | str | None] | None = None,
         backup_enabled: bool = False,
+        cap_usd: float = 0.0,
     ):
         """`wanted`: the processes this setup runs (expected). `unit_state`: systemd's state of a unit, or None.
-        `backup_enabled`: [backup] is on."""
+        `backup_enabled`: [backup] is on. `cap_usd`: [usage] monthly_cap_usd."""
         self._log, self._conversations = log, ConversationLog(log)
         self._wanted, self._services, self._unit_state = wanted, services, unit_state
-        self._read_throttled, self._backup_enabled = read_throttled, backup_enabled
+        self._read_throttled, self._backup_enabled, self._cap_usd = read_throttled, backup_enabled, cap_usd
 
     def report(self) -> Report:
         services, asked = self._services.get()
@@ -465,6 +512,7 @@ class Health:
             "services": services,
             "services_asked": asked,
             "backup": backup_lines(self._log.folder, self._unit_state, now) if self._backup_enabled else None,
+            "usage": month_usage(self._log, self._cap_usd, now),
             "machine": machine(self._log.folder, self._read_throttled),
         }
 

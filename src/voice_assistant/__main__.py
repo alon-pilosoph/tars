@@ -81,6 +81,8 @@ def main() -> None:
     parser.add_argument(
         "--telegram", action="store_true", help="chat with TARS on Telegram ([telegram] in config.toml)"
     )
+    parser.add_argument("--usage", action="store_true", help="what TARS used of the paid services, and the cost")
+    parser.add_argument("--month", metavar="YYYY-MM", help="with --usage: an earlier month")
     backup = parser.add_mutually_exclusive_group()
     backup.add_argument(
         "--backup", action="store_true", help="back up to S3 once, as its timer does ([backup] in config.toml)"
@@ -182,6 +184,12 @@ def main() -> None:
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)
+            return
+        if args.usage:
+            from . import usage
+            from .wiring import make_event_log
+
+            print(usage.report(usage.month(make_event_log(cfg, root).store, args.month)))
             return
         if args.backup:
             backup_pass(cfg, root, delete_anyway=args.delete_anyway)

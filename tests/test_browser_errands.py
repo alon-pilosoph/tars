@@ -4,6 +4,7 @@ the one-time login page, and the sign-in codes and links read from the person's 
 import dataclasses
 import email
 import imaplib
+import json
 import threading
 import time
 import types
@@ -40,9 +41,12 @@ class ButtonBot(FakeBot):
     def __init__(self):
         super().__init__()
         self.buttons, self.photos, self.dropped, self.taps_answered = [], [], [], []
+        self.unpreviewed = []  # the messages sent with no link preview
 
-    def send_buttons(self, chat_id, text, buttons):
+    def send_buttons(self, chat_id, text, buttons, preview=True):
         self.buttons.append((chat_id, text, buttons))
+        if not preview:
+            self.unpreviewed.append(len(self.buttons))
         return len(self.buttons)
 
     def drop_buttons(self, chat_id, message_id):
@@ -267,6 +271,45 @@ def test_cancel_says_nothing_was_ordered():
     t.handle(tap(bot.buttons[0][2][1][1]))
     asking.join(2)
     assert answers == [False] and "Cancelled: nothing done." in bot.said()
+
+
+def test_a_hand_over_waits_for_done_from_the_persons_own_chat_and_says_when_the_screen_is_opened(monkeypatch):
+    monkeypatch.setattr("voice_assistant.telegram_errands.LOOK_OPENED_S", 0.02)
+    bot = ButtonBot()
+    t = tars(bot, [ScriptedBrain()])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
+    opened, answers = [False], []
+    link = "https://s.example/view?t=abc"
+    asking = threading.Thread(target=lambda: answers.append(chats.take_over(
+        "Alon", "wolt.com", "solve the robot check", link, 60, lambda: opened[0])))  # fmt: skip
+    asking.start()
+    until(lambda: bot.buttons)
+    chat_id, text, buttons = bot.buttons[0]
+    assert chat_id == ALON and "https://s.example/view?t=abc" in text and "robot check" in text
+    assert "works for an hour" in text
+    assert bot.unpreviewed == [1]  # Telegram would fetch the link to make a preview
+    opened[0] = True
+    until(lambda: any("screen is open" in m for m in bot.said()))
+    nonce = buttons[0][1].split(":")[1]
+    t.handle(tap(f"done:{nonce}", from_id=999))  # someone else's tap
+    assert asking.is_alive()
+    t.handle(tap(f"done:{nonce}"))
+    asking.join(2)
+    assert answers == [True] and bot.dropped == [1]
+
+
+def test_giving_up_a_hand_over_stops_there():
+    bot = ButtonBot()
+    t = tars(bot, [ScriptedBrain()])
+    chats = TelegramErrands(t, "127.0.0.1", 8091)
+    answers = []
+    asking = threading.Thread(target=lambda: answers.append(chats.take_over(
+        "Alon", "wolt.com", "sign in with Google", "https://s.example/view?t=abc", 15, lambda: False)))  # fmt: skip
+    asking.start()
+    until(lambda: bot.buttons)
+    t.handle(tap(bot.buttons[0][2][1][1]))
+    asking.join(2)
+    assert answers == [False] and "Stopped there." in bot.said()
 
 
 def test_a_code_sent_back_goes_to_the_sign_in_and_not_to_the_brain():
@@ -543,8 +586,6 @@ def test_the_telegram_service_makes_errands_only_with_browser_on(tmp_path):
     on = dataclasses.replace(cfg, browser=BrowserConfig(enabled=True))
     with pytest.raises(ConfigError):
         errand_queue(on, events, has_openai=False)
-    with pytest.raises(ConfigError):  # the queue is in the event database
-        errand_queue(on, None, has_openai=True)
     queue = errand_queue(on, events, has_openai=True)
     made = make_errands(on, tmp_path, object(), queue, tars(ButtonBot(), [ScriptedBrain()]))
     assert isinstance(made, Errands) and isinstance(made.chats, TelegramErrands)
@@ -584,3 +625,18 @@ def test_errand_traces_older_than_a_month_are_deleted(tmp_path):
     old.write_text("{}"), new.write_text("{}")
     os.utime(old, (0, 0))
     assert prune(tmp_path, before=time.time() - 3600) == 1 and not old.exists() and new.exists()
+
+
+def test_a_link_is_sent_with_its_preview_turned_off():
+    from voice_assistant.telegram import Bot
+
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 5}})
+
+    bot = Bot("1:X", httpx.Client(transport=httpx.MockTransport(handler)))
+    bot.send_buttons(ALON, "the link", [("Done", "done:1")], preview=False)
+    bot.send_buttons(ALON, "an order", [("Order", "order:1")])
+    assert sent[0]["link_preview_options"] == {"is_disabled": True} and "link_preview_options" not in sent[1]

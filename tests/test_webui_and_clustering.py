@@ -7,10 +7,8 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from voice_assistant import entrypoints as cli
 from voice_assistant import webui
 from voice_assistant.clustering import MIN_REQUESTS_TO_ENROLL, enroll_named, recluster
-from voice_assistant.config import ConfigError, load_config
 from voice_assistant.events import NOT_PERSON, PERSON, REAL, UNKNOWN
 from voice_assistant.reminders import NewReminder, Reminders
 from voice_assistant.verify import ANSWER
@@ -104,7 +102,7 @@ def test_naming_a_voice_that_isnt_a_person_keeps_it_that_way(log, client):
 
 def test_status_says_what_the_page_can_offer(client):
     status = client.get("/api/status").json()
-    assert status == {"clustering": False, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": False}
+    assert status == {"aloud": True, "clustering": False, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": False}
 
 
 def test_each_voice_comes_with_its_newest_requests(log, client):
@@ -323,12 +321,6 @@ def test_with_reminders_off_the_page_says_so(log):
     assert client.post("/api/reminders", json={"kind": "timer", "due": time.time() + 60}).status_code == 501
 
 
-def test_the_web_ui_without_the_event_log_is_a_setup_problem_its_service_doesnt_restart_over(tmp_path):
-    (tmp_path / "config.toml").write_text("[learning]\nlog_events = false\n")
-    with pytest.raises(ConfigError, match="log_events"):  # exit code 78: RestartPreventExitStatus
-        cli.web_ui(load_config(tmp_path / "config.toml", local=False), tmp_path, "127.0.0.1", 0)
-
-
 def test_agree_with_all_answers_each_with_tars_s_own_guess_never_one_answered_or_unguessed(log, client):
     from voice_assistant.events import IGNORE, NOT_REAL, SAID_NOTHING
 
@@ -344,3 +336,8 @@ def test_agree_with_all_answers_each_with_tars_s_own_guess_never_one_answered_or
     assert client.post("/api/events/agree", json={"ids": []}).json() == {REAL: 0, NOT_REAL: 0}
     too_many = client.post("/api/events/agree", json={"ids": list(range(10_000))})
     assert too_many.status_code == 422
+
+
+def test_a_chat_only_home_tells_the_page_to_hide_what_is_about_hearing(log):
+    assert TestClient(create_app(log)).get("/api/status").json()["aloud"] is True
+    assert TestClient(create_app(log, aloud=False)).get("/api/status").json()["aloud"] is False

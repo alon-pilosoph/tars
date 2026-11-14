@@ -175,6 +175,7 @@ class Session:
         self.dialogs: list[str] = []
         self.network: list[Response] = []
         self.secrets: set[str] = set()  # what a sign-in typed (login.py): blanked out of what the trace keeps
+        self.screen = None  # how a person takes over this browser's screen, where they can (sprite.Screen)
         context.on("page", self._on_page)
         self._watch(self.page)
 

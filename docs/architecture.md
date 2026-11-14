@@ -165,7 +165,7 @@ the brain (`tools=`), with nothing in `llm.py` to change.
 
 - **Web search** (OpenAI's built-in tool, `[llm] web_search`): for current questions and real links. When the
   model starts a search with nothing said yet, TARS says "Looking it up." so the wait isn't silent.
-- **Send** (`[llm] send`, needs `[learning] log_events`): a strict function tool for a link, a note (short
+- **Send** (`[llm] send`): a strict function tool for a link, a note (short
   markdown), a list, or a text file (`.txt`, `.md`, `.csv`, `.ics`), for whoever asked or for the household. The
   assistant checks every call (links must be http(s), a file needs a known type and its text) and returns errors to
   the model (see tool rounds below). Sent
@@ -254,7 +254,8 @@ short lines made ahead ("Yes?", "Did you call me?", the error lines) are kept in
 `[tts]` setup, so TARS can still say something went wrong after a restart with the network down. After changing the
 voice effect's code (`effects.py`), delete that folder so the lines are made again. With `[backup]` on, all of it is
 copied to an S3 bucket, and a request's audio leaves the machine after a month, living on in the bucket
-([backing up to S3](backup.md)).
+([backing up to S3](backup.md)). What each call used of the paid services is a row in the event database's `usage` table, kept
+400 days ([usage](usage.md)).
 
 ## What leaves the machine
 
@@ -371,12 +372,12 @@ The assistant is `src/voice_assistant/`:
 | Understanding and answering | `stt.py` (Deepgram, OpenAI as backup), `llm.py` (Qwen with its own tools on Cerebras, OpenAI with its tools, the thinking model, and `Reply`, a turn's reply and its markers), `toolbox.py` (the brain's tools, from whoever provides them, each saying what it may change), `speech.py` (sentence pipelining), `tts.py`, `phrases.py` (the short lines made ahead), `draft.py` (start early, speak late), `errors.py` (a service failing, told from a bug) |
 | Reminders | `reminders.py` (the table, what's due, where it's said, what to say, the brain's tools), and in `assistant.py` saying them and hearing "got it" |
 | Telegram | `telegram.py` (`--telegram`: the household's chats, posting reminders and what TARS sent, the Bot API, an errand's approvals, login links and codes) |
-| The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` (the loop), `brain.py`, `openai_brain.py` and `anthropic_brain.py` (its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `money.py` (amounts, however written), `tools.py`, `login.py`, `login_page.py`, `codes.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `trace.py`, `run.py`, `chrome.py` (TARS's own Chrome), `mcp_server.py` and `claude.py` (Claude Code as its brain); `telegram_errands.py` (an errand's questions and answer in a chat); `homenet.py` (what's at home, for the browser and the web UI) |
+| The browser | `browser/` ([TARS's browser](browser.md)): `errands.py` (the `browse` tool and the queue of errands), `agent.py` (the loop), `brain.py`, `openai_brain.py` and `anthropic_brain.py` (its models), `page.py` (the page as the model reads it), `session.py` (steps on it), `gate.py` (what's never pressed without a yes), `money.py` (amounts, however written), `tools.py`, `login.py`, `login_page.py`, `codes.py`, `vault.py` and `mail.py` (signing in), `notes.py` (what it learns of a site), `trace.py`, `run.py`, `chrome.py` (TARS's own Chrome), `sprite.py` and `way_out.py` (that Chrome on a Fly Sprite, and its way out to the internet through home), `mcp_server.py` and `claude.py` (Claude Code as its brain); `telegram_errands.py` (an errand's questions and answer in a chat); `homenet.py` (what's at home, for the browser and the web UI) |
 | The house | `home.py` (the `home` tool, its rules, the `Device` interface, loading plugins), `plugins.py` (a plugin's manifest, its grant and the context scoped to it, its own tools), `hass.py` (Home Assistant and its devices by domain), `androidtv.py` (an Android TV box over ADB, and the agent that works it), `found.py` (finding a device again when the router gives it another address, kept in `voice_data/found.json`), `volume.py` (TARS's own speaker as a device: its sound card's volume through amixer, or the Mac's), `commands.py` (house commands done on the Pi without the model, their replies made ahead, and Vosk hearing them offline), and in `assistant.py` saying how a task went (`Announcements`); a plugin's devices in its own module, like `examples/my_house` |
 | Who's home | `routers.py` (the home network's routers, signed into as their own pages do it, and who's connected), `presence.py` (whose phone is whose, the rules, the board in the event log, the watcher, the `who's home` device), `doors.py` (a Nuki's lock actions over MQTT, someone opening the door from outside home at once, whose key is whose, learned, and the broker watched), `mosquitto.py` (TARS's own user on the household's Mosquitto, from the installer), and in `reminders.py` reminders following people to their chat (`ChatWhenOut`) and waiting messages said when they're home (`on_arrival`) |
 | Who's talking | `speaker.py` (voiceprints), `clustering.py` (grouping voices), `enroll.py` (recording people at a terminal), `recording.py` (recording sessions: scripts, checks, takes), `takes.py` (the assistant's side of them), `control.py` (the socket the web UI asks the assistant over) |
 | The main loop | `assistant.py` (the conversation, through its body: wake, listen, answer, follow-ups, errors, timing), `__main__.py` (the command line), `entrypoints.py` (what each option runs: the assistant, `--text`, `--web`, `--telegram`, `--backup` and the rest), `wiring.py` (each part made from `config.toml`, and the `Household`: the parts the processes share), `config.py` (`config.toml`, and `with_keys`, which cuts it down to the keys there are) |
-| What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
+| What's kept | `store.py` (database, audio, upgrades), `events.py` (wakes and labels), `conversations.py` (turns and sent things), `journal.py` (writes that never cost a reply), `usage.py` and `prices.toml` (what each call used of the paid services, and the cost: [usage](usage.md)), `files.py` (crash-safe writes), `backup.py` (`--backup`: to S3, making room, snapshots, lifecycle, bringing back) |
 | Downloads | `models.py` (the small local models, on first use) |
 | Checking a setup | `check.py` (`--check`: keys, devices, models, echo cancellation, voiceprints, the services and Telegram, voice, mic, storage, the web UI, Home Assistant and each device in the house, each router, the backup, and systemd's services) |
 | Is it all running | `health.py` (heartbeats, today's counts, the services and their status pages, the machine: what the Status page shows) |
@@ -394,5 +395,6 @@ Around it: `training/` (the scripts that made the wake models, [training/README.
 `capability_bench.py` and `router_bench.py` for the quick model's tools and hand-offs; `echo_bench.py` for echo
 cancellation in the room; `commands_bench.py` for house commands on the Pi, on house recording sessions' takes),
 `evals/` (whole conversations played through the brain, hand-offs followed through, [docs/evals.md](evals.md)),
-`deploy/` (the Pi's install script and services, and `home-assistant/`: Home Assistant in Docker), `examples/`
+`deploy/` (the Pi's install script and services, `home-assistant/`: Home Assistant in Docker, and `browser-host/`:
+the browser's Fly Sprite, [on a Sprite](browser.md#on-a-sprite)), `examples/`
 (plugins: one household's own devices, [examples/my_house](../examples/my_house/README.md)) and `tests/`.

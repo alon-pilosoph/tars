@@ -1,6 +1,10 @@
 # Every stage is configured here, so the same code runs on the Mac and on the Pi.
 
 [audio]
+# TARS's own microphone and speaker at home: the voice assistant. false: this home is chat-only, TARS runs as its
+# Telegram and web UI processes (voice-assistant --telegram, --web), a reminder due aloud goes to its person's chat,
+# and nothing listens or speaks (docs/deployment.md#without-a-microphone).
+enabled = true
 # Substring of the device name to use, e.g. "PowerConf". Empty = system default.
 # Run `uv run voice-assistant --list-devices` to see what's available.
 input_device = ""
@@ -111,7 +115,7 @@ web_search = true
 # model guesses or asks for a city. home_country is a two-letter code (IL, GB, US).
 home_city = "Tel Aviv"
 home_country = "IL"
-# Send links, notes, lists and text files to the web UI ("It's on the TARS page."). Needs [learning] log_events.
+# Send links, notes, lists and text files to the web UI ("It's on the TARS page.").
 send = true
 system_prompt = """You are TARS, a former Marine Corps robot now running on a small computer in someone's home. \
 Your replies are read aloud, so answer in one to three short sentences. \
@@ -153,8 +157,10 @@ threshold = 0.5
 wake_threshold = 0.25
 
 [learning]
-# Keep every wake, near-miss, conversation and sent item (in voice_data/events/, never leaves this machine) for
-# the web UI (voice-assistant --web) and for retraining. Turning it off also turns off [llm] send.
+# Record every wake and near-miss with its audio, and what's said by voice as audio (in voice_data/events/, never
+# leaves this machine), for the web UI (voice-assistant --web) and for retraining. Off, none of that is kept; the
+# event database itself always is (conversations as text, reminders, sent items, skills, who's home), and everything
+# that runs on it goes on.
 log_events = true
 # Where they're kept, relative to this file.
 folder = "voice_data/events"
@@ -165,7 +171,7 @@ keep_audio_days = 60
 
 [reminders]
 # Timers, reminders and messages, set by voice ("remind me to call the bank at nine", "tell Stacey dinner's ready")
-# or on the web UI's Reminders page (docs/reminders.md). Needs [learning] log_events.
+# or on the web UI's Reminders page (docs/reminders.md).
 enabled = true
 # A reminder or message that waits for an acknowledgement ("got it") is said again this often, at most this many
 # times, then it shows as missed. Each reminder can change both.
@@ -207,9 +213,14 @@ people = {}
 # What TARS sends at home for someone here ("send me the recipe") also comes to their chat. A reminder set in a chat
 # comes to the chat of the person it's for, if they're here; otherwise it's said aloud at home.
 send_items = true
-# A chat is one conversation until it's been quiet this long, or someone sends /new; then the next message starts a
-# new one. Longer than [llm]'s, since a written reply often comes back much later.
+# A chat is one conversation until it's been quiet this long, or someone sends /new. Longer than [llm]'s, since a
+# written reply often comes back much later.
 memory_minutes = 60
+# After that, for up to this many days, a message that carries the conversation on ("try again", "and tomorrow?")
+# keeps it going, and one about something else starts a new one: the quick model reads the end of it and says which
+# (docs/telegram.md#one-conversation-or-a-new-one). A restart doesn't lose it either. 0 = always a new one after
+# memory_minutes.
+keep_days = 7
 # Who answers a chat: "openai" ([llm] model: web search, real links; Qwen when there's no OpenAI key) or "quick" (Qwen
 # first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing there.
 brain = "openai"
@@ -312,7 +323,7 @@ container = "homeassistant"
 # Who's home (docs/presence.md): whose phone the home network's routers see, asked every every_s seconds by the
 # assistant. "Who's home?" is answered from it, by voice and in a chat; a reminder due aloud for someone who's out goes
 # to their Telegram chat instead; and a message waiting until someone's back is said soon after their phone comes
-# home. Kept in the event log, so it needs [learning] log_events. Put this machine's own [presence] in
+# home. Kept in the event log, for the other processes. Put this machine's own [presence] in
 # config.local.toml: whose phone is whose and the routers are the household's, not the repo's.
 enabled = false
 # Each person, by the name TARS knows them by, and their phone as the routers list it: its Wi-Fi address (on an
@@ -392,7 +403,7 @@ keep_snapshots_days = 30
 # there a table at Ontopo on Friday", "what did I order last time" (docs/browser.md). It reads the page, clicks and
 # types its way there, signs in from its vault, and asks on Telegram before anything is ordered, booked or paid; the
 # answer comes to the chat, and is said aloud too if it was asked aloud. The Telegram service runs the errands, so it
-# needs [telegram]; asking aloud also needs [learning] log_events, where they're queued. And the browser extra (uv
+# needs [telegram]; asked aloud, they're queued in the event database. And the browser extra (uv
 # sync --all-extras) and OPENAI_API_KEY; each errand is a few cents of the model.
 enabled = false
 # The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
@@ -408,10 +419,15 @@ really_order = false
 # Tailscale (encrypted) is better than the home Wi-Fi.
 login_host = ""
 login_port = 8091
+# The Fly Sprite the browser runs on (docs/browser.md#on-a-sprite): on the Pi, it must be set. The pages still load
+# from home: every connection the Sprite's Chrome makes comes back through the link to this machine, which refuses
+# anything at home. The logins stay here; the Sprite keeps each person's cookies. Set it up first with
+# deploy/browser-host/setup.sh <name>. "": Chrome on this machine, for developing the browser on a Mac.
+sprite = ""
 
 [feeds]
 # RSS feeds, followed by talking to TARS: "find me good feeds about gaming", "what's new in gaming?" (docs/feeds.md).
-# Each person's are their own, kept in the event database ([learning] log_events). When TARS can't tell whose voice
+# Each person's are their own, kept in the event database. When TARS can't tell whose voice
 # asked, they're this person's (a name as TARS knows them; "": it says it doesn't know whose).
 default_person = ""
 
@@ -446,3 +462,11 @@ monthly = 4
 # needs sudo (new system packages, a device rule) is left for them to install by hand. Either way they're told.
 enabled = false
 branch = "main"
+
+[usage]
+# What TARS uses of the paid services is counted, by service and by person (docs/usage.md; `voice-assistant --usage`).
+# A cap on a month's estimated cost, in dollars, from prices.toml's prices: the maintainers ([household]) are told at
+# 80% and when it's reached. Past it, TARS says it's out of budget instead of answering, until the month ends; house
+# commands it hears on the Pi itself ([home] commands_on_pi) still work, and reminders already set are still said.
+# 0 = no cap.
+monthly_cap_usd = 0

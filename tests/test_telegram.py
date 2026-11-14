@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import tempfile
 import threading
 import time
 import types
@@ -14,7 +15,8 @@ import pytest
 
 from voice_assistant.config import ConfigError, LLMConfig
 from voice_assistant.control import Refused, Unavailable
-from voice_assistant.conversations import FILE, LIST, NOTE, OTHER, SentItem
+from voice_assistant.conversations import FILE, LIST, NOTE, OTHER, ConversationLog, SentItem
+from voice_assistant.events import EventLog
 from voice_assistant.llm import SEARCHING, THINKING, OpenAIChat
 from voice_assistant.reminders import (
     ADD,
@@ -42,6 +44,7 @@ from voice_assistant.telegram import (
     MAX_VOICE_S,
     MIC,
     NO_ALOUD,
+    NO_SPEAKER,
     NO_SPOTIFY,
     NO_VOICE,
     NO_WORDS,
@@ -128,6 +131,9 @@ class ScriptedBrain:
     def remember_said(self, text):
         self.remembered.append(text)
 
+    def remember_exchange(self, asked, said):
+        self.remembered.append((asked, said))
+
     def start_over(self):
         self.started_over += 1
 
@@ -141,9 +147,11 @@ def message(text, chat_id=ALON, sent_at=None, kind="private", update_id=1):
 
 
 def tars(bot, brains, convos=None, tools=None, people=None, **kw) -> TelegramTars:
-    """A TelegramTars whose people get the given brains, in order."""
+    """A TelegramTars whose people get the given brains, in order; its conversations in a database of its own when
+    the test doesn't look at them."""
     made = iter(brains)
     kw.setdefault("sleep", lambda s: None)
+    convos = convos or ConversationLog(EventLog(Path(tempfile.mkdtemp(prefix="tars-telegram-"))))
     return TelegramTars(bot, people or PEOPLE, lambda: next(made), convos, tools, typing=False, **kw)
 
 
@@ -314,6 +322,102 @@ def test_a_chat_that_went_quiet_starts_a_new_conversation(convos):
     now[0] += 601
     t.handle(message("two", sent_at=now[0]))
     assert len(convos.conversations()) == 2
+
+
+class Says:
+    """A continuity check that says `verdict` ("continued" or "new"), keeping what it was shown."""
+
+    def __init__(self, verdict):
+        from voice_assistant.threads import Continuity
+
+        self.shown = []
+        self.check = Continuity(lambda messages: self.shown.append(messages[-1]["content"]) or verdict)
+
+
+DAY = 24 * 3600
+
+
+@pytest.mark.parametrize("verdict, conversations, started_over", [("continued", 1, 0), ("new", 2, 1)])
+def test_after_a_quiet_spell_the_check_says_whether_a_message_carries_the_conversation_on(
+    convos, verdict, conversations, started_over
+):
+    now, says, brain = [1_800_000_000.0], Says(verdict), ScriptedBrain(["I couldn't sign in to Wolt.", "On it."])
+    t = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, continuity=says.check, clock=lambda: now[0])
+    t.handle(message("my last Wolt order?", sent_at=now[0]))
+    now[0] += 2 * DAY
+    t.handle(message("let's try again", sent_at=now[0], update_id=2))
+    (shown,) = says.shown
+    assert "Alon: my last Wolt order?\nTARS: I couldn't sign in to Wolt." in shown
+    assert "2 days later, the new message:\nAlon: let's try again" in shown
+    assert len(convos.conversations()) == conversations and brain.started_over == started_over
+
+
+def test_within_the_hour_it_is_the_same_conversation_without_asking(convos):
+    now, says = [1_800_000_000.0], Says("new")
+    t = tars(FakeBot(), [ScriptedBrain(["A.", "B."])], convos, memory_s=3600, keep_s=7 * DAY, continuity=says.check,
+             clock=lambda: now[0])  # fmt: skip
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += 3000
+    t.handle(message("two", sent_at=now[0], update_id=2))
+    assert says.shown == [] and len(convos.conversations()) == 1
+
+
+def test_after_keep_days_it_is_a_new_conversation_without_asking(convos):
+    now, says, brain = [1_800_000_000.0], Says("continued"), ScriptedBrain(["A.", "B."])
+    t = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, continuity=says.check, clock=lambda: now[0])
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += 8 * DAY
+    t.handle(message("two", sent_at=now[0], update_id=2))
+    assert says.shown == [] and len(convos.conversations()) == 2 and brain.started_over == 1
+
+
+def test_a_check_that_fails_carries_the_conversation_on(convos, capsys):
+    from voice_assistant.threads import Continuity
+
+    def down(messages):
+        raise TimeoutError("Cerebras")
+
+    now = [1_800_000_000.0]
+    t = tars(FakeBot(), [ScriptedBrain(["A.", "B."])], convos, memory_s=3600, keep_s=7 * DAY,
+             continuity=Continuity(down), clock=lambda: now[0])  # fmt: skip
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += DAY
+    t.handle(message("two", sent_at=now[0], update_id=2))
+    assert len(convos.conversations()) == 1 and "couldn't tell" in capsys.readouterr().out
+
+
+def test_a_restart_reads_the_chat_back_from_the_log(convos):
+    now = [1_800_000_000.0]
+    before = tars(FakeBot(), [ScriptedBrain(["Nine.", RuntimeError("down")])], convos, memory_s=3600,
+                  keep_s=7 * DAY, clock=lambda: now[0])  # fmt: skip
+    before.handle(message("what time?", sent_at=now[0]))
+    before.handle(message("and later?", sent_at=now[0], update_id=2))  # failed: not remembered
+    now[0] += 600  # an update restarted the service
+    brain = ScriptedBrain(["Ten."])
+    after = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, clock=lambda: now[0])
+    after.handle(message("and tomorrow?", sent_at=now[0], update_id=3))
+    assert brain.remembered == [("[Speaker: Alon] what time?", "Nine.")]
+    assert len(convos.conversations()) == 1
+
+
+def test_a_restart_long_after_reads_nothing_back(convos):
+    now = [1_800_000_000.0]
+    tars(FakeBot(), [ScriptedBrain(["Nine."])], convos, keep_s=7 * DAY, clock=lambda: now[0]).handle(
+        message("what time?", sent_at=now[0])
+    )
+    now[0] += 8 * DAY
+    brain = ScriptedBrain(["Hi."])
+    tars(FakeBot(), [brain], convos, keep_s=7 * DAY, clock=lambda: now[0]).handle(message("hi", sent_at=now[0]))
+    assert brain.remembered == [] and len(convos.conversations()) == 2
+
+
+def test_what_tars_posts_after_a_quiet_spell_starts_a_new_conversation(convos):
+    now, brain = [1_800_000_000.0], ScriptedBrain(["A."])
+    t = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, clock=lambda: now[0])
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += DAY
+    t.remember(t.chat_for("Alon"), "Your timer's done.")
+    assert len(convos.conversations()) == 2 and brain.started_over == 1 and brain.remembered == ["Your timer's done."]
 
 
 def test_a_conversation_deleted_in_the_web_ui_is_not_written_to_again(convos):
@@ -825,8 +929,9 @@ def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path)
     assert chat_brain_config(quick, has_openai=True).service_tier == cfg.llm.service_tier
     # A written reply often comes back later than a spoken one: the chat remembers for longer, whoever answers.
     assert cfg.telegram.memory_minutes > cfg.llm.memory_minutes
+    # The chat decides when its conversation ends (keep_days, with the continuity check): the brain keeps it as long.
     for has_openai in (True, False):
-        assert chat_brain_config(cfg, has_openai).memory_minutes == cfg.telegram.memory_minutes
+        assert chat_brain_config(cfg, has_openai).memory_minutes == cfg.telegram.keep_days * 24 * 60
 
 
 # Voice messages.
@@ -1259,3 +1364,52 @@ def test_one_asked_aloud_done_here_does_what_it_asked_of_the_reminders_as_by_voi
     tars(bot, [ScriptedBrain([]), own], None, tools, skill_clock=clock).deliver()
     (reminder,) = [r for r in tools.reminders.active() if r["kind"] == REMINDER]
     assert (reminder["from_name"], reminder["channel"], reminder["set_via"]) == ("Alon", VOICE, VOICE)
+
+
+# A chat-only home ([audio] enabled = false): no speaker or microphone at home
+
+
+def test_a_chat_only_home_says_hello_without_say():
+    bot = FakeBot()
+    tars(bot, [ScriptedBrain()], aloud=False).handle(message("/start"))
+    assert "/say" not in bot.said()[0] and "Hello, Alon" in bot.said()[0]
+
+
+@pytest.mark.parametrize("command", ["/say dinner's ready", "/volume 40", "/mute", "/unmute"])
+def test_a_chat_only_home_says_it_has_no_speaker_or_microphone(command):
+    bot, said = FakeBot(), []
+    tars(bot, [ScriptedBrain()], aloud=False, say=said.append).handle(message(command))
+    assert bot.said() == [NO_SPEAKER] and said == []
+
+
+def test_in_a_chat_only_home_a_reminder_due_aloud_is_posted_to_its_persons_chat(convos):
+    bot = FakeBot()
+    tools = tools_with(convos)
+    now = time.time()
+    rid = tools.reminders.add(NewReminder(REMINDER, "call mum", "Alon", due=now + 60), WEB, now=now)  # aloud
+    tars(bot, [ScriptedBrain()], convos, tools, clock=lambda: now + 61, aloud=False).deliver()
+    assert len(bot.said()) == 1 and "call mum" in bot.said()[0]
+    assert tools.reminders.get(rid)["channel"] == TELEGRAM
+
+
+def test_with_a_speaker_a_reminder_due_aloud_stays_for_the_voice(convos):
+    bot = FakeBot()
+    tools = tools_with(convos)
+    now = time.time()
+    rid = tools.reminders.add(NewReminder(REMINDER, "call mum", "Alon", due=now + 60), WEB, now=now)
+    tars(bot, [ScriptedBrain()], convos, tools, clock=lambda: now + 61).deliver()
+    assert bot.said() == [] and tools.reminders.get(rid)["channel"] == VOICE
+
+
+def test_a_chat_only_homes_menu_has_no_commands_about_the_speaker():
+    bot = FakeBot()
+    t = tars(bot, [ScriptedBrain()], aloud=False)
+    t._bot.updates = lambda *a, **kw: (_ for _ in ()).throw(KeyboardInterrupt)  # the menu, then stop
+    with pytest.raises(KeyboardInterrupt):
+        t.run_forever({"username": "hey_tars_bot"})
+    assert {c["command"] for c in bot.commands} == {c["command"] for c in COMMANDS} - {
+        "say",
+        "volume",
+        "mute",
+        "unmute",
+    }

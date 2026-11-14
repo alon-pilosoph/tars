@@ -11,7 +11,7 @@ import { LoadErrors, Loading, Unreachable } from "./components/States";
 import { StatusView } from "./components/Status";
 import { Toasts } from "./components/Toasts";
 import { Voices } from "./components/Voices";
-import { type Tab, linkTo } from "./params";
+import { HEARING, type Tab, linkTo } from "./params";
 import {
   type State,
   menuOpen,
@@ -88,7 +88,8 @@ export function App() {
   useEffect(() => {
     document.title = counts.sent ? `TARS (${counts.sent})` : "TARS";
   }, [counts.sent]);
-  const View = VIEWS[s.tab];
+  const aloud = s.status.aloud;
+  const View = VIEWS[!aloud && HEARING.includes(s.tab) ? "home" : s.tab];
   const busy = s.refreshing || s.phase === "loading";
   return (
     <>
@@ -99,14 +100,14 @@ export function App() {
         <nav className="nav" aria-label="Pages">
           <NavLink s={s} tab="home" label="Home" />
           <NavLink s={s} tab="sent" label="Sent" n={counts.sent} />
-          <NavLink s={s} tab="review" label="Review" n={counts.review} />
+          {aloud && <NavLink s={s} tab="review" label="Review" n={counts.review} />}
           <NavLink s={s} tab="reminders" label="Reminders" n={counts.reminders} />
         </nav>
         <div className="top-end">
           <nav className="nav-2" aria-label="More pages">
             <NavLink s={s} tab="skills" label="Skills" />
-            <NavLink s={s} tab="voices" label="Voices" />
-            <NavLink s={s} tab="models" label="Models" />
+            {aloud && <NavLink s={s} tab="voices" label="Voices" />}
+            {aloud && <NavLink s={s} tab="models" label="Models" />}
             {s.status.health && <NavLink s={s} tab="status" label="Status" />}
           </nav>
           <button className="refresh" onClick={() => busy || refreshNow()} aria-busy={s.refreshing}>
@@ -142,7 +143,7 @@ export function App() {
       <nav className="tabbar" aria-label="Pages">
         <BarLink s={s} tab="home" label="Home" icon="home" />
         <BarLink s={s} tab="sent" label="Sent" icon="sent" n={counts.sent} />
-        <BarLink s={s} tab="review" label="Review" icon="wave" n={counts.review} />
+        {aloud && <BarLink s={s} tab="review" label="Review" icon="wave" n={counts.review} />}
         <BarLink s={s} tab="reminders" label="Reminders" icon="bell" n={counts.reminders} />
       </nav>
       <Toasts />

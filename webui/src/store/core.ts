@@ -105,7 +105,7 @@ let current: State = {
   events: [],
   clusters: [],
   models: null,
-  status: { clustering: false, enroll_at: 0, health: false },
+  status: { aloud: true, clustering: false, enroll_at: 0, health: false },
   convs: [],
   items: [],
   reminders: null,

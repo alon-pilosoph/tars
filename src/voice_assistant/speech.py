@@ -7,6 +7,7 @@ import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
 from concurrent.futures import Future
 
+from . import usage
 from .conversations import LLM, OTHER, TTS
 from .tts import Voice
 
@@ -68,7 +69,9 @@ def _sentence_end(text: str) -> re.Match | None:
 class _Prefetch:
     def __init__(self, voice: Voice, text: str, stop: threading.Event):
         self._chunks: queue.Queue = queue.Queue()
-        threading.Thread(target=self._fetch, args=(voice, text, stop), daemon=True, name="tts-sentence").start()
+        threading.Thread(
+            target=usage.carried(self._fetch), args=(voice, text, stop), daemon=True, name="tts-sentence"
+        ).start()
 
     def _fetch(self, voice: Voice, text: str, stop: threading.Event) -> None:
         audio = None
@@ -113,7 +116,9 @@ class StreamedReply:
         self._playlist: queue.Queue = queue.Queue()
         self._stop = threading.Event()
         self._made_ahead = made_ahead
-        threading.Thread(target=self._produce, args=(pieces, voice, on_sentence), daemon=True, name="reply").start()
+        threading.Thread(
+            target=usage.carried(self._produce), args=(pieces, voice, on_sentence), daemon=True, name="reply"
+        ).start()
 
     def _produce(self, pieces: Iterable[str], voice: Voice, on_sentence: Callable[[str], None]) -> None:
         try:

@@ -80,6 +80,10 @@ usual. "Tell the house dinner's ready" or "tell Stacey at home to call me" in a 
 and the chat is told when it was said and who said they got it. Saying "I took the pills" in a chat acknowledges one
 said aloud at home. Something waiting until someone's back is always said aloud.
 
+In a chat-only home (`[audio] enabled = false`), nothing is said aloud: one that would be (set on the web UI, by a
+skill, or for someone else in a chat) is posted to the chat of whoever it's for, or whoever set it, instead, as one
+due for someone who's out is. One for someone with no chat waits.
+
 If Telegram isn't running, reminders set there wait, and are posted late, with when they were due: someone who set
 one in a chat is usually away, so saying it to the house wouldn't reach them. `--check` and the
 [Status page](web-ui.md#the-status-page) say how many are waiting.

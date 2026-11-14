@@ -19,6 +19,7 @@ from typing import Protocol
 
 from openai import OpenAI, OpenAIError, RateLimitError
 
+from . import usage
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
 from .home import ONE_MOMENT, HomeTools, Request
@@ -850,14 +851,18 @@ class OpenAIChat:
             if last:
                 tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
             _check(writing)
-            stream = writing.stream = self._client.responses.create(
-                model=model,
-                instructions=f"{instructions}\n\n{OUT_OF_STEPS * last}\n\n{self._now()}",
-                input=context,
-                stream=True,
-                store=False,  # nothing kept on OpenAI's side beyond the request itself
-                **extra,
-                **tools,
+            stream = writing.stream = usage.CountedResponses(
+                self._client.responses.create(
+                    model=model,
+                    instructions=f"{instructions}\n\n{OUT_OF_STEPS * last}\n\n{self._now()}",
+                    input=context,
+                    stream=True,
+                    store=False,  # nothing kept on OpenAI's side beyond the request itself
+                    **extra,
+                    **tools,
+                ),
+                "openai",
+                model,
             )
             for event in stream:
                 _check(writing)
@@ -1261,7 +1266,7 @@ class QuickChat(OpenAIChat):
         if self._quick_tools and _last_round(round_, writing):
             system, *rest = messages
             messages = [{**system, "content": f"{system['content']}\n\n{OUT_OF_STEPS}"}, *rest]
-        return service.client.chat.completions.create(
+        stream = service.client.chat.completions.create(
             model=service.model,
             stream=True,
             messages=messages,
@@ -1269,6 +1274,7 @@ class QuickChat(OpenAIChat):
             **self._quick_extra,
             **self._quick_tools_for(round_, writing),
         )
+        return usage.CountedChat(stream, service.name, service.model)
 
     def _open(self, service: QuickService, messages: list, streams: _Streams) -> _Opened:
         """`service`'s first round, read up to its first sign of an answer."""
@@ -1295,7 +1301,7 @@ class QuickChat(OpenAIChat):
             while True:
                 _check(writing)
                 if service := next(todo, None):
-                    pending[pool.submit(self._open, service, messages, streams)] = service
+                    pending[pool.submit(usage.carried(self._open), service, messages, streams)] = service
                 if not pending:
                     return None, None, failed
                 done, _ = wait(pending, timeout=HEDGE_S, return_when=FIRST_COMPLETED)
@@ -1441,14 +1447,18 @@ class ResponsesQuickChat(QuickChat):
             if last:
                 tools["tool_choice"] = "none"  # the last round has to say something
             _check(writing)
-            stream = writing.stream = service.client.responses.create(
-                model=service.model,
-                instructions=f"{self._quick_instructions}\n\n{OUT_OF_STEPS * last}\n\n{self._now()}",
-                input=items,
-                stream=True,
-                store=False,
-                **self._quick_extra,
-                **tools,
+            stream = writing.stream = usage.CountedResponses(
+                service.client.responses.create(
+                    model=service.model,
+                    instructions=f"{self._quick_instructions}\n\n{OUT_OF_STEPS * last}\n\n{self._now()}",
+                    input=items,
+                    stream=True,
+                    store=False,
+                    **self._quick_extra,
+                    **tools,
+                ),
+                service.name,
+                service.model,
             )
             calls = []
             for event in stream:
@@ -1550,7 +1560,9 @@ class ClaudeQuickChat(QuickChat):
                             said += event.text
                             yield event.text
                     final = stream.get_final_message()
+                    usage.claude_message(service.name, service.model, final)
             except anthropic.APIError as e:
+                usage.llm(service.name, service.model, reported=False)
                 raise QuickFailed(f"Claude: {e!r}") from e
             writing.stream = None
             if final.stop_reason == "refusal":

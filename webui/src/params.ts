@@ -11,6 +11,8 @@ export type PersonFilter = "all" | "household" | number;
 export type GuessFilter = "all" | "yes" | "no" | "none";
 
 const TABS: Tab[] = ["home", "sent", "review", "reminders", "skills", "voices", "models", "status"];
+/** The pages about what TARS hears, which a chat-only home ([audio] enabled = false) doesn't have. */
+export const HEARING: Tab[] = ["review", "voices", "models"];
 
 export const PARAMS = new URLSearchParams(location.search);
 export const idParam = (v: string | null | undefined) => (v && /^\d+$/.test(v) ? Number(v) : null);

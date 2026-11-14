@@ -13,6 +13,7 @@ import type {
   Item,
   Label,
   MachineHealth,
+  MonthUsage,
   Metric,
   ModelsInfo,
   Outcome,
@@ -1064,15 +1065,18 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
   const event = (id: number) => d.events.find(e => e.id === id);
   const convWake = (id: number) => d.convs.find(c => c.wake?.event_id === id)?.wake;
   const item = (id: number) => d.items.find(i => i.id === id);
+  // A chat-only home records nothing it hears: no wakes, and no voice on anyone's turn.
+  const heard = DEMO_LINK.chatOnly ? { has_audio: false } : {};
   const withItems = (c: DemoConv) => ({
     ...clone(c),
-    turns: c.turns.map(t => ({ ...clone(t), items: (t.items || []).filter(id => item(id)) })),
+    turns: c.turns.map(t => ({ ...clone(t), ...heard, items: (t.items || []).filter(id => item(id)) })),
   });
   const p = new URL(path, "http://demo").pathname;
   if (method === "GET" && DEMO_LINK.failed.some(part => LOADED_FROM[part] === p))
     throw new Error("Internal Server Error");
   let m: RegExpMatchArray | null;
 
+  if (p === "/api/events" && DEMO_LINK.chatOnly) return [];
   if (p === "/api/events") {
     const answered = d.events.filter(e => e.kind === "wake" && e.outcome === "answer").map(e => e.ts);
     return (
@@ -1098,7 +1102,7 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
       .sort((a, b) => b.size - a.size);
   }
   if (p === "/api/models") return d.models;
-  if (p === "/api/status") return { clustering: true, enroll_at: 5, health: true };
+  if (p === "/api/status") return { aloud: !DEMO_LINK.chatOnly, clustering: true, enroll_at: 5, health: true };
   if (p === "/api/health") return demoHealth(Date.now() / 1000);
   if (p === "/api/conversations") return d.convs.map(withItems).sort((a, b) => b.started - a.started);
   if ((m = p.match(/^\/api\/conversations\/(\d+)$/))) {
@@ -1287,6 +1291,16 @@ function demoHealth(at: number): Health {
       services: [],
       services_asked: at - 2,
       backup: null,
+      usage: {
+        month: monthOf(at),
+        cost: 0,
+        cap: 0,
+        checked: "2026-11-13",
+        unpriced: 0,
+        unreported: 0,
+        by_service: [],
+        by_person: [],
+      },
       machine: demoMachine(false),
     };
   return {
@@ -1336,7 +1350,37 @@ function demoHealth(at: number): Health {
           },
       { name: "The timer", status: "ok", detail: "running", fix: "" },
     ],
+    usage: demoUsage(at, trouble),
     machine: demoMachine(trouble),
+  };
+}
+
+function monthOf(at: number): string {
+  const d = new Date(at * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function demoUsage(at: number, trouble: boolean): MonthUsage {
+  const line = (name: string, calls: number, cost: number, unpriced = 0) => ({ name, calls, cost, unpriced });
+  const k = trouble ? 6.4 : 1;
+  return {
+    month: monthOf(at),
+    cost: 2.69 * k,
+    cap: trouble ? 20 : 30,
+    checked: "2026-11-13",
+    unpriced: trouble ? 2 : 0,
+    unreported: 3,
+    by_service: [
+      line("openai gpt-6-luna", Math.round(412 * k), 1.38 * k),
+      line("cerebras qwen-3.8-27b", Math.round(1630 * k), 0.61 * k),
+      line("deepgram flux-general-en", Math.round(590 * k), 0.42 * k),
+      line("deepgram aura-2-thalia-en", Math.round(655 * k), 0.28 * k, trouble ? 2 : 0),
+    ],
+    by_person: [
+      line("alon", Math.round(1840 * k), 1.71 * k),
+      line("stacey", Math.round(1120 * k), 0.83 * k),
+      line("", Math.round(327 * k), 0.15 * k),
+    ],
   };
 }
 

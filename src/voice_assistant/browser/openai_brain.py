@@ -4,6 +4,7 @@ import base64
 import json
 from typing import Any
 
+from .. import usage as metered
 from .brain import SQUEEZE, Call, earlier_page
 
 
@@ -39,6 +40,7 @@ class OpenAIBrain:
             reasoning={"effort": effort},
             **({"include": ["reasoning.encrypted_content"]} if self.full else {}),
         )
+        metered.llm("openai", self.settings.model, **_used(reply))  # what TARS used, by errand (usage.py)
         if usage := reply.usage:
             details = getattr(usage, "input_tokens_details", None)
             cached = getattr(details, "cached_tokens", 0) or 0
@@ -101,3 +103,16 @@ def _openai_content(text: str, picture: bytes | None) -> list[dict[str, Any]]:
         data = base64.b64encode(picture).decode()
         content.append({"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}", "detail": "auto"})
     return content
+
+
+def _used(reply) -> dict:
+    """A reply's usage, as usage.llm takes it; marked unreported if it has none."""
+    u = getattr(reply, "usage", None)
+    if u is None:
+        return {"reported": False}
+    return {
+        "input": u.input_tokens or 0,
+        "output": u.output_tokens or 0,
+        "reasoning": getattr(getattr(u, "output_tokens_details", None), "reasoning_tokens", 0) or 0,
+        "cached": getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0,
+    }

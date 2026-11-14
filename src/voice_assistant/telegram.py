@@ -5,8 +5,9 @@ voice. It long-polls Telegram's Bot API for messages, so nothing at home is reac
 no open port. Only the people in [telegram] people are answered; anyone else is ignored, and logged once, so a new
 person's chat id can be found.
 
-Each person has their own conversation (the brain's history, kept until it's quiet for [telegram] memory_minutes,
-or they send /new; what TARS posts by itself is part of it) with the same
+Each person has their own conversation (the brain's history, kept through [telegram] memory_minutes of quiet, then
+for as long as a quick check says each message carries it on, up to keep_days (threads.py), or until they send /new;
+read back from the log after a restart; what TARS posts by itself is part of it) with the same
 brain, tools and reminders as at home, told it's writing rather than speaking; a voice message is written down by
 the same speech to text as at home (stt.py), and answered as if written. What it sends goes into the chat as
 well as onto the TARS page. A reminder set here for someone with a chat comes to that chat when it's due, and
@@ -32,10 +33,23 @@ from pathlib import Path
 import httpx
 import numpy as np
 
+from . import usage
 from .audio import SAMPLE_RATE, decode_recording, warm_decoder
 from .config import TELEGRAM_KEY, ConfigError
 from .control import Refused, Unavailable
-from .conversations import FILE, HOUSEHOLD, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
+from .conversations import (
+    FILE,
+    HOUSEHOLD,
+    LINK,
+    LIST,
+    LLM,
+    NOTE,
+    OTHER,
+    ROLE_PERSON,
+    STT,
+    ConversationLog,
+    SentItem,
+)
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
 from .llm import FILLERS, REMIND_TOOLS, SKIP, THINKING, Brain, Reply
@@ -57,6 +71,7 @@ from .reminders import (
     twelve_hour,
 )
 from .stt import Transcriber, transcribe_recording
+from .threads import Continuity
 from .volume import DEVICE as SPEAKER
 
 API = "https://api.telegram.org"
@@ -102,6 +117,12 @@ COMMANDS = [
     {"command": "spotify", "description": "Sign TARS in to Spotify"},
     {"command": "new", "description": "Start a new conversation"},
 ]
+AT_HOME = {"say", "volume", "mute", "unmute"}  # the commands about TARS's speaker and microphone at home
+HELLO_CHAT_ONLY = (
+    "Hello, {name}. It's TARS. Ask me anything, have me set a timer or a reminder, work the house, or ask me to send "
+    "you something; the menu has the rest."
+)
+NO_SPEAKER = "This home has no speaker or microphone for me: here, I'm in this chat and on the web page only."
 SAY_HOW = "Send /say and what to say, like: /say dinner's ready"
 NO_ALOUD = "I can't say it: the voice assistant at home isn't running."
 VOLUME_HOW = "Send /volume and a level, up or down, like: /volume 40"
@@ -219,10 +240,14 @@ class Bot:
         for part in split_text(text):
             self.call("sendMessage", chat_id=chat_id, text=part)
 
-    def send_buttons(self, chat_id: int, text: str, buttons: list[tuple[str, str]]) -> int:
-        """`text` with a row of buttons under it, each (label, what a tap sends back); the message's id."""
+    def send_buttons(self, chat_id: int, text: str, buttons: list[tuple[str, str]], preview: bool = True) -> int:
+        """`text` with a row of buttons under it, each (label, what a tap sends back); the message's id. `preview`:
+        False sends a link in it without a preview, which Telegram makes by fetching the link itself."""
         markup = {"inline_keyboard": [[{"text": label, "callback_data": data} for label, data in buttons]]}
-        return self.call("sendMessage", chat_id=chat_id, text=text[:MAX_TEXT], reply_markup=markup)["message_id"]
+        extra = {} if preview else {"link_preview_options": {"is_disabled": True}}
+        return self.call("sendMessage", chat_id=chat_id, text=text[:MAX_TEXT], reply_markup=markup, **extra)[
+            "message_id"
+        ]
 
     def drop_buttons(self, chat_id: int, message_id: int) -> None:
         self.call(
@@ -338,6 +363,7 @@ class Chat:
     brain: Brain
     conversation: int | None = None
     last_at: float = 0.0
+    restored: bool = False  # whether its conversation has been read back from the log since TARS started
     # Held while TARS answers in the chat, or posts to it by itself: one at a time, never one inside the other.
     busy: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
@@ -393,7 +419,7 @@ class TelegramTars:
         bot: Bot,
         people: dict[str, int],
         make_brain: Callable[[], Brain],
-        conversations: ConversationLog | None = None,
+        conversations: ConversationLog,
         reminder_tools: ReminderTools | None = None,
         memory_s: float = 600.0,
         send_items: bool = True,
@@ -406,16 +432,23 @@ class TelegramTars:
         say: Callable[[str], None] | None = None,
         spotify_login: Callable[[Callable[[str], None]], str] | None = None,
         skill_clock=None,
+        keep_s: float = 0.0,
+        continuity: Continuity | None = None,
+        aloud: bool = True,
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
-        each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
+        each has their own conversation. `conversations`: where chats are kept for the web UI.
         `send_items`: also post what TARS sends at home for someone with a chat. `transcriber`: speech to text for
         voice messages (None: they're turned down). `env`: where the token is, for saying so when Telegram refuses it.
         `home`: the chat's house, for /home, /volume, /mute and /unmute. `say(text)`: has the assistant say it aloud
         at home, word for word, for /say; raises control.py's Unavailable or Refused when it can't.
         `spotify_login(send)`: signs in to Spotify for /spotify, telling them with `send` (spotify.page_login).
-        `skill_clock`: the skills due to run by themselves in their owner's chat (skills.Clock).
-        `clock`, `typing` and `sleep` are for the tests."""
+        `skill_clock`: the skills due to run by themselves in their owner's chat (skills.Clock). `aloud`: this home
+        has TARS's microphone and speaker ([audio] enabled); without, the commands about them say there are none, and
+        a reminder due aloud is posted to its person's chat instead.
+        `memory_s`: how long a chat is one conversation however quiet it's been. `keep_s`: after that, and up to this,
+        a message the `continuity` check says carries it on keeps it going; the conversation is read back from the
+        log after a restart too (0: never). `clock`, `typing` and `sleep` are for the tests."""
         self._bot, self._make_brain = bot, make_brain
         self._chats = {chat_id: Chat(name, chat_id, make_brain()) for name, chat_id in people.items()}
         self._by_person = {person_key(name): chat_id for name, chat_id in people.items()}
@@ -423,7 +456,8 @@ class TelegramTars:
         self._memory_s, self._send_items, self._clock, self._typing = memory_s, send_items, clock, typing
         self._sleep, self._transcriber, self._env, self._home, self._say = sleep, transcriber, env, home, say
         self._spotify_login = spotify_login
-        self._skill_clock = skill_clock
+        self._skill_clock, self._aloud = skill_clock, aloud
+        self._keep_s, self._continuity = keep_s, continuity
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
@@ -436,7 +470,7 @@ class TelegramTars:
         names = ", ".join(c.person for c in self._chats.values())
         print(f"TARS is on Telegram as @{me.get('username')}, for {names}.", flush=True)
         try:
-            self._bot.set_commands(COMMANDS)
+            self._bot.set_commands(COMMANDS if self._aloud else [c for c in COMMANDS if c["command"] not in AT_HOME])
         except TelegramError as e:  # only the menu: /new works without it
             print(f"(Telegram: couldn't set the commands menu: {e})")
         threading.Thread(target=self._deliver_forever, daemon=True, name="telegram-deliver").start()
@@ -478,6 +512,11 @@ class TelegramTars:
                 who = (message.get("from") or {}).get("first_name") or "someone"
                 print(f"(Telegram: {who} wrote from chat {chat_id}, which isn't in [telegram] people; not answered)")
             return
+        with usage.turn(chat.person, usage.TELEGRAM):  # what answering costs is counted for this chat's person
+            self._from(chat, chat_id, message)
+
+    def _from(self, chat: Chat, chat_id: int, message: dict) -> None:
+        """A message from one of the people TARS answers here."""
         text, voice = (message.get("text") or "").strip(), message.get("voice")
         if not text and not voice:
             self._send(chat_id, CANT_READ)
@@ -488,17 +527,21 @@ class TelegramTars:
             self._send(chat_id, off)
             return
         if voice:
-            self.listen(chat, voice)
+            if not self._over_the_cap(chat_id):
+                self.listen(chat, voice)
             return
         command = text.split()[0].split("@")[0]
         if command == "/start":
-            self._send(chat_id, HELLO.format(name=chat.person))
+            self._send(chat_id, (HELLO if self._aloud else HELLO_CHAT_ONLY).format(name=chat.person))
             return
         if command == "/new":
             self.start_over(chat)
             self._send(chat_id, FRESH)
             return
         rest = text[len(text.split()[0]) :].strip()
+        if not self._aloud and command.lstrip("/") in AT_HOME:
+            self._send(chat_id, NO_SPEAKER)
+            return
         if command == "/say":
             self._send(chat_id, self.say_aloud(chat, rest))
             return
@@ -508,7 +551,16 @@ class TelegramTars:
         if command == "/spotify":
             self.spotify(chat_id)
             return
-        self.answer(chat, text)
+        if not self._over_the_cap(chat_id):
+            self.answer(chat, text)
+
+    def _over_the_cap(self, chat_id: int) -> bool:
+        """Past the month's cap ([usage] monthly_cap_usd): said in the chat, and nothing paid for is started. The
+        commands done by code (/home, /volume, /mute) still work."""
+        if not usage.capped():
+            return False
+        self._send(chat_id, usage.CAPPED_LINE)
+        return True
 
     def spotify(self, chat_id: int) -> None:
         """/spotify: a sign-in from this chat, in a thread of its own, since it waits minutes for the page."""
@@ -529,6 +581,8 @@ class TelegramTars:
             return SAY_HOW
         if self._say is None:
             return NO_ALOUD
+        if usage.capped():  # said in a voice that's paid for
+            return usage.CAPPED_LINE
         try:
             self._say(text)
         except Unavailable, Refused:
@@ -546,7 +600,7 @@ class TelegramTars:
         if command == "/volume":
             return self.volume(chat, rest)
         if MIC.lower() not in self._home.devices:
-            return "I can't reach my microphone from here: the voice assistant has no event log to meet me at."
+            return "I can't reach my microphone from here."
         action = OFF if command == "/mute" else ON
         said = self._home.call({"device": MIC, "action": action}, Request(speaker=chat.person, by_chat=True))
         if said.startswith("done"):
@@ -622,6 +676,7 @@ class TelegramTars:
         """`recording`: the voice message `text` was written down from; None for a written message."""
         now = self._clock()
         print(f"{chat.person} (Telegram{', by voice' if recording is not None else ''}):  {text!r}", flush=True)
+        self._carry_on_or_not(chat, text, now)
         conversation = self._current_conversation(chat, now)
         if conversation is not None:
             self._log(self._conversations.add_person_turn, conversation, text, recording, speaker=chat.person, ts=now)
@@ -652,8 +707,8 @@ class TelegramTars:
         turn = self._log_turn(conversation, reply, brain)
         for item in sent:
             delivered = self._post_item(chat.chat_id, item)
-            if self._conversations:  # kept even without a conversation, like those sent by voice
-                self._log(self._conversations.add_item, conversation, turn, item, chat.person, delivered=delivered)
+            # kept even without a conversation, like those sent by voice
+            self._log(self._conversations.add_item, conversation, turn, item, chat.person, delivered=delivered)
         if written.acks is not None and self._tools:
             self._ack(written.acks, chat.person, changed={c.id for c in changes if c.id is not None})
         for change in changes:
@@ -668,10 +723,14 @@ class TelegramTars:
         now = self._clock()
         if self._tools:
             reminders = self._tools.reminders
+            if not self._aloud:
+                self._to_chats(reminders, now)
             for r in reminders.due(now, channel=TELEGRAM):
                 chat = self._chat_for(r["for_name"] or r["from_name"])
-                if chat is None:  # their chat was taken out of [telegram] people since: said at home instead
+                if chat is None and self._aloud:  # their chat was taken out of [telegram] people since: said at home
                     reminders.say_aloud(r["id"])
+                    continue
+                if chat is None:  # and there's no home to say it at: it waits, should their chat come back
                     continue
                 with _free(chat) as free:
                     if free:
@@ -696,7 +755,7 @@ class TelegramTars:
                     continue
                 with chat.busy:  # due now: after an exchange in progress, not the next round
                     self._run_skill(chat, due)
-        if self._conversations and self._send_items:
+        if self._send_items:
             for row in self._conversations.undelivered(since=now - ITEMS_WITHIN_S):
                 chat = self._chat_for(row["for_name"])
                 if chat is None:
@@ -704,6 +763,13 @@ class TelegramTars:
                 with _free(chat) as free:
                     if free:
                         self._post_sent_at_home(chat, row, now)
+
+    def _to_chats(self, reminders, now: float) -> None:
+        """A chat-only home ([audio] enabled = false): what's due aloud, set on the web page or by a skill, is posted to
+        the chat of whoever it's for (or set it) instead, as one due when they're out is (reminders.to_chat)."""
+        for r in reminders.due(now, channel=VOICE):
+            if self._chat_for(r["for_name"] or r["from_name"]) is not None:
+                reminders.to_chat(r["id"])
 
     def _run_skill(self, chat: Chat | None, due) -> None:
         """A skill whose time has come, in its owner's chat: a turn of its own, with its instructions as the request,
@@ -714,57 +780,62 @@ class TelegramTars:
         up and whoever asked is told (skills.Clock.settle). What the turn sent, and asked of the reminders, is made
         once its reply is kept, posted or handed over, as an ordinary chat turn's is once it's posted (_skill_did);
         never for one skipped, one that didn't happen, or one whose post failed."""
-        from .skills import Answers, happened, on_its_own
+        with usage.turn(due.skill.owner, usage.SKILL):
+            from .skills import Answers, happened, on_its_own
 
-        skill, clock = due.skill, self._skill_clock
-        # What the house answers, for whether a one-off happened; one a door's lock set off changes nothing in it
-        # (home.Request.by_door).
-        house = Answers()
-        if chat:
-            request = Request(speaker=chat.person, by_chat=True, changed=house, by_door=due.door)
-            brain, where = chat.brain, f"in {chat.person}'s chat"
-        else:  # not part of any chat's conversation
-            request = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
-            brain, where = self._make_brain(), "to be said aloud"
-        print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, {where})", flush=True)
-        try:
-            written = Reply(brain, on_its_own(skill, due.when, SKIP, due.why), request)
-            reply = tidy(written.read())
-        except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
-            print(f"(skill {skill.name} didn't run: {e!r})", flush=True)
-            if skill.once is not None:
-                clock.settle(due, house, e)
-            return
-        sent, changes = list(brain.sent), list(brain.changes)  # the brain forgets them with the turn
-        if skill.once is not None and happened(house)[0]:
-            written.drop()
-            print(f"(skill {skill.name}: not posted, since it didn't happen: {reply!r})", flush=True)
-            clock.settle(due, house)
-            return
-        if not reply:  # skipped, or nothing at all
-            written.drop()
-            print(f"(skill {skill.name}: nothing to do now)", flush=True)
-            clock.record(due, "")
-            return
-        if chat is None:
-            clock.hand_over(due, reply)
-            self._skill_did(None, request.speaker, None, None, sent, changes)
-            return
-        try:
-            self._send(chat.chat_id, reply, tries=SEND_TRIES)
-        except TelegramError as e:
-            written.drop()
-            print(f"(skill {skill.name}: couldn't post it: {e})", flush=True)
-            if skill.once is not None:  # done all the same: posted with the reminders, once Telegram takes it
+            skill, clock = due.skill, self._skill_clock
+            # What the house answers, for whether a one-off happened; one a door's lock set off changes nothing in it
+            # (home.Request.by_door).
+            house = Answers()
+            if chat:
+                request = Request(speaker=chat.person, by_chat=True, changed=house, by_door=due.door)
+                brain, where = chat.brain, f"in {chat.person}'s chat"
+            else:  # not part of any chat's conversation
+                request = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
+                brain, where = self._make_brain(), "to be said aloud"
+            print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, {where})", flush=True)
+            if chat:
+                self._new_if_quiet(chat, self._clock())
+            try:
+                if usage.capped():
+                    raise usage.Capped()
+                written = Reply(brain, on_its_own(skill, due.when, SKIP, due.why), request)
+                reply = tidy(written.read())
+            except Exception as e:  # noqa: BLE001 - a skill that can't run waits for its next time
+                print(f"(skill {skill.name} didn't run: {e!r})", flush=True)
+                if skill.once is not None:
+                    clock.settle(due, house, e)
+                return
+            sent, changes = list(brain.sent), list(brain.changes)  # the brain forgets them with the turn
+            if skill.once is not None and happened(house)[0]:
+                written.drop()
+                print(f"(skill {skill.name}: not posted, since it didn't happen: {reply!r})", flush=True)
+                clock.settle(due, house)
+                return
+            if not reply:  # skipped, or nothing at all
+                written.drop()
+                print(f"(skill {skill.name}: nothing to do now)", flush=True)
+                clock.record(due, "")
+                return
+            if chat is None:
                 clock.hand_over(due, reply)
-                self._skill_did(chat, chat.person, None, None, sent, changes, post=False)
-            return
-        clock.record(due, reply)
-        now = self._clock()
-        turn = None
-        if (conversation := self._current_conversation(chat, now)) is not None:
-            turn = self._log(self._conversations.add_tars_turn, conversation, reply, ts=now)
-        self._skill_did(chat, chat.person, conversation, turn, sent, changes)
+                self._skill_did(None, request.speaker, None, None, sent, changes)
+                return
+            try:
+                self._send(chat.chat_id, reply, tries=SEND_TRIES)
+            except TelegramError as e:
+                written.drop()
+                print(f"(skill {skill.name}: couldn't post it: {e})", flush=True)
+                if skill.once is not None:  # done all the same: posted with the reminders, once Telegram takes it
+                    clock.hand_over(due, reply)
+                    self._skill_did(chat, chat.person, None, None, sent, changes, post=False)
+                return
+            clock.record(due, reply)
+            now = self._clock()
+            turn = None
+            if (conversation := self._current_conversation(chat, now)) is not None:
+                turn = self._log(self._conversations.add_tars_turn, conversation, reply, ts=now)
+            self._skill_did(chat, chat.person, conversation, turn, sent, changes)
 
     def _skill_did(
         self,
@@ -782,9 +853,9 @@ class TelegramTars:
         `person` (None: the household's), as by voice."""
         for item in sent:
             delivered = self._post_item(chat.chat_id, item) if chat and post else None
-            if self._conversations:  # kept even without a conversation, like those sent by voice
-                item = item if person else dataclasses.replace(item, scope=HOUSEHOLD)
-                self._log(self._conversations.add_item, conversation, turn, item, person, delivered=delivered)
+            # kept even without a conversation, like those sent by voice
+            item = item if person else dataclasses.replace(item, scope=HOUSEHOLD)
+            self._log(self._conversations.add_item, conversation, turn, item, person, delivered=delivered)
         for change in changes:
             if chat:
                 self._apply(change, chat, conversation)
@@ -946,8 +1017,7 @@ class TelegramTars:
         """The chat's conversation for the web UI: the same one until it goes quiet for as long as the brain
         remembers, or someone deletes it there. Call with the lock held."""
         log = self._conversations
-        if log is None:
-            return None
+        self._restore(chat)
         current = chat.conversation
         if current is not None and now - chat.last_at <= self._memory_s and self._log(log.exists, current):
             return current
@@ -955,6 +1025,72 @@ class TelegramTars:
             self._log(log.end, current, ts=chat.last_at or now)
         chat.conversation = self._log(log.start, None, ts=now, via=TELEGRAM)
         return chat.conversation
+
+    def _carry_on_or_not(self, chat: Chat, text: str, now: float) -> None:
+        """Before answering `text`: after [telegram] memory_minutes of quiet, the chat's conversation goes on only if
+        the continuity check says the message carries it on, within [telegram] keep_days; otherwise the brain starts
+        over and the next turn starts a new conversation."""
+        with self._lock:
+            self._restore(chat)
+            current, quiet = chat.conversation, now - chat.last_at
+            if not chat.last_at or quiet <= self._memory_s:
+                return
+        checks = current is not None and quiet <= self._keep_s and self._continuity is not None
+        turns = self._turns(current, chat.person) if checks else []
+        carries = bool(turns) and self._continuity.continues(turns, text, quiet, chat.person)
+        with self._lock:
+            if chat.conversation != current:  # something else moved it on meanwhile
+                return
+            if carries:
+                chat.last_at = now
+            else:
+                self._start_afresh(chat)
+
+    def _new_if_quiet(self, chat: Chat, now: float) -> None:
+        """What TARS posts by itself after [telegram] memory_minutes of quiet starts a new conversation."""
+        with self._lock:
+            self._restore(chat)
+            if chat.last_at and now - chat.last_at > self._memory_s:
+                self._start_afresh(chat)
+
+    def _start_afresh(self, chat: Chat) -> None:
+        """The brain forgets the chat, and the next turn starts a new conversation. Call with the lock held."""
+        if chat.conversation is not None and self._conversations is not None:
+            self._log(self._conversations.end, chat.conversation, ts=chat.last_at or self._clock())
+        chat.conversation, chat.last_at = None, 0.0
+        chat.brain.start_over()
+
+    def _restore(self, chat: Chat) -> None:
+        """Once after a start: the chat's last conversation read back from the log into its brain, if it was within
+        [telegram] keep_days, so a restart (an update) doesn't lose the thread. Call with the lock held."""
+        if chat.restored:
+            return
+        chat.restored = True
+        log = self._conversations
+        if log is None or not self._keep_s:
+            return
+        conversation = self._log(log.latest_with, chat.person, TELEGRAM)
+        turns = self._log(log.turns_of, conversation) if conversation is not None else None
+        if not turns or self._clock() - turns[-1]["ts"] > self._keep_s:
+            return
+        asked = None
+        for turn in turns:
+            if turn["role"] == ROLE_PERSON:
+                asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if turn['spoken'] else ''}{turn['text'] or ''}"
+            elif turn["failed_at"] or not turn["text"]:
+                asked = None  # unanswered: as the brain forgets a failed turn
+            elif asked is not None:
+                chat.brain.remember_exchange(asked, turn["text"])
+                asked = None
+            else:
+                chat.brain.remember_said(turn["text"])
+        chat.conversation, chat.last_at = conversation, turns[-1]["ts"]
+        print(f"(Telegram: {chat.person}'s conversation from {_clock(chat.last_at)} read back)", flush=True)
+
+    def _turns(self, conversation: int, person: str) -> list[tuple[str, str]]:
+        """A conversation's turns as the continuity check reads them: (who, text), oldest first."""
+        turns = self._log(self._conversations.turns_of, conversation) if self._conversations else None
+        return [(person if t["role"] == ROLE_PERSON else "TARS", t["text"]) for t in turns or [] if t["text"]]
 
     def _keep_unanswered(self, chat: Chat, recording: np.ndarray | None, said: str = "", **failure) -> None:
         """A voice message that got no answer, kept with its recording if there is one, and what TARS said back or
@@ -975,7 +1111,7 @@ class TelegramTars:
     def start_over(self, chat: Chat) -> None:
         """/new: the brain forgets the chat so far, and the next message starts a new conversation on the web UI."""
         with chat.busy, self._lock:
-            if chat.conversation is not None and self._conversations is not None:
+            if chat.conversation is not None:
                 self._log(self._conversations.end, chat.conversation, ts=chat.last_at or self._clock())
             chat.conversation, chat.last_at = None, 0.0
             chat.brain.start_over()
@@ -998,6 +1134,7 @@ class TelegramTars:
     def _said(self, chat: Chat, text: str, now: float) -> None:
         """TARS wrote first (a reminder, or how one said at home went): part of the brain's conversation, so "snooze
         that" right after knows what "that" is, and kept in the chat's conversation, or one of its own."""
+        self._new_if_quiet(chat, now)
         chat.brain.remember_said(text)
         if (conversation := self._current_conversation(chat, now)) is not None:
             self._log(self._conversations.add_tars_turn, conversation, text, ts=now)
@@ -1009,6 +1146,7 @@ class TelegramTars:
             self._conversations.add_tars_turn,
             conversation,
             text,
+            ts=self._clock(),
             answered_by=brain.answered_by,
             quick_service=brain.quick_service,
             **failure,

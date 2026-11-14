@@ -10,7 +10,8 @@
    ?answered=<event id>:real|not_real: a wake answered on this page, before Refresh; with &refreshed=1, after it
    ?form=minutes|time|back|error: the New reminder form, filled in
    ?toast=recluster|renamed     ?recluster=running     ?health=trouble: the Status page with everything wrong
-   ?failed=items,reminders...: those parts of the load fail (store/core.ts LoadPart) */
+   ?failed=items,reminders...: those parts of the load fail (store/core.ts LoadPart)
+   ?chatonly=1: a chat-only home ([audio] enabled = false): no pages about hearing */
 import { PARAMS, idParam, oneOf } from "./params";
 import type { LoadPart } from "./store/core";
 
@@ -25,6 +26,7 @@ const [answered, answer] = (PARAMS.get("answered") || "").split(":");
 export const DEMO_LINK = {
   data: PARAMS.get("demo") || "",
   remindersOff: PARAMS.get("reminders") === "off",
+  chatOnly: PARAMS.get("chatonly") === "1",
   state: oneOf(PARAMS.get("state"), ["loading", "error"] as const),
   seenAll: PARAMS.get("seen") === "all",
   reviewDone: PARAMS.get("review") === "done",

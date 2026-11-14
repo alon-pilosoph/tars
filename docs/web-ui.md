@@ -23,6 +23,10 @@ palette).
 On a phone the pages are tabs along the bottom, Voices, Models and Status sit under the ⋯ at the top, and menus and
 dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
 
+In a chat-only home (`[audio] enabled = false`: no microphone or speaker, TARS only on Telegram and here), the pages
+about hearing aren't there: no Review, Voices or Models, and a link to one opens Home. Nothing is recorded there, so
+conversations have no recordings to play, and the Status page doesn't expect the voice assistant.
+
 | Home | Review, on a phone |
 |---|---|
 | ![Home](screenshots/home-desktop.png) | ![Review on a phone](screenshots/review-phone.png) |
@@ -31,6 +35,8 @@ Every page, on desktop and phone, is in [`screenshots/`](screenshots/) (the demo
 `npm run screenshots`).
 
 ## Recording sessions
+
+They record audio, so not with `[learning] log_events = false`, which says not to.
 
 A page of its own, opened from a link TARS sends, that has one person say a list of phrases into TARS's own
 speakerphone, one at a time: their voice, so speaker ID knows them from the start, or the house's commands, for
@@ -172,6 +178,11 @@ in the background.
 `<events folder>/backup.json`: files in the bucket and only there, and when the last good pass was (flagged after an
 hour), or why the last one failed; and whether the timer is running, where there's systemd. The bucket itself isn't
 asked, so the page costs no S3 request. A `backup.json` that can't be read is one failing line, not a page that fails.
+
+**What the paid services cost this month.** As `voice-assistant --usage` says it ([usage](usage.md)): the month's
+estimated cost so far, against `[usage] monthly_cap_usd` when there's one (flagged from 80%), then by service and model
+and by person, with how many calls had no price or were cut off before the provider said what they used, and the date
+`prices.toml`'s prices were checked. It's read from the event database when the page asks, and asks no provider.
 
 **The Pi says if it's short of power or too hot.** `vcgencmd get_throttled` reads the firmware's flags (under-voltage,
 slowed down, throttled, at the soft temperature limit, each now and since it started) through `/dev/vcio`, so the web

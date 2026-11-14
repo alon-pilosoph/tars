@@ -45,6 +45,7 @@ QUICK_PROVIDERS = (
 
 
 WEB_PORT = 8080  # the web UI's, unless --port says otherwise
+SPRITE_NAME = r"[a-z0-9][a-z0-9-]{0,62}"  # a Fly Sprite's name ([browser] sprite): it goes into an ssh command line
 
 
 GREETS = ("pause", "always", "never")  # [recorder] greet
@@ -52,6 +53,9 @@ GREETS = ("pause", "always", "never")  # [recorder] greet
 
 @dataclass
 class AudioConfig:
+    # TARS's own microphone and speaker at home: the voice assistant. Off, this home is chat-only: TARS runs as its
+    # Telegram and web UI processes, a reminder due aloud goes to its person's chat, and nothing listens or speaks.
+    enabled: bool = True
     input_device: str = ""
     output_device: str = ""
     playback_prebuffer_s: float = 0.3
@@ -115,7 +119,7 @@ class LLMConfig:
     # models and the web search. Empty = not said (OpenAI's model then guesses, or asks for a city).
     home_city: str = ""
     home_country: str = ""  # a two-letter country code, like IL or GB
-    # Let it send links, notes, lists and text files to the web UI (needs [learning] log_events).
+    # Let it send links, notes, lists and text files to the web UI.
     send: bool = True
     # The quick model (Groq or Cerebras) sets reminders and sends notes, lists and files itself, with its own tools,
     # instead of handing those turns to `model`. Off until tools/capability_bench.py shows it gets them right.
@@ -150,8 +154,9 @@ class SpeakerConfig:
 
 @dataclass
 class LearningConfig:
-    # Keep every wake, near-miss, conversation and sent item (voice_data/events/) for the web UI and training.
-    # Off also turns off sending ([llm] send): sent items live there.
+    # Record every wake and near-miss, with its audio, and what was said by voice, as audio (voice_data/events/), for
+    # the web UI and training. Off, none of that is kept; the event database itself always is (conversations as text,
+    # reminders, sent items, skills, who's home), and so is everything that runs on it.
     log_events: bool = True
     folder: str = "voice_data/events"
     # Audio of events nothing labels (lonely near-misses, wakes nobody spoke after) is dropped after this many days.
@@ -178,7 +183,7 @@ class WebConfig:
 
 @dataclass
 class RemindersConfig:
-    # Timers, reminders and messages, set by voice or on the web UI (docs/reminders.md). Needs [learning] log_events.
+    # Timers, reminders and messages, set by voice or on the web UI (docs/reminders.md).
     enabled: bool = True
     # A reminder or message that waits for an acknowledgement is said again this often, at most this many times, then
     # it's missed.
@@ -198,9 +203,13 @@ class TelegramConfig:
     people: dict[str, int] = field(default_factory=dict)
     # Things TARS sends at home for someone here ("send me the recipe") also come to their chat.
     send_items: bool = True
-    # A chat is one conversation until it's been quiet this long (or someone sends /new); then the next message
-    # starts a new one. Longer than [llm] memory_minutes, since a written reply often comes back much later.
+    # A chat is one conversation until it's been quiet this long (or someone sends /new). Longer than [llm]
+    # memory_minutes, since a written reply often comes back much later.
     memory_minutes: float = 60.0
+    # After that, up to this many days, a quick model reads the end of the conversation and the new message, and says
+    # whether it carries it on or starts something new (docs/telegram.md#one-conversation-or-a-new-one). A chat's
+    # conversation is also read back after a restart, within this. 0 = a new one once memory_minutes have passed.
+    keep_days: float = 7.0
     # Who answers a chat: "openai" ([llm] model, which has web search and sends links; Qwen if there's no OpenAI key)
     # or "quick" (Qwen first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing.
     brain: str = "openai"
@@ -285,7 +294,7 @@ _SECRET = re.compile(r"[A-Z][A-Z0-9_]*")
 @dataclass
 class PresenceConfig:
     # Who's home, from whose phone is on the home Wi-Fi, as the routers see it (docs/presence.md). Runs in the
-    # assistant; needs [learning] log_events, where it's kept for the other processes.
+    # assistant, and kept in the event log for the other processes.
     enabled: bool = False
     # Each person, and their phone as the routers know it: hardware addresses, or names a router lists it under. A
     # door lock's key for them may be listed too: "key:<the app's auth id>" or "code:<a keypad code's id>"; keys
@@ -345,7 +354,7 @@ EFFORTS = ("minimal", "low", "medium", "high", "xhigh")  # how hard an OpenAI mo
 class BrowserConfig:
     # TARS's own web browser, for errands asked in a Telegram chat or aloud: ordering, booking, looking something up
     # on a site (docs/browser.md). The Telegram service runs them, so it needs [telegram]; asked aloud, they're queued
-    # in the event database ([learning] log_events). And the browser extra and OPENAI_API_KEY.
+    # in the event database. And the browser extra and OPENAI_API_KEY.
     enabled: bool = False
     # The model that works the browser, and how hard it thinks: Luna at high effort did every hard task in the evals.
     model: str = "gpt-6-luna"
@@ -359,6 +368,10 @@ class BrowserConfig:
     # home network or Tailscale ("": its Tailscale address if it has one, else its address at home).
     login_host: str = ""
     login_port: int = 8091
+    # The Fly Sprite the browser runs on; must be set on the Pi. Its pages still load from home: every connection comes
+    # back through the link to this machine. Set up with deploy/browser-host/setup.sh. "": Chrome on this machine, for
+    # developing the browser on a Mac.
+    sprite: str = ""
 
 
 @dataclass
@@ -375,6 +388,13 @@ class HouseholdConfig:
     # Empty = nobody in particular: wishes are only kept, anyone TARS knows marks them done, and nobody changes the
     # setup.
     maintainers: list[str] = field(default_factory=list)
+
+
+@dataclass
+class UsageConfig:
+    # What TARS uses of the paid services is counted (docs/usage.md). A cap on a month's estimated cost, in dollars:
+    # the maintainers are told at 80% and when it's reached, and past it no turn calls a paid service. 0 = none.
+    monthly_cap_usd: float = 0.0
 
 
 @dataclass
@@ -424,6 +444,7 @@ class Config:
     household: HouseholdConfig
     updates: UpdatesConfig
     wishes: WishesConfig
+    usage: UsageConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
@@ -614,6 +635,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[telegram] people needs a name for each chat id")
     if cfg.telegram.memory_minutes <= 0:
         problems.append("[telegram] memory_minutes must be more than 0")
+    if cfg.telegram.keep_days < 0:
+        problems.append("[telegram] keep_days must be 0 or more")
     if cfg.telegram.brain not in ("openai", "quick"):
         problems.append(f"[telegram] brain must be openai or quick, not {cfg.telegram.brain!r}")
     if len(set(cfg.telegram.people.values())) < len(cfg.telegram.people):
@@ -629,6 +652,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[browser] model must be an OpenAI model: errands read sign-in emails and site notes with it")
     if not 1024 <= w.login_port <= 65535:
         problems.append("[browser] login_port must be between 1024 and 65535")
+    if w.sprite and not re.fullmatch(SPRITE_NAME, w.sprite):
+        problems.append(f"[browser] sprite must be a Sprite's name (lower case, digits, dashes), not {w.sprite!r}")
     b = cfg.backup
     if b.enabled and not b.bucket:
         problems.append("[backup] bucket must name the S3 bucket to back up to")
@@ -646,12 +671,19 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
+    if cfg.usage.monthly_cap_usd < 0:
+        problems.append("[usage] monthly_cap_usd is dollars a month, or 0 for no cap")
     if cfg.home.local_first and not cfg.home.commands_on_pi:
         problems.append("[home] local_first hears house commands first: it needs commands_on_pi = true")
     if bool(cfg.web.tls_cert) != bool(cfg.web.tls_key):
         problems.append("[web] tls_cert and tls_key go together: the certificate and its key")
     if any("sensor" in d for d in cfg.presence.doors) and not cfg.home.url:
         problems.append("[[presence.doors]] sensor is read from Home Assistant: set [home] url")
+    if not cfg.audio.enabled:
+        heard = {"[audio] echo_cancel": cfg.audio.echo_cancel, "[home] own_speaker": cfg.home.own_speaker,
+                 "[home] commands_on_pi": cfg.home.commands_on_pi, "[home] remote": bool(cfg.home.remote)}  # fmt: skip
+        problems += [f"{name} is for TARS's microphone and speaker, which [audio] enabled = false says this home has "
+                     "none of" for name, on in heard.items() if on]  # fmt: skip
     return problems + _home_problems(cfg.home) + _presence_problems(cfg.presence) + _wishes_problems(cfg)
 
 

@@ -58,7 +58,6 @@ MODELS_S = 300.0  # long enough to download every local model on a slow line, th
 READY = "TARS is ready."
 STALE_BACKUP_S = 3600.0  # the timer runs a pass every 15 minutes: an hour without a good one is worth a look
 BACKUP_CHECK_S = 20.0  # S3's client retries a bucket that doesn't answer; --check never waits longer than this
-DISPLAY_UNIT = "voice-assistant-display"  # the browser's virtual screen, on a machine with none (the Pi)
 OVERDUE_S = 3 * 60.0  # a reminder Telegram should have posted this long ago is waiting for it
 PRESENCE = "Who's home"
 ROUTER_FIX = "check its address, user, and its password in .env (the name under secret); docs/presence.md"
@@ -440,12 +439,54 @@ def browser(cfg: Config) -> Result:
         from .browser.chrome import executable
     except ImportError:
         return Result("Browser", FAIL, 'no optional extra "browser"', "uv sync --all-extras")
+    orders = "orders once approved" if cfg.browser.really_order else "approved orders are a dry run"
+    if cfg.browser.sprite:
+        return sprite_browser(cfg, orders)
+    if platform.system() != "Darwin":  # the Pi: a browser here is for developing it, on a desktop
+        fix = "deploy/browser-host/setup.sh <name>, then [browser] sprite (docs/browser.md#on-a-sprite)"
+        return Result("Browser", FAIL, "it runs on a Fly Sprite, and [browser] sprite isn't set", fix)
     try:
         found = executable()
     except RuntimeError:
         return Result("Browser", FAIL, "no Chrome or Chromium", "sudo apt install chromium (install-pi.sh does)")
-    orders = "orders once approved" if cfg.browser.really_order else "approved orders are a dry run"
     return Result("Browser", OK, f"{cfg.browser.model} at {cfg.browser.effort} effort, in {found}; {orders}")
+
+
+def sprite_browser(cfg: Config, orders: str, reach=None) -> Result:
+    """The browser on a Fly Sprite ([browser] sprite): the link opens and the control service there answers. Wakes
+    the Sprite for a moment."""
+    from .browser.sprite import SpriteUnreachable, reachable
+
+    sprite = cfg.browser.sprite
+    try:
+        (reach or reachable)(sprite)
+    except SpriteUnreachable as e:
+        return Result("Browser", FAIL, f"on the Sprite {sprite}: {e}", f"deploy/browser-host/setup.sh {sprite}")
+    said = f"{cfg.browser.model} at {cfg.browser.effort} effort, on the Sprite {sprite}; {orders}"
+    return Result("Browser", OK, said)
+
+
+def usage_cap(cfg: Config, folder: Path, now: float | None = None) -> Result:
+    """This month's estimated cost against [usage] monthly_cap_usd (docs/usage.md): a warning from 80% of it.
+    `folder`: the event log's."""
+    from .store import DB_FILE
+    from .usage import WARN_SHARE, month
+
+    name, cap = "Usage this month", cfg.usage.monthly_cap_usd
+    if not (folder / DB_FILE).exists():
+        return Result(name, SKIP, "nothing counted yet")
+    from .events import EventLog
+
+    m = month(EventLog(folder).store, now=now)
+    if not cap:
+        return Result(name, SKIP, f"${m.cost:,.2f} so far, with no cap ([usage] monthly_cap_usd)")
+    said = f"${m.cost:,.2f} of the ${cap:,.2f} cap ({m.cost / cap:.0%})"
+    if m.cost >= cap:
+        off = f"{said}: the paid services are off until the month ends"
+        return Result(name, WARN, off, "raise [usage] monthly_cap_usd")
+    if m.cost / cap * 100 >= WARN_SHARE:
+        return Result(name, WARN, f"{said}: near it", "voice-assistant --usage says what it went on")
+    return Result(name, OK, said)
 
 
 def errands_waiting(cfg: Config, folder: Path, now: float | None = None) -> Result:
@@ -818,8 +859,6 @@ def routers_last(cfg: Config, folder: Path, now: float | None = None) -> Result 
 
     if not cfg.presence.enabled:
         return Result(PRESENCE, SKIP, "off ([presence] enabled)")
-    if not cfg.learning.log_events:
-        return Result(PRESENCE, FAIL, "it's kept in the event log", "set [learning] log_events = true")
     if not (folder / DB_FILE).exists():
         return Result(PRESENCE, WARN, "the routers haven't been asked yet", "is the assistant running? (it asks them)")
     from .events import EventLog
@@ -1072,24 +1111,41 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
             "check the network and run it again",
         )
 
+    aloud = cfg.audio.enabled  # chat-only ([audio] enabled = false): nothing to hear with or speak from
+    no_audio = "chat-only ([audio] enabled = false): no microphone, speaker or wake word to check"
+    chat_only: list[tuple[str, Check]] = [("Audio", lambda: Result("Audio", SKIP, no_audio))]
     checks: list[tuple[str, Check]] = [
         ("API keys", services.keys),
-        ("Input device", lambda: audio_device("input")),
-        ("Output device", lambda: audio_device("output")),
-        ("Local models", models),
-        ("Echo cancellation", echo),
+        *(
+            [
+                ("Input device", lambda: audio_device("input")),
+                ("Output device", lambda: audio_device("output")),
+                ("Local models", models),
+                ("Echo cancellation", echo),
+            ]
+            if aloud
+            else chat_only
+        ),
         ("Voiceprints", speakers),
         *services.keyed,
         ("Telegram", services.telegram),
         ("Telegram reminders", services.telegram_reminders),
-        ("Voice", speaking),
-        ("Microphone", (lambda: Result("Microphone", SKIP, "not listened to (a silent check)")) if silent else listen),
+        *(
+            [
+                ("Voice", speaking),
+                (
+                    "Microphone",
+                    (lambda: Result("Microphone", SKIP, "not listened to (a silent check)")) if silent else listen,
+                ),
+            ]
+            if aloud
+            else []
+        ),
         ("Storage", lambda: disk(root / cfg.learning.folder)),
         ("Web UI", lambda: web(functools.partial(http_status, verify=False), web_port(), cfg)),
         ("Home Assistant", hass_check),
         ("The house", devices),
-        ("TARS's speaker", speaker_volume),
-        (BUTTONS, lambda: buttons(cfg)),
+        *([("TARS's speaker", speaker_volume), (BUTTONS, lambda: buttons(cfg))] if aloud else []),
         (PRESENCE, lambda: within(60, PRESENCE, lambda: routers_now(cfg, secret), "a router didn't answer", "")),
         ("Backup", lambda: backup(cfg, lambda: wiring.make_backup(cfg, root))),
         (
@@ -1100,9 +1156,9 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ),
         ("Browser", lambda: browser(cfg)),
         ("Errands", lambda: errands_waiting(cfg, root / cfg.learning.folder)),
+        ("Usage this month", lambda: usage_cap(cfg, root / cfg.learning.folder)),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),
-        *([(DISPLAY_UNIT, lambda: systemd(DISPLAY_UNIT, systemd_state))] if cfg.browser.enabled else []),
     ]
     print("Checking TARS...\n", flush=True)
     results = run(checks)
