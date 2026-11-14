@@ -346,3 +346,10 @@ def test_keys_that_cant_run_tars_show_as_one_failure_not_a_page_of_nothing(tmp_p
     found, _ = Services(lambda: service_checks(cfg, tmp_path).listed(), lambda url: {}).get()
     assert [(s["name"], s["status"]) for s in found] == [("API keys", FAIL)]
     assert "OPENAI_API_KEY" in found[0]["detail"] and ".env" in found[0]["fix"]
+
+
+def test_a_chat_only_home_expects_no_voice_assistant(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        "[audio]\nenabled = false\n[telegram]\nenabled = true\npeople = { Alon = 1 }\n"
+    )
+    assert expected(load_config(tmp_path / "config.toml", local=False)) == ["web", "telegram"]

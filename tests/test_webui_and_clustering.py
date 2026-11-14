@@ -102,7 +102,7 @@ def test_naming_a_voice_that_isnt_a_person_keeps_it_that_way(log, client):
 
 def test_status_says_what_the_page_can_offer(client):
     status = client.get("/api/status").json()
-    assert status == {"clustering": False, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": False}
+    assert status == {"aloud": True, "clustering": False, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": False}
 
 
 def test_each_voice_comes_with_its_newest_requests(log, client):
@@ -336,3 +336,8 @@ def test_agree_with_all_answers_each_with_tars_s_own_guess_never_one_answered_or
     assert client.post("/api/events/agree", json={"ids": []}).json() == {REAL: 0, NOT_REAL: 0}
     too_many = client.post("/api/events/agree", json={"ids": list(range(10_000))})
     assert too_many.status_code == 422
+
+
+def test_a_chat_only_home_tells_the_page_to_hide_what_is_about_hearing(log):
+    assert TestClient(create_app(log)).get("/api/status").json()["aloud"] is True
+    assert TestClient(create_app(log, aloud=False)).get("/api/status").json()["aloud"] is False

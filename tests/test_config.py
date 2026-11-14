@@ -225,3 +225,23 @@ def test_a_mistake_in_the_local_file_says_so(tmp_path):
 def test_a_remote_s_codes_are_written_as_the_receiver_reads_them(tmp_path):
     cfg = config(tmp_path, "[home]\nremote = { volume_up = 0x80, volume_down = 0x81 }")
     assert cfg.home.remote == {"volume_up": 0x80, "volume_down": 0x81} and cfg.home.volume_keys is True
+
+
+def test_a_chat_only_home_loads(tmp_path):
+    assert config(tmp_path, "[audio]\nenabled = false\n").audio.enabled is False
+
+
+@pytest.mark.parametrize(
+    "line", ["[audio]\nenabled = false\necho_cancel = true", "[audio]\nenabled = false\n[home]\nown_speaker = true",
+             "[audio]\nenabled = false\n[home]\ncommands_on_pi = true"],
+)  # fmt: skip
+def test_a_chat_only_home_refuses_settings_for_a_microphone_or_speaker(tmp_path, line):
+    with pytest.raises(ConfigError, match="enabled = false"):
+        config(tmp_path, line + "\n")
+
+
+def test_the_voice_assistant_wont_start_in_a_chat_only_home(tmp_path):
+    from voice_assistant import entrypoints
+
+    with pytest.raises(ConfigError, match="chat-only"):
+        entrypoints.run(config(tmp_path, "[audio]\nenabled = false\n"), False, tmp_path)

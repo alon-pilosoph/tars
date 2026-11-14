@@ -220,8 +220,11 @@ def create_app(
     ask: Callable[..., dict] | None = None,
     finished: Callable[[dict], None] | None = None,
     accounts=None,
+    aloud: bool = True,
 ) -> FastAPI:
-    """`recluster` regroups the voices (see clustering.regroup); None hides the button.
+    """`aloud`: this home has TARS's microphone and speaker ([audio] enabled); without, the page hides what's about
+    hearing (Review, Voices, Models). `recluster` regroups the voices (see clustering.regroup); None hides the
+    button.
     `pairs`: the wake models TARS listens with, for the Models page (versions.pair_source).
     `allowed_hosts`: more names this machine is reached by, besides the ones allowed_host always accepts.
     `reminders`: TARS's timers, reminders and messages; None when they're off. `voice_names`: the names TARS knows
@@ -628,7 +631,12 @@ def create_app(
 
     @app.get("/api/status")
     def status():
-        return {"clustering": recluster is not None, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": health is not None}
+        return {
+            "aloud": aloud,
+            "clustering": recluster is not None,
+            "enroll_at": MIN_REQUESTS_TO_ENROLL,
+            "health": health is not None,
+        }
 
     @app.get("/api/health")
     def health_now():

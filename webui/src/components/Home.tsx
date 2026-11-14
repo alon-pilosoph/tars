@@ -82,7 +82,7 @@ export function Home() {
           )}
         </>
       )}
-      {toReview > 0 && (
+      {toReview > 0 && s.status.aloud && (
         <div className="nudge">
           {`${toReview} wake${toReview === 1 ? "" : "s"} TARS wasn't sure about. `}
           <a
