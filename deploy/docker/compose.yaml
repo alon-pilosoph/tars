@@ -3,7 +3,7 @@
 # start, where TARS keeps everything).
 #
 #   docker compose up -d --build        # from this folder; then: docker compose logs -f telegram
-#   docker compose run --rm telegram --check
+#   docker compose exec web voice-assistant --check
 #
 # The web UI is on http://127.0.0.1:8080 on this machine only. To reach it from elsewhere, put it behind a proxy with
 # HTTPS and set [web] allowed_hosts and sign_in (docs/web-ui.md#signing-in), rather than opening the port.

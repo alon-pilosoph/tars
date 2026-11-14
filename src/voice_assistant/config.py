@@ -484,14 +484,17 @@ def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
     """config.toml's setup, cut down to the services there are API keys for (`keys`, the names set in .env): (the setup
     that runs, a line for each thing done differently). Every paid service is optional, as long as each stage has one:
     a missing quick provider is skipped, Deepgram's stages fall to OpenAI's and OpenAI's to Deepgram's, and without
-    OpenAI Qwen answers everything itself."""
+    OpenAI Qwen answers everything itself. A chat-only home ([audio] enabled = false) isn't told about what only the
+    voice uses: the voice, live speech to text, and Qwen when chats go to OpenAI."""
     stt, tts, llm, notes = cfg.stt, cfg.tts, cfg.llm, []
+    aloud = cfg.audio.enabled
+    qwen_used = aloud or cfg.telegram.brain != "openai" or OPENAI_KEY not in keys
     openai, deepgram = OPENAI_KEY in keys, DEEPGRAM_KEY in keys
     if not (openai or deepgram):
         raise ConfigError(f"Hearing and speaking need {DEEPGRAM_KEY} or {OPENAI_KEY} in .env (see .env.example).")
     if stt.provider != "openai" and not deepgram:
         stt = dataclasses.replace(stt, provider="openai", model=OPENAI_STT_MODEL)
-        notes.append(f"no {DEEPGRAM_KEY}: OpenAI transcribes, once you've stopped talking")
+        notes += [f"no {DEEPGRAM_KEY}: OpenAI transcribes, once you've stopped talking"] * aloud
     elif stt.provider == "openai" and not openai:
         english = stt.language.lower().startswith("en")
         stt = dataclasses.replace(stt, provider="flux" if english else "deepgram", model=DEEPGRAM_STT_MODEL)
@@ -499,20 +502,20 @@ def with_keys(cfg: Config, keys: set[str]) -> tuple[Config, list[str]]:
     if tts.provider == "cartesia" and CARTESIA_KEY not in keys:
         if deepgram:
             tts = dataclasses.replace(tts, provider="deepgram", model=DEEPGRAM_VOICE)
-            notes.append(f"no {CARTESIA_KEY}: Deepgram's {DEEPGRAM_VOICE} voice speaks")
+            notes += [f"no {CARTESIA_KEY}: Deepgram's {DEEPGRAM_VOICE} voice speaks"] * aloud
         else:
             tts = dataclasses.replace(tts, provider="openai", model=TTSConfig.model)
-            notes.append(f"no {CARTESIA_KEY}: OpenAI's {tts.voice} voice speaks")
+            notes += [f"no {CARTESIA_KEY}: OpenAI's {tts.voice} voice speaks"] * aloud
     elif tts.provider == "deepgram" and not deepgram:
         tts = dataclasses.replace(tts, provider="openai", model=TTSConfig.model)
-        notes.append(f"no {DEEPGRAM_KEY}: OpenAI's {tts.voice} voice speaks")
+        notes += [f"no {DEEPGRAM_KEY}: OpenAI's {tts.voice} voice speaks"] * aloud
     elif tts.provider == "openai" and not openai:
         tts = dataclasses.replace(tts, provider="deepgram", model=DEEPGRAM_VOICE)
-        notes.append(f"no {OPENAI_KEY}: Deepgram's {DEEPGRAM_VOICE} voice speaks")
+        notes += [f"no {OPENAI_KEY}: Deepgram's {DEEPGRAM_VOICE} voice speaks"] * aloud
     for provider in QUICK_PROVIDERS:
         if getattr(llm, provider.setting) and provider.key_name not in keys:
             llm = dataclasses.replace(llm, **{provider.setting: ""})
-            notes.append(f"no {provider.key_name}: Qwen doesn't run on {provider.name}")
+            notes += [f"no {provider.key_name}: Qwen doesn't run on {provider.name}"] * qwen_used
     if not openai:
         if not any(getattr(llm, provider.setting) for provider in QUICK_PROVIDERS):
             names = ", ".join(provider.key_name for provider in QUICK_PROVIDERS)
