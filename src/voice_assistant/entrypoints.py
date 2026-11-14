@@ -42,6 +42,7 @@ from .wiring import (
     make_health,
     make_home,
     make_openai_client,
+    make_pages,
     make_pipeline,
     make_recording_transcriber,
     make_reminders,
@@ -317,10 +318,10 @@ def telegram(cfg: Config, root: Path) -> None:
     skills = household.skills
     wishes = household.wishes  # one, with one GitHub client, for the offers, the taps and following
     myself = household.myself
-    tars = TelegramTars(
-        bot,
-        cfg.telegram.people,
-        lambda: make_brain(
+
+    def chat_brain():
+        browse = browse_tool(cfg, queue, "telegram")
+        return make_brain(
             client,
             llm,
             env,
@@ -328,11 +329,17 @@ def telegram(cfg: Config, root: Path) -> None:
             channel_rules=rules,
             remind_tools=CHAT_REMIND_TOOLS,
             home=home,
-            browser=browse_tool(cfg, queue, "telegram"),
+            browser=browse,
             feeds=feeds,
             skills=skills,
             myself=myself,
-        ),
+            tools=[p] if (p := make_pages(cfg, events, browse)) else [],
+        )
+
+    tars = TelegramTars(
+        bot,
+        cfg.telegram.people,
+        chat_brain,
         ConversationLog(events),
         tools,
         memory_s=cfg.telegram.memory_minutes * 60,
@@ -567,6 +574,7 @@ def typed(cfg: Config, root: Path) -> None:
         feeds=household.feeds,
         skills=household.skills,
         myself=household.myself,
+        pages=make_pages(cfg, household.events),
     )
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
@@ -629,6 +637,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         feeds=household.feeds,
         skills=skills,
         myself=myself,
+        pages=make_pages(cfg, events, browser),
     )
     commands = house_commands(cfg, root, home)
     if commands and cfg.home.local_first:

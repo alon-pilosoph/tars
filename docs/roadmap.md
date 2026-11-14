@@ -20,7 +20,9 @@ being right.
 Alongside the steps, built: [house commands on the Pi](#built-house-commands-on-the-pi), small and independent of
 them; and [wishes that come true](#built-wishes-that-come-true), where something TARS couldn't do becomes a pull
 request and, once merged, a message to whoever asked. Planned: [noticing routines](#planned-noticing-routines), where
-TARS learns the household's habits from Home Assistant's history and offers to take them over. Benched for now:
+TARS learns the household's habits from Home Assistant's history and offers to take them over. Built too: [reading
+pages](#built-reading-pages), where TARS reads the page a link goes to, learning for each site how to get its words.
+Benched for now:
 [learning from how conversations go](#benched-learning-from-how-conversations-go). Later, after the six: [working
 offline](#later-working-offline), [a brain anywhere, a body at home](#later-a-brain-anywhere-a-body-at-home) (TARS
 itself off the Pi, the house's own hardware a small part that can fail without losing TARS) and [TARS in other
@@ -349,6 +351,19 @@ what each came from, so a wrong one is easy to see.
 **Measure:** the finder run over the recorded history, its routines checked by hand against what the household
 says it does; offers made and declined, and skills undone. **Done when** three offered routines have run for two
 weeks without being undone, and the unusual has been said at least once when it mattered, and never when it didn't.
+
+## Built: reading pages
+
+**Built** ([reading pages](pages.md)): the quick way first, the browser for a site that turns it away, the paywall
+seen from the page itself and asked about once, and what worked kept for each site and each person. **Left:** the
+live test below, on the Pi with the browser on and a subscriber's sign-in in the vault.
+
+**Goal:** "tell me more about that one", or any link someone sends TARS: it reads the page itself and tells what it
+says, rather than searching the web for it, learning for each site how to get its words, so nobody is asked twice.
+
+**Measure:** a story from each followed feed read with "tell me more", the quick way or in the browser as learned; a
+Haaretz article read signed in after one yes; nothing asked twice. **Done when** a week of "tell me more" has no
+wrong way taken twice for the same site.
 
 ## Built: house commands on the Pi
 

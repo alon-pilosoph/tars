@@ -94,7 +94,8 @@ RULES = (
     "each in a sentence or two, in your own words, from its summary, never reading out headlines. Aloud, three or "
     "four; in a chat, up to six, each with its link. End that reply with <told> and the numbers of the stories you "
     'told, like "<told 2 5 9>": it\'s taken out before they hear it, and only those count as told; the rest stay new. '
-    "Then offer more, or more about one: for more than its summary says, search the web. More stories in a later "
+    "Then offer more, or more about one: for more than its summary says, read its page with read_page if you have "
+    "it, else search the web. More stories in a later "
     "reply: read again, which gives the ones not yet told. Nothing new since they last asked: say so, and offer the "
     "latest again (everything true).\n"
     '- Finding feeds ("I want to follow gaming", "any good feeds about cooking?"): search the web for the topic\'s '
