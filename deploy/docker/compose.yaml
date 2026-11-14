@@ -1,0 +1,33 @@
+# Chat-only TARS on any machine with Docker (docs/deployment.md#without-a-microphone): its Telegram and web UI
+# processes, over one folder. Next to this file: config.local.toml and .env (yours), and voice_data/ (made on the first
+# start, where TARS keeps everything).
+#
+#   docker compose up -d --build        # from this folder; then: docker compose logs -f telegram
+#   docker compose run --rm telegram --check
+#
+# The web UI is on http://127.0.0.1:8080 on this machine only. To reach it from elsewhere, put it behind a proxy with
+# HTTPS and set [web] allowed_hosts and sign_in (docs/web-ui.md#signing-in), rather than opening the port.
+
+x-tars: &tars
+  build:
+    context: ../..
+    dockerfile: deploy/docker/Dockerfile
+  image: tars-chat
+  restart: unless-stopped
+  read_only: true # nothing but the household's folder is written
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  volumes:
+    - ./config.local.toml:/app/config.local.toml:ro
+    - ./.env:/app/.env:ro
+    - ./voice_data:/app/voice_data
+
+services:
+  telegram:
+    <<: *tars
+    command: ["--telegram"]
+  web:
+    <<: *tars
+    command: ["--web", "--host", "0.0.0.0", "--port", "8080"]
+    ports: ["127.0.0.1:8080:8080"]
