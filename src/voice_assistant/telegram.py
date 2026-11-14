@@ -5,8 +5,9 @@ voice. It long-polls Telegram's Bot API for messages, so nothing at home is reac
 no open port. Only the people in [telegram] people are answered; anyone else is ignored, and logged once, so a new
 person's chat id can be found.
 
-Each person has their own conversation (the brain's history, kept until it's quiet for [telegram] memory_minutes,
-or they send /new; what TARS posts by itself is part of it) with the same
+Each person has their own conversation (the brain's history, kept through [telegram] memory_minutes of quiet, then
+for as long as a quick check says each message carries it on, up to keep_days (threads.py), or until they send /new;
+read back from the log after a restart; what TARS posts by itself is part of it) with the same
 brain, tools and reminders as at home, told it's writing rather than speaking; a voice message is written down by
 the same speech to text as at home (stt.py), and answered as if written. What it sends goes into the chat as
 well as onto the TARS page. A reminder set here for someone with a chat comes to that chat when it's due, and
@@ -35,7 +36,19 @@ import numpy as np
 from .audio import SAMPLE_RATE, decode_recording, warm_decoder
 from .config import TELEGRAM_KEY, ConfigError
 from .control import Refused, Unavailable
-from .conversations import FILE, HOUSEHOLD, LINK, LIST, LLM, NOTE, OTHER, STT, ConversationLog, SentItem
+from .conversations import (
+    FILE,
+    HOUSEHOLD,
+    LINK,
+    LIST,
+    LLM,
+    NOTE,
+    OTHER,
+    ROLE_PERSON,
+    STT,
+    ConversationLog,
+    SentItem,
+)
 from .events import person_key
 from .home import OFF, ON, PRESS, SET, STATUS, HomeTools, Request
 from .llm import FILLERS, REMIND_TOOLS, SKIP, THINKING, Brain, Reply
@@ -57,6 +70,7 @@ from .reminders import (
     twelve_hour,
 )
 from .stt import Transcriber, transcribe_recording
+from .threads import Continuity
 from .volume import DEVICE as SPEAKER
 
 API = "https://api.telegram.org"
@@ -342,6 +356,7 @@ class Chat:
     brain: Brain
     conversation: int | None = None
     last_at: float = 0.0
+    restored: bool = False  # whether its conversation has been read back from the log since TARS started
     # Held while TARS answers in the chat, or posts to it by itself: one at a time, never one inside the other.
     busy: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
@@ -410,6 +425,8 @@ class TelegramTars:
         say: Callable[[str], None] | None = None,
         spotify_login: Callable[[Callable[[str], None]], str] | None = None,
         skill_clock=None,
+        keep_s: float = 0.0,
+        continuity: Continuity | None = None,
     ):
         """`people`: name → chat id, the only chats answered. `make_brain`: a new brain, one for each person, so
         each has their own conversation. `conversations`: where chats are kept for the web UI (None: nowhere).
@@ -419,7 +436,9 @@ class TelegramTars:
         at home, word for word, for /say; raises control.py's Unavailable or Refused when it can't.
         `spotify_login(send)`: signs in to Spotify for /spotify, telling them with `send` (spotify.page_login).
         `skill_clock`: the skills due to run by themselves in their owner's chat (skills.Clock).
-        `clock`, `typing` and `sleep` are for the tests."""
+        `memory_s`: how long a chat is one conversation however quiet it's been. `keep_s`: after that, and up to this,
+        a message the `continuity` check says carries it on keeps it going; the conversation is read back from the
+        log after a restart too (0: never). `clock`, `typing` and `sleep` are for the tests."""
         self._bot, self._make_brain = bot, make_brain
         self._chats = {chat_id: Chat(name, chat_id, make_brain()) for name, chat_id in people.items()}
         self._by_person = {person_key(name): chat_id for name, chat_id in people.items()}
@@ -428,6 +447,7 @@ class TelegramTars:
         self._sleep, self._transcriber, self._env, self._home, self._say = sleep, transcriber, env, home, say
         self._spotify_login = spotify_login
         self._skill_clock = skill_clock
+        self._keep_s, self._continuity = keep_s, continuity
         self._ignored: set[int] = set()
         # A chat's conversation is kept from two threads: the one answering, and the one posting what's due.
         self._lock = threading.Lock()
@@ -626,6 +646,7 @@ class TelegramTars:
         """`recording`: the voice message `text` was written down from; None for a written message."""
         now = self._clock()
         print(f"{chat.person} (Telegram{', by voice' if recording is not None else ''}):  {text!r}", flush=True)
+        self._carry_on_or_not(chat, text, now)
         conversation = self._current_conversation(chat, now)
         if conversation is not None:
             self._log(self._conversations.add_person_turn, conversation, text, recording, speaker=chat.person, ts=now)
@@ -731,6 +752,8 @@ class TelegramTars:
             request = Request(speaker=None if skill.household else skill.owner, changed=house, by_door=due.door)
             brain, where = self._make_brain(), "to be said aloud"
         print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'}, {where})", flush=True)
+        if chat:
+            self._new_if_quiet(chat, self._clock())
         try:
             written = Reply(brain, on_its_own(skill, due.when, SKIP, due.why), request)
             reply = tidy(written.read())
@@ -952,6 +975,7 @@ class TelegramTars:
         log = self._conversations
         if log is None:
             return None
+        self._restore(chat)
         current = chat.conversation
         if current is not None and now - chat.last_at <= self._memory_s and self._log(log.exists, current):
             return current
@@ -959,6 +983,72 @@ class TelegramTars:
             self._log(log.end, current, ts=chat.last_at or now)
         chat.conversation = self._log(log.start, None, ts=now, via=TELEGRAM)
         return chat.conversation
+
+    def _carry_on_or_not(self, chat: Chat, text: str, now: float) -> None:
+        """Before answering `text`: after [telegram] memory_minutes of quiet, the chat's conversation goes on only if
+        the continuity check says the message carries it on, within [telegram] keep_days; otherwise the brain starts
+        over and the next turn starts a new conversation."""
+        with self._lock:
+            self._restore(chat)
+            current, quiet = chat.conversation, now - chat.last_at
+            if not chat.last_at or quiet <= self._memory_s:
+                return
+        checks = current is not None and quiet <= self._keep_s and self._continuity is not None
+        turns = self._turns(current, chat.person) if checks else []
+        carries = bool(turns) and self._continuity.continues(turns, text, quiet, chat.person)
+        with self._lock:
+            if chat.conversation != current:  # something else moved it on meanwhile
+                return
+            if carries:
+                chat.last_at = now
+            else:
+                self._start_afresh(chat)
+
+    def _new_if_quiet(self, chat: Chat, now: float) -> None:
+        """What TARS posts by itself after [telegram] memory_minutes of quiet starts a new conversation."""
+        with self._lock:
+            self._restore(chat)
+            if chat.last_at and now - chat.last_at > self._memory_s:
+                self._start_afresh(chat)
+
+    def _start_afresh(self, chat: Chat) -> None:
+        """The brain forgets the chat, and the next turn starts a new conversation. Call with the lock held."""
+        if chat.conversation is not None and self._conversations is not None:
+            self._log(self._conversations.end, chat.conversation, ts=chat.last_at or self._clock())
+        chat.conversation, chat.last_at = None, 0.0
+        chat.brain.start_over()
+
+    def _restore(self, chat: Chat) -> None:
+        """Once after a start: the chat's last conversation read back from the log into its brain, if it was within
+        [telegram] keep_days, so a restart (an update) doesn't lose the thread. Call with the lock held."""
+        if chat.restored:
+            return
+        chat.restored = True
+        log = self._conversations
+        if log is None or not self._keep_s:
+            return
+        conversation = self._log(log.latest_with, chat.person, TELEGRAM)
+        turns = self._log(log.turns_of, conversation) if conversation is not None else None
+        if not turns or self._clock() - turns[-1]["ts"] > self._keep_s:
+            return
+        asked = None
+        for turn in turns:
+            if turn["role"] == ROLE_PERSON:
+                asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if turn['spoken'] else ''}{turn['text'] or ''}"
+            elif turn["failed_at"] or not turn["text"]:
+                asked = None  # unanswered: as the brain forgets a failed turn
+            elif asked is not None:
+                chat.brain.remember_exchange(asked, turn["text"])
+                asked = None
+            else:
+                chat.brain.remember_said(turn["text"])
+        chat.conversation, chat.last_at = conversation, turns[-1]["ts"]
+        print(f"(Telegram: {chat.person}'s conversation from {_clock(chat.last_at)} read back)", flush=True)
+
+    def _turns(self, conversation: int, person: str) -> list[tuple[str, str]]:
+        """A conversation's turns as the continuity check reads them: (who, text), oldest first."""
+        turns = self._log(self._conversations.turns_of, conversation) if self._conversations else None
+        return [(person if t["role"] == ROLE_PERSON else "TARS", t["text"]) for t in turns or [] if t["text"]]
 
     def _keep_unanswered(self, chat: Chat, recording: np.ndarray | None, said: str = "", **failure) -> None:
         """A voice message that got no answer, kept with its recording if there is one, and what TARS said back or
@@ -1002,6 +1092,7 @@ class TelegramTars:
     def _said(self, chat: Chat, text: str, now: float) -> None:
         """TARS wrote first (a reminder, or how one said at home went): part of the brain's conversation, so "snooze
         that" right after knows what "that" is, and kept in the chat's conversation, or one of its own."""
+        self._new_if_quiet(chat, now)
         chat.brain.remember_said(text)
         if (conversation := self._current_conversation(chat, now)) is not None:
             self._log(self._conversations.add_tars_turn, conversation, text, ts=now)
@@ -1013,6 +1104,7 @@ class TelegramTars:
             self._conversations.add_tars_turn,
             conversation,
             text,
+            ts=self._clock(),
             answered_by=brain.answered_by,
             quick_service=brain.quick_service,
             **failure,

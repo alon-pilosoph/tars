@@ -128,6 +128,9 @@ class ScriptedBrain:
     def remember_said(self, text):
         self.remembered.append(text)
 
+    def remember_exchange(self, asked, said):
+        self.remembered.append((asked, said))
+
     def start_over(self):
         self.started_over += 1
 
@@ -314,6 +317,102 @@ def test_a_chat_that_went_quiet_starts_a_new_conversation(convos):
     now[0] += 601
     t.handle(message("two", sent_at=now[0]))
     assert len(convos.conversations()) == 2
+
+
+class Says:
+    """A continuity check that says `verdict` ("continued" or "new"), keeping what it was shown."""
+
+    def __init__(self, verdict):
+        from voice_assistant.threads import Continuity
+
+        self.shown = []
+        self.check = Continuity(lambda messages: self.shown.append(messages[-1]["content"]) or verdict)
+
+
+DAY = 24 * 3600
+
+
+@pytest.mark.parametrize("verdict, conversations, started_over", [("continued", 1, 0), ("new", 2, 1)])
+def test_after_a_quiet_spell_the_check_says_whether_a_message_carries_the_conversation_on(
+    convos, verdict, conversations, started_over
+):
+    now, says, brain = [1_800_000_000.0], Says(verdict), ScriptedBrain(["I couldn't sign in to Wolt.", "On it."])
+    t = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, continuity=says.check, clock=lambda: now[0])
+    t.handle(message("my last Wolt order?", sent_at=now[0]))
+    now[0] += 2 * DAY
+    t.handle(message("let's try again", sent_at=now[0], update_id=2))
+    (shown,) = says.shown
+    assert "Alon: my last Wolt order?\nTARS: I couldn't sign in to Wolt." in shown
+    assert "2 days later, the new message:\nAlon: let's try again" in shown
+    assert len(convos.conversations()) == conversations and brain.started_over == started_over
+
+
+def test_within_the_hour_it_is_the_same_conversation_without_asking(convos):
+    now, says = [1_800_000_000.0], Says("new")
+    t = tars(FakeBot(), [ScriptedBrain(["A.", "B."])], convos, memory_s=3600, keep_s=7 * DAY, continuity=says.check,
+             clock=lambda: now[0])  # fmt: skip
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += 3000
+    t.handle(message("two", sent_at=now[0], update_id=2))
+    assert says.shown == [] and len(convos.conversations()) == 1
+
+
+def test_after_keep_days_it_is_a_new_conversation_without_asking(convos):
+    now, says, brain = [1_800_000_000.0], Says("continued"), ScriptedBrain(["A.", "B."])
+    t = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, continuity=says.check, clock=lambda: now[0])
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += 8 * DAY
+    t.handle(message("two", sent_at=now[0], update_id=2))
+    assert says.shown == [] and len(convos.conversations()) == 2 and brain.started_over == 1
+
+
+def test_a_check_that_fails_carries_the_conversation_on(convos, capsys):
+    from voice_assistant.threads import Continuity
+
+    def down(messages):
+        raise TimeoutError("Cerebras")
+
+    now = [1_800_000_000.0]
+    t = tars(FakeBot(), [ScriptedBrain(["A.", "B."])], convos, memory_s=3600, keep_s=7 * DAY,
+             continuity=Continuity(down), clock=lambda: now[0])  # fmt: skip
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += DAY
+    t.handle(message("two", sent_at=now[0], update_id=2))
+    assert len(convos.conversations()) == 1 and "couldn't tell" in capsys.readouterr().out
+
+
+def test_a_restart_reads_the_chat_back_from_the_log(convos):
+    now = [1_800_000_000.0]
+    before = tars(FakeBot(), [ScriptedBrain(["Nine.", RuntimeError("down")])], convos, memory_s=3600,
+                  keep_s=7 * DAY, clock=lambda: now[0])  # fmt: skip
+    before.handle(message("what time?", sent_at=now[0]))
+    before.handle(message("and later?", sent_at=now[0], update_id=2))  # failed: not remembered
+    now[0] += 600  # an update restarted the service
+    brain = ScriptedBrain(["Ten."])
+    after = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, clock=lambda: now[0])
+    after.handle(message("and tomorrow?", sent_at=now[0], update_id=3))
+    assert brain.remembered == [("[Speaker: Alon] what time?", "Nine.")]
+    assert len(convos.conversations()) == 1
+
+
+def test_a_restart_long_after_reads_nothing_back(convos):
+    now = [1_800_000_000.0]
+    tars(FakeBot(), [ScriptedBrain(["Nine."])], convos, keep_s=7 * DAY, clock=lambda: now[0]).handle(
+        message("what time?", sent_at=now[0])
+    )
+    now[0] += 8 * DAY
+    brain = ScriptedBrain(["Hi."])
+    tars(FakeBot(), [brain], convos, keep_s=7 * DAY, clock=lambda: now[0]).handle(message("hi", sent_at=now[0]))
+    assert brain.remembered == [] and len(convos.conversations()) == 2
+
+
+def test_what_tars_posts_after_a_quiet_spell_starts_a_new_conversation(convos):
+    now, brain = [1_800_000_000.0], ScriptedBrain(["A."])
+    t = tars(FakeBot(), [brain], convos, memory_s=3600, keep_s=7 * DAY, clock=lambda: now[0])
+    t.handle(message("one", sent_at=now[0]))
+    now[0] += DAY
+    t.remember(t.chat_for("Alon"), "Your timer's done.")
+    assert len(convos.conversations()) == 2 and brain.started_over == 1 and brain.remembered == ["Your timer's done."]
 
 
 def test_a_conversation_deleted_in_the_web_ui_is_not_written_to_again(convos):
@@ -825,8 +924,9 @@ def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path)
     assert chat_brain_config(quick, has_openai=True).service_tier == cfg.llm.service_tier
     # A written reply often comes back later than a spoken one: the chat remembers for longer, whoever answers.
     assert cfg.telegram.memory_minutes > cfg.llm.memory_minutes
+    # The chat decides when its conversation ends (keep_days, with the continuity check): the brain keeps it as long.
     for has_openai in (True, False):
-        assert chat_brain_config(cfg, has_openai).memory_minutes == cfg.telegram.memory_minutes
+        assert chat_brain_config(cfg, has_openai).memory_minutes == cfg.telegram.keep_days * 24 * 60
 
 
 # Voice messages.

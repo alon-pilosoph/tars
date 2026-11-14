@@ -291,6 +291,24 @@ class ConversationLog:
         self._add_turns(out, people, voices)
         return out
 
+    def latest_with(self, person: str, via: str) -> int | None:
+        """The newest conversation `via` ("telegram") that `person` wrote in, if any."""
+        rows = self.store.rows(
+            "SELECT t.conversation_id FROM turns t JOIN conversations c ON c.id = t.conversation_id "
+            "WHERE c.via = ? AND t.role = ? AND t.speaker = ? ORDER BY t.ts DESC, t.id DESC LIMIT 1",
+            (via, ROLE_PERSON, person),
+        )
+        return rows[0]["conversation_id"] if rows else None
+
+    def turns_of(self, conversation_id: int) -> list[dict]:
+        """A conversation's turns, oldest first: role, what was said (as corrected, if it was), when, and whether
+        TARS's failed."""
+        return self.store.rows(
+            "SELECT role, COALESCE(corrected_text, text) AS text, ts, failed_at, audio IS NOT NULL AS spoken "
+            "FROM turns WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        )
+
     def get(self, conversation_id: int) -> dict | None:
         found = self.conversations(ids=[conversation_id])
         return found[0] if found else None
