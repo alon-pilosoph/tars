@@ -11,9 +11,25 @@ code as for the Pi's own speakerphone. That keeps a body small enough for an ESP
 conversation, not one per device.
 
 **Where it stands:** the brain's side of the link is built ([`bodylink.py`](../src/voice_assistant/bodylink.py)),
-tested against a fake body speaking the protocol over a real socket. Still to come: device keys and pairing, the
+tested against a fake body speaking the protocol over a real socket, and bodies can be paired. Still to come: the
 `--body` program for a second machine, and the brain serving one. Several bodies holding conversations at once is
 the step after.
+
+## Pairing
+
+```
+uv run voice-assistant --body-add Kitchen      # prints the kitchen body's key, once
+uv run voice-assistant --body-list             # which are paired, and when each last connected
+uv run voice-assistant --body-remove Kitchen   # its key is refused from then on
+```
+
+A key is one line, `tars-body-1:<device>:<key>`, given to the body and kept like a password: the device's id and an
+Ed25519 private key ([`bodykeys.py`](../src/voice_assistant/bodykeys.py)). TARS keeps only its public half, in the
+event database's `bodies` table, so a copy of the database (a backup, an SD card) can't be used to pose as a body.
+One body per room; to change one, remove it and add it again. `[bodies]` in `config.toml` turns listening on (off by
+default: nothing listens), and sets the port (8766). `--check` says whether bodies may connect, and has a line for
+each one paired with when it last connected. What a key lets someone do, and what it doesn't:
+[security](security.md#a-network-body-or-something-posing-as-one).
 
 ## How fast
 
@@ -37,8 +53,8 @@ is on the home network or not. Text frames are JSON objects with a `type`; binar
 1. The brain sends `{"type": "challenge", "nonce": "..."}`.
 2. The body answers within 10 s with `hello`: `protocol` (1), `device` (its id), `proof`, and what it is: `kind`
    (`pi`, `atom`, `web`...), `wake` (below), `echo_cancel` (whether it takes its own sound out of what it hears),
-   `buttons`, `version`. `proof` is HMAC-SHA256 of the nonce under the device's key, in hex: the key itself never
-   crosses the wire.
+   `buttons`, `version`. `proof` is the nonce (its UTF-8 bytes) signed with the device's Ed25519 key, in hex: the key
+   itself never crosses the wire.
 3. The brain sends `welcome`: `room`, `play_rate`, `max_listen_s`.
 
 Anything wrong (an unknown device, a wrong proof, another protocol, audio before `hello`, no `hello` in time) closes

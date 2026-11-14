@@ -10,6 +10,7 @@ from .audio import AudioDeviceError, NoDeviceError, list_devices
 from .config import WEB_PORT, ConfigError, load_config
 from .entrypoints import (
     backup_pass,
+    bodies_command,
     enroll_speaker,
     fetch_audio,
     ha_config_from_backup,
@@ -73,6 +74,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--web-sign-out", metavar="NAME", help="sign NAME out of the web UI everywhere, and forget their passkeys"
+    )
+    parser.add_argument(
+        "--body-add", metavar="ROOM", help="pair a network body for ROOM ([bodies]): prints its key, once"
+    )
+    parser.add_argument(
+        "--body-list", action="store_true", help="the network bodies paired, and when each last connected"
+    )
+    parser.add_argument(
+        "--body-remove", metavar="ROOM", help="unpair ROOM's network body: its key is refused from now on"
     )
     parser.add_argument(
         "--host", default="127.0.0.1", help="web UI address (0.0.0.0 = reachable from the home network)"
@@ -188,6 +198,9 @@ def main() -> None:
             return
         if args.web_sign_out:
             web_sign_out(cfg, root, args.web_sign_out)
+            return
+        if args.body_add or args.body_list or args.body_remove:
+            bodies_command(cfg, root, add=args.body_add, listed=args.body_list, remove=args.body_remove)
             return
         if args.telegram:
             telegram(keyed(cfg, root), root)

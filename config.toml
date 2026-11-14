@@ -455,6 +455,16 @@ tries = 3
 # The most builds started in 30 days.
 monthly = 4
 
+[bodies]
+# Network bodies (docs/bodies.md): another machine in another room that TARS hears and speaks through, over the home
+# network. Pair one with `voice-assistant --body-add Kitchen`, which prints its key once; --body-list and
+# --body-remove ROOM manage them. Off: nothing listens, and nothing changes. Bodies connect to this address and port,
+# with plain ws:// only from home addresses: the key never crosses the network, it signs a challenge.
+enabled = false
+host = "0.0.0.0"
+port = 8766
+plain_from_home = true
+
 [updates]
 # TARS updates itself, from a timer every ten minutes (docs/deployment.md#updates): what's merged into `branch` is
 # installed at a quiet moment (nobody's spoken to it for a few minutes, no errand running), checked silently, and taken

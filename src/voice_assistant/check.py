@@ -489,6 +489,32 @@ def usage_cap(cfg: Config, folder: Path, now: float | None = None) -> Result:
     return Result(name, OK, said)
 
 
+def bodies(cfg: Config, folder: Path, now: float | None = None) -> list[Result]:
+    """[bodies]: whether TARS listens for network bodies, and each one paired, with when it last connected
+    (docs/bodies.md). Never a key: TARS has only their public halves. `folder`: the event log's."""
+    from .store import DB_FILE
+
+    paired = []
+    if (folder / DB_FILE).exists():
+        from .bodykeys import BodyKeys
+        from .events import EventLog
+
+        paired = BodyKeys(EventLog(folder).store).listed()
+    b = cfg.bodies
+    if not b.enabled:
+        detail = "off ([bodies] enabled)" + (f", with {len(paired)} paired: they can't connect" if paired else "")
+        return [Result("Bodies", WARN if paired else SKIP, detail, "turn on [bodies]" if paired else "")]
+    results = [Result("Bodies", OK, f"bodies may connect to port {b.port}, from home addresses, with their keys")]
+    if not paired:
+        results.append(Result("Bodies", WARN, "none paired yet", "voice-assistant --body-add ROOM"))
+    now = time.time() if now is None else now
+    for r in paired:
+        seen = f"last connected {_ago(now - r['last_seen'])}" if r["last_seen"] else "never connected yet"
+        results.append(Result(f"Body: {r['room']}", OK if r["last_seen"] else WARN, f"{r['device']}, {seen}",
+                              "" if r["last_seen"] else "start --body on that machine with its key"))  # fmt: skip
+    return results
+
+
 def errands_waiting(cfg: Config, folder: Path, now: float | None = None) -> Result:
     """Errands asked aloud that wait in the queue while nothing runs them: the Telegram service does. `folder`: the
     event log's."""
@@ -1170,6 +1196,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ),
         ("Browser", lambda: browser(cfg)),
         ("Errands", lambda: errands_waiting(cfg, root / cfg.learning.folder)),
+        ("Bodies", lambda: bodies(cfg, root / cfg.learning.folder)),
         ("Usage this month", lambda: usage_cap(cfg, root / cfg.learning.folder)),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),

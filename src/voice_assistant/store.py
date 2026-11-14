@@ -284,6 +284,15 @@ TABLES = {
     head TEXT,                       -- the pull request's latest commit, as last seen
     moved REAL                       -- when its build last moved: a new commit, or sent back to be fixed
 )""",
+    "bodies": """CREATE TABLE bodies (
+    device TEXT PRIMARY KEY,         -- the id in its key (bodykeys.py), like kitchen-3f9a1c
+    room TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT '',
+    public_key TEXT NOT NULL,        -- hex: the public half of its Ed25519 key; the private half is the body's alone
+    created REAL NOT NULL,
+    last_seen REAL,                  -- when it last connected
+    revoked REAL                     -- when --body-remove took it away; NULL: paired
+)""",
     "web_invites": """CREATE TABLE web_invites (
     token TEXT PRIMARY KEY,          -- sha256 of the one-time token in the link (signin.py)
     person TEXT NOT NULL,
@@ -523,6 +532,17 @@ MIGRATIONS = [
             "CREATE TABLE page_subscriptions (person TEXT NOT NULL, site TEXT NOT NULL, subscribes INTEGER NOT NULL, "
             "at REAL NOT NULL, PRIMARY KEY (person, site))"
         ),
+    ],
+    [
+        """CREATE TABLE bodies (
+    device TEXT PRIMARY KEY,         -- the id in its key (bodykeys.py), like kitchen-3f9a1c
+    room TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT '',
+    public_key TEXT NOT NULL,        -- hex: the public half of its Ed25519 key; the private half is the body's alone
+    created REAL NOT NULL,
+    last_seen REAL,                  -- when it last connected
+    revoked REAL                     -- when --body-remove took it away; NULL: paired
+)"""
     ],
 ]
 

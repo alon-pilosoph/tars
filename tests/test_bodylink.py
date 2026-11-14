@@ -14,11 +14,14 @@ from websockets.sync.client import connect
 
 from voice_assistant import bodylink
 from voice_assistant.audio import BLOCK_SAMPLES
-from voice_assistant.bodylink import BodyGone, BodyListener, RemoteBody, proof
+from voice_assistant.bodykeys import public_of
+from voice_assistant.bodykeys import sign as proof
+from voice_assistant.bodylink import BodyGone, BodyListener, RemoteBody
 from voice_assistant.verify import ANSWER, ASK, IGNORE
 from voice_assistant.wake import DUE
 
-KEY = b"k" * 32
+KEY = b"k" * 32  # the body's private key; the brain knows only PUBLIC
+PUBLIC = public_of(KEY)
 TRANSCRIPTS = Path(__file__).parent / "fixtures" / "bodylink"
 
 
@@ -26,7 +29,7 @@ TRANSCRIPTS = Path(__file__).parent / "fixtures" / "bodylink"
 def listener():
     waits = []
     made = BodyListener(
-        lambda device: KEY if device == "kitchen" else None,
+        lambda device: PUBLIC if device == "kitchen" else None,
         lambda hello: bodylink.welcome("kitchen", 24000),
         host="127.0.0.1",
         sleep=waits.append,
@@ -136,7 +139,7 @@ def test_an_address_that_keeps_failing_waits_longer_each_time(listener):
 
 
 def test_an_address_that_isnt_allowed_is_shut_out_before_anything():
-    closed = BodyListener(lambda d: KEY, lambda h: {}, allowed=lambda address: False, host="127.0.0.1").start()
+    closed = BodyListener(lambda d: PUBLIC, lambda h: {}, allowed=lambda address: False, host="127.0.0.1").start()
     try:
         ws = connect(f"ws://127.0.0.1:{closed.port}", legacy=True)
         with pytest.raises(ConnectionClosed):
