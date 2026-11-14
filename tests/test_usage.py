@@ -335,3 +335,29 @@ def test_check_says_this_month_against_the_cap(tmp_path, cap, status, said):
     cfg = dataclasses.replace(load_config(Path("config.toml"), local=False), usage=UsageConfig(cap))
     result = usage_cap(cfg, tmp_path / "events", now=NOW)
     assert result.status == status and said in result.detail
+
+
+def test_the_chat_memory_check_is_counted_for_whoever_wrote(meter, monkeypatch, tmp_path):
+    from voice_assistant import wiring
+    from voice_assistant.config import load_config
+
+    used = types.SimpleNamespace(prompt_tokens=180, completion_tokens=3)
+    reply = types.SimpleNamespace(
+        usage=used, choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="new"))]
+    )
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=lambda **kw: reply))
+    )
+    service = types.SimpleNamespace(name="Cerebras", model="qwen-3.8-27b", client=client)
+    monkeypatch.setattr(wiring, "quick_services", lambda llm, env: [service])
+    check = wiring.make_continuity(load_config(Path("config.toml"), local=False), tmp_path / ".env", None)
+    with usage.turn("Alon", usage.TELEGRAM):
+        check.continues([("Alon", "hi"), ("TARS", "Hello.")], "weather?", 7200, "Alon")
+    [r] = rows(meter)
+    assert (r["service"], r["model"], r["input"], r["output"], r["person"]) == (
+        "Cerebras",
+        "qwen-3.8-27b",
+        180,
+        3,
+        "alon",
+    )

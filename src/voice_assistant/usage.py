@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from .events import person_key
 
@@ -484,6 +485,16 @@ class CountedResponses(_Counted):
                 "cached": getattr(getattr(used, "input_tokens_details", None), "cached_tokens", 0) or 0,
                 "searches": searches,
             }
+
+
+def chat_reply(service: str, model: str, reply) -> None:
+    """A whole (not streamed) chat completions reply, counted as its stream would be."""
+    list(CountedChat(iter([reply]), service, model))
+
+
+def response(service: str, model: str, reply) -> None:
+    """A whole (not streamed) Responses API reply, counted as its stream would be."""
+    list(CountedResponses(iter([SimpleNamespace(type="response.completed", response=reply)]), service, model))
 
 
 def claude_message(service: str, model: str, message) -> None:

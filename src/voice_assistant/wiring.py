@@ -815,6 +815,7 @@ def make_continuity(cfg: Config, env_path: Path, client):
     [llm]'s order, else OpenAI's; None with neither, or keep_days 0."""
     if not cfg.telegram.keep_days:
         return None
+    from . import usage
     from .threads import Continuity
 
     services = quick_services(cfg.llm, env_path)
@@ -831,6 +832,7 @@ def make_continuity(cfg: Config, env_path: Path, client):
                         max_completion_tokens=CONTINUITY_MAX_TOKENS,
                         **({"reasoning_effort": effort} if effort else {}),
                     )
+                    usage.chat_reply(service.name, service.model, reply)
                     return reply.choices[0].message.content or ""
                 except Exception as e:  # noqa: BLE001 - the next one is asked
                     failed = e
@@ -850,6 +852,7 @@ def make_continuity(cfg: Config, env_path: Path, client):
             max_output_tokens=CONTINUITY_MAX_TOKENS,
             **reasoning,
         )
+        usage.response("openai", cfg.llm.model, reply)
         return reply.output_text
 
     return Continuity(ask_openai)
