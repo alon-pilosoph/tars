@@ -179,6 +179,11 @@ in the background.
 hour), or why the last one failed; and whether the timer is running, where there's systemd. The bucket itself isn't
 asked, so the page costs no S3 request. A `backup.json` that can't be read is one failing line, not a page that fails.
 
+**What the paid services cost this month.** As `voice-assistant --usage` says it ([usage](usage.md)): the month's
+estimated cost so far, against `[usage] monthly_cap_usd` when there's one (flagged from 80%), then by service and model
+and by person, with how many calls had no price or were cut off before the provider said what they used, and the date
+`prices.toml`'s prices were checked. It's read from the event database when the page asks, and asks no provider.
+
 **The Pi says if it's short of power or too hot.** `vcgencmd get_throttled` reads the firmware's flags (under-voltage,
 slowed down, throttled, at the soft temperature limit, each now and since it started) through `/dev/vcio`, so the web
 UI's service keeps its devices ([the services](security.md#the-services-on-the-machine)). Without `vcgencmd` it isn't

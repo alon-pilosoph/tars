@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from .. import toolbox
+from .. import toolbox, usage
 from ..config import BrowserConfig
 from ..events import person_key
 
@@ -265,42 +265,43 @@ class Errands:
         return True
 
     def _errand(self, row: dict) -> None:
-        from .agent import Settings
+        with usage.turn(row["person"], usage.ERRAND):
+            from .agent import Settings
 
-        person, goal, started = row["person"], row["goal"], time.time()
-        if row["asked_via"] == VOICE:  # the phone hears of it first, since that's where it'll be asked things
-            self._tell(person, f"On it, as you asked at home: {goal}")
-        trace = self._folder / f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(person)}.jsonl"
-        settings = Settings(model=self._cfg.model, effort=self._cfg.effort, turns=self._cfg.turns,
-                            really_commit=self._cfg.really_order)  # fmt: skip
-        you, run = ByChat(person, self.chats), None
-        try:
-            run_task = self._run or _run_task()
-            run = run_task(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai,
-                           home=self._home, profile=profile_for(person, self._people[0]),
-                           notes=_notes(self._folder.parent), sprite=self._cfg.sprite)  # fmt: skip
-            text, status = _told(run.result), DONE if run.result.ended == "done" else FAILED
-        except Exception as e:  # noqa: BLE001 - an errand that broke is said so, never left hanging
-            traceback.print_exc()
-            text, status = f"The errand broke before it was done ({type(e).__name__}), so I stopped.", FAILED
-            if you.approved and self._cfg.really_order:
-                text += " You'd approved the order, so check on the site whether it went through."
-            else:
-                text += " Nothing was ordered."
-        finally:
-            self.current = None
-        print(f"(browser: {person}'s errand took {time.time() - started:.0f} s: {status})", flush=True)
-        try:
-            self.queue.finish(row["id"], status, text)
-        except Exception as e:  # noqa: BLE001 - only the record of it
-            print(f"(browser: couldn't record errand {row['id']}: {e!r})")
-        self._tell(person, text)
-        if row["asked_via"] == VOICE and self._say_aloud:
-            aloud = (run.result.aloud.strip() if run else "") or _first_sentences(text)
+            person, goal, started = row["person"], row["goal"], time.time()
+            if row["asked_via"] == VOICE:  # the phone hears of it first, since that's where it'll be asked things
+                self._tell(person, f"On it, as you asked at home: {goal}")
+            trace = self._folder / f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(person)}.jsonl"
+            settings = Settings(model=self._cfg.model, effort=self._cfg.effort, turns=self._cfg.turns,
+                                really_commit=self._cfg.really_order)  # fmt: skip
+            you, run = ByChat(person, self.chats), None
             try:
-                self._say_aloud(person, aloud)  # cut to a reminder's length there
-            except Exception as e:  # noqa: BLE001 - it's in their chat all the same
-                print(f"(browser: couldn't have {person}'s errand said aloud: {e!r})")
+                run_task = self._run or _run_task()
+                run = run_task(goal, you, trace_to=trace, settings=settings, person=you, openai=self._openai,
+                               home=self._home, profile=profile_for(person, self._people[0]),
+                               notes=_notes(self._folder.parent), sprite=self._cfg.sprite)  # fmt: skip
+                text, status = _told(run.result), DONE if run.result.ended == "done" else FAILED
+            except Exception as e:  # noqa: BLE001 - an errand that broke is said so, never left hanging
+                traceback.print_exc()
+                text, status = f"The errand broke before it was done ({type(e).__name__}), so I stopped.", FAILED
+                if you.approved and self._cfg.really_order:
+                    text += " You'd approved the order, so check on the site whether it went through."
+                else:
+                    text += " Nothing was ordered."
+            finally:
+                self.current = None
+            print(f"(browser: {person}'s errand took {time.time() - started:.0f} s: {status})", flush=True)
+            try:
+                self.queue.finish(row["id"], status, text)
+            except Exception as e:  # noqa: BLE001 - only the record of it
+                print(f"(browser: couldn't record errand {row['id']}: {e!r})")
+            self._tell(person, text)
+            if row["asked_via"] == VOICE and self._say_aloud:
+                aloud = (run.result.aloud.strip() if run else "") or _first_sentences(text)
+                try:
+                    self._say_aloud(person, aloud)  # cut to a reminder's length there
+                except Exception as e:  # noqa: BLE001 - it's in their chat all the same
+                    print(f"(browser: couldn't have {person}'s errand said aloud: {e!r})")
 
     def _tell(self, person: str, text: str) -> None:
         try:

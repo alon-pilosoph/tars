@@ -122,6 +122,27 @@ def make_event_log(cfg: Config, root: Path) -> EventLog:
     return EventLog(root / cfg.learning.folder, record=cfg.learning.log_events)
 
 
+def start_metering(cfg: Config, events: EventLog) -> None:
+    """What this process uses of the paid services, counted in the event log (usage.py), the oldest rows pruned, and
+    [usage] monthly_cap_usd held to."""
+    from . import usage
+    from .maintainers import tell
+
+    meter = usage.Meter(events.store)
+    try:
+        meter.prune()
+    except Exception as e:  # noqa: BLE001 - counting goes on
+        print(f"(usage: couldn't prune the oldest rows: {e!r})")
+    usage.install(meter)
+    if cfg.usage.monthly_cap_usd:
+
+        def tell_maintainers(text: str) -> None:
+            if not tell(cfg, events.store, text):
+                print(f"(usage: no maintainer's chat to tell: {text})")
+
+        usage.install_cap(usage.Cap(events.store, cfg.usage.monthly_cap_usd, tell_maintainers))
+
+
 def start_heartbeat(events: EventLog, process: str, root: Path) -> None:
     """The heartbeat the web UI's Status page reads for this process (health.py), kept with the event log."""
     from .health import Heartbeat
@@ -204,7 +225,8 @@ def make_health(cfg: Config, root: Path, log: EventLog) -> Callable[[], Report]:
     from .health import Health, Services, expected
 
     services = Services(lambda: service_checks(cfg, root).listed())
-    return Health(log, expected(cfg), services, systemd_state, backup_enabled=cfg.backup.enabled).report
+    cap = cfg.usage.monthly_cap_usd
+    return Health(log, expected(cfg), services, systemd_state, backup_enabled=cfg.backup.enabled, cap_usd=cap).report
 
 
 def make_reminders(cfg: Config, household: Household, push_to_talk: bool):
@@ -786,6 +808,7 @@ def make_continuity(cfg: Config, env_path: Path, client):
     [llm]'s order, else OpenAI's; None with neither, or keep_days 0."""
     if not cfg.telegram.keep_days:
         return None
+    from . import usage
     from .threads import Continuity
 
     services = quick_services(cfg.llm, env_path)
@@ -802,6 +825,7 @@ def make_continuity(cfg: Config, env_path: Path, client):
                         max_completion_tokens=CONTINUITY_MAX_TOKENS,
                         **({"reasoning_effort": effort} if effort else {}),
                     )
+                    usage.chat_reply(service.name, service.model, reply)
                     return reply.choices[0].message.content or ""
                 except Exception as e:  # noqa: BLE001 - the next one is asked
                     failed = e
@@ -821,6 +845,7 @@ def make_continuity(cfg: Config, env_path: Path, client):
             max_output_tokens=CONTINUITY_MAX_TOKENS,
             **reasoning,
         )
+        usage.response("openai", cfg.llm.model, reply)
         return reply.output_text
 
     return Continuity(ask_openai)

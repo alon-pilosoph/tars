@@ -8,6 +8,8 @@ go(): a draft may be thrown away, but a door it unlocked stays unlocked.
 import threading
 from collections.abc import Callable
 
+from . import usage
+
 # Longer than any answer takes to play. Only a bug leaves a draft unsettled, and since drafts share one lock, an
 # unbounded wait would block every later answer.
 SETTLE_TIMEOUT_S = 600.0
@@ -27,7 +29,7 @@ class Draft[T]:
         self._result: T | None = None
         self._error: Exception | None = None
         self._discard = discard
-        threading.Thread(target=self._run, args=(turn, prepare), daemon=True, name="draft").start()
+        threading.Thread(target=usage.carried(self._run), args=(turn, prepare), daemon=True, name="draft").start()
 
     def _run(self, turn: threading.Lock, prepare: Callable[[Draft[T]], T]) -> None:
         with turn:

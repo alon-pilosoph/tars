@@ -13,6 +13,7 @@ import type {
   Item,
   Label,
   MachineHealth,
+  MonthUsage,
   Metric,
   ModelsInfo,
   Outcome,
@@ -1290,6 +1291,16 @@ function demoHealth(at: number): Health {
       services: [],
       services_asked: at - 2,
       backup: null,
+      usage: {
+        month: monthOf(at),
+        cost: 0,
+        cap: 0,
+        checked: "2026-11-13",
+        unpriced: 0,
+        unreported: 0,
+        by_service: [],
+        by_person: [],
+      },
       machine: demoMachine(false),
     };
   return {
@@ -1339,7 +1350,37 @@ function demoHealth(at: number): Health {
           },
       { name: "The timer", status: "ok", detail: "running", fix: "" },
     ],
+    usage: demoUsage(at, trouble),
     machine: demoMachine(trouble),
+  };
+}
+
+function monthOf(at: number): string {
+  const d = new Date(at * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function demoUsage(at: number, trouble: boolean): MonthUsage {
+  const line = (name: string, calls: number, cost: number, unpriced = 0) => ({ name, calls, cost, unpriced });
+  const k = trouble ? 6.4 : 1;
+  return {
+    month: monthOf(at),
+    cost: 2.69 * k,
+    cap: trouble ? 20 : 30,
+    checked: "2026-11-13",
+    unpriced: trouble ? 2 : 0,
+    unreported: 3,
+    by_service: [
+      line("openai gpt-6-luna", Math.round(412 * k), 1.38 * k),
+      line("cerebras qwen-3.8-27b", Math.round(1630 * k), 0.61 * k),
+      line("deepgram flux-general-en", Math.round(590 * k), 0.42 * k),
+      line("deepgram aura-2-thalia-en", Math.round(655 * k), 0.28 * k, trouble ? 2 : 0),
+    ],
+    by_person: [
+      line("alon", Math.round(1840 * k), 1.71 * k),
+      line("stacey", Math.round(1120 * k), 0.83 * k),
+      line("", Math.round(327 * k), 0.15 * k),
+    ],
   };
 }
 

@@ -10,8 +10,8 @@ until it has a defense and a test, or is accepted as a risk on purpose. What's n
 
 - **The house:** the front door's lock above all (TARS works it by itself, with auto-lock), then everything else
   TARS works (the boiler, the AC, the TV).
-- **What TARS keeps:** recordings of every wake and request, every conversation, the voiceprints, who's home and when
-  (`voice_data/`, and the backup's bucket).
+- **What TARS keeps:** recordings of every wake and request, every conversation, the voiceprints, who's home and when,
+  who used what of the paid services ([usage](usage.md)) (`voice_data/`, and the backup's bucket).
 - **The keys in `.env`:** each service's API key (some with money behind them), the bot's token, the router and Home
   Assistant logins, the backup's AWS key.
 - **The browser's logins and what they can buy:** the vault (`~/.cache/tars-browser/`), the browser's own profile

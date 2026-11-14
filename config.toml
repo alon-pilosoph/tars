@@ -462,3 +462,11 @@ monthly = 4
 # needs sudo (new system packages, a device rule) is left for them to install by hand. Either way they're told.
 enabled = false
 branch = "main"
+
+[usage]
+# What TARS uses of the paid services is counted, by service and by person (docs/usage.md; `voice-assistant --usage`).
+# A cap on a month's estimated cost, in dollars, from prices.toml's prices: the maintainers ([household]) are told at
+# 80% and when it's reached. Past it, TARS says it's out of budget instead of answering, until the month ends; house
+# commands it hears on the Pi itself ([home] commands_on_pi) still work, and reminders already set are still said.
+# 0 = no cap.
+monthly_cap_usd = 0

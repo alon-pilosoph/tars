@@ -466,6 +466,29 @@ def sprite_browser(cfg: Config, orders: str, reach=None) -> Result:
     return Result("Browser", OK, said)
 
 
+def usage_cap(cfg: Config, folder: Path, now: float | None = None) -> Result:
+    """This month's estimated cost against [usage] monthly_cap_usd (docs/usage.md): a warning from 80% of it.
+    `folder`: the event log's."""
+    from .store import DB_FILE
+    from .usage import WARN_SHARE, month
+
+    name, cap = "Usage this month", cfg.usage.monthly_cap_usd
+    if not (folder / DB_FILE).exists():
+        return Result(name, SKIP, "nothing counted yet")
+    from .events import EventLog
+
+    m = month(EventLog(folder).store, now=now)
+    if not cap:
+        return Result(name, SKIP, f"${m.cost:,.2f} so far, with no cap ([usage] monthly_cap_usd)")
+    said = f"${m.cost:,.2f} of the ${cap:,.2f} cap ({m.cost / cap:.0%})"
+    if m.cost >= cap:
+        off = f"{said}: the paid services are off until the month ends"
+        return Result(name, WARN, off, "raise [usage] monthly_cap_usd")
+    if m.cost / cap * 100 >= WARN_SHARE:
+        return Result(name, WARN, f"{said}: near it", "voice-assistant --usage says what it went on")
+    return Result(name, OK, said)
+
+
 def errands_waiting(cfg: Config, folder: Path, now: float | None = None) -> Result:
     """Errands asked aloud that wait in the queue while nothing runs them: the Telegram service does. `folder`: the
     event log's."""
@@ -1133,6 +1156,7 @@ def check_all(cfg: Config, root: Path, silent: bool = False) -> int:
         ),
         ("Browser", lambda: browser(cfg)),
         ("Errands", lambda: errands_waiting(cfg, root / cfg.learning.folder)),
+        ("Usage this month", lambda: usage_cap(cfg, root / cfg.learning.folder)),
         *((unit, lambda unit=unit: systemd(unit, systemd_state)) for unit in (PROCESSES[p][1] for p in expected(cfg))),
         *([("voice-assistant-backup.timer", lambda: backup_timer(systemd_state))] if cfg.backup.enabled else []),
     ]

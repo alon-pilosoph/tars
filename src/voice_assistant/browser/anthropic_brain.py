@@ -20,6 +20,7 @@ from typing import Any
 
 from anthropic import Anthropic
 
+from .. import usage as metered
 from ..check import env_value
 from .brain import SQUEEZE, Call, earlier_page
 
@@ -127,6 +128,7 @@ class AnthropicBrain:
         self._shrink(keep=1)
 
     def _count(self, reply) -> None:
+        metered.claude_message("anthropic", self.settings.model, reply)  # what TARS used, by errand (usage.py)
         u = reply.usage
         written, read = u.cache_creation_input_tokens or 0, u.cache_read_input_tokens or 0
         self.used = (self.used[0] + u.input_tokens + written + read, self.used[1] + read,

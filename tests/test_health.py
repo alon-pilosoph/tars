@@ -348,6 +348,27 @@ def test_keys_that_cant_run_tars_show_as_one_failure_not_a_page_of_nothing(tmp_p
     assert "OPENAI_API_KEY" in found[0]["detail"] and ".env" in found[0]["fix"]
 
 
+def test_the_month_s_usage_is_on_the_page_with_the_cap(log):
+    import time
+
+    from voice_assistant import usage
+
+    meter = usage.Meter(log.store)
+    usage.install(meter)
+    try:
+        with usage.turn("Alon", usage.TELEGRAM):
+            usage.llm("openai", "gpt-6-luna", input=1000, output=10)
+        meter.flush()
+    finally:
+        usage.install(None)
+    services = Services(list, lambda url: {"status": {}})
+    found = Health(log, ["web"], services, states(), read_throttled=lambda: None, cap_usd=20.0).report()["usage"]
+    assert set(found) == set(health.MonthUsage.__annotations__)
+    assert found["cap"] == 20.0 and found["month"] == time.strftime("%Y-%m") and found["cost"] > 0
+    assert [(line["name"], line["calls"]) for line in found["by_person"]] == [("alon", 1)]
+    assert found["by_service"][0]["name"] == "openai gpt-6-luna"
+
+
 def test_a_chat_only_home_expects_no_voice_assistant(tmp_path):
     (tmp_path / "config.toml").write_text(
         "[audio]\nenabled = false\n[telegram]\nenabled = true\npeople = { Alon = 1 }\n"

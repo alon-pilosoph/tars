@@ -391,6 +391,13 @@ class HouseholdConfig:
 
 
 @dataclass
+class UsageConfig:
+    # What TARS uses of the paid services is counted (docs/usage.md). A cap on a month's estimated cost, in dollars:
+    # the maintainers are told at 80% and when it's reached, and past it no turn calls a paid service. 0 = none.
+    monthly_cap_usd: float = 0.0
+
+
+@dataclass
 class WishesConfig:
     # Wishes that come true (docs/wishes.md): what TARS was asked for and couldn't do, built by Claude Code on GitHub
     # once a maintainer taps Build it, and told to whoever asked once it's installed. Needs [household] maintainers on
@@ -437,6 +444,7 @@ class Config:
     household: HouseholdConfig
     updates: UpdatesConfig
     wishes: WishesConfig
+    usage: UsageConfig
 
 
 # This machine's own settings, next to config.toml and never committed (.gitignore): the audio devices' names, who's
@@ -663,6 +671,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[backup] archive_after_days must be 0 (never) or more")
     if b.keep_snapshots_days < 1:
         problems.append("[backup] keep_snapshots_days must be at least 1")
+    if cfg.usage.monthly_cap_usd < 0:
+        problems.append("[usage] monthly_cap_usd is dollars a month, or 0 for no cap")
     if cfg.home.local_first and not cfg.home.commands_on_pi:
         problems.append("[home] local_first hears house commands first: it needs commands_on_pi = true")
     if bool(cfg.web.tls_cert) != bool(cfg.web.tls_key):

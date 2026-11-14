@@ -14,8 +14,9 @@ the reasoning effort and tools config.toml gives it; hand-offs really go to Open
 and only changes the times). A run that hits a real "too many requests" is run again after a pause, and isn't
 counted if it never gets through. Every run's transcript goes to evals/runs/<time>/ (not committed).
 
-Every run starts with an estimate of what it will cost, from earlier runs and evals/prices.toml; --budget refuses to
-start a run estimated over it, and stops one that gets there (web searches are most of it: $10 per 1,000).
+Every run starts with an estimate of what it will cost, from earlier runs and the prices TARS keeps
+(src/voice_assistant/prices.toml); --budget refuses to start a run estimated over it, and stops one that gets there
+(web searches are most of it: $10 per 1,000).
 
 Exit status: 0 if it passes, 1 if --fail-under or --no-regressions fails it, 2 if some runs couldn't be run (still
 rate-limited, or a service refused the account: out of credits, a bad key; the eval then stops early, and --save keeps

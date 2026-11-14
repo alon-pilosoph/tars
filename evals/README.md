@@ -37,7 +37,7 @@ date, is what the estimate goes on there, with no transcripts of earlier runs.
 ## What a run costs
 
 Every run starts with an estimate, from what the same scenarios used in earlier runs and the prices in
-`evals/prices.toml` (check them against the providers' pages: they change). **Web searches are most of it**: OpenAI
+`src/voice_assistant/prices.toml` (check them against the providers' pages: they change). **Web searches are most of it**: OpenAI
 bills $10 per 1,000 on any tier, besides their results' tokens. The first 29 scenarios, 3 runs each, make about 45
 searches, take about a minute, and come to about $0.90: about $0.50 on OpenAI, most of it searches, and about $0.40
 for Qwen on Cerebras ($0.99 per million tokens in, $1.49 out; its instructions are long, so it's mostly input). The

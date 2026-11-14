@@ -6,6 +6,7 @@ import {
   answerSplit,
   checkLine,
   diskLine,
+  dollars,
   duration,
   failedLine,
   fmtSize,
@@ -22,6 +23,7 @@ import {
   reminderWhen,
   sentence,
   timingLine,
+  usageLine,
   wakeLine,
 } from "./format";
 import { md, plain } from "./markdown";
@@ -216,6 +218,28 @@ describe("the Status page", () => {
       bad: false,
     });
     expect(pageLine(null)).toEqual({ text: "No status page", bad: false });
+  });
+  it("says this month's use against the cap, flagged from 80%", () => {
+    const month = (cost: number, cap: number) => ({
+      month: "2026-11",
+      cost,
+      cap,
+      checked: "2026-11-13",
+      unpriced: 0,
+      unreported: 0,
+      by_service: [],
+      by_person: [],
+    });
+    expect(usageLine(month(3.421, 0))).toEqual({ text: "$3.42 so far in November", bad: false });
+    expect(usageLine(month(5, 20))).toEqual({
+      text: "$5.00 of the $20.00 cap for November (25%), $15.00 left",
+      bad: false,
+    });
+    expect(usageLine(month(17, 20)).bad).toBe(true);
+    expect(usageLine(month(21, 20)).text).toBe(
+      "$21.00 of the $20.00 cap for November (105%): the paid services are off until the month ends",
+    );
+    expect([dollars(0), dollars(0.004), dollars(0.006)]).toEqual(["$0.00", "under $0.01", "$0.01"]);
   });
   it("says what to do about a check, the backup's or a service's, only when it isn't fine", () => {
     const fix = "systemctl --user start voice-assistant-backup";

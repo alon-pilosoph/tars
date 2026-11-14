@@ -56,6 +56,7 @@ from .wiring import (
     start_auto_locks,
     start_buttons,
     start_heartbeat,
+    start_metering,
     start_presence,
     tell_maintainers,
     voice_errands,
@@ -291,6 +292,7 @@ def telegram(cfg: Config, root: Path) -> None:
     household = Household(cfg, root)
     events = household.events
     start_heartbeat(events, "telegram", root)
+    start_metering(cfg, events)
     presence = household.presence
     tools = None
     if household.reminders is not None:
@@ -554,6 +556,7 @@ def typed(cfg: Config, root: Path) -> None:
                     made[0].brain.remember_said(line)
 
     household = Household(cfg, root)
+    start_metering(cfg, household.events)
     home = make_home(cfg, root, announce, household.presence, own_speaker(cfg))
     _, brain, voice = make_pipeline(
         cfg,
@@ -598,6 +601,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     household = Household(cfg, root)
     events = household.events
     start_heartbeat(events, "assistant", root)
+    start_metering(cfg, events)
     speaker_id = household.speaker_id
     presence = household.presence
     reminders = make_reminders(cfg, household, push_to_talk)
