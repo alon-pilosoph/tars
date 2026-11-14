@@ -60,21 +60,20 @@ def test_a_part_is_made_once_after_what_it_needs_and_nothing_else(tmp_path, fact
     assert made(household) == {"events", "wishes", "myself", "presence"}
 
 
-def test_the_reminders_are_the_tables_on_the_event_log_and_none_without_it_or_with_them_off(tmp_path):
+def test_the_reminders_are_the_tables_on_the_event_log_and_none_with_them_off(tmp_path):
     household = Household(config(), tmp_path)
     assert isinstance(household.reminders, Reminders) and household.reminders.store is household.events.store
-    assert Household(config(log_events=False), tmp_path).reminders is None
+    assert isinstance(Household(config(log_events=False), tmp_path).reminders, Reminders)  # recording off: still there
     cfg = config()
     off = Household(dataclasses.replace(cfg, reminders=dataclasses.replace(cfg.reminders, enabled=False)), tmp_path)
     assert off.reminders is None and made(off) == {"reminders"}  # the event log isn't needed to know that
 
 
-def test_without_the_event_log_every_part_kept_in_it_is_left_out_saying_so(tmp_path, capsys):
+def test_with_recording_off_the_database_and_every_part_kept_in_it_are_still_there(tmp_path):
+    """[learning] log_events only says whether wakes and audio are recorded: what's kept in the database works."""
     household = Household(config(log_events=False), tmp_path)
-    assert all(getattr(household, part) is None for part in PARTS - {"myself"})
-    assert household.myself is not None  # TARS knows itself without a database, from its files
-    out = capsys.readouterr().out
-    assert "(presence: off" in out and "(skills: off" in out and "(feeds: off" in out
+    assert household.events is not None and household.events.record is False
+    assert all(getattr(household, part) is not None for part in PARTS - {"speaker_id", "wishes"})
 
 
 def test_every_part_made_starts_no_thread_and_opens_no_device(tmp_path, monkeypatch):

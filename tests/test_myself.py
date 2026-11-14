@@ -53,6 +53,7 @@ def remember(log: EventLog, via: str | None, turns: list[tuple[float, str, str |
 
 
 def me(cfg, root, log=None, run=subprocess.run) -> Myself:
+    log = log or EventLog(root / "voice_data" / "events")
     return Myself(cfg, root, log, run=run, unit_state=lambda unit: None, now=lambda: NOW)
 
 

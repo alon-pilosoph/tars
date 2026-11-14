@@ -56,8 +56,7 @@ routers already know which phones are connected, and TARS signs into them and as
    whose phone it sees. Then restart TARS; its log says `(presence: asking 2 router(s) every 30 s)`, and
    `(presence: Stacey came home)` as it happens.
 
-It runs in the assistant, and keeps who's home in the event log, so it needs `[learning] log_events` (on by
-default). The Telegram service and the web UI read it there.
+It runs in the assistant, and keeps who's home in the event log. The Telegram service and the web UI read it there.
 
 ## The routers
 

@@ -836,8 +836,6 @@ def routers_last(cfg: Config, folder: Path, now: float | None = None) -> Result 
 
     if not cfg.presence.enabled:
         return Result(PRESENCE, SKIP, "off ([presence] enabled)")
-    if not cfg.learning.log_events:
-        return Result(PRESENCE, FAIL, "it's kept in the event log", "set [learning] log_events = true")
     if not (folder / DB_FILE).exists():
         return Result(PRESENCE, WARN, "the routers haven't been asked yet", "is the assistant running? (it asks them)")
     from .events import EventLog

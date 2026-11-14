@@ -114,18 +114,16 @@ def quick_services(llm: LLMConfig, env_path: Path) -> list[QuickService]:
     ]
 
 
-def make_event_log(cfg: Config, root: Path):
-    if not cfg.learning.log_events:
-        return None
+def make_event_log(cfg: Config, root: Path) -> EventLog:
+    """The event database, always there: reminders, conversations, Telegram's sends, the web UI and the backup are
+    kept in it. [learning] log_events only says whether wakes and audio are recorded too."""
     from .events import EventLog
 
-    return EventLog(root / cfg.learning.folder)
+    return EventLog(root / cfg.learning.folder, record=cfg.learning.log_events)
 
 
-def start_heartbeat(events: EventLog | None, process: str, root: Path) -> None:
+def start_heartbeat(events: EventLog, process: str, root: Path) -> None:
     """The heartbeat the web UI's Status page reads for this process (health.py), kept with the event log."""
-    if events is None:
-        return
     from .health import Heartbeat
 
     Heartbeat(events.folder, process, root).start()
@@ -153,9 +151,9 @@ def make_echo_canceller(cfg: Config):
 
 
 def brain_config(cfg: Config, typed: bool) -> LLMConfig:
-    """Sent items live in the event log, which typed questions (--text) don't use: without it, TARS mustn't say it
-    sent anything."""
-    return dataclasses.replace(cfg.llm, send=cfg.llm.send and cfg.learning.log_events and not typed)
+    """Sent items live in the event log, which typed questions (--text) don't use: there, TARS mustn't say it sent
+    anything."""
+    return dataclasses.replace(cfg.llm, send=cfg.llm.send and not typed)
 
 
 def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
@@ -264,12 +262,9 @@ def local_first(cfg: Config, root: Path, commands):
 
 
 def make_presence(cfg: Config, root: Path, events):
-    """[presence] (presence.Presence), when it's on and there's an event log to keep who's home in; None otherwise.
-    It only reads the board until the assistant's watch() asks the routers."""
+    """[presence] (presence.Presence) when it's on, who's home kept in the event log; None otherwise. It only reads
+    the board until the assistant's watch() asks the routers."""
     if not cfg.presence.enabled:
-        return None
-    if events is None:
-        print("(presence: off: who's home is kept in the event log, so it needs [learning] log_events)")
         return None
     from .presence import make_presence as presence_from
 
@@ -401,7 +396,7 @@ def make_home(
     context.maintainers = list(cfg.household.maintainers)
     # `background`: this process (the voice assistant's) watches devices, and tells the maintainers through `events`.
     context.background = background
-    if events is not None:
+    if events is not None:  # None: a house that tells the maintainers nothing (a chat's, a typed question's)
         from .maintainers import tell
 
         def tell_maintainers(text: str) -> None:
@@ -469,11 +464,11 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, h
     if not (cfg.home.url and token):
         print(f"(auto-lock: off: it works the lock through Home Assistant: set [home] url, and {TOKEN_KEY} in .env)")
         return
-    store = events.store if events else None
+    store = events.store
 
     def post(text: str) -> None:
         """To everyone's Telegram chat."""
-        for name in cfg.telegram.people if cfg.telegram.enabled and store else []:
+        for name in cfg.telegram.people if cfg.telegram.enabled else []:
             try:
                 Reminders(store).add(
                     NewReminder(MESSAGE, text, for_name=name, due=time.time(), needs_ack=False, max_tries=1),
@@ -519,7 +514,7 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, h
 
 
 def make_skills(events):
-    """What TARS is taught, skills and preferences (skills.py), in the event database, or None without one."""
+    """What TARS is taught, skills and preferences (skills.py), in the event database."""
     from .skills import make
 
     return make(events)
@@ -726,8 +721,8 @@ def make_myself(cfg: Config, root: Path, events, wishes=None):
 
 
 def make_wishes(cfg: Config, root: Path, events):
-    """Wishes that come true (wishes.py), with [wishes] on and a database; None otherwise."""
-    if not cfg.wishes.enabled or events is None:
+    """Wishes that come true (wishes.py), with [wishes] on; None otherwise."""
+    if not cfg.wishes.enabled:
         return None
     from .reminders import MESSAGE, TELEGRAM, VOICE, NewReminder, Reminders
     from .wishes import GitHub, GitHubError, Told, Wishes, running_has
@@ -752,7 +747,7 @@ def make_wishes(cfg: Config, root: Path, events):
 
 
 def make_feeds(cfg: Config, events):
-    """The feeds tool (feeds.py), in the event database, or None without one."""
+    """The feeds tool (feeds.py), in the event database."""
     from .feeds import make
 
     return make(cfg.feeds, events)
@@ -871,8 +866,6 @@ def errand_queue(cfg: Config, events, has_openai: bool):
         return None
     if not has_openai:
         raise ConfigError(f"[browser] needs {OPENAI_KEY} in .env: an OpenAI model works the browser.")
-    if events is None:
-        raise ConfigError("[browser] needs [learning] log_events: errands are queued in the event database.")
     try:
         import cryptography  # noqa: F401 - only whether they're there
         import playwright  # noqa: F401
@@ -923,12 +916,8 @@ def errand_said_aloud(reminders, presence=None):
 
 def voice_errands(cfg: Config, events):
     """The browse tool for the voice (browser/errands.py), with [browser] on: an errand asked for aloud goes into
-    the queue in the event database, for the Telegram service to run. None without the browser, Telegram or that
-    database."""
+    the queue in the event database, for the Telegram service to run. None without the browser or Telegram."""
     if not (cfg.browser.enabled and cfg.telegram.enabled and cfg.telegram.people):
-        return None
-    if events is None:
-        print("(browser: errands asked aloud need [learning] log_events, where they're queued)")
         return None
     from .browser.errands import Queue
 
@@ -991,15 +980,13 @@ def plugin_files(cfg: Config, root: Path) -> dict[str, Path]:
     return files
 
 
-def make_backup(cfg: Config, root: Path, log: EventLog | None = None) -> Backup:
+def make_backup(cfg: Config, root: Path, log: EventLog | None = None) -> Backup:  # None: made here
     """The backup to [backup]'s bucket, of `log` (made from config.toml if not given): the event log's files, and a
     snapshot of the database and snapshot_files every six hours. ConfigError if it's off, or can't be."""
     from .backup import Backup
 
     s3 = make_s3(cfg, root)
     log = log or make_event_log(cfg, root)
-    if log is None:
-        raise ConfigError("The backup is of the event log: set log_events = true under [learning] in config.toml.")
     return Backup(log, cfg.backup, s3, snapshot_files(cfg, root))
 
 
@@ -1123,7 +1110,7 @@ class Household:
         self.cfg, self.root = cfg, root
 
     @functools.cached_property
-    def events(self) -> EventLog | None:
+    def events(self) -> EventLog:
         return make_event_log(self.cfg, self.root)
 
     @functools.cached_property
@@ -1138,9 +1125,9 @@ class Household:
 
     @functools.cached_property
     def reminders(self):
-        """The reminders' table (reminders.Reminders), with [reminders] on and an event log; None otherwise. Each
-        process gives the brain its own tools over it (reminder_tools), knowing people its own way."""
-        if not (self.cfg.reminders.enabled and self.events):
+        """The reminders' table (reminders.Reminders), with [reminders] on; None otherwise. Each process gives the brain
+        its own tools over it (reminder_tools), knowing people its own way."""
+        if not self.cfg.reminders.enabled:
             return None
         from .reminders import Reminders
 
