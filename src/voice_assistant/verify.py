@@ -334,25 +334,32 @@ class VerifiedTrigger:
                     return DUE
                 continue
             self._trigger.reset()
-            audio = recent.audio()
-            outcome, heard = self._verifier.decide(audio)
-            if self._journal:
-                self._journal.wake(
-                    audio,
-                    score,
-                    outcome,
-                    heard,
-                    self._verifier.last_confidence,
-                    self.pair.wake_model,
-                    self.pair.check_model,
-                )
-            if outcome != IGNORE:
-                self.last_audio = audio
-                self.after_name = self._find_after_name(audio) if outcome == ANSWER else None
+            if (outcome := self.confirm(recent.audio(), score)) != IGNORE:
                 return outcome
-            print(f"(heard '{heard}', not '{self.phrase}'; still listening)")
 
-    def _find_after_name(self, audio: np.ndarray) -> Future[np.ndarray]:
+    def confirm(self, audio: np.ndarray, score: float) -> str:
+        """The double-check of a wake the model scored `score` on `audio` (the check window that ends on it): ANSWER,
+        ASK or IGNORE, kept in the journal. Not IGNORE: `last_audio` is `audio`, and on ANSWER `after_name` is being
+        found. Also for a network body that ran only the wake model itself (bodylink.RemoteTrigger)."""
+        outcome, heard = self._verifier.decide(audio)
+        if self._journal:
+            self._journal.wake(
+                audio,
+                score,
+                outcome,
+                heard,
+                self._verifier.last_confidence,
+                self.pair.wake_model,
+                self.pair.check_model,
+            )
+        if outcome == IGNORE:
+            print(f"(heard '{heard}', not '{self.phrase}'; still listening)")
+            return outcome
+        self.last_audio = audio
+        self.after_name = self.find_after_name(audio) if outcome == ANSWER else None
+        return outcome
+
+    def find_after_name(self, audio: np.ndarray) -> Future[np.ndarray]:
         """Where the name ends takes a recognizer pass (about 0.25 s on a Pi 4): made on the side, so the greeting
         doesn't wait for it. The mic keeps what's said meanwhile."""
         found: Future[np.ndarray] = Future()
