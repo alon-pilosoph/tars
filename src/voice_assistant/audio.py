@@ -222,6 +222,11 @@ PLUG_IN = "Plug in the speakerphone, or set it in config.toml [audio] (--list-de
 MIC_STALL_S = 3.0
 # Playback that's this far behind the audio it was given has stopped: the device no longer asks for more.
 SPEAKER_STALL_S = 3.0
+# What the speaker asks the system for, the same on every machine: audio handed over 20 ms at a time, with the
+# system's comfortable latency. Left to each system, "as low as you can" meant 0.6 ms pieces on a MacBook (1,600
+# Python callbacks a second) and far bigger ones on the Pi; a reply over the network tapped on the Mac. It costs
+# about 20 ms before the first sound.
+OUTPUT_BLOCK_S = 0.02
 # How long the mic stays shut once TARS's last sound has left the speaker, for the room's echo. In the room, on the
 # PowerConf, nothing of TARS was heard after its last sound, and an answer to its question starts 0.25-0.35 s after
 # it: shut 0.3 s, "twelve" came through as "well" or "hello?" two times in four; shut 0.1 s, it came through whole.
@@ -343,9 +348,17 @@ class Speaker:
         self._on_start: Callable[[], None] | None = None
         self._drained = threading.Event()
         self._stopped = False  # stop(): what's playing now ends here
+        self.ran_dry = 0  # times the audio ran out mid-reply in the last play: a gap, heard as a tap
+        self.underflows = 0  # times the device itself went short (this callback came late), since it opened
         try:
             self._stream = sd.RawOutputStream(
-                samplerate=self._rate, device=device, channels=1, dtype="int16", callback=self._fill
+                samplerate=self._rate,
+                blocksize=round(OUTPUT_BLOCK_S * self._rate),
+                latency="high",
+                device=device,
+                channels=1,
+                dtype="int16",
+                callback=self._fill,
             )
         except sd.PortAudioError as e:
             raise NoDeviceError(f"No speaker to open ({e}). {PLUG_IN}") from None
@@ -359,6 +372,8 @@ class Speaker:
         self._stream.close()
 
     def _fill(self, outdata, frames, time_info, status) -> None:
+        if status and status.output_underflow:  # the device played before the last block was handed over: a click
+            self.underflows += 1
         self._fill_from_buffer(outdata)
         if self._echo:  # every frame, silence too: the canceller needs them all, in time
             self._echo.played(bytes(outdata), self._rate)
@@ -383,6 +398,7 @@ class Speaker:
                     self._drained.set()
                 elif n < wanted:
                     self._buffering = True
+                    self.ran_dry += 1
 
     @property
     def latency(self) -> float:
@@ -412,6 +428,7 @@ class Speaker:
             self._on_start = on_first_audio
             self._drained.clear()
             self._stopped = False
+            self.ran_dry = 0
         resample = Resampler(sample_rate, self._rate) if sample_rate != self._rate else None
         pending, heard = b"", False
         try:
