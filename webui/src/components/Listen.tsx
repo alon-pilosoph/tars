@@ -148,10 +148,12 @@ export function Listen({ queue, onClose }: { queue: TarsEvent[]; onClose: () => 
         <>
           <main className="listen-main" data-id={e.id}>
             <Guess e={e} />
-            <p className="listen-what">
-              <What e={e} />
-              <span className="muted">{` · ${stamp(e.ts)}`}</span>
-            </p>
+            <div>
+              <p className="listen-what">
+                <What e={e} />
+              </p>
+              <div className="wake-when">{stamp(e.ts)}</div>
+            </div>
             <ClipBar key={e.id} clip={clipOf(e)} ended={phase === "waiting"} />
             <p className="listen-status" aria-live="polite">
               {STATUS[phase](e)}
