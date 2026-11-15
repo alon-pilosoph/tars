@@ -457,3 +457,24 @@ def test_with_recording_on_the_same_turn_keeps_its_audio(tmp_path):
     kept = ConversationLog(EventLog(tmp_path / "events"))
     turn = kept.add_person_turn(kept.start(None, via="telegram"), "remind me at five", speech(), "Alon")
     assert kept.turn(turn)["audio"] and len(audio_files(kept.events.folder)) == 1
+
+
+def test_a_wake_turned_down_on_nothing_like_the_name_settles_itself_out_of_review(log):
+    # On the household's first 271 answered wakes like these, none was "hey TARS"; the one real one the check turned
+    # down was heard as "guitars", which stays.
+    far = [
+        log.add_wake(AUDIO, 0.4, IGNORE, heard, 0.0, ts=t)
+        for t, heard in enumerate(["nothing clear", "[unk]", "there"])
+    ]
+    close = [
+        log.add_wake(AUDIO, 0.4, IGNORE, heard, 0.0, ts=10 + t)
+        for t, heard in enumerate(["guitars", "[unk] hey", "hey there", "tara", "lars"])
+    ]
+    answered = log.add_wake(AUDIO, 0.4, IGNORE, "[unk]", 0.0, ts=20)
+    log.set_label(answered, REAL)  # someone said otherwise: it stays, among the answered
+    shown = {e["id"] for e in log.for_review()}
+    assert not shown & set(far) and set(close) <= shown and answered in shown
+    rows = {e["id"]: e for e in log.events()}
+    assert all(rows[i]["auto_label"] == NOT_REAL for i in far)
+    assert rows[far[0]]["auto_reason"] == "the double-check heard nothing like hey TARS"
+    assert all(learning_label(rows[i]) is None for i in far)  # still only the check's verdict: not taught

@@ -403,6 +403,35 @@ test("Status shows each process by its heartbeat, today's counts, and the servic
   await expect(page.locator(".kv")).toContainText(health.machine.host);
 });
 
+// Near the end: it answers a few of Review's wakes, which the tests above count on being there.
+test("Listen plays the wakes to check one after another: left alone, a clip takes TARS's guess; a tap says otherwise; Back takes it back", async () => {
+  await nav("Review").click();
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  const label = async (id: number) => (await A.events()).find(e => e.id === id)?.label ?? null;
+  const guessOf = async (id: number) => (await A.events()).find(e => e.id === id)?.auto_label ?? null;
+  await page.getByRole("button", { name: /^Listen to \d+$/ }).click();
+  const panel = page.locator(".listen");
+  const shown = async () => Number(await panel.locator(".listen-main").getAttribute("data-id"));
+  const first = await shown();
+  const guess = await guessOf(first);
+  expect(guess).not.toBeNull(); // the demo's first wake to check has a guess
+  await expect(panel.locator(".listen-count")).toHaveText(/^2 of /, { timeout: 20_000 }); // played out, untouched
+  await expect.poll(() => label(first)).toBe(guess);
+  const second = await shown();
+  const other = (await guessOf(second)) === "real" ? "Not it" : "hey TARS";
+  await panel.getByRole("button", { name: other, exact: true }).click();
+  await expect.poll(() => label(second)).toBe(other === "Not it" ? "not_real" : "real");
+  await expect(panel.locator(".listen-count")).toHaveText(/^3 of /);
+  await panel.getByRole("button", { name: "Back" }).click();
+  await expect.poll(() => label(second)).toBeNull();
+  expect(await shown()).toBe(second);
+  await panel.getByRole("button", { name: "Pause" }).click();
+  await expect(panel.locator(".listen-status")).toHaveText(/^Paused/);
+  await panel.getByRole("button", { name: "Close" }).click();
+  await expect(panel).toHaveCount(0);
+  expect(await label(second)).toBeNull(); // paused and closed: not answered
+});
+
 // Last: it answers most of Review, which the tests above count on being there.
 test("Agree with all answers each guessed wake with TARS's guess, and leaves the rest waiting", async () => {
   await nav("Review").click();

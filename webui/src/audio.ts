@@ -34,15 +34,18 @@ export function useProgress(c: Clip): Playing | null {
 }
 
 const DEMO_SECONDS = 3;
-let audio: HTMLAudioElement | null = null;
+// One element for every clip: a phone lets a page play audio only from a tap, but an element a tap has started may
+// go on to play other clips, as Review's Listen does one after another.
+let element: HTMLAudioElement | null = null;
+let turn = 0; // the clip playing now: a late event from one before it is ignored
 let frame = 0;
 let demoTimer = 0;
 
 export function stopAudio() {
-  if (audio) {
-    audio.onended = audio.onerror = null; // a late error from the old clip must not stop the next one
-    audio.pause();
-    audio = null;
+  turn++;
+  if (element) {
+    element.onended = element.onerror = null; // a late error from the old clip must not stop the next one
+    element.pause();
   }
   cancelAnimationFrame(frame);
   clearInterval(demoTimer);
@@ -52,7 +55,8 @@ export function stopAudio() {
 export const showPlaying = (key: string, progress: number, seconds: number | null = null) =>
   emit(key, progress, seconds);
 
-export function play(c: Clip, onError: () => void) {
+/** `onEnd`: called once the clip has played to its end (not when it's stopped, or another starts). */
+export function play(c: Clip, onError: () => void, onEnd?: () => void) {
   const key = clipKey(c);
   const was = playing.key;
   stopAudio();
@@ -63,19 +67,33 @@ export function play(c: Clip, onError: () => void) {
     demoTimer = window.setInterval(() => {
       progress += 0.02;
       emit(key, progress, DEMO_SECONDS);
-      if (progress >= 1) stopAudio();
+      if (progress >= 1) {
+        stopAudio();
+        onEnd?.();
+      }
     }, 60);
     return;
   }
-  const a = (audio = new Audio(clipUrl(c)));
-  a.onended = stopAudio;
-  a.onerror = () => {
+  const a = (element ??= new Audio());
+  const mine = turn;
+  a.src = clipUrl(c);
+  a.onended = () => {
+    if (turn !== mine) return;
+    stopAudio();
+    onEnd?.();
+  };
+  const failed = () => {
+    if (turn !== mine) return;
     stopAudio();
     onError();
   };
-  a.play().catch(() => {});
+  a.onerror = failed;
+  // Refused (the browser wants a tap first) is a failure; aborted (another clip took over) isn't.
+  a.play().catch((e: unknown) => {
+    if (!(e instanceof DOMException && e.name === "AbortError")) failed();
+  });
   const tick = () => {
-    if (audio !== a) return;
+    if (turn !== mine) return;
     if (a.duration) emit(key, a.currentTime / a.duration, a.duration);
     frame = requestAnimationFrame(tick);
   };

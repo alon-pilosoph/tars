@@ -18,6 +18,7 @@ export const ICONS = {
   note: `<path d="M5 6h14"/><path d="M5 11h14"/><path d="M5 16h9"/>`,
   list: `<path d="M11 6h9"/><path d="M11 12h9"/><path d="M11 18h9"/><path d="m3.5 6 1.5 1.5 2.5-3"/><path d="m3.5 12 1.5 1.5 2.5-3"/><path d="m3.5 18 1.5 1.5 2.5-3"/>`,
   link: `<path d="M10 14a4 4 0 0 0 5.7 0l3-3A4 4 0 0 0 13 5.3l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>`,
+  undo: `<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>`,
   close: `<path d="M6 6l12 12"/><path d="M18 6 6 18"/>`,
   trash: `<path d="M4 7h16"/><path d="M9 7V4.5h6V7"/><path d="m6 7 1 13h10l1-13"/>`,
   notfor: `<path d="M20.5 12a8.5 8.5 0 0 1-12.3 7.6L3.5 21l1.3-4.6A8.5 8.5 0 1 1 20.5 12z"/><path d="m4 4 16 16"/>`,

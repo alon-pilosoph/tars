@@ -1,7 +1,7 @@
 import { post } from "../api";
 import { answerSplit, stamp } from "../format";
 import type { Conversation, Label, TarsEvent, Turn } from "../types";
-import { confirmDelete, saveThenReload, undoable } from "./actions";
+import { confirmDelete, run, saveThenReload, undoable } from "./actions";
 import { get, set, setNow } from "./core";
 import { eventById, findTurn, speakerName } from "./selectors";
 import { confirm, copyText, scrollToEl } from "./ui";
@@ -103,6 +103,13 @@ function saveLabel(id: number, prev: Label | null, next: Label | null, msg: stri
     prev,
     msg,
   );
+}
+
+/** Review's Listen: an answer saved with no toast (the panel shows it), or cleared again by its Back. */
+export async function labelQuietly(id: number, label: Label | null) {
+  const prev = eventById(get(), id)?.label ?? null;
+  patchWakeLabel(id, label);
+  return run(() => post(`/api/events/${id}/label`, { label }), { revert: () => patchWakeLabel(id, prev) });
 }
 
 const ANSWERED = { real: "Marked: it was “hey TARS”.", not_real: "Marked: not TARS." };
