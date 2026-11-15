@@ -2058,6 +2058,73 @@ details.how {
   font-size: 14px;
   padding: 0 2px;
 }
+.rec-count.link-btn {
+  text-decoration: none;
+  gap: 4px;
+}
+.rec-count.link-btn:disabled {
+  opacity: 1;
+}
+.rec-list-head {
+  margin-bottom: 24px;
+}
+.rec-list-head .rec-lede {
+  margin-top: 6px;
+}
+.rec-phrases {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding-bottom: calc(130px + env(safe-area-inset-bottom)); /* clear of the dock's Back */
+}
+.rec-group-how {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+.rec-group ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rec-phrase {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 2ch 1fr auto;
+  align-items: start; /* each on the first line: all three are 21px lines */
+  column-gap: 14px;
+  padding: 11px 0; /* 15px text at 1.4: a 43px row, with the divider a tap target */
+  border-bottom: 1px solid var(--line);
+  text-align: start;
+}
+.rec-phrase[aria-current="step"] .rec-phrase-n {
+  color: var(--ink); /* where you were: its number lit, nothing louder */
+}
+.rec-phrase-n {
+  font-size: 13px;
+  line-height: 21px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+.rec-phrase-say {
+  font-size: 15px;
+  line-height: 21px;
+}
+.rec-phrase-state {
+  display: inline-flex;
+  align-items: center;
+  height: 21px;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rec-phrase-state.redo,
+.rec-phrase-state.later {
+  color: var(--accent);
+}
 .rec-prompt {
   margin-top: 36px;
 }

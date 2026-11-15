@@ -3,14 +3,14 @@ speakerphone, or, for a wake test, on the device the page is open on (record/Rec
 docs/web-ui.md#recording-sessions).
 
 A session is a script of prompts (the exact words, and how to say them) for one person, and a token: the link's only
-key, good for LINK_HOURS or until the last prompt is done. The assistant does the recording, since it holds the
-speakerphone (Assistant.take, over control.py); the web UI keeps each take here, after `check` has listened for what
-would make it worth doing again. Three scripts: the person's voice (for speaker ID), the house's commands (for
-measuring house commands on the Pi, tools/commands_bench.py), and "hey TARS" in the places and noise it's said in (a
-wake test, for measuring wake models on real mics, docs/wake-word.md). A wake test made for a device (--device) is
-recorded by the page itself, on that device's microphone, and uploaded; its takes only ever test a model, never train
-one. A house session's takes stay on the Pi unless it
-was made with --cloud, which its page says before it starts: then the bench may send them to Deepgram too.
+key, good for LINK_HOURS (a wake test, WAKE_LINK_HOURS) or until the person finishes it. The assistant does the
+recording, since it holds the speakerphone (Assistant.take, over control.py); the web UI keeps each take here, after
+`check` has listened for what would make it worth doing again. Three scripts: the person's voice (for speaker ID),
+the house's commands (for measuring house commands on the Pi, tools/commands_bench.py), and "hey TARS" in the places
+and noise it's said in (a wake test, for measuring wake models on real mics, docs/wake-word.md). A wake test made for
+a device (--device) is recorded by the page itself, on that device's microphone, and uploaded; its takes only ever
+test a model, never train one. A house session's takes stay on the Pi unless it was made with --cloud, which its page
+says before it starts: then the bench may send them to Deepgram too.
 """
 
 import json
@@ -34,6 +34,7 @@ KINDS = (VOICE, HOUSE, WAKE)
 # Where a session's takes are recorded: TARS's speakerphone, or the device the page is open on (a wake test only).
 ON_TARS, ON_DEVICE = "tars", "here"
 LINK_HOURS = 24
+WAKE_LINK_HOURS = 24 * 7  # a wake test is done in parts, as the TV and other people are around
 MIN_ENROLL_TAKES = 5  # good takes a voice session needs before it becomes a voiceprint, as --enroll does
 SECONDS_A_PROMPT = 15  # reading, the beep, saying it, hearing it back: for "about N minutes"
 
@@ -177,6 +178,7 @@ WAKE_REQUESTS = [
 ]
 # What a wake model mistakes for "hey TARS": near misses TARS's double-check has turned down on the Pi.
 LOOKALIKES = ["Hey cars", "Hey stars", "Guitars", "Hey Lars", "Hey there", "Hey Tara", "Hey darts", "Hey Mars"]
+LOOKALIKE_HOW = "As written: it sounds like TARS, but isn't"
 ROOM_SECONDS = 60.0
 WALK_AWAY_S = 4.0  # a device recording "from across the room" counts down this long, so it can be put down first
 ROOM_TAKES = 3
@@ -192,7 +194,7 @@ def wake_script(on_device: bool) -> list[Prompt]:
     steps = [
         *[("w", "Hey TARS", "", WAKE_PHRASE)] * 6,
         *[("r", words, IN_ONE_BREATH, WAKE_PHRASE) for words in WAKE_REQUESTS],
-        *[("l", words, "", "") for words in LOOKALIKES],
+        *[("l", words, LOOKALIKE_HOW, "") for words in LOOKALIKES],
         *[("w", "Hey TARS", FAR, WAKE_PHRASE)] * 6,
         *[("w", "Hey TARS", SOFTLY, WAKE_PHRASE)] * 5,
         *[("w", "Hey TARS", TV, WAKE_PHRASE)] * 6,
@@ -317,7 +319,8 @@ class Sessions:
             "INSERT INTO sessions (token, kind, person, created, expires, prompts, cloud, mic, device) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                token, kind, person, now, now + LINK_HOURS * 3600, json.dumps([asdict(p) for p in prompts]),
+                token, kind, person, now, now + (WAKE_LINK_HOURS if kind == WAKE else LINK_HOURS) * 3600,
+                json.dumps([asdict(p) for p in prompts]),
                 int(cloud), ON_DEVICE if device else ON_TARS, device,
             ),
         )  # fmt: skip
@@ -343,7 +346,8 @@ class Sessions:
         return self.store.row("SELECT * FROM takes WHERE id = ? AND session_id = ?", (take_id, session_id))
 
     def add_take(self, session: dict, prompt: Prompt, pcm: bytes | None, stopped: str) -> dict:
-        """Kept, checked, and in place of the prompt's earlier take, whose audio goes with it."""
+        """Kept, checked, and in place of the prompt's earlier take, whose audio goes with it. A prompt left for later
+        isn't any more."""
         problem = check(pcm, stopped, prompt.quiet, timed=prompt.seconds > 0)
         seconds = len(pcm) / 2 / SAMPLE_RATE if pcm else 0.0
         name = f"take_{session['id']}_{prompt.id}_{secrets.token_hex(4)}"  # never the name of the take it replaces
@@ -352,6 +356,10 @@ class Sessions:
             old = [r["audio"] for r in db.execute(
                 "SELECT audio FROM takes WHERE session_id = ? AND prompt = ?", (session["id"], prompt.id))]  # fmt: skip
             db.execute("DELETE FROM takes WHERE session_id = ? AND prompt = ?", (session["id"], prompt.id))
+            later = json.loads(db.execute("SELECT skipped FROM sessions WHERE id = ?", (session["id"],)).fetchone()[0])
+            if prompt.id in later:
+                later.remove(prompt.id)
+                db.execute("UPDATE sessions SET skipped = ? WHERE id = ?", (json.dumps(later), session["id"]))
             take_id = db.execute(
                 "INSERT INTO takes (session_id, prompt, ts, audio, seconds, problem, stopped) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -361,6 +369,7 @@ class Sessions:
         return self.take(session["id"], take_id)
 
     def skip(self, session: dict, prompt_id: str) -> None:
+        """Left for later: the page comes back to it before the end, and it can be finished without it."""
         with self.store.transaction() as db:
             row = db.execute("SELECT skipped FROM sessions WHERE id = ?", (session["id"],)).fetchone()
             skipped = json.loads(row["skipped"])
@@ -370,13 +379,14 @@ class Sessions:
                 )
 
     def done(self, session: dict) -> bool:
-        """Every prompt has a take or was skipped."""
+        """Every prompt has a take or was left for later."""
         row = self.store.row("SELECT skipped FROM sessions WHERE id = ?", (session["id"],))
         covered = {t["prompt"] for t in self.takes(session["id"])} | set(json.loads(row["skipped"]))
         return all(p.id in covered for p in self.prompts(session))
 
     def finish(self, session: dict) -> bool:
-        """Closes the link once every prompt is covered; True if this call did (so what follows runs once)."""
+        """Closes the link once every prompt is covered and the person says they're done; True if this call did (so
+        what follows runs once)."""
         if not self.done(session):
             return False
         with self.store.transaction() as db:

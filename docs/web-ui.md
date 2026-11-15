@@ -44,7 +44,7 @@ measuring [house commands on the Pi](home.md#house-commands-on-the-pi) on the ho
 device does, asked the way people ask, from across the room and quietly too, words that name a device without asking
 for anything, and plain requests. `voice-assistant --record-session voice|house --for NAME`
 makes one and sends its link to NAME's Telegram chat (or prints it). The link is the session's only key, and works for
-a day or until the last phrase is done.
+a day (a wake test's, a week) or until its person taps Finish.
 
 A third kind, a wake test (`--record-session wake --for NAME`), is "hey TARS" as it's really said, for measuring
 wake models on real microphones ([wake word](wake-word.md#measuring-on-real-microphones)): close and from across the
@@ -68,10 +68,13 @@ ever sent: `tools/commands_bench.py --cloud` leaves every other session's to Vos
 Each phrase is shown as it should be said, with how to say it ("From across the room", "Quietly"). A tap, a beep from
 the speakerphone, and TARS records until you stop talking (or a second tap). Each take is checked straight away, and
 one worth doing again says why: nothing heard, too quiet, too loud, cut off or too short. Hear it back, redo it, or
-go on; a phrase can be skipped. While the page is open TARS doesn't listen for its name (a phrase can say "hey
+go on. A phrase can be left for later (no TV on, nobody around to talk): the page comes back to it at the end, which
+offers what's left before Finish, and the link keeps everything until then. Tapping the phrase count opens all of
+them, grouped as they're said, each recorded, worth redoing, left for later or not yet: any can be heard, redone or
+recorded from there. While the page is open TARS doesn't listen for its name (a phrase can say "hey
 TARS"), what's due is still said between takes, and three minutes after the page last asked for anything it listens
-again by itself. A session left halfway carries on where it stopped. When a voice session's last phrase is done, its
-good takes (at least five) become the person's voiceprint.
+again by itself. A session left halfway carries on where it stopped. When a voice session is finished, its good takes
+(at least five) become the person's voiceprint.
 
 | The phrase, before a take | A take that needs doing again |
 |---|---|
@@ -246,13 +249,13 @@ fails is shown as it last loaded, saying so, and only when none answers is TARS 
 | `POST /api/skills/{id}/pause` | `{"paused": true or false}` |
 | `DELETE /api/skills/{id}` | Deleted; 404 if it's gone already |
 | `DELETE /api/preferences/{id}` | Forgotten |
-| `GET /api/session/{token}` | A [recording session](#recording-sessions): its phrases (not what a command means), takes and skips; 404 once its link is used up or a day old |
+| `GET /api/session/{token}` | A [recording session](#recording-sessions): its phrases (not what a command means), takes and what's left for later; 404 once it's finished or its link has expired (a day; a wake test's, a week) |
 | `POST /api/session/{token}/begin`, `/leave` | TARS stops listening for its name for the session, or listens again |
 | `POST /api/session/{token}/record` | `{"prompt": id}`: the beep, then a take, answered once it's recording; 409 if TARS is in a conversation or muted, 503 if it isn't running |
 | `GET /api/session/{token}/record/{id}` | The take as it goes (seconds, loudness for the meter); kept and checked once it has ended |
 | `POST /api/session/{token}/record/{id}/stop` | Ends the take now, and keeps it |
-| `POST /api/session/{token}/skip` | `{"prompt": id}` |
-| `POST /api/session/{token}/finish` | Once every phrase has a take or was skipped: the link stops working, and a voice session becomes a voiceprint |
+| `POST /api/session/{token}/skip` | `{"prompt": id}`: left for later; a take for it later takes it off the list |
+| `POST /api/session/{token}/finish` | When its person taps Finish, once every phrase has a take or was left for later: the link stops working, and a voice session becomes a voiceprint |
 | `GET /api/session/{token}/takes/{id}/audio` | A take, as WAV |
 
 ## Working on it

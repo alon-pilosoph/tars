@@ -2,7 +2,8 @@
    device, as a wake test made with --device is). The take's meter moves, it stops
    by itself after a few seconds as TARS would, and every fourth take comes back too quiet, to show a redo.
 
-   For the screenshot tests: &done=<n> prompts already recorded, and &step=ready|recording|heard|problem|busy|done|gone
+   For the screenshot tests: &done=<n> prompts already recorded, and &later=<n> after them left for later, and
+   &step=ready|recording|heard|problem|busy|list|end|done|gone
    to open the page at that step. */
 import { PARAMS } from "../params";
 import type { Step } from "./Record";
@@ -55,7 +56,7 @@ const WAKE: Prompt[] = [
     seconds: 0,
     countdown: 0,
   },
-  { id: "l1", say: "Hey cars", how: "", seconds: 0, countdown: 0 },
+  { id: "l1", say: "Hey cars", how: "As written: it sounds like TARS, but isn't", seconds: 0, countdown: 0 },
   { id: "w2", say: "Hey TARS", how: "From across the room", seconds: 0, countdown: 4 },
   {
     id: "w3",
@@ -91,6 +92,7 @@ const AFTER = {
   wake: "They're kept on TARS, and played to its wake models to see which one hears its name best.",
 };
 const done = Number(PARAMS.get("done") ?? 0);
+const later = Number(PARAMS.get("later") ?? 0); // the prompts after those done, left for later
 
 let sessionNow: Session = {
   kind,
@@ -102,7 +104,7 @@ let sessionNow: Session = {
   after: AFTER[kind],
   prompts,
   takes: prompts.slice(0, done).map((p, n) => ({ id: n + 1, prompt: p.id, seconds: 2.4, problem: null })),
-  skipped: [],
+  skipped: prompts.slice(done, done + later).map(p => p.id),
   minutes: { voice: 4, house: 10, wake: 14 }[kind],
 };
 
@@ -176,6 +178,10 @@ export function demoStep(s: Session, index: number): { step: Step; error: string
         step: { at: "ready" },
         error: "TARS is in the middle of a conversation. Try again in a moment.",
       };
+    case "list":
+      return { step: { at: "list" }, error: null };
+    case "end":
+      return { step: { at: "end" }, error: null };
     case "done":
       return { step: { at: "done" }, error: null };
     case "gone":

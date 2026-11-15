@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Endpointer } from "./here";
-import { nextPrompt } from "./Record";
+import { laterPrompts, nextPrompt, promptState } from "./Record";
 import type { Session } from "./types";
 
 const session = (takes: string[], skipped: string[] = []): Session => ({
@@ -51,5 +51,22 @@ describe("Endpointer", () => {
   });
   it("hears speech over a loud room only when it's well above it", () => {
     expect(run(frames(7, -30))?.stopped).toBe("nobody");
+  });
+});
+
+describe("what's left for later", () => {
+  it("is what was left for later and still has no take, in order", () => {
+    expect(laterPrompts(session(["b"], ["c", "a", "b"]))).toEqual([0, 2]);
+  });
+  it("each phrase's state, for the list", () => {
+    const s = {
+      ...session(["a", "b"], ["c"]),
+      takes: [
+        { id: 1, prompt: "a", seconds: 2, problem: null },
+        { id: 2, prompt: "b", seconds: 2, problem: "quiet" as const },
+      ],
+    };
+    expect(s.prompts.map(p => promptState(s, p))).toEqual(["recorded", "redo", "later"]);
+    expect(promptState(session([]), { id: "a", say: "a", how: "", seconds: 0, countdown: 0 })).toBe("todo");
   });
 });

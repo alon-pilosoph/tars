@@ -222,6 +222,24 @@ def test_a_session_finishes_once_every_prompt_has_a_take_or_was_skipped(sessions
     assert sessions.open(token) is None
 
 
+def test_a_phrase_left_for_later_and_recorded_after_all_isnt_left_for_later_any_more(sessions):
+    token, session = make_session(sessions)
+    first, second, _ = sessions.prompts(session)
+    sessions.skip(session, first.id)
+    sessions.skip(session, second.id)
+    sessions.add_take(session, first, take_audio(), SILENCE)  # came back to it
+    assert sessions.public(sessions.open(token))["skipped"] == [second.id]
+
+
+def test_a_wake_test_link_lasts_a_week_and_others_a_day(sessions):
+    wake = sessions.create(WAKE, "Alon", wake_script(on_device=True)[:2], device="Alon's phone")
+    voice = sessions.create(VOICE, "Alon", voice_script()[:2])
+    sessions.now[0] += 2 * 24 * 3600  # two days on
+    assert sessions.open(wake) and not sessions.open(voice)
+    sessions.now[0] += 6 * 24 * 3600
+    assert not sessions.open(wake)
+
+
 def test_the_page_isnt_told_what_a_command_means(sessions):
     token = sessions.create(HOUSE, "Alon", house_script(DEVICES, random.Random(3)))
     public = sessions.public(sessions.open(token))
