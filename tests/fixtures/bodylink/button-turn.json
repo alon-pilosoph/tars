@@ -1,0 +1,5 @@
+{
+  "about": "A button wake on a body without a wake word: what the brain sends, in order, for one question and its answer, with runs of audio frames as one. For P5 and P6 to check their bodies against (docs/bodies.md).",
+  "body_sends": ["hello", "wake {how: button}", "audio (the question)", "played {id}"],
+  "brain_sends": ["challenge", "welcome", "sleep", "listen", "play", "audio", "play_end", "listen"]
+}
