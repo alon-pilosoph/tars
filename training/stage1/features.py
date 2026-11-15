@@ -1,6 +1,7 @@
 """Stage 1's training features: augmented spectrograms of every clip, the way microWakeWord trains on them.
 
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic      # every voice source + real lookalikes
+    DATA/mww/.venv/bin/python -m training.stage1.features synthetic --device   # the same through made-up microphones
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
     DATA/mww/.venv/bin/python -m training.stage1.features cloned         # cloned speakers, for the large pair
@@ -30,6 +31,11 @@ POSITIVES = {"piper_libritts": 50_000, "kokoro": 20_000, "openai": 1_312, "piper
 NEAR_MISSES = {"piper_libritts": 30_000, "kokoro": 16_000, "openai": 304, "piper_voices": 26_000}
 REAL_LOOKALIKES = 5_000
 CLONED = 50_000
+# --device: the share of clips heard through a made-up microphone (training/data/device.py), and how many 3.2 s cuts of
+# TV, chatter, music and noise go through one as things that aren't the phrase, so a device's sound can't mean a wake.
+DEVICE_SHARE = 0.7
+DEVICE_NEGATIVES = 20_000
+CUT_S = 3.2
 
 
 def augmenter(layout: Layout, owner: bool = False):
@@ -97,7 +103,8 @@ def write(out: Path, generator) -> None:
     tmp.rename(final)
 
 
-def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int) -> None:
+def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int, aug=None, plain=False) -> None:
+    """`aug`: an augmenter in place of the usual one; `plain`: none at all (the clips are ready as they are)."""
     from microwakeword.audio.clips import Clips
     from microwakeword.audio.spectrograms import SpectrogramGeneration
 
@@ -109,7 +116,7 @@ def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int)
         random_split_seed=10,
         split_count=0.1,
     )
-    aug = augmenter(layout)
+    aug = None if plain else aug or augmenter(layout)
     for split, split_name, split_slide in [
         ("training", "train", slide),
         ("validation", "validation", slide),
@@ -123,15 +130,59 @@ def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int)
         write(out / split, gen.spectrogram_generator(split=split_name, repeat=1, max_clips=cap))
 
 
-def synthetic(layout: Layout, phrase: str) -> None:
+def synthetic(layout: Layout, phrase: str, device: bool = False) -> None:
+    """`device`: into DATA/features/<phrase>-device, DEVICE_SHARE of every clip through a made-up microphone, plus
+    DEVICE_NEGATIVES cuts of the backgrounds through one (negative/device)."""
     if not (layout.aug / "interference.done").exists():
         raise SystemExit("Run training.data.make_interference first.")
-    root = layout.features / phrase
+    root = layout.features / (f"{phrase}-device" if device else phrase)
+    aug = None
+    if device:
+        from training.data.device import DeviceAugmentation
+
+        aug = DeviceAugmentation(augmenter(layout), DEVICE_SHARE)
     for kind, table, slide in [("positive", POSITIVES, 5), ("near_miss", NEAR_MISSES, 1)]:
         for source, cap in table.items():
-            build(layout, layout.clip_dir(source, phrase, kind), root / kind / source, cap, slide)
+            build(layout, layout.clip_dir(source, phrase, kind), root / kind / source, cap, slide, aug)
     if phrase == "hey_tars":
-        build(layout, layout.real_lookalikes, root / "near_miss" / "real", REAL_LOOKALIKES, slide=1)
+        build(layout, layout.real_lookalikes, root / "near_miss" / "real", REAL_LOOKALIKES, slide=1, aug=aug)
+    if device:
+        build(layout, device_negatives(layout), root / "negative" / "device", DEVICE_NEGATIVES, slide=1, plain=True)
+
+
+def device_negatives(layout: Layout) -> Path:
+    """DEVICE_NEGATIVES cuts of CUT_S from the TV, chatter, music and noise, each through a made-up microphone, as
+    16 kHz WAVs (made once, in DATA/aug/device_negatives)."""
+    import soundfile as sf
+
+    from training.data.device import device
+
+    out = layout.aug / "device_negatives"
+    if (out / ".done").exists():
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    musan, bg = layout.aug / "musan", layout.backgrounds
+    folders = [layout.aug / "train/tv", layout.aug / "train/babble", musan / "speech", musan / "music",
+               musan / "noise", bg / "audioset_16k", bg / "fma"]  # fmt: skip
+    files = [f for d in folders for f in sorted(d.rglob("*.wav"))]
+    rng = np.random.default_rng(15)
+    n, want = 0, int(CUT_S * 16000)
+    log(f"device negatives: {DEVICE_NEGATIVES} cuts from {len(files)} files")
+    while n < DEVICE_NEGATIVES:
+        path = files[rng.integers(len(files))]
+        info = sf.info(str(path))
+        if info.samplerate != 16000 or info.frames < want:
+            continue
+        start = int(rng.integers(0, info.frames - want + 1))
+        x, _ = sf.read(str(path), start=start, frames=want, dtype="float32", always_2d=True)
+        x = x.mean(axis=1)
+        if np.sqrt((x**2).mean()) < 1e-3:  # silence teaches nothing here
+            continue
+        y = device(x / max(np.abs(x).max(), 1e-6) * rng.uniform(0.1, 0.9), rng)
+        sf.write(str(out / f"{n:05d}.wav"), (y * 32767).astype(np.int16), 16000, subtype="PCM_16")
+        n += 1
+    (out / ".done").touch()
+    return out
 
 
 def cloned(layout: Layout) -> None:
@@ -185,12 +236,13 @@ def main():
     p.add_argument("what", choices=["synthetic", "user", "household", "cloned"])
     p.add_argument("run", nargs="?", help="household: the training run's name")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
+    p.add_argument("--device", action="store_true", help="synthetic: through made-up microphones (data/device.py)")
     add_user_arg(p)
     args = p.parse_args()
     cap_threads()
     layout = Layout(args.data)
     if args.what == "synthetic":
-        synthetic(layout, args.phrase)
+        synthetic(layout, args.phrase, args.device)
     elif args.what == "cloned":
         cloned(layout)
     elif args.what == "user":
