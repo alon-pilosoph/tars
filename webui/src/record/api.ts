@@ -1,7 +1,8 @@
 /* The recording session's calls. Its link's token is the only key: the page needs nothing else from the web UI. */
-import { getJson, post } from "../api";
+import { getJson, post, postAudio } from "../api";
 import { DEMO } from "../params";
-import type { Recording, Session } from "./types";
+import type { Stopped } from "./here";
+import type { Recording, Session, Take } from "./types";
 
 export const TOKEN = new URLSearchParams(location.search).get("session") ?? "";
 const base = () => `/api/session/${encodeURIComponent(TOKEN)}`;
@@ -23,6 +24,18 @@ export const poll = async (id: number): Promise<Recording> =>
 
 export const stop = async (id: number): Promise<Recording> =>
   DEMO ? (await demo()).stop(id) : post<Recording>(`${base()}/record/${id}/stop`);
+
+/** A take recorded on this device, kept at TARS's and checked there. */
+export const upload = async (prompt: string, wav: Blob, stopped: Stopped): Promise<Take> =>
+  DEMO
+    ? (await demo()).upload(prompt)
+    : (
+        await postAudio<{ take: Take }>(
+          `${base()}/upload?prompt=${encodeURIComponent(prompt)}&stopped=${stopped}`,
+          wav,
+          30_000,
+        )
+      ).take;
 
 export const skip = async (prompt: string) => (DEMO ? undefined : post(`${base()}/skip`, { prompt }));
 

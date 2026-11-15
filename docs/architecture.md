@@ -358,7 +358,9 @@ To use it away from home, put the Pi and the phone on Tailscale rather than forw
 on the speakerphone, which only the assistant holds, so the web UI asks it over a Unix socket in the event log's
 folder (`control.py`): a line of JSON each way, readable by TARS's user only. The assistant records on its own
 thread, between listening for its name (`takes.py`): a take asked for in the middle of a conversation is refused
-rather than kept waiting, and the hold a session puts on the wake word lapses on its own.
+rather than kept waiting, and the hold a session puts on the wake word lapses on its own. A wake test made for a
+device is the exception: the page records on its own device and uploads each take, and the web UI only asks the
+assistant to hold.
 
 ## Code map
 

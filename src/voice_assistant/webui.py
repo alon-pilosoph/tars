@@ -23,12 +23,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from . import control
+from .audio import decode_recording
 from .clustering import MIN_REQUESTS_TO_ENROLL
 from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, REVIEW_SHOWN, UNKNOWN, EventLog
 from .health import Report
 from .homenet import address, home_name
-from .recording import Sessions, public_take
+from .recording import ON_DEVICE, STOPPED, Sessions, public_take
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .skills import Skills
 from .versions import INSTALLED, FixedPair, ModelVersions
@@ -70,6 +71,8 @@ REFUSALS = {
 }
 NOT_RUNNING = "TARS isn't running right now, so nothing can be recorded. Try again in a minute."
 MOST_TAKES = 64  # the takes the recording API remembers, by the assistant's id: enough for a few pages at once
+# A take recorded on the page's own device, uploaded as a WAV: a minute of the room at 48 kHz with room to spare.
+MOST_UPLOAD_BYTES = 12_000_000
 LINK_GONE = "It was used up, or it expired: links last a day."
 
 
@@ -735,6 +738,8 @@ def _recording_sessions(
         session = open_or_404(token)
         if not sessions.prompt(session, body.prompt):
             raise HTTPException(404, "no such prompt")
+        if session["mic"] == ON_DEVICE:
+            raise HTTPException(409, "this session's takes are recorded on the device its page is open on")
         answer = assistant("record", session=session["id"])
         with lock:
             kept.pop(answer["id"], None)  # not that an id comes round again, but a stale one mustn't stand in for it
@@ -754,6 +759,37 @@ def _recording_sessions(
     @app.post("/api/session/{token}/record/{take_id}/stop")
     def stop(token: str, take_id: int):
         return keep(open_or_404(token), take_id)
+
+    @app.post("/api/session/{token}/upload")
+    async def upload(
+        token: str,
+        request: Request,
+        prompt: str = Query(max_length=40),
+        stopped: str = Query(max_length=10),
+    ):
+        """A take the page recorded on its own device: a WAV at the device's rate, kept at TARS's like any other.
+        TARS stays held while the page uploads, as it does while the speakerphone records."""
+        session = open_or_404(token)
+        if session["mic"] != ON_DEVICE:
+            raise HTTPException(409, "this session's takes are recorded on TARS's speakerphone")
+        said = sessions.prompt(session, prompt)
+        if not said:
+            raise HTTPException(404, "no such prompt")
+        if stopped not in STOPPED:
+            raise HTTPException(422, "stopped: silence, tap or nobody")
+        data = await request.body()
+        if len(data) > MOST_UPLOAD_BYTES:
+            raise HTTPException(413, "That recording is too long.")
+        try:
+            pcm = decode_recording(data).tobytes() if data else None
+        except ValueError:
+            raise HTTPException(422, "That recording couldn't be read. Record it again.") from None
+        try:
+            ask("hold", session=session["id"])
+        except control.Unavailable, control.Refused:
+            pass  # TARS isn't running: nothing to keep from waking
+        take = sessions.add_take(session, said, pcm, stopped)
+        return {"take": public_take(take)}
 
     @app.post("/api/session/{token}/skip")
     def skip(token: str, body: PromptRef):

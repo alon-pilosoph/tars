@@ -59,10 +59,19 @@ def main() -> None:
     )
     parser.add_argument(
         "--record-session",
-        choices=["voice", "house"],
-        help="send a link to a recording session on TARS's speakerphone: someone's voice, or the house's commands",
+        choices=["voice", "house", "wake"],
+        help=(
+            "send a link to a recording session on TARS's speakerphone: someone's voice, the house's commands, or "
+            '"hey TARS" as it\'s really said (wake: to test wake models)'
+        ),
     )
     parser.add_argument("--for", dest="person", metavar="NAME", help="whose --record-session it is")
+    parser.add_argument(
+        "--device",
+        metavar="NAME",
+        default="",
+        help='with --record-session wake: recorded on the device the link is opened on, called NAME ("Alon\'s phone")',
+    )
     parser.add_argument(
         "--cloud",
         action="store_true",
@@ -144,6 +153,8 @@ def main() -> None:
         parser.error("--record-session and --for NAME go together")
     if args.cloud and args.record_session != "house":
         parser.error("--cloud goes with --record-session house")
+    if args.device and args.record_session != "wake":
+        parser.error("--device goes with --record-session wake")
 
     if args.list_devices:
         try:
@@ -181,7 +192,7 @@ def main() -> None:
             web_ui(cfg, root, args.host, args.port)
             return
         if args.record_session:
-            record_session(cfg, root, args.record_session, args.person, args.port, args.cloud)
+            record_session(cfg, root, args.record_session, args.person, args.port, args.cloud, args.device.strip())
             return
         if args.web_invite:
             web_invite(cfg, root, args.web_invite, args.port)

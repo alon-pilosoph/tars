@@ -143,33 +143,48 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
     )
 
 
-def record_session(cfg: Config, root: Path, kind: str, person: str, port: int, cloud: bool = False) -> None:
+def record_session(
+    cfg: Config, root: Path, kind: str, person: str, port: int, cloud: bool = False, device: str = ""
+) -> None:
     """--record-session: a recording session for `person` (recording.py), its link printed and sent to their
     Telegram chat if they have one. `cloud` (--cloud): a house session whose takes may also be sent to Deepgram when
-    they're measured, as its page and the message say."""
+    they're measured, as its page and the message say. `device` (--device): a wake test recorded on the device the
+    link is opened on, by that name, instead of TARS's speakerphone."""
     import random
 
-    from .recording import ABOUT, HOUSE, SECONDS_A_PROMPT, Sessions, house_script, voice_script
+    from .recording import ABOUT, HOUSE, WAKE, Sessions, house_script, minutes, voice_script, wake_script
 
     if not cfg.learning.log_events:
         raise ConfigError("Recording sessions record audio, which [learning] log_events = false says not to.")
-    if not cfg.audio.enabled:
+    if not cfg.audio.enabled and not device:
         raise ConfigError("Recording sessions are said into TARS's microphone, which this chat-only home has none of.")
     log = make_event_log(cfg, root)
-    prompts = house_script(house_actions(cfg, root, log), random.Random()) if kind == HOUSE else voice_script()
-    token = Sessions(log.store).create(kind, person, prompts, cloud)
-    url = f"{web_link(cfg, port)}/?session={token}"
-    minutes = max(1, round(len(prompts) * SECONDS_A_PROMPT / 60))
-    print(f"{ABOUT[kind][0]} for {person}, {len(prompts)} phrases (about {minutes} minutes):\n{url}")
+    if kind == HOUSE:
+        prompts = house_script(house_actions(cfg, root, log), random.Random())
+    else:
+        prompts = wake_script(on_device=bool(device)) if kind == WAKE else voice_script()
+    token = Sessions(log.store).create(kind, person, prompts, cloud, device)
+    link = web_link(cfg, port)
+    url = f"{link}/?session={token}"
+    took = minutes(prompts)
+    on = f", recorded on {device}" if device else ""
+    print(f"{ABOUT[kind][0]} for {person}{on}, {len(prompts)} phrases (about {took} minutes):\n{url}")
     if cloud:
         print("(its takes may also go to Deepgram, when tools/commands_bench.py --cloud measures them)")
+    if device and not link.startswith("https://"):
+        print(
+            "(a browser only lets a page use its microphone over HTTPS, or on this machine at localhost: set [web] "
+            "tls_cert and link, or open it here with localhost in place of the address)"
+        )
     where = " Its recordings are kept on TARS, and also sent to Deepgram, in the cloud, when they're measured."
     where = where if cloud else ""
+    title = "\u201chey TARS\u201d" if kind == WAKE else ABOUT[kind][0].lower()
+    open_it = f"Open it on {device}" if device else "Open it when you're near TARS"
     text = (
-        f"A recording session for you: {ABOUT[kind][0].lower()}, {len(prompts)} phrases, about {minutes} minutes."
-        f"{where} Open it when you're near TARS; the link works for a day.\n{url}"
+        f"A recording session for you: {title}, {len(prompts)} phrases, about {took} minutes."
+        f"{where} {open_it}; the link works for a day.\n{url}"
     )
-    send_link(cfg, root, person, text, "their phone")
+    send_link(cfg, root, person, text, device or "their phone")
 
 
 def web_link(cfg: Config, port: int) -> str:

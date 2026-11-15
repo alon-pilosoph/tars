@@ -2,7 +2,8 @@ import { DEMO, PARAMS } from "./params";
 
 export interface Opts {
   method?: string;
-  body?: string;
+  body?: string | Blob;
+  headers?: Record<string, string>;
   timeoutMs?: number;
 }
 
@@ -61,4 +62,7 @@ export const writesMade = () => writeCount;
 
 export const post = <T = unknown>(path: string, body?: unknown, timeoutMs?: number) =>
   write<T>(path, { method: "POST", body: JSON.stringify(body ?? {}), timeoutMs });
+/** A recording, sent as it is (a WAV), not as JSON. */
+export const postAudio = <T = unknown>(path: string, audio: Blob, timeoutMs?: number) =>
+  write<T>(path, { method: "POST", body: audio, headers: { "Content-Type": audio.type }, timeoutMs });
 export const del = (path: string) => write(path, { method: "DELETE" });

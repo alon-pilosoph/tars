@@ -2129,6 +2129,17 @@ details.how {
   width: 30px;
   height: 30px;
 }
+.rec-countdown {
+  font: 400 40px/1 var(--serif);
+  font-variant-numeric: tabular-nums;
+  /* Centred on the digit itself, not on the font's line, which leaves more room above a number than below. */
+  text-box: trim-both cap alphabetic;
+}
+@supports not (text-box: trim-both cap alphabetic) {
+  .rec-countdown {
+    transform: translateY(0.12em);
+  }
+}
 .rec-btn-label {
   min-height: 21px;
   font-size: 14px;

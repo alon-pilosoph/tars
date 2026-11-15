@@ -1059,7 +1059,7 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
   const d = data();
   await sleep(60);
   const method = opts.method || "GET";
-  const body = opts.body ? JSON.parse(opts.body) : {};
+  const body = typeof opts.body === "string" ? JSON.parse(opts.body) : {};
   const ok = { ok: true };
   const newestFirst = <T extends { ts: number }>(xs: T[]) => [...xs].sort((a, b) => b.ts - a.ts);
   const event = (id: number) => d.events.find(e => e.id === id);
