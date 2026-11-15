@@ -193,14 +193,16 @@ TABLES = {
     "sessions": """CREATE TABLE sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     token TEXT NOT NULL UNIQUE,      -- the link's key (recording.py)
-    kind TEXT NOT NULL,              -- voice | house
+    kind TEXT NOT NULL,              -- voice | house | wake
     person TEXT NOT NULL,            -- whose voice, as TARS knows them
     created REAL NOT NULL,
     expires REAL NOT NULL,
     prompts TEXT NOT NULL,           -- JSON: what to say, in order (recording.Prompt)
     skipped TEXT NOT NULL DEFAULT '[]', -- JSON: the prompts skipped, by id
     finished REAL,                   -- when the last prompt was done; the link works no more
-    cloud INTEGER NOT NULL DEFAULT 0 -- 1: a house session whose takes may also go to Deepgram, as its page said
+    cloud INTEGER NOT NULL DEFAULT 0, -- 1: a house session whose takes may also go to Deepgram, as its page said
+    mic TEXT NOT NULL DEFAULT 'tars', -- tars: recorded on TARS's speakerphone; here: on the page's own device
+    device TEXT NOT NULL DEFAULT ''  -- with mic = here, the device's name ("Alon's phone")
 )""",
     "takes": """CREATE TABLE takes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -523,6 +525,10 @@ MIGRATIONS = [
             "CREATE TABLE page_subscriptions (person TEXT NOT NULL, site TEXT NOT NULL, subscribes INTEGER NOT NULL, "
             "at REAL NOT NULL, PRIMARY KEY (person, site))"
         ),
+    ],
+    [
+        "ALTER TABLE sessions ADD COLUMN mic TEXT NOT NULL DEFAULT 'tars'",
+        "ALTER TABLE sessions ADD COLUMN device TEXT NOT NULL DEFAULT ''",
     ],
 ]
 

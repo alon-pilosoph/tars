@@ -359,6 +359,16 @@ the check did slightly worse, so the check runs at once.
   77%) were the basis for the decisions; the small ones would need several candidates per option to confirm.
 - **Cost on the Pi** isn't measured yet; the numbers above are from the development Mac.
 
+## Measuring on real microphones
+
+The results above come from synthetic voices with noise mixed in, and they didn't predict real use. On the Pi's
+speakerphone, which gates quiet audio to silence and evens out loudness, a real "hey TARS" scored about 0.4 where the
+lab's scored 0.99, and the generic model fired on half of what the double-check then turned down. So the generic
+model is measured on real recordings too: [wake tests](web-ui.md#recording-sessions), recorded on phones, laptops and
+TARS's own speakerphone, by several people, and the clips TARS has kept. They are only ever used to test a model,
+never to train one, so a model that does better on them does better on microphones and voices it has never heard, not
+on the owner's.
+
 ## Next steps
 
 Offline tuning has reached diminishing returns: the last experiments each moved one or two takes, which is within

@@ -46,6 +46,17 @@ for anything, and plain requests. `voice-assistant --record-session voice|house 
 makes one and sends its link to NAME's Telegram chat (or prints it). The link is the session's only key, and works for
 a day or until the last phrase is done.
 
+A third kind, a wake test (`--record-session wake --for NAME`), is "hey TARS" as it's really said, for measuring
+wake models on real microphones ([wake word](wake-word.md#measuring-on-real-microphones)): close and from across the
+room, softly, run into a request, over the TV and over other people, and lookalikes it mustn't wake to ("hey cars",
+"guitars"). Made with `--device NAME` (`--record-session wake --device "Alon's phone" --for Alon`), it's recorded on
+the device the link is opened on instead of the speakerphone: the page asks for the microphone, beeps, ends each take
+at a pause the way TARS does, and uploads it (a take from across the room counts down four chimes first, so the
+device can be put down), and the session adds three minutes of the room with the TV on, for how
+often a model wakes to nothing. The device keeps its own echo cancelling and noise suppression, as a real one would.
+A browser only lets a page use the microphone over HTTPS, or at localhost on the same machine, so a phone needs
+[HTTPS](#signing-in) for it. A wake test's takes stay on TARS and only ever test a model, never train one.
+
 Where the recordings go is said on the first page, before anything is recorded, and again at the end. A voice
 session's, and a house session's by default, stay on the Pi: none is sent anywhere (the backup doesn't copy them
 either). A house session made with `--cloud` (`--record-session house --cloud --for NAME`) says instead that its

@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from voice_assistant import control
-from voice_assistant.audio import SAMPLE_RATE, MicrophoneError
+from voice_assistant.audio import SAMPLE_RATE, MicrophoneError, wav_bytes
 from voice_assistant.commands import DeviceWords
 from voice_assistant.control import Refused
 from voice_assistant.recording import (
@@ -30,10 +30,14 @@ from voice_assistant.recording import (
     SILENCE,
     TAP,
     VOICE,
+    WAKE,
+    WAKE_PHRASE,
     Sessions,
     check,
     house_script,
+    minutes,
     voice_script,
+    wake_script,
 )
 from voice_assistant.takes import BUSY, GONE, MUTED, TakeDesk
 from voice_assistant.wake import DUE
@@ -133,6 +137,38 @@ def test_the_voice_script_has_enough_to_enroll_with_some_from_afar():
     assert any(p.quiet for p in prompts) and all(p.means is None for p in prompts)
 
 
+def test_the_wake_script_says_hey_tars_everywhere_its_said_and_lookalikes_it_mustnt_wake_to():
+    prompts = wake_script(on_device=True)
+    wakes = [p for p in prompts if p.means == WAKE_PHRASE]
+    assert len(wakes) >= 30 and all(p.say.lower().startswith("hey tars") for p in wakes)
+    assert {p.how for p in wakes} >= {"", "From across the room", "In one breath, as you'd ask"}
+    lookalikes = [p for p in prompts if p.means == "" and not p.seconds]
+    assert lookalikes and not any("hey tars" in p.say.lower() for p in lookalikes)
+    assert len({p.id for p in prompts}) == len(prompts)
+    room = [p for p in prompts if p.seconds]
+    assert len(room) == 3 and all(p.means == "" for p in room)
+
+
+def test_on_a_device_each_take_from_across_the_room_counts_down_first_so_it_can_be_put_down():
+    far = [p for p in wake_script(on_device=True) if p.how == "From across the room"]
+    assert far and all(p.countdown == 4 for p in far)
+    assert not any(p.countdown for p in wake_script(on_device=True) if p.how != "From across the room")
+    assert not any(p.countdown for p in wake_script(on_device=False))  # the speakerphone stays where it is
+
+
+def test_on_tars_s_speakerphone_the_wake_script_has_no_minute_of_the_room():
+    # The speakerphone ends a take at a pause; its room is measured from the near misses TARS keeps anyway.
+    assert not any(p.seconds for p in wake_script(on_device=False))
+    assert minutes(wake_script(on_device=True)) > minutes(wake_script(on_device=False))
+
+
+def test_a_minute_of_the_room_is_fine_with_nobody_speaking_but_not_when_nothing_came():
+    room = take_audio(speech_s=0.0, before_s=30.0, after_s=30.0)
+    assert check(room, SILENCE, timed=True) is None
+    assert check(bytes(len(room)), SILENCE, timed=True) == NOTHING
+    assert check(None, SILENCE, timed=True) == NOTHING
+
+
 # ---------- Sessions ----------
 
 
@@ -190,7 +226,7 @@ def test_the_page_isnt_told_what_a_command_means(sessions):
     token = sessions.create(HOUSE, "Alon", house_script(DEVICES, random.Random(3)))
     public = sessions.public(sessions.open(token))
     assert public["title"] == "House commands" and public["person"] == "Alon"
-    assert all(set(p) == {"id", "say", "how"} for p in public["prompts"])
+    assert all(set(p) == {"id", "say", "how", "seconds", "countdown"} for p in public["prompts"])
     assert public["minutes"] >= 1 and public["takes"] == [] and public["skipped"] == []
 
 
@@ -516,3 +552,65 @@ def test_a_link_only_reaches_its_own_session(log):
     assert client.get(f"/api/session/{mine}/record/{rec['id']}").status_code == 404
     assert client.post(f"/api/session/{mine}/record", json={"prompt": "nope"}).status_code == 404
     assert client.get("/api/session/made-up").status_code == 404
+
+
+def test_only_a_wake_test_is_recorded_on_the_device_its_page_is_on(sessions):
+    token = sessions.create(WAKE, "Alon", wake_script(on_device=True), device="Alon's phone")
+    shown = sessions.public(sessions.open(token))
+    assert shown["mic"] == "here" and shown["device"] == "Alon's phone"
+    assert any(p["seconds"] for p in shown["prompts"])
+    assert sessions.public(sessions.open(sessions.create(WAKE, "Alon", wake_script(False))))["mic"] == "tars"
+    with pytest.raises(ValueError):
+        sessions.create(VOICE, "Alon", voice_script(), device="Alon's phone")
+
+
+def wav_at(rate, seconds=2.0):
+    t = np.arange(int(rate * seconds)) / rate
+    speech = (0.2 * np.sin(2 * np.pi * 220 * t) * ((t > 0.5) & (t < 1.5))).astype(np.float32)
+    return wav_bytes((speech * 32767).astype(np.int16)) if rate == SAMPLE_RATE else _wav(speech, rate)
+
+
+def _wav(samples, rate):
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(rate)
+        f.writeframes((samples * 32767).astype(np.int16).tobytes())
+    return buf.getvalue()
+
+
+def test_a_take_recorded_on_a_phone_is_kept_at_16_khz_and_checked(log):
+    token = Sessions(log.store).create(WAKE, "Alon", wake_script(on_device=True)[:2], device="Alon's phone")
+    client, fake = page(log)
+    r = client.post(f"/api/session/{token}/upload?prompt=w1&stopped=silence", content=wav_at(48_000))
+    assert r.status_code == 200 and r.json()["take"]["problem"] is None
+    assert abs(r.json()["take"]["seconds"] - 2.0) < 0.01  # 48 kHz in, TARS's 16 kHz kept
+    assert fake.asked == ["hold"]  # TARS stays deaf to the "hey TARS" said into the phone
+    audio = client.get(f"/api/session/{token}/takes/{r.json()['take']['id']}/audio")
+    assert audio.status_code == 200
+    # A redo replaces it, as on the speakerphone.
+    again = client.post(f"/api/session/{token}/upload?prompt=w1&stopped=tap", content=wav_at(44_100))
+    assert again.status_code == 200 and len(client.get(f"/api/session/{token}").json()["takes"]) == 1
+
+
+def test_a_phone_s_take_is_kept_with_tars_not_running(log):
+    token = Sessions(log.store).create(WAKE, "Alon", wake_script(on_device=True)[:1], device="the MacBook")
+    client, _ = page(log, FakeAssistant(why="down"))
+    assert client.post(f"/api/session/{token}/upload?prompt=w1&stopped=silence", content=wav_at(16_000)).is_success
+
+
+def test_uploads_only_go_to_a_session_recorded_on_its_device(log):
+    sessions = Sessions(log.store)
+    on_tars = sessions.create(WAKE, "Alon", wake_script(on_device=False)[:1])
+    here = sessions.create(WAKE, "Alon", wake_script(on_device=True)[:1], device="Alon's phone")
+    client, _ = page(log)
+    upload = "/api/session/{}/upload?prompt={}&stopped={}"
+    assert client.post(upload.format(on_tars, "w1", "silence"), content=wav_at(16_000)).status_code == 409
+    assert client.post(f"/api/session/{here}/record", json={"prompt": "w1"}).status_code == 409
+    assert client.post(upload.format(here, "nope", "silence"), content=wav_at(16_000)).status_code == 404
+    assert client.post(upload.format(here, "w1", "whenever"), content=wav_at(16_000)).status_code == 422
+    assert client.post(upload.format(here, "w1", "silence"), content=b"not a recording").status_code == 422

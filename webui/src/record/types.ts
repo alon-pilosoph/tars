@@ -1,5 +1,5 @@
 /* A recording session, as the server sends it (webui.py's /api/session/<token>): what to say, one prompt at a time,
-   recorded on TARS's own speakerphone. */
+   recorded on TARS's own speakerphone, or on the device the page is open on. */
 
 export interface Prompt {
   id: string;
@@ -7,6 +7,10 @@ export interface Prompt {
   say: string;
   /** How to say them, or where from: "From across the room", "Quietly". Empty: as you'd normally talk to TARS. */
   how: string;
+  /** More than 0: recorded for this long, whatever is said (the room's sound). */
+  seconds: number;
+  /** More than 0: after the tap, this many seconds, a chime each, to put this device down and walk away. */
+  countdown: number;
 }
 
 /** What the server found in a take, in case it needs doing again (recording.py's check). */
@@ -21,8 +25,12 @@ export interface Take {
 
 export interface Session {
   kind: string;
-  /** "Your voice", "House commands". */
+  /** "Your voice", "House commands", "Hey TARS". */
   title: string;
+  /** Where the takes are recorded: TARS's speakerphone, or this device (a wake test made for it). */
+  mic: "tars" | "here";
+  /** With mic "here": the device's name, as the link was made for ("Alon's phone"). */
+  device: string;
   /** Who it's for, as TARS knows them. */
   person: string;
   /** One line on why, for the first screen. */

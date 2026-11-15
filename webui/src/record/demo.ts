@@ -1,4 +1,5 @@
-/* The recording page's sample session, with no server: ?demo&session=house|voice. The take's meter moves, it stops
+/* The recording page's sample session, with no server: ?demo&session=house|voice|wake (wake: recorded on this
+   device, as a wake test made with --device is). The take's meter moves, it stops
    by itself after a few seconds as TARS would, and every fourth take comes back too quiet, to show a redo.
 
    For the screenshot tests: &done=<n> prompts already recorded, and &step=ready|recording|heard|problem|busy|done|gone
@@ -8,45 +9,101 @@ import type { Step } from "./Record";
 import type { Prompt, Recording, Session, Take } from "./types";
 
 const HOUSE: Prompt[] = [
-  { id: "h1", say: "Turn on the AC in the bedroom", how: "" },
-  { id: "h2", say: "Lock the front door", how: "From across the room" },
-  { id: "h3", say: "Set the living room AC to twenty three", how: "" },
-  { id: "h4", say: "Hey TARS, switch off the TV please", how: "Quietly, as if someone's asleep" },
-  { id: "h5", say: "Remind me to lock the door at eleven", how: "This one mustn't count as a command" },
-  { id: "h6", say: "Can you turn on Ari's hatch", how: "A bit faster than usual" },
-  { id: "h7", say: "Turn the volume down", how: "From the kitchen" },
-  { id: "h8", say: "AC off", how: "" },
+  { id: "h1", say: "Turn on the AC in the bedroom", how: "", seconds: 0, countdown: 0 },
+  { id: "h2", say: "Lock the front door", how: "From across the room", seconds: 0, countdown: 0 },
+  { id: "h3", say: "Set the living room AC to twenty three", how: "", seconds: 0, countdown: 0 },
+  {
+    id: "h4",
+    say: "Hey TARS, switch off the TV please",
+    how: "Quietly, as if someone's asleep",
+    seconds: 0,
+    countdown: 0,
+  },
+  {
+    id: "h5",
+    say: "Remind me to lock the door at eleven",
+    how: "This one mustn't count as a command",
+    seconds: 0,
+    countdown: 0,
+  },
+  { id: "h6", say: "Can you turn on Ari's hatch", how: "A bit faster than usual", seconds: 0, countdown: 0 },
+  { id: "h7", say: "Turn the volume down", how: "From the kitchen", seconds: 0, countdown: 0 },
+  { id: "h8", say: "AC off", how: "", seconds: 0, countdown: 0 },
 ];
 
 const VOICE: Prompt[] = [
-  { id: "v1", say: "Hey TARS, what's the weather like tomorrow?", how: "" },
-  { id: "v2", say: "Remind me to call my mother at six.", how: "" },
-  { id: "v3", say: "The quick brown fox jumps over the lazy dog.", how: "" },
-  { id: "v4", say: "Hey TARS, turn off the lights in the kitchen.", how: "From across the room" },
-  { id: "v5", say: "Add milk, eggs and bread to the shopping list.", how: "" },
-  { id: "v6", say: "What time is it in New York right now?", how: "Quietly" },
+  { id: "v1", say: "Hey TARS, what's the weather like tomorrow?", how: "", seconds: 0, countdown: 0 },
+  { id: "v2", say: "Remind me to call my mother at six.", how: "", seconds: 0, countdown: 0 },
+  { id: "v3", say: "The quick brown fox jumps over the lazy dog.", how: "", seconds: 0, countdown: 0 },
+  {
+    id: "v4",
+    say: "Hey TARS, turn off the lights in the kitchen.",
+    how: "From across the room",
+    seconds: 0,
+    countdown: 0,
+  },
+  { id: "v5", say: "Add milk, eggs and bread to the shopping list.", how: "", seconds: 0, countdown: 0 },
+  { id: "v6", say: "What time is it in New York right now?", how: "Quietly", seconds: 0, countdown: 0 },
 ];
 
-const kind = PARAMS.get("session") === "voice" ? "voice" : "house";
-const prompts = kind === "voice" ? VOICE : HOUSE;
+const WAKE: Prompt[] = [
+  { id: "w1", say: "Hey TARS", how: "", seconds: 0, countdown: 0 },
+  {
+    id: "r1",
+    say: "Hey TARS, what's the weather tomorrow?",
+    how: "In one breath, as you'd ask",
+    seconds: 0,
+    countdown: 0,
+  },
+  { id: "l1", say: "Hey cars", how: "", seconds: 0, countdown: 0 },
+  { id: "w2", say: "Hey TARS", how: "From across the room", seconds: 0, countdown: 4 },
+  {
+    id: "w3",
+    say: "Hey TARS",
+    how: "With the TV or music on, as loud as you'd usually have it",
+    seconds: 0,
+    countdown: 0,
+  },
+  {
+    id: "b1",
+    say: "Just the room, for a minute",
+    how: "With the TV on, and nobody saying \u201chey TARS\u201d",
+    seconds: 60,
+    countdown: 0,
+  },
+  { id: "w4", say: "Hey TARS", how: "While other people are talking nearby", seconds: 0, countdown: 0 },
+];
+
+const asked = PARAMS.get("session");
+const kind = asked === "voice" || asked === "wake" ? asked : "house";
+const prompts = { voice: VOICE, wake: WAKE, house: HOUSE }[kind];
+const TITLES = { voice: "Your voice", house: "House commands", wake: "Hey TARS" };
+const ABOUT = {
+  voice: "So TARS knows it's you when you talk to it, and can call you by name.",
+  house: "To test which offline recognizer hears the house commands best, before TARS relies on one.",
+  wake:
+    "To measure how well TARS hears its name on real microphones, in real rooms. Your recordings stay on TARS and " +
+    "are only used to test it: none of them is sent anywhere, or used to train it on your voice.",
+};
+const AFTER = {
+  voice: "TARS is learning your voice from these now. It will know you from your next request.",
+  house: "The recognizers are compared on the Pi. The results will be on the Status page.",
+  wake: "They're kept on TARS, and played to its wake models to see which one hears its name best.",
+};
 const done = Number(PARAMS.get("done") ?? 0);
 
 let sessionNow: Session = {
   kind,
-  title: kind === "voice" ? "Your voice" : "House commands",
+  title: TITLES[kind],
+  mic: kind === "wake" ? "here" : "tars",
+  device: kind === "wake" ? "Alon's phone" : "",
   person: "Alon",
-  about:
-    kind === "voice"
-      ? "So TARS knows it's you when you talk to it, and can call you by name."
-      : "To test which offline recognizer hears the house commands best, before TARS relies on one.",
-  after:
-    kind === "voice"
-      ? "TARS is learning your voice from these now. It will know you from your next request."
-      : "The recognizers are compared on the Pi. The results will be on the Status page.",
+  about: ABOUT[kind],
+  after: AFTER[kind],
   prompts,
   takes: prompts.slice(0, done).map((p, n) => ({ id: n + 1, prompt: p.id, seconds: 2.4, problem: null })),
   skipped: [],
-  minutes: kind === "voice" ? 4 : 10,
+  minutes: { voice: 4, house: 10, wake: 14 }[kind],
 };
 
 export const session = async (): Promise<Session> => {
@@ -112,6 +169,8 @@ export function demoStep(s: Session, index: number): { step: Step; error: string
       return { step: heard(null), error: null };
     case "problem":
       return { step: heard("quiet"), error: null };
+    case "countdown":
+      return { step: { at: "countdown", left: 3 }, error: null };
     case "busy":
       return {
         step: { at: "ready" },
@@ -124,4 +183,12 @@ export function demoStep(s: Session, index: number): { step: Step; error: string
     default:
       return null;
   }
+}
+
+/** A take recorded on this device and uploaded (a wake test): kept as the speakerphone's are. */
+export async function upload(prompt: string): Promise<Take> {
+  await pause(300);
+  const kept: Take = { id: ++count, prompt, seconds: 2.4, problem: count % 4 === 3 ? "quiet" : null };
+  sessionNow = { ...sessionNow, takes: [...sessionNow.takes.filter(k => k.prompt !== prompt), kept] };
+  return kept;
 }

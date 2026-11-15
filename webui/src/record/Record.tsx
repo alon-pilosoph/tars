@@ -1,13 +1,15 @@
-/* A recording session, opened from the link TARS sends: one prompt at a time, recorded on TARS's speakerphone.
-   Tap, the speakerphone beeps, say the words; TARS stops the take when you stop talking (or tap again), checks it,
-   and you hear it back or go on. Built for a phone held in one hand: everything you tap is at the bottom. */
+/* A recording session, opened from the link TARS sends: one prompt at a time, recorded on TARS's speakerphone, or,
+   for a wake test made for a device, on the device the page is open on (here.ts). Tap, a beep, say the words; the
+   take stops when you stop talking (or tap again), TARS checks it, and you hear it back or go on. Built for a phone
+   held in one hand: everything you tap is at the bottom. */
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { stopAudio } from "../audio";
 import { Icon } from "../components/Icon";
 import { Player } from "../components/PlayButton";
 import { Toasts } from "../components/Toasts";
 import { DEMO } from "../params";
-import { audioUrl, begin, finish as finishSession, leave, load, poll, record, skip, stop } from "./api";
+import { audioUrl, begin, finish as finishSession, leave, load, poll, record, skip, stop, upload } from "./api";
+import { DeviceMic, type Take as DeviceTake } from "./here";
 import type { Problem, Prompt, Recording, Session, Take } from "./types";
 
 const POLL_MS = 150;
@@ -17,6 +19,7 @@ export type Step =
   | { at: "gone"; why: string }
   | { at: "intro" }
   | { at: "ready" }
+  | { at: "countdown"; left: number }
   | { at: "beep" }
   | { at: "recording"; rec: Recording }
   | { at: "checking" }
@@ -48,6 +51,10 @@ export function RecordPage() {
   const [error, setError] = useState<string | null>(null);
   const polling = useRef(0);
   const following = useRef<number | null>(null); // the take being polled, until it's done or stopped by hand
+  const mic = useRef<DeviceMic | null>(null); // this device's microphone, for a session recorded here
+  const onDevice = useRef<DeviceTake | null>(null); // the take it's recording
+  const takes = useRef(0);
+  const counting = useRef(false); // a countdown is on; a tap sets it false to call it off
 
   useEffect(() => {
     load()
@@ -61,9 +68,16 @@ export function RecordPage() {
         if (n === null) finishSession().catch(() => {}); // everything was done before the page closed: close the session
       })
       .catch((e: Error) => setStep({ at: "gone", why: e.message }));
-    const away = () => leave();
+    const away = () => {
+      leave();
+      mic.current?.close();
+      mic.current = null;
+    };
     window.addEventListener("pagehide", away);
-    return () => window.removeEventListener("pagehide", away);
+    return () => {
+      window.removeEventListener("pagehide", away);
+      mic.current?.close();
+    };
   }, []);
 
   useEffect(
@@ -84,8 +98,10 @@ export function RecordPage() {
   const prompt: Prompt | undefined = session?.prompts[index];
 
   function heard(rec: Recording) {
-    if (!rec.take) return;
-    const take = rec.take;
+    if (rec.take) keep(rec.take);
+  }
+
+  function keep(take: Take) {
     setSession(s => s && { ...s, takes: [...s.takes.filter(t => t.prompt !== take.prompt), take] });
     setStep({ at: "heard", take });
   }
@@ -114,6 +130,7 @@ export function RecordPage() {
     stopAudio();
     setError(null);
     setStep({ at: "beep" });
+    if (session?.mic === "here" && !DEMO) return startHere(prompt);
     try {
       const rec = await record(prompt.id);
       setStep({ at: "recording", rec });
@@ -124,7 +141,48 @@ export function RecordPage() {
     }
   }
 
+  /** A take on this device's microphone: its beep, until a pause (or its set time, or a tap), then uploaded. */
+  async function startHere(p: Prompt) {
+    try {
+      mic.current ??= new DeviceMic();
+      await mic.current.open();
+      if (p.countdown && !(await countDown(mic.current, p.countdown))) return setStep({ at: "ready" });
+      await mic.current.beep();
+      const id = ++takes.current;
+      const take = mic.current.record(p.seconds, (level, seconds) =>
+        setStep(s =>
+          s.at === "recording" && s.rec.id === id ? { at: "recording", rec: { ...s.rec, level, seconds } } : s,
+        ),
+      );
+      onDevice.current = take;
+      setStep({ at: "recording", rec: { id, state: "recording", seconds: 0, level: 0, take: null } });
+      const { wav, stopped } = await take.done;
+      onDevice.current = null;
+      setStep({ at: "checking" });
+      keep(await upload(p.id, wav, stopped));
+    } catch (e) {
+      onDevice.current = null;
+      setError((e as Error).message);
+      setStep({ at: "ready" });
+    }
+  }
+
+  /** A chime a second while the device is put down and you walk away; false if a tap called it off. */
+  async function countDown(device: DeviceMic, seconds: number): Promise<boolean> {
+    counting.current = true;
+    for (let left = Math.round(seconds); left > 0; left--) {
+      if (!counting.current) return false;
+      setStep({ at: "countdown", left });
+      device.chime();
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    const going = counting.current;
+    counting.current = false;
+    return going;
+  }
+
   async function finish(id: number) {
+    if (onDevice.current) return onDevice.current.stop(); // startHere carries on from there
     following.current = null;
     clearTimeout(polling.current);
     setStep({ at: "checking" });
@@ -208,9 +266,9 @@ export function RecordPage() {
       <section className="rec-prompt" aria-labelledby="say">
         <p className="rec-how">{prompt.how ? prompt.how : "In your normal voice"}</p>
         <p id="say" className="rec-say" dir="auto">
-          “{prompt.say}”
+          {prompt.seconds ? prompt.say : `“${prompt.say}”`}
         </p>
-        <Status step={step} />
+        <Status step={step} timed={prompt.seconds} away={prompt.countdown > 0} />
         {error && (
           <p className="form-error rec-error" role="alert">
             <Icon name="alert" size="s" />
@@ -229,7 +287,13 @@ export function RecordPage() {
             </button>
           </div>
         ) : (
-          <RecordButton step={step} onStart={start} onStop={finish} />
+          <RecordButton
+            step={step}
+            timed={prompt.seconds}
+            onStart={start}
+            onStop={finish}
+            onCancel={() => (counting.current = false)}
+          />
         )}
       </Dock>
     </Frame>
@@ -270,7 +334,14 @@ function Intro({ session, onStart }: { session: Session; onStart: () => void }) 
               ? `${done} of ${total} done, about ${Math.max(1, Math.round((session.minutes * (total - done)) / total))} minutes left.`
               : `${total} phrases, about ${session.minutes} minutes.`}
           </li>
-          <li>Stand where you'd normally talk to TARS. Its speakerphone records, not your phone.</li>
+          {session.mic === "here" ? (
+            <li>
+              This {session.device ? `device (${session.device})` : "device"} records, not TARS. Put it where TARS could
+              stand, and talk to it from where you'd talk to TARS.
+            </li>
+          ) : (
+            <li>Stand where you'd normally talk to TARS. Its speakerphone records, not your phone.</li>
+          )}
           <li>Tap, wait for the beep, then say exactly what's on the screen.</li>
           <li>TARS won't answer anyone until you finish or close this page.</li>
         </ul>
@@ -305,12 +376,27 @@ function Done({ session }: { session: Session }) {
   );
 }
 
-function Status({ step }: { step: Step }) {
+function Status({ step, timed, away }: { step: Step; timed: number; away: boolean }) {
   let line: React.ReactNode = null;
-  if (step.at === "ready") line = <span className="muted">Tap the button, wait for the beep, then say it.</span>;
+  if (step.at === "ready")
+    line = (
+      <span className="muted">
+        {timed
+          ? "Tap the button, then let the room play."
+          : away
+            ? "Tap the button, put this down and go across the room. Four chimes, then a beep: say it after the beep."
+            : "Tap the button, wait for the beep, then say it."}
+      </span>
+    );
+  else if (step.at === "countdown")
+    line = <span className="rec-live">Put it down and go across the room. Say it after the beep.</span>;
   else if (step.at === "beep") line = <span className="muted">Listen for the beep…</span>;
   else if (step.at === "recording")
-    line = <span className="rec-live">Recording. TARS stops when you do, or tap to stop.</span>;
+    line = (
+      <span className="rec-live">
+        {timed ? "Recording the room. It stops by itself." : "Recording. TARS stops when you do, or tap to stop."}
+      </span>
+    );
   else if (step.at === "checking") line = <span className="muted">Checking…</span>;
   else if (step.at === "heard") {
     const { take } = step;
@@ -341,7 +427,32 @@ function Status({ step }: { step: Step }) {
   );
 }
 
-function RecordButton({ step, onStart, onStop }: { step: Step; onStart: () => void; onStop: (id: number) => void }) {
+function RecordButton({
+  step,
+  timed,
+  onStart,
+  onStop,
+  onCancel,
+}: {
+  step: Step;
+  timed: number;
+  onStart: () => void;
+  onStop: (id: number) => void;
+  onCancel: () => void;
+}) {
+  if (step.at === "countdown")
+    return (
+      <div className="rec-btn-wrap">
+        <button className="rec-btn" aria-label="Cancel the countdown" onClick={onCancel}>
+          <span className="rec-countdown" aria-live="assertive">
+            {step.left}
+          </span>
+        </button>
+        <span className="rec-btn-label" aria-hidden="true">
+          Tap to cancel
+        </span>
+      </div>
+    );
   const on = step.at === "recording";
   const busy = step.at === "beep" || step.at === "checking";
   const level = on ? step.rec.level : 0;
@@ -358,7 +469,13 @@ function RecordButton({ step, onStart, onStop }: { step: Step; onStart: () => vo
         <Icon name={on ? "stop" : "mic"} size="l" />
       </button>
       <span className="rec-btn-label" aria-hidden="true">
-        {on ? clock(step.rec.seconds) : step.at === "beep" ? "Beep…" : step.at === "checking" ? "Checking…" : "Record"}
+        {on
+          ? clock(timed ? Math.max(0, timed - step.rec.seconds) : step.rec.seconds)
+          : step.at === "beep"
+            ? "Beep…"
+            : step.at === "checking"
+              ? "Checking…"
+              : "Record"}
       </span>
     </div>
   );
