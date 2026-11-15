@@ -55,6 +55,43 @@ Each threat lists its **defenses** (with where they live), the **tests** that ch
   plain HTTP, so a password typed into it over the home Wi-Fi crosses it unencrypted (`[browser] login_host` can put
   it on Tailscale, which encrypts).
 
+### A network body, or something posing as one
+
+A body is another machine TARS hears and speaks through ([bodies](bodies.md)). With `[bodies]` on, TARS listens for
+them on a port of its own; off (the default), nothing listens.
+
+- **Defenses:** a body is let in only from a home address, and only with a key paired by `--body-add`. Its
+  connection starts with a fresh challenge that the body signs with its key (Ed25519): the key never crosses the
+  network, a recorded handshake can't be replayed, and TARS keeps only each key's public half, so someone with the
+  database (a copied SD card, a backup) still can't pose as a body. The key is shown once, when it's made, and is in
+  no log, journal or `--check` line. A wrong, unknown or removed key is closed with no reason given, and an address
+  that keeps failing waits a second longer each time, up to 30 s, before its next try is even looked at. A body
+  takes in nothing it shouldn't: audio only between its wake and TARS sending it back to sleep, frames over 256 KiB
+  or malformed ones close it, and audio waiting unread is kept to its newest 30 s. A body going away ends only its
+  own conversation, never TARS.
+- **Tests:** `tests/test_bodykeys.py::test_a_paired_body_gets_in_is_noted_and_a_removed_one_is_refused`,
+  `::test_a_key_is_the_device_and_its_private_key_and_only_the_public_half_is_kept`,
+  `::test_check_says_whether_bodies_may_connect_and_each_one_paired_without_its_key`;
+  `tests/test_bodylink.py::test_a_body_that_cant_prove_itself_is_closed_without_a_reason`,
+  `::test_an_address_that_keeps_failing_waits_longer_each_time`, `::test_a_frame_too_big_or_broken_closes_the_body`,
+  `::test_a_flood_of_audio_keeps_only_the_newest_30_seconds`,
+  `::test_a_body_gone_in_any_phase_leaves_the_listener_ready_for_the_next`.
+- **A stolen key** (copied off the body): at home, its holder can be that room's body. They can talk to TARS as
+  someone in that room would, with the same guards as by voice (the front door still needs its challenge, an order
+  still needs a tap on Telegram), and hear TARS's replies to it. `--body-remove ROOM` refuses it from then on;
+  `--body-add ROOM` pairs the body again with a new key.
+- **A hostile body** (a paired device someone took over): it can send audio as though someone spoke in its room,
+  and hear what TARS says there; it can't reach another room, start a conversation TARS doesn't answer, or make TARS
+  connect anywhere (a body always dials in).
+- **Open:** **the audio itself isn't encrypted on the home network** (plain `ws://`; TLS is for when bodies come from
+  outside home, later): a device on the Wi-Fi that can see the traffic between a body and the Pi can hear what's said
+  to TARS in that room, and its replies. The key stays safe either way. Home addresses include Tailscale's
+  (100.64.0.0/10), as everywhere TARS decides what's home. **With a `model` body** (one that runs only the wake
+  word, like the ESP32), a few seconds of audio leave the room before the wake is confirmed, since the double-check
+  runs on the Pi; a `verified` body (one that double-checks itself) sends nothing before then. A body's own rules
+  (no audio before its own wake, a cap on a conversation, showing that it's streaming) are its code's: a body that
+  breaks them sends audio TARS then drops.
+
 ### A device on the home network, speaking for the front door
 
 The front door's Nuki says who opened it by publishing to the household's MQTT broker, and TARS takes what the

@@ -17,8 +17,9 @@ are audio: up, 16 kHz mono 16-bit, any length (re-blocked here to 80 ms); down, 
     brain → listen {on}   play {id, listening} + audio + play_end {id}   stop   sleep   mute {muted}   pong
     body → played {id, cut}   button {name}   gone_quiet   ping
 
-`proof` is HMAC-SHA256(the device key, the nonce): the key never crosses. A wrong one closes the socket with no
-reason given, and an address that keeps failing waits longer each time.
+`proof` is the nonce signed with the body's Ed25519 key (bodykeys.py): the key never crosses, and the brain keeps
+only its public half. A wrong one closes the socket with no reason given, and an address that keeps failing waits
+longer each time.
 
 The reply's audio is sent as it's made, faster than it plays: a body must buffer at least 30 s of it
 (MIN_BODY_BUFFER_S), and says `played` once the last of it has left its speaker.
@@ -29,8 +30,6 @@ come from any thread. A body that goes away raises `BodyGone` in whichever call 
 `AudioDeviceError`: that ends TARS so systemd starts it again, and a laptop closing its lid mustn't.
 """
 
-import hashlib
-import hmac
 import json
 import queue
 import secrets
@@ -47,6 +46,7 @@ import numpy as np
 
 from .audio import BLOCK_SAMPLES, BLOCK_SECONDS, ECHO_TAIL_S, MIC_STALL_S, SPEAKER_STALL_S, silent_bytes
 from .body import LocalBody
+from .bodykeys import verify
 from .verify import ANSWER, ASK, IGNORE
 from .wake import DUE, Due
 
@@ -66,11 +66,6 @@ WAKE_POLL_S = BLOCK_SECONDS  # how often a wait for a wake asks whether somethin
 class BodyGone(Exception):
     """The network body went away (closed, lost, or silent while it should be streaming). Ends that body's
     conversation, never TARS."""
-
-
-def proof(key: bytes, nonce: str) -> str:
-    """What a body sends to show it has `key`: HMAC-SHA256 of the challenge's nonce, in hex."""
-    return hmac.new(key, nonce.encode(), hashlib.sha256).hexdigest()
 
 
 @dataclass
@@ -393,21 +388,22 @@ class BodyListener:
     key; then it's handed to whoever waits for that device (`connected`), and the connection's thread feeds it until
     it goes. A newer connection from the same device replaces the older one.
 
-    `key_for(device)`: the device's key, or None for one that isn't paired (or was revoked). `allowed(address)`: whether
-    an address may connect at all (the home network, for plain ws://). `welcome`: what's told a body that's let in
-    (room, play_rate, max_listen_s)."""
+    `key_for(device)`: the device's public key, or None for one that isn't paired (or was revoked). `allowed(address)`:
+    whether an address may connect at all (the home network, for plain ws://). `welcome`: what's told a body that's
+    let in (room, play_rate, max_listen_s). `seen(device)`: called when one is let in."""
 
     def __init__(
         self,
         key_for: Callable[[str], bytes | None],
         welcome: Callable[[Hello], dict],
         allowed: Callable[[str], bool] = lambda address: True,
+        seen: Callable[[str], None] = lambda device: None,
         host: str = "0.0.0.0",  # nosec B104 - a body dials in from another machine; allowed() decides who
         port: int = 0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
-        self._key_for, self._welcome, self._allowed = key_for, welcome, allowed
+        self._key_for, self._welcome, self._allowed, self._seen = key_for, welcome, allowed, seen
         self._clock, self._sleep = clock, sleep
         self._lock = threading.Lock()
         self._bodies: dict[str, BodyConnection] = {}
@@ -473,6 +469,10 @@ class BodyListener:
             old.close()
         print(f"(body {hello.device} ({hello.kind or 'unknown'}) connected from {address})", flush=True)
         try:
+            self._seen(hello.device)
+        except Exception as e:  # noqa: BLE001 - only the record of it
+            print(f"(body {hello.device}: couldn't note it connected: {e!r})", flush=True)
+        try:
             for message in ws:
                 link.take(message)
         except ValueError as e:
@@ -502,8 +502,8 @@ class BodyListener:
         device, given = said.get("device"), said.get("proof")
         if not isinstance(device, str) or not device or not isinstance(given, str):
             return None
-        key = self._key_for(device)
-        if key is None or not hmac.compare_digest(given.encode(), proof(key, nonce).encode()):
+        public = self._key_for(device)
+        if public is None or not verify(public, nonce, given):
             return None
         wake = said.get("wake", "none")
         buttons = said.get("buttons") or []

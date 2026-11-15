@@ -415,6 +415,18 @@ class WishesConfig:
 
 
 @dataclass
+class BodiesConfig:
+    # Network bodies (docs/bodies.md): another machine in another room that TARS hears and speaks through, paired with
+    # `voice-assistant --body-add ROOM`. Off: nothing listens, and nothing changes. The address and port bodies
+    # connect to; plain ws:// only from home addresses (the device key never crosses either way: it signs a
+    # challenge). From outside home, nothing yet.
+    enabled: bool = False
+    host: str = "0.0.0.0"  # nosec B104 - bodies dial in from other machines on the home network
+    port: int = 8766
+    plain_from_home: bool = True
+
+
+@dataclass
 class UpdatesConfig:
     # TARS updates itself (docs/deployment.md#updates): what's merged into `branch` is installed by itself, at a quiet
     # moment, checked, and taken back if it fails; one that changes the database waits for a maintainer's tap, and one
@@ -443,6 +455,7 @@ class Config:
     feeds: FeedsConfig
     household: HouseholdConfig
     updates: UpdatesConfig
+    bodies: BodiesConfig
     wishes: WishesConfig
     usage: UsageConfig
 
@@ -636,6 +649,10 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[telegram] people must say who may chat with TARS, like { Alon = 123456789 }")
     if any(not name.strip() for name in cfg.telegram.people):
         problems.append("[telegram] people needs a name for each chat id")
+    if not 0 < cfg.bodies.port < 65536:
+        problems.append("[bodies] port must be a port number")
+    if cfg.bodies.enabled and not cfg.bodies.plain_from_home:
+        problems.append("[bodies] plain_from_home is the only way in for now: bodies from outside home come later")
     if cfg.telegram.memory_minutes <= 0:
         problems.append("[telegram] memory_minutes must be more than 0")
     if cfg.telegram.keep_days < 0:
