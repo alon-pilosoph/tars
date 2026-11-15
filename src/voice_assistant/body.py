@@ -21,6 +21,11 @@ from .stt import TurnState
 from .wake import Due, Trigger
 
 
+class BodyGone(Exception):
+    """A network body went away (closed, lost, or silent while it should be streaming): it ends that body's
+    conversation, never TARS, unlike an AudioDeviceError (bodylink.py)."""
+
+
 class Wake(NamedTuple):
     """What a wait for a wake ended on."""
 

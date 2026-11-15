@@ -1,0 +1,55 @@
+# systemd *user* service: this machine as a body for TARS in another room (docs/bodies.md): its microphone and
+# speaker, for the brain on the Pi. Its key (from --body-add on the brain) is TARS_BODY_KEY in .env; the brain's
+# address is below. A user service shares the login session's PipeWire audio.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/voice-assistant-body.service ~/.config/systemd/user/
+#   (edit the address in ExecStart)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now voice-assistant-body
+#   sudo loginctl enable-linger $USER    # start at boot, without logging in
+#
+#   journalctl --user-unit voice-assistant-body -f    # follow the logs
+
+[Unit]
+Description=TARS body (a microphone and speaker for TARS in another room)
+After=pipewire.service network-online.target
+Wants=network-online.target
+
+[Service]
+# Assumes the repo is cloned to ~/voice-assistant and uv is installed in ~/.local/bin.
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen --all-extras voice-assistant --body ws://homepi.local:8766
+Environment=PYTHONUNBUFFERED=1
+# Sandboxed like the voice assistant (docs/security.md#the-services-on-the-machine), but tighter: a body needs no
+# D-Bus, no Docker and no database, so the home is read-only but its own folder (the wake models it may fetch, and
+# uv's caches), and it reaches only the network and its sound devices.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/voice-assistant -%h/.cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+Restart=always
+RestartSec=3
+# 78 (EX_CONFIG): no key, or a damaged one. Restarting won't fix it; see the logs.
+# 69 (EX_UNAVAILABLE): no microphone or speaker.
+RestartPreventExitStatus=78 69
+
+[Install]
+WantedBy=default.target

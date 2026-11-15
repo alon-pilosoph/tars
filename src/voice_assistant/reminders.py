@@ -386,6 +386,12 @@ class Clock:
         self._paused_until = 0.0
 
     def start(self) -> None:
+        """Reads what's due on a thread of its own, from now on. Once: called again (a network body that came back
+        runs the wake loop again), it changes nothing."""
+        if getattr(self, "_started", False):
+            return
+        self._started = True
+
         def loop():
             while True:
                 self.read()
