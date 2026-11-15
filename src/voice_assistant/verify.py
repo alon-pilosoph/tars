@@ -76,6 +76,8 @@ PHRASES = {
         ],
         # The name alone, its "hey" lost or never said: worth a "Did you call me?" too.
         "ask_alone": ["tars"],
+        # Lookalike words nothing like the name: a wake turned down on only these (and no "hey") was not the phrase.
+        "not_name": ["there", "jarvis", "stop"],
     },
     "tars stop": {
         "accept": ["tars stop", "tar stop", "darts stop"],
@@ -101,6 +103,17 @@ PHRASES = {
 }
 
 ANSWER, ASK, IGNORE = "answer", "ask", "ignore"
+
+
+def sounds_like_name(heard: str, phrase: str = "hey tars") -> bool:
+    """Whether what the double-check heard has the name in it, a word like it, or a "hey" that may have lost it.
+    Anything else ("nothing clear", "[unk]", "there", "jarvis") was nothing like the wake phrase: on the household's
+    first 271 answered such wakes, none was."""
+    spec = PHRASES[phrase]
+    first = spec["accept"][0].split()[0]
+    close = {w for a in spec["accept"] + spec["lookalikes"] for w in a.split()} | set(spec.get("ask_after_hey", ()))
+    close -= set(spec.get("not_name", ()))
+    return any(w in close or w == first for w in heard.split())
 
 
 def ensure_model(models_dir: Path) -> Path:

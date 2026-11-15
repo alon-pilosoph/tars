@@ -315,3 +315,12 @@ def test_a_wait_that_ends_without_a_wake_leaves_nothing_from_the_last_one(hearin
     woke = listening(FakeTrigger(fire_at=[3]), verifier)
     assert woke.wait(SilentMic(20)) == ANSWER and woke.after_name is not None
     assert woke.wait(SilentMic(20), due=lambda: True) == DUE and woke.after_name is None
+
+
+def test_what_sounds_like_the_name():
+    from voice_assistant.verify import sounds_like_name
+
+    for heard in ["hey tars", "tars", "darts", "guitars", "[unk] hey", "hey", "lars", "tarot parts", "car"]:
+        assert sounds_like_name(heard), heard
+    for heard in ["nothing clear", "[unk]", "there", "jarvis", "stop", "[unk] [unk] there", ""]:
+        assert not sounds_like_name(heard), heard
