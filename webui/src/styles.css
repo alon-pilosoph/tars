@@ -212,6 +212,11 @@ main.wide {
   flex-wrap: wrap;
   margin-bottom: 28px;
 }
+.head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .page-title {
   font: 400 36px/1.1 var(--serif);
   margin: 0;
@@ -2162,6 +2167,143 @@ details.how {
 .rec-skel {
   padding-top: 24px;
 }
+/* ---------- Review's Listen ---------- */
+.listen {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--scrim);
+  display: grid;
+  place-items: center;
+}
+.listen > * {
+  width: min(560px, 100%);
+}
+.listen-top,
+.listen-main,
+.listen-dock {
+  background: var(--raised);
+  padding: 18px 24px;
+}
+.listen-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
+  align-self: end;
+}
+.listen-top .bar {
+  max-width: none;
+}
+.listen-count {
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.listen-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 26px;
+  padding-bottom: 26px;
+}
+.listen-dock {
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  align-self: start;
+  padding-top: 0;
+}
+.listen-guess {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.listen-k {
+  font-size: 13px;
+  color: var(--muted);
+}
+.listen-v {
+  font: 400 36px/1.1 var(--serif);
+}
+.listen-guess.none .listen-v {
+  color: var(--tars);
+}
+.listen-what {
+  color: var(--tars);
+  margin: 0;
+  text-wrap: pretty;
+}
+.listen-clip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.listen-clip .dur {
+  min-width: 0;
+}
+.listen-clip .bar {
+  max-width: none;
+  height: 4px;
+}
+.listen-status {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0;
+  min-height: 42px;
+  text-wrap: pretty;
+}
+.listen-answers {
+  margin-left: 0;
+}
+.listen-controls {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.listen-end {
+  align-items: flex-start;
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  align-self: start;
+}
+.listen-end .rec-done-mark {
+  margin-bottom: 0;
+}
+.listen-title {
+  font: 400 26px/1.2 var(--serif);
+  margin: 0;
+}
+@media (max-width: 720px) {
+  .listen {
+    background: var(--raised);
+    display: flex;
+    flex-direction: column;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .listen-top {
+    border-radius: 0;
+    padding-top: calc(14px + env(safe-area-inset-top));
+  }
+  .listen-main {
+    flex: 1;
+    justify-content: center;
+  }
+  .listen-clip {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .listen-clip .bar {
+    flex: none;
+    width: 100%;
+  }
+  .listen-clip .dur {
+    align-self: flex-end;
+  }
+  .listen-dock,
+  .listen-end {
+    border-radius: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rec-btn {
     transition: none;

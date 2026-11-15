@@ -1,4 +1,5 @@
-import { heardText, stamp } from "../format";
+import { useState } from "react";
+import { stamp } from "../format";
 import type { GuessFilter } from "../params";
 import {
   type State,
@@ -15,7 +16,9 @@ import {
 import type { Label, TarsEvent } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
+import { Listen } from "./Listen";
 import { PlayButton } from "./PlayButton";
+import { What } from "./WakeWhat";
 
 export function Review() {
   const s = useStore();
@@ -27,17 +30,27 @@ export function Review() {
   const toCheck = toCheckAll.filter(e => byGuess(e, g));
   const reviewed = all.filter(e => !s.snapshot.review.has(e.id) && byGuess(e, g));
   const guessed = toCheck.filter(e => !e.label && e.auto_label);
+  const [listening, setListening] = useState<TarsEvent[] | null>(null);
+  const toListen = toCheck.filter(e => !e.label && e.has_wake_audio);
   const head = (
     <PageHead
       title={left ? `${left} to check` : "Review"}
       sub="TARS wasn't sure these were meant for it. Its guess is shaded. Answers move to Reviewed at the next Refresh."
     >
-      {guessed.length > 1 && (
-        <button className="btn big" onClick={() => agreeWithGuesses(guessed)}>
-          <Icon name="check" size="s" />
-          {`Agree with all ${guessed.length} guesses`}
-        </button>
-      )}
+      <div className="head-actions">
+        {toListen.length > 0 && (
+          <button className="btn big primary" onClick={() => setListening(toListen)}>
+            <Icon name="play" size="s" />
+            {`Listen to ${toListen.length}`}
+          </button>
+        )}
+        {guessed.length > 1 && (
+          <button className="btn big" onClick={() => agreeWithGuesses(guessed)}>
+            <Icon name="check" size="s" />
+            {`Agree with all ${guessed.length} guesses`}
+          </button>
+        )}
+      </div>
     </PageHead>
   );
   const seg = <GuessSeg s={s} events={toCheckAll} />;
@@ -53,6 +66,7 @@ export function Review() {
     );
   return (
     <>
+      {listening && <Listen queue={listening} onClose={() => setListening(null)} />}
       {head}
       {seg}
       {toCheck.length ? (
@@ -101,16 +115,6 @@ function GuessSeg({ s, events }: { s: State; events: TarsEvent[] }) {
       ))}
     </div>
   );
-}
-
-function What({ e }: { e: TarsEvent }) {
-  if (e.kind === "near_miss") return <>Almost woke, then didn't</>;
-  const h = <span className="heard">{`“${heardText(e.heard || "")}”`}</span>;
-  if (e.outcome === "ignore") return <>Heard {h} and stayed quiet</>;
-  if (e.outcome === "ask") return <>Heard {h} and asked “Did you call me?”</>;
-  if (e.follow === "said_nothing") return <>Woke on {h}, but nobody spoke</>;
-  if (e.follow === "not_for_us") return <>Woke on {h} and heard this</>;
-  return <>Woke on {h}</>;
 }
 
 const n2 = (x: number | null) => (x == null ? "?" : x.toFixed(2));

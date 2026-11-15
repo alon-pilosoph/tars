@@ -64,12 +64,17 @@ The rules run when reading, so they can change without touching stored data:
 | "Did you call me?" and they answered | real |
 | a near-miss, followed within 10 s by a real wake | real (a missed "hey TARS", said again louder) |
 | the check heard something else | not real |
+| the check heard nothing like the name, not even a "hey" | not real, and out of Review |
 | the reply wasn't meant for TARS | not real |
 | "Did you call me?" and nobody answered | not real |
 | it woke and nobody spoke; a lone near-miss | no guess |
 
 A person's answer always wins over the automatic one. The web UI's **Review** tab shows only the wakes no
-conversation explained, so reviewing is a few taps a day. A wake that led to a conversation can still be marked
+conversation explained, so reviewing is a few taps a day. A wake the check turned down having heard nothing like the
+name ("nothing clear", "there", "jarvis", and no "hey") isn't shown either: of the first 248 such wakes answered in
+one household, none was "hey TARS", and the one real wake the check turned down there had been heard as "guitars".
+Its **Listen** button plays what's left one clip after another under TARS's guess: a clip left to play to its end
+takes the guess, a tap gives the other answer, and Back takes the last answer back. A wake that led to a conversation can still be marked
 "Not meant for TARS" from the conversation's menu (a TV line TARS answered, for example).
 
 ## Voices
@@ -111,7 +116,8 @@ missed. Two automatic labels are left out. "The double-check heard something els
 when it wrongly turns down a soft "t" and nobody reviews it, learning from that would teach both stages to ignore
 that voice harder. And a near-miss guessed a missed "hey TARS" is guessed only from when it came (a real wake within
 10 s), so any sound in those seconds would be taught as one. Both wait in Review, and a person's answer makes them
-count.
+count. A wake turned down on nothing like the name leaves Review but still teaches nothing on its own: its audio is
+pruned like any unanswered wake's, as a TV makes dozens a day.
 
 **Versions** (`versions.py`). A trained pair (the wake model, the check's learned layer, and the threshold and check
 window they were tuned for, with the test results it was chosen on) is installed with `voice-assistant

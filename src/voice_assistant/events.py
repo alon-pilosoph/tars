@@ -16,7 +16,7 @@ import numpy as np
 
 from .audio import read_wav, sound_ms
 from .store import Store
-from .verify import ANSWER, ASK, IGNORE
+from .verify import ANSWER, ASK, IGNORE, sounds_like_name
 
 WAKE, NEAR_MISS = "wake", "near_miss"
 ASKED, SAID_NOTHING, NOT_FOR_US = "asked", "said_nothing", "not_for_us"
@@ -276,7 +276,8 @@ class EventLog:
         settles itself, and one whose audio is gone can't be listened to, so neither waits. A near-miss waits only
         when a real wake followed within MISSED_WINDOW_S (probably a missed "hey TARS", said again): the rest are
         any sound that came near, dozens a day with a lenient model, and stay in the log, out of Review. So does one
-        with nothing to hear, a click before the real wake: there's no answering it."""
+        with nothing to hear, a click before the real wake: there's no answering it. And so does a wake turned down
+        on nothing like the name (`nothing_like`): it settles itself as not for TARS."""
         rows = self.store.rows(
             "SELECT * FROM events WHERE id IN (SELECT id FROM events e WHERE label IS NULL AND audio IS NOT NULL "
             "AND follow IS NOT ? AND (kind IS NOT ? OR EXISTS (SELECT 1 FROM events w WHERE w.kind=? "
@@ -284,7 +285,7 @@ class EventLog:
             "OR id IN (SELECT id FROM events WHERE label IS NOT NULL ORDER BY ts DESC LIMIT ?) ORDER BY ts DESC",
             (ASKED, NEAR_MISS, WAKE, ANSWER, MISSED_WINDOW_S, REVIEW_SHOWN, REVIEW_SHOWN),
         )
-        return self._labeled([r for r in rows if not self._blank(r)])
+        return self._labeled([r for r in rows if not self._blank(r) and not (r["label"] is None and nothing_like(r))])
 
     def _blank(self, event: dict) -> bool:
         """An unanswered near-miss with next to no sound in it. One whose audio can't be read is left to Review."""
@@ -398,6 +399,13 @@ def voice_decided(cluster: dict | None, pinned: bool) -> bool:
     return cluster is not None and bool(pinned or cluster["name"] or cluster["kind"] == NOT_PERSON)
 
 
+def nothing_like(event: dict) -> bool:
+    """A wake the double-check turned down having heard nothing like the name, not even a "hey"
+    (verify.sounds_like_name): not for TARS, without asking anyone, so it stays out of Review. Training still doesn't
+    learn from it (learning_label), and its audio is pruned like any unanswered wake's: a TV makes dozens a day."""
+    return event["kind"] == WAKE and event["outcome"] == IGNORE and not sounds_like_name(event.get("heard") or "")
+
+
 def learning_label(event: dict) -> str | None:
     """The label training learns from: a person's, else the automatic one, unless that is only the check's own
     verdict, or a guessed miss. Learning from the check's verdict would teach both stages what the check already
@@ -418,6 +426,8 @@ def auto_label(event: dict, answered_wake_times: list[float]) -> tuple[str | Non
         return None, "it never woke up"
     follow, outcome = event["follow"], event["outcome"]
     if outcome == IGNORE:
+        if nothing_like(event):
+            return NOT_REAL, "the double-check heard nothing like hey TARS"
         return NOT_REAL, "the double-check heard something else"
     if follow == ASKED or (follow is None and event["transcript"]):  # a request but no follow: the reply failed
         return REAL, "a request followed" if outcome == ANSWER else "they answered “Did you call me?”"
