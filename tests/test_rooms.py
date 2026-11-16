@@ -1,6 +1,7 @@
 """The rooms' desk (rooms.py): where each thing TARS says by itself is said, and that it's said once."""
 
 import threading
+import time
 
 import pytest
 
@@ -130,3 +131,100 @@ def test_the_assistant_tells_the_desk_who_it_heard():
     assistant._who = lambda identifying: type("W", (), {"name": "Stacey", "score": 0.9, "embedding": None})()
     assistant.converse(follow_up_s=0.0)
     assert desk.room_for("Stacey") == "bedroom"
+
+
+# Several assistants, one desk
+
+
+def two_rooms(tmp_path):
+    """The living room's assistant (the main room) and the bedroom's, on one desk and one reminders table, with a
+    reminder for Stacey due now."""
+    from voice_assistant.reminders import MESSAGE, WEB, NewReminder, Reminders, ReminderTools
+
+    from .test_assistant import logged_assistant
+
+    desk = Rooms("living room")
+    made = {}
+    store = None
+    for room in ("living room", "bedroom"):
+        assistant, convos = logged_assistant(tmp_path / room, [None], [], (), None)
+        assistant.journal.end_conversation()
+        store = store or convos.store
+        assistant.rooms, assistant.room = desk, room
+        desk.add(room)
+        assistant.voice.stream = lambda text: iter([text.encode()])
+        made[room] = assistant
+    tools = ReminderTools(Reminders(store))
+    for assistant in made.values():
+        assistant.use_reminders(tools)
+    rid = tools.reminders.add(NewReminder(MESSAGE, "dinner's at eight", for_name="stacey", from_name="alon",
+                                          due=time.time(), needs_ack=False), WEB)  # fmt: skip
+    return desk, made, tools.reminders, rid
+
+
+def say_at_once(made):
+    barrier = threading.Barrier(len(made))
+
+    def say(assistant):
+        barrier.wait()
+        assistant.say_reminders()
+
+    threads = [threading.Thread(target=say, args=(a,)) for a in made.values()]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+
+
+def said_in(assistant):
+    return [c.decode() for c in assistant.body.played if len(c) < 200]
+
+
+def test_a_reminder_is_said_once_in_the_room_its_person_was_last_heard(tmp_path):
+    desk, made, reminders, rid = two_rooms(tmp_path)
+    desk.heard("bedroom", "Stacey")
+    say_at_once(made)
+    assert said_in(made["bedroom"]) == ["Stacey, a message from Alon: dinner's at eight."]
+    assert said_in(made["living room"]) == [] and reminders.get(rid)["tries"] == 1
+
+
+def test_with_the_bedrooms_body_gone_its_reminder_is_said_in_the_main_room(tmp_path):
+    desk, made, _, _ = two_rooms(tmp_path)
+    desk.heard("bedroom", "Stacey")
+    desk.connected("bedroom", False)
+    say_at_once(made)
+    assert said_in(made["living room"]) == ["Stacey, a message from Alon: dinner's at eight."]
+    assert said_in(made["bedroom"]) == []
+
+
+def test_only_the_rooms_with_something_due_wake_for_it(tmp_path):
+    desk, made, _, _ = two_rooms(tmp_path)
+    desk.heard("bedroom", "Stacey")
+    for assistant in made.values():
+        assistant._reminder_clock.read()
+    assert made["bedroom"]._due() and not made["living room"]._due()
+
+
+def test_a_rooms_conversation_is_kept_with_its_room(log):
+    from voice_assistant.journal import Journal
+
+    journal = Journal(log, room="bedroom")
+    journal.heard(b"\0\0" * 1600, "what time is it", "stacey", 0.9, None, first=True)
+    journal.answered("Nine.", [], asker="stacey")
+    journal.flush()
+    rows = log.store.rows("SELECT room FROM conversations")
+    assert rows == [{"room": "bedroom"}]
+
+
+def test_the_brain_is_told_the_room_once_there_is_more_than_one(tmp_path):
+    from .conftest import make_assistant
+
+    assistant, brain = make_assistant([b"q", None], ["what time is it"])
+    assistant.converse(follow_up_s=0.0)
+    assert "[Room:" not in brain.asked[0] and brain.requests[0].room == ""  # one room: as ever
+    assistant, brain = make_assistant([b"q", None], ["turn off the light"])
+    assistant.rooms = Rooms("living room")
+    assistant.rooms.add("bedroom")
+    assistant.room = "bedroom"
+    assistant.converse(follow_up_s=0.0)
+    assert brain.asked[0].startswith("[Room: bedroom]") and brain.requests[0].room == "bedroom"

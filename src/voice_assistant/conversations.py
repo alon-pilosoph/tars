@@ -55,13 +55,15 @@ class ConversationLog:
         ts: float | None = None,
         via: str | None = None,
         said: Sequence[tuple[float, str]] = (),
+        room: str | None = None,
     ) -> int:
         """`via`: "telegram" for a chat there; None by voice. `said`: what TARS said before anyone spoke ("Yes,
-        Alon?"), as (when, what), its first turns: kept with the conversation or not at all."""
+        Alon?"), as (when, what), its first turns: kept with the conversation or not at all. `room`: where it was
+        held, by voice (rooms.py)."""
         with self.store.transaction() as db:
             conversation = db.execute(
-                "INSERT INTO conversations (started, wake_event_id, via) VALUES (?, ?, ?)",
-                (ts or time.time(), wake_event_id, via),
+                "INSERT INTO conversations (started, wake_event_id, via, room) VALUES (?, ?, ?, ?)",
+                (ts or time.time(), wake_event_id, via, room),
             ).lastrowid
             db.executemany(  # TARS turns as add_tars_turn writes them, in this transaction
                 "INSERT INTO turns (conversation_id, ts, role, text) VALUES (?, ?, ?, ?)",

@@ -424,6 +424,11 @@ class BodiesConfig:
     host: str = "0.0.0.0"  # nosec B104 - bodies dial in from other machines on the home network
     port: int = 8766
     plain_from_home: bool = True
+    # Rooms (docs/bodies.md#rooms): this machine's own microphone's room, and the main room, where things for
+    # nobody in particular are said, and anything for someone not heard lately ("": this machine's room, or, with no
+    # microphone of its own, the room paired first).
+    room: str = "home"
+    main_room: str = ""
 
 
 @dataclass
@@ -651,6 +656,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[telegram] people needs a name for each chat id")
     if not 0 < cfg.bodies.port < 65536:
         problems.append("[bodies] port must be a port number")
+    if not cfg.bodies.room.strip():
+        problems.append('[bodies] room needs a name, like "living room"')
     if cfg.bodies.enabled and not cfg.bodies.plain_from_home:
         problems.append("[bodies] plain_from_home is the only way in for now: bodies from outside home come later")
     if cfg.telegram.memory_minutes <= 0:

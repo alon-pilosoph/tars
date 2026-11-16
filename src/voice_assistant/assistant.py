@@ -1207,7 +1207,10 @@ class Assistant:
         if not text or draft.cancelled:
             return answer
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
-        request = Request(answer.who.name, answer.who.score, by_voice=True, heard=text, may_act=draft.may_act)
+        room = "" if self.rooms.single else self.room
+        request = Request(
+            answer.who.name, answer.who.score, by_voice=True, heard=text, may_act=draft.may_act, room=room
+        )
         # A follow-up may not be meant for TARS (the TV, someone else in the room): only the model may skip it.
         if self.commands and tag is None and not follow_up and (command := self.commands.commands.match(text)):
             return self._command_reply(answer, command, prompt, request)
@@ -1293,6 +1296,8 @@ class Assistant:
     def _prompt(self, text: str, name: str | None, follow_up: bool, tag: str | None) -> str:
         if self.speaker_id:
             text = f"[Speaker: {name or 'unknown'}] {text}"
+        if not self.rooms.single:  # where it was said, for the brain to know (choosing a device by it comes later)
+            text = f"[Room: {self.room}] {text}"
         if follow_up:
             text = f"{FOLLOW_UP_TAG} {text}"
         if tag:

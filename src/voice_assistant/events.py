@@ -99,17 +99,18 @@ class EventLog:
         wake_model: str = "",
         check_model: str = "",
         ts: float | None = None,
+        room: str | None = None,
     ) -> int | None:
-        """The wake's id; None when nothing is recorded."""
+        """The wake's id; None when nothing is recorded. `room`: whose body heard it (rooms.py)."""
         if not self.record:
             return None
         ts = ts or time.time()
         audio = self.store.save_audio(pcm, f"{int(ts * 1000)}_wake")
         with self.store.removed_on_failure(audio):
             return self.store.write(
-                "INSERT INTO events (ts, kind, wake_score, outcome, heard, confidence, wake_model, check_model, audio) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (ts, WAKE, wake_score, outcome, heard, confidence, wake_model, check_model, audio),
+                "INSERT INTO events (ts, kind, wake_score, outcome, heard, confidence, wake_model, check_model, audio, "
+                "room) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (ts, WAKE, wake_score, outcome, heard, confidence, wake_model, check_model, audio, room),
             )
 
     def add_near_miss(

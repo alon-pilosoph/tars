@@ -44,7 +44,8 @@ TABLES = {
     embedding BLOB,                  -- voice embedding of the request (for clustering)
     label TEXT,                      -- real | not_real, given by a person (wins over auto_label)
     cluster_id INTEGER,
-    cluster_pinned INTEGER DEFAULT 0 -- 1 = a person put it there; re-clustering leaves it alone
+    cluster_pinned INTEGER DEFAULT 0, -- 1 = a person put it there; re-clustering leaves it alone
+    room TEXT                         -- the room whose body heard it (rooms.py); NULL: before rooms
 )""",
     "clusters": """CREATE TABLE clusters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,7 +58,8 @@ TABLES = {
     started REAL NOT NULL,
     ended REAL,
     wake_event_id INTEGER,           -- the wake that started it (events.id), if any
-    via TEXT                         -- telegram: a chat on Telegram; NULL = by voice
+    via TEXT,                        -- telegram: a chat on Telegram; NULL = by voice
+    room TEXT                        -- the room it was held in (rooms.py); NULL: before rooms, or not by voice
 )""",
     "turns": """CREATE TABLE turns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -550,6 +552,7 @@ MIGRATIONS = [
     revoked REAL                     -- when --body-remove took it away; NULL: paired
 )"""
     ],
+    ["ALTER TABLE conversations ADD COLUMN room TEXT", "ALTER TABLE events ADD COLUMN room TEXT"],
 ]
 
 
