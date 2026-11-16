@@ -6,6 +6,7 @@
     DATA/mww/.venv/bin/python -m training.stage1.features tv-negatives         # TV, chatter, music as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features speech-negatives     # real read speech as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features vc                   # voice-converted real speakers
+    DATA/mww/.venv/bin/python -m training.stage1.features cuts NAME --folder DIR   # 3.2 s cuts of any speech
     DATA/mww/.venv/bin/python -m training.stage1.features negatives NAME --folder DIR   # any WAVs as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
@@ -184,26 +185,32 @@ def folder_negatives(layout: Layout, phrase: str, name: str, folder: Path) -> No
     build(layout, folder, layout.features / phrase / "negative" / name, n, slide=1, plain=True)
 
 
-def speech_cuts(layout: Layout, count: int = DEVICE_NEGATIVES) -> Path:
-    """`count` cuts of CUT_S from LibriSpeech train-clean-100 (real people reading, 100 hours), as 16 kHz WAVs in
-    DATA/aug/speech_negatives (made once)."""
+def speech_cuts(
+    layout: Layout, count: int = DEVICE_NEGATIVES, source: Path | None = None, name: str = "speech"
+) -> Path:
+    """`count` cuts of CUT_S from real speech (default LibriSpeech train-clean-100, 100 hours of reading; or every
+    WAV/FLAC under `source`), as 16 kHz WAVs in DATA/aug/<name>_negatives (made once)."""
     import soundfile as sf
 
-    out = layout.aug / "speech_negatives"
+    out = layout.aug / f"{name}_negatives"
     if (out / ".done").exists():
         return out
     out.mkdir(parents=True, exist_ok=True)
-    files = sorted((layout.root / "LibriSpeech" / "train-clean-100").rglob("*.flac"))
+    root = source or layout.root / "LibriSpeech" / "train-clean-100"
+    files = sorted(root.rglob("*.flac")) + sorted(root.rglob("*.wav"))
     rng = np.random.default_rng(16)
     n, want = 0, int(CUT_S * 16000)
-    log(f"speech negatives: {count} cuts from {len(files)} files")
+    log(f"{name} negatives: {count} cuts from {len(files)} files")
     while n < count:
         path = files[rng.integers(len(files))]
         info = sf.info(str(path))
-        if info.frames < want:
+        if info.frames < want or info.samplerate != 16000:
             continue
         start = int(rng.integers(0, info.frames - want + 1))
-        x, _ = sf.read(str(path), start=start, frames=want, dtype="float32")
+        x, _ = sf.read(str(path), start=start, frames=want, dtype="float32", always_2d=True)
+        x = x.mean(axis=1)
+        if np.sqrt((x**2).mean()) < 1e-3:
+            continue
         y = x / max(np.abs(x).max(), 1e-6) * rng.uniform(0.1, 0.9)
         sf.write(str(out / f"{n:05d}.wav"), (y * 32767).astype(np.int16), 16000, subtype="PCM_16")
         n += 1
@@ -313,7 +320,17 @@ def main():
     p = parser(__doc__)
     p.add_argument(
         "what",
-        choices=["synthetic", "user", "household", "cloned", "tv-negatives", "speech-negatives", "negatives", "vc"],
+        choices=[
+            "synthetic",
+            "user",
+            "household",
+            "cloned",
+            "tv-negatives",
+            "speech-negatives",
+            "negatives",
+            "vc",
+            "cuts",
+        ],
     )
     p.add_argument("run", nargs="?", help="household: the training run's name; negatives: the set's name")
     p.add_argument("--folder", type=Path, help="negatives: the folder of WAVs")
@@ -328,6 +345,10 @@ def main():
         synthetic(layout, args.phrase, args.device, args.cut)
     elif args.what == "vc":
         converted(layout)
+    elif args.what == "cuts":
+        if not (args.run and args.folder):
+            p.error("cuts: NAME and --folder (real speech to cut)")
+        folder_negatives(layout, args.phrase, args.run, speech_cuts(layout, source=args.folder, name=args.run))
     elif args.what == "speech-negatives":
         folder_negatives(layout, args.phrase, "speech", speech_cuts(layout))
     elif args.what == "negatives":
