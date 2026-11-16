@@ -203,7 +203,7 @@ def main():
             "--test_tflite_streaming",
             "1",
             "--test_tflite_streaming_quantized",
-            "0",
+            "1",
             "--use_weights",
             "best_weights",
             "mixednet",
@@ -229,6 +229,9 @@ def main():
     out = folder / f"{args.phrase}.tflite"
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(train_dir / "tflite_stream_state_internal/stream_state_internal.tflite", out)
+    quantized = train_dir / "tflite_stream_state_internal_quant/stream_state_internal_quant.tflite"
+    if quantized.exists():  # the 8-bit model an ESP32 runs (ESPHome's micro_wake_word), next to the full one
+        shutil.copy(quantized, out.with_name(f"{args.phrase}_int8.tflite"))
     log(f"DONE: {out}" + ("" if args.run else f" (copy it to the repo's models/{setup}/)"))
 
 
