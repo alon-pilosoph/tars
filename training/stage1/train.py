@@ -68,6 +68,7 @@ def features(
     cut: bool = False,
     tv_negatives: float = 0,
     extra: list[str] = (),
+    vc: float = 0,
 ) -> list[dict]:
     root = layout.features / (f"{phrase}-device" if device else f"{phrase}-cut" if cut else phrase)
     neg = layout.mww / "negative_datasets"
@@ -81,6 +82,9 @@ def features(
     fs += [feature_set(neg / n, w, False, "random") for n, w in NEGATIVES.items()]
     if device:
         fs.append(feature_set(root / "negative" / "device", DEVICE_NEGATIVE_WEIGHT, False, "random"))
+    if vc:
+        base = layout.features / phrase
+        fs += [feature_set(base / "positive" / "vc", vc, True), feature_set(base / "near_miss" / "vc", 2 * vc, False)]
     for spec in extra:
         set_name, weight = spec.rsplit(":", 1)
         fs.append(feature_set(layout.features / phrase / "negative" / set_name, float(weight), False, "random"))
@@ -117,6 +121,7 @@ def main():
         metavar="NAME:WEIGHT",
         help="also features.py's negatives set NAME, at WEIGHT (again for more)",
     )
+    p.add_argument("--vc", type=float, default=0, help="weight of the voice-converted speakers (features.py vc)")
     p.add_argument("--tv-negatives", type=float, default=0, help="weight of features.py tv-negatives (0: none)")
     p.add_argument("--negative-weight", type=float, default=20, help="how much a negative counts (the recipe's: 20)")
     p.add_argument("--name", help="the model's folder under DATA/models (default: its setup's)")
@@ -149,7 +154,16 @@ def main():
         "window_step_ms": 10,
         "train_dir": str(train_dir),
         "features": features(
-            layout, args.setup, args.run, args.phrase, args.cloned, args.device, args.cut, args.tv_negatives, args.extra
+            layout,
+            args.setup,
+            args.run,
+            args.phrase,
+            args.cloned,
+            args.device,
+            args.cut,
+            args.tv_negatives,
+            args.extra,
+            args.vc,
         ),
         "training_steps": [args.steps],
         "positive_class_weight": [1],

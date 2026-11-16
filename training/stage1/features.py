@@ -5,6 +5,7 @@
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic --cut      # some "hey TARS" with its ending cut
     DATA/mww/.venv/bin/python -m training.stage1.features tv-negatives         # TV, chatter, music as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features speech-negatives     # real read speech as negatives
+    DATA/mww/.venv/bin/python -m training.stage1.features vc                   # voice-converted real speakers
     DATA/mww/.venv/bin/python -m training.stage1.features negatives NAME --folder DIR   # any WAVs as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
@@ -253,6 +254,15 @@ def device_negatives(layout: Layout, through_device: bool = True) -> Path:
     return out
 
 
+def converted(layout: Layout) -> None:
+    """The clips voice-converted into real LibriSpeech speakers (data/vc_librispeech.py, DATA/vc), as a source of
+    their own: positive/vc and near_miss/vc (train --vc WEIGHT)."""
+    root = layout.features / "hey_tars"
+    for kind, slide in [("positive", 5), ("near_miss", 1)]:
+        folder = layout.root / "vc" / kind
+        build(layout, folder, root / kind / "vc", len(list(folder.glob("*.wav"))), slide)
+
+
 def cloned(layout: Layout) -> None:
     root = layout.features / "hey_tars"
     for kind, slide in [("positive", 5), ("near_miss", 1)]:
@@ -302,7 +312,8 @@ def augmented(layout: Layout, folder: Path, out: Path, slide: int | None, repeat
 def main():
     p = parser(__doc__)
     p.add_argument(
-        "what", choices=["synthetic", "user", "household", "cloned", "tv-negatives", "speech-negatives", "negatives"]
+        "what",
+        choices=["synthetic", "user", "household", "cloned", "tv-negatives", "speech-negatives", "negatives", "vc"],
     )
     p.add_argument("run", nargs="?", help="household: the training run's name; negatives: the set's name")
     p.add_argument("--folder", type=Path, help="negatives: the folder of WAVs")
@@ -315,6 +326,8 @@ def main():
     layout = Layout(args.data)
     if args.what == "synthetic":
         synthetic(layout, args.phrase, args.device, args.cut)
+    elif args.what == "vc":
+        converted(layout)
     elif args.what == "speech-negatives":
         folder_negatives(layout, args.phrase, "speech", speech_cuts(layout))
     elif args.what == "negatives":
