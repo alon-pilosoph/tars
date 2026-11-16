@@ -11,17 +11,24 @@ turned on once at its panel. Nothing remote gets it out of that, so TARS says so
 Its Bluetooth can be switched off at its own panel, and then nothing can reach it. So the voice assistant watches it
 (Watch): every few minutes it listens for the purifier's broadcast for a few seconds, never connecting, and when it's
 gone quiet for a quarter of an hour, TARS's maintainers are told once, in their chats, and again when it's back.
-Being turned off doesn't do it: a night's watch on 2026-11-09, off for 14 hours, heard it in every scan."""
+Being turned off doesn't do it: a night's watch on 2026-11-09, off for 14 hours, heard it in every scan. When it last
+heard it, and whether it's told them, are kept in a file: TARS restarting changes neither, so it's never told again,
+nor told "quiet for 16 minutes" when it's been unplugged since the morning."""
 
 import asyncio
+import json
 import subprocess
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Protocol
 
+from voice_assistant.files import atomic_write
 from voice_assistant.home import OFF, ON, PRESS, SET, STATUS, Check, Device, HomeError, Request, button
+from voice_assistant.reminders import twelve_hour
 
 WRITE = "0000ef01-0000-1000-8000-00805f9b34fb"
 LIVE = "0000ef02-0000-1000-8000-00805f9b34fb"
@@ -300,6 +307,7 @@ def _said(s: Status) -> str:
 WATCH_EVERY_S = 300.0  # how often the watch listens
 LISTEN_S = 10.0  # for how long: it broadcasts several times a second when its Bluetooth is on
 GONE_AFTER_S = 900.0  # unheard this long, and its maintainers are told
+WATCH_FILE = "voice_data/purifier_watch.json"  # when each purifier was last heard, and whether it's been told gone
 STUCK_AFTER = 2  # listens in a row this machine couldn't make before its Bluetooth is restarted
 
 
@@ -316,14 +324,46 @@ class Watch:
         name: str,
         heard: Callable[[float], bool | None],
         tell: Callable[[str], None],
-        clock: Callable[[], float] = time.monotonic,
+        clock: Callable[[], float] = time.time,
         restart: Callable[[], bool] | None = None,
+        memory: Path | None = None,
     ):
+        """`clock`: wall-clock seconds, since what's kept in `memory` outlives this process. `memory`: the file
+        where when it was last heard and whether it's been told gone are kept, one entry per purifier (None: kept
+        only while TARS runs)."""
         self.name, self._heard, self._tell, self._clock, self._restart = name, heard, tell, clock, restart
-        self._last = clock()
-        self.gone = False  # told it's gone, and not yet that it's back
+        self._memory = memory
+        kept = self._recall()
+        # Never heard before (a first start): unheard only since the watch began, which is all it can say.
+        self._last = float(kept.get("last_heard") or clock())
+        self._known = "last_heard" in kept
+        self.gone = bool(kept.get("gone"))  # told it's gone, and not yet that it's back
         self.stuck = False  # told this machine's Bluetooth won't listen, and not yet that it does
         self._failed = 0  # listens in a row this machine couldn't make
+
+    def _recall(self) -> dict:
+        if self._memory is None:
+            return {}
+        try:
+            entry = json.loads(self._memory.read_text()).get(self.name)
+        except OSError, ValueError, AttributeError:
+            return {}
+        return entry if isinstance(entry, dict) else {}
+
+    def _keep(self) -> None:
+        if self._memory is None:
+            return
+        try:
+            try:
+                kept = json.loads(self._memory.read_text())
+            except OSError, ValueError:
+                kept = {}
+            if not isinstance(kept, dict):
+                kept = {}
+            kept[self.name] = {"gone": self.gone, **({"last_heard": self._last} if self._known else {})}
+            atomic_write(self._memory, json.dumps(kept, indent=1))
+        except OSError as e:  # the watch goes on; only a restart would forget
+            print(f"(purifier watch: couldn't keep what it knows in {self._memory}: {e})")
 
     def answered(self) -> None:
         """It answered a request: plainly on."""
@@ -338,12 +378,22 @@ class Watch:
             self._back()
         elif not self.gone and self._clock() - self._last >= GONE_AFTER_S:
             self.gone = True
-            minutes = round((self._clock() - self._last) / 60)
+            self._keep()
             self._tell(
-                f"The {self.name}'s Bluetooth has gone quiet: I haven't heard it for {minutes} minutes, so I can't "
-                "work it. It's probably been switched off at its panel: press its Bluetooth button, or unplug it for "
-                "ten seconds."
+                f"The {self.name} has gone quiet on Bluetooth: {self._unheard()}, so I can't work it. It's unplugged, "
+                "or its Bluetooth was switched off at its panel: plug it in, or press its Bluetooth button."
             )
+
+    def _unheard(self) -> str:
+        """For how long it's been unheard, as far as this watch knows."""
+        now, last = self._clock(), self._last
+        when = datetime.fromtimestamp(last).astimezone()
+        at = twelve_hour(when)
+        if when.date() != datetime.fromtimestamp(now).astimezone().date():
+            at = f"{when:%A} at {at}"
+        if not self._known:
+            return f"I haven't heard it since I started listening for it, at {at}"
+        return f"I last heard it at {at}, {_duration(now - last)} ago"
 
     def _listen(self) -> bool | None:
         """A listen, with this machine's Bluetooth restarted first when it's failed STUCK_AFTER times running."""
@@ -375,9 +425,11 @@ class Watch:
             self._tell("My Bluetooth works again.")
 
     def _back(self) -> None:
-        self._last = self._clock()
-        if self.gone:
-            self.gone = False
+        # Kept every few minutes at most (a listen, or a request it answered), so the file is no burden.
+        self._last, self._known = self._clock(), True
+        was_gone, self.gone = self.gone, False
+        self._keep()
+        if was_gone:
             self._tell(f"The {self.name} is back on Bluetooth: I can work it again.")
 
     def start(self, every_s: float = WATCH_EVERY_S) -> Watch:
@@ -391,3 +443,14 @@ class Watch:
 
         threading.Thread(target=keep, daemon=True, name=f"watch {self.name}").start()
         return self
+
+
+def _duration(seconds: float) -> str:
+    """ "20 minutes", "about 3 hours", "about 2 days": how long, as said."""
+    minutes = round(seconds / 60)
+    if minutes < 90:
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    hours = round(seconds / 3600)
+    if hours < 36:
+        return f"about {hours} hours"
+    return f"about {round(seconds / 86400)} days"
