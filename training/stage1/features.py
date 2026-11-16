@@ -3,6 +3,7 @@
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic      # every voice source + real lookalikes
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic --device   # the same through made-up microphones
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic --cut      # some "hey TARS" with its ending cut
+    DATA/mww/.venv/bin/python -m training.stage1.features tv-negatives         # TV, chatter, music as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
     DATA/mww/.venv/bin/python -m training.stage1.features cloned         # cloned speakers, for the large pair
@@ -172,14 +173,21 @@ def cut_endings(layout: Layout, phrase: str) -> None:
         build(layout, layout.clip_dir(source, phrase, "positive"), root / "positive" / source, cap, 5, aug)
 
 
-def device_negatives(layout: Layout) -> Path:
-    """DEVICE_NEGATIVES cuts of CUT_S from the TV, chatter, music and noise, each through a made-up microphone, as
-    16 kHz WAVs (made once, in DATA/aug/device_negatives)."""
+def tv_negatives(layout: Layout, phrase: str) -> None:
+    """Into DATA/features/<phrase>/negative/tv: DEVICE_NEGATIVES cuts of the TV, chatter, music and noise as they
+    are, for a model that wakes to them less (train --tv-negatives)."""
+    out = device_negatives(layout, through_device=False)
+    build(layout, out, layout.features / phrase / "negative" / "tv", DEVICE_NEGATIVES, slide=1, plain=True)
+
+
+def device_negatives(layout: Layout, through_device: bool = True) -> Path:
+    """DEVICE_NEGATIVES cuts of CUT_S from the TV, chatter, music and noise, each through a made-up microphone (or,
+    `through_device` False, as they are), as 16 kHz WAVs (made once, in DATA/aug/device_negatives or tv_negatives)."""
     import soundfile as sf
 
     from training.data.device import device
 
-    out = layout.aug / "device_negatives"
+    out = layout.aug / ("device_negatives" if through_device else "tv_negatives")
     if (out / ".done").exists():
         return out
     out.mkdir(parents=True, exist_ok=True)
@@ -200,7 +208,8 @@ def device_negatives(layout: Layout) -> Path:
         x = x.mean(axis=1)
         if np.sqrt((x**2).mean()) < 1e-3:  # silence teaches nothing here
             continue
-        y = device(x / max(np.abs(x).max(), 1e-6) * rng.uniform(0.1, 0.9), rng)
+        y = x / max(np.abs(x).max(), 1e-6) * rng.uniform(0.1, 0.9)
+        y = device(y, rng) if through_device else y
         sf.write(str(out / f"{n:05d}.wav"), (y * 32767).astype(np.int16), 16000, subtype="PCM_16")
         n += 1
     (out / ".done").touch()
@@ -255,7 +264,7 @@ def augmented(layout: Layout, folder: Path, out: Path, slide: int | None, repeat
 
 def main():
     p = parser(__doc__)
-    p.add_argument("what", choices=["synthetic", "user", "household", "cloned"])
+    p.add_argument("what", choices=["synthetic", "user", "household", "cloned", "tv-negatives"])
     p.add_argument("run", nargs="?", help="household: the training run's name")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     p.add_argument("--device", action="store_true", help="synthetic: through made-up microphones (data/device.py)")
@@ -266,6 +275,8 @@ def main():
     layout = Layout(args.data)
     if args.what == "synthetic":
         synthetic(layout, args.phrase, args.device, args.cut)
+    elif args.what == "tv-negatives":
+        tv_negatives(layout, args.phrase)
     elif args.what == "cloned":
         cloned(layout)
     elif args.what == "user":
