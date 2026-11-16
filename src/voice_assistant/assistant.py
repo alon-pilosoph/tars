@@ -47,6 +47,7 @@ from .phrases import Audio, Phrases
 from .recording import NO_SPEECH, SILENCE, TAP
 from .reminders import VOICE, Change, Clock, Reminders, ReminderTools, held_line, late, says_line
 from .reminders import line as reminder_line
+from .rooms import MAIN, Rooms
 from .skills import ALOUD, Answers, happened, on_its_own
 from .skills import Clock as SkillClock
 from .speaker import SpeakerID
@@ -273,12 +274,18 @@ class Assistant:
         elsewhere: Callable[[dict], bool] | None = None,
         skill_clock: SkillClock | None = None,
         commands: HouseCommands | None = None,
+        rooms: Rooms | None = None,
+        room: str = MAIN,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
         `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
         reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out). `skill_clock`: the
-        skills due to run by themselves (skills.py)."""
+        skills due to run by themselves (skills.py). `rooms`: the desk every room's assistant shares, which says which
+        room says what (rooms.py); `room`: this one's. Without a desk, it's the only room."""
         self.body = body
+        self.room = room
+        self.rooms = rooms or Rooms(room)
+        self.rooms.add(room)
         self.transcriber = transcriber
         self.brain = brain
         self.voice = voice
@@ -574,18 +581,26 @@ class Assistant:
         self.phrases.keep_only(lines | {held_line(r) for r in active if r["due"] is None})
 
     def _due(self) -> bool:
+        """Whether something is due for this room to say (rooms.py): with one room, anything that's due."""
         clock = self._reminder_clock
         skills = self._skill_clock
+        rooms, single = self.rooms, self.rooms.single
         return (
-            bool(self.announcements and self.announcements.waiting())
-            or bool(clock and clock.is_due())
-            or bool(skills and skills.is_due())
+            bool(self.announcements and self.announcements.waiting() and rooms.room_for(None) == self.room)
+            or bool(clock and clock.is_due() and (single or rooms.waiting(self.room, clock.due(), _reminder, _for)))
+            or bool(skills and skills.is_due() and (single or any(self._ours(d) for d in skills.peek())))
         )
+
+    def _ours(self, due) -> bool:
+        """Whether a skill that's due is this room's to run: its owner's room, or the main room for the household."""
+        return self.rooms.room_for(None if due.skill.household else due.skill.owner) == self.room
 
     def say_announcements(self, follow_up_s: float = 0.0) -> None:
         """Says what's waiting to be said (the TV is playing, or why it isn't), then, if it asked something ("Toy
         Story, or Toy Story 4?"), listens a moment for the answer without the wake word. News that asks nothing
         doesn't listen: what's heard next is mostly the TV it just put on. What's said joins the conversation."""
+        if self.rooms.room_for(None) != self.room:  # for nobody in particular: the main room's to say
+            return
         lines = self.announcements.take() if self.announcements else []
         audio = self._made_now(lines)
         if unsaid := [line for line in lines if line not in audio]:
@@ -625,7 +640,7 @@ class Assistant:
         its line is kept, said or handed over, as an ordinary turn's is once it's heard (_skill_did); never for one
         skipped, one that didn't happen, or one nobody heard."""
         clock = self._skill_clock
-        for due in clock.take() if clock else []:
+        for due in clock.take(self._ours) if clock else []:
             with usage.turn(None if due.skill.household else due.skill.owner, usage.SKILL):
                 skill, house = due.skill, Answers()
                 print(f"(skill {skill.name}: {due.why or f'at {due.when:%H:%M}'})")
@@ -704,6 +719,13 @@ class Assistant:
         if self._elsewhere and len(kept := [r for r in due if not self._elsewhere(r)]) < len(due):
             due = kept
             self._reread_reminders()
+        due = self.rooms.take(self.room, due, _reminder, _for)  # this room's, and no other room's meanwhile
+        try:
+            self._say_reminders(due, follow_up_s)
+        finally:
+            self.rooms.done(self.room, [_reminder(r) for r in due])
+
+    def _say_reminders(self, due: list[dict], follow_up_s: float) -> None:
         lines = {r["id"]: [t for t in [reminder_line(r), late(r)] if t] if says_line(r) else [] for r in due}
         audio = self._made_now([t for texts in lines.values() for t in texts])
         said = []
@@ -1181,6 +1203,7 @@ class Assistant:
             print(f"({why}; heard a house command on the Pi)")
         stt_s = time.perf_counter() - t
         answer = Answer(text, self._who(identifying), stt_s)
+        self.rooms.heard(self.room, answer.who.name)  # what's for them is said here now
         if not text or draft.cancelled:
             return answer
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
@@ -1361,3 +1384,13 @@ def _tee(pieces: Iterator[str], into: list[str]) -> Iterator[str]:
 def _over_the_cap(pcm: bytes) -> str:
     """A turn's speech to text past the month's cap: nothing sent, and nothing heard but a house command on the Pi."""
     raise usage.Capped()
+
+
+def _reminder(r: dict) -> tuple[str, int]:
+    """A reminder, as the desk knows it (rooms.py)."""
+    return ("reminder", r["id"])
+
+
+def _for(r: dict) -> str | None:
+    """Whose ears a reminder is for: its person, or whoever set it."""
+    return r.get("for_name") or r.get("from_name")
