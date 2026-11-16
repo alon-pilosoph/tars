@@ -67,6 +67,7 @@ def features(
     device: bool = False,
     cut: bool = False,
     tv_negatives: float = 0,
+    extra: list[str] = (),
 ) -> list[dict]:
     root = layout.features / (f"{phrase}-device" if device else f"{phrase}-cut" if cut else phrase)
     neg = layout.mww / "negative_datasets"
@@ -80,6 +81,9 @@ def features(
     fs += [feature_set(neg / n, w, False, "random") for n, w in NEGATIVES.items()]
     if device:
         fs.append(feature_set(root / "negative" / "device", DEVICE_NEGATIVE_WEIGHT, False, "random"))
+    for spec in extra:
+        set_name, weight = spec.rsplit(":", 1)
+        fs.append(feature_set(layout.features / phrase / "negative" / set_name, float(weight), False, "random"))
     if tv_negatives:
         fs.append(feature_set(layout.features / phrase / "negative" / "tv", tv_negatives, False, "random"))
     fs.append(feature_set(neg / VALIDATION_NEGATIVES, 0.0, False, "split"))  # validation and testing only
@@ -106,6 +110,13 @@ def main():
     p.add_argument("--cloned", action="store_true", help="generic: add the cloned Common Voice speakers")
     p.add_argument("--device", action="store_true", help="generic: the features made through made-up microphones")
     p.add_argument("--cut", action="store_true", help="generic: the features with some endings cut")
+    p.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        metavar="NAME:WEIGHT",
+        help="also features.py's negatives set NAME, at WEIGHT (again for more)",
+    )
     p.add_argument("--tv-negatives", type=float, default=0, help="weight of features.py tv-negatives (0: none)")
     p.add_argument("--negative-weight", type=float, default=20, help="how much a negative counts (the recipe's: 20)")
     p.add_argument("--name", help="the model's folder under DATA/models (default: its setup's)")
@@ -138,7 +149,7 @@ def main():
         "window_step_ms": 10,
         "train_dir": str(train_dir),
         "features": features(
-            layout, args.setup, args.run, args.phrase, args.cloned, args.device, args.cut, args.tv_negatives
+            layout, args.setup, args.run, args.phrase, args.cloned, args.device, args.cut, args.tv_negatives, args.extra
         ),
         "training_steps": [args.steps],
         "positive_class_weight": [1],

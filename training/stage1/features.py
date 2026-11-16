@@ -4,6 +4,8 @@
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic --device   # the same through made-up microphones
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic --cut      # some "hey TARS" with its ending cut
     DATA/mww/.venv/bin/python -m training.stage1.features tv-negatives         # TV, chatter, music as negatives
+    DATA/mww/.venv/bin/python -m training.stage1.features speech-negatives     # real read speech as negatives
+    DATA/mww/.venv/bin/python -m training.stage1.features negatives NAME --folder DIR   # any WAVs as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
     DATA/mww/.venv/bin/python -m training.stage1.features cloned         # cloned speakers, for the large pair
@@ -173,6 +175,41 @@ def cut_endings(layout: Layout, phrase: str) -> None:
         build(layout, layout.clip_dir(source, phrase, "positive"), root / "positive" / source, cap, 5, aug)
 
 
+def folder_negatives(layout: Layout, phrase: str, name: str, folder: Path) -> None:
+    """Into DATA/features/<phrase>/negative/<name>: every WAV in `folder` as it is, as things that aren't the phrase
+    (train --extra NAME:WEIGHT). For clips made elsewhere: mined false wakes, real speech cut to length."""
+    n = len(list(folder.glob("*.wav")))
+    log(f"negatives {name}: {n} clips from {folder}")
+    build(layout, folder, layout.features / phrase / "negative" / name, n, slide=1, plain=True)
+
+
+def speech_cuts(layout: Layout, count: int = DEVICE_NEGATIVES) -> Path:
+    """`count` cuts of CUT_S from LibriSpeech train-clean-100 (real people reading, 100 hours), as 16 kHz WAVs in
+    DATA/aug/speech_negatives (made once)."""
+    import soundfile as sf
+
+    out = layout.aug / "speech_negatives"
+    if (out / ".done").exists():
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    files = sorted((layout.root / "LibriSpeech" / "train-clean-100").rglob("*.flac"))
+    rng = np.random.default_rng(16)
+    n, want = 0, int(CUT_S * 16000)
+    log(f"speech negatives: {count} cuts from {len(files)} files")
+    while n < count:
+        path = files[rng.integers(len(files))]
+        info = sf.info(str(path))
+        if info.frames < want:
+            continue
+        start = int(rng.integers(0, info.frames - want + 1))
+        x, _ = sf.read(str(path), start=start, frames=want, dtype="float32")
+        y = x / max(np.abs(x).max(), 1e-6) * rng.uniform(0.1, 0.9)
+        sf.write(str(out / f"{n:05d}.wav"), (y * 32767).astype(np.int16), 16000, subtype="PCM_16")
+        n += 1
+    (out / ".done").touch()
+    return out
+
+
 def tv_negatives(layout: Layout, phrase: str) -> None:
     """Into DATA/features/<phrase>/negative/tv: DEVICE_NEGATIVES cuts of the TV, chatter, music and noise as they
     are, for a model that wakes to them less (train --tv-negatives)."""
@@ -264,8 +301,11 @@ def augmented(layout: Layout, folder: Path, out: Path, slide: int | None, repeat
 
 def main():
     p = parser(__doc__)
-    p.add_argument("what", choices=["synthetic", "user", "household", "cloned", "tv-negatives"])
-    p.add_argument("run", nargs="?", help="household: the training run's name")
+    p.add_argument(
+        "what", choices=["synthetic", "user", "household", "cloned", "tv-negatives", "speech-negatives", "negatives"]
+    )
+    p.add_argument("run", nargs="?", help="household: the training run's name; negatives: the set's name")
+    p.add_argument("--folder", type=Path, help="negatives: the folder of WAVs")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     p.add_argument("--device", action="store_true", help="synthetic: through made-up microphones (data/device.py)")
     p.add_argument("--cut", action="store_true", help="synthetic: some positives with their ending cut")
@@ -275,6 +315,12 @@ def main():
     layout = Layout(args.data)
     if args.what == "synthetic":
         synthetic(layout, args.phrase, args.device, args.cut)
+    elif args.what == "speech-negatives":
+        folder_negatives(layout, args.phrase, "speech", speech_cuts(layout))
+    elif args.what == "negatives":
+        if not (args.run and args.folder):
+            p.error("negatives: NAME and --folder")
+        folder_negatives(layout, args.phrase, args.run, args.folder)
     elif args.what == "tv-negatives":
         tv_negatives(layout, args.phrase)
     elif args.what == "cloned":
