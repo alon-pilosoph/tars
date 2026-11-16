@@ -148,13 +148,17 @@ def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int,
         write(out / split, gen.spectrogram_generator(split=split_name, repeat=1, max_clips=cap))
 
 
-def synthetic(layout: Layout, phrase: str, device: bool = False, cut: bool = False, loud: bool = False) -> None:
+def synthetic(
+    layout: Layout, phrase: str, device: bool = False, cut: bool = False, loud: bool = False, lead: bool = False
+) -> None:
     """`device`: into DATA/features/<phrase>-device, DEVICE_SHARE of every clip through a made-up microphone, plus
     DEVICE_NEGATIVES cuts of the backgrounds through one (negative/device)."""
     if not (layout.aug / "interference.done").exists():
         raise SystemExit("Run training.data.make_interference first.")
     if cut:
         return cut_endings(layout, phrase)
+    if lead:
+        return lead_in(layout, phrase)
     root = layout.features / (f"{phrase}-device" if device else f"{phrase}-loud" if loud else phrase)
     aug = augmenter(layout, loud=True) if loud else None
     if device:
@@ -234,6 +238,22 @@ def tv_negatives(layout: Layout, phrase: str) -> None:
     are, for a model that wakes to them less (train --tv-negatives)."""
     out = device_negatives(layout, through_device=False)
     build(layout, out, layout.features / phrase / "negative" / "tv", DEVICE_NEGATIVES, slide=1, plain=True)
+
+
+def lead_in(layout: Layout, phrase: str) -> None:
+    """Into DATA/features/<phrase>-lead: the positives again with half of them preceded by real conversation (People's
+    Speech); the lookalikes are the plain set's, linked."""
+    from training.data.device import LeadIn
+
+    base, root = layout.features / phrase, layout.features / f"{phrase}-lead"
+    (root / "near_miss").mkdir(parents=True, exist_ok=True)
+    for source in sorted((base / "near_miss").iterdir()):
+        link = root / "near_miss" / source.name
+        if not link.exists():
+            link.symlink_to(source, target_is_directory=True)
+    aug = LeadIn(augmenter(layout), layout.root / "peoples_speech" / "wav", 0.5)
+    for source, cap in POSITIVES.items():
+        build(layout, layout.clip_dir(source, phrase, "positive"), root / "positive" / source, cap, 5, aug)
 
 
 def device_negatives(layout: Layout, through_device: bool = True) -> Path:
@@ -349,12 +369,13 @@ def main():
     p.add_argument("--device", action="store_true", help="synthetic: through made-up microphones (data/device.py)")
     p.add_argument("--cut", action="store_true", help="synthetic: some positives with their ending cut")
     p.add_argument("--loud", action="store_true", help="synthetic: under loud talk and TV (down to -10 dB)")
+    p.add_argument("--lead", action="store_true", help="synthetic: half the positives preceded by real conversation")
     add_user_arg(p)
     args = p.parse_args()
     cap_threads()
     layout = Layout(args.data)
     if args.what == "synthetic":
-        synthetic(layout, args.phrase, args.device, args.cut, args.loud)
+        synthetic(layout, args.phrase, args.device, args.cut, args.loud, args.lead)
     elif args.what == "vc":
         converted(layout)
     elif args.what == "cuts":

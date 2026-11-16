@@ -71,8 +71,9 @@ def features(
     extra: list[str] = (),
     vc: float = 0,
     loud: bool = False,
+    lead: bool = False,
 ) -> list[dict]:
-    variant = "device" if device else "cut" if cut else "loud" if loud else None
+    variant = "device" if device else "cut" if cut else "loud" if loud else "lead" if lead else None
     root = layout.features / (f"{phrase}-{variant}" if variant else phrase)
     neg = layout.mww / "negative_datasets"
     positives, near_misses = POSITIVE_WEIGHTS, NEAR_MISS_WEIGHTS
@@ -118,6 +119,7 @@ def main():
     p.add_argument("--device", action="store_true", help="generic: the features made through made-up microphones")
     p.add_argument("--cut", action="store_true", help="generic: the features with some endings cut")
     p.add_argument("--loud", action="store_true", help="generic: the features made under loud talk and TV")
+    p.add_argument("--lead", action="store_true", help="generic: the features with conversation before the phrase")
     p.add_argument(
         "--extra",
         action="append",
@@ -144,7 +146,7 @@ def main():
         p.error("--run goes with the household setup, and only with it")
     if args.setup == "household" and args.phrase != "hey_tars":
         p.error("a household's wakes are for hey_tars")
-    variant = args.large or args.cloned or args.device or args.cut or args.loud
+    variant = args.large or args.cloned or args.device or args.cut or args.loud or args.lead
     if variant and (args.setup != "generic" or args.phrase != "hey_tars"):
         p.error("--large, --cloned, --device and --cut are for the generic hey_tars model")
     import yaml
@@ -152,7 +154,7 @@ def main():
     cap_threads()
     layout = Layout(args.data)
     setup = args.name or next(
-        (f"generic-{v}" for v in ("large", "device", "cut", "loud") if getattr(args, v)), args.setup
+        (f"generic-{v}" for v in ("large", "device", "cut", "loud", "lead") if getattr(args, v)), args.setup
     )
     name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{setup}"
     train_dir = layout.trained_models / name
@@ -173,6 +175,7 @@ def main():
             args.extra,
             args.vc,
             args.loud,
+            args.lead,
         ),
         "training_steps": [args.steps],
         "positive_class_weight": [1],

@@ -176,6 +176,41 @@ class CutEndings:
             yield self.augment_clip(audio)
 
 
+class LeadIn:
+    """`share` of the clips with real conversation right before the phrase (0.3-1.5 s of another talker from
+    `folder`, at a random level), as "hey TARS" often comes straight out of a TV line or a sentence; then
+    microWakeWord's Augmentation as usual. Only before: the phrase must still end where the window expects it."""
+
+    def __init__(self, inner, folder, share: float, seed: int | None = None):
+        from pathlib import Path
+
+        self.inner, self.share = inner, share
+        self.files = sorted(Path(folder).glob("*.wav"))
+        self.rng = np.random.default_rng(seed)
+
+    def augment_clip(self, audio: np.ndarray) -> np.ndarray:
+        if self.files and self.rng.random() < self.share:
+            import soundfile as sf
+
+            scale = 32768.0 if audio.dtype == np.int16 else 1.0
+            x = audio.astype(np.float32) / scale
+            want = int(self.rng.uniform(0.3, 1.5) * RATE)
+            path = self.files[self.rng.integers(len(self.files))]
+            info = sf.info(str(path))
+            if info.frames > want:
+                start = int(self.rng.integers(0, info.frames - want))
+                lead, _ = sf.read(str(path), start=start, frames=want, dtype="float32")
+                peak = max(np.abs(x).max(), 1e-6)
+                lead = lead / max(np.abs(lead).max(), 1e-6) * peak * self.rng.uniform(0.3, 1.0)
+                gap = np.zeros(int(self.rng.uniform(0.0, 0.25) * RATE), np.float32)
+                audio = np.concatenate([lead.astype(np.float32), gap, x])
+        return self.inner.augment_clip(audio)
+
+    def augment_generator(self, audio_generator):
+        for audio in audio_generator:
+            yield self.augment_clip(audio)
+
+
 class DeviceAugmentation:
     """microWakeWord's Augmentation, then a device, on `share` of the clips (the rest pass as they were)."""
 
