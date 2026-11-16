@@ -6,6 +6,7 @@
     DATA/mww/.venv/bin/python -m training.stage1.train generic --phrase tars_stop    # "TARS stop", the interrupt
     DATA/mww/.venv/bin/python -m training.stage1.train generic --large --cloned      # the large pair
     DATA/mww/.venv/bin/python -m training.stage1.train generic --device   # on features.py synthetic --device
+    DATA/mww/.venv/bin/python -m training.stage1.train generic --cut      # on features.py synthetic --cut
 
 The recipe: 20k steps, learning rate 0.001, negative class weight 20, SpecAugment (2 time masks of up to 5 frames,
 2 frequency masks of up to 3 bins), batch 128, 1.5 s clips. The checkpoint kept is the one with the best average
@@ -64,8 +65,9 @@ def features(
     phrase: str = "hey_tars",
     cloned: bool = False,
     device: bool = False,
+    cut: bool = False,
 ) -> list[dict]:
-    root = layout.features / (f"{phrase}-device" if device else phrase)
+    root = layout.features / (f"{phrase}-device" if device else f"{phrase}-cut" if cut else phrase)
     neg = layout.mww / "negative_datasets"
     positives, near_misses = POSITIVE_WEIGHTS, NEAR_MISS_WEIGHTS
     if cloned:
@@ -100,6 +102,7 @@ def main():
     p.add_argument("--large", action="store_true", help="generic: the large model, four times as wide")
     p.add_argument("--cloned", action="store_true", help="generic: add the cloned Common Voice speakers")
     p.add_argument("--device", action="store_true", help="generic: the features made through made-up microphones")
+    p.add_argument("--cut", action="store_true", help="generic: the features with some endings cut")
     p.add_argument(
         "--resume",
         action="store_true",
@@ -110,13 +113,14 @@ def main():
         p.error("--run goes with the household setup, and only with it")
     if args.setup == "household" and args.phrase != "hey_tars":
         p.error("a household's wakes are for hey_tars")
-    if (args.large or args.cloned or args.device) and (args.setup != "generic" or args.phrase != "hey_tars"):
-        p.error("--large, --cloned and --device are for the generic hey_tars model")
+    variant = args.large or args.cloned or args.device or args.cut
+    if variant and (args.setup != "generic" or args.phrase != "hey_tars"):
+        p.error("--large, --cloned, --device and --cut are for the generic hey_tars model")
     import yaml
 
     cap_threads()
     layout = Layout(args.data)
-    setup = "generic-large" if args.large else "generic-device" if args.device else args.setup
+    setup = next((f"generic-{v}" for v in ("large", "device", "cut") if getattr(args, v)), args.setup)
     name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{setup}"
     train_dir = layout.trained_models / name
     if not args.resume:
@@ -124,7 +128,7 @@ def main():
     config = {
         "window_step_ms": 10,
         "train_dir": str(train_dir),
-        "features": features(layout, args.setup, args.run, args.phrase, args.cloned, args.device),
+        "features": features(layout, args.setup, args.run, args.phrase, args.cloned, args.device, args.cut),
         "training_steps": [20000],
         "positive_class_weight": [1],
         "negative_class_weight": [20],

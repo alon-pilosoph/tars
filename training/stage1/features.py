@@ -2,6 +2,7 @@
 
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic      # every voice source + real lookalikes
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic --device   # the same through made-up microphones
+    DATA/mww/.venv/bin/python -m training.stage1.features synthetic --cut      # some "hey TARS" with its ending cut
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
     DATA/mww/.venv/bin/python -m training.stage1.features cloned         # cloned speakers, for the large pair
@@ -34,6 +35,7 @@ CLONED = 50_000
 # --device: the share of clips heard through a made-up microphone (training/data/device.py), and how many 3.2 s cuts of
 # TV, chatter, music and noise go through one as things that aren't the phrase, so a device's sound can't mean a wake.
 DEVICE_SHARE = 0.7
+CUT_SHARE = 0.3  # --cut: the share of "hey TARS" clips whose ending is cut (training/data/device.py clip_ending)
 DEVICE_NEGATIVES = 20_000
 CUT_S = 3.2
 
@@ -130,11 +132,13 @@ def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int,
         write(out / split, gen.spectrogram_generator(split=split_name, repeat=1, max_clips=cap))
 
 
-def synthetic(layout: Layout, phrase: str, device: bool = False) -> None:
+def synthetic(layout: Layout, phrase: str, device: bool = False, cut: bool = False) -> None:
     """`device`: into DATA/features/<phrase>-device, DEVICE_SHARE of every clip through a made-up microphone, plus
     DEVICE_NEGATIVES cuts of the backgrounds through one (negative/device)."""
     if not (layout.aug / "interference.done").exists():
         raise SystemExit("Run training.data.make_interference first.")
+    if cut:
+        return cut_endings(layout, phrase)
     root = layout.features / (f"{phrase}-device" if device else phrase)
     aug = None
     if device:
@@ -148,6 +152,24 @@ def synthetic(layout: Layout, phrase: str, device: bool = False) -> None:
         build(layout, layout.real_lookalikes, root / "near_miss" / "real", REAL_LOOKALIKES, slide=1, aug=aug)
     if device:
         build(layout, device_negatives(layout), root / "negative" / "device", DEVICE_NEGATIVES, slide=1, plain=True)
+
+
+def cut_endings(layout: Layout, phrase: str) -> None:
+    """Into DATA/features/<phrase>-cut: the positives again with CUT_SHARE of them cut short; the lookalikes are the
+    plain set's, linked, since nothing about them changes."""
+    from training.data.device import CutEndings
+
+    base, root = layout.features / phrase, layout.features / f"{phrase}-cut"
+    if not (base / "near_miss").is_dir():
+        raise SystemExit("Run features synthetic first: --cut reuses its lookalikes.")
+    (root / "near_miss").mkdir(parents=True, exist_ok=True)
+    for source in sorted((base / "near_miss").iterdir()):
+        link = root / "near_miss" / source.name
+        if not link.exists():
+            link.symlink_to(source, target_is_directory=True)
+    aug = CutEndings(augmenter(layout), CUT_SHARE)
+    for source, cap in POSITIVES.items():
+        build(layout, layout.clip_dir(source, phrase, "positive"), root / "positive" / source, cap, 5, aug)
 
 
 def device_negatives(layout: Layout) -> Path:
@@ -237,12 +259,13 @@ def main():
     p.add_argument("run", nargs="?", help="household: the training run's name")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     p.add_argument("--device", action="store_true", help="synthetic: through made-up microphones (data/device.py)")
+    p.add_argument("--cut", action="store_true", help="synthetic: some positives with their ending cut")
     add_user_arg(p)
     args = p.parse_args()
     cap_threads()
     layout = Layout(args.data)
     if args.what == "synthetic":
-        synthetic(layout, args.phrase, args.device)
+        synthetic(layout, args.phrase, args.device, args.cut)
     elif args.what == "cloned":
         cloned(layout)
     elif args.what == "user":

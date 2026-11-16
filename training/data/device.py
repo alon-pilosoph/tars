@@ -142,6 +142,40 @@ def device(x: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return np.clip(y, -1.0, 1.0).astype(np.float32)
 
 
+def clip_ending(x: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """The phrase's end cut away, as a speakerphone's noise reduction did to "TARS" with the TV on (the recordings of
+    2026-11-15): somewhere from 65% to 90% through the voiced part, a fade of 10-30 ms, then exact zeros."""
+    y = np.array(x, dtype=np.float32)
+    levels = _frame_levels(y.astype(np.float64))
+    if not len(levels) or levels.max() <= 0:
+        return y
+    voiced = np.flatnonzero(levels > levels.max() * _db(-30))
+    start, end = voiced[0] * FRAME, (voiced[-1] + 1) * FRAME
+    cut = start + int((end - start) * rng.uniform(0.65, 0.9))
+    fade = int(rng.uniform(0.01, 0.03) * RATE)
+    y[cut : cut + fade] *= np.linspace(1, 0, len(y[cut : cut + fade]), dtype=np.float32)
+    y[cut + fade :] = 0
+    return y
+
+
+class CutEndings:
+    """`share` of the clips with their ending cut (clip_ending), then microWakeWord's Augmentation as usual."""
+
+    def __init__(self, inner, share: float, seed: int | None = None):
+        self.inner, self.share = inner, share
+        self.rng = np.random.default_rng(seed)
+
+    def augment_clip(self, audio: np.ndarray) -> np.ndarray:
+        if self.rng.random() < self.share:
+            scale = 32768.0 if audio.dtype == np.int16 else 1.0
+            audio = clip_ending(audio.astype(np.float32) / scale, self.rng)
+        return self.inner.augment_clip(audio)
+
+    def augment_generator(self, audio_generator):
+        for audio in audio_generator:
+            yield self.augment_clip(audio)
+
+
 class DeviceAugmentation:
     """microWakeWord's Augmentation, then a device, on `share` of the clips (the rest pass as they were)."""
 
