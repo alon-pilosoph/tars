@@ -133,6 +133,7 @@ def main():
     p.add_argument("--name", help="the model's folder under DATA/models (default: its setup's)")
     p.add_argument("--teacher", help="distil from this trained model (trained_models/hey_tars_NAME), large")
     p.add_argument("--alpha", type=float, default=0.5, help="with --teacher: the teacher's share of each target")
+    p.add_argument("--snapshots", type=int, default=0, help="also save the weights every N steps (to choose later)")
     p.add_argument("--steps", type=int, default=20000, help="training steps (the recipe's: 20000)")
     p.add_argument("--lr", type=float, default=0.001, help="learning rate (the recipe's: 0.001)")
     p.add_argument("--target-fph", type=float, default=0.5, help="the checkpoint's false wakes an hour (recipe: 0.5)")
@@ -198,15 +199,17 @@ def main():
     log(f"training {args.setup}")
     entry = ["-m", "microwakeword.model_train_eval"]
     env = None
-    if args.teacher:
-        large = (
-            "--pointwise_filters 256,256,256,256 --repeat_in_block 1,1,1,1"
-            " --mixconv_kernel_sizes [5],[7,11],[9,15],[23]"
-            " --residual_connection 0,0,0,0 --first_conv_filters 96 --first_conv_kernel_size 5 --stride 3"
-        )
-        teacher_dir = layout.trained_models / f"{args.phrase}_{args.teacher}"
-        entry = ["-m", "training.stage1.distill", "--teacher-dir", str(teacher_dir), "--teacher-args", large,
-                 "--alpha", str(args.alpha), "--"]  # fmt: skip
+    if args.teacher or args.snapshots:
+        wrapped = ["-m", "training.stage1.distill", "--snapshot-every", str(args.snapshots)]
+        if args.teacher:
+            large = (
+                "--pointwise_filters 256,256,256,256 --repeat_in_block 1,1,1,1"
+                " --mixconv_kernel_sizes [5],[7,11],[9,15],[23]"
+                " --residual_connection 0,0,0,0 --first_conv_filters 96 --first_conv_kernel_size 5 --stride 3"
+            )
+            teacher_dir = layout.trained_models / f"{args.phrase}_{args.teacher}"
+            wrapped += ["--teacher-dir", str(teacher_dir), "--teacher-args", large, "--alpha", str(args.alpha)]
+        entry = [*wrapped, "--"]
         env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])}
     subprocess.run(
         [
