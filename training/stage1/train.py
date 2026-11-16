@@ -131,7 +131,12 @@ def main():
     p.add_argument("--tv-negatives", type=float, default=0, help="weight of features.py tv-negatives (0: none)")
     p.add_argument("--negative-weight", type=float, default=20, help="how much a negative counts (the recipe's: 20)")
     p.add_argument("--name", help="the model's folder under DATA/models (default: its setup's)")
-    p.add_argument("--teacher", help="distil from this trained model (trained_models/hey_tars_NAME), large")
+    p.add_argument(
+        "--teacher",
+        help="distil from this trained model (trained_models/hey_tars_NAME), large; or a "
+        "committee: NAME[:WEIGHTS],... (WEIGHTS a file in its folder, e.g. snapshots/step_avg5.weights.h5)",
+    )
+    p.add_argument("--teacher-small", action="store_true", help="the teachers are small models (a committee)")
     p.add_argument("--alpha", type=float, default=0.5, help="with --teacher: the teacher's share of each target")
     p.add_argument("--snapshots", type=int, default=0, help="also save the weights every N steps (to choose later)")
     p.add_argument("--steps", type=int, default=20000, help="training steps (the recipe's: 20000)")
@@ -202,13 +207,13 @@ def main():
     if args.teacher or args.snapshots:
         wrapped = ["-m", "training.stage1.distill", "--snapshot-every", str(args.snapshots)]
         if args.teacher:
-            large = (
-                "--pointwise_filters 256,256,256,256 --repeat_in_block 1,1,1,1"
+            arch = (
+                "--pointwise_filters {f},{f},{f},{f} --repeat_in_block 1,1,1,1"
                 " --mixconv_kernel_sizes [5],[7,11],[9,15],[23]"
-                " --residual_connection 0,0,0,0 --first_conv_filters 96 --first_conv_kernel_size 5 --stride 3"
-            )
-            teacher_dir = layout.trained_models / f"{args.phrase}_{args.teacher}"
-            wrapped += ["--teacher-dir", str(teacher_dir), "--teacher-args", large, "--alpha", str(args.alpha)]
+                " --residual_connection 0,0,0,0 --first_conv_filters {c} --first_conv_kernel_size 5 --stride 3"
+            ).format(**({"f": 64, "c": 32} if args.teacher_small else {"f": 256, "c": 96}))
+            dirs = ",".join(str(layout.trained_models / f"{args.phrase}_{t}") for t in args.teacher.split(","))
+            wrapped += ["--teacher-dir", dirs, "--teacher-args", arch, "--alpha", str(args.alpha)]
         entry = [*wrapped, "--"]
         env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])}
     subprocess.run(

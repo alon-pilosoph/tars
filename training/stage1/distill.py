@@ -7,8 +7,10 @@ not on its own.
 Distillation (--teacher-dir): every batch's targets are blended with a teacher model's scores on the same
 spectrograms, so the small student learns how sure a bigger model is, not only yes or no. DIR is a trained model's
 folder (trained_models/<name>, with best_weights.weights.h5) and the teacher's architecture is given as
-microWakeWord's mixednet arguments. alpha is the teacher's share of each target: (1 - alpha) * the label + alpha * the
-teacher's score. The class weights stay the labels' own.
+microWakeWord's mixednet arguments. Several teachers of one architecture (a committee) are given comma-separated, each
+DIR or DIR:WEIGHTS (a weights file inside DIR, e.g. snapshots/step_avg5.weights.h5); their scores are averaged.
+alpha is the teacher's share of each target: (1 - alpha) * the label + alpha * the teacher's score.
+The class weights stay the labels' own.
 
 Snapshots (--snapshot-every N): the weights are also saved every N steps (train_dir/snapshots/step_<n>.weights.h5),
 so a run's best moment can be chosen later on real recordings instead of microWakeWord's synthetic validation
@@ -41,14 +43,16 @@ def main():
     original_train = mww_train.train
 
     def wrapped_train(model, config, data_processor):
-        teacher = None
-        if own.teacher_dir:
+        teachers = []
+        for spec in own.teacher_dir.split(",") if own.teacher_dir else []:
+            folder, _, weights = spec.partition(":")
             tp = argparse.ArgumentParser()
             mixednet.model_parameters(tp)
-            teacher = mixednet.model(tp.parse_args(own.teacher_args.split()), config["training_input_shape"],
-                                     config["batch_size"])  # fmt: skip
-            teacher.load_weights(os.path.join(own.teacher_dir, "best_weights.weights.h5"))
-            teacher.trainable = False
+            t = mixednet.model(tp.parse_args(own.teacher_args.split()), config["training_input_shape"],
+                               config["batch_size"])  # fmt: skip
+            t.load_weights(os.path.join(folder, weights or "best_weights.weights.h5"))
+            t.trainable = False
+            teachers.append(t)
         snapshots = os.path.join(config["train_dir"], "snapshots")
         if own.snapshot_every:
             os.makedirs(snapshots, exist_ok=True)
@@ -57,8 +61,8 @@ def main():
 
         def train_on_batch(x, y, sample_weight=None, **kw):
             step[0] += 1
-            if teacher is not None:
-                soft = np.asarray(teacher(x, training=False)).reshape(-1, 1)
+            if teachers:
+                soft = np.mean([np.asarray(t(x, training=False)).reshape(-1, 1) for t in teachers], axis=0)
                 y = (1 - own.alpha) * np.asarray(y, dtype=np.float32).reshape(-1, 1) + own.alpha * soft
             result = plain(x, y, sample_weight=sample_weight, **kw)
             if own.snapshot_every and step[0] % own.snapshot_every == 0:
