@@ -70,8 +70,10 @@ def features(
     tv_negatives: float = 0,
     extra: list[str] = (),
     vc: float = 0,
+    loud: bool = False,
 ) -> list[dict]:
-    root = layout.features / (f"{phrase}-device" if device else f"{phrase}-cut" if cut else phrase)
+    variant = "device" if device else "cut" if cut else "loud" if loud else None
+    root = layout.features / (f"{phrase}-{variant}" if variant else phrase)
     neg = layout.mww / "negative_datasets"
     positives, near_misses = POSITIVE_WEIGHTS, NEAR_MISS_WEIGHTS
     if cloned:
@@ -115,6 +117,7 @@ def main():
     p.add_argument("--cloned", action="store_true", help="generic: add the cloned Common Voice speakers")
     p.add_argument("--device", action="store_true", help="generic: the features made through made-up microphones")
     p.add_argument("--cut", action="store_true", help="generic: the features with some endings cut")
+    p.add_argument("--loud", action="store_true", help="generic: the features made under loud talk and TV")
     p.add_argument(
         "--extra",
         action="append",
@@ -141,14 +144,16 @@ def main():
         p.error("--run goes with the household setup, and only with it")
     if args.setup == "household" and args.phrase != "hey_tars":
         p.error("a household's wakes are for hey_tars")
-    variant = args.large or args.cloned or args.device or args.cut
+    variant = args.large or args.cloned or args.device or args.cut or args.loud
     if variant and (args.setup != "generic" or args.phrase != "hey_tars"):
         p.error("--large, --cloned, --device and --cut are for the generic hey_tars model")
     import yaml
 
     cap_threads()
     layout = Layout(args.data)
-    setup = args.name or next((f"generic-{v}" for v in ("large", "device", "cut") if getattr(args, v)), args.setup)
+    setup = args.name or next(
+        (f"generic-{v}" for v in ("large", "device", "cut", "loud") if getattr(args, v)), args.setup
+    )
     name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{setup}"
     train_dir = layout.trained_models / name
     if not args.resume:
@@ -167,6 +172,7 @@ def main():
             args.tv_negatives,
             args.extra,
             args.vc,
+            args.loud,
         ),
         "training_steps": [args.steps],
         "positive_class_weight": [1],

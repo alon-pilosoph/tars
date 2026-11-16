@@ -45,11 +45,22 @@ DEVICE_NEGATIVES = 20_000
 CUT_S = 3.2
 
 
-def augmenter(layout: Layout, owner: bool = False):
+def augmenter(layout: Layout, owner: bool = False, loud: bool = False):
+    """`loud`: the backgrounds are mostly people talking (real conversation, TV, babble) and as loud as 10 dB over the
+    phrase, for the case real use fails on: "hey TARS" over a loud TV."""
     from microwakeword.audio.augmentation import Augmentation
 
     musan, bg, aug = layout.aug / "musan", layout.backgrounds, layout.aug
-    if owner:
+    if loud:
+        backgrounds = [
+            layout.root / "peoples_speech" / "wav",
+            aug / "train/tv",
+            aug / "train/babble",
+            musan / "speech",
+            musan / "music",
+            bg / "audioset_16k",
+        ]
+    elif owner:
         backgrounds = [
             musan / "music",
             musan / "noise",
@@ -77,15 +88,15 @@ def augmenter(layout: Layout, owner: bool = False):
             "PitchShift": 0.3,
             "BandStopFilter": 0.1,
             "AddColorNoise": 0.15,
-            "AddBackgroundNoise": 0.8 if owner else 0.9,
+            "AddBackgroundNoise": 0.95 if loud else 0.8 if owner else 0.9,
             "Gain": 1.0,
             "GainTransition": 0.25,
             "RIR": 0.5 if owner else 0.6,
         },
         impulse_paths=[str(bg / "mit_rirs"), str(aug / "train_rirs")],
         background_paths=[str(p) for p in backgrounds],
-        background_min_snr_db=-5,
-        background_max_snr_db=15,
+        background_min_snr_db=-10 if loud else -5,
+        background_max_snr_db=10 if loud else 15,
         min_jitter_s=0.195,
         max_jitter_s=0.205,
     )
@@ -137,15 +148,15 @@ def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int,
         write(out / split, gen.spectrogram_generator(split=split_name, repeat=1, max_clips=cap))
 
 
-def synthetic(layout: Layout, phrase: str, device: bool = False, cut: bool = False) -> None:
+def synthetic(layout: Layout, phrase: str, device: bool = False, cut: bool = False, loud: bool = False) -> None:
     """`device`: into DATA/features/<phrase>-device, DEVICE_SHARE of every clip through a made-up microphone, plus
     DEVICE_NEGATIVES cuts of the backgrounds through one (negative/device)."""
     if not (layout.aug / "interference.done").exists():
         raise SystemExit("Run training.data.make_interference first.")
     if cut:
         return cut_endings(layout, phrase)
-    root = layout.features / (f"{phrase}-device" if device else phrase)
-    aug = None
+    root = layout.features / (f"{phrase}-device" if device else f"{phrase}-loud" if loud else phrase)
+    aug = augmenter(layout, loud=True) if loud else None
     if device:
         from training.data.device import DeviceAugmentation
 
@@ -337,12 +348,13 @@ def main():
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
     p.add_argument("--device", action="store_true", help="synthetic: through made-up microphones (data/device.py)")
     p.add_argument("--cut", action="store_true", help="synthetic: some positives with their ending cut")
+    p.add_argument("--loud", action="store_true", help="synthetic: under loud talk and TV (down to -10 dB)")
     add_user_arg(p)
     args = p.parse_args()
     cap_threads()
     layout = Layout(args.data)
     if args.what == "synthetic":
-        synthetic(layout, args.phrase, args.device, args.cut)
+        synthetic(layout, args.phrase, args.device, args.cut, args.loud)
     elif args.what == "vc":
         converted(layout)
     elif args.what == "cuts":
