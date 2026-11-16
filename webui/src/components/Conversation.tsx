@@ -1,5 +1,5 @@
 import { Fragment, type MouseEvent, useEffect, useRef } from "react";
-import { failedLine, stamp, time, timingLine, wakeLine } from "../format";
+import { failedLine, roomName, stamp, time, timingLine, wakeLine } from "../format";
 import {
   type State,
   cancelFix,
@@ -53,7 +53,10 @@ export function ConversationRow({ c, s }: { c: Conversation; s: State }) {
   const open = s.open.has(c.id);
   return (
     <article className="conv" data-id={c.id} aria-label={`Conversation, ${stamp(c.started)}`}>
-      <div className="conv-time">{time(c.started)}</div>
+      <div className="conv-time">
+        {time(c.started)}
+        {c.room && <span className="conv-room">{roomName(c.room)}</span>}
+      </div>
       {open ? <Panel c={c} s={s} /> : <Closed c={c} s={s} />}
     </article>
   );
@@ -274,6 +277,7 @@ function Panel({ c, s }: { c: Conversation; s: State }) {
           {c.via === "telegram"
             ? `A chat on Telegram${c.speaker?.name ? ` with ${c.speaker.name}` : ""}.`
             : wakeLine(c.wake, { name: c.speaker?.name ?? null, known: !isUnknown(c.speaker) }) +
+              (c.room ? ` In the ${c.room}.` : "") +
               (notReal ? " Marked as not meant for TARS." : "")}
         </div>
         <div className="p-actions">

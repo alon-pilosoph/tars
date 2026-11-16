@@ -33,6 +33,7 @@ from .config import (
     QuickProvider,
     with_keys,
 )
+from .files import atomic_write
 from .haconfig import BUNDLE as HA_BUNDLE
 from .versions import pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
@@ -260,6 +261,7 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
     # The double-check for a body that runs only the wake word, on this machine's models. Not journaled: a journal
     # follows one room's conversation, and this is shared (keeping network bodies' wakes is a follow-up).
     checker, _ = make_trigger(cfg, False, root, None)
+    here = BodiesHere(Path(store.folder))
 
     def room(device: str) -> None:
         assistant = None
@@ -269,6 +271,7 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
             # A recorder of its own: its speech detector and end-of-turn model keep state through an utterance.
             body = RemoteBody(link, sample_rate, make_recorder(cfg, root), checker)
             rooms.connected(name, True)
+            here.mark(device, name, True)
             try:
                 if assistant is None:
                     assistant = assistant_for(body, name)
@@ -282,6 +285,7 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
                 time.sleep(3)
             finally:
                 rooms.connected(name, False)
+                here.mark(device, name, False)
 
     def watch() -> None:
         served: set[str] = set()
@@ -301,6 +305,33 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
 
 
 BODIES_RECHECK_S = 30.0
+BODIES_FILE = "bodies.json"  # in the event log's folder: which bodies are connected, for the Status page
+
+
+class BodiesHere:
+    """Which bodies are connected now, and since when, written for the web UI (another process) to show: the voice
+    process alone knows. Rewritten whole on each change."""
+
+    def __init__(self, folder: Path):
+        self._path, self._lock, self._now = folder / BODIES_FILE, threading.Lock(), {}
+
+    def mark(self, device: str, room: str, connected: bool) -> None:
+        with self._lock:
+            self._now[device] = {"room": room, "connected": connected, "since": time.time()}
+            data = json.dumps(self._now).encode()
+        try:
+            atomic_write(self._path, data)
+        except OSError as e:  # only the Status page's view of it
+            print(f"(bodies: couldn't note who's connected: {e!r})", flush=True)
+
+
+def bodies_here(folder: Path) -> dict:
+    """What BodiesHere last wrote: device: {room, connected, since}; {} if nothing has (no rooms, or not yet)."""
+    try:
+        data = json.loads((folder / BODIES_FILE).read_text())
+    except OSError, ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def main_room(cfg: Config, store) -> str:

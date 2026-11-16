@@ -88,8 +88,10 @@ the room paired first. Each conversation is kept with its room. The brain is tol
 (`[Room: bedroom]`, and `Request.room`), so it knows; choosing "the light" by the room comes later. With `[bodies]`
 off, there's one room and nothing about TARS changes.
 
-Not yet: wakes heard by a body that runs only the wake word aren't kept in the wake log (its conversations are); the
-web UI shows no rooms yet; the Pi's buttons and the control socket act on its own room only.
+The web UI shows the room under each conversation's time and in its last line, and the Status page lists the bodies:
+each one's room, and whether it's connected (the voice process writes `bodies.json` beside the event log as they come
+and go); `--check` says the same. Not yet: wakes heard by a body that runs only the wake word aren't kept in the wake
+log (its conversations are); the Pi's buttons and the control socket act on its own room only.
 
 ## How fast
 

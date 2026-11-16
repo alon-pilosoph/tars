@@ -394,6 +394,7 @@ def _speaker(guess: str | None, people: dict, voice: Voice | None) -> dict | Non
 
 def _conversation(row: dict, wake: dict | None, voice: Voice | None, people: dict) -> dict:
     out = {k: row[k] for k in ("id", "started", "ended", "via")}
+    out["room"] = row.get("room")  # where it was held, with rooms (rooms.py); None before them, or with one
     out["wake"] = (
         {
             "event_id": wake["id"],

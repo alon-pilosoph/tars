@@ -228,3 +228,25 @@ def test_the_brain_is_told_the_room_once_there_is_more_than_one(tmp_path):
     assistant.room = "bedroom"
     assistant.converse(follow_up_s=0.0)
     assert brain.asked[0].startswith("[Room: bedroom]") and brain.requests[0].room == "bedroom"
+
+
+def test_check_and_the_status_page_say_which_bodies_are_connected_now(log, monkeypatch):
+    import dataclasses
+    from pathlib import Path
+
+    from voice_assistant import check, health
+    from voice_assistant.bodykeys import BodyKeys, parse_key
+    from voice_assistant.config import BodiesConfig, load_config
+    from voice_assistant.wiring import BodiesHere
+
+    keys = BodyKeys(log.store)
+    device, _ = parse_key(keys.add("Bedroom"))
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    on = dataclasses.replace(cfg, bodies=BodiesConfig(enabled=True))
+    assert "never connected yet" in check.line(check.bodies(on, log.folder)[1])
+    BodiesHere(log.folder).mark(device, "Bedroom", True)
+    assert "connected now" in check.line(check.bodies(on, log.folder)[1])
+    [body] = health.bodies(log)
+    assert (body["room"], body["connected"]) == ("Bedroom", True) and body["since"] is not None
+    BodiesHere(log.folder).mark(device, "Bedroom", False)
+    assert health.bodies(log)[0]["connected"] is False

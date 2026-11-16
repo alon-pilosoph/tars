@@ -10,13 +10,15 @@ import {
   processorLine,
   temperatureLine,
   time,
+  bodyLine,
   dollars,
   personName,
+  roomName,
   serviceModel,
   usageLine,
 } from "../format";
 import { loadHealth, useStore } from "../store";
-import type { CheckLine, Health, MonthUsage, UsageLine } from "../types";
+import type { BodyHealth, CheckLine, Health, MonthUsage, UsageLine } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
 import { LoadError, Loading } from "./States";
@@ -135,6 +137,8 @@ function Body({ h }: { h: Health }) {
         </table>
       )}
 
+      {h.bodies.length > 0 && <Rooms h={h} />}
+
       {h.usage && <Usage u={h.usage} />}
 
       {h.backup && (
@@ -246,5 +250,30 @@ function UsageTable({ what, lines, name }: { what: string; lines: UsageLine[]; n
         ))}
       </tbody>
     </table>
+  );
+}
+
+function Rooms({ h }: { h: Health }) {
+  return (
+    <>
+      <SecHead title="Rooms" />
+      <table className="cmp health rooms">
+        <tbody>
+          {h.bodies.map((b: BodyHealth) => {
+            const line = bodyLine(b, h.now);
+            return (
+              <tr key={b.device}>
+                <td>
+                  {roomName(b.room)}
+                  <span className="model">{b.kind ? `${b.device}, ${b.kind}` : b.device}</span>
+                </td>
+                <td className={line.bad ? "bad" : undefined}>{line.text}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="hint">Each room is a body TARS hears and speaks through (voice-assistant --body-list).</p>
+    </>
   );
 }
