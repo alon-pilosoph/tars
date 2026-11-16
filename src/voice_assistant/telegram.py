@@ -88,6 +88,14 @@ RETRY_S = (1.0, 2.0, 5.0, 10.0, 30.0, 60.0)  # waiting for Telegram again, after
 REFUSED = (401, 404)  # Telegram turning the bot's token down: a setup problem, which trying again won't fix
 DELIVERY_REST_S = 30.0
 SEND_TRIES = 3
+# How long a reply keeps being tried while Telegram fails in a way that may pass (it was down 19:20-19:25 on
+# 2026-11-16, and three tries in three seconds lost a reply).
+SEND_PATIENCE_S = 4 * 60.0
+# A message written this long before TARS reads it (Telegram down, or TARS restarting) is answered knowing so.
+LATE_S = 90.0
+LATE = "[Written at {at}; Telegram only brought it now]"
+# Polls in a row that came back empty while Telegram said it held messages for TARS: then a fresh connection.
+MISSED_POLLS = 2
 TYPING_EVERY_S = 4.0  # "typing..." shows for 5 s
 # The longest a "typing..." may take, and so the longest a reply waits for one on its way, so it can't come after.
 TYPING_TIMEOUT_S = 5.0
@@ -195,6 +203,10 @@ def refused_token_error(env: Path | str) -> ConfigError:
     return ConfigError(f"Telegram refused {TELEGRAM_KEY}: check it in {env}.")
 
 
+def _client() -> httpx.Client:
+    return httpx.Client(timeout=httpx.Timeout(POLL_S + 10, connect=10))
+
+
 class Bot:
     """The few methods of Telegram's Bot API that TARS uses. The token is part of every address, so no error says
     which address failed: it would end up in the logs."""
@@ -202,7 +214,21 @@ class Bot:
     def __init__(self, token: str, http: httpx.Client | None = None):
         self._base = f"{API}/bot{token}"
         self._files = f"{API}/file/bot{token}"
-        self._http = http or httpx.Client(timeout=httpx.Timeout(POLL_S + 10, connect=10))
+        self._own_http = http is None
+        self._http = http or _client()
+
+    def reconnect(self) -> None:
+        """Fresh connections to Telegram, for after it's failed: one kept through an outage can go on reaching a part
+        of it that's still broken (empty answers while it holds messages for TARS, 2026-11-16). The old ones are
+        closed on a thread of their own: closing waits for a request still on one, a send from another thread."""
+        if not self._own_http:
+            return
+        old, self._http = self._http, _client()
+        threading.Thread(target=old.close, daemon=True, name="telegram-close").start()
+
+    def waiting(self) -> int:
+        """How many messages Telegram holds for TARS that it hasn't fetched yet."""
+        return int(self.call("getWebhookInfo").get("pending_update_count") or 0)
 
     def call(self, method: str, files: dict | None = None, wait_s: float | None = None, **params):
         """`wait_s`: how long to wait for Telegram's answer, if not the client's own."""
@@ -341,6 +367,32 @@ def _clock(at: float) -> str:
     return twelve_hour(datetime.fromtimestamp(at).astimezone())
 
 
+def together(updates: list[dict]) -> list[dict]:
+    """`updates`, with a run of one person's written messages that came in at once (sent while Telegram or TARS was
+    down) made one, so it gets one answer rather than a reply each. Commands, voice messages and taps stay as they
+    are. The one made has the last's date, and the first's as first_date."""
+    out: list[dict] = []
+    for update in updates:
+        message = update.get("message") or {}
+        last = (out[-1].get("message") or {}) if out else {}
+        if _written(message) and _written(last) and last["chat"]["id"] == message["chat"]["id"]:
+            joined = {
+                **message,
+                "text": f"{last['text']}\n{message['text']}",
+                "first_date": last.get("first_date") or last.get("date"),
+            }
+            out[-1] = {**update, "message": joined}
+        else:
+            out.append(update)
+    return out
+
+
+def _written(message: dict) -> bool:
+    """A message that's words for the brain: written, and not a command."""
+    text = (message.get("text") or "").strip()
+    return bool(text) and not text.startswith("/") and "id" in (message.get("chat") or {})
+
+
 def tidy(reply: str) -> str:
     """A reply written to be heard, for reading: without the lines said while a slow answer comes ("Looking it
     up."), which a chat shows as "typing..." instead."""
@@ -476,11 +528,10 @@ class TelegramTars:
         threading.Thread(target=self._deliver_forever, daemon=True, name="telegram-deliver").start()
         if self._transcriber is not None:  # a voice message's decoder loads in seconds on a Pi: not on the first one
             threading.Thread(target=warm_decoder, daemon=True, name="telegram-warm").start()
-        offset, failures = None, 0
+        offset, failures, missed = None, 0, 0
         while True:
             try:
                 updates = self._bot.updates(offset)
-                failures = 0
             except TelegramError as e:
                 if e.refused:
                     raise refused_token_error(self._env) from None
@@ -489,14 +540,35 @@ class TelegramTars:
                 if e.status == 409:
                     print("(Telegram: something else is reading this bot's messages, another TARS?)")
                 print(f"(Telegram: {e}; trying again in {wait:.0f} s)", flush=True)
+                self._bot.reconnect()
                 self._sleep(wait)
                 continue
-            for update in updates:
-                offset = update["update_id"] + 1
+            if failures:
+                print(f"(Telegram: reached again after {failures} failed tries)", flush=True)
+                failures = 0
+            missed = 0 if updates else self._missed(missed)
+            if updates:
+                offset = updates[-1]["update_id"] + 1
+            for update in together(updates):
                 try:
                     self.handle(update)
                 except Exception:  # noqa: BLE001 - one message gone wrong never stops the chat
                     traceback.print_exc()
+
+    def _missed(self, missed: int) -> int:
+        """After a poll that came back empty: how many in a row did while Telegram said it held messages for TARS.
+        At MISSED_POLLS, a fresh connection, and counting starts again."""
+        try:
+            waiting = self._bot.waiting()
+        except TelegramError:
+            return missed  # the next poll will say whether Telegram's failing
+        if not waiting:
+            return 0
+        if missed + 1 < MISSED_POLLS:
+            return missed + 1
+        print(f"(Telegram: holds {waiting} messages it keeps not handing over; connecting afresh)", flush=True)
+        self._bot.reconnect()
+        return 0
 
     def handle(self, update: dict) -> None:
         if any(listener(update) for listener in self._listeners):
@@ -522,6 +594,7 @@ class TelegramTars:
             self._send(chat_id, CANT_READ)
             return
         sent_at = message.get("date") or self._clock()
+        first_at = message.get("first_date") or sent_at  # the first of several written while TARS couldn't read them
         if self._clock() - sent_at > STALE_S:
             off = f"I was off when this came in, at {_clock(sent_at)}. Send it again if it still matters."
             self._send(chat_id, off)
@@ -552,7 +625,7 @@ class TelegramTars:
             self.spotify(chat_id)
             return
         if not self._over_the_cap(chat_id):
-            self.answer(chat, text)
+            self.answer(chat, text, written_at=first_at if self._clock() - first_at > LATE_S else None)
 
     def _over_the_cap(self, chat_id: int) -> bool:
         """Past the month's cap ([usage] monthly_cap_usd): said in the chat, and nothing paid for is started. The
@@ -665,14 +738,17 @@ class TelegramTars:
                 return
             self._answer(chat, text, recording)
 
-    def answer(self, chat: Chat, text: str) -> None:
+    def answer(self, chat: Chat, text: str, written_at: float | None = None) -> None:
         """Answers in the chat, and keeps the exchange for the web UI. As by voice, what the reply did (reminders
         set, things sent) only happens once the reply has reached them. The chat is held meanwhile, so what TARS
-        posts by itself (deliver) waits until the exchange is over."""
+        posts by itself (deliver) waits until the exchange is over. `written_at`: when it was written, if that was a
+        while before it reached TARS (LATE_S), so the reply knows."""
         with chat.busy:
-            self._answer(chat, text)
+            self._answer(chat, text, written_at=written_at)
 
-    def _answer(self, chat: Chat, text: str, recording: np.ndarray | None = None) -> None:
+    def _answer(
+        self, chat: Chat, text: str, recording: np.ndarray | None = None, written_at: float | None = None
+    ) -> None:
         """`recording`: the voice message `text` was written down from; None for a written message."""
         now = self._clock()
         print(f"{chat.person} (Telegram{', by voice' if recording is not None else ''}):  {text!r}", flush=True)
@@ -682,7 +758,8 @@ class TelegramTars:
             self._log(self._conversations.add_person_turn, conversation, text, recording, speaker=chat.person, ts=now)
         brain, written = chat.brain, None
         self._last_asked = chat
-        asked = f"[Speaker: {chat.person}] {VOICE_TAG + ' ' if recording is not None else ''}{text}"
+        late = f"{LATE.format(at=_clock(written_at))} " if written_at is not None else ""
+        asked = f"[Speaker: {chat.person}] {late}{VOICE_TAG + ' ' if recording is not None else ''}{text}"
         request = Request(speaker=chat.person, by_chat=True, heard=text)
         try:
             with _Typing(self._bot, chat.chat_id) if self._typing else nullcontext():
@@ -998,7 +1075,8 @@ class TelegramTars:
         ("Set for 5pm."), so that must be done."""
         parts = split_text(text)
         for sent, part in enumerate(parts):
-            for attempt in range(tries):
+            attempt, waited = 0, 0.0
+            while True:
                 try:
                     self._bot.send(chat_id, part)
                     break
@@ -1006,12 +1084,17 @@ class TelegramTars:
                     if tries == 1:
                         print(f"(Telegram: couldn't send a message: {e})")
                         return
-                    if attempt == tries - 1:
+                    attempt += 1
+                    # Telegram failing in a way that may pass is waited out for minutes; anything else, tries times.
+                    if (waited >= SEND_PATIENCE_S) if e.retryable else attempt >= tries:
                         if sent == 0:
                             raise
                         print(f"(Telegram: only {sent} of the {len(parts)} parts of a message arrived: {e})")
                         return
-                    self._sleep(e.retry_after or RETRY_S[attempt])
+                    wait = e.retry_after or RETRY_S[min(attempt - 1, len(RETRY_S) - 1)]
+                    print(f"(Telegram: {e} sending a message; trying again in {wait:.0f} s)", flush=True)
+                    self._sleep(wait)
+                    waited += wait
 
     def _conversation(self, chat: Chat, now: float) -> int | None:
         """The chat's conversation for the web UI: the same one until it goes quiet for as long as the brain
