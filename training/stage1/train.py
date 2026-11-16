@@ -109,6 +109,9 @@ def main():
     p.add_argument("--tv-negatives", type=float, default=0, help="weight of features.py tv-negatives (0: none)")
     p.add_argument("--negative-weight", type=float, default=20, help="how much a negative counts (the recipe's: 20)")
     p.add_argument("--name", help="the model's folder under DATA/models (default: its setup's)")
+    p.add_argument("--steps", type=int, default=20000, help="training steps (the recipe's: 20000)")
+    p.add_argument("--lr", type=float, default=0.001, help="learning rate (the recipe's: 0.001)")
+    p.add_argument("--target-fph", type=float, default=0.5, help="the checkpoint's false wakes an hour (recipe: 0.5)")
     p.add_argument(
         "--resume",
         action="store_true",
@@ -137,10 +140,10 @@ def main():
         "features": features(
             layout, args.setup, args.run, args.phrase, args.cloned, args.device, args.cut, args.tv_negatives
         ),
-        "training_steps": [20000],
+        "training_steps": [args.steps],
         "positive_class_weight": [1],
         "negative_class_weight": [args.negative_weight],
-        "learning_rates": [0.001],
+        "learning_rates": [args.lr],
         "batch_size": 128,
         "time_mask_max_size": [5],
         "time_mask_count": [2],
@@ -149,7 +152,7 @@ def main():
         "eval_step_interval": 500,
         "clip_duration_ms": 1500,
         "minimization_metric": "ambient_false_positives_per_hour",
-        "target_minimization": 0.5,
+        "target_minimization": args.target_fph,
         "maximization_metric": "average_viable_recall",
     }
     train_dir.parent.mkdir(parents=True, exist_ok=True)
