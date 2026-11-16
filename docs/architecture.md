@@ -158,7 +158,9 @@ what](security.md#what-each-tool-may-change)). Only a
 `COLLECTS` tool is called holding the conversation; the rest may wait, so it's released meanwhile. Web search isn't
 in the toolbox: it's OpenAI's own, run on its side, and the brain marks the reply that used it
 (`Request.read_the_web`) for every tool to go by; a `Tool` whose answers are words from anywhere (`outside`: the
-feeds) marks it too, once it's answered. A toolset may have `markers`: something the model writes for its provider
+feeds) marks it too, once it's answered. A tool that refuses for that tells the brain (`toolbox.held_for_the_web`),
+which writes the reply once more without the web: the first try dropped, web search and `outside` tools taken away
+(`REDO_WITHOUT_WEB`). A toolset may have `markers`: something the model writes for its provider
 (the feeds' `<told 2 5>`, the stories it told), taken out of the words as they stream, held back only while they could
 still be one, and handed to the provider once the reply is over. A new tool is a provider with a `toolset()`, given to
 the brain (`tools=`), with nothing in `llm.py` to change.

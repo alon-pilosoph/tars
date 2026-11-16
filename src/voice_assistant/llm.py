@@ -296,6 +296,12 @@ OUT_OF_STEPS = (
     "You've used every round of tools this reply may take, so you can't call any more now. Say plainly what you did "
     "and what's left undone, and that they can ask you to carry on; never give any other reason for stopping."
 )
+# A change held back because the reply read the web ("put the news on" read as a question for the web first) is
+# written again once, from the person's own words, with no web search and nothing from it.
+REDO_WITHOUT_WEB = (
+    "Web search is off for this reply: do what they asked from their own words alone, without looking anything up. "
+    "If something stops you, say what it was; never blame a device for a change that was held back by you."
+)
 TOOL_LOG_CHARS = 300  # how much of a tool call and its result the log keeps
 # What the quick model replies when a turn needs OpenAI's tools; that turn is then OpenAI's to answer.
 LOOK_UP = "<look-up>"
@@ -749,6 +755,8 @@ class _Writing:
         # Its tool calls that failed, by (name, arguments): the error, and how many times.
         self.failed: dict[tuple[str, str], tuple[str, int]] = {}
         self.repeated = False  # it made one that failed twice again
+        self.held_for_web = False  # a tool held something back because it read the web (Request.held_for_web)
+        self.redone = False  # written again without the web, after a change was held back for it (REDO_WITHOUT_WEB)
 
 
 class OpenAIChat:
@@ -822,7 +830,9 @@ class OpenAIChat:
             self._history.append(self._asked)
             self.sent, self.changes = [], []
             self._writing = writing = _Writing(self.first_answerer)
-            writing.request = dataclasses.replace(request or Request(), emit=self._emit)
+            writing.request = dataclasses.replace(
+                request or Request(), emit=self._emit, held_for_web=lambda: setattr(writing, "held_for_web", True)
+            )
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
 
@@ -844,9 +854,10 @@ class OpenAIChat:
         if said_first.strip():
             instructions = f"{instructions}\n\n{CARRY_ON.format(said=said_first.strip())}"
         unmarked = _Unmarked(self._toolbox.markers)
+        first, offered = list(context), self._tools
         for round_ in range(MAX_TOOL_ROUNDS):
             calls, said = [], ""
-            tools = {"tools": self._tools} if self._tools else {}
+            tools = {"tools": offered} if offered else {}
             last = bool(tools) and _last_round(round_, writing)
             if last:
                 tools["tool_choice"] = "none"  # the last round has to say something, or TARS goes silent
@@ -906,10 +917,27 @@ class OpenAIChat:
                     )
                     output = self._run_tool(call, writing=writing)
                     context.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
+            if writing.held_for_web and not writing.redone:
+                # A change they asked for, held back only because this reply read the web: written again from their
+                # own words, with nothing from the web in it and no way to read it, so the change can be made.
+                print("(a change was held back for the web: writing the reply again without it)")
+                writing.redone = True
+                writing.request = dataclasses.replace(writing.request, read_the_web=False)
+                context[:] = first
+                offered = self._without_the_web()
+                instructions = f"{instructions}\n\n{REDO_WITHOUT_WEB}"
         if not answer.strip() and not self.sent:
             raise ReplyFailed("the reply was empty")
         unmarked.heard(writing.request)
         self._remember(answer, writing)
+
+    def _without_the_web(self) -> list:
+        """The tools, less web search and those whose answers are words from anywhere (Tool.outside)."""
+        return [
+            t
+            for t in self._tools
+            if t.get("type") != "web_search" and not getattr(self._toolbox.get(t.get("name", "")), "outside", False)
+        ]
 
     def _reminder_rules(self, tools: bool = True) -> list[str]:
         """`tools`: this model sets them itself, rather than handing the turn over."""

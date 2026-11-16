@@ -170,12 +170,14 @@ def test_the_logbook_says_what_did_it(ha):
 
 
 def test_after_a_web_search_the_past_isnt_read_and_nothing_changes(ha):
-    searched = Request(by_chat=True, read_the_web=True)
+    held = []  # each told to the brain, which writes the reply again without the web
+    searched = Request(by_chat=True, read_the_web=True, held_for_web=lambda: held.append(1))
     for action in ("history", "statistics", "logbook"):
         assert ask(ha, action, searched, entity_ids=["switch.boiler"]).startswith("refused: this reply searched")
     assert ask(ha, "state", searched, entity_ids=["switch.boiler"]).startswith("switch.boiler: off")
     said = ask(ha, "call", searched, service="light.turn_on", entity_ids=["light.hall"])
     assert said.startswith("refused") and ha.fake.calls == []
+    assert len(held) == 4  # the three reads of the past and the change; the state read wasn't held back
 
 
 def test_a_turn_a_doors_lock_set_off_reads_but_changes_nothing(ha):

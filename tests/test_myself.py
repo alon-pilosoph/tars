@@ -92,8 +92,10 @@ def test_records_are_what_was_said_and_a_chat_is_only_its_own_persons(cfg, root,
     alon = ask(tars, "records", Request(speaker="Alon", by_chat=True))
     assert "Keep me updated" not in alon and "1 other people's chats in that span left out" in alon
     assert "Which channel" in ask(tars, "records", Request(), query="channel")
-    searched = Request(speaker="Stacey", by_chat=True, read_the_web=True)
+    held = []
+    searched = Request(speaker="Stacey", by_chat=True, read_the_web=True, held_for_web=lambda: held.append(1))
     assert ask(tars, "records", searched).startswith("refused: this reply searched the web")
+    assert held == [1]  # told to the brain, which writes the reply again without the web
 
 
 def test_the_log_leaves_out_chat_messages_and_finds_what_went_wrong(cfg, root, monkeypatch):

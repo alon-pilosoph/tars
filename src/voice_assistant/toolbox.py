@@ -36,6 +36,17 @@ if TYPE_CHECKING:
 READS, CHANGES, COLLECTS, ITS_OWN = "reads", "changes", "collects", "its own"
 DOES = (READS, CHANGES, COLLECTS, ITS_OWN)
 READ_THE_WEB = "refused: this reply read the web, so it changes nothing; they can ask again on its own"
+
+
+def held_for_the_web(request: Request | None, refusal: str = READ_THE_WEB) -> str:
+    """`refusal`, for what a reply that read the web (Request.read_the_web) may not do, with the request's
+    held_for_web told first, so the brain can write the reply again without the web (llm.py's REDO_WITHOUT_WEB).
+    Every tool's refusal for the web goes through here."""
+    if callable(told := getattr(request, "held_for_web", None)):
+        told()
+    return refusal
+
+
 WITHDRAWN = "error: the request was withdrawn before anything was done; nothing changed"
 BY_DOOR = (
     "refused: this ran because the {door}'s lock said someone came in, and that alone never changes anything; say "
@@ -115,7 +126,7 @@ def held_back(request: Request | None) -> str:
     if request is None:
         return ""
     if getattr(request, "read_the_web", False):
-        return READ_THE_WEB
+        return held_for_the_web(request)
     if door := getattr(request, "by_door", ""):
         return BY_DOOR.format(door=door)
     go_ahead = getattr(request, "go_ahead", None)

@@ -85,6 +85,19 @@ def test_a_tool_that_changes_something_is_refused_after_a_web_search_and_reads_s
     assert garden.watered == []
 
 
+def test_a_change_held_back_for_the_web_is_told_to_the_turn_and_nothing_else_is():
+    held = []
+    tools = Toolbox([Garden().toolset()])
+    searched = Turn(Request(read_the_web=True, held_for_web=lambda: held.append(1)))
+    tools.call(tools.get("moisture"), {}, searched)
+    assert held == []  # a read goes ahead
+    tools.call(tools.get("water"), {}, searched)
+    assert held == [1]
+    door = Turn(Request(by_door="front door", held_for_web=lambda: held.append(2)))
+    tools.call(tools.get("water"), {}, door)
+    assert held == [1]  # held back for the door, not the web: writing it again wouldn't help
+
+
 def test_a_tool_that_changes_something_is_refused_on_a_turn_a_doors_lock_set_off_and_reads_still_go():
     garden = Garden()
     tools = Toolbox([garden.toolset()])

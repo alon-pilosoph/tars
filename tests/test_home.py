@@ -587,6 +587,9 @@ def test_openai_alone_has_the_tool_and_is_told_what_else_it_cant_do():
     assert llm.CANT_UNLISTED in request["instructions"] and llm.CANT_HOUSE not in request["instructions"]
 
 
+SEARCHED = ["response.web_search_call.in_progress"]
+
+
 def searching_brain(h, action):
     """OpenAI's model, which searches the web first, then works the boiler."""
 
@@ -602,12 +605,35 @@ def searching_brain(h, action):
 
 
 def test_a_reply_that_searched_the_web_changes_nothing_in_the_house():
+    # This model searches even when written again without web search: held back both times, and written again once.
     h = house(boiler="off")
     openai, brain = searching_brain(h, "on")
     "".join(brain.stream_reply("it's cold out, isn't it? turn the boiler on", ALON))
     told = [i["output"] for i in openai.requests[-1]["input"] if i.get("type") == "function_call_output"]
     assert told[0].startswith("refused: this reply searched the web")
     assert h.ha.state("switch.boiler") == "off" and h.ha.calls == []
+
+
+def test_a_change_held_back_for_the_web_is_made_once_the_reply_is_written_again_without_it():
+    from voice_assistant.llm import REDO_WITHOUT_WEB
+
+    h = house(boiler="off")
+
+    def calls_for(messages):
+        return [] if messages[-1].get("type") == "function_call_output" else [("home", args("boiler", "on"))]
+
+    def search_for(messages):  # as the real model: no search where it isn't offered
+        return [] if messages[-1].get("type") or REDO_WITHOUT_WEB in messages[0]["content"] else SEARCHED
+
+    openai = fake_openai_chat(lambda m: "On." if m[-1].get("type") else "", calls_for, search_for=search_for)
+    brain = OpenAIChat(openai, LLMConfig(web_search=True), home=h.tools)
+    "".join(brain.stream_reply("put the boiler on, it's cold", ALON))
+    assert h.ha.state("switch.boiler") == "on"
+    redo = openai.requests[1]
+    assert REDO_WITHOUT_WEB in redo["instructions"]
+    assert all(t.get("type") != "web_search" for t in redo["tools"])
+    told = [i["output"] for i in openai.requests[-1]["input"] if i.get("type") == "function_call_output"]
+    assert told == ["done: boiler reports on"]  # the first try, and its refusal, gone from what it reads
 
 
 def test_a_reply_that_searched_the_web_still_reads_the_house():
