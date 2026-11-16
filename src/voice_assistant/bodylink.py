@@ -326,6 +326,9 @@ class RemoteTrigger:
 
     def __init__(self, link: BodyConnection, checker: Checker | None = None):
         self.link, self.checker = link, checker
+        # The checker keeps a confirm's results on itself (last_audio, after_name): one body's confirm and reading
+        # them back at a time, when several bodies share it.
+        self._checking = _CHECKING.setdefault(id(checker), threading.Lock())
 
     def wait(self, mic: RemoteMicrophone, due: Due | None = None) -> str | None:
         """ANSWER (or None, for a button) once someone wants to talk, ASK when the wake sounded close, DUE when `due`
@@ -348,12 +351,16 @@ class RemoteTrigger:
                 self.last_audio = preroll
                 self.after_name = self.checker.find_after_name(preroll) if self.checker and len(preroll) else None
                 return ANSWER
-            outcome = self.checker.confirm(preroll, score)
+            with self._checking:
+                outcome = self.checker.confirm(preroll, score)
+                self.last_audio, self.after_name = self.checker.last_audio, self.checker.after_name
             if outcome == IGNORE:
                 self.link.sleep()
                 continue
-            self.last_audio, self.after_name = self.checker.last_audio, self.checker.after_name
             return outcome if outcome in (ANSWER, ASK) else ANSWER
+
+
+_CHECKING: dict[int, threading.Lock] = {}  # a lock per checker, shared by the bodies that use it
 
 
 def _preroll(mic: RemoteMicrophone, preroll_ms: int) -> np.ndarray:

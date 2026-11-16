@@ -253,12 +253,12 @@ def network_bodies(cfg: Config, root: Path, store, sample_rate: int, journal) ->
         seen=keys.seen,
     ).start()
     print(f"(bodies: listening on port {listener.port} for {len(keys.listed())} paired)", flush=True)
-    recorder = make_recorder(cfg, root)
     checker, _ = make_trigger(cfg, False, root, journal)
     while True:
         link = listener.any_connected()
         room = keys.room_of(link.hello.device) or link.hello.device
-        yield RemoteBody(link, sample_rate, recorder, checker), f"Waiting for its name in the {room}..."
+        # A recorder of its own: its speech detector and end-of-turn model keep state through an utterance.
+        yield RemoteBody(link, sample_rate, make_recorder(cfg, root), checker), f"Waiting for its name in the {room}..."
 
 
 def make_speaker_id(cfg: Config, root: Path):

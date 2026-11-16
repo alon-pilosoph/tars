@@ -172,7 +172,10 @@ class Announcements:
     def take(self) -> list[str]:
         with self._lock:
             taken, self._lines = list(self._lines), deque()
-            self._taken = {line: at for at, line in taken}
+            now = self._clock()
+            # When each was added, for put_back: kept for every room's take (one assistant per body), not only the last.
+            self._taken = {line: at for line, at in self._taken.items() if now - at < ANNOUNCEMENT_KEEP_S}
+            self._taken.update({line: at for at, line in taken})
         fresh = [line for at, line in taken if self._clock() - at < ANNOUNCEMENT_KEEP_S]
         if len(fresh) < len(taken):
             print(f"(dropped {len(taken) - len(fresh)} announcement(s) too old to say)")

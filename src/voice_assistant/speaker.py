@@ -5,6 +5,7 @@ run on onnxruntime to avoid PyTorch.
 """
 
 import io
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -49,6 +50,9 @@ class SpeakerID:
         self.voiceprints: dict[str, np.ndarray] = {}
         self._from_clusters: set[str] = set()  # voiceprints the web UI made from named voices
         self._loaded_mtime = None
+        # Rooms identify speakers at once (one assistant per body): a reload, an enrollment or a naming in the web UI
+        # swaps in whole new voiceprints under this lock, never changing the ones a match is reading.
+        self._lock = threading.Lock()
         self._reload()
 
     def names(self) -> list[str]:
@@ -63,13 +67,14 @@ class SpeakerID:
             mtime = self._voiceprints_path.stat().st_mtime_ns
         except FileNotFoundError:
             return
-        if mtime == self._loaded_mtime:
-            return
-        try:
-            self.voiceprints, self._from_clusters = _load(self._voiceprints_path)
-        except Exception as e:  # noqa: BLE001 - a half-written or foreign file
-            print(f"(couldn't read the voiceprints in {self._voiceprints_path}, keeping the old ones: {e!r})")
-        self._loaded_mtime = mtime
+        with self._lock:
+            if mtime == self._loaded_mtime:
+                return
+            try:
+                self.voiceprints, self._from_clusters = _load(self._voiceprints_path)
+            except Exception as e:  # noqa: BLE001 - a half-written or foreign file
+                print(f"(couldn't read the voiceprints in {self._voiceprints_path}, keeping the old ones: {e!r})")
+            self._loaded_mtime = mtime
 
     def _save(self) -> None:
         names = list(self.voiceprints)
@@ -95,20 +100,23 @@ class SpeakerID:
     def enroll(self, name: str, clips: list[np.ndarray]) -> None:
         """From recorded sentences (--enroll). Replaced if a voice with the same name is named in the web UI."""
         self._reload()
-        key = person_key(name)
-        self.voiceprints[key] = self.voiceprint(clips)
-        self._from_clusters.discard(key)
-        self._save()
+        key, print_ = person_key(name), self.voiceprint(clips)
+        with self._lock:
+            self.voiceprints = {**self.voiceprints, key: print_}
+            self._from_clusters = self._from_clusters - {key}
+            self._save()
 
     def set_cluster_voiceprints(self, voiceprints: dict[str, np.ndarray]) -> None:
         """Replaces every web-UI voiceprint with these (keyed by events.person_key). A name that's gone (renamed,
         merged away, marked not a person) stops being recognized; people enrolled with --enroll stay."""
         self._reload()
-        for name in self._from_clusters - set(voiceprints):
-            self.voiceprints.pop(name, None)
-        self.voiceprints.update(voiceprints)
-        self._from_clusters = set(voiceprints)
-        self._save()
+        with self._lock:
+            kept = {
+                name: vp for name, vp in self.voiceprints.items() if name not in self._from_clusters - set(voiceprints)
+            }
+            self.voiceprints = {**kept, **voiceprints}
+            self._from_clusters = set(voiceprints)
+            self._save()
 
     def _match(self, pcm: bytes) -> tuple[str | None, float | None, np.ndarray | None]:
         self._reload()
@@ -116,7 +124,8 @@ class SpeakerID:
         if len(audio) < MIN_SPEECH_S * SAMPLE_RATE:
             return None, None, None
         emb = self.embed(audio)
-        scores = {name: float(emb @ vp) for name, vp in self.voiceprints.items()}
+        voiceprints = self.voiceprints  # whole: a reload swaps in new ones, never changes these
+        scores = {name: float(emb @ vp) for name, vp in voiceprints.items()}
         best = max(scores, key=scores.get, default=None)
         return best, (scores[best] if best else None), emb
 
