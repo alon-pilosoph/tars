@@ -103,6 +103,8 @@ def main():
     p.add_argument("--cloned", action="store_true", help="generic: add the cloned Common Voice speakers")
     p.add_argument("--device", action="store_true", help="generic: the features made through made-up microphones")
     p.add_argument("--cut", action="store_true", help="generic: the features with some endings cut")
+    p.add_argument("--negative-weight", type=float, default=20, help="how much a negative counts (the recipe's: 20)")
+    p.add_argument("--name", help="the model's folder under DATA/models (default: its setup's)")
     p.add_argument(
         "--resume",
         action="store_true",
@@ -120,7 +122,7 @@ def main():
 
     cap_threads()
     layout = Layout(args.data)
-    setup = next((f"generic-{v}" for v in ("large", "device", "cut") if getattr(args, v)), args.setup)
+    setup = args.name or next((f"generic-{v}" for v in ("large", "device", "cut") if getattr(args, v)), args.setup)
     name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{setup}"
     train_dir = layout.trained_models / name
     if not args.resume:
@@ -131,7 +133,7 @@ def main():
         "features": features(layout, args.setup, args.run, args.phrase, args.cloned, args.device, args.cut),
         "training_steps": [20000],
         "positive_class_weight": [1],
-        "negative_class_weight": [20],
+        "negative_class_weight": [args.negative_weight],
         "learning_rates": [0.001],
         "batch_size": 128,
         "time_mask_max_size": [5],
