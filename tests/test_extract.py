@@ -204,9 +204,8 @@ class LocalFakeBody:
     recorder = None
 
 
-def test_a_conversation_woken_over_the_tv_hears_one_voice_and_tells_the_brain(monkeypatch):
+def test_a_conversation_woken_over_the_tv_hears_one_voice(monkeypatch):
     from voice_assistant.body import Wake
-    from voice_assistant.extract import MIXED_NOTE
 
     from .conftest import FakeBody, make_assistant, speech
 
@@ -231,5 +230,5 @@ def test_a_conversation_woken_over_the_tv_hears_one_voice_and_tells_the_brain(mo
     assistant._focus_maker = Maker()
     assistant.converse(0.0, wake=Wake(ANSWER, talk(3.0, 2000)), greet="never")
     assert isinstance(assistant.body.speech, Focus)
-    assert brain.asked and brain.asked[0].startswith(MIXED_NOTE) and "turn on the lights" in brain.asked[0]
+    assert brain.asked and "turn on the lights" in brain.asked[0] and "[Said over" not in brain.asked[0]
     assert assistant._focus is None  # only for that conversation

@@ -30,7 +30,7 @@ from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .echo import without_echo
 from .errors import SERVICE_FAILURES
-from .extract import MIXED_NOTE, FocusedSpeech, RequestFocus
+from .extract import FocusedSpeech, RequestFocus
 from .home import ONE_MOMENT, Request
 from .journal import Journal
 from .llm import (
@@ -1264,8 +1264,6 @@ class Assistant:
             may_act=draft.may_act,
             room=room,
         )
-        if self._focus is not None:
-            prompt = f"{MIXED_NOTE} {prompt}"
         # Not after a reminder or "Did you call me?" (tag), where "thanks" is the model's to take as an acknowledgement,
         # nor after a question TARS asked ("News on?"), where "no thanks" is the answer.
         if tag is None and not asks([self._last_reply]) and (kind := closing.closing(text)):

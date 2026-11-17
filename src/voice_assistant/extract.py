@@ -177,16 +177,12 @@ class FocusedSpeech:
         return None if self.failed or not self._voice else np.concatenate(self._voice)
 
 
-MIXED_NOTE = (
-    "[Said over the TV or other people talking: the transcript may hold words that weren't theirs. Answer the one "
-    "request in it that makes sense for you, and don't mention the noise.]"
-)
-
-
 class RequestFocus:
     """After a wake by an enrolled person said over other speech: their voice alone, for the whole conversation.
     `for_wake` decides; the recording then uses the FocusedSpeech it returns as its speech detector, and `transcribe`
-    sends what they said, without the TV, as a finished recording (the streaming service would hear the TV)."""
+    sends what they said, without the TV, as a finished recording (the streaming service would hear the TV). The
+    brain isn't told: a note that the transcript may hold other voices' words made it find the right request less
+    often (extracted voice, +5/0/-5 dB: 88/81/58% without the note, 79/81/50% with), the transcript is clean enough."""
 
     def __init__(self, extractor: Extractor, detector, transcribe: Callable[[bytes], str], share: float,
                  level_db: float, embed: Callable[[np.ndarray], np.ndarray], same_voice: float):  # fmt: skip
