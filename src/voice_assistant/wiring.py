@@ -248,12 +248,17 @@ def request_focus(cfg: Config, root: Path):
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
     whole = make_recording_transcriber(cfg, env, client, spoken=True)
+    from .speaker import SpeakerID
+
+    voices = SpeakerID(root / cfg.speaker.model, root / cfg.speaker.voiceprints, cfg.speaker.threshold)
     return RequestFocus(
         extractor,
         SileroVAD(root / cfg.recorder.vad_model),
         lambda pcm: transcribe_recording(whole, pcm),
         x.mixed_share,
         x.mixed_level_db,
+        voices.embed,
+        x.same_voice,
     )
 
 

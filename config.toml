@@ -180,6 +180,9 @@ mixed_share = 0.3
 mixed_level_db = 12.0
 # An extraction that kept less than this share of the level failed (a wrong reference): the raw answer stands.
 kept_least = 0.05
+# Who woke it, over a TV: the enrolled voice whose extraction from the wake sounds at least this much like their own
+# reference (speaker similarity). Offline: the owner's 0.44-0.64, a stranger's reference at most 0.34, the TV 0.16.
+same_voice = 0.4
 [learning]
 # Record every wake and near-miss with its audio, and what's said by voice as audio (in voice_data/events/, never
 # leaves this machine), for the web UI (voice-assistant --web) and for retraining. Off, none of that is kept; the

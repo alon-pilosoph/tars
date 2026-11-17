@@ -189,35 +189,47 @@ class RequestFocus:
     sends what they said, without the TV, as a finished recording (the streaming service would hear the TV)."""
 
     def __init__(self, extractor: Extractor, detector, transcribe: Callable[[bytes], str], share: float,
-                 level_db: float):  # fmt: skip
+                 level_db: float, embed: Callable[[np.ndarray], np.ndarray], same_voice: float):  # fmt: skip
         self._extractor, self._detector, self._transcribe = extractor, detector, transcribe
         self._share, self._level_db = share, level_db
+        self._embed, self._same_voice = embed, same_voice
+        self._prints: dict[str, np.ndarray] | None = None
 
-    def for_wake(
-        self, audio: np.ndarray | None, who: str | None, identify: Callable[[np.ndarray], str | None] | None = None
-    ) -> FocusedSpeech | None:
-        """Their FocusedSpeech, or None: not said over other speech, or not someone enrolled. Over a TV, speaker ID
-        often can't name anyone from the raw wake (`who` None); then each enrolled voice is taken out of it, and the
-        one `identify` (speaker ID) names as that same person is who woke it: a wrong reference gives back something
-        that's nobody's, so a guest is never mistaken for them."""
+    def _voiceprints(self) -> dict[str, np.ndarray]:
+        if self._prints is None:
+            self._prints = {name: _unit(self._embed(ref)) for name, ref in self._extractor.voices.items()}
+        return self._prints
+
+    def for_wake(self, audio: np.ndarray | None) -> FocusedSpeech | None:
+        """Their FocusedSpeech, or None: not said over other speech, or not someone enrolled. Who woke it is found
+        from the wake itself: each enrolled voice is taken out of it, and the one whose extraction sounds like their
+        own reference (speaker similarity >= same_voice) is them. Over a TV the raw wake is too mixed to tell (0.0 to
+        0.36 against the owner's reference, offline); his extracted wakes scored 0.44 to 0.64, the same wakes taken
+        out with a stranger's reference at most 0.34, and the TV alone at most 0.16. So a guest's voice, which comes
+        out as nobody's, is never taken for theirs."""
         if audio is None:
             return None
         self._detector.reset()
         if not mixed(audio, self._detector, self._share, self._level_db):
             return None
-        voices = {name.lower(): v for name, v in self._extractor.voices.items()}
-        if who:
-            reference = voices.get(who.lower())
-        elif identify:
-            reference = next((ref for name, ref in voices.items() if self._is(audio, ref, name, identify)), None)
-        else:
-            reference = None
-        return None if reference is None else FocusedSpeech(self._extractor, reference, self._detector)
-
-    def _is(self, audio: np.ndarray, reference: np.ndarray, name: str, identify) -> bool:
-        voice = self._extractor.extract(audio, reference)
-        return voice is not None and (identify(voice) or "").lower() == name
+        best, best_score = None, self._same_voice
+        for name, ref in self._extractor.voices.items():
+            voice = self._extractor.extract(audio, ref)
+            if voice is None:
+                continue
+            score = float(_unit(self._embed(voice)) @ self._voiceprints()[name])
+            if score >= best_score:
+                best, best_score = name, score
+        if best is None:
+            return None
+        print(f"({best}'s voice over other speech, {best_score:.2f} like their own)")
+        return FocusedSpeech(self._extractor, self._extractor.voices[best], self._detector)
 
     def transcribe(self, focus: FocusedSpeech, raw: bytes) -> str:
         voice = focus.pcm()
         return self._transcribe(raw if voice is None else voice.tobytes())
+
+
+def _unit(v: np.ndarray) -> np.ndarray:
+    v = np.asarray(v, dtype=np.float64).ravel()
+    return v / (np.linalg.norm(v) or 1.0)

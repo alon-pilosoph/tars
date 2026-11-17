@@ -44,7 +44,7 @@ def test_an_extraction_that_kept_almost_nothing_isnt_trusted():
 def enrolled(tmp_path, *names: str):
     for i, name in enumerate(names):
         (tmp_path / name).mkdir()
-        sf.write(str(tmp_path / name / "a.wav"), talk(2.0, 2000, i), RATE, subtype="PCM_16")
+        sf.write(str(tmp_path / name / "a.wav"), talk(2.0, 2000, 10 + i), RATE, subtype="PCM_16")
     return tmp_path
 
 
@@ -165,16 +165,37 @@ def test_a_focused_recording_whose_server_fails_hears_the_raw_audio_from_then_on
     assert focus.failed and probs[-1] == 1.0 and focus.pcm() is None
 
 
+def embedder(reference: np.ndarray):
+    """A stand-in speaker embedding: audio that is `reference`'s voice (it follows it, sample for sample) comes back
+    as one direction, anything else as another."""
+
+    def embed(voice):
+        n = min(len(voice), len(reference), 4000)
+        same = np.corrcoef(voice[:n].astype(float), reference[:n].astype(float))[0, 1] > 0.5
+        return np.array([1.0, 0.0]) if same else np.array([0.0, 1.0])
+
+    return embed
+
+
 def test_focus_is_only_for_an_enrolled_voice_whose_wake_was_said_over_other_speech(tmp_path):
     from voice_assistant.extract import FocusedSpeech, RequestFocus
 
-    http, _ = server(lambda mix, enroll: mix.astype(np.float32) / 32768)
+    http, _ = server(lambda mix, enroll: enroll[: len(mix)].astype(np.float32) / 32768)
     ex = Extractor("http://x/extract", enrolled(tmp_path, "alon"), 1.0, 0.05, http)
-    rf = RequestFocus(ex, Detector(), lambda pcm: "text", 0.3, 12.0)
-    assert rf.for_wake(window(2000, 3000), None) is None  # nobody recognized
-    assert rf.for_wake(window(2000, 3000), "Stacey") is None  # not enrolled
-    assert rf.for_wake(window(0, 3000), "Alon") is None  # said in quiet
-    assert isinstance(rf.for_wake(window(2000, 3000), "Alon"), FocusedSpeech)
+    rf = RequestFocus(ex, Detector(), lambda pcm: "text", 0.3, 12.0, embedder(ex.voices["alon"]), 0.4)
+    assert rf.for_wake(None) is None
+    assert rf.for_wake(window(0, 3000)) is None  # said in quiet
+    assert isinstance(rf.for_wake(window(2000, 3000)), FocusedSpeech)
+
+
+def test_a_wake_whose_extraction_sounds_like_nobody_enrolled_isnt_focused(tmp_path):
+    from voice_assistant.extract import RequestFocus
+
+    # A guest: whatever the reference, what comes back is their voice, not the reference's owner's.
+    http, _ = server(lambda mix, enroll: mix.astype(np.float32) / 32768)
+    ex = Extractor("http://x/extract", enrolled(tmp_path, "alon"), 1.0, 0.0, http)
+    rf = RequestFocus(ex, Detector(), lambda pcm: "text", 0.3, 12.0, embedder(ex.voices["alon"]), 0.4)
+    assert rf.for_wake(window(2000, 3000)) is None
 
 
 class LocalFakeBody:
@@ -199,7 +220,7 @@ def test_a_conversation_woken_over_the_tv_hears_one_voice_and_tells_the_brain(mo
             pass
 
     class Maker:
-        def for_wake(self, audio, who, identify=None):
+        def for_wake(self, audio):
             return Focus()
 
         def transcribe(self, focus, pcm):
@@ -212,19 +233,3 @@ def test_a_conversation_woken_over_the_tv_hears_one_voice_and_tells_the_brain(mo
     assert isinstance(assistant.body.speech, Focus)
     assert brain.asked and brain.asked[0].startswith(MIXED_NOTE) and "turn on the lights" in brain.asked[0]
     assert assistant._focus is None  # only for that conversation
-
-
-def test_over_a_tv_the_waker_is_found_by_naming_their_extracted_voice(tmp_path):
-    from voice_assistant.extract import FocusedSpeech, RequestFocus
-
-    http, _ = server(lambda mix, enroll: enroll[: len(mix)].astype(np.float32) / 32768)
-    ex = Extractor("http://x/extract", enrolled(tmp_path, "alon", "stacey"), 1.0, 0.05, http)
-    rf = RequestFocus(ex, Detector(), lambda pcm: "text", 0.3, 12.0)
-    # Speaker ID names the extracted voice as Stacey only when Stacey's reference was used.
-    stacey = ex.voices["stacey"]
-
-    def identify(voice):
-        return "Stacey" if np.array_equal(voice[:100] != 0, (stacey[:100] != 0)) and voice.any() else None
-
-    assert isinstance(rf.for_wake(window(2000, 3000), None, identify), FocusedSpeech)
-    assert rf.for_wake(window(2000, 3000), None, lambda voice: None) is None  # nobody's: a guest

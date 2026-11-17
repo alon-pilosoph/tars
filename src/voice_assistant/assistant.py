@@ -847,22 +847,18 @@ class Assistant:
         self._reread_reminders()
 
     def _focus_on(self, wake: Wake) -> FocusedSpeech | None:
-        """Hearing only whoever woke it, for this conversation: when [extract] is on, they're enrolled, the wake was
-        said over other speech, and this body records here (a network body's recording isn't ours to steer)."""
+        """Hearing only whoever woke it, for this conversation: when [extract] is on, the wake was said over other
+        speech by someone enrolled, and this body records here (a network body's recording isn't ours to steer)."""
         if not (self._focus_maker and wake.audio is not None and hasattr(self.body, "recorder")):
             return None
         try:
-            focus = self._focus_maker.for_wake(wake.audio, self.wake_speaker(wake.audio), self._identify)
+            focus = self._focus_maker.for_wake(wake.audio)
         except Exception as e:  # noqa: BLE001 - heard as always
             print(f"(couldn't set up hearing one voice: {e!r})")
             return None
         if focus:
             print("(said over other voices: listening for that voice alone)")
         return focus
-
-    def _identify(self, audio: np.ndarray) -> str | None:
-        """Speaker ID on audio that's one voice already (taken out of the TV): who it is, at the wake's bar."""
-        return self.wake_speaker(audio)
 
     def wake_speaker(self, audio: np.ndarray | None) -> str | None:
         """Who said the wake word in `audio`, for the greeting; None if nobody is sure, or speaker ID couldn't tell."""

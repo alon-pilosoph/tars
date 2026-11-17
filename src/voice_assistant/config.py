@@ -164,6 +164,7 @@ class ExtractConfig:
     mixed_share: float = 0.3  # "said over other speech": speech in at least this share of the window before the name
     mixed_level_db: float = 12.0  # ...and the name at most this much louder than it
     kept_least: float = 0.05  # an extraction keeping less than this share of the level is a failed one
+    same_voice: float = 0.4  # how like their own reference an extracted wake must sound to be theirs
 
 
 @dataclass
