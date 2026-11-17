@@ -138,11 +138,45 @@ def test_its_watch_tells_the_maintainers_once_when_it_goes_quiet_and_once_when_i
     now[0] = GONE_AFTER_S + 60
     watch.look()
     watch.look()
-    assert len(told) == 1 and "living room air purifier's Bluetooth has gone quiet" in told[0]
-    assert "press its Bluetooth button" in told[0]
+    assert len(told) == 1 and "living room air purifier has gone quiet on Bluetooth" in told[0]
+    assert "16 minutes ago" in told[0] and "unplugged" in told[0] and "press its Bluetooth button" in told[0]
     on[0] = True
     watch.look()
     assert told[-1] == "The living room air purifier is back on Bluetooth: I can work it again." and not watch.gone
+
+
+def test_a_restart_neither_forgets_when_it_was_last_heard_nor_tells_it_gone_again(tmp_path):
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    memory, now, told = tmp_path / "watch.json", [1_000_000.0], []
+    heard = [True]
+
+    def watch() -> Watch:
+        return Watch("air purifier", lambda s: heard[0], told.append, clock=lambda: now[0], memory=memory)
+
+    watch().look()  # heard: kept in the file
+    heard[0] = False  # unplugged
+    now[0] += 9 * 3600  # TARS restarts nine hours later: still the morning's last heard
+    w = watch()
+    w.look()
+    assert len(told) == 1 and "about 9 hours ago" in told[0]
+    told.clear()
+    now[0] += GONE_AFTER_S * 2  # and restarts again: already told
+    watch().look()
+    assert told == []
+    heard[0] = True
+    watch().look()
+    assert told == ["The air purifier is back on Bluetooth: I can work it again."]
+
+
+def test_never_heard_at_all_it_says_since_when_it_listened(tmp_path):
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told = [1_000_000.0], []
+    w = Watch("air purifier", lambda s: False, told.append, clock=lambda: now[0], memory=tmp_path / "w.json")
+    now[0] += GONE_AFTER_S + 60
+    w.look()
+    assert len(told) == 1 and "since I started listening for it" in told[0]
 
 
 def test_a_request_it_answers_counts_as_heard():
