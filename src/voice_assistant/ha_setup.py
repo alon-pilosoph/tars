@@ -21,7 +21,7 @@ from collections.abc import Callable
 
 from .hass import HomeAssistant
 from .home import HomeError, Request, set_off_by_door
-from .toolbox import WITHDRAWN
+from .toolbox import WITHDRAWN, held_for_the_web
 
 DISCOVERED, INTEGRATIONS, SETUP, REMOVE, RENAME, AREA, UNDO, SETUP_HISTORY = (
     "discovered",
@@ -74,7 +74,9 @@ class HASetup:
             if refused := self._may(request):
                 return refused
             if request.read_the_web:
-                return "refused: this reply searched the web, so it changes nothing in the house; ask on its own"
+                return held_for_the_web(
+                    request, "refused: this reply searched the web, so it changes nothing in the house; ask on its own"
+                )
             if refused := set_off_by_door(request):
                 return refused
             # As the house's own changes do: a reply still being drafted may yet be thrown away.

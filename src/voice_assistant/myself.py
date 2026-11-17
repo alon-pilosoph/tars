@@ -128,7 +128,10 @@ class Myself:
         args = args if isinstance(args, dict) else {}
         action, query = args.get("action"), str(args.get("query") or "").strip()
         if action in PRIVATE and getattr(request, "read_the_web", False):
-            return "refused: this reply searched the web, so it doesn't read TARS's records; they can ask on its own"
+            return toolbox.held_for_the_web(
+                request,
+                "refused: this reply searched the web, so it doesn't read TARS's records; they can ask on its own",
+            )
         try:
             if action == ABOUT:
                 return self.about()
@@ -328,7 +331,10 @@ class Myself:
         from .settings import SettingsError
 
         if getattr(request, "read_the_web", False):
-            return "refused: this reply searched the web, so it changes nothing about TARS; they can ask on its own"
+            return toolbox.held_for_the_web(
+                request,
+                "refused: this reply searched the web, so it changes nothing about TARS; they can ask on its own",
+            )
         if door := getattr(request, "by_door", ""):
             return (
                 f"refused: this ran because the {door}'s lock said someone came in, and that alone changes nothing "

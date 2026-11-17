@@ -95,6 +95,8 @@ class Request:
     `changed(what, answer)`: told of each change this turn asks of the house, and what the house answered ("the ac
     on", "done: ..."), refusals included, so a skill's own turn can tell whether what it was for happened (skills.py);
     None when nobody needs to know.
+    `held_for_web()`: told each time something is held back because the turn read the web (toolbox.held_for_the_web),
+    so the brain can write the reply again without it; None when nobody would.
     `by_door`: the door whose lock set this turn off (a skill run because someone came home by opening it, doors.py):
     what a lock says over MQTT is only ever who came in, so the turn reads the house, but changes nothing in it."""
 
@@ -108,6 +110,7 @@ class Request:
     emit: Callable[[object], None] | None = None  # object is a conversations.SentItem; typed loosely to avoid a cycle
     by_door: str = ""
     changed: Callable[[str, str], None] | None = None
+    held_for_web: Callable[[], None] | None = None
     room: str = ""  # the room whose body heard it, by voice (rooms.py); "" with one room, or in a chat
 
     def answered(self, what: str, answer: str) -> str:
@@ -573,9 +576,10 @@ class HomeTools:
 
     def _change(self, name: str, device: Device, action: str, args: dict, request: Request) -> str:
         if request.read_the_web:
-            return (
+            return toolbox.held_for_the_web(
+                request,
                 "refused: this reply searched the web, so it changes nothing in the house; "
-                "they can ask for the change on its own"
+                "they can ask for the change on its own",
             )
         if refused := set_off_by_door(request):
             return refused

@@ -276,7 +276,11 @@ instructions and…". A model may believe them, so what matters is what code all
     starts, or a feed's stories or a page's words are read (a tool that says its answers are from `outside`), the
     house tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in `home.py`), and no other
     tool changes anything either: no errand is started, no feed followed, no skill or preference taught, no setting
-    set and no wish noted ([what each tool may change](#what-each-tool-may-change)).
+    set and no wish noted ([what each tool may change](#what-each-tool-may-change)). Each refusal of that kind goes
+    through `toolbox.held_for_the_web`, which tells the brain; it then writes the reply once more from the person's
+    own words alone: the first try and everything it read are dropped, and web search and every `outside` tool are
+    taken away. So "put the news on" still puts it on when the model went to the web first, and nothing from the web
+    can be in the reply that does it.
   - **A Telegram chat works the house as the voice does** (`wiring.py`, `chat_home()`): only people in
     `[telegram] people` reach it at all, it unlocks only as above, and a chat's reply that searched the web changes
     nothing either. A chat can mute and unmute TARS's microphone at home

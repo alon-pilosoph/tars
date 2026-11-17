@@ -142,8 +142,10 @@ def test_someone_else_cant_confirm_a_removal_and_only_maintainers_may_change_it(
     assert do(setup, "discovered", stacey).startswith("found")  # looking is fine
     nobody = HASetup(FakeHA(), [], None)
     assert "maintainers is empty" in nobody.call("rename", "d1", "Front door", None, ALON)
-    searched = Request(speaker="Alon", by_chat=True, heard="x", read_the_web=True)
+    held = []
+    searched = Request(speaker="Alon", by_chat=True, heard="x", read_the_web=True, held_for_web=lambda: held.append(1))
     assert do(setup, "rename", searched, target="d1", query="x").startswith("refused: this reply searched the web")
+    assert held == [1]  # told to the brain, which writes the reply again without the web
     by_door = Request(speaker="Alon", by_chat=True, heard="x", by_door="front door")
     assert do(setup, "rename", by_door, target="d1", query="x").startswith("refused: this ran because the front door")
 
