@@ -154,6 +154,19 @@ class SpeakerConfig:
 
 
 @dataclass
+class ExtractConfig:
+    # A second chance for the wake's double-check over the TV: when it turns a wake down that was said over other
+    # speech, each enrolled voice is taken out of the mix and checked again (extract.py). Experimental.
+    enabled: bool = False
+    url: str = ""  # the extraction server (tools/extract_server.py), e.g. "http://mac.local:8765/extract"
+    timeout_s: float = 1.5
+    enroll: str = "voice_data/enroll"  # <name>/*.wav: a few of each person's ordinary requests, 16 kHz mono
+    mixed_share: float = 0.3  # "said over other speech": speech in at least this share of the window before the name
+    mixed_level_db: float = 12.0  # ...and the name at most this much louder than it
+    kept_least: float = 0.05  # an extraction keeping less than this share of the level is a failed one
+
+
+@dataclass
 class LearningConfig:
     # Record every wake and near-miss, with its audio, and what was said by voice, as audio (voice_data/events/), for
     # the web UI and training. Off, none of that is kept; the event database itself always is (conversations as text,
@@ -454,6 +467,7 @@ class Config:
     llm: LLMConfig
     tts: TTSConfig
     speaker: SpeakerConfig
+    extract: ExtractConfig
     learning: LearningConfig
     web: WebConfig
     reminders: RemindersConfig

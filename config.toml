@@ -163,6 +163,23 @@ threshold = 0.5
 # The same, but for naming you from just "hey TARS" (much less audio, so a lower bar; measured 0% wrong names).
 wake_threshold = 0.25
 
+
+[extract]
+# Experimental: a second chance for the wake word over the TV. When the double-check turns a wake down that was said
+# over other speech, each enrolled voice is taken out of the mix by an extraction server and checked again; a guest's
+# "hey TARS" is judged exactly as without it. The server (tools/extract_server.py) needs a GPU or a fast computer: on
+# a Pi 4 one wake takes 23 s. Enroll by putting a few of each person's ordinary requests (16 kHz WAVs) in
+# voice_data/enroll/<name>/.
+enabled = false
+url = ""
+timeout_s = 1.5
+enroll = "voice_data/enroll"
+# "Said over other speech": speech in at least this share of the wake window before the name, and the name at most
+# mixed_level_db louder than it. Offline: 83-92% of takes over a real TV, none in quiet.
+mixed_share = 0.3
+mixed_level_db = 12.0
+# An extraction that kept less than this share of the level failed (a wrong reference): the raw answer stands.
+kept_least = 0.05
 [learning]
 # Record every wake and near-miss with its audio, and what's said by voice as audio (in voice_data/events/, never
 # leaves this machine), for the web UI (voice-assistant --web) and for retraining. Off, none of that is kept; the
