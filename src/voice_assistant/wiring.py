@@ -230,6 +230,33 @@ def second_chance(cfg: Config, root: Path):
     return SecondChance(extractor, SileroVAD(root / cfg.recorder.vad_model), x.mixed_share, x.mixed_level_db)
 
 
+def request_focus(cfg: Config, root: Path):
+    """After a wake said over the TV by someone enrolled: their voice alone for the conversation ([extract],
+    extract.RequestFocus), or None."""
+    x = cfg.extract
+    if not (x.enabled and x.url):
+        return None
+    from .extract import Extractor, RequestFocus
+    from .stt import transcribe_recording
+    from .vad import SileroVAD
+
+    extractor = Extractor(x.url, root / x.enroll, x.timeout_s, x.kept_least)
+    if not extractor.voices:
+        return None
+    env = root / ".env"
+    keys = env_keys(env)
+    cfg, _ = with_keys(cfg, keys)
+    client = make_openai_client(env) if OPENAI_KEY in keys else None
+    whole = make_recording_transcriber(cfg, env, client, spoken=True)
+    return RequestFocus(
+        extractor,
+        SileroVAD(root / cfg.recorder.vad_model),
+        lambda pcm: transcribe_recording(whole, pcm),
+        x.mixed_share,
+        x.mixed_level_db,
+    )
+
+
 @contextmanager
 def local_body(
     cfg: Config, root: Path, sample_rate: int, push_to_talk: bool, journal

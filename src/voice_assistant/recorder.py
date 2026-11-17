@@ -68,6 +68,7 @@ class UtteranceRecorder:
         stop: Callable[[], bool] | None = None,
         max_s: float | None = None,
         lead: np.ndarray | None = None,
+        speech=None,
     ) -> bytes | None:
         """Returns 16 kHz mono int16 PCM, or None if nobody spoke before the timeout.
 
@@ -80,8 +81,21 @@ class UtteranceRecorder:
         it at once with None, as if nobody spoke (a stop button). `max_s` overrides the configured longest utterance:
         what's still said after it isn't recorded. `lead` is audio from just before listening began (what followed the
         wake word, already read off the mic): if speech runs on from it into the mic's audio, it's where the utterance
-        starts.
+        starts. `speech`: a speech detector to use for this recording instead of the usual one, such as
+        extract.FocusedSpeech, which hears only one person over a TV.
         """
+        if speech is None:
+            return self._record(mic, preroll_blocks, tail_blocks, start_timeout_s, on_audio, on_pause, on_resume,
+                                turn_state, stop, max_s, lead)  # fmt: skip
+        usual, self._vad = self._vad, speech
+        try:
+            return self._record(mic, preroll_blocks, tail_blocks, start_timeout_s, on_audio, on_pause, on_resume,
+                                turn_state, stop, max_s, lead)  # fmt: skip
+        finally:
+            self._vad = usual
+
+    def _record(self, mic, preroll_blocks, tail_blocks, start_timeout_s, on_audio, on_pause, on_resume, turn_state,
+                stop, max_s, lead) -> bytes | None:  # fmt: skip
         cfg = self._cfg
         timeout_s = cfg.start_timeout_s if start_timeout_s is None else start_timeout_s
         stopped = stop or (lambda: False)
@@ -129,7 +143,7 @@ class UtteranceRecorder:
                 if (
                     silence == pauses.end
                     and pauses.longest > pauses.end
-                    and self._turn.p_finished(_pcm(blocks)) < UNFINISHED
+                    and self._turn.p_finished(self._heard(blocks)) < UNFINISHED
                 ):
                     stop_at = pauses.longest
             if not service:
@@ -155,6 +169,12 @@ class UtteranceRecorder:
         for _ in range(0 if service_ended else tail_blocks - after):
             blocks.append(mic.read())
         return _pcm(blocks[: last_voiced + 1 + tail_blocks])
+
+    def _heard(self, blocks: list[np.ndarray]) -> bytes:
+        """What the end-of-turn model judges: the recording, or, with a focused detector (extract.FocusedSpeech),
+        their voice alone, so a TV talking on doesn't sound like more to come."""
+        voice = self._vad.pcm() if hasattr(self._vad, "pcm") else None
+        return _pcm(blocks) if voice is None else voice.tobytes()
 
     def _wait_for_speech(
         self,

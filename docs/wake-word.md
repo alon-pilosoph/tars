@@ -442,7 +442,15 @@ TARS heard on other days:
 No extra false answers: none on the TV-only hours, none on the owner's own lookalikes ("hey cars"...) over the TV.
 With the wrong person's voice as the reference, extraction suppresses the speaker instead of inventing a wake, and
 an extraction that kept almost nothing is dropped (`kept_least`). The same extraction on the request itself cut
-Deepgram's word errors over the TV from 75-126% to 19-51% and lets the end of a turn be heard, the next steps.
+Deepgram's word errors over the TV from 75-126% to 19-51%.
+
+**The request, too.** After such a wake by an enrolled person, the conversation hears them alone
+(`extract.RequestFocus`): every 0.48 s the last 3 s go to the server, the speech detector and the end-of-turn model
+judge their extracted voice, and what's transcribed (as a finished recording; a stream would carry the TV) is that
+voice. The brain is told the request was said over other voices. In TARS's own recorder, on the owner's requests
+with real TV talking on after them, recordings that ended within 6 s of his last word went from 10-13 of 48 to 43-46
+of 48 (voice 0 and 5 dB over the TV), about 1.3-1.5 s after it. The server takes about 0.2 s of GPU time per 0.48 s,
+so it keeps up as he talks; if it fails, the recording carries on hearing the raw audio.
 
 ## Limitations
 
