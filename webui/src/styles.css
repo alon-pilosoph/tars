@@ -1940,6 +1940,20 @@ details.how {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+.conv-time .conv-room {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cmp.rooms td:first-child {
+  width: auto;
+  white-space: normal;
+}
+.cmp.rooms .model {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+}
 .cmp.usage td .model {
   white-space: normal;
 }

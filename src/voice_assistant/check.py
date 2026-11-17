@@ -516,8 +516,14 @@ def bodies(cfg: Config, folder: Path, now: float | None = None) -> list[Result]:
     results = [Result("Bodies", OK, f"bodies may connect to port {b.port}, from home addresses, with their keys")]
     if not paired:
         results.append(Result("Bodies", WARN, "none paired yet", "voice-assistant --body-add ROOM"))
+    from .wiring import bodies_here
+
     now = time.time() if now is None else now
+    here = bodies_here(folder)
     for r in paired:
+        if (here.get(r["device"]) or {}).get("connected"):
+            results.append(Result(f"Body: {r['room']}", OK, f"{r['device']}, connected now"))
+            continue
         seen = f"last connected {_ago(now - r['last_seen'])}" if r["last_seen"] else "never connected yet"
         results.append(Result(f"Body: {r['room']}", OK if r["last_seen"] else WARN, f"{r['device']}, {seen}",
                               "" if r["last_seen"] else "start --body on that machine with its key"))  # fmt: skip

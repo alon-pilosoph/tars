@@ -197,16 +197,17 @@ def test_a_whole_turn_between_the_two_halves(brain):
     ws.close()
 
 
-def test_the_brain_serves_whichever_body_comes_and_waits_again_when_it_goes(log, monkeypatch):
+def test_each_body_is_a_room_whose_assistant_waits_for_it_again_when_it_goes(log, monkeypatch):
     import dataclasses
     from pathlib import Path
 
     from voice_assistant import wiring
+    from voice_assistant.body import BodyGone
     from voice_assistant.config import BodiesConfig, load_config
+    from voice_assistant.rooms import Rooms
 
     keys = BodyKeys(log.store)
-    key = keys.add("Kitchen")
-    device, seed = parse_key(key)
+    device, seed = parse_key(keys.add("Kitchen"))
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     cfg = dataclasses.replace(cfg, bodies=BodiesConfig(enabled=True, host="127.0.0.1", port=0))
     monkeypatch.setattr(wiring, "make_trigger", lambda *a: (None, ""))
@@ -219,10 +220,19 @@ def test_the_brain_serves_whichever_body_comes_and_waits_again_when_it_goes(log,
         return real(self)
 
     monkeypatch.setattr(BodyListener, "start", started)
-    bodies = wiring.network_bodies(cfg, Path("."), log.store, 24000, None)
-    got = {}
-    first = threading.Thread(target=lambda: got.update(first=next(bodies)))
-    first.start()
+    rooms, made, runs = Rooms("home"), [], []
+
+    def assistant_for(body, room):
+        made.append(types.SimpleNamespace(body=body, room=room))
+        return made[-1]
+
+    def run(assistant, idle):
+        runs.append((assistant, assistant.body.link, idle))
+        while not assistant.body.link.gone.is_set():
+            time.sleep(0.01)
+        raise BodyGone("it went")
+
+    wiring.serve_rooms(cfg, Path("."), log.store, 24000, rooms, assistant_for, run)
 
     def come():
         deadline = time.monotonic() + 5
@@ -234,19 +244,21 @@ def test_the_brain_serves_whichever_body_comes_and_waits_again_when_it_goes(log,
         assert json.loads(ws.recv(timeout=5))["room"] == "Kitchen"
         return ws
 
+    def until(condition):
+        deadline = time.monotonic() + 5
+        while not condition() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert condition()
+
     ws = come()
-    first.join(5)
-    body, idle = got["first"]
-    assert idle == "Waiting for its name in the Kitchen..." and body.link.hello.device == device
+    until(lambda: len(runs) == 1)
+    assert runs[0][2] == "Waiting for its name in the Kitchen..." and rooms.room_for(None) == "home"
+    until(lambda: not rooms.single)
     ws.close()
-    deadline = time.monotonic() + 5
-    while not body.link.gone.is_set() and time.monotonic() < deadline:
-        time.sleep(0.01)
-    again = threading.Thread(target=lambda: got.update(again=next(bodies)))
-    again.start()
+    until(lambda: rooms._rooms["Kitchen"].connected is False)
     ws = come()
-    again.join(5)
-    assert got["again"][0].link is not body.link and not got["again"][0].link.gone.is_set()
+    until(lambda: len(runs) == 2)
+    assert len(made) == 1 and runs[1][0] is made[0] and runs[1][1] is not runs[0][1]  # the same assistant, a new link
     ws.close()
 
 

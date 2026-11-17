@@ -33,6 +33,7 @@ from .config import (
     QuickProvider,
     with_keys,
 )
+from .files import atomic_write
 from .haconfig import BUNDLE as HA_BUNDLE
 from .versions import pair_source
 from .wake import PushToTalkTrigger, wake_word_trigger
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
     from .body import LocalBody
     from .events import EventLog
     from .health import Report
-    from .llm import QuickService
+    from .llm import Brain, QuickService
     from .stt import Transcriber
 
 OPENAI_TIMEOUT_S = 15.0
@@ -228,11 +229,15 @@ def local_body(
         yield LocalBody(mic, speaker, trigger, recorder), idle_message
 
 
-def network_bodies(cfg: Config, root: Path, store, sample_rate: int, journal) -> Iterator[tuple[object, str]]:
-    """[bodies] in a home with no microphone of its own: TARS's body is a network body (docs/bodies.md), the one that
-    connected last, given each time one connects (again), with what to show while it waits for its name. Its wakes
-    get the same double-check as the Pi's own (for a body that runs only the wake model), with this machine's
-    models. `sample_rate`: the voice's, which the body is told to play at."""
+def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assistant_for, run) -> None:
+    """[bodies]: each paired body as a room of its own (docs/bodies.md#rooms), on a thread of its own, from the first
+    time it connects: `assistant_for(body, room)` makes its assistant (once; it keeps its conversation's state across
+    reconnections), and `run(assistant, idle_message)` runs its wake loop. A body that goes ends its room's
+    conversation, never TARS: the room waits for it to come back, and meanwhile the desk (`rooms`) says nothing there.
+    A body paired while TARS runs is picked up within BODIES_RECHECK_S. `sample_rate`: the voice's."""
+    import traceback
+
+    from .body import BodyGone
     from .bodykeys import BodyKeys
     from .bodylink import BodyListener, RemoteBody, welcome
     from .homenet import address
@@ -253,12 +258,92 @@ def network_bodies(cfg: Config, root: Path, store, sample_rate: int, journal) ->
         seen=keys.seen,
     ).start()
     print(f"(bodies: listening on port {listener.port} for {len(keys.listed())} paired)", flush=True)
-    recorder = make_recorder(cfg, root)
-    checker, _ = make_trigger(cfg, False, root, journal)
-    while True:
-        link = listener.any_connected()
-        room = keys.room_of(link.hello.device) or link.hello.device
-        yield RemoteBody(link, sample_rate, recorder, checker), f"Waiting for its name in the {room}..."
+    # The double-check for a body that runs only the wake word, on this machine's models. Not journaled: a journal
+    # follows one room's conversation, and this is shared (keeping network bodies' wakes is a follow-up).
+    checker, _ = make_trigger(cfg, False, root, None)
+    here = BodiesHere(Path(store.folder))
+
+    def room(device: str) -> None:
+        assistant = None
+        while True:
+            link = listener.connected(device)
+            name = keys.room_of(device) or device
+            # A recorder of its own: its speech detector and end-of-turn model keep state through an utterance.
+            body = RemoteBody(link, sample_rate, make_recorder(cfg, root), checker)
+            rooms.connected(name, True)
+            here.mark(device, name, True)
+            try:
+                if assistant is None:
+                    assistant = assistant_for(body, name)
+                else:
+                    assistant.body = body
+                run(assistant, f"Waiting for its name in the {name}...")
+            except BodyGone as e:
+                print(f"(the {name}'s body went: {e}; waiting for it to come back)", flush=True)
+            except Exception:  # noqa: BLE001 - one room's failure is never another's, nor TARS's
+                traceback.print_exc()
+                time.sleep(3)
+            finally:
+                rooms.connected(name, False)
+                here.mark(device, name, False)
+
+    def watch() -> None:
+        served: set[str] = set()
+        while True:
+            try:
+                for row in keys.listed():
+                    if row["device"] not in served:
+                        served.add(row["device"])
+                        threading.Thread(
+                            target=room, args=(row["device"],), daemon=True, name=f"room {row['room']}"
+                        ).start()
+            except Exception as e:  # noqa: BLE001 - tried again
+                print(f"(bodies: couldn't read the paired bodies: {e!r})", flush=True)
+            time.sleep(BODIES_RECHECK_S)
+
+    threading.Thread(target=watch, daemon=True, name="bodies").start()
+
+
+BODIES_RECHECK_S = 30.0
+BODIES_FILE = "bodies.json"  # in the event log's folder: which bodies are connected, for the Status page
+
+
+class BodiesHere:
+    """Which bodies are connected now, and since when, written for the web UI (another process) to show: the voice
+    process alone knows. Rewritten whole on each change."""
+
+    def __init__(self, folder: Path):
+        self._path, self._lock, self._now = folder / BODIES_FILE, threading.Lock(), {}
+
+    def mark(self, device: str, room: str, connected: bool) -> None:
+        with self._lock:
+            self._now[device] = {"room": room, "connected": connected, "since": time.time()}
+            data = json.dumps(self._now).encode()
+        try:
+            atomic_write(self._path, data)
+        except OSError as e:  # only the Status page's view of it
+            print(f"(bodies: couldn't note who's connected: {e!r})", flush=True)
+
+
+def bodies_here(folder: Path) -> dict:
+    """What BodiesHere last wrote: device: {room, connected, since}; {} if nothing has (no rooms, or not yet)."""
+    try:
+        data = json.loads((folder / BODIES_FILE).read_text())
+    except OSError, ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def main_room(cfg: Config, store) -> str:
+    """The main room ([bodies] main_room): where what's for nobody in particular is said."""
+    if cfg.bodies.main_room.strip():
+        return cfg.bodies.main_room.strip()
+    if cfg.audio.enabled or not cfg.bodies.enabled:
+        return cfg.bodies.room
+    from .bodykeys import BodyKeys
+
+    paired = BodyKeys(store).listed()
+    return paired[0]["room"] if paired else cfg.bodies.room
 
 
 def make_speaker_id(cfg: Config, root: Path):
@@ -689,6 +774,28 @@ def ask_to_say(folder: Path, text: str) -> None:
     ask(folder, "say", text=text)
 
 
+def brains(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None, feeds=None,
+           skills=None, myself=None, pages=None) -> Callable[[], Brain]:  # fmt: skip
+    """What makes the brain make_pipeline makes, with the same tools: one for each room (rooms.py), whose
+    conversations are their own."""
+    env = root / ".env"
+    keys = env_keys(env)
+    cfg, _ = with_keys(cfg, keys)
+    client = make_openai_client(env) if OPENAI_KEY in keys else None
+    return lambda: make_brain(
+        client,
+        brain_config(cfg, typed=typed),
+        env,
+        reminders,
+        home=home,
+        browser=browser,
+        feeds=feeds,
+        skills=skills,
+        myself=myself,
+        tools=[pages] if pages else [],
+    )
+
+
 def make_pipeline(
     cfg: Config,
     root: Path,
@@ -720,18 +827,7 @@ def make_pipeline(
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
-    brain = make_brain(
-        client,
-        brain_config(cfg, typed=typed),
-        env,
-        reminders,
-        home=home,
-        browser=browser,
-        feeds=feeds,
-        skills=skills,
-        myself=myself,
-        tools=[pages] if pages else [],
-    )
+    brain = brains(cfg, root, typed, reminders, home, browser, feeds, skills, myself, pages)()
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
     elif cfg.tts.provider == "cartesia":

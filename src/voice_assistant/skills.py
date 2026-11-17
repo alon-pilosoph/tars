@@ -1059,11 +1059,18 @@ class Clock:
     def is_due(self) -> bool:
         return bool(self._due)
 
-    def take(self) -> list[Due]:
-        """The skills due, each with when, and why if something happened, handed over once."""
+    def take(self, want: Callable[[Due], bool] | None = None) -> list[Due]:
+        """The skills due, each with when, and why if something happened, handed over once; only those `want` takes
+        (a room's own, rooms.py), the rest left for the room they're for."""
         with self._lock:
-            due, self._due = self._due, []
+            due = [d for d in self._due if want is None or want(d)]
+            self._due = [d for d in self._due if d not in due]
         return due
+
+    def peek(self) -> list[Due]:
+        """The skills due, left where they are."""
+        with self._lock:
+            return list(self._due)
 
     def record(self, due: Due, said: str) -> None:
         """How a skill that ran by itself went: what it said, or "" for nothing to do. A one-off is done, and gone."""

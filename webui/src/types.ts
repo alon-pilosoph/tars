@@ -146,6 +146,15 @@ export interface MonthUsage {
   by_person: UsageLine[];
 }
 
+export interface BodyHealth {
+  room: string;
+  device: string;
+  kind: string;
+  connected: boolean;
+  since: number | null; // when it connected or went; null: not since TARS started
+  last_seen: number | null; // when it last connected
+}
+
 export interface Health {
   now: number;
   processes: ProcessHealth[];
@@ -154,6 +163,7 @@ export interface Health {
   services_asked: number;
   backup: CheckLine[] | null; // null: the backup is off
   usage: MonthUsage | null; // null: it couldn't be added up
+  bodies: BodyHealth[]; // the paired network bodies; [] with none
   machine: MachineHealth;
 }
 
@@ -235,6 +245,7 @@ export interface Conversation {
   id: number;
   started: number;
   via: "telegram" | null; // null: by voice
+  room: string | null; // where it was held, with rooms; null before them, or with one
   speaker: Speaker | null;
   wake: ConversationWake | null;
   turns: Turn[];

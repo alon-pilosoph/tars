@@ -139,6 +139,15 @@ class MonthUsage(TypedDict):
     by_person: list[UsageLine]
 
 
+class BodyHealth(TypedDict):
+    room: str
+    device: str
+    kind: str
+    connected: bool
+    since: float | None  # when it connected or went, as the voice process last said; None: not since it started
+    last_seen: float | None  # when it last connected
+
+
 class Report(TypedDict):
     now: float
     processes: list[ProcessHealth]
@@ -147,6 +156,7 @@ class Report(TypedDict):
     services_asked: float
     backup: list[CheckLine] | None  # None: [backup] is off
     usage: MonthUsage | None  # None: it couldn't be added up
+    bodies: list[BodyHealth]  # the paired network bodies (docs/bodies.md); [] with none
     machine: MachineHealth
 
 
@@ -303,6 +313,27 @@ def today(log: EventLog, conversations: ConversationLog, now: float) -> Today:
     midnight = time.mktime((day.tm_year, day.tm_mon, day.tm_mday, 0, 0, 0, 0, 0, -1))
     answers, failed = conversations.answers_since(midnight)
     return {"wakes": log.wakes_since(midnight), "answers": answers, "failed": failed, "last_wake": log.last_wake()}
+
+
+def bodies(log: EventLog) -> list[BodyHealth]:
+    """The paired bodies, each with its room, whether it's connected now (as the voice process last wrote it) and
+    when it last connected (docs/bodies.md)."""
+    from .bodykeys import BodyKeys
+    from .wiring import bodies_here
+
+    try:
+        paired = BodyKeys(log.store).listed()
+    except Exception as e:  # noqa: BLE001 - the rest of the page still shows
+        print(f"(status: couldn't read the paired bodies: {e!r})")
+        return []
+    here = bodies_here(log.folder) if paired else {}
+    out: list[BodyHealth] = []
+    for row in paired:
+        now = here.get(row["device"]) or {}
+        out.append({"room": row["room"], "device": row["device"], "kind": row["kind"],
+                    "connected": bool(now.get("connected")), "since": now.get("since"),
+                    "last_seen": row["last_seen"]})  # fmt: skip
+    return out
 
 
 def month_usage(log: EventLog, cap_usd: float, now: float) -> MonthUsage | None:
@@ -514,6 +545,7 @@ class Health:
             "services_asked": asked,
             "backup": backup_lines(self._log.folder, self._unit_state, now) if self._backup_enabled else None,
             "usage": month_usage(self._log, self._cap_usd, now),
+            "bodies": bodies(self._log),
             "machine": machine(self._log.folder, self._read_throttled),
         }
 

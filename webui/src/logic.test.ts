@@ -5,6 +5,7 @@ import {
   ago,
   answerSplit,
   checkLine,
+  bodyLine,
   diskLine,
   dollars,
   duration,
@@ -21,6 +22,7 @@ import {
   reminderFor,
   reminderNow,
   reminderWhen,
+  roomName,
   sentence,
   timingLine,
   usageLine,
@@ -240,6 +242,22 @@ describe("the Status page", () => {
       "$21.00 of the $20.00 cap for November (105%): the paid services are off until the month ends",
     );
     expect([dollars(0), dollars(0.004), dollars(0.006)]).toEqual(["$0.00", "under $0.01", "$0.01"]);
+  });
+  it("names a room, and says whether its body is here or since when it's gone", () => {
+    expect(roomName("living room")).toBe("Living room");
+    const body = { room: "bedroom", device: "bedroom-3f9a1c", kind: "pi", last_seen: NOW - 7200 };
+    expect(bodyLine({ ...body, connected: true, since: NOW - 7200 }, NOW)).toEqual({
+      text: "Connected for 2 hours",
+      bad: false,
+    });
+    expect(bodyLine({ ...body, connected: false, since: NOW - 600 }, NOW)).toEqual({
+      text: "Gone for 10 minutes",
+      bad: true,
+    });
+    expect(bodyLine({ ...body, connected: false, since: null }, NOW).text).toBe(
+      "Not connected; last connected 2 hours ago",
+    );
+    expect(bodyLine({ ...body, connected: false, since: null, last_seen: null }, NOW).text).toBe("Never connected yet");
   });
   it("says what to do about a check, the backup's or a service's, only when it isn't fine", () => {
     const fix = "systemctl --user start voice-assistant-backup";
