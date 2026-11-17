@@ -1,6 +1,13 @@
 """Stage 1's training features: augmented spectrograms of every clip, the way microWakeWord trains on them.
 
     DATA/mww/.venv/bin/python -m training.stage1.features synthetic      # every voice source + real lookalikes
+    DATA/mww/.venv/bin/python -m training.stage1.features synthetic --device   # the same through made-up microphones
+    DATA/mww/.venv/bin/python -m training.stage1.features synthetic --cut      # some "hey TARS" with its ending cut
+    DATA/mww/.venv/bin/python -m training.stage1.features tv-negatives         # TV, chatter, music as negatives
+    DATA/mww/.venv/bin/python -m training.stage1.features speech-negatives     # real read speech as negatives
+    DATA/mww/.venv/bin/python -m training.stage1.features vc                   # voice-converted real speakers
+    DATA/mww/.venv/bin/python -m training.stage1.features cuts NAME --folder DIR   # 3.2 s cuts of any speech
+    DATA/mww/.venv/bin/python -m training.stage1.features negatives NAME --folder DIR   # any WAVs as negatives
     DATA/mww/.venv/bin/python -m training.stage1.features user           # the owner's training half (personal setup)
     DATA/mww/.venv/bin/python -m training.stage1.features household RUN  # a household's wakes (training.household)
     DATA/mww/.venv/bin/python -m training.stage1.features cloned         # cloned speakers, for the large pair
@@ -30,13 +37,30 @@ POSITIVES = {"piper_libritts": 50_000, "kokoro": 20_000, "openai": 1_312, "piper
 NEAR_MISSES = {"piper_libritts": 30_000, "kokoro": 16_000, "openai": 304, "piper_voices": 26_000}
 REAL_LOOKALIKES = 5_000
 CLONED = 50_000
+# --device: the share of clips heard through a made-up microphone (training/data/device.py), and how many 3.2 s cuts of
+# TV, chatter, music and noise go through one as things that aren't the phrase, so a device's sound can't mean a wake.
+DEVICE_SHARE = 0.7
+CUT_SHARE = 0.3  # --cut: the share of "hey TARS" clips whose ending is cut (training/data/device.py clip_ending)
+DEVICE_NEGATIVES = 20_000
+CUT_S = 3.2
 
 
-def augmenter(layout: Layout, owner: bool = False):
+def augmenter(layout: Layout, owner: bool = False, loud: bool = False):
+    """`loud`: the backgrounds are mostly people talking (real conversation, TV, babble) and as loud as 10 dB over the
+    phrase, for the case real use fails on: "hey TARS" over a loud TV."""
     from microwakeword.audio.augmentation import Augmentation
 
     musan, bg, aug = layout.aug / "musan", layout.backgrounds, layout.aug
-    if owner:
+    if loud:
+        backgrounds = [
+            layout.root / "peoples_speech" / "wav",
+            aug / "train/tv",
+            aug / "train/babble",
+            musan / "speech",
+            musan / "music",
+            bg / "audioset_16k",
+        ]
+    elif owner:
         backgrounds = [
             musan / "music",
             musan / "noise",
@@ -64,15 +88,15 @@ def augmenter(layout: Layout, owner: bool = False):
             "PitchShift": 0.3,
             "BandStopFilter": 0.1,
             "AddColorNoise": 0.15,
-            "AddBackgroundNoise": 0.8 if owner else 0.9,
+            "AddBackgroundNoise": 0.95 if loud else 0.8 if owner else 0.9,
             "Gain": 1.0,
             "GainTransition": 0.25,
             "RIR": 0.5 if owner else 0.6,
         },
         impulse_paths=[str(bg / "mit_rirs"), str(aug / "train_rirs")],
         background_paths=[str(p) for p in backgrounds],
-        background_min_snr_db=-5,
-        background_max_snr_db=15,
+        background_min_snr_db=-10 if loud else -5,
+        background_max_snr_db=10 if loud else 15,
         min_jitter_s=0.195,
         max_jitter_s=0.205,
     )
@@ -97,7 +121,8 @@ def write(out: Path, generator) -> None:
     tmp.rename(final)
 
 
-def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int) -> None:
+def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int, aug=None, plain=False) -> None:
+    """`aug`: an augmenter in place of the usual one; `plain`: none at all (the clips are ready as they are)."""
     from microwakeword.audio.clips import Clips
     from microwakeword.audio.spectrograms import SpectrogramGeneration
 
@@ -109,7 +134,7 @@ def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int)
         random_split_seed=10,
         split_count=0.1,
     )
-    aug = augmenter(layout)
+    aug = None if plain else aug or augmenter(layout)
     for split, split_name, split_slide in [
         ("training", "train", slide),
         ("validation", "validation", slide),
@@ -123,15 +148,157 @@ def build(layout: Layout, clip_dir: Path, out: Path, max_clips: int, slide: int)
         write(out / split, gen.spectrogram_generator(split=split_name, repeat=1, max_clips=cap))
 
 
-def synthetic(layout: Layout, phrase: str) -> None:
+def synthetic(
+    layout: Layout, phrase: str, device: bool = False, cut: bool = False, loud: bool = False, lead: bool = False
+) -> None:
+    """`device`: into DATA/features/<phrase>-device, DEVICE_SHARE of every clip through a made-up microphone, plus
+    DEVICE_NEGATIVES cuts of the backgrounds through one (negative/device)."""
     if not (layout.aug / "interference.done").exists():
         raise SystemExit("Run training.data.make_interference first.")
-    root = layout.features / phrase
+    if cut:
+        return cut_endings(layout, phrase)
+    if lead:
+        return lead_in(layout, phrase)
+    root = layout.features / (f"{phrase}-device" if device else f"{phrase}-loud" if loud else phrase)
+    aug = augmenter(layout, loud=True) if loud else None
+    if device:
+        from training.data.device import DeviceAugmentation
+
+        aug = DeviceAugmentation(augmenter(layout), DEVICE_SHARE)
     for kind, table, slide in [("positive", POSITIVES, 5), ("near_miss", NEAR_MISSES, 1)]:
         for source, cap in table.items():
-            build(layout, layout.clip_dir(source, phrase, kind), root / kind / source, cap, slide)
+            build(layout, layout.clip_dir(source, phrase, kind), root / kind / source, cap, slide, aug)
     if phrase == "hey_tars":
-        build(layout, layout.real_lookalikes, root / "near_miss" / "real", REAL_LOOKALIKES, slide=1)
+        build(layout, layout.real_lookalikes, root / "near_miss" / "real", REAL_LOOKALIKES, slide=1, aug=aug)
+    if device:
+        build(layout, device_negatives(layout), root / "negative" / "device", DEVICE_NEGATIVES, slide=1, plain=True)
+
+
+def cut_endings(layout: Layout, phrase: str) -> None:
+    """Into DATA/features/<phrase>-cut: the positives again with CUT_SHARE of them cut short; the lookalikes are the
+    plain set's, linked, since nothing about them changes."""
+    from training.data.device import CutEndings
+
+    base, root = layout.features / phrase, layout.features / f"{phrase}-cut"
+    if not (base / "near_miss").is_dir():
+        raise SystemExit("Run features synthetic first: --cut reuses its lookalikes.")
+    (root / "near_miss").mkdir(parents=True, exist_ok=True)
+    for source in sorted((base / "near_miss").iterdir()):
+        link = root / "near_miss" / source.name
+        if not link.exists():
+            link.symlink_to(source, target_is_directory=True)
+    aug = CutEndings(augmenter(layout), CUT_SHARE)
+    for source, cap in POSITIVES.items():
+        build(layout, layout.clip_dir(source, phrase, "positive"), root / "positive" / source, cap, 5, aug)
+
+
+def folder_negatives(layout: Layout, phrase: str, name: str, folder: Path) -> None:
+    """Into DATA/features/<phrase>/negative/<name>: every WAV in `folder` as it is, as things that aren't the phrase
+    (train --extra NAME:WEIGHT). For clips made elsewhere: mined false wakes, real speech cut to length."""
+    n = len(list(folder.glob("*.wav")))
+    log(f"negatives {name}: {n} clips from {folder}")
+    build(layout, folder, layout.features / phrase / "negative" / name, n, slide=1, plain=True)
+
+
+def speech_cuts(
+    layout: Layout, count: int = DEVICE_NEGATIVES, source: Path | None = None, name: str = "speech"
+) -> Path:
+    """`count` cuts of CUT_S from real speech (default LibriSpeech train-clean-100, 100 hours of reading; or every
+    WAV/FLAC under `source`), as 16 kHz WAVs in DATA/aug/<name>_negatives (made once)."""
+    import soundfile as sf
+
+    out = layout.aug / f"{name}_negatives"
+    if (out / ".done").exists():
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    root = source or layout.root / "LibriSpeech" / "train-clean-100"
+    files = sorted(root.rglob("*.flac")) + sorted(root.rglob("*.wav"))
+    rng = np.random.default_rng(16)
+    n, want = 0, int(CUT_S * 16000)
+    log(f"{name} negatives: {count} cuts from {len(files)} files")
+    while n < count:
+        path = files[rng.integers(len(files))]
+        info = sf.info(str(path))
+        if info.frames < want or info.samplerate != 16000:
+            continue
+        start = int(rng.integers(0, info.frames - want + 1))
+        x, _ = sf.read(str(path), start=start, frames=want, dtype="float32", always_2d=True)
+        x = x.mean(axis=1)
+        if np.sqrt((x**2).mean()) < 1e-3:
+            continue
+        y = x / max(np.abs(x).max(), 1e-6) * rng.uniform(0.1, 0.9)
+        sf.write(str(out / f"{n:05d}.wav"), (y * 32767).astype(np.int16), 16000, subtype="PCM_16")
+        n += 1
+    (out / ".done").touch()
+    return out
+
+
+def tv_negatives(layout: Layout, phrase: str) -> None:
+    """Into DATA/features/<phrase>/negative/tv: DEVICE_NEGATIVES cuts of the TV, chatter, music and noise as they
+    are, for a model that wakes to them less (train --tv-negatives)."""
+    out = device_negatives(layout, through_device=False)
+    build(layout, out, layout.features / phrase / "negative" / "tv", DEVICE_NEGATIVES, slide=1, plain=True)
+
+
+def lead_in(layout: Layout, phrase: str) -> None:
+    """Into DATA/features/<phrase>-lead: the positives again with half of them preceded by real conversation (People's
+    Speech); the lookalikes are the plain set's, linked."""
+    from training.data.device import LeadIn
+
+    base, root = layout.features / phrase, layout.features / f"{phrase}-lead"
+    (root / "near_miss").mkdir(parents=True, exist_ok=True)
+    for source in sorted((base / "near_miss").iterdir()):
+        link = root / "near_miss" / source.name
+        if not link.exists():
+            link.symlink_to(source, target_is_directory=True)
+    aug = LeadIn(augmenter(layout), layout.root / "peoples_speech" / "wav", 0.5)
+    for source, cap in POSITIVES.items():
+        build(layout, layout.clip_dir(source, phrase, "positive"), root / "positive" / source, cap, 5, aug)
+
+
+def device_negatives(layout: Layout, through_device: bool = True) -> Path:
+    """DEVICE_NEGATIVES cuts of CUT_S from the TV, chatter, music and noise, each through a made-up microphone (or,
+    `through_device` False, as they are), as 16 kHz WAVs (made once, in DATA/aug/device_negatives or tv_negatives)."""
+    import soundfile as sf
+
+    from training.data.device import device
+
+    out = layout.aug / ("device_negatives" if through_device else "tv_negatives")
+    if (out / ".done").exists():
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    musan, bg = layout.aug / "musan", layout.backgrounds
+    folders = [layout.aug / "train/tv", layout.aug / "train/babble", musan / "speech", musan / "music",
+               musan / "noise", bg / "audioset_16k", bg / "fma"]  # fmt: skip
+    files = [f for d in folders for f in sorted(d.rglob("*.wav"))]
+    rng = np.random.default_rng(15)
+    n, want = 0, int(CUT_S * 16000)
+    log(f"device negatives: {DEVICE_NEGATIVES} cuts from {len(files)} files")
+    while n < DEVICE_NEGATIVES:
+        path = files[rng.integers(len(files))]
+        info = sf.info(str(path))
+        if info.samplerate != 16000 or info.frames < want:
+            continue
+        start = int(rng.integers(0, info.frames - want + 1))
+        x, _ = sf.read(str(path), start=start, frames=want, dtype="float32", always_2d=True)
+        x = x.mean(axis=1)
+        if np.sqrt((x**2).mean()) < 1e-3:  # silence teaches nothing here
+            continue
+        y = x / max(np.abs(x).max(), 1e-6) * rng.uniform(0.1, 0.9)
+        y = device(y, rng) if through_device else y
+        sf.write(str(out / f"{n:05d}.wav"), (y * 32767).astype(np.int16), 16000, subtype="PCM_16")
+        n += 1
+    (out / ".done").touch()
+    return out
+
+
+def converted(layout: Layout) -> None:
+    """The clips voice-converted into real LibriSpeech speakers (data/vc_librispeech.py, DATA/vc), as a source of
+    their own: positive/vc and near_miss/vc (train --vc WEIGHT)."""
+    root = layout.features / "hey_tars"
+    for kind, slide in [("positive", 5), ("near_miss", 1)]:
+        folder = layout.root / "vc" / kind
+        build(layout, folder, root / kind / "vc", len(list(folder.glob("*.wav"))), slide)
 
 
 def cloned(layout: Layout) -> None:
@@ -182,15 +349,47 @@ def augmented(layout: Layout, folder: Path, out: Path, slide: int | None, repeat
 
 def main():
     p = parser(__doc__)
-    p.add_argument("what", choices=["synthetic", "user", "household", "cloned"])
-    p.add_argument("run", nargs="?", help="household: the training run's name")
+    p.add_argument(
+        "what",
+        choices=[
+            "synthetic",
+            "user",
+            "household",
+            "cloned",
+            "tv-negatives",
+            "speech-negatives",
+            "negatives",
+            "vc",
+            "cuts",
+        ],
+    )
+    p.add_argument("run", nargs="?", help="household: the training run's name; negatives: the set's name")
+    p.add_argument("--folder", type=Path, help="negatives: the folder of WAVs")
     p.add_argument("--phrase", default="hey_tars", choices=["hey_tars", "tars_stop"])
+    p.add_argument("--device", action="store_true", help="synthetic: through made-up microphones (data/device.py)")
+    p.add_argument("--cut", action="store_true", help="synthetic: some positives with their ending cut")
+    p.add_argument("--loud", action="store_true", help="synthetic: under loud talk and TV (down to -10 dB)")
+    p.add_argument("--lead", action="store_true", help="synthetic: half the positives preceded by real conversation")
     add_user_arg(p)
     args = p.parse_args()
     cap_threads()
     layout = Layout(args.data)
     if args.what == "synthetic":
-        synthetic(layout, args.phrase)
+        synthetic(layout, args.phrase, args.device, args.cut, args.loud, args.lead)
+    elif args.what == "vc":
+        converted(layout)
+    elif args.what == "cuts":
+        if not (args.run and args.folder):
+            p.error("cuts: NAME and --folder (real speech to cut)")
+        folder_negatives(layout, args.phrase, args.run, speech_cuts(layout, source=args.folder, name=args.run))
+    elif args.what == "speech-negatives":
+        folder_negatives(layout, args.phrase, "speech", speech_cuts(layout))
+    elif args.what == "negatives":
+        if not (args.run and args.folder):
+            p.error("negatives: NAME and --folder")
+        folder_negatives(layout, args.phrase, args.run, args.folder)
+    elif args.what == "tv-negatives":
+        tv_negatives(layout, args.phrase)
     elif args.what == "cloned":
         cloned(layout)
     elif args.what == "user":

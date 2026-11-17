@@ -5,6 +5,8 @@
     DATA/mww/.venv/bin/python -m training.stage1.train household --run RUN   # adds a household's wakes
     DATA/mww/.venv/bin/python -m training.stage1.train generic --phrase tars_stop    # "TARS stop", the interrupt
     DATA/mww/.venv/bin/python -m training.stage1.train generic --large --cloned      # the large pair
+    DATA/mww/.venv/bin/python -m training.stage1.train generic --device   # on features.py synthetic --device
+    DATA/mww/.venv/bin/python -m training.stage1.train generic --cut      # on features.py synthetic --cut
 
 The recipe: 20k steps, learning rate 0.001, negative class weight 20, SpecAugment (2 time masks of up to 5 frames,
 2 frequency masks of up to 3 bins), batch 128, 1.5 s clips. The checkpoint kept is the one with the best average
@@ -26,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from training.common import PHRASES, Layout, cap_threads, log, parser
 
@@ -53,10 +56,26 @@ def feature_set(path, sampling, truth, truncation="truncate_start"):
     }
 
 
+DEVICE_NEGATIVE_WEIGHT = 5.0  # the backgrounds through made-up microphones, as microWakeWord's own no-speech sets
+
+
 def features(
-    layout: Layout, setup: str, run: str | None = None, phrase: str = "hey_tars", cloned: bool = False
+    layout: Layout,
+    setup: str,
+    run: str | None = None,
+    phrase: str = "hey_tars",
+    cloned: bool = False,
+    device: bool = False,
+    cut: bool = False,
+    tv_negatives: float = 0,
+    extra: list[str] = (),
+    vc: float = 0,
+    loud: bool = False,
+    lead: bool = False,
 ) -> list[dict]:
-    root, neg = layout.features / phrase, layout.mww / "negative_datasets"
+    variant = "device" if device else "cut" if cut else "loud" if loud else "lead" if lead else None
+    root = layout.features / (f"{phrase}-{variant}" if variant else phrase)
+    neg = layout.mww / "negative_datasets"
     positives, near_misses = POSITIVE_WEIGHTS, NEAR_MISS_WEIGHTS
     if cloned:
         positives, near_misses = {**positives, "cloned": 1.5}, {**near_misses, "cloned": 3.0}
@@ -65,6 +84,16 @@ def features(
     if setup in ("generic", "household") and phrase == "hey_tars":
         fs.append(feature_set(root / "near_miss" / "real", 2.0, False))
     fs += [feature_set(neg / n, w, False, "random") for n, w in NEGATIVES.items()]
+    if device:
+        fs.append(feature_set(root / "negative" / "device", DEVICE_NEGATIVE_WEIGHT, False, "random"))
+    if vc:
+        base = layout.features / phrase
+        fs += [feature_set(base / "positive" / "vc", vc, True), feature_set(base / "near_miss" / "vc", 2 * vc, False)]
+    for spec in extra:
+        set_name, weight = spec.rsplit(":", 1)
+        fs.append(feature_set(layout.features / phrase / "negative" / set_name, float(weight), False, "random"))
+    if tv_negatives:
+        fs.append(feature_set(layout.features / phrase / "negative" / "tv", tv_negatives, False, "random"))
     fs.append(feature_set(neg / VALIDATION_NEGATIVES, 0.0, False, "split"))  # validation and testing only
     if setup == "personal":
         user = layout.features / "user" / phrase
@@ -87,6 +116,32 @@ def main():
     p.add_argument("--phrase", default="hey_tars", choices=PHRASES)
     p.add_argument("--large", action="store_true", help="generic: the large model, four times as wide")
     p.add_argument("--cloned", action="store_true", help="generic: add the cloned Common Voice speakers")
+    p.add_argument("--device", action="store_true", help="generic: the features made through made-up microphones")
+    p.add_argument("--cut", action="store_true", help="generic: the features with some endings cut")
+    p.add_argument("--loud", action="store_true", help="generic: the features made under loud talk and TV")
+    p.add_argument("--lead", action="store_true", help="generic: the features with conversation before the phrase")
+    p.add_argument(
+        "--extra",
+        action="append",
+        default=[],
+        metavar="NAME:WEIGHT",
+        help="also features.py's negatives set NAME, at WEIGHT (again for more)",
+    )
+    p.add_argument("--vc", type=float, default=0, help="weight of the voice-converted speakers (features.py vc)")
+    p.add_argument("--tv-negatives", type=float, default=0, help="weight of features.py tv-negatives (0: none)")
+    p.add_argument("--negative-weight", type=float, default=20, help="how much a negative counts (the recipe's: 20)")
+    p.add_argument("--name", help="the model's folder under DATA/models (default: its setup's)")
+    p.add_argument(
+        "--teacher",
+        help="distil from this trained model (trained_models/hey_tars_NAME), large; or a "
+        "committee: NAME[:WEIGHTS],... (WEIGHTS a file in its folder, e.g. snapshots/step_avg5.weights.h5)",
+    )
+    p.add_argument("--teacher-small", action="store_true", help="the teachers are small models (a committee)")
+    p.add_argument("--alpha", type=float, default=0.5, help="with --teacher: the teacher's share of each target")
+    p.add_argument("--snapshots", type=int, default=0, help="also save the weights every N steps (to choose later)")
+    p.add_argument("--steps", type=int, default=20000, help="training steps (the recipe's: 20000)")
+    p.add_argument("--lr", type=float, default=0.001, help="learning rate (the recipe's: 0.001)")
+    p.add_argument("--target-fph", type=float, default=0.5, help="the checkpoint's false wakes an hour (recipe: 0.5)")
     p.add_argument(
         "--resume",
         action="store_true",
@@ -97,13 +152,16 @@ def main():
         p.error("--run goes with the household setup, and only with it")
     if args.setup == "household" and args.phrase != "hey_tars":
         p.error("a household's wakes are for hey_tars")
-    if (args.large or args.cloned) and (args.setup != "generic" or args.phrase != "hey_tars"):
-        p.error("--large and --cloned are for the generic hey_tars model")
+    variant = args.large or args.cloned or args.device or args.cut or args.loud or args.lead
+    if variant and (args.setup != "generic" or args.phrase != "hey_tars"):
+        p.error("--large, --cloned, --device and --cut are for the generic hey_tars model")
     import yaml
 
     cap_threads()
     layout = Layout(args.data)
-    setup = "generic-large" if args.large else args.setup
+    setup = args.name or next(
+        (f"generic-{v}" for v in ("large", "device", "cut", "loud", "lead") if getattr(args, v)), args.setup
+    )
     name = f"{args.phrase}_household_{args.run}" if args.run else f"{args.phrase}_{setup}"
     train_dir = layout.trained_models / name
     if not args.resume:
@@ -111,11 +169,24 @@ def main():
     config = {
         "window_step_ms": 10,
         "train_dir": str(train_dir),
-        "features": features(layout, args.setup, args.run, args.phrase, args.cloned),
-        "training_steps": [20000],
+        "features": features(
+            layout,
+            args.setup,
+            args.run,
+            args.phrase,
+            args.cloned,
+            args.device,
+            args.cut,
+            args.tv_negatives,
+            args.extra,
+            args.vc,
+            args.loud,
+            args.lead,
+        ),
+        "training_steps": [args.steps],
         "positive_class_weight": [1],
-        "negative_class_weight": [20],
-        "learning_rates": [0.001],
+        "negative_class_weight": [args.negative_weight],
+        "learning_rates": [args.lr],
         "batch_size": 128,
         "time_mask_max_size": [5],
         "time_mask_count": [2],
@@ -124,18 +195,31 @@ def main():
         "eval_step_interval": 500,
         "clip_duration_ms": 1500,
         "minimization_metric": "ambient_false_positives_per_hour",
-        "target_minimization": 0.5,
+        "target_minimization": args.target_fph,
         "maximization_metric": "average_viable_recall",
     }
     train_dir.parent.mkdir(parents=True, exist_ok=True)
     cfg = train_dir.parent / f"{name}.yaml"
     cfg.write_text(yaml.dump(config))
     log(f"training {args.setup}")
+    entry = ["-m", "microwakeword.model_train_eval"]
+    env = None
+    if args.teacher or args.snapshots:
+        wrapped = ["-m", "training.stage1.distill", "--snapshot-every", str(args.snapshots)]
+        if args.teacher:
+            arch = (
+                "--pointwise_filters {f},{f},{f},{f} --repeat_in_block 1,1,1,1"
+                " --mixconv_kernel_sizes [5],[7,11],[9,15],[23]"
+                " --residual_connection 0,0,0,0 --first_conv_filters {c} --first_conv_kernel_size 5 --stride 3"
+            ).format(**({"f": 64, "c": 32} if args.teacher_small else {"f": 256, "c": 96}))
+            dirs = ",".join(str(layout.trained_models / f"{args.phrase}_{t}") for t in args.teacher.split(","))
+            wrapped += ["--teacher-dir", dirs, "--teacher-args", arch, "--alpha", str(args.alpha)]
+        entry = [*wrapped, "--"]
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])}
     subprocess.run(
         [
             sys.executable,
-            "-m",
-            "microwakeword.model_train_eval",
+            *entry,
             f"--training_config={cfg}",
             "--train",
             "1",
@@ -150,7 +234,7 @@ def main():
             "--test_tflite_streaming",
             "1",
             "--test_tflite_streaming_quantized",
-            "0",
+            "1",
             "--use_weights",
             "best_weights",
             "mixednet",
@@ -171,11 +255,15 @@ def main():
         ],
         check=True,
         cwd=layout.mww,
+        env=env,
     )
     folder = layout.household / args.run / "pair" if args.run else layout.models / setup
     out = folder / f"{args.phrase}.tflite"
     out.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(train_dir / "tflite_stream_state_internal/stream_state_internal.tflite", out)
+    quantized = train_dir / "tflite_stream_state_internal_quant/stream_state_internal_quant.tflite"
+    if quantized.exists():  # the 8-bit model an ESP32 runs (ESPHome's micro_wake_word), next to the full one
+        shutil.copy(quantized, out.with_name(f"{args.phrase}_int8.tflite"))
     log(f"DONE: {out}" + ("" if args.run else f" (copy it to the repo's models/{setup}/)"))
 
 
