@@ -139,6 +139,13 @@ def main():
     p.add_argument("--teacher-small", action="store_true", help="the teachers are small models (a committee)")
     p.add_argument("--alpha", type=float, default=0.5, help="with --teacher: the teacher's share of each target")
     p.add_argument("--snapshots", type=int, default=0, help="also save the weights every N steps (to choose later)")
+    p.add_argument(
+        "--average",
+        type=int,
+        default=0,
+        help="with --snapshots: the model is the average of the last K snapshots (stochastic weight averaging), not "
+        "microWakeWord's own checkpoint choice, which is a lottery on real recordings (the shipped recipe: 5)",
+    )
     p.add_argument("--steps", type=int, default=20000, help="training steps (the recipe's: 20000)")
     p.add_argument("--lr", type=float, default=0.001, help="learning rate (the recipe's: 0.001)")
     p.add_argument("--target-fph", type=float, default=0.5, help="the checkpoint's false wakes an hour (recipe: 0.5)")
@@ -148,6 +155,8 @@ def main():
         help="carry on from the last checkpoint of an interrupted run (otherwise it starts over)",
     )
     args = p.parse_args()
+    if args.average and not args.snapshots:
+        p.error("--average needs --snapshots")
     if (args.setup == "household") != bool(args.run):
         p.error("--run goes with the household setup, and only with it")
     if args.setup == "household" and args.phrase != "hey_tars":
@@ -216,8 +225,7 @@ def main():
             wrapped += ["--teacher-dir", dirs, "--teacher-args", arch, "--alpha", str(args.alpha)]
         entry = [*wrapped, "--"]
         env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])}
-    subprocess.run(
-        [
+    command = [
             sys.executable,
             *entry,
             f"--training_config={cfg}",
@@ -252,11 +260,20 @@ def main():
             "5",
             "--stride",
             "3",
-        ],
-        check=True,
-        cwd=layout.mww,
-        env=env,
-    )
+    ]  # fmt: skip
+    subprocess.run(command, check=True, cwd=layout.mww, env=env)
+    if args.average:
+        from training.stage1.export_snapshots import average
+
+        snaps = [p for p in sorted((train_dir / "snapshots").glob("step_*.weights.h5")) if p.stem[5:11].isdigit()]
+        if len(snaps) < args.average:
+            raise SystemExit(f"--average {args.average}: only {len(snaps)} snapshots (snapshot more often)")
+        avg = average(snaps[-args.average :], train_dir / "snapshots" / f"step_avg{args.average}.weights.h5")
+        log(f"the model: the average of the last {args.average} snapshots, not the checkpoint microWakeWord chose")
+        export = [sys.executable, "-m", "microwakeword.model_train_eval", *command[len(entry) + 1 :]]
+        export[export.index("--train") + 1] = "0"
+        export[export.index("--use_weights") + 1] = f"snapshots/{avg.name.removesuffix('.weights.h5')}"
+        subprocess.run(export, check=True, cwd=layout.mww)
     folder = layout.household / args.run / "pair" if args.run else layout.models / setup
     out = folder / f"{args.phrase}.tflite"
     out.parent.mkdir(parents=True, exist_ok=True)
