@@ -222,6 +222,16 @@ def test_a_session_finishes_once_every_prompt_has_a_take_or_was_skipped(sessions
     assert sessions.open(token) is None
 
 
+def test_takes_worth_redoing_dont_stop_a_session_finishing(sessions):
+    """The page suggests redoing a take that's too quiet or heard nothing, but keeping it is the person's call."""
+    token, session = make_session(sessions)
+    first, second, third = sessions.prompts(session)
+    assert sessions.add_take(session, first, take_audio(loudness=0.012), SILENCE)["problem"] == QUIET
+    assert sessions.add_take(session, second, None, NO_SPEECH)["problem"] == NOTHING
+    sessions.add_take(session, third, take_audio(), SILENCE)
+    assert sessions.finish(session) and sessions.open(token) is None
+
+
 def test_a_phrase_left_for_later_and_recorded_after_all_isnt_left_for_later_any_more(sessions):
     token, session = make_session(sessions)
     first, second, _ = sessions.prompts(session)
