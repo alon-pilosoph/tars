@@ -211,6 +211,15 @@ as aloud: "This was due at 8:00."
 off when this came in, at 8:02. Send it again if it still matters.", not an answer: "in ten minutes" would be
 wrong by then.
 
+**When Telegram is down.** Messages that pile up meanwhile get one answer, not a reply each: a run of one person's
+written messages that arrive together is read as one (commands and voice messages stay apart), and one written more
+than 90 seconds before TARS reads it is answered knowing so ("Written at 7:27 PM; Telegram only brought it now"). A
+reply Telegram fails to take is tried again for up to 4 minutes when the failure may pass (a 5xx, a 429, no
+connection); one Telegram turns down for good (a blocked bot) only a few times. After any failure the bot connects
+afresh, and when polls keep coming back empty while Telegram says it holds messages for it (`getWebhookInfo`), it
+connects afresh too: on 2026-11-16 a connection kept through an outage went on getting nothing for minutes while two
+messages waited. A retry after a 5xx can now and then post a message twice, since Telegram may have taken it.
+
 **What TARS sent at home** for a person with a chat is posted there within a couple of seconds (`items.delivered`
 records when). Only things from the last hour: after TARS has been off a long time, a backlog of old notes would be
 noise. Things sent before this feature existed were marked delivered by the upgrade. `[telegram] send_items = false`
