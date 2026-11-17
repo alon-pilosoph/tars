@@ -122,15 +122,31 @@ simulated and real room responses (RIRS_NOISES, MIT). The test noise is a separa
 
 ### Stage 1: the wake model
 
-microWakeWord, trained with this recipe: 20k steps, learning rate 0.001, negative class weight 20, SpecAugment,
-batch 128, 1.5 s clips, and augmentation with background sound from −5 to 15 dB and room echo. The checkpoint kept
-is the one with the best average recall among those under 0.5 false accepts per hour of ambient audio. The generic
-model is that recipe on all the synthetic clips, unfiltered, plus the real lookalikes at double weight. Features are
-stored as uint16, which is lossless (the microfrontend's outputs are integers times 0.0390625).
+microWakeWord's mixednet, small enough for an ESP32 (69 KB; the 8-bit file scores the same). The base recipe: 20k
+steps, learning rate 0.001, SpecAugment, batch 128, 1.5 s clips, and augmentation with background sound from −5 to
+15 dB and room echo, on all the synthetic clips plus the real lookalikes at double weight. Features are stored as
+uint16, which is lossless (the microfrontend's outputs are integers times 0.0390625).
 
-The recipe was arrived at by training variants and scoring each on held-out data: a longer two-phase schedule, twice the
-steps, filtered positives, accented voices and voice conversions were each tried in stage 1 and left out on the
-evidence in [design decisions](#design-decisions).
+The shipped generic model adds three things to it, each kept because it did better on real TV recordings that never
+trained anything ([the shipped generic pair](#the-shipped-generic-pair); the steps are
+[`training/stage1/recipe.sh`](../training/README.md#run-order)):
+
+- **Harder negatives**, weighted 40 against the positives: cuts of real read speech, and a first model's own false
+  wakes on the training audio (hard-negative mining).
+- **Snapshot averaging.** microWakeWord keeps the checkpoint its own validation likes best, and on real recordings
+  that choice is a lottery: retrains of one recipe caught anywhere from 59% to 93% of the owner's takes over a TV.
+  Saving the weights every 2,000 steps and averaging the last five (stochastic weight averaging) gives a model that
+  lands in a narrow band instead.
+- **Distillation from a committee.** Four averaged models (one trained with loud talk and TV at −10 to 10 dB) teach
+  a fifth: each training batch's targets are half the labels and half the four's averaged scores. The student is
+  trained with the loud backgrounds too, and averaged the same way. A committee of models beats any one of them, and
+  the student keeps most of that in one small model.
+
+The recipe was arrived at by training variants and scoring each on held-out data. Left out on the evidence: a longer
+two-phase schedule, twice the steps, filtered positives, accented voices and voice conversions
+([design decisions](#design-decisions)), and in the latest round made-up microphones, cut endings, TV and real
+conversation as negatives (too timid: the conversation runs caught under half of what the others did), real
+conversation right before the phrase, and distillation from a large model (no better than its weak teacher).
 
 ### Stage 2: the learned layer
 
@@ -139,7 +155,12 @@ regression learns "is it hey TARS?" from Kokoro, Piper-voice and OpenAI clips, t
 conversions, the accented Piper clips and the real lookalikes, sampled down to 6,000 wake phrases and 7,000
 lookalikes, each put through one random training condition (noise, room). It uses the assistant's own feature code
 (`verify.TunedCheck`), so training and runtime can't drift apart. The generic layer uses no household recordings;
-the personal one adds the owner's training half. Stage 2 is deterministic: rerunning it on the same data, in the
+the personal one adds the owner's training half. The shipped generic layer (`train_check.py generic --hard`) adds
+6,000 wake phrases and lookalikes with TV or babble at 0 and −5 dB, and 3,000 three-second stretches of TV, babble
+and real conversation (People's Speech) with no wake phrase: the old layer had never heard a voice under a TV, and
+turned down most of what the new stage 1 caught there. Its bar, 0.35, was chosen on the PowerConf's real TV
+recordings; at it, the layer lets fewer held-out lookalikes through than the old one did at 0.3 (4% against 8%).
+Stage 2 is deterministic: rerunning it on the same data, in the
 environment `training/setup/eval_env.sh` pins, gives the same layer.
 
 ### How it was measured
@@ -212,14 +233,36 @@ The shipped pairs, measured as [above](#how-it-was-measured).
 
 | Test | Answered |
 |---|---|
-| Held-out synthetic voices, quiet | 97% |
-| Same voices, TV or babble at 10–15 dB | 92–97% |
-| The owner, whom it never heard, quiet (30 takes) | 97% |
-| Cloned Common Voice speakers, all 8 conditions | 73% |
-| Lookalikes let through: held-out voices | 0–10% |
-| Lookalikes let through: cloned Common Voice speakers | 1.6% |
-| False answers in an hour of TV | 1 (Vosk heard "hey darts") |
+| Held-out synthetic voices, quiet | 99% |
+| Same voices, TV or babble at 10–15 dB | 94–97% |
+| Same voices, TV or babble at 5 dB | 80–90% |
+| Same voices, across the room with the TV on | 82% |
+| Lookalikes let through: held-out voices | 0–14% (7% on average, as before) |
+| False answers in an hour of TV | 0 |
 | False answers in an hour of audiobooks | 0 |
+
+The previous pair, on the same tests: 97% quiet, 90–96% at 10–15 dB, 78–86% at 5 dB, 79% across the room, one false
+answer in the TV hour. The cloned Common Voice speakers (73% and 1.6% lookalikes for the previous pair) weren't on
+disk to repeat.
+
+### The shipped generic pair
+
+Measured on real recordings no model trained on: an hour of the living-room TV recorded on an iPhone and on TARS's
+speakerphone, and the owner's clear takes laid over it with the voice 10, 5, 0 and −5 dB above the TV. The
+speakerphone half chose between candidates; the iPhone half, below, only grades. Each stage 1 at its own threshold
+for the same false wakes on the lab TV and audiobook hours, so the real recordings choose nothing.
+
+| | Previous pair (threshold 0.2) | Shipped pair (0.47) |
+|---|---|---|
+| Stage 1 catches, voice +10 / +5 / 0 / −5 dB over the TV | 80 / 64 / 46 / 14% (at its fair threshold) | 93 / 81 / 63 / 28% |
+| Answered by the whole chain, same takes | 68 / 41 / 16 / 9% | 71 / 44 / 20 / 12% |
+| Stage 1 wakes an hour on real TV, iPhone / speakerphone | 21 / 65 | 8 / 5 |
+| False answers on real TV | 0 / 1 an hour | 0 / 0 |
+
+The new stage 1 is much better under a TV and wakes far less on it: on the speakerphone the double-check runs 5 times
+an hour instead of 65, and there's that much less to review. The chain's answers rise less than stage 1's catches:
+with the voice at or under the TV, Vosk mostly can't make out the phrase, and that's now the limit (see
+[limitations](#limitations)).
 
 **Personal setup**, the owner's 15 held-out takes, 2.5 s window
 
@@ -357,6 +400,9 @@ the check did slightly worse, so the check runs at once.
 - **Run-to-run spread.** Most recipe decisions above rest on one candidate per option, while retrains of the same
   recipe differ widely. The large differences (openWakeWord's 27% of the owner's takes, 96% against 72%, 93% against
   77%) were the basis for the decisions; the small ones would need several candidates per option to confirm.
+- **A voice at or under the TV's level.** Stage 1 now catches 63% of the owner's takes with the voice as loud as the
+  TV, but the double-check makes out only about a third of those (20% answered). Without echo cancellation or a
+  beamforming mic, the recognizer hears the TV as much as the voice.
 - **Cost on the Pi** isn't measured yet; the numbers above are from the development Mac.
 
 ## Measuring on real microphones
@@ -371,12 +417,12 @@ on the owner's.
 
 ## Next steps
 
-Offline tuning has reached diminishing returns: the last experiments each moved one or two takes, which is within
-the spread between retrains. The next gains come from real use. Every wake and near-miss is saved with its audio and
-labeled, and both stages are retrained together on the household's own clips, especially the near-misses that were a
-missed "hey TARS", then tested end to end against the pair in use before anything is installed
-([the household retrain](#closing-the-loop-the-household-retrain)). The interrupt phrase is the other open piece of
-work, below.
+Stage 1 is no longer the weak link: the double-check is, with the voice at or under the TV. A mic that cancels
+what TARS hears from the room (echo cancellation and beamforming, as on the ReSpeaker XVF3800) attacks that at the
+source, and its recordings will be measured the same way. Meanwhile every wake and near-miss is saved with its audio
+and labeled, and both stages are retrained together on the household's own clips, then tested end to end against
+the pair in use before anything is installed ([the household retrain](#closing-the-loop-the-household-retrain)).
+The interrupt phrase is the other open piece of work, below.
 
 ## "TARS stop"
 

@@ -25,8 +25,9 @@ mode = "wakeword"
 #   models/personal/  trained partly on the author's recordings; kept local (uses check_window_s = 2.5)
 # A path to a custom .onnx (openWakeWord) or .tflite (microWakeWord) model, or a pretrained openWakeWord name.
 model = "models/generic/hey_tars.tflite"
-# Low on purpose: the double-check below throws out lookalikes, so the model mustn't miss the real phrase.
-threshold = 0.2
+# The generic model's point for 10 wakes an hour on TV and audiobooks (docs/wake-word.md); the double-check below
+# throws out what gets through. A household's own models carry their own threshold.
+threshold = 0.47
 # Double-check each wake with a small offline speech recognizer, so "hey cars" doesn't wake it.
 verify = true
 # The double-check's learned layer ("" = plain phrase match). These settings are the installed pair; models trained
@@ -464,6 +465,10 @@ enabled = false
 host = "0.0.0.0"
 port = 8766
 plain_from_home = true
+# Rooms: this machine's own microphone's room, and the main room: where what's for nobody in particular is said, and
+# what's for someone not heard lately in another room ("": this machine's room, or the room paired first).
+room = "home"
+main_room = ""
 
 [updates]
 # TARS updates itself, from a timer every ten minutes (docs/deployment.md#updates): what's merged into `branch` is

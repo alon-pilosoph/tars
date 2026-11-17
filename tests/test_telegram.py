@@ -49,6 +49,7 @@ from voice_assistant.telegram import (
     NO_VOICE,
     NO_WORDS,
     SAY_HOW,
+    SEND_TRIES,
     SORRY,
     SPEAKER,
     STALE_S,
@@ -61,6 +62,7 @@ from voice_assistant.telegram import (
     channel_rules,
     split_text,
     tidy,
+    together,
 )
 
 from .conftest import ScriptedTranscriber, fake_openai_chat
@@ -101,6 +103,26 @@ class FakeBot:
 
     def said(self, chat_id=ALON) -> list[str]:
         return [text for to, text in self.messages if to == chat_id]
+
+    reconnects = 0
+    held = 0  # what Telegram says it holds for TARS (waiting)
+
+    def reconnect(self):
+        self.reconnects += 1
+
+    def waiting(self):
+        return self.held
+
+
+def tries_while_patient() -> int:
+    """How many times a reply is tried while Telegram fails in a way that may pass (SEND_PATIENCE_S)."""
+    from voice_assistant.telegram import RETRY_S, SEND_PATIENCE_S
+
+    tries, waited = 1, 0.0
+    while waited < SEND_PATIENCE_S:
+        waited += RETRY_S[min(tries - 1, len(RETRY_S) - 1)]
+        tries += 1
+    return tries
 
 
 class ScriptedBrain:
@@ -1344,9 +1366,7 @@ def test_a_one_off_handed_over_still_does_what_it_asked_and_what_it_sent_waits_t
     it (deliver), as anything sent for someone with a chat."""
     skills, clock = one_off_due(tmp_path, {"telegram": os.getpid()})
     tools = ReminderTools(Reminders(skills.store))
-    from voice_assistant.telegram import SEND_TRIES
-
-    bot, alon = FakeBot(failing=SEND_TRIES), ScriptedBrain(["Done: the heater's off; the bill's below."])
+    bot, alon = FakeBot(failing=tries_while_patient()), ScriptedBrain(["Done: the heater's off; the bill's below."])
     alon.next_sent = [SentItem(NOTE, "Heating bill", body="120 shekels.")]
     alon.next_changes = [Change(ADD, NewReminder(REMINDER, "the heater back on", due=time.time() + 600))]
     tars(bot, [alon], convos, tools, skill_clock=clock).deliver()  # its post fails, and Telegram's back after
@@ -1413,3 +1433,96 @@ def test_a_chat_only_homes_menu_has_no_commands_about_the_speaker():
         "mute",
         "unmute",
     }
+
+
+def polled(bot, *rounds):
+    """bot.updates answering each of `rounds` in turn (an exception is raised), then stopping the loop."""
+    left = list(rounds)
+
+    def updates(offset):
+        if not left:
+            raise KeyboardInterrupt
+        r = left.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    bot.updates = updates
+
+
+def test_messages_that_piled_up_get_one_answer_that_knows_they_came_late():
+    bot, brain = FakeBot(), ScriptedBrain(["Channel 12's on, and hello. Sorry, Telegram was down."])
+    written = time.time() - 120
+    polled(
+        bot,
+        [
+            message("Put the news on", sent_at=written, update_id=1),
+            message("Hello", sent_at=written + 60, update_id=2),
+            message("/home", update_id=3),
+            message("Turn the volume down", update_id=4),
+        ],
+    )
+    with pytest.raises(KeyboardInterrupt):
+        tars(bot, [brain]).run_forever({"username": "hey_tars_bot"})
+    at = f"{datetime.fromtimestamp(written).astimezone():%I:%M %p}".lstrip("0")
+    assert len(brain.asked) == 2  # the two before /home as one, the one after it alone
+    assert brain.asked[0] == f"[Speaker: Alon] [Written at {at}; Telegram only brought it now] Put the news on\nHello"
+    assert "Written at" not in brain.asked[1]  # sent just now
+
+
+def test_one_persons_messages_are_never_joined_with_anothers_nor_with_a_command():
+    a, b = message("hi", update_id=1), message("hello", chat_id=STACEY, update_id=2)
+    assert [u["update_id"] for u in together([a, b])] == [1, 2]
+    command, after = message("/new", update_id=3), message("start over", update_id=4)
+    assert [u["update_id"] for u in together([command, after])] == [3, 4]
+    (joined,) = together([message("one", sent_at=100.0), message("two", sent_at=160.0, update_id=2)])
+    assert joined["message"]["text"] == "one\ntwo" and joined["message"]["date"] == 160.0
+    assert joined["message"]["first_date"] == 100.0 and joined["update_id"] == 2
+
+
+def test_after_telegram_fails_the_bot_connects_afresh(capsys):
+    bot = FakeBot()
+    polled(bot, TelegramError("getUpdates: Bad Gateway", 502), TelegramError("getUpdates: Bad Gateway", 502), [])
+    with pytest.raises(KeyboardInterrupt):
+        tars(bot, [ScriptedBrain()]).run_forever({"username": "hey_tars_bot"})
+    assert bot.reconnects == 2
+    assert "reached again after 2 failed tries" in capsys.readouterr().out
+
+
+def test_polls_that_keep_coming_back_empty_while_telegram_holds_messages_connect_afresh():
+    bot = FakeBot()
+    bot.held = 2  # the morning of 2026-11-16: two messages held, and nothing handed over
+    polled(bot, [], [], [], [])
+    with pytest.raises(KeyboardInterrupt):
+        tars(bot, [ScriptedBrain()]).run_forever({"username": "hey_tars_bot"})
+    assert bot.reconnects == 2  # once every MISSED_POLLS
+    quiet = FakeBot()
+    polled(quiet, [], [], [], [])
+    with pytest.raises(KeyboardInterrupt):
+        tars(quiet, [ScriptedBrain()]).run_forever({"username": "hey_tars_bot"})
+    assert quiet.reconnects == 0  # nothing held: an empty poll is only a quiet chat
+
+
+def test_a_reply_is_tried_again_for_minutes_while_telegram_is_down_and_not_when_it_says_no():
+    bot = FakeBot(failing=6)  # longer than SEND_TRIES quick tries: an outage of a minute or two
+    tars(bot, [ScriptedBrain(["On it."])]).handle(message("put the news on"))
+    assert bot.said() == ["On it."]
+    blocked, waits = FakeBot(), []
+
+    def send(chat_id, text):
+        raise TelegramError("sendMessage: Forbidden: bot was blocked by the user", 403)
+
+    blocked.send = send
+    tars(blocked, [ScriptedBrain(["On it."])], sleep=waits.append).handle(message("put the news on"))
+    assert len(waits) == SEND_TRIES - 1  # turned down for good: a few tries, as before, not minutes
+
+
+def test_the_bot_swaps_in_fresh_connections_only_when_they_are_its_own():
+    given = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"ok": True, "result": {}})))
+    bot = Bot("123:SECRET", given)
+    bot.reconnect()
+    assert bot._http is given  # a test's, or a caller's: left alone
+    own = Bot("123:SECRET")
+    first = own._http
+    own.reconnect()
+    assert own._http is not first

@@ -45,7 +45,7 @@ from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, TESTED, Remote, tested_path
-from .purifier import Bluetooth, Purifier, Watch
+from .purifier import WATCH_FILE, Bluetooth, Purifier, Watch
 from .screen import Screen
 
 # What it needs, to be granted under [home.plugins.my_house] grant: the blaster's key, Home Assistant (the AC's light
@@ -158,7 +158,9 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         if not (context.background and context.tell):
             return Purifier(spec["name"], link)
         # The voice assistant's watches its Bluetooth, and tells the maintainers when it goes quiet.
-        watch = Watch(spec["name"], link.heard, context.tell, restart=link.restart).start()
+        watch = Watch(
+            spec["name"], link.heard, context.tell, restart=link.restart, memory=context.root / WATCH_FILE
+        ).start()
         return Purifier(spec["name"], link, answered=watch.answered)
 
     return {"ac": ac, "remote": remote, "firetv": firetv, "purifier": purifier}

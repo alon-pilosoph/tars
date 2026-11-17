@@ -551,6 +551,7 @@ function build(): DemoData {
     id,
     started,
     via: null,
+    room: ({ 1: "bedroom", 3: "bedroom", 8: "bedroom" } as Record<number, string>)[id] ?? "living room",
     speaker,
     wake,
     turns: turns.map(([who, text, extra], n) => ({
@@ -953,6 +954,7 @@ function stress(d: DemoData) {
     id: 12,
     started: now - 90,
     via: null,
+    room: "living room",
     speaker: alon,
     wake: {
       event_id: 99,
@@ -1291,6 +1293,7 @@ function demoHealth(at: number): Health {
       services: [],
       services_asked: at - 2,
       backup: null,
+      bodies: [],
       usage: {
         month: monthOf(at),
         cost: 0,
@@ -1351,6 +1354,33 @@ function demoHealth(at: number): Health {
       { name: "The timer", status: "ok", detail: "running", fix: "" },
     ],
     usage: demoUsage(at, trouble),
+    bodies: [
+      {
+        room: "bedroom",
+        device: "bedroom-3f9a1c",
+        kind: "pi",
+        connected: true,
+        since: at - 5 * 3600,
+        last_seen: at - 5 * 3600,
+      },
+      trouble
+        ? {
+            room: "kitchen",
+            device: "kitchen-81d0e2",
+            kind: "atom",
+            connected: false,
+            since: at - 40 * 60,
+            last_seen: at - 26 * 3600,
+          }
+        : {
+            room: "kitchen",
+            device: "kitchen-81d0e2",
+            kind: "atom",
+            connected: true,
+            since: at - 26 * 3600,
+            last_seen: at - 26 * 3600,
+          },
+    ],
     machine: demoMachine(trouble),
   };
 }

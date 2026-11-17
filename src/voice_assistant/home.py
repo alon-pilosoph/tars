@@ -111,6 +111,7 @@ class Request:
     by_door: str = ""
     changed: Callable[[str, str], None] | None = None
     held_for_web: Callable[[], None] | None = None
+    room: str = ""  # the room whose body heard it, by voice (rooms.py); "" with one room, or in a chat
 
     def answered(self, what: str, answer: str) -> str:
         """`answer`, the house's to the change `what`, told to `changed`, and handed back."""

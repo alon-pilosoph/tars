@@ -326,6 +326,12 @@ def main():
     )
     p.add_argument("--only-if-better", action="store_true", help="don't ask: install it only if it's better")
     p.add_argument("--force", action="store_true", help="install even if it isn't better (after showing why)")
+    p.add_argument("--no-install", action="store_true", help="train and compare only: never install (an experiment)")
+    p.add_argument(
+        "--train-args",
+        default="",
+        help='more for stage1.train, e.g. "--negative-weight 40 --extra mined:10 --extra speech:5" (a better base)',
+    )
     args = p.parse_args()
     layout = Layout(args.data)
     missing = not_ready(layout)
@@ -357,7 +363,8 @@ def main():
     log(f"the pair in use: {current.version}")
 
     mww = layout.mww / ".venv" / "bin" / "python"
-    for step in (["training.stage1.features", "household", run], ["training.stage1.train", "household", "--run", run]):
+    train = ["training.stage1.train", "household", "--run", run, *args.train_args.split()]
+    for step in (["training.stage1.features", "household", run], train):
         log(f"wake model: {' '.join(step)}")
         subprocess.run(
             ["nice", "-n", "19", str(mww), "-m", *step, "--data", str(layout.root)],
@@ -399,6 +406,9 @@ def main():
             indent=1,
         )
     )
+    if args.no_install:
+        log(f"{'better' if better else 'not better'}; not installed (--no-install): the run is in {run_dir}")
+        return
     if better:
         log("better for you, and no worse for anyone else: installing")
     elif args.force:

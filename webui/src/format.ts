@@ -1,5 +1,6 @@
 import type {
   AnsweredBy,
+  BodyHealth,
   CheckLine,
   ConversationWake,
   FailedAt,
@@ -75,6 +76,17 @@ export function duration(seconds: number) {
 export const ago = (ts: number, now: number) => (now - ts < 10 ? "just now" : `${duration(now - ts)} ago`);
 
 export const itemName = (i: Item) => i.title || i.name || "";
+
+/** A room as it's shown: "living room" is "Living room". */
+export const roomName = (room: string) => room.charAt(0).toUpperCase() + room.slice(1);
+
+/** A body on the Status page: connected for how long, or since when it's been gone. */
+export function bodyLine(b: BodyHealth, now: number): HealthLine {
+  if (b.connected) return { text: b.since ? `Connected for ${duration(now - b.since)}` : "Connected", bad: false };
+  if (b.since) return { text: `Gone for ${duration(now - b.since)}`, bad: true };
+  if (b.last_seen) return { text: `Not connected; last connected ${ago(b.last_seen, now)}`, bad: true };
+  return { text: "Never connected yet", bad: true };
+}
 
 const ANSWERED_BY: Record<AnsweredBy, string> = {
   quick: "Answered by the quick model (Qwen).",

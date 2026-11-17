@@ -17,8 +17,10 @@ from .events import ASKED, DAY_S, NOT_FOR_US, SAID_NOTHING, EventLog
 
 
 class Journal:
-    def __init__(self, events: EventLog | None = None):
-        self.events = events
+    def __init__(self, events: EventLog | None = None, room: str | None = None):
+        """`room`: whose conversations these are (rooms.py: one journal per room, since a journal follows one
+        conversation at a time); None in a home with one."""
+        self.events, self.room = events, room
         self.conversations = ConversationLog(events) if events else None
         self._wake: int | None = None  # id of the logged wake being answered
         self._said: list[tuple[float, str]] = []  # "Yes, Alon?" / "Did you call me?": kept only if someone answers
@@ -66,7 +68,7 @@ class Journal:
         self._wake = None
         if self.events:
             self._wake = self._safe(
-                self.events.add_wake, pcm, score, outcome, heard, confidence, wake_model, check_model
+                self.events.add_wake, pcm, score, outcome, heard, confidence, wake_model, check_model, room=self.room
             )
 
     def unprompted(self) -> None:
@@ -134,7 +136,7 @@ class Journal:
             self._gone = True
 
     def _start(self, said: list[tuple[float, str]], ts: float) -> int:
-        return self.conversations.start(self._wake, ts=said[0][0] if said else ts, said=said)
+        return self.conversations.start(self._wake, ts=said[0][0] if said else ts, said=said, room=self.room)
 
     def answered(
         self,

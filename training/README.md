@@ -122,12 +122,15 @@ $E -m training.data.real_lookalikes                      # "stars", "cars"... cu
 $E -m training.data.vc_librispeech --per-speaker 80      # needs clean.py
 $E -m training.data.prep_vctk && $E -m training.data.vc_vctk --per-speaker 60
 
-# 4. Stage 1 (features ~2 h, training 20-45 min)
+# 4. Stage 1 (features ~2 h; the shipped recipe ~9 h, a single plain run 20-45 min)
 $M -m training.stage1.features synthetic
-$M -m training.stage1.train generic
+sh training/stage1/recipe.sh                             # the shipped generic stage 1 (below)
 $M -m training.stage1.features user --user $U && $M -m training.stage1.train personal   # personal only
 
-# 5. Stage 2 (a few minutes, plus its own held-out test)
+# 5. Stage 2 (a few minutes, plus its own held-out test; --hard: about 10 minutes and People's Speech first)
+uv run --group training --with pyarrow python -m training.data.peoples_speech          # ~145 h of conversation
+$M -m training.stage1.features cuts conv --folder $D/peoples_speech/wav               # DATA/aug/conv_negatives
+$E -m training.stage2.train_check generic --hard --threshold 0.35 --user $U   # the shipped one: models/generic-hard/
 $E -m training.stage2.train_check generic --user $U         # --user: test on the owner's recordings too
 $E -m training.stage2.train_check personal --user $U        # personal only
 
@@ -154,6 +157,24 @@ uv run --group training python -m training.hub export OUT && uv run --group trai
 ```
 
 Tip: for long steps, `nohup nice -n 19 ... > log 2>&1 &`, and keep it to two heavy jobs at once.
+
+**The shipped generic stage 1** (`training/stage1/recipe.sh`). A plain run of microWakeWord is a lottery: the same
+recipe gave models catching anywhere from 59% to 93% of the owner's takes over a real TV (voice 10 dB above it),
+because the moment its own validation keeps is often not a good one. The recipe takes the luck out in three steps,
+each measured on real TV recordings that never trained anything ([results](../docs/wake-word.md#the-shipped-generic-pair)):
+
+1. **Harder negatives.** Real read speech (LibriSpeech cuts, `features speech-negatives`) and a first model's own
+   false wakes on the training audio (`stage1/mine.py`, hard-negative mining), at weights 5 and 10, with every
+   negative weighted 40 against the positives (`--negative-weight 40`).
+2. **Teachers, averaged.** `train --snapshots 2000` keeps the weights every 2,000 steps; `export_snapshots --average 5`
+   makes the mean of the last five into one model (stochastic weight averaging). Over a real TV with the voice level
+   with it, four runs' averages caught 49-54% of the owner's takes, where the same runs' own picks caught 29-55%.
+   Three teachers are the plain recipe, one has loud talk and TV in its positives (`features synthetic --loud`:
+   backgrounds mostly people talking, -10 to 10 dB).
+3. **A student taught by all four** (`train --teacher A:W,B:W,... --teacher-small --alpha 0.5`): each batch's targets
+   are half the labels and half the teachers' averaged scores, so the one small model learns what the committee
+   knows; trained with `--loud` and averaged over its last five snapshots like the teachers. It is the same size as
+   any stage 1 (69 KB; the 8-bit file an ESP32 runs scores the same).
 
 **Training several stage 1 candidates.** Each run of step 4 overwrites `DATA/models/<setup>/hey_tars.tflite`, so copy
 each candidate aside (to `DATA/runs/<name>.tflite`, next to the pair in use copied as `DATA/runs/shipped.tflite`),
@@ -249,11 +270,13 @@ them, and the end-to-end test then uses all 30 (`--all-user`).
 
 - **Stage 2 is deterministic.** `stage2/train_check.py generic` on the same data, in the environment
   `setup/eval_env.sh` pins, gives the same weights and bias.
-- **Stage 1 is not.** microWakeWord's augmentation is unseeded, and candidates trained on the same data and recipe
-  differ substantially: across 30 retrains, both stages together answered between 19% and 73% of the owner's
-  training-half takes, averaged over the 8 conditions (the shipped pair: 64%). So a rebuild gives a candidate, not
-  the shipped file, and is judged on the test sets like any other; a difference between two single runs that is
-  smaller than this spread isn't evidence.
+- **Stage 1 is not.** microWakeWord's augmentation is unseeded. The shipped recipe's snapshot averaging keeps reruns
+  close: a second run of the whole student step caught 93/83/70/31% of the owner's takes over the real TV (the shipped
+  one: 93/81/63/28%), where that run's own checkpoint pick caught 72/56/35/12%. A single plain run differs
+  substantially: across 30 retrains, both stages together answered between 19% and 73% of the owner's training-half
+  takes, averaged over the 8 conditions (the shipped pair: 64%). So a rebuild gives a candidate, not the shipped file,
+  and is judged on the test sets like any other; a difference between two single runs that is smaller than this spread
+  isn't evidence.
 - **Environments are pinned** to exact versions, kept at the newest that work: `setup/mww-constraints.txt` and
   `setup/oww-constraints.txt`, and the versions in `setup/tts_env.sh` and `setup/eval_env.sh`. Where the Python
   isn't the newest, something holds it back: microWakeWord's environment is on 3.13 until TensorFlow 2.22 is out

@@ -76,6 +76,9 @@ them on a port of its own; off (the default), nothing listens.
   `::test_an_address_that_keeps_failing_waits_longer_each_time`, `::test_a_frame_too_big_or_broken_closes_the_body`,
   `::test_a_flood_of_audio_keeps_only_the_newest_30_seconds`,
   `::test_a_body_gone_in_any_phase_leaves_the_listener_ready_for_the_next`.
+- **Unlocking from another room:** a paired body's room counts as "at home, by voice", like the Pi's own
+  speakerphone: the trusted voice, recognised surely, saying "unlock", then the digits, as anywhere at home
+  (`Request.room` says which room; `_may_unlock` treats every room alike). The web page (P6) will never count.
 - **A stolen key** (copied off the body): at home, its holder can be that room's body. They can talk to TARS as
   someone in that room would, with the same guards as by voice (the front door still needs its challenge, an order
   still needs a tap on Telegram), and hear TARS's replies to it. `--body-remove ROOM` refuses it from then on;

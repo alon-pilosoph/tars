@@ -381,6 +381,7 @@ class Clock:
     def __init__(self, reminders: Reminders, every_s: float = 2.0, on_read: Callable[[list[dict]], None] | None = None):
         self._reminders, self._every_s, self._on_read = reminders, every_s, on_read
         self._next: float | None = None
+        self._active: list[dict] = []  # what the last read found active, for which room says each (rooms.py)
         self._holds: dict[int, float] = {}
         self._holding = threading.Lock()  # guards _holds: hold() runs on the wake loop, read() on the clock's thread
         self._paused_until = 0.0
@@ -412,6 +413,7 @@ class Clock:
                 (max(r["next_at"], holds.get(r["id"], 0.0)) for r in active if r["next_at"] is not None),
                 default=None,
             )
+            self._active = active
             if self._on_read:
                 self._on_read(active)
         except Exception as e:  # noqa: BLE001 - a locked or broken table, or the audio made ahead failing
@@ -435,6 +437,17 @@ class Clock:
         now = time.time() if now is None else now
         at = self._next
         return now >= self._paused_until and at is not None and at <= now
+
+    def due(self, now: float | None = None) -> list[dict]:
+        """The reminders due now by the last read, holds kept: which room says each is the desk's (rooms.py)."""
+        now = time.time() if now is None else now
+        if now < self._paused_until:
+            return []
+        with self._holding:
+            holds = dict(self._holds)
+        return [
+            r for r in self._active if r["next_at"] is not None and max(r["next_at"], holds.get(r["id"], 0.0)) <= now
+        ]
 
 
 def snoozable(r: dict) -> bool:

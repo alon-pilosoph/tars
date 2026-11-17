@@ -21,11 +21,9 @@ On the brain (the Pi, or any machine running TARS):
 
 ```toml
 # config.local.toml
-[audio]
-enabled = false   # until rooms: a brain serves either its own microphone or a body in another room
-
 [bodies]
 enabled = true
+room = "living room"   # this machine's own speakerphone's room; [audio] enabled = false for a brain with none
 ```
 
 `uv run voice-assistant --body-add Kitchen` prints the body's key. Then `voice-assistant` (the voice process) listens
@@ -64,6 +62,36 @@ One body per room; to change one, remove it and add it again. `[bodies]` in `con
 default: nothing listens), and sets the port (8766). `--check` says whether bodies may connect, and has a line for
 each one paired with when it last connected. What a key lets someone do, and what it doesn't:
 [security](security.md#a-network-body-or-something-posing-as-one).
+
+## Rooms
+
+Each body is a room of its own, and so is the brain's own speakerphone ([`rooms.py`](../src/voice_assistant/rooms.py)).
+Every room has its own assistant, on its own thread, with its own conversation (its own brain and journal), so
+someone in the bedroom and someone in the living room can talk to TARS at the same time; a conversation stays in the
+room it started in. What they share: the voice, the speech to text, who's who, the reminders and skills, and the
+house, whose changes go one at a time.
+
+What TARS says by itself goes to one room, and is said once:
+
+- **A reminder, or a skill's line, for someone** goes to the room where they were last heard (by their voice, in the
+  last 2 hours); otherwise to the **main room**. Only a room's own hearing counts: the routers know who's home, not
+  which room they're in.
+- **What's for nobody in particular** (an announcement, a household skill) goes to the main room.
+- **A room whose body is gone** is given nothing; what it had taken and not yet said goes back, and to another
+  room. A muted room is passed over for one that isn't, but a home where every room is muted still hears its
+  reminders, as a muted TARS always has.
+- Two rooms can't both take the same thing: a room takes it under the desk's lock, and it's that room's until it's
+  said. A take that's never finished (a room that stopped) is free again after 2 minutes.
+
+The main room is `[bodies] main_room`, or this machine's room (`[bodies] room`), or, with no microphone of its own,
+the room paired first. Each conversation is kept with its room. The brain is told which room a request came from
+(`[Room: bedroom]`, and `Request.room`), so it knows; choosing "the light" by the room comes later. With `[bodies]`
+off, there's one room and nothing about TARS changes.
+
+The web UI shows the room under each conversation's time and in its last line, and the Status page lists the bodies:
+each one's room, and whether it's connected (the voice process writes `bodies.json` beside the event log as they come
+and go); `--check` says the same. Not yet: wakes heard by a body that runs only the wake word aren't kept in the wake
+log (its conversations are); the Pi's buttons and the control socket act on its own room only.
 
 ## How fast
 

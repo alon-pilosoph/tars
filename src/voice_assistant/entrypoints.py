@@ -20,6 +20,7 @@ from .wiring import (
     Household,
     api_key,
     ask_to_say,
+    brains,
     browse_tool,
     chat_brain_config,
     chat_home,
@@ -30,6 +31,7 @@ from .wiring import (
     listen_for_update_taps,
     local_body,
     local_first,
+    main_room,
     maintainer_chats,
     make_backup,
     make_brain,
@@ -49,10 +51,10 @@ from .wiring import (
     make_s3,
     make_speaker_id,
     need_voice,
-    network_bodies,
     own_speaker,
     phrase_folder,
     reminder_tools,
+    serve_rooms,
     skill_clock,
     snapshot_files,
     spotify_login,
@@ -672,6 +674,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     need_voice()
     from .assistant import Announcements, Assistant
     from .journal import Journal
+    from .rooms import MAIN, Rooms
 
     household = Household(cfg, root)
     events = household.events
@@ -693,76 +696,74 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
 
         offer_welcome(skills)
     myself = household.myself
-    transcriber, brain, voice = make_pipeline(
-        cfg,
-        root,
-        reminders=reminders,
-        home=home,
-        browser=browser,
-        feeds=household.feeds,
-        skills=skills,
-        myself=myself,
-        pages=make_pages(cfg, events, browser),
-    )
+    tools = {"reminders": reminders, "home": home, "browser": browser, "feeds": household.feeds, "skills": skills,
+             "myself": myself, "pages": make_pages(cfg, events, browser)}  # fmt: skip
+    transcriber, brain, voice = make_pipeline(cfg, root, **tools)
     commands = house_commands(cfg, root, home)
     if commands and cfg.home.local_first:
         transcriber = local_first(cfg, root, commands)
     elif cfg.home.local_first:
         print("(house commands: none, with no devices in the house; local_first is off, the cloud hears every request)")
-    journal = Journal(events)
-    journal.keep_pruning(cfg.learning.keep_audio_days)
+    rooms_on = cfg.bodies.enabled
+    here = cfg.bodies.room if rooms_on else MAIN  # this machine's microphone's room
+    journal = Journal(events, room=here if rooms_on else None)
+    journal.keep_pruning(cfg.learning.keep_audio_days)  # once: every room's journal writes to the same log
+    # Shared by every room (rooms.py): the desk says which room says what's due, each said once.
+    rooms = Rooms(main_room(cfg, events.store) if rooms_on else here)
+    if network:  # no microphone of its own: every room, the main one too, is there once its body connects
+        rooms.connected(rooms.main, False)
+    clock = skill_clock(skills, "aloud", home, presence, myself)
+    clocks.extend([clock] if clock else [])
+    elsewhere = make_chat_when_out(cfg, presence, reminders)
+    new_brain = brains(cfg, root, **tools)
 
-    def assistant_on(body) -> Assistant:
-        made = Assistant(
+    def assistant_on(body, room: str, room_journal: Journal, room_brain) -> Assistant:
+        return Assistant(
             body,
             transcriber,
-            brain,
+            room_brain,
             voice,
             speaker_id,
             name_threshold=cfg.speaker.wake_threshold,
-            journal=journal,
+            journal=room_journal,
             humor=cfg.llm.humor,
             phrase_folder=phrase_folder(cfg, root),
             reminders=reminders,
             ack_window_s=cfg.reminders.ack_window_s,
             announcements=announcements,
-            elsewhere=make_chat_when_out(cfg, presence, reminders),
-            skill_clock=(clock := skill_clock(skills, "aloud", home, presence, myself)),
+            elsewhere=elsewhere,
+            skill_clock=clock,
             commands=commands,
+            rooms=rooms,
+            room=room,
         )
-        clocks.extend([clock] if clock else [])
-        return made
 
-    if network:
-        from .body import BodyGone
-
-        bodies = network_bodies(cfg, root, events.store, voice.sample_rate, journal)
-        body, idle_message = next(bodies)
-        assistant = assistant_on(body)
-        while True:  # a body that goes ends its conversation, never TARS: it's waited for again
-            try:
-                assistant.run_forever(
-                    idle_message,
-                    follow_up_s=cfg.recorder.follow_up_s,
-                    greet_after_s=cfg.recorder.greet_after_s,
-                    greet=cfg.recorder.greet,
-                )
-            except BodyGone as e:
-                print(f"(the body went: {e}; waiting for it to come back)", flush=True)
-                assistant.body, idle_message = next(bodies)
-    if cfg.bodies.enabled:
-        print("(bodies: this home has a microphone of its own: a body in another room waits for rooms; not listening)")
-    with local_body(cfg, root, voice.sample_rate, push_to_talk, journal) as (body, idle_message):
-        assistant = assistant_on(body)
-        set_muted = body.set_muted = start_buttons(cfg, volume, assistant, root)
-        if not push_to_talk:
-            from .control import Server
-
-            # Recording sessions, from the web UI; muting and unmuting, from a chat.
-            Server(events.store.folder, assistant.control_ops(set_muted))
+    def wake_loop(assistant: Assistant, idle_message: str) -> None:
         assistant.run_forever(
             idle_message,
             follow_up_s=cfg.recorder.follow_up_s,
             greet_after_s=cfg.recorder.greet_after_s,
             greet=cfg.recorder.greet,
         )
+
+    if rooms_on:  # every paired body a room of its own, each with its own brain and journal
+        serve_rooms(
+            cfg,
+            root,
+            events.store,
+            voice.sample_rate,
+            rooms,
+            lambda body, room: assistant_on(body, room, Journal(events, room=room), new_brain()),
+            wake_loop,
+        )
+    if network:  # no microphone of its own: the rooms are all there is
+        threading.Event().wait()
+    with local_body(cfg, root, voice.sample_rate, push_to_talk, journal) as (body, idle_message):
+        assistant = assistant_on(body, here, journal, brain)
+        set_muted = body.set_muted = start_buttons(cfg, volume, assistant, root)
+        if not push_to_talk:
+            from .control import Server
+
+            # Recording sessions, from the web UI; muting and unmuting, from a chat.
+            Server(events.store.folder, assistant.control_ops(set_muted))
+        wake_loop(assistant, idle_message)
