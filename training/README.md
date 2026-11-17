@@ -271,11 +271,12 @@ them, and the end-to-end test then uses all 30 (`--all-user`).
 - **Stage 2 is deterministic.** `stage2/train_check.py generic` on the same data, in the environment
   `setup/eval_env.sh` pins, gives the same weights and bias.
 - **Stage 1 is not.** microWakeWord's augmentation is unseeded. The shipped recipe's snapshot averaging keeps reruns
-  close (four teachers within 6 points of each other on the real TV tests); a single plain run differs substantially:
-  across 30 retrains, both stages together answered between 19% and 73% of the owner's training-half takes, averaged
-  over the 8 conditions (the shipped pair: 64%). So a rebuild gives a candidate, not the shipped file, and is judged
-  on the test sets like any other; a difference between two single runs that is smaller than this spread isn't
-  evidence.
+  close: a second run of the whole student step caught 93/83/70/31% of the owner's takes over the real TV (the shipped
+  one: 93/81/63/28%), where that run's own checkpoint pick caught 72/56/35/12%. A single plain run differs
+  substantially: across 30 retrains, both stages together answered between 19% and 73% of the owner's training-half
+  takes, averaged over the 8 conditions (the shipped pair: 64%). So a rebuild gives a candidate, not the shipped file,
+  and is judged on the test sets like any other; a difference between two single runs that is smaller than this spread
+  isn't evidence.
 - **Environments are pinned** to exact versions, kept at the newest that work: `setup/mww-constraints.txt` and
   `setup/oww-constraints.txt`, and the versions in `setup/tts_env.sh` and `setup/eval_env.sh`. Where the Python
   isn't the newest, something holds it back: microWakeWord's environment is on 3.13 until TensorFlow 2.22 is out
