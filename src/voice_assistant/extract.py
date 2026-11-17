@@ -193,16 +193,30 @@ class RequestFocus:
         self._extractor, self._detector, self._transcribe = extractor, detector, transcribe
         self._share, self._level_db = share, level_db
 
-    def for_wake(self, audio: np.ndarray | None, who: str | None) -> FocusedSpeech | None:
-        if audio is None or not who:
-            return None
-        reference = next((v for name, v in self._extractor.voices.items() if name.lower() == who.lower()), None)
-        if reference is None:
+    def for_wake(
+        self, audio: np.ndarray | None, who: str | None, identify: Callable[[np.ndarray], str | None] | None = None
+    ) -> FocusedSpeech | None:
+        """Their FocusedSpeech, or None: not said over other speech, or not someone enrolled. Over a TV, speaker ID
+        often can't name anyone from the raw wake (`who` None); then each enrolled voice is taken out of it, and the
+        one `identify` (speaker ID) names as that same person is who woke it: a wrong reference gives back something
+        that's nobody's, so a guest is never mistaken for them."""
+        if audio is None:
             return None
         self._detector.reset()
         if not mixed(audio, self._detector, self._share, self._level_db):
             return None
-        return FocusedSpeech(self._extractor, reference, self._detector)
+        voices = {name.lower(): v for name, v in self._extractor.voices.items()}
+        if who:
+            reference = voices.get(who.lower())
+        elif identify:
+            reference = next((ref for name, ref in voices.items() if self._is(audio, ref, name, identify)), None)
+        else:
+            reference = None
+        return None if reference is None else FocusedSpeech(self._extractor, reference, self._detector)
+
+    def _is(self, audio: np.ndarray, reference: np.ndarray, name: str, identify) -> bool:
+        voice = self._extractor.extract(audio, reference)
+        return voice is not None and (identify(voice) or "").lower() == name
 
     def transcribe(self, focus: FocusedSpeech, raw: bytes) -> str:
         voice = focus.pcm()

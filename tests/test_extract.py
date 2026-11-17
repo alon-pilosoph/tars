@@ -199,7 +199,7 @@ def test_a_conversation_woken_over_the_tv_hears_one_voice_and_tells_the_brain(mo
             pass
 
     class Maker:
-        def for_wake(self, audio, who):
+        def for_wake(self, audio, who, identify=None):
             return Focus()
 
         def transcribe(self, focus, pcm):
@@ -212,3 +212,19 @@ def test_a_conversation_woken_over_the_tv_hears_one_voice_and_tells_the_brain(mo
     assert isinstance(assistant.body.speech, Focus)
     assert brain.asked and brain.asked[0].startswith(MIXED_NOTE) and "turn on the lights" in brain.asked[0]
     assert assistant._focus is None  # only for that conversation
+
+
+def test_over_a_tv_the_waker_is_found_by_naming_their_extracted_voice(tmp_path):
+    from voice_assistant.extract import FocusedSpeech, RequestFocus
+
+    http, _ = server(lambda mix, enroll: enroll[: len(mix)].astype(np.float32) / 32768)
+    ex = Extractor("http://x/extract", enrolled(tmp_path, "alon", "stacey"), 1.0, 0.05, http)
+    rf = RequestFocus(ex, Detector(), lambda pcm: "text", 0.3, 12.0)
+    # Speaker ID names the extracted voice as Stacey only when Stacey's reference was used.
+    stacey = ex.voices["stacey"]
+
+    def identify(voice):
+        return "Stacey" if np.array_equal(voice[:100] != 0, (stacey[:100] != 0)) and voice.any() else None
+
+    assert isinstance(rf.for_wake(window(2000, 3000), None, identify), FocusedSpeech)
+    assert rf.for_wake(window(2000, 3000), None, lambda voice: None) is None  # nobody's: a guest
