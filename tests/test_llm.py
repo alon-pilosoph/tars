@@ -1423,3 +1423,11 @@ def test_a_reply_that_ran_out_after_saying_something_goes_to_openai_not_again_to
     said = "".join(brain.stream_reply("plan the trip"))
     assert said.startswith("Here's the plan, day one") and brain.answered_by == llm.FALLBACK
     assert cerebras.requests == []  # starting again there would say it twice
+
+
+def test_a_request_that_could_mean_two_things_gets_a_question_not_a_refusal():
+    from voice_assistant.home import HOME_RULES
+    from voice_assistant.llm import ASK_DONT_REFUSE, abilities
+
+    assert ASK_DONT_REFUSE in abilities(["say the time"], [], ["make phone calls"])
+    assert "The bedroom or Ari's room?" in HOME_RULES and "change nothing yet" in HOME_RULES
