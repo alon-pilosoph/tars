@@ -1,0 +1,18 @@
+{
+  "type": "micro",
+  "wake_word": "Hey TARS",
+  "author": "TARS",
+  "website": "https://tars.alonp.dev",
+  "model": "hey_tars.tflite",
+  "trained_languages": [
+    "en"
+  ],
+  "version": 2,
+  "micro": {
+    "probability_cutoff": 0.47,
+    "feature_step_size": 10,
+    "sliding_window_size": 1,
+    "tensor_arena_size": 60000,
+    "minimum_esphome_version": "2024.7.0"
+  }
+}
