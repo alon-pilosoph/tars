@@ -19,6 +19,7 @@ import numpy as np
 
 from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
 from .models import fetch
+from .versions import INSTALLED
 from .wake import DUE, Due, WakeModel, wake_word_trigger
 
 if TYPE_CHECKING:
@@ -201,6 +202,11 @@ class PhraseVerifier:
         return (ASK if close else IGNORE), heard
 
 
+def heard_nothing(heard: str) -> bool:
+    """The recognizer made out no words: only its catch-all for unclear speech, or nothing."""
+    return heard == "nothing clear" or not [w for w in heard.split() if w != "[unk]"]
+
+
 def end_of_name(words: list[dict], names: Collection[str] | None = None) -> float | None:
     """Where the name ends, in seconds into the audio. With `names` (a phrase that starts with "hey"): the end of the
     word straight after the last "hey", if it's one of them; anything else there may be the request itself. Without:
@@ -297,6 +303,9 @@ class NearMisses:
         return None
 
 
+SURE_BLOCKS = 4  # how long a wake listens on before the check when `sure` is on: 4 x 80 ms
+
+
 class VerifiedTrigger:
     last_audio: np.ndarray | None = None  # what woke it, for speaker ID
     # On a confirmed wake, what followed the name in the wake window: found while TARS gets on with it.
@@ -310,10 +319,12 @@ class VerifiedTrigger:
         journal: Journal | None = None,
         make_trigger: Callable[[str, float], WakeModel] = wake_word_trigger,
         make_verifier: Callable[[str, Path], PhraseVerifier] = PhraseVerifier,
+        sure: float = 0.0,
     ):
         """The wake model, threshold, check and check window come from the pair `pairs` has in use, and follow it
-        while TARS runs."""
-        self._pairs, self._models_dir, self._journal = pairs, models_dir, journal
+        while TARS runs. `sure` (0 = off): a wake the installed model scored at least this high stands when the check
+        heard no words at all, as over a loud TV, where the recognizer often makes out nothing; heard words decide."""
+        self._pairs, self._models_dir, self._journal, self._sure = pairs, models_dir, journal, sure
         self._make_trigger, self._make_verifier = make_trigger, make_verifier
         self._stamp, self.pair, self._verifier = None, None, None
         self._follow_versions(quiet=True)
@@ -346,6 +357,13 @@ class VerifiedTrigger:
                 if due and due():
                     return DUE
                 continue
+            if self._sure and self.pair.version == INSTALLED:
+                # The model is surest a moment after it first fires, as the rest of the name comes in: hear that
+                # moment, so a wake the check can't make out is judged on how sure the model got.
+                for _ in range(SURE_BLOCKS):
+                    block = mic.read()
+                    recent.add(block)
+                    score = max(score, self._trigger.score(block))
             self._trigger.reset()
             if (outcome := self.confirm(recent.audio(), score)) != IGNORE:
                 return outcome
@@ -355,6 +373,8 @@ class VerifiedTrigger:
         ASK or IGNORE, kept in the journal. Not IGNORE: `last_audio` is `audio`, and on ANSWER `after_name` is being
         found. Also for a network body that ran only the wake model itself (bodylink.RemoteTrigger)."""
         outcome, heard = self._verifier.decide(audio)
+        if outcome == IGNORE and self._sure and self.pair.version == INSTALLED and score >= self._sure:
+            outcome = ANSWER if heard_nothing(heard) else IGNORE
         if self._journal:
             self._journal.wake(
                 audio,

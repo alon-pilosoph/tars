@@ -37,6 +37,10 @@ check_model = "models/generic/hey_tars_check.json"
 # Seconds of audio the double-check hears. The generic model can fire a moment after the phrase ends, so it
 # needs 3.0 (measured: 94% of other voices vs 81% at 2.0); the personal one does best at 2.5.
 check_window_s = 3.0
+# Over a loud TV the double-check often makes out no words at all, even when the wake model is very sure. A wake this
+# model scores at least this high stands then; any words it does hear (a lookalike, other speech) still decide.
+# 0 = off. Only for the model above, and set for it: a household's own models never use it.
+sure = 0.0
 
 [recorder]
 # How sure the speech detector (Silero VAD, local) must be that it hears speech, 0-1.

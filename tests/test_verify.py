@@ -324,3 +324,54 @@ def test_what_sounds_like_the_name():
         assert sounds_like_name(heard), heard
     for heard in ["nothing clear", "[unk]", "there", "jarvis", "stop", "[unk] [unk] there", ""]:
         assert not sounds_like_name(heard), heard
+
+
+def sure_of(verifier, score: float, sure: float, version: str = INSTALLED) -> str:
+    """The double-check's outcome for a wake scored `score`, with `sure` set, on a pair of `version`."""
+    trigger = FakeTrigger(fire_at=[])
+    pair = Pair(version, "", "", None, trigger.threshold, 2.5, Path(""))
+    v = VerifiedTrigger(FixedPair(pair), Path("models"), make_trigger=lambda path, t: trigger,
+                        make_verifier=lambda phrase, folder: verifier, sure=sure)  # fmt: skip
+    return v.confirm(SILENCE, score)
+
+
+@pytest.mark.parametrize("heard", ["", "[unk]", "[unk] [unk]"])
+def test_a_very_sure_wake_stands_when_the_check_heard_no_words(hearing, heard):
+    assert sure_of(hearing(heard), 0.9, sure=0.88) == ANSWER
+
+
+@pytest.mark.parametrize("heard", ["[unk] hey bars", "lars", "what's the weather"])
+def test_heard_words_still_decide_however_sure_the_wake(hearing, heard):
+    assert sure_of(hearing(heard), 0.99, sure=0.88) == sure_of(hearing(heard), 0.99, sure=0.0) != ANSWER
+
+
+def test_a_wake_below_sure_still_needs_the_check(hearing):
+    assert sure_of(hearing("[unk]"), 0.87, sure=0.88) == IGNORE
+
+
+def test_sure_is_off_by_default_and_for_a_households_own_models(hearing):
+    assert sure_of(hearing("[unk]"), 1.0, sure=0.0) == IGNORE
+    assert sure_of(hearing("[unk]"), 1.0, sure=0.88, version="v2") == IGNORE
+
+
+class Rising(FakeTrigger):
+    """Fires at block 3 just over the threshold, and is surer over the next blocks."""
+
+    threshold = 0.6
+
+    def score(self, block):
+        self.n += 1
+        return {3: 0.62, 4: 0.8, 5: 0.93, 6: 0.7}.get(self.n, 0.0)
+
+
+def test_with_sure_on_the_check_judges_the_wake_on_how_sure_it_got(hearing):
+    trigger = Rising(fire_at=[])
+    pair = Pair(INSTALLED, "", "", None, trigger.threshold, 2.5, Path(""))
+    v = VerifiedTrigger(FixedPair(pair), Path("models"), make_trigger=lambda path, t: trigger,
+                        make_verifier=lambda phrase, folder: hearing("[unk]"), sure=0.9)  # fmt: skip
+    assert v.wait(SilentMic(20)) == ANSWER and trigger.n == 3 + verify.SURE_BLOCKS
+
+
+def test_without_sure_the_check_runs_as_soon_as_the_wake_fires(hearing):
+    trigger = FakeTrigger(fire_at=[3])
+    assert listening(trigger, hearing("hey tars")).wait(SilentMic(20)) == ANSWER and trigger.n == 3

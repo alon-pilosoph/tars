@@ -382,6 +382,16 @@ Moonshine features would help in loud babble, but at a size and per-check time j
 2 s and 94% at 3 s. The generic setup uses 3 s and the personal one 2.5 s. Waiting 240 ms after a wake before running
 the check did slightly worse, so the check runs at once.
 
+**A very sure wake the check can't make out.** With the voice at or under the TV, the recognizer often makes out no
+words at all (only its catch-all for unclear speech) even when the wake model is very sure. `[wake] sure` lets such a
+wake stand when the model scored at least that high; any words the recognizer does hear, a lookalike or other speech,
+still decide, so "hey cars" is turned down as before. A model is surest about 0.3 s after it first fires, as the rest
+of the name comes in, so with `sure` on, TARS listens 4 more blocks (320 ms) and judges the wake on the highest score.
+Measured on the owner's 34 takes over his TV with an openWakeWord-embedding stage 1 of ours, streamed as it runs live:
+answered 14 → 20 at `sure = 0.88`, with no false answers on two real TV hours, the lab's TV and audiobook hours, 354
+kept clips of other sounds and 16 lookalike takes (the highest no-wake score with nothing made out was 0.82). The
+value belongs to one model, so it is off (0) by default and household-trained models never use it.
+
 ## Limitations
 
 - **The owner's soft *t*** is the main reason for the generic setup's missed takes, and stage 1 never fired on most
