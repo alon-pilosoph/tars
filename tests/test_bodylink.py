@@ -409,6 +409,7 @@ def test_a_body_wake_checked_here_is_kept_with_its_room_audio_and_the_bodys_mode
 
     trigger = VerifiedTrigger.__new__(VerifiedTrigger)
     trigger._journal = None  # the shared checker has none of its own
+    trigger._sure = None  # no "sure" rule
     trigger._verifier = types.SimpleNamespace(decide=lambda audio: (IGNORE, "hey cars"), last_confidence=0.4)
     trigger.pair = types.SimpleNamespace(wake_model="models/generic/hey_tars.tflite", check_model="check.onnx")
     trigger.phrase = "hey tars"
