@@ -143,6 +143,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         accounts=Accounts(log.store) if cfg.web.sign_in else None,
         tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
         aloud=cfg.audio.enabled,
+        talk=(cfg.bodies.port, cfg.bodies.secure_port) if cfg.bodies.enabled else None,
     )
 
 
@@ -717,7 +718,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     elsewhere = make_chat_when_out(cfg, presence, reminders)
     new_brain = brains(cfg, root, **tools)
 
-    def assistant_on(body, room: str, room_journal: Journal, room_brain) -> Assistant:
+    def assistant_on(body, room: str, room_journal: Journal, room_brain, page=None) -> Assistant:
         return Assistant(
             body,
             transcriber,
@@ -736,6 +737,8 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             commands=commands,
             rooms=rooms,
             room=room,
+            web=page is not None,
+            person=page.person if page is not None else None,
         )
 
     def wake_loop(assistant: Assistant, idle_message: str) -> None:
@@ -753,7 +756,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             events.store,
             voice.sample_rate,
             rooms,
-            lambda body, room: assistant_on(body, room, Journal(events, room=room), new_brain()),
+            lambda body, room, page: assistant_on(body, room, Journal(events, room=room), new_brain(), page),
             wake_loop,
         )
     if network:  # no microphone of its own: the rooms are all there is

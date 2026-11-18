@@ -45,7 +45,8 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **Knows what it used and what that cost**, per service and per person (`--usage`, [usage](docs/usage.md)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:
-  every part running, the services, the backup, the Pi ([web UI](docs/web-ui.md)).
+  every part running, the services, the backup, the Pi ([web UI](docs/web-ui.md)). Its **Talk** page is TARS from a
+  phone or a laptop: tap, ask, hear it answer there, as whoever's signed in ([talk](docs/web-ui.md#talk)).
 - **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
   sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
 - **Errands on any website**, asked aloud or in a chat: TARS's own browser orders on Wolt or books a table, with

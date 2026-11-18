@@ -485,3 +485,87 @@ def _until(condition, timeout=5.0):
     while not condition():
         assert time.monotonic() < deadline, "timed out"
         time.sleep(0.01)
+
+
+def page_hello(port: int, ticket, **said):
+    ws = connect(f"ws://127.0.0.1:{port}", legacy=True, max_size=None)
+    ws.recv(timeout=5)
+    ws.send(json.dumps({"type": "hello", "protocol": 1, "ticket": ticket, "echo_cancel": True, **said}))
+    return ws
+
+
+def test_a_web_page_gets_in_once_with_its_ticket_and_who_it_is_comes_from_the_ticket():
+    good = {"t1": "stacey"}
+    redeem = lambda ticket: (True, good.pop(ticket)) if ticket in good else (False, None)
+    listener = BodyListener(lambda device: None, lambda hello: bodylink.welcome("the web", 24000),
+                            host="127.0.0.1", sleep=lambda s: None, redeem=redeem).start()  # fmt: skip
+    try:
+        # It says it's someone else, and a device of its own: neither counts.
+        ws = page_hello(listener.port, "t1", person="alon", device="kitchen", wake="verified")
+        assert json.loads(ws.recv(timeout=5))["type"] == "welcome"
+        hello = listener.pages.get(timeout=5)
+        assert (hello.web, hello.person, hello.kind, hello.wake) == (True, "stacey", "web", "none")
+        assert hello.device.startswith("web-") and hello.echo_cancel
+        assert listener.connected(hello.device, timeout=5) is not None
+        assert listener.connected("kitchen", timeout=0.1) is None
+        for ticket in ("t1", "never given", None):  # used, unknown, missing
+            again = page_hello(listener.port, ticket)
+            with pytest.raises(ConnectionClosed):
+                again.recv(timeout=5)
+        assert listener.pages.empty()
+        ws.close()
+    finally:
+        listener.close()
+
+
+def test_without_tickets_a_page_is_never_let_in(listener):
+    ws = page_hello(listener.port, "anything")
+    with pytest.raises(ConnectionClosed):
+        ws.recv(timeout=5)
+
+
+def test_a_page_served_over_https_reaches_the_bodies_over_wss(tmp_path):
+    import datetime
+    import ssl
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(1).not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+            .sign(key, hashes.SHA256()))  # fmt: skip
+    (tmp_path / "c.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (tmp_path / "k.pem").write_bytes(
+        key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    )
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.load_cert_chain(tmp_path / "c.pem", tmp_path / "k.pem")
+    welcome = lambda hello: bodylink.welcome("the web", 24000)
+    listener = BodyListener(lambda device: None, welcome, host="127.0.0.1", sleep=lambda s: None,
+                            redeem=lambda t: (t == "t1", "stacey"), ssl=server).start()  # fmt: skip
+    try:
+        client = ssl.create_default_context(cafile=tmp_path / "c.pem")
+        ws = connect(f"wss://localhost:{listener.ssl_port}", legacy=True, ssl=client)
+        ws.recv(timeout=5)
+        ws.send(json.dumps({"type": "hello", "protocol": 1, "ticket": "t1"}))
+        assert json.loads(ws.recv(timeout=5))["type"] == "welcome"
+        assert listener.pages.get(timeout=5).person == "stacey" and listener.port != listener.ssl_port
+        ws.close()
+    finally:
+        listener.close()
+
+
+def test_only_a_web_page_is_shown_the_conversations_words():
+    sent = []
+    for web in (True, False):
+        hello = bodylink.Hello("web-1" if web else "kitchen", web=web)
+        link = bodylink.BodyConnection(hello, sent.append, lambda: None)
+        body = RemoteBody(link, 24000, None)
+        body.show("you", " What time is it? ")
+        body.show("tars", "  ")  # nothing to show
+    assert [json.loads(m) for m in sent] == [{"type": "text", "who": "you", "text": "What time is it?"}]

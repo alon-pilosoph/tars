@@ -74,6 +74,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test -c checks/e2e.config.ts
+      - run: npx playwright test -c checks/talk.config.ts # the Talk page, with Chromium's fake microphone
 
   # A chat-only home (docs/deployment.md#without-a-microphone): no extras and no PortAudio, and the chat side (Telegram,
   # the web UI) imports none of the voice's packages.

@@ -102,7 +102,13 @@ def test_naming_a_voice_that_isnt_a_person_keeps_it_that_way(log, client):
 
 def test_status_says_what_the_page_can_offer(client):
     status = client.get("/api/status").json()
-    assert status == {"aloud": True, "clustering": False, "enroll_at": MIN_REQUESTS_TO_ENROLL, "health": False}
+    assert status == {
+        "aloud": True,
+        "clustering": False,
+        "enroll_at": MIN_REQUESTS_TO_ENROLL,
+        "health": False,
+        "talk": False,
+    }
 
 
 def test_each_voice_comes_with_its_newest_requests(log, client):

@@ -424,6 +424,10 @@ class BodiesConfig:
     host: str = "0.0.0.0"  # nosec B104 - bodies dial in from other machines on the home network
     port: int = 8766
     plain_from_home: bool = True
+    # The Talk page (a web page as a body, docs/bodies.md#the-web-page): a page served over HTTPS may only open
+    # wss://, so with [web] tls_cert the bodies are listened for there too, on this port, with the web UI's
+    # certificate. Home addresses only, as for ws://.
+    secure_port: int = 8767
     # Rooms (docs/bodies.md#rooms): this machine's own microphone's room, and the main room, where things for
     # nobody in particular are said, and anything for someone not heard lately ("": this machine's room, or, with no
     # microphone of its own, the room paired first).

@@ -11,7 +11,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
 
 from voice_assistant import check
-from voice_assistant.bodykeys import BodyKeys, parse_key, public_of, sign, verify
+from voice_assistant.bodykeys import TICKET_S, BodyKeys, Tickets, parse_key, public_of, sign, verify
 from voice_assistant.bodylink import BodyListener, welcome
 from voice_assistant.config import BodiesConfig, load_config
 
@@ -134,3 +134,19 @@ def test_bodies_settings_are_checked():
     problems = _problems(bad)
     assert any("port" in p for p in problems) and any("plain_from_home" in p for p in problems)
     assert ConfigError
+
+
+def test_a_talk_ticket_works_once_within_its_minute_for_its_person_and_only_its_hash_is_kept(log):
+    now = [1_800_000_000.0]
+    tickets = Tickets(log.store, clock=lambda: now[0])
+    stacey, nobody = tickets.issue("stacey"), tickets.issue(None)
+    assert tickets.redeem(stacey) == (True, "stacey")
+    assert tickets.redeem(stacey) == (False, None)  # used
+    assert tickets.redeem(nobody) == (True, None)  # sign-in off: let in, nobody known
+    late = tickets.issue("alon")
+    now[0] += TICKET_S + 1
+    assert tickets.redeem(late) == (False, None)  # expired
+    for wrong in ("", "nope", None, 42):
+        assert tickets.redeem(wrong) == (False, None)
+    kept = log.store.rows("SELECT token FROM talk_tickets")
+    assert kept and all(row["token"] not in (stacey, nobody, late) for row in kept)

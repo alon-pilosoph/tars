@@ -7,6 +7,7 @@ import { Models } from "./components/Models";
 import { Reminders } from "./components/Reminders";
 import { Review } from "./components/Review";
 import { Skills } from "./components/Skills";
+import { Talk } from "./components/Talk";
 import { LoadErrors, Loading, Unreachable } from "./components/States";
 import { StatusView } from "./components/Status";
 import { Toasts } from "./components/Toasts";
@@ -33,6 +34,7 @@ const VIEWS = {
   voices: Voices,
   models: Models,
   status: StatusView,
+  talk: Talk,
 };
 
 const COUNTED: Partial<Record<Tab, string>> = { review: "to review", reminders: "waiting for got it" };
@@ -89,7 +91,8 @@ export function App() {
     document.title = counts.sent ? `TARS (${counts.sent})` : "TARS";
   }, [counts.sent]);
   const aloud = s.status.aloud;
-  const View = VIEWS[!aloud && HEARING.includes(s.tab) ? "home" : s.tab];
+  const talk = Boolean(s.status.talk);
+  const View = VIEWS[(!aloud && HEARING.includes(s.tab)) || (!talk && s.tab === "talk") ? "home" : s.tab];
   const busy = s.refreshing || s.phase === "loading";
   return (
     <>
@@ -102,6 +105,7 @@ export function App() {
           <NavLink s={s} tab="sent" label="Sent" n={counts.sent} />
           {aloud && <NavLink s={s} tab="review" label="Review" n={counts.review} />}
           <NavLink s={s} tab="reminders" label="Reminders" n={counts.reminders} />
+          {talk && <NavLink s={s} tab="talk" label="Talk" />}
         </nav>
         <div className="top-end">
           <nav className="nav-2" aria-label="More pages">
@@ -145,6 +149,7 @@ export function App() {
         <BarLink s={s} tab="sent" label="Sent" icon="sent" n={counts.sent} />
         {aloud && <BarLink s={s} tab="review" label="Review" icon="wave" n={counts.review} />}
         <BarLink s={s} tab="reminders" label="Reminders" icon="bell" n={counts.reminders} />
+        {talk && <BarLink s={s} tab="talk" label="Talk" icon="mic" />}
       </nav>
       <Toasts />
       <Dialog />

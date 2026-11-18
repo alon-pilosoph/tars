@@ -94,6 +94,19 @@ each one's room, and whether it's connected (the voice process writes `bodies.js
 and go); `--check` says the same. Not yet: wakes heard by a body that runs only the wake word aren't kept in the wake
 log (its conversations are); the Pi's buttons and the control socket act on its own room only.
 
+## The web page
+
+A browser can be a body too, for as long as a page is open: [the Talk page](web-ui.md#talk). It asks the web UI for
+a ticket, opens the body link with it (`wss://` on `[bodies] secure_port` from a page over HTTPS, with the web UI's
+certificate; `ws://` on `port` otherwise), and talks by a tap: a `wake` with `how: button`.
+
+- **Who's speaking** is whoever is signed in on the page, in place of speaker ID. With sign-in off, nobody is known
+  from the page, and the voice is told as anywhere.
+- **A room only while it's open:** "Stacey on the web", each page its own. Nothing TARS says by itself goes there,
+  and talking on it doesn't count as being heard in a room, so reminders still follow the voice.
+- **Never at home:** a request made on a page never unlocks the front door, wherever the browser is, as a chat
+  without a trusted person can't.
+
 ## How fast
 
 Measured on the household's Pi 4 with the home Mac as the body over Wi-Fi (about 5 ms round trip), the same eight
@@ -123,6 +136,11 @@ is on the home network or not. Text frames are JSON objects with a `type`; binar
 Anything wrong (an unknown device, a wrong proof, another protocol, audio before `hello`, no `hello` in time) closes
 the socket without saying what. An address that keeps failing waits a second longer each time (up to 30 s) before
 its next try is even looked at. A body that connects again replaces its older connection.
+
+A web page has no key. The web UI gives a signed-in page a one-time ticket (`POST /api/talk/ticket`), good for a
+minute, and the page's `hello` carries `ticket` in place of `device` and `proof`. It's let in as a body of its own
+(`kind: web`, `wake: none`, a fresh id), for the person the ticket was made for: who's speaking comes from the web
+UI's session, never from anything the page says. See [the web page](#the-web-page).
 
 `wake` says what the body checks itself before it says someone wants to talk:
 

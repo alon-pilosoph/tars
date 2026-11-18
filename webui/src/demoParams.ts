@@ -11,7 +11,8 @@
    ?form=minutes|time|back|error: the New reminder form, filled in
    ?toast=recluster|renamed     ?recluster=running     ?health=trouble: the Status page with everything wrong
    ?failed=items,reminders...: those parts of the load fail (store/core.ts LoadPart)
-   ?chatonly=1: a chat-only home ([audio] enabled = false): no pages about hearing */
+   ?chatonly=1: a chat-only home ([audio] enabled = false): no pages about hearing
+   ?talk=listening|speaking|long|insecure|refused|gone: the Talk page in that state (none: ready) */
 import { PARAMS, idParam, oneOf } from "./params";
 import type { LoadPart } from "./store/core";
 
@@ -27,6 +28,7 @@ export const DEMO_LINK = {
   data: PARAMS.get("demo") || "",
   remindersOff: PARAMS.get("reminders") === "off",
   chatOnly: PARAMS.get("chatonly") === "1",
+  talk: oneOf(PARAMS.get("talk"), ["listening", "speaking", "long", "insecure", "refused", "gone"] as const),
   state: oneOf(PARAMS.get("state"), ["loading", "error"] as const),
   seenAll: PARAMS.get("seen") === "all",
   reviewDone: PARAMS.get("review") === "done",
