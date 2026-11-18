@@ -142,7 +142,7 @@ voice; it says so.
 A chat's messages reach the brain, which holds Telegram's bot token; the hub can't tell a real "unlock" from one the
 brain made up. So for a chat the hub asks the person itself, on a channel the brain doesn't hold:
 
-- **Proposed: a door bot.** The hub has a small Telegram bot of its own (its token on the hub only). An unlock from a
+- **The door bot (decided).** The hub has a small Telegram bot of its own (its token on the hub only). An unlock from a
   chat, past the brain's rules, makes the hub send the person, in its own chat, "Unlock the front door? [Unlock]
   [No]", with what was asked and when. Only their tap opens it, within a minute. The brain can't send that button,
   and can't press it.
@@ -196,10 +196,8 @@ held back.
   be worked from a server through Home Assistant's own remote access, with no TARS box at home, but it would lose
   what only answers at home (an Android TV, an IR blaster, the routers for who's home) and the second unlock check,
   which means nothing on the same server as the brain. Every home with devices gets a hub.
-
-## Open questions for the owner
-
-1. **Chats:** the door bot, a passkey at home only, or no unlocking from chats in a hosted home?
-2. **Voiceprints on the hub:** the trusted voices' prints kept on the hub as well as the brain. Fine?
-3. **A hub without speaker ID** (too small to run it): no unlocking by voice there, or the brain's word for who
-   spoke, with the digits still the hub's?
+- **From a chat, the door bot.** An unlock asked in a chat, past the brain's rules, is confirmed by the person
+  tapping Unlock on the hub's own Telegram bot, whose token only the hub holds. It's off unless a home sets it up.
+- **The trusted voices' prints are kept on the hub too**, so it can recognize them itself.
+- **A hub that can't run speaker ID doesn't unlock by voice.** There's no weaker fallback that takes the brain's word
+  for who spoke.
