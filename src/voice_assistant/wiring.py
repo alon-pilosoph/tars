@@ -492,26 +492,27 @@ def start_presence(cfg: Config, root: Path, presence, reminders=None, came_in=No
     skills' clock, so a "welcome home" runs at once)."""
     if presence is None:
         return
+    from .hub import HubEvents
     from .reminders import came_in as messages_on_coming_in
     from .reminders import on_arrival
 
     for line in presence.left_out:
         print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
-    told = [c for c in (reminders and messages_on_coming_in(reminders.reminders, cfg.presence.quiet), came_in) if c]
-
-    def tell_came_in(names: list[str], door: str) -> None:
-        for one in told:
-            one(names, door)
-
-    doors = make_doors(cfg, presence, tell_came_in)
-    arrival = on_arrival(reminders.reminders, quiet=cfg.presence.quiet) if reminders else None
-    changes = [c for c in (arrival, doors and doors.phone_came_home) if c]
+    # The brain's side: what it does when someone comes home, or in by a door.
+    events = HubEvents()
+    if reminders:
+        events.on("came_in", messages_on_coming_in(reminders.reminders, cfg.presence.quiet))
+        events.on("home", on_arrival(reminders.reminders, quiet=cfg.presence.quiet))
+    events.on("came_in", came_in)
+    # The hub's side: the routers and the doors, which tell the brain through `events`.
+    doors = make_doors(cfg, presence, lambda names, door: events.emit("came_in", names, door))
 
     def changed(person: str, home: bool) -> None:
-        for change in changes:
-            change(person, home)
+        if doors:
+            doors.phone_came_home(person, home)
+        events.emit("home", person, home)
 
-    watcher = presence.watch(changed if changes else None)
+    watcher = presence.watch(changed if doors or events.wanted("home") else None)
     if watcher:
         print(f"(presence: asking {len(presence.routers)} router(s) every {presence.every_s:.0f} s)")
     if doors:
@@ -630,6 +631,10 @@ def make_home(
     for device in auto_lock_devices(cfg, root):
         extra[device.name] = device
     built = build(cfg.home, context, extra)
+    if built.tools:
+        from .hub import behind_hub
+
+        behind_hub(built.tools, context.hass)  # the house reached through the hub (docs/house-hub.md)
     if built.tools and (asked := {d["entity"]: a for d, _, _, a in auto_locks(cfg, root)}):
         built.tools.unlock_asked = lambda entity: asked[entity].mark() if entity in asked else None
     for name, why in built.unavailable.items():
@@ -705,6 +710,17 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, h
         states = [s.home for s in presence.board.states().values()]
         return True if any(states) else False if states and all(h is False for h in states) else None
 
+    # The brain's side says, posts and tells; auto-lock, on the hub's, emits.
+    from .hub import HubEvents
+
+    events = HubEvents()
+    events.on("said", say)
+    events.on("posted", post)
+    events.on("maintainers", tell_maintainers)
+
+    def emit(kind: str):
+        return lambda text: events.emit(kind, text)
+
     changing = home.changing if home else None
     for d, settings, off, asked in locks:
         hass = HomeAssistant(cfg.home.url, token)
@@ -717,7 +733,8 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, h
             return hass.call("lock.lock", {"entity_id": entity})
 
         auto = AutoLock(
-            d["name"].strip(), entity, d["door"], settings, off, read, lock, say, post, tell_maintainers, anyone_home,
+            d["name"].strip(), entity, d["door"], settings, off, read, lock, emit("said"), emit("posted"),
+            emit("maintainers"), anyone_home,
             asked=asked, changing=changing,
         )  # fmt: skip
         auto.start(

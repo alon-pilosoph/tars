@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from . import toolbox
-from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
+from .config import EVERYTHING, HomeConfig
 
 if TYPE_CHECKING:
     from .plugins import Loaded, PluginTool
@@ -270,91 +270,11 @@ class Built(NamedTuple):
 
 
 def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = None) -> Built:
-    """The devices [home] lists, made: Home Assistant's, then Android TVs, then each plugin's, then `extra`, made
-    already (TARS's own, like who's home). Like every service, optional: a device that can't be made (no token, a
-    missing extra, a plugin's own problem) is left out with why, and TARS starts without it."""
-    from . import androidtv, hass
-    from .plugins import Loaded, admit, provided
+    """The devices [home] lists, made, and the house tools over them: the hub's work (hub.build), here for the
+    plugins and code that have always called it from home."""
+    from .hub import build as hub_build
 
-    unavailable: dict[str, str] = {}
-    # As people call them ("AC", "front door"), and without label, which is how each is written, the same for all.
-    specs = [(d["name"].strip(), {k: v for k, v in d.items() if k != "label"}) for d in cfg.devices]
-    labels = {d["name"].strip(): d["label"].strip() for d in cfg.devices if d.get("label")}
-    if context.hass is None and cfg.url and context.secret(TOKEN_KEY):
-        context.hass = hass.HomeAssistant(cfg.url, context.secret(TOKEN_KEY))
-    makers: dict[str, Callable[[dict], Device]] = {}
-    plugin_tools: list[PluginTool] = []
-    loaded: dict[str, Loaded] = {}
-    for plugin, settings in cfg.plugins.items():
-        try:
-            module = load_plugin(settings["module"], context.root)
-            given, loaded[plugin] = admit(plugin, module, settings.get("grant"), context)
-            made = provided(
-                module.setup({k: v for k, v in settings.items() if k not in ("module", "grant")}, given),
-                plugin,
-                {t.name for t in plugin_tools},
-            )
-            makers |= {f"{plugin}.{kind}": make for kind, make in made.kinds.items()}
-            plugin_tools += made.tools
-        except Exception as e:  # noqa: BLE001 - a plugin that won't load costs its devices, not TARS
-            had = loaded.get(plugin)
-            loaded[plugin] = Loaded(plugin, had.version if had else "", had.needs if had else (), None, str(e))
-            for name, d in specs:
-                if str(d.get("kind", "")).startswith(f"{plugin}."):
-                    unavailable[name] = f"the plugin {plugin} didn't load: {e}"
-    # Home Assistant's and the Android TVs first: a plugin's device may lean on them (a TV remote asking the TV's box
-    # whether the TV is on).
-    for name, d in sorted(specs, key=lambda s: s[1].get("kind") not in (None, ANDROID_TV)):
-        if name in unavailable:
-            continue
-        kind = d.get("kind")
-        try:
-            if kind is None:
-                if context.hass is None:
-                    why = f"no {TOKEN_KEY} in .env" if cfg.url else "[home] url isn't set"
-                    raise ValueError(f"it goes through Home Assistant, and {why}")
-                device = hass.entity_device(name, d, context.hass)
-            elif kind == ANDROID_TV:
-                device = androidtv.make(name, d, context)
-            elif kind == CAMERA:
-                if context.hass is None:
-                    why = f"no {TOKEN_KEY} in .env" if cfg.url else "[home] url isn't set"
-                    raise ValueError(f"it goes through Home Assistant, and {why}")
-                device = hass.camera_device(name, d, context.hass)
-            elif kind == SPOTIFY:
-                from . import spotify
-
-                device = spotify.make(name, d, context)
-            elif kind in makers:
-                device = makers[kind](d | {"name": name})
-                context.plugin_of[name.lower()] = kind.partition(".")[0]
-            else:
-                raise ValueError(f"its plugin has no kind {kind.partition('.')[2]!r}")
-        except Exception as e:  # noqa: BLE001 - one device that can't be made never stops the others
-            unavailable[name] = str(e) or type(e).__name__
-            continue
-        device.label = labels.get(name) or device.label
-        context.devices[name.lower()] = device
-    for name, device in (extra or {}).items():
-        context.devices[name.lower()] = device
-    made = context.devices or context.hass is not None or plugin_tools
-    history = None
-    if cfg.config_dir and context.hass is not None:
-        from .haconfig import HAConfig
-
-        history = HAConfig(context.root / cfg.config_dir, cfg.container)
-    tools = None
-    if made:
-        tools = HomeTools(
-            cfg,
-            dict(context.devices),
-            hass=context.hass,
-            ha_config=history,
-            maintainers=context.maintainers,
-            plugin_tools=plugin_tools,
-        )
-        context.may_unlock = tools._may_unlock
-    return Built(tools, unavailable, loaded)
+    return hub_build(cfg, context, extra)
 
 
 def load_plugin(module: str, root: Path):

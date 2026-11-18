@@ -505,6 +505,9 @@ The body decides nothing: it does what it's asked and says what happened.
    be reached; the backup and `--check` follow the brain.
 4. **A second body**, in another room, to prove the split holds.
 
+**The house from afar** is designed in [the house hub](house-hub.md): the devices behind a hub at home that dials
+out, and unlocking checked twice, so a brain that's been taken over can't open the door.
+
 **Open questions:** where the brain runs (a small server for a few dollars a month and always on; the Mac, which
 sleeps; or still the Pi); whether speech to text goes straight from the body; how much the body does while the brain
 is away; and whether Home Assistant stays on the body or moves to a box of its own.

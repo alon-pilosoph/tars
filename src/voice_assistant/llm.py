@@ -952,7 +952,7 @@ class OpenAIChat:
         cfg, home = self._cfg, self._home
         devices = home.devices.values() if home else []
         everything = bool(getattr(home, "ha", None))  # all of Home Assistant, not only the devices listed
-        plays = everything or any(type(d).__name__ == "Spotify" for d in devices)
+        plays = everything or any(getattr(d, "kind", type(d).__name__) == "Spotify" for d in devices)
         house = [] if everything else [CANT_UNLISTED] if home else [CANT_HOUSE]
         return (
             [CANT_REMIND] * (not self._reminders)
