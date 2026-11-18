@@ -93,7 +93,13 @@ them on a port of its own; off (the default), nothing listens.
   word, like the ESP32), a few seconds of audio leave the room before the wake is confirmed, since the double-check
   runs on the Pi; a `verified` body (one that double-checks itself) sends nothing before then. A body's own rules
   (no audio before its own wake, a cap on a conversation, showing that it's streaming) are its code's: a body that
-  breaks them sends audio TARS then drops.
+  breaks them sends audio TARS then drops. A body with no light or screen (the Atom) can't show that it's streaming.
+- **[The Atom](atom.md)**, an ESP32 body: how often its wake word alone fires, and so how often a few seconds of the
+  room reach the Pi to be checked and dropped, is still to be measured. Its key is built into its firmware, which
+  isn't encrypted on the chip: whoever has the Atom in hand can read the key off it (a stolen key, above;
+  `--body-remove` the room). Its Wi-Fi password and its update password are in the firmware too. Updates over Wi-Fi
+  need that password; a USB cable needs nothing. The build's `secrets.yaml` and `.esphome/` folder hold the same and
+  are never committed.
 
 ### A device on the home network, speaking for the front door
 

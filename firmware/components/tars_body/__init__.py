@@ -1,16 +1,17 @@
 """TARS's body link (docs/bodies.md) for an ESP32: the device hears "hey TARS" with its own small model, sends the
 seconds that had the name in them to the brain, which double-checks them, then streams what's said and plays the
-reply. Its key signs with Monocypher (monocypher*.c, BSD-2-Clause or CC0, 4.0.2). The body's half of the protocol is voice_assistant.bodyclient.BodyProtocol, which this follows."""
+reply. Its key signs with Monocypher (monocypher*.c, BSD-2-Clause or CC0, 4.0.2). The body's half of the protocol
+is voice_assistant.bodyclient.BodyProtocol, which this follows."""
 
 import base64
 import wave
 from pathlib import Path
 
 import esphome.codegen as cg
+import esphome.config_validation as cv
 from esphome import automation
 from esphome.components import esp32, microphone, speaker
 from esphome.components.micro_wake_word import MicroWakeWord
-import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_MICROPHONE, CONF_SPEAKER, CONF_URL
 from esphome.core import HexInt
 
@@ -125,9 +126,7 @@ async def wake_to_code(config, action_id, template_arg, args):
     return var
 
 
-@automation.register_action(
-    "tars_body.press", PressAction, cv.Schema({cv.GenerateID(): cv.use_id(TarsBody)})
-)
+@automation.register_action("tars_body.press", PressAction, cv.Schema({cv.GenerateID(): cv.use_id(TarsBody)}))
 async def press_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])

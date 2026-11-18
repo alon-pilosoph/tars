@@ -39,6 +39,9 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
   To know someone from the start, TARS sends them a link to a short recording session on its own speakerphone
   ([recording sessions](docs/web-ui.md#recording-sessions)).
+- **In every room**: another machine, or a small ESP32 board, is TARS's ears and voice in another room, each room its
+  own conversation, with reminders said where their person was last heard ([bodies](docs/bodies.md),
+  [the Atom](docs/atom.md)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **Knows what it used and what that cost**, per service and per person (`--usage`, [usage](docs/usage.md)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:
@@ -129,6 +132,8 @@ assistant, edit the system prompt.
 | [Reading pages](docs/pages.md) | "tell me more about that one": a link's page read the quick way or in the browser, signed in where they subscribe, learned per site |
 | [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person |
 | [Evaluating the browser](docs/browser-evals.md) | sixteen live tasks; the prototype, Luna, Sol, Opus and Claude Code compared; on a simulated Pi |
+| [Bodies: TARS in another room](docs/bodies.md) | network bodies, pairing, rooms, the protocol, the rules each side keeps |
+| [The Atom](docs/atom.md) | an ESP32 body: TARS's firmware for the M5Stack Atom VoiceS3R, setting one up, what was measured |
 | [Running TARS at home](docs/deployment.md) | the Pi, services, enrolling voices, backup, a test run |
 | [Trying it on a simulated device](docs/simulator.md) | the Pi's software in a container: tests, the browser, a service; device profiles |
 | [Backing up to S3](docs/backup.md) | what goes to the bucket, making room on the Pi, archiving, bringing it back |
