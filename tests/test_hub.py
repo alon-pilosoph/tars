@@ -131,3 +131,16 @@ def test_the_home_assistant_tool_reaches_home_assistant_through_the_hub():
     with pytest.raises(ValueError):
         hub.home_assistant("delete_everything")
     assert "call_service" in HA_REQUESTS and "token" not in HA_REQUESTS
+
+
+def test_what_happens_at_home_reaches_every_handler_and_one_that_fails_stops_none(capsys):
+    from voice_assistant.hub import EVENTS, HubEvents
+
+    events, told = HubEvents(), []
+    events.on("came_in", lambda names, door: 1 / 0)
+    events.on("came_in", lambda names, door: told.append((names, door)))
+    events.on("home", None)  # nothing to do with it: left out
+    events.emit("came_in", ["alon"], "front door")
+    assert told == [(["alon"], "front door")] and "wasn't handled" in capsys.readouterr().out
+    assert not events.wanted("home") and events.wanted("came_in")
+    assert set(EVENTS) == {"home", "came_in", "said", "posted", "maintainers"}

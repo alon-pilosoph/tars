@@ -135,6 +135,35 @@ class HubDevice(Device):
         self._hub.ask(self._key, "stop")
 
 
+class HubEvents:
+    """What happens at home, told to the brain: the link's `event` messages (docs/house-hub.md#events). The loops on
+    the home network (who's home, the doors, auto-lock) `emit`; the brain's side has said what it does with each
+    (`on`). A handler that fails is said and passed over: what happened at home is never lost to one."""
+
+    def __init__(self):
+        self._handlers: dict[str, list[Callable]] = {kind: [] for kind in EVENTS}
+
+    def on(self, kind: str, handler: Callable | None) -> None:
+        if handler is not None:
+            self._handlers[kind].append(handler)
+
+    def emit(self, kind: str, *fields) -> None:
+        for handler in self._handlers[kind]:
+            try:
+                handler(*fields)
+            except Exception as e:  # noqa: BLE001 - one handler's failure is never the loop's
+                print(f"(hub: {kind} {fields!r} wasn't handled: {e!r})", flush=True)
+
+    def wanted(self, kind: str) -> bool:
+        return bool(self._handlers[kind])
+
+
+# The events, with what each carries: someone's phone came home or left (person, home); people came in by a door
+# (names, door); a line to say aloud (text); one to post to the household's chats (text); one for the maintainers
+# (text).
+EVENTS = ("home", "came_in", "said", "posted", "maintainers")
+
+
 def behind_hub(tools: HomeTools, hass=None) -> LocalHub:
     """The house tools' devices and Home Assistant (`hass`) moved behind a hub: the tools then reach each device
     through its HubDevice, and Home Assistant through HubHomeAssistant."""
