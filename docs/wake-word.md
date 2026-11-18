@@ -415,6 +415,22 @@ TARS's own speakerphone, by several people, and the clips TARS has kept. They ar
 never to train one, so a model that does better on them does better on microphones and voices it has never heard, not
 on the owner's.
 
+## On a microcontroller
+
+The same stage 1 runs on an ESP32-S3, in [the Atom](atom.md), through ESPHome's `micro_wake_word`: its 8-bit build
+(`firmware/models/hey_tars.tflite`, int8 features in and a uint8 score out, from the same training run as
+`models/generic/hey_tars.tflite`), with the same audio front end, value for value. On recordings played at it, it
+scored what the full-precision model scores on the Mac (0.89 to 0.99 on clean takes). Two things differ from the Pi:
+
+- **The rule.** ESPHome averages a window of scores; the Pi fires on one. The Atom is set to a window of one at the
+  Pi's 0.47, so both fire on the same score.
+- **No double-check on the device.** Vosk doesn't fit, so the Atom sends the 3.6 s before the wake to the brain, which
+  runs the same double-check on it as on the Pi's own audio. Stage 1 firing alone, as on a live trial at a lenient
+  setting, does wake it on ordinary talk now and then: that's what the brain's check is for.
+
+The larger openWakeWord stage 1 is too big for the chip (on a Pi 4 it takes 30% of a core); if the double-check
+alone doesn't hold up on the Atom's wakes, it could score them on the brain instead.
+
 ## Next steps
 
 Stage 1 is no longer the weak link: the double-check is, with the voice at or under the TV. A mic that cancels

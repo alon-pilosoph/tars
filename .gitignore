@@ -32,3 +32,6 @@ tuya-raw.json
 
 # The web UI's HTTPS certificate and its key (docs/web-ui.md#signing-in)
 tls/
+# ESPHome: the firmware's own secrets, and its build folders
+firmware/**/secrets.yaml
+firmware/**/.esphome/

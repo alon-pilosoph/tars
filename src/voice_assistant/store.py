@@ -297,6 +297,12 @@ TABLES = {
     last_seen REAL,                  -- when it last connected
     revoked REAL                     -- when --body-remove took it away; NULL: paired
 )""",
+    "talk_tickets": """CREATE TABLE talk_tickets (
+    token TEXT PRIMARY KEY,          -- sha256 of a one-time ticket the Talk page's body link shows (bodykeys.py)
+    person TEXT,                     -- who's signed in on the page; NULL: sign-in is off, and nobody is known
+    expires REAL NOT NULL,
+    used REAL                        -- when a body link came with it; NULL: not yet
+)""",
     "web_invites": """CREATE TABLE web_invites (
     token TEXT PRIMARY KEY,          -- sha256 of the one-time token in the link (signin.py)
     person TEXT NOT NULL,
@@ -553,6 +559,14 @@ MIGRATIONS = [
 )"""
     ],
     ["ALTER TABLE conversations ADD COLUMN room TEXT", "ALTER TABLE events ADD COLUMN room TEXT"],
+    [
+        """CREATE TABLE talk_tickets (
+    token TEXT PRIMARY KEY,          -- sha256 of a one-time ticket the Talk page's body link shows (bodykeys.py)
+    person TEXT,                     -- who's signed in on the page; NULL: sign-in is off, and nobody is known
+    expires REAL NOT NULL,
+    used REAL                        -- when a body link came with it; NULL: not yet
+)"""
+    ],
 ]
 
 

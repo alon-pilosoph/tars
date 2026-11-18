@@ -222,8 +222,8 @@ def test_each_body_is_a_room_whose_assistant_waits_for_it_again_when_it_goes(log
     monkeypatch.setattr(BodyListener, "start", started)
     rooms, made, runs = Rooms("home"), [], []
 
-    def assistant_for(body, room):
-        made.append(types.SimpleNamespace(body=body, room=room))
+    def assistant_for(body, room, page):
+        made.append(types.SimpleNamespace(body=body, room=room, page=page, journal=None))
         return made[-1]
 
     def run(assistant, idle):
@@ -260,6 +260,62 @@ def test_each_body_is_a_room_whose_assistant_waits_for_it_again_when_it_goes(log
     until(lambda: len(runs) == 2)
     assert len(made) == 1 and runs[1][0] is made[0] and runs[1][1] is not runs[0][1]  # the same assistant, a new link
     ws.close()
+
+
+def test_a_talk_page_is_a_room_of_its_own_for_its_person_until_it_closes(log, monkeypatch):
+    import dataclasses
+    from pathlib import Path
+
+    from voice_assistant import wiring
+    from voice_assistant.body import BodyGone
+    from voice_assistant.bodykeys import Tickets
+    from voice_assistant.config import BodiesConfig, load_config
+    from voice_assistant.rooms import Rooms
+
+    cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
+    cfg = dataclasses.replace(cfg, bodies=BodiesConfig(enabled=True, host="127.0.0.1", port=0))
+    monkeypatch.setattr(wiring, "make_trigger", lambda *a: (None, ""))
+    monkeypatch.setattr("voice_assistant.recorder.make_recorder", lambda cfg, root: None)
+    port = {}
+    real = BodyListener.start
+
+    def started(self):
+        port["n"] = self.port
+        return real(self)
+
+    monkeypatch.setattr(BodyListener, "start", started)
+    rooms, made, runs = Rooms("home"), [], []
+
+    def assistant_for(body, room, page):
+        made.append(types.SimpleNamespace(body=body, room=room, page=page, journal=None))
+        return made[-1]
+
+    def run(assistant, idle):
+        runs.append(idle)
+        while not assistant.body.link.gone.is_set():
+            time.sleep(0.01)
+        raise BodyGone("closed")
+
+    def until(condition):
+        deadline = time.monotonic() + 5
+        while not condition() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert condition()
+
+    wiring.serve_rooms(cfg, Path("."), log.store, 24000, rooms, assistant_for, run)
+    until(lambda: "n" in port)
+    ws = connect(f"ws://127.0.0.1:{port['n']}", legacy=True)
+    ws.recv(timeout=5)
+    ws.send(json.dumps({"type": "hello", "protocol": 1, "ticket": Tickets(log.store).issue("stacey")}))
+    room = json.loads(ws.recv(timeout=5))["room"]
+    assert room.startswith("Stacey on the web ")
+    until(lambda: len(runs) == 1)
+    page = made[0].page
+    assert made[0].room == room and (page.web, page.person) == (True, "stacey")
+    assert rooms._rooms[room].page and rooms.room_for("stacey") == "home"
+    ws.close()
+    until(lambda: room not in rooms._rooms)  # closed: gone, never waited for
+    assert len(runs) == 1 and log.store.rows("SELECT last_seen FROM bodies") == []
 
 
 def test_the_status_page_expects_the_voice_assistant_for_a_body_in_another_room():

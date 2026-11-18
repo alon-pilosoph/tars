@@ -234,32 +234,43 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
     time it connects: `assistant_for(body, room)` makes its assistant (once; it keeps its conversation's state across
     reconnections), and `run(assistant, idle_message)` runs its wake loop. A body that goes ends its room's
     conversation, never TARS: the room waits for it to come back, and meanwhile the desk (`rooms`) says nothing there.
-    A body paired while TARS runs is picked up within BODIES_RECHECK_S. `sample_rate`: the voice's."""
+    A body paired while TARS runs is picked up within BODIES_RECHECK_S. `sample_rate`: the voice's.
+
+    A web page let in by a ticket (the Talk page) is a room only while it's open: `assistant_for(body, room, page)`
+    makes it a fresh assistant each time, for the person signed in on it (`page`, the body's Hello), and the desk
+    gives it nothing to say."""
     import traceback
 
     from .body import BodyGone
-    from .bodykeys import BodyKeys
+    from .bodykeys import BodyKeys, Tickets
     from .bodylink import BodyListener, RemoteBody, welcome
     from .homenet import address
     from .recorder import make_recorder
 
     keys = BodyKeys(store)
+    tickets = Tickets(store)
 
     def at_home(peer: str) -> bool:
         found = address(peer)
         return found is not None and not found.is_global
 
+    def room_of(hello) -> str:
+        return page_room(hello) if hello.web else keys.room_of(hello.device) or ""
+
     listener = BodyListener(
         keys.public_key,
-        lambda hello: welcome(keys.room_of(hello.device) or "", sample_rate),
+        lambda hello: welcome(room_of(hello), sample_rate),
         allowed=at_home if cfg.bodies.plain_from_home else (lambda peer: False),
         host=cfg.bodies.host,
         port=cfg.bodies.port,
-        seen=keys.seen,
+        seen=lambda device: None if device.startswith("web-") else keys.seen(device),
+        redeem=tickets.redeem,
+        ssl=_ssl_context(cfg, root),
+        ssl_port=cfg.bodies.secure_port,
     ).start()
     print(f"(bodies: listening on port {listener.port} for {len(keys.listed())} paired)", flush=True)
-    # The double-check for a body that runs only the wake word, on this machine's models. Not journaled: a journal
-    # follows one room's conversation, and this is shared (keeping network bodies' wakes is a follow-up).
+    # The double-check for a body that runs only the wake word, on this machine's models, shared by every room: each
+    # room's trigger hands it the room's own journal, so its wakes are kept there.
     checker, _ = make_trigger(cfg, False, root, None)
     here = BodiesHere(Path(store.folder))
 
@@ -274,9 +285,10 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
             here.mark(device, name, True)
             try:
                 if assistant is None:
-                    assistant = assistant_for(body, name)
+                    assistant = assistant_for(body, name, None)
                 else:
                     assistant.body = body
+                body.trigger.journal = assistant.journal  # its wakes kept with its room's
                 run(assistant, f"Waiting for its name in the {name}...")
             except BodyGone as e:
                 print(f"(the {name}'s body went: {e}; waiting for it to come back)", flush=True)
@@ -301,7 +313,54 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
                 print(f"(bodies: couldn't read the paired bodies: {e!r})", flush=True)
             time.sleep(BODIES_RECHECK_S)
 
+    def page(hello) -> None:
+        """A web page's room: from its arrival until it goes. Never waited for again: a new page is a new ticket."""
+        name = page_room(hello)
+        link = listener.connected(hello.device, timeout=5)
+        if link is None:
+            return
+        rooms.page(name)
+        try:
+            body = RemoteBody(link, sample_rate, make_recorder(cfg, root), checker)
+            assistant = assistant_for(body, name, hello)
+            body.trigger.journal = assistant.journal
+            run(assistant, f"Waiting for a tap on {name}...")
+        except BodyGone:
+            print(f"({name} closed)", flush=True)
+        except Exception:  # noqa: BLE001 - a page's failure is never a room's, nor TARS's
+            traceback.print_exc()
+        finally:
+            link.close()
+            rooms.remove(name)
+
+    def pages() -> None:
+        while True:
+            hello = listener.pages.get()
+            threading.Thread(target=page, args=(hello,), daemon=True, name=f"page {hello.device}").start()
+
     threading.Thread(target=watch, daemon=True, name="bodies").start()
+    threading.Thread(target=pages, daemon=True, name="pages").start()
+    if listener.ssl_port:
+        print(f"(bodies: the Talk page's wss:// on port {listener.ssl_port})", flush=True)
+
+
+def page_room(hello) -> str:
+    """A web page's room: its person's, told apart from any other page ("Stacey on the web 3f9a", "the web 3f9a")."""
+    from .signin import shown
+
+    who = f"{shown(hello.person)} on the web" if hello.person else "the web"
+    return f"{who} {hello.device.removeprefix('web-')[:4]}"
+
+
+def _ssl_context(cfg: Config, root: Path):
+    """The web UI's certificate, for the Talk page's wss://; None without one (a page over http may use ws://)."""
+    if not cfg.web.tls_cert:
+        return None
+    import ssl
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(root / cfg.web.tls_cert, root / cfg.web.tls_key)
+    return context
 
 
 BODIES_RECHECK_S = 30.0

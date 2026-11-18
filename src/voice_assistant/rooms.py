@@ -11,6 +11,9 @@ one `Rooms` desk, which decides where each thing TARS says by itself is said, an
 
 With one room, every item is that room's: nothing about TARS changes. "Last heard" comes only from a room's assistant
 knowing who spoke (`heard`): presence knows who's home, not which room they're in.
+
+A web page (the Talk page) is a room only while it's open (`page`, then `remove`): it's never given anything, and
+someone talking there isn't "heard" in it, so what's theirs still goes where their voice was last heard.
 """
 
 import threading
@@ -33,6 +36,7 @@ class Room:
     name: str
     connected: bool = True
     muted: bool = False
+    page: bool = False  # a web page: never given anything to say
     last_heard: dict[str, float] = field(default_factory=dict)  # person: when (the desk's clock)
 
 
@@ -57,6 +61,18 @@ class Rooms:
         if not connected:
             self.give_back(name)
 
+    def page(self, name: str) -> None:
+        """A web page opened as a room of its own, for as long as it's open."""
+        with self._lock:
+            self._rooms[name] = Room(name, page=True)
+
+    def remove(self, name: str) -> None:
+        """A web page's room, closed. The main room stays."""
+        if name != self.main:
+            self.give_back(name)
+            with self._lock:
+                self._rooms.pop(name, None)
+
     def muted(self, name: str, muted: bool) -> None:
         with self._lock:
             self._rooms.setdefault(name, Room(name)).muted = muted
@@ -66,6 +82,8 @@ class Rooms:
         if key := person_key(person):
             now = self._clock()
             with self._lock:
+                if (here := self._rooms.get(name)) and here.page:
+                    return
                 for room in self._rooms.values():
                     room.last_heard.pop(key, None)
                 self._rooms.setdefault(name, Room(name)).last_heard[key] = now
@@ -78,7 +96,7 @@ class Rooms:
             return self._room_for(person_key(person), self._clock())
 
     def _room_for(self, person: str, now: float) -> str | None:
-        here = [r for r in self._rooms.values() if r.connected]
+        here = [r for r in self._rooms.values() if r.connected and not r.page]
         if not here:
             return None
         if person:

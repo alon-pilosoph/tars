@@ -179,7 +179,9 @@ def test_two_bodies_confirming_wakes_at_once_each_get_their_own_audio_back():
     checker = SlowChecker()
 
     def a_body(level):
-        link = types.SimpleNamespace(hello=types.SimpleNamespace(wake="model", device=f"b{level}"))
+        link = types.SimpleNamespace(
+            hello=types.SimpleNamespace(wake="model", device=f"b{level}", kind="atom", version="")
+        )
         trigger = RemoteTrigger(link, checker)
         for _ in range(20):
             audio = np.full(1280, level, np.int16)

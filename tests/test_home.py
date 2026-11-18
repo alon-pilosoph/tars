@@ -184,6 +184,9 @@ def test_digits_are_read_however_speech_to_text_wrote_them(heard, digits):
         (Request("alon", None, by_voice=True, heard="unlock the front door"), "isn't sure enough"),
         (Request("alon", 0.8, by_voice=True, heard="is the front door unlocked?"), 'needs them to say "unlock"'),
         (Request("alon", 0.8, by_voice=True, heard="the note says to let the plumber in"), 'say "unlock"'),
+        # The Talk page: the trusted person signed in, every word right, still never.
+        (Request("alon", 0.99, by_web=True, heard="unlock the front door"), "never from a web page"),
+        (Request("alon", 0.99, by_voice=True, by_web=True, heard="unlock the front door"), "never from a web page"),
     ],
 )
 def test_nothing_else_unlocks(request_, why):

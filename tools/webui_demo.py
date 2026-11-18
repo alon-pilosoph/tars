@@ -454,6 +454,7 @@ def main() -> None:
     serve_it.add_argument("folder", type=Path)
     serve_it.add_argument("port", type=int)
     serve_it.add_argument("--sign-in", action="store_true", help="every route needs a passkey's session")
+    serve_it.add_argument("--talk", type=int, metavar="PORT", help="the Talk page, against a scripted brain there")
     invite = commands.add_parser("invite", help="print a one-time invite token, for --sign-in")
     invite.add_argument("folder", type=Path)
     invite.add_argument("person")
@@ -466,6 +467,8 @@ def main() -> None:
         print(Accounts(log.store).invite(args.person))
         return
     cfg = load_config(REPO / "config.toml")
+    if args.talk:
+        scripted_brain(log, args.talk)
     Heartbeat(log.folder, "web", REPO).start()  # the assistant's is never seen: it isn't running
     serve(
         log,
@@ -477,7 +480,55 @@ def main() -> None:
         voice_names=lambda: ["alon"],  # the demo's voiceprints
         health=Health(log, ["assistant", "web"], Services(demo_services, demo_page), lambda unit: None).report,
         accounts=Accounts(log.store) if args.sign_in else None,
+        talk=(args.talk, args.talk) if args.talk else None,
     )
+
+
+def scripted_brain(log: EventLog, port: int) -> None:
+    """--talk: the body link on `port`, as the voice process would listen, with a brain that holds one scripted turn
+    with each page: after the tap it hears a second and a half, says how much sound came and how loud, plays half a
+    second of tone and waits for the page to say it played, then says so and sends it back to sleep. For the Talk
+    page's browser check (checks/talk.spec.ts), with Chromium's fake microphone."""
+    import threading
+
+    from voice_assistant.bodykeys import Tickets
+    from voice_assistant.bodylink import BodyListener, RemoteSpeaker, welcome
+
+    listener = BodyListener(
+        lambda device: None,
+        lambda hello: welcome("Alon on the web", 24000),
+        host="127.0.0.1",
+        port=port,
+        redeem=Tickets(log.store).redeem,
+    ).start()
+
+    def turn(device: str) -> None:
+        link = listener.connected(device, timeout=5)
+        try:
+            link.sleep()
+            link.wakes.get(timeout=120)
+            heard, until = [], time.monotonic() + 1.5
+            while time.monotonic() < until:
+                try:
+                    heard.append(link.blocks.get(timeout=0.5))
+                except Exception:  # noqa: BLE001, S112 - none yet
+                    continue
+            loudest = int(max((abs(b).max() for b in heard), default=0))
+            link.send({"type": "listen", "on": False})
+            link.send({"type": "text", "who": "you", "text": f"{len(heard) * 80} ms of sound, loudest {loudest}"})
+            tone = (np.sin(np.arange(12000) * 2 * np.pi * 440 / 24000) * 6000).astype(np.int16).tobytes()
+            cut = RemoteSpeaker(link, 24000).play_pcm_stream(iter([tone]), 24000)
+            link.send({"type": "text", "who": "tars", "text": "Cut short." if cut else "Played it all."})
+            link.sleep()
+        except Exception as e:  # noqa: BLE001 - the page went: its turn is over
+            print(f"(talk: {e!r})", flush=True)
+
+    def pages() -> None:
+        while True:
+            hello = listener.pages.get()
+            threading.Thread(target=turn, args=(hello.device,), daemon=True).start()
+
+    threading.Thread(target=pages, daemon=True).start()
 
 
 def demo_services() -> list[tuple[str, Check]]:

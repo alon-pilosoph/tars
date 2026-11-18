@@ -1092,3 +1092,13 @@ def test_the_stop_button_turns_a_ringing_timer_off_on_its_chime(tmp_path):
     r = reminders.get(rid)
     assert (r["status"], r["tries"]) == (ACKNOWLEDGED, 2)
     assert assistant.body.timeouts == [assistant.ack_window_s]  # only the first ring listened
+
+
+def test_on_the_talk_page_the_person_signed_in_is_who_spoke_and_it_never_counts_as_at_home():
+    assistant, brain = make_assistant([b"q", None], ["unlock the front door"])
+    assistant.speaker_id = FakeSpeakerID("alon")  # the voice sounds like Alon: the page's sign-in decides
+    assistant.web, assistant.person = True, "stacey"
+    assistant.converse(follow_up_s=4.0)
+    request = brain.requests[0]
+    assert brain.asked[0].startswith("[Speaker: stacey]")
+    assert (request.speaker, request.by_web, request.by_voice) == ("stacey", True, False)

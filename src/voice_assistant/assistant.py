@@ -276,14 +276,19 @@ class Assistant:
         commands: HouseCommands | None = None,
         rooms: Rooms | None = None,
         room: str = MAIN,
+        web: bool = False,
+        person: str | None = None,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
         `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
         reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out). `skill_clock`: the
         skills due to run by themselves (skills.py). `rooms`: the desk every room's assistant shares, which says which
-        room says what (rooms.py); `room`: this one's. Without a desk, it's the only room."""
+        room says what (rooms.py); `room`: this one's. Without a desk, it's the only room. `web`: its body is a web page
+        (the Talk page), so what's said there never counts as said at home (home.Request.by_web); `person`: who's
+        signed in on it, taken as who spoke in place of speaker ID (None: told by voice, as anywhere)."""
         self.body = body
         self.room = room
+        self.web, self.person = web, person
         self.rooms = rooms or Rooms(room)
         self.rooms.add(room)
         self.transcriber = transcriber
@@ -533,6 +538,7 @@ class Assistant:
         except Exception as e:  # noqa: BLE001 - a line TARS can't say is skipped, never fatal
             print(f"(couldn't say {text!r}: {e!r})")
             return False
+        self._show("tars", text)
         self._play(audio, on_first_audio)
         return True
 
@@ -1188,7 +1194,9 @@ class Assistant:
     ) -> Answer:
         """Transcribe, identify the speaker, and set the brain and voice to work, all without a sound."""
         # Speaker ID runs while the audio is transcribed, so it adds no latency.
-        identifying = self._identifying.submit(self.speaker_id.describe, pcm) if self.speaker_id else None
+        identifying = (
+            self._identifying.submit(self.speaker_id.describe, pcm) if self.speaker_id and not self.person else None
+        )
         t = time.perf_counter()
         try:
             text = without_echo(session.transcript(), echo_of)
@@ -1202,14 +1210,21 @@ class Assistant:
             why = "past the month's cap" if capped else f"speech to text didn't answer ({e!r})"
             print(f"({why}; heard a house command on the Pi)")
         stt_s = time.perf_counter() - t
-        answer = Answer(text, self._who(identifying), stt_s)
+        answer = Answer(text, Identified(self.person, None, None) if self.person else self._who(identifying), stt_s)
         self.rooms.heard(self.room, answer.who.name)  # what's for them is said here now
         if not text or draft.cancelled:
             return answer
+        self._show("you", text)
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
         room = "" if self.rooms.single else self.room
         request = Request(
-            answer.who.name, answer.who.score, by_voice=True, heard=text, may_act=draft.may_act, room=room
+            answer.who.name,
+            answer.who.score,
+            by_voice=not self.web,
+            by_web=self.web,
+            heard=text,
+            may_act=draft.may_act,
+            room=room,
         )
         # A follow-up may not be meant for TARS (the TV, someone else in the room): only the model may skip it.
         if self.commands and tag is None and not follow_up and (command := self.commands.commands.match(text)):
@@ -1254,7 +1269,7 @@ class Assistant:
         answer.reply = StreamedReply(
             _tee(pieces(), answer.spoken),
             _MadeAhead(self.voice, self.phrases),
-            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+            self._on_sentence(answer),
         )
         return answer
 
@@ -1281,10 +1296,22 @@ class Assistant:
         answer.reply = StreamedReply(
             _tee(answer.written, answer.spoken),
             self.voice,
-            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+            self._on_sentence(answer),
             self.phrases.made_ahead,
         )
         return answer
+
+    def _on_sentence(self, answer: Answer) -> Callable[[str], None]:
+        def said(sentence: str) -> None:
+            answer.sentences.append((time.perf_counter(), sentence))
+            self._show("tars", sentence)
+
+        return said
+
+    def _show(self, who: str, text: str) -> None:
+        """The conversation's words, to a body with a screen (a web page): "you" heard, "tars" said."""
+        if show := getattr(self.body, "show", None):
+            show(who, text)
 
     def _discard(self, answer: Answer) -> None:
         if answer.reply:
