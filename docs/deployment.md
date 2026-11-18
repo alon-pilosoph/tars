@@ -175,6 +175,10 @@ ten minutes ([`deploy/voice-assistant-update.timer`](../deploy/voice-assistant-u
 (`updater.py`):
 
 1. **Fetches the branch.** Nothing new: done.
+   **The Pi on a branch of its own** (a live test, with changes that aren't merged): what's merged isn't installed
+   over it. With everything merged already in it, it's up to date. Otherwise the maintainers are told, once for each
+   new version: "There's an update for me (...), but I'm running a version with changes of my own (the branch: how
+   many), so I won't install it over them", and someone merges it in by hand or switches it back.
 2. **Decides whether it may install by itself.** Not when the update changes the database (a new step in
    `store.MIGRATIONS`, which code can't take back) or the system (packages in `deploy/pi-packages.txt` not installed
    yet, a changed device rule): the maintainers get "There's an update for me (...). It changes ..., so I'm asking

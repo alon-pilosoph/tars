@@ -71,6 +71,7 @@ class State:
     approved: str = ""  # the version a maintainer tapped Install for
     told_sudo: str = ""  # the version they were told needs installing by hand
     failed: str = ""  # a version that was installed, failed and taken back: not tried again
+    told_own: str = ""  # the version they were told can't be installed over this checkout's own changes
 
     @classmethod
     def load(cls, path: Path) -> State:
@@ -115,7 +116,11 @@ class Updater:
         if old == new:
             return None
         if self._git("merge-base", "--is-ancestor", "HEAD", new, check=False) is None:
-            raise UpdateError(f"this checkout has changes of its own that origin/{branch} doesn't: update it by hand")
+            waiting = self._git("log", "--first-parent", "--format=%s", f"HEAD..{new}").splitlines()
+            if not waiting:
+                return None  # changes of its own, on top of everything merged: nothing to install
+            own = len(self._git("rev-list", f"{new}..HEAD").splitlines())
+            raise OwnChanges(new, waiting, own, self._git("rev-parse", "--abbrev-ref", "HEAD"))
         titles = self._git("log", "--first-parent", "--format=%s", f"{old}..{new}").splitlines()
         return Plan(old, new, titles, self._migrates(new), self._system(new), self._needs_person(new))
 
@@ -166,6 +171,19 @@ class Updater:
         state = State.load(self._state_path)
         try:
             plan = self.plan()
+        except OwnChanges as e:
+            if state.told_own != e.new:
+                unmerged = "1 change that isn't" if e.own == 1 else f"{e.own} changes that aren't"
+                self._tell(
+                    f"There's an update for me ({_list(e.titles)}), but I'm running a version with changes of my own "
+                    f"({e.branch}: {unmerged} merged), so I won't "
+                    "install it over them. Someone needs to update me by hand: merge it into what I run, or switch "
+                    f"me back to {self._cfg.updates.branch}.",
+                    [],
+                )
+                state.told_own = e.new
+                state.save(self._state_path)
+            return f"not updating: {e}"
         except UpdateError as e:
             return f"not updating: {e}"
         if plan is None:
@@ -300,6 +318,14 @@ class Updater:
 
 class UpdateError(Exception):
     pass
+
+
+class OwnChanges(UpdateError):
+    """What's merged can't be installed: this checkout has changes of its own that aren't (a test branch)."""
+
+    def __init__(self, new: str, titles: list[str], own: int, branch: str):
+        super().__init__("this checkout has changes of its own that the merged version doesn't: update it by hand")
+        self.new, self.titles, self.own, self.branch = new, titles, own, branch
 
 
 def _list(titles: list[str]) -> str:
