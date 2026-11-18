@@ -1,6 +1,6 @@
 """The open stage 1: small classifiers on openWakeWord's pretrained speech embedding (Google's, trained on a lot of
 audio), trained only on generic data, never anyone's real recordings. Four heads are averaged into one openWakeWord
-model (models/generic/hey_tars_open.onnx). Runs in DATA/oww/.venv (openWakeWord and PyTorch), from the repo root:
+model (models/generic/hey_tars.onnx). Runs in DATA/oww/.venv (openWakeWord and PyTorch), from the repo root:
 
     DATA/oww/.venv/bin/python -m training.open.train embed           # training rows from the clips
     DATA/oww/.venv/bin/python -m training.open.train train --out NAME [--head convattn] [--near 3] [--neg 10]

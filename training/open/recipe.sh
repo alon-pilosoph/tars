@@ -1,5 +1,5 @@
 #!/bin/sh
-# The open stage 1 (models/generic/hey_tars_open.onnx), from a data folder prepared for stage 1 (README.md, run order;
+# The open stage 1 (models/generic/hey_tars.onnx), from a data folder prepared for stage 1 (README.md, run order;
 # aug/mined is stage1/recipe.sh's mining). About 5 hours on the development Mac.
 #
 #   sh training/open/recipe.sh            (from the repo root; DATA = $TARS_TRAINING_DATA or ~/tars-training)
@@ -23,5 +23,5 @@ $P train --out plain-ca --head convattn --near 3 --neg 10
 $P embed --loud
 $P train --out loud --near 3 --neg 10
 $P train --out loud-ca --head convattn --near 3 --neg 10
-$P export --heads plain,plain-ca,loud,loud-ca --out "$D/open_model/hey_tars_open.onnx"
-echo "open stage 1: $D/open_model/hey_tars_open.onnx (threshold 0.59, [wake] sure 0.88)"
+$P export --heads plain,plain-ca,loud,loud-ca --out "$D/open_model/hey_tars.onnx"
+echo "open stage 1: $D/open_model/hey_tars.onnx (threshold 0.59, [wake] sure 0.88)"

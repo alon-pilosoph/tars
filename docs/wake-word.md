@@ -266,11 +266,11 @@ with the voice at or under the TV, Vosk mostly can't make out the phrase, and th
 
 ### The open stage 1 (optional)
 
-`models/generic/hey_tars_open.onnx` is a second generic stage 1, for a Pi: four small heads on openWakeWord's
+`models/generic/hey_tars.onnx` is a second generic stage 1, for a Pi: four small heads on openWakeWord's
 pretrained speech embedding, averaged into one openWakeWord model ([training/open](../training/open/recipe.sh)). The
 heads are a plain one and a conv-attention one, each trained once on the usual mixes and once with extra takes and
 lookalikes at +5 to −10 dB. Each pair erred in different places and the average beat every one of them. Like the
-microWakeWord model, it was trained on generic data only. It runs as `model = "models/generic/hey_tars_open.onnx"`,
+microWakeWord model, it was trained on generic data only. It runs as `model = "models/generic/hey_tars.onnx"`,
 `threshold = 0.59`, `sure = 0.88`.
 
 | Same tests as above | microWakeWord (shipped) | Open, four heads |
