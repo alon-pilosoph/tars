@@ -874,6 +874,7 @@ class OpenAIChat:
                 ),
                 "openai",
                 model,
+                {"instructions": instructions, "input": context, **tools},
             )
             for event in stream:
                 _check(writing)
@@ -1302,7 +1303,8 @@ class QuickChat(OpenAIChat):
             **self._quick_extra,
             **self._quick_tools_for(round_, writing),
         )
-        return usage.CountedChat(stream, service.name, service.model)
+        sent = {"messages": messages, **self._quick_tools_for(round_, writing)}
+        return usage.CountedChat(stream, service.name, service.model, sent)
 
     def _open(self, service: QuickService, messages: list, streams: _Streams) -> _Opened:
         """`service`'s first round, read up to its first sign of an answer."""
@@ -1487,6 +1489,7 @@ class ResponsesQuickChat(QuickChat):
                 ),
                 service.name,
                 service.model,
+                {"instructions": self._quick_instructions, "input": items, **tools},
             )
             calls = []
             for event in stream:
