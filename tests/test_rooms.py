@@ -77,8 +77,11 @@ def test_two_rooms_taking_at_once_never_hold_the_same_item(desk):
                 desk.done(name, [item["id"]])
 
     def wander():
-        for i in range(2000):
+        # At least 2000 moves, and on until every item was taken: a busy machine mustn't fail it by being slow.
+        deadline, i = time.monotonic() + 10, 0
+        while i < 2000 or (len(said) < len(items) and time.monotonic() < deadline):
             desk.heard("bedroom" if i % 2 else "living room", "Stacey")
+            i += 1
         stop.set()
 
     threads = [threading.Thread(target=room, args=(n,)) for n in ("bedroom", "living room")]

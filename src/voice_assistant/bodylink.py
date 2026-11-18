@@ -15,6 +15,7 @@ are audio: up, 16 kHz mono 16-bit, any length (re-blocked here to 80 ms); down, 
     brain → welcome {room, play_rate, max_listen_s}
     body → wake {how, score, preroll_ms}, then audio: the pre-roll (what had the name in it), then live
     brain → listen {on}   play {id, listening} + audio + play_end {id}   stop   sleep   mute {muted}   pong
+    brain → text {who, text}                  (a web page only: what was heard, and what's said)
     body → played {id, cut}   button {name}   gone_quiet   ping
 
 `proof` is the nonce signed with the body's Ed25519 key (bodykeys.py): the key never crosses, and the brain keeps
@@ -382,6 +383,15 @@ class RemoteBody(LocalBody):
         mic = RemoteMicrophone(link)
         super().__init__(mic, RemoteSpeaker(link, speaker_rate), RemoteTrigger(link, checker), recorder)
         self.link = link
+
+    def show(self, who: str, text: str) -> None:
+        """The conversation's words, for a body that shows them (a web page): `who` is "you" for what was heard, "tars"
+        for what's said. Other bodies are sent nothing: they've no screen."""
+        if self.link.hello.web and text.strip():
+            try:
+                self.link.send({"type": "text", "who": who, "text": text.strip()})
+            except BodyGone:
+                pass  # the conversation finds out on its own
 
     def play(self, audio, sample_rate, on_first_audio=None, listening=False) -> bool:
         if listening and self.hears_while_speaking:

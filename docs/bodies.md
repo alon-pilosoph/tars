@@ -95,7 +95,7 @@ log (its conversations are); the Pi's buttons and the control socket act on its 
 
 ## The web page
 
-A browser can be a body too, for as long as a page is open: the Talk page (its page in the web UI is in progress). It asks the web UI for
+A browser can be a body too, for as long as a page is open: [the Talk page](web-ui.md#talk). It asks the web UI for
 a ticket, opens the body link with it (`wss://` on `[bodies] secure_port` from a page over HTTPS, with the web UI's
 certificate; `ws://` on `port` otherwise), and talks by a tap: a `wake` with `how: button`.
 

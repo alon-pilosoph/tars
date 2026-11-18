@@ -538,6 +538,7 @@ class Assistant:
         except Exception as e:  # noqa: BLE001 - a line TARS can't say is skipped, never fatal
             print(f"(couldn't say {text!r}: {e!r})")
             return False
+        self._show("tars", text)
         self._play(audio, on_first_audio)
         return True
 
@@ -1213,6 +1214,7 @@ class Assistant:
         self.rooms.heard(self.room, answer.who.name)  # what's for them is said here now
         if not text or draft.cancelled:
             return answer
+        self._show("you", text)
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
         room = "" if self.rooms.single else self.room
         request = Request(
@@ -1267,7 +1269,7 @@ class Assistant:
         answer.reply = StreamedReply(
             _tee(pieces(), answer.spoken),
             _MadeAhead(self.voice, self.phrases),
-            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+            self._on_sentence(answer),
         )
         return answer
 
@@ -1294,10 +1296,22 @@ class Assistant:
         answer.reply = StreamedReply(
             _tee(answer.written, answer.spoken),
             self.voice,
-            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+            self._on_sentence(answer),
             self.phrases.made_ahead,
         )
         return answer
+
+    def _on_sentence(self, answer: Answer) -> Callable[[str], None]:
+        def said(sentence: str) -> None:
+            answer.sentences.append((time.perf_counter(), sentence))
+            self._show("tars", sentence)
+
+        return said
+
+    def _show(self, who: str, text: str) -> None:
+        """The conversation's words, to a body with a screen (a web page): "you" heard, "tars" said."""
+        if show := getattr(self.body, "show", None):
+            show(who, text)
 
     def _discard(self, answer: Answer) -> None:
         if answer.reply:

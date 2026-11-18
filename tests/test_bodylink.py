@@ -558,3 +558,14 @@ def test_a_page_served_over_https_reaches_the_bodies_over_wss(tmp_path):
         ws.close()
     finally:
         listener.close()
+
+
+def test_only_a_web_page_is_shown_the_conversations_words():
+    sent = []
+    for web in (True, False):
+        hello = bodylink.Hello("web-1" if web else "kitchen", web=web)
+        link = bodylink.BodyConnection(hello, sent.append, lambda: None)
+        body = RemoteBody(link, 24000, None)
+        body.show("you", " What time is it? ")
+        body.show("tars", "  ")  # nothing to show
+    assert [json.loads(m) for m in sent] == [{"type": "text", "who": "you", "text": "What time is it?"}]

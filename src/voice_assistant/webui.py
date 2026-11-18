@@ -659,6 +659,7 @@ def create_app(
             "clustering": recluster is not None,
             "enroll_at": MIN_REQUESTS_TO_ENROLL,
             "health": health is not None,
+            "talk": talk is not None,
         }
 
     @app.get("/api/health")
