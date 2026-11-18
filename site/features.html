@@ -110,6 +110,12 @@
               ><small>Every wake teaches the next wake models, and voices get names.</small></a
             >
           </li>
+          <li>
+            <a href="#rooms"
+              ><span class="no">7</span><b>Every room</b
+              ><small>A small board in the bedroom, each room its own conversation.</small></a
+            >
+          </li>
         </ol>
       </section>
 
@@ -595,6 +601,48 @@
             </div>
           </li>
         </ol>
+      </section>
+
+      <section id="rooms" class="part">
+        <div class="part-head">
+          <div class="kicker"><span class="no">7</span>Every room</div>
+          <h2>One brain, ears in every room</h2>
+          <p class="lead">
+            Another machine, or a matchbox-sized board, can be TARS's ears and voice in another room. It only moves
+            sound: the conversation, and everything TARS knows, stay on the Pi.
+          </p>
+        </div>
+        <div class="rem-grid">
+          <div class="rules">
+            <div>
+              <h3>Each room its own conversation</h3>
+              <p>
+                Someone in the bedroom and someone in the living room can talk to TARS at once. A reminder is said in
+                the room its person was last heard in, and only there.
+              </p>
+            </div>
+            <div>
+              <h3>TARS's own firmware on an ESP32</h3>
+              <p>
+                The M5Stack Atom VoiceS3R hears “hey TARS” with the same model as the Pi, and sends the seconds before
+                it to the Pi, which double-checks the name before answering.<span class="d">
+                  It plays a reply of any length, slowing the Pi's sending to its own pace, cancels its own echo, and
+                  takes a button for talking without the name. Updates come over Wi-Fi.</span
+                >
+              </p>
+            </div>
+            <div>
+              <h3>Only bodies it paired</h3>
+              <p>Each one proves itself with a key it never sends, and the Pi keeps only the half that checks it.</p>
+            </div>
+          </div>
+          <div class="request">
+            <span class="k">From the bedroom</span>
+            <p class="said"><b>Alon</b> Hey TARS, what's seven times eight?</p>
+            <p class="said tars"><b>TARS</b> Fifty-six.</p>
+            <span class="foot">0.83 s from the end of the question to the first sound, through the Atom.</span>
+          </div>
+        </div>
       </section>
       <section class="part next" aria-label="The other page">
         <a class="next-link" href="how-it-works.html"

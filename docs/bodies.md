@@ -10,10 +10,9 @@ turns (when someone's done, the answer started during a pause, follow-ups, who's
 code as for the Pi's own speakerphone. That keeps a body small enough for an ESP32, and keeps one way of holding a
 conversation, not one per device.
 
-**Where it stands:** a second machine can be TARS's body in another room, for a brain with no microphone of its own:
-built and tested on one machine (each half over a real socket against the other), not yet tried across two in a real
-room. Several bodies holding conversations at once, and a body beside the Pi's own speakerphone, are the next step
-(rooms).
+**Where it stands:** tried across real machines: the home Mac as a body for the Pi, two bodies holding
+conversations at once ([rooms](#rooms)), and an ESP32 board, [the Atom](atom.md), that hears the name itself and
+leaves the double-check to the brain.
 
 ## Running one
 
@@ -46,6 +45,8 @@ a minute, then try again." `deploy/voice-assistant-body.service` runs it at boot
 assistant but tighter. Its protocol handling is [`bodyclient.py`](../src/voice_assistant/bodyclient.py)'s
 `BodyProtocol`, a small state machine with no devices in it: the ESP32 and the web page are held to the same
 behaviour.
+
+An ESP32 board runs TARS's own firmware instead: [the Atom](atom.md), set up with ESPHome.
 
 ## Pairing
 
@@ -179,7 +180,8 @@ These hold even if the brain were compromised; they're the body's, in its own co
   body itself opened, never from sleep.
 - A conversation has a hard cap (`max_listen_s`, and the body's own, whichever is lower); past it, the body stops
   streaming and sends `gone_quiet`.
-- It shows that it's streaming (a light, a visible state on a page).
+- It shows that it's streaming, where it has a way to: a light, a visible state on a page. A body with neither (the
+  Atom) shows nothing; TARS's own "Yes?" after the wake is the sign it's listening.
 - Muted means the wake word isn't even running.
 
 With `wake: model`, a few seconds of audio leave the room before the wake is confirmed, since the double-check runs on

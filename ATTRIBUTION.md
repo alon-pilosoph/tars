@@ -24,6 +24,16 @@ script.
 |---|---|---|
 | [Newsreader](https://github.com/productiontype/Newsreader) and [Instrument Sans](https://github.com/Instrument/instrument-sans) | SIL OFL 1.1 (`webui/src/fonts/OFL.txt`) | the web UI's and the site's fonts, in this repo |
 
+## The Atom's firmware
+
+| Part | License | How it's used |
+|---|---|---|
+| [ESPHome](https://esphome.io) | C++ MIT, Python GPLv3 | builds the firmware; `firmware/components/micro_wake_word` is its wake word component with one small change, under its own terms (GPLv3 for its `__init__.py`) |
+| [M5Stack's ESPHome configuration](https://github.com/m5stack/esphome-yaml) | MIT | the Atom's pins and audio settings, in `firmware/atom-voices3r/tars-atom.yaml` |
+| [esphome-audio-stack](https://github.com/n-IA-hane/esphome-audio-stack) | MIT | the audio chip and echo canceller; downloaded at build |
+| [Monocypher](https://monocypher.org) 4.0.2 | BSD 2-Clause or CC0 | the device key's Ed25519 signature; in this repo (`firmware/components/tars_body/monocypher*`) |
+| [esp_websocket_client](https://components.espressif.com/components/espressif/esp_websocket_client) | Apache 2.0 | the connection to the brain; downloaded at build |
+
 ## Voices the training clips were synthesized with
 
 | Source | License | How it's used |
