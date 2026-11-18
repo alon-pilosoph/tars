@@ -2,8 +2,9 @@
 
 **Status: the design is agreed; step 2 has started.** The house tools now reach every listed device through the
 hub's boundary, in one process (`hub.py`): each is a `HubDevice` that asks a `LocalHub`, which holds the devices
-`hub.build` made. Still to move behind it: the `home_assistant` tool, and the loops on the home network (who's home,
-the doors, auto-lock). It answers how a brain that isn't on the home network (a
+`hub.build` made, and the `home_assistant` tool reaches Home Assistant through `HubHomeAssistant`, one request of
+`HA_REQUESTS` at a time. Still to go: the loops on the home network (who's home, the doors, auto-lock), whose events
+reach the brain through the functions they're handed. It answers how a brain that isn't on the home network (a
 hosted one, for an invited home) can still work the house: Home Assistant, the TV, the IR blaster, the doors, and
 knowing who's home. It follows [a brain anywhere, a body at home](roadmap.md#later-a-brain-anywhere-a-body-at-home),
 and uses the [body link](bodies.md)'s transport and device keys. The owner's own home doesn't need it while its brain

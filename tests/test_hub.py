@@ -75,16 +75,24 @@ def test_what_the_brain_is_told_of_a_device_is_what_doesnt_change():
 
 # The boundary itself: what the brain's side of TARS may import. A device client is the code that talks to something
 # on the home network; only the hub's side builds and holds them.
-CLIENTS = {"hass", "androidtv", "routers", "mosquitto", "spotify", "speakerphone", "haconfig", "ha_setup"}
+CLIENTS = {"hass", "androidtv", "routers", "mosquitto", "spotify", "speakerphone", "haconfig"}
 HUB_SIDE = {"hub", "check", "wiring", "entrypoints", "presence", "doors", "autolock", "plugins", "mic_mute", "volume"}
 HUB_SIDE |= CLIENTS
-# Still to move behind the hub (step 2's next part): the home_assistant tool, which reaches all of Home Assistant.
-NOT_YET = {("home", "ha_setup"), ("home", "haconfig"), ("ha_tool", "ha_setup"), ("ha_tool", "hass")}
+NOT_YET: set[tuple[str, str]] = set()  # what's still to move behind the hub, by (module, client)
 
 
 def imported(path: Path) -> set[str]:
+    """What a module imports from TARS's own, leaving out what's only for type checking (if TYPE_CHECKING:)."""
+    tree = ast.parse(path.read_text())
+    typing_only = {
+        id(n) for block in ast.walk(tree)
+        if isinstance(block, ast.If) and getattr(block.test, "id", "") == "TYPE_CHECKING"
+        for n in ast.walk(block)
+    }  # fmt: skip
     found = set()
-    for node in ast.walk(ast.parse(path.read_text())):
+    for node in ast.walk(tree):
+        if id(node) in typing_only:
+            continue
         if isinstance(node, ast.ImportFrom) and node.level == 1:
             if node.module:
                 found.add(node.module.split(".")[0])
@@ -103,3 +111,23 @@ def test_no_module_on_the_brains_side_imports_a_device_client():
     )
     assert crossing == [], f"reach these through the hub (hub.py): {crossing}"
     assert HomeTools  # the brain's side of the house
+
+
+def test_the_home_assistant_tool_reaches_home_assistant_through_the_hub():
+    from voice_assistant.hub import HA_REQUESTS, HubHomeAssistant
+
+    both()  # the house tools behind the hub build as before
+    asked = []
+
+    class Hass:
+        def __getattr__(self, request):
+            return lambda *a, **k: asked.append(request) or []
+
+    hub = LocalHub({}, Hass())
+    ha = HubHomeAssistant(hub)
+    assert ha.states() == [] and asked == ["states"]
+    with pytest.raises(AttributeError):
+        ha.token  # noqa: B018 - only the requests the tool makes cross, never the connection's own parts
+    with pytest.raises(ValueError):
+        hub.home_assistant("delete_everything")
+    assert "call_service" in HA_REQUESTS and "token" not in HA_REQUESTS

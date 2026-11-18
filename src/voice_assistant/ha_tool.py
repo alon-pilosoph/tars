@@ -25,13 +25,16 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 from . import history as past
 from .ha_setup import ACTIONS as SETUP_ACTIONS
 from .ha_setup import RULES as SETUP_RULES
-from .hass import HomeAssistant
 from .home import HomeError, Request, set_off_by_door
 from .toolbox import held_for_the_web
+
+if TYPE_CHECKING:
+    from .hass import HomeAssistant
 
 FIND, STATE, HISTORY, STATISTICS, LOGBOOK, SERVICES, CALL = (
     "find",
@@ -199,6 +202,13 @@ class HAAccess:
         self._lock = lock or threading.Lock()
         self._setup = setup
         self.doors = Doors(hass)
+
+    def through(self, hass: HomeAssistant) -> None:
+        """Reaches Home Assistant through `hass` from now on (the hub's, hub.HubHomeAssistant): this tool, its door
+        check and the setup it works."""
+        self._hass = self.doors._hass = hass
+        if self._setup is not None:
+            self._setup._hass = hass
 
     def call(self, args: dict, request: Request) -> str:
         args = args if isinstance(args, dict) else {}

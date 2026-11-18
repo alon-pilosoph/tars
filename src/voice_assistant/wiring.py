@@ -574,7 +574,7 @@ def make_home(
     if built.tools:
         from .hub import behind_hub
 
-        behind_hub(built.tools)  # the house tools reach every device through the hub (docs/house-hub.md)
+        behind_hub(built.tools, context.hass)  # the house reached through the hub (docs/house-hub.md)
     if built.tools and (asked := {d["entity"]: a for d, _, _, a in auto_locks(cfg, root)}):
         built.tools.unlock_asked = lambda entity: asked[entity].mark() if entity in asked else None
     for name, why in built.unavailable.items():

@@ -43,11 +43,19 @@ class Description:
 
 
 class LocalHub:
-    """The hub in this process: the devices themselves, by name in lower case. Each of its methods is one message
-    of the link's (docs/house-hub.md#the-link): `describe`, a `call`, or a read (`ask`)."""
+    """The hub in this process: the devices themselves, by name in lower case, and Home Assistant (`hass`, for the
+    home_assistant tool). Each of its methods is one message of the link's (docs/house-hub.md#the-link):
+    `describe`, a `call`, a read (`ask`), or a request to Home Assistant (`home_assistant`)."""
 
-    def __init__(self, devices: dict[str, Device]):
+    def __init__(self, devices: dict[str, Device], hass=None):
         self._devices = {name.strip().lower(): device for name, device in devices.items()}
+        self._hass = hass
+
+    def home_assistant(self, request: str, *args, **kwargs):
+        """One of HA_REQUESTS, made to Home Assistant here, where its token is."""
+        if request not in HA_REQUESTS or self._hass is None:
+            raise ValueError(f"not a request the hub makes of Home Assistant: {request}")
+        return getattr(self._hass, request)(*args, **kwargs)
 
     def describe(self) -> dict[str, Description]:
         return {name: Description.of(device) for name, device in self._devices.items()}
@@ -63,6 +71,25 @@ class LocalHub:
 
 
 READS = ("status", "what", "history", "past", "rules", "glance", "slow", "check", "stop")
+# What the home_assistant tool asks of Home Assistant (ha_tool.HAAccess, its door check, ha_setup.HASetup): reading it,
+# a service call, and its setup's own.
+HA_REQUESTS = (
+    "states", "state", "areas", "area_list", "history", "statistics", "logbook", "services", "call_service",
+    "entity_entries", "entries", "devices", "config_of", "discovered", "start_setup", "answer_setup",
+    "update_device", "remove_entry", "link",
+)  # fmt: skip
+
+
+class HubHomeAssistant:
+    """Home Assistant as the brain has it: each request made by the hub (LocalHub.home_assistant)."""
+
+    def __init__(self, hub: LocalHub):
+        self._hub = hub
+
+    def __getattr__(self, request: str):
+        if request not in HA_REQUESTS:
+            raise AttributeError(request)
+        return lambda *args, **kwargs: self._hub.home_assistant(request, *args, **kwargs)
 
 
 class HubDevice(Device):
@@ -108,10 +135,13 @@ class HubDevice(Device):
         self._hub.ask(self._key, "stop")
 
 
-def behind_hub(tools: HomeTools) -> LocalHub:
-    """The house tools' devices moved behind a hub: the tools then reach each through its HubDevice."""
-    hub = LocalHub(tools.devices)
+def behind_hub(tools: HomeTools, hass=None) -> LocalHub:
+    """The house tools' devices and Home Assistant (`hass`) moved behind a hub: the tools then reach each device
+    through its HubDevice, and Home Assistant through HubHomeAssistant."""
+    hub = LocalHub(tools.devices, hass)
     tools.devices = {name: HubDevice(hub, described) for name, described in hub.describe().items()}
+    if tools.ha is not None and hass is not None:
+        tools.ha.through(HubHomeAssistant(hub))
     return hub
 
 
