@@ -121,6 +121,12 @@ CANT_UNLISTED = "work anything in the house the home tool doesn't list"
 CANT_REMIND = "set timers, alarms or reminders"
 CANT_WEB = "look anything up on the web"
 CANT_SEND = "send anything to a phone or the TARS page"
+# A request that could mean more than one thing gets a question, not a refusal or a guess (Gemini for Home does the
+# same: "which bedroom?").
+ASK_DONT_REFUSE = (
+    "When a request could mean more than one thing and a wrong guess would matter, ask one short question that names "
+    "the choices, instead of guessing or saying you can't."
+)
 # What a model can do itself, with its tools.
 CAN_WEB = "look things up on the web, with web search"
 CAN_SEND = "send a link, a note, a list or a text file to the household's TARS page, with the send tool"
@@ -385,6 +391,7 @@ def abilities(can: list[str], hand_offs: list[tuple[str, str, list[str], list[st
     """What a model can do itself (`can`), what it hands over and how ((marker, intro, what for, examples)), and what
     TARS can't do at all, from one place, so it never claims what it can't do or hands over what it could have done."""
     parts = [f"What you can do yourself: {'; '.join(can)}."] if can else []
+    parts.append(ASK_DONT_REFUSE)
     for marker, intro, needs, examples in hand_offs:
         quoted = " or ".join(f'"{e}"' for e in examples)
         reply = f"reply with exactly {marker} and nothing else"
