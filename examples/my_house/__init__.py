@@ -6,7 +6,7 @@ In config.toml (or config.local.toml):
 
     [home.plugins.my_house]
     module = "examples.my_house"
-    grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
+    grant = ["TUYA_LOCAL_KEY", "PURIFIER_ATOM_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
     blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.5", control_type = 2 }
 
     [[home.devices]]
@@ -32,8 +32,16 @@ In config.toml (or config.local.toml):
     name = "air purifier"
     kind = "my_house.purifier"
     address = "48:87:2D:00:00:00"         # its Bluetooth address: a Soehnle AC500, from this machine's own adapter
+
+    [[home.devices]]
+    name = "bedroom purifier"
+    kind = "my_house.purifier"
+    address = "48:87:2D:00:00:01"
+    atom = "tars-bt-bedroom.local"        # out of range: through an Atom beside it (firmware/atom-lite-bt),
+                                          # the key it shares in .env as PURIFIER_ATOM_KEY
 """
 
+import re
 from collections.abc import Callable
 
 from voice_assistant.androidtv import KEY_FILE, AndroidTV
@@ -45,13 +53,16 @@ from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, TESTED, Remote, tested_path
-from .purifier import WATCH_FILE, Bluetooth, Purifier, Watch
+from .purifier import ATOM_KEY, WATCH_FILE, Atom, Bluetooth, Purifier, Watch
 from .screen import Screen
 
-# What it needs, to be granted under [home.plugins.my_house] grant: the blaster's key, Home Assistant (the AC's light
-# sensor), the Android TV agent, the other devices (a remote asks the Fire TV whether the TV is on), saying aloud
-# what the Fire TV did, and telling the maintainers when the purifier stops answering. Never unlock.
-PLUGIN = Manifest(version="1.0.0", needs=(TUYA_KEY, "home_assistant", "tv_agent", "devices", "announce", "tell"))
+# What it needs, to be granted under [home.plugins.my_house] grant: the blaster's key, the Atom's key (a purifier out
+# of range), Home Assistant (the AC's light sensor), the Android TV agent, the other devices (a remote asks the Fire TV
+# whether the TV is on), saying aloud what the Fire TV did, and telling the maintainers when the purifier stops
+# answering. Never unlock.
+PLUGIN = Manifest(
+    version="1.1.0", needs=(TUYA_KEY, ATOM_KEY, "home_assistant", "tv_agent", "devices", "announce", "tell")
+)
 
 # What this house has learned, kept in the backup's snapshot: the AC's profile, its presses and what it was last sent,
 # and which power codes each remote's set answered to.
@@ -147,19 +158,36 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         return device
 
     def purifier(spec: dict) -> Purifier:
-        _only(spec, {"address"})
-        if not (isinstance(spec.get("address"), str) and spec["address"].strip()):
-            raise ValueError("it needs address, its Bluetooth address")
-        try:
-            import bleak  # noqa: F401 - only whether it's there
-        except ImportError:
-            raise ValueError('it needs the optional extra "my-house": uv sync --all-extras') from None
-        link = Bluetooth(spec["address"].strip())
+        _only(spec, {"address", "atom"})
+        address = spec.get("address")
+        if not (isinstance(address, str) and re.fullmatch(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", address.strip())):
+            raise ValueError("it needs address, its Bluetooth address, like 48:87:2D:1F:C1:5C")
+        atom = spec.get("atom")
+        if atom is not None and not (isinstance(atom, str) and atom.strip()):
+            raise ValueError("atom is the Atom's address on the home network, like tars-bt-bedroom.local")
+        if not atom:
+            try:
+                import bleak  # noqa: F401 - only whether it's there
+            except ImportError:
+                raise ValueError('it needs the optional extra "my-house": uv sync --all-extras') from None
+        link: Atom | Bluetooth
+        if atom:
+            key = context.secret(ATOM_KEY)
+            if not key:
+                raise ValueError(f"no {ATOM_KEY} in .env: the key the Atom shares, from its secrets.h")
+            link = Atom(address.strip(), atom.strip(), key)
+        else:
+            link = Bluetooth(address.strip())
         if not (context.background and context.tell):
             return Purifier(spec["name"], link)
         # The voice assistant's watches its Bluetooth, and tells the maintainers when it goes quiet.
         watch = Watch(
-            spec["name"], link.heard, context.tell, restart=link.restart, memory=context.root / WATCH_FILE
+            spec["name"],
+            link.heard,
+            context.tell,
+            restart=link.restart if isinstance(link, Bluetooth) else None,
+            memory=context.root / WATCH_FILE,
+            via=atom.strip() if atom else "",
         ).start()
         return Purifier(spec["name"], link, answered=watch.answered)
 

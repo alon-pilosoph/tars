@@ -2,6 +2,10 @@
 Assistant, no pairing. The protocol is from github.com/narolinus/soehnle-ac500 (MIT), which read it from the official
 app's Bluetooth captures: writes to ef01, a live status about every second on ef02.
 
+Out of this machine's range (a purifier in another room), it's reached through an M5Stack Atom beside it running our
+firmware (firmware/atom-lite-bt), which keeps a Bluetooth connection to it ready and passes the bytes on: Atom, the
+same requests over Wi-Fi.
+
 Each request is one short connection, since a connection held open would keep the phone app out. Connections drop now
 and then, so each is tried a few times. A change is "done" only when the purifier's own status shows it.
 
@@ -16,7 +20,10 @@ heard it, and whether it's told them, are kept in a file: TARS restarting change
 nor told "quiet for 16 minutes" when it's been unplugged since the morning."""
 
 import asyncio
+import hashlib
+import hmac
 import json
+import socket
 import subprocess
 import threading
 import time
@@ -24,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self
 
 from voice_assistant.files import atomic_write
 from voice_assistant.home import OFF, ON, PRESS, SET, STATUS, Check, Device, HomeError, Request, button
@@ -178,6 +185,165 @@ class Bluetooth:
             raise OSError(f"{type(e).__name__}: {e}") from e
 
 
+ATOM_PORT = 8780  # the firmware's (firmware/atom-lite-bt)
+ATOM_KEY = "PURIFIER_ATOM_KEY"  # the key it and TARS share, in .env
+LINK_S = 20.0  # how long the Atom gets to connect to the purifier; it tries several times itself
+REPLY_S = 5.0  # for anything else it's asked
+
+
+class Atom:
+    """The link through an Atom beside the purifier (firmware/atom-lite-bt), at `host` on the home network, sharing
+    `key`: for a purifier too far from this machine's own Bluetooth. A request is one connection to the Atom over
+    Wi-Fi, in which it hands over the connection to the purifier it keeps ready, passes on the frames sent and the
+    statuses it reports, and replaces it after: the purifier takes a request's commands only on a fresh connection.
+    One thing at a time."""
+
+    def __init__(self, address: str, host: str, key: str):
+        self.address, self.host, self._key = address, host, key
+        self._lock = threading.Lock()
+
+    def talk(self, commands: list[bytes], done: Callable[[Status], bool]) -> Status:
+        with self._lock:
+            return asyncio.run(self._talk(commands, done))
+
+    def heard(self, seconds: float) -> bool | None:
+        """Whether the Atom heard its broadcast in the last minute. None: the Atom couldn't be reached, which says
+        nothing about the purifier."""
+        with self._lock:
+            try:
+                return asyncio.run(self._heard())
+            except OSError as e:
+                print(f"(purifier watch: {e})")
+                return None
+
+    async def _heard(self) -> bool:
+        async with _AtomSession(self.host, self._key) as atom:
+            ms = int((await atom.ask("heard")).removeprefix("heard "))
+            return 0 <= ms < 60_000
+
+    async def _talk(self, commands: list[bytes], done: Callable[[Status], bool]) -> Status:
+        async with _AtomSession(self.host, self._key) as atom:
+            said = await atom.ask("link", LINK_S)
+            if said != "linked":
+                raise OSError(f"the Atom couldn't connect to it ({said.removeprefix('failed ')})")
+            try:
+                status = await atom.first(FIRST_STATUS_S)  # the Atom's latest, sent with "linked"
+                if status.held:
+                    return status
+                await atom.send(frame(HELLO, 0, 1))
+                await asyncio.sleep(0.12)
+                await atom.send(frame(HELLO, 0, 1))
+                await asyncio.sleep(0.2)
+                for command in commands:
+                    await atom.send(command)
+                    await asyncio.sleep(0.2)
+                # It reports its status about every second on its own: asking as well isn't needed.
+                deadline = time.monotonic() + SETTLE_S
+                while not done(atom.latest) and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                return atom.latest
+            finally:
+                await atom.ask("unlink")
+
+
+_found: dict[str, str] = {}  # an Atom's name on the home network, and the address it was last found at
+
+
+async def _ipv4(host: str) -> str:
+    """`host`'s IPv4 address. Looked up for IPv4 only: a .local name's IPv6 lookup goes unanswered by the Atom, and
+    waiting it out costs five seconds a request. Kept until a connection to it fails (_AtomSession forgets it)."""
+    if host not in _found:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, ATOM_PORT, family=socket.AF_INET)
+        _found[host] = infos[0][4][0]
+    return _found[host]
+
+
+class _AtomSession:
+    """One connection to the Atom: proven with the key, then lines both ways. Statuses ("live <hex>") come whenever
+    the purifier sends them; anything else answers what was asked. OSError for anything gone wrong."""
+
+    def __init__(self, host: str, key: str):
+        self.host, self._key = host, key
+        self.latest: Status | None = None
+        self._fresh = asyncio.Event()
+        self._replies: asyncio.Queue[str] = asyncio.Queue()
+
+    async def __aenter__(self) -> Self:
+        try:
+            self._reader, self._writer = await asyncio.wait_for(
+                asyncio.open_connection(await _ipv4(self.host), ATOM_PORT), CONNECT_S
+            )
+            hello = (await asyncio.wait_for(self._reader.readline(), REPLY_S)).decode().split()
+            if hello[:2] != ["tars-bt", "1"] or len(hello) != 3:
+                raise OSError("it isn't running TARS's firmware (firmware/atom-lite-bt)")
+            proof = hmac.new(self._key.encode(), hello[2].encode(), hashlib.sha256).hexdigest()
+            self._writer.write(f"auth {proof}\n".encode())
+            if (await asyncio.wait_for(self._reader.readline(), REPLY_S)).strip() != b"ok":
+                raise OSError(f"it refused the key: is {ATOM_KEY} the one in its secrets.h?")
+        except (OSError, TimeoutError, UnicodeDecodeError) as e:
+            _found.pop(self.host, None)  # it may have moved: looked up again next time
+            await self._close()
+            raise OSError(f"the Atom at {self.host} didn't answer: {type(e).__name__}: {e}") from e
+        self._reading = asyncio.create_task(self._read())
+        return self
+
+    async def __aexit__(self, *_) -> None:
+        self._reading.cancel()
+        await self._close()
+
+    async def _close(self) -> None:
+        if writer := getattr(self, "_writer", None):
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+
+    async def _read(self) -> None:
+        while line := await self._reader.readline():
+            said = line.decode(errors="replace").strip()
+            if said.startswith("live "):
+                try:
+                    found = parse(bytes.fromhex(said[5:]))
+                except ValueError:
+                    continue
+                if found is not None:
+                    self.latest = found
+                    self._fresh.set()
+            elif said == "unlinked" and self._asked != "unlink":
+                continue  # the purifier let go unasked: the next command sent says so
+            else:
+                self._replies.put_nowait(said)
+        self._replies.put_nowait("")  # it hung up
+
+    _asked = ""
+
+    async def ask(self, what: str, wait: float = REPLY_S) -> str:
+        self._asked = what
+        self._writer.write(f"{what}\n".encode())
+        try:
+            said = await asyncio.wait_for(self._replies.get(), wait)
+        except TimeoutError:
+            raise OSError(f"the Atom at {self.host} didn't answer {what!r}") from None
+        if not said:
+            raise OSError(f"the Atom at {self.host} hung up")
+        return said
+
+    async def send(self, command: bytes) -> None:
+        said = await self.ask(f"send {command.hex()}")
+        if said != "sent":
+            raise OSError(f"the Atom couldn't send it a command ({said.removeprefix('failed ')})")
+
+    async def first(self, wait: float) -> Status:
+        """Its status: the first one, waited for."""
+        try:
+            await asyncio.wait_for(self._fresh.wait(), wait)
+        except TimeoutError:
+            raise OSError("it sent no status") from None
+        assert self.latest is not None
+        return self.latest
+
+
 def power(state: str) -> bool:
     """This machine's Bluetooth `state`, "on" or "off": whether bluetoothctl did it."""
     try:
@@ -327,12 +493,13 @@ class Watch:
         clock: Callable[[], float] = time.time,
         restart: Callable[[], bool] | None = None,
         memory: Path | None = None,
+        via: str = "",
     ):
         """`clock`: wall-clock seconds, since what's kept in `memory` outlives this process. `memory`: the file
         where when it was last heard and whether it's been told gone are kept, one entry per purifier (None: kept
-        only while TARS runs)."""
+        only while TARS runs). `via`: the Atom it's heard through (its address), if not this machine's Bluetooth."""
         self.name, self._heard, self._tell, self._clock, self._restart = name, heard, tell, clock, restart
-        self._memory = memory
+        self._memory, self._via = memory, via
         kept = self._recall()
         # Never heard before (a first start): unheard only since the watch began, which is all it can say.
         self._last = float(kept.get("last_heard") or clock())
@@ -402,27 +569,36 @@ class Watch:
             self._adapter_works()
             return heard
         self._failed += 1
-        if self._failed < STUCK_AFTER or self._restart is None:
+        if self._failed < STUCK_AFTER:
             return None
-        print("(purifier watch: this machine's Bluetooth can't listen; restarting it)")
-        self._restart()
-        heard = self._heard(LISTEN_S)
-        if heard is not None:
-            self._adapter_works()
-            return heard
+        if self._restart is not None:
+            print("(purifier watch: this machine's Bluetooth can't listen; restarting it)")
+            self._restart()
+            heard = self._heard(LISTEN_S)
+            if heard is not None:
+                self._adapter_works()
+                return heard
         if not self.stuck:
             self.stuck = True
-            self._tell(
-                f"My Bluetooth has stopped working, so I can't reach the {self.name}. I restarted it and it still "
-                "can't listen; restarting me (the Pi) usually fixes it."
-            )
+            if self._via:
+                self._tell(
+                    f"The Atom I reach the {self.name} through ({self._via}) isn't answering on Wi-Fi, so I can't "
+                    "work it. Is it plugged in? Unplugging it and plugging it back in restarts it."
+                )
+            elif self._restart is not None:
+                self._tell(
+                    f"My Bluetooth has stopped working, so I can't reach the {self.name}. I restarted it and it "
+                    "still can't listen; restarting me (the Pi) usually fixes it."
+                )
+            else:
+                self._tell(f"My Bluetooth has stopped working, so I can't reach the {self.name}.")
         return None
 
     def _adapter_works(self) -> None:
         self._failed = 0
         if self.stuck:
             self.stuck = False
-            self._tell("My Bluetooth works again.")
+            self._tell(f"The Atom for the {self.name} answers again." if self._via else "My Bluetooth works again.")
 
     def _back(self) -> None:
         # Kept every few minutes at most (a listen, or a request it answered), so the file is no burden.
