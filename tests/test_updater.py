@@ -241,3 +241,35 @@ def test_the_scripts_parse_and_the_root_helper_refuses_rules_that_run_programs()
     for rules in ("99-tars-speakerphone.rules", "99-tars-ir.rules"):  # TARS's own rules pass its own check
         lines = [line for line in (deploy / rules).read_text().splitlines() if not line.lstrip().startswith("#")]
         assert not any(word in line for line in lines for word in ("RUN", "PROGRAM", "IMPORT"))
+
+
+def on_a_test_branch(pi, title="Testing something (local)"):
+    """The Pi switched to a branch of its own, with a commit main doesn't have, as for a live test."""
+    root = str(pi.root)
+    subprocess.run(["git", "-C", root, "checkout", "-q", "-b", "live-test"], check=True)
+    (pi.root / "test.txt").write_text("trying something\n")
+    subprocess.run(["git", "-C", root, *GIT, "add", "test.txt"], check=True)
+    subprocess.run(["git", "-C", root, *GIT, "commit", "-q", "-m", title], check=True)
+
+
+def test_a_test_branch_on_top_of_everything_merged_is_up_to_date(pi):
+    on_a_test_branch(pi)
+    assert pi.updater().run_once() == "up to date" and pi.told == []
+
+
+def test_whats_merged_but_cant_go_over_a_test_branch_is_told_once_and_again_for_something_newer(pi):
+    on_a_test_branch(pi)
+    pi.commit("Rooms: several bodies at once (#151)")
+    pi.commit("The Talk page (#160)")
+    first, again = pi.updater().run_once(), pi.updater().run_once()
+    assert first.startswith("not updating: this checkout has changes of its own") and again == first
+    told = (
+        "There's an update for me (The Talk page; Rooms: several bodies at once), but I'm running a version with "
+        "changes of my own (live-test: 1 change that isn't merged), so I won't install it over them. Someone needs "
+        "to update me by hand: merge it into what I run, or switch me back to main."
+    )
+    assert pi.told == [(told, [])]
+    assert ["deploy/install-pi.sh"] not in pi.commands  # nothing installed over it
+    pi.commit("Usage: drafts counted (#161)")
+    pi.updater().run_once()
+    assert len(pi.told) == 2 and "Usage: drafts counted" in pi.told[1][0]
