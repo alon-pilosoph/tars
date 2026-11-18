@@ -41,6 +41,23 @@ def test_custom_model_phrase_comes_from_the_filename(tmp_path):
     assert WakeWordTrigger(str(custom), 0.5).phrase == "hey tars"
 
 
+def test_a_custom_model_fetches_the_feature_models_it_needs_and_no_others(tmp_path, monkeypatch):
+    # A fresh install has none of openWakeWord's files: a custom .onnx still needs its feature models.
+    import openwakeword.model
+    import openwakeword.utils
+
+    from voice_assistant import wake
+
+    fetched = []
+    monkeypatch.setattr(openwakeword.utils, "download_models", lambda names: fetched.append(names))
+    monkeypatch.setattr(openwakeword.model, "Model", lambda **kw: "the model")
+    custom = tmp_path / "hey_tars.onnx"
+    custom.write_bytes(b"model")
+    WakeWordTrigger(str(custom), 0.5)
+    assert fetched == [[wake.FEATURES_ONLY]]
+    assert not [m for m in openwakeword.MODELS.values() if wake.FEATURES_ONLY in m["download_url"]]
+
+
 def test_missing_wake_model_is_a_clear_error():
     with pytest.raises(FileNotFoundError, match="not found"):
         WakeWordTrigger("models/does_not_exist.onnx", 0.5)

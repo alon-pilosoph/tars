@@ -46,6 +46,7 @@ class WakeWordTrigger:
             if not path.exists():
                 raise FileNotFoundError(f"Wake-word model {model!r} not found.")
             name = path.stem
+            openwakeword.utils.download_models([FEATURES_ONLY])  # its feature models; no-op once cached
         else:
             openwakeword.utils.download_models([model])  # no-op once cached
             name = model
@@ -159,6 +160,11 @@ class PushToTalkTrigger:
 DOWNLOAD_TRIES = 3
 
 
+# A name no openWakeWord model has: download_models then fetches only the models every wake model needs (its feature
+# models and VAD). An empty list would fetch every model it has.
+FEATURES_ONLY = "features-only"
+
+
 def _load(make, model: str, download):
     """openWakeWord's model, made again after fetching its files afresh if one came down broken: its download keeps
     whatever arrived (a failed request's error page among them) and never fetches a file that exists, so one broken
@@ -176,7 +182,7 @@ def _load(make, model: str, download):
                 path.unlink(missing_ok=True)
                 # openWakeWord fetches a feature model again only when its .tflite is missing, and both together.
                 path.with_suffix(".tflite").unlink(missing_ok=True)
-            download([] if model.endswith(".onnx") else [model])
+            download([FEATURES_ONLY] if model.endswith(".onnx") else [model])
     raise AssertionError("unreachable")
 
 
