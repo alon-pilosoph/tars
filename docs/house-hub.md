@@ -1,6 +1,9 @@
 # The house hub: working the house from a brain that isn't at home
 
-**Status: a design, for review. Nothing here is built.** It answers how a brain that isn't on the home network (a
+**Status: the design is agreed; step 2 has started.** The house tools now reach every listed device through the
+hub's boundary, in one process (`hub.py`): each is a `HubDevice` that asks a `LocalHub`, which holds the devices
+`hub.build` made. Still to move behind it: the `home_assistant` tool, and the loops on the home network (who's home,
+the doors, auto-lock). It answers how a brain that isn't on the home network (a
 hosted one, for an invited home) can still work the house: Home Assistant, the TV, the IR blaster, the doors, and
 knowing who's home. It follows [a brain anywhere, a body at home](roadmap.md#later-a-brain-anywhere-a-body-at-home),
 and uses the [body link](bodies.md)'s transport and device keys. The owner's own home doesn't need it while its brain
