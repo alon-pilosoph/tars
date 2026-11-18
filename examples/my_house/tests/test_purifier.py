@@ -20,7 +20,7 @@ def test_a_real_status_is_read_and_anything_else_is_not():
     on = parse(ON_FRAME)
     assert on.on and not on.held and on.fan == "medium" and not on.uv and on.timer_hours == 0
     assert on.pm25 == pytest.approx(14.2) and on.temperature == pytest.approx(24.6)
-    assert on.filter_percent == pytest.approx(40.74, abs=0.01)
+    assert on.filter_used == pytest.approx(40.74, abs=0.01)  # its hours-run counter: 1760 of 4320
     assert not parse(OFF_FRAME).on
     assert parse(HELD_FRAME).held
     assert parse(ON_FRAME[:-3] + b"\x00\x00\xee") is None  # a bad checksum
@@ -64,7 +64,7 @@ def purifier(**kw) -> tuple[Purifier, Pretend]:
 
 def test_on_off_and_its_status():
     p, link = purifier()
-    assert p.status() == "air purifier: off, fan medium, PM2.5 2, 24 °C, filter 40%"
+    assert p.status() == "air purifier: off, fan medium, PM2.5 2, 24 °C, filter 60% left"
     assert call(p, "on") == "done: air purifier reports on"
     assert call(p, "off") == "done: air purifier reports off"
     assert link.sent == [frame(1, 0, 1), frame(1, 0, 0)]

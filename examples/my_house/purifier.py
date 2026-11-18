@@ -48,6 +48,7 @@ ATTEMPTS = 3
 CONNECT_S = 12.0
 FIRST_STATUS_S = 4.0
 SETTLE_S = 6.0
+FILTER_HOURS = 4320  # a filter's life, as its hours-run counter counts it (the counter goes up; resetting zeroes it)
 FLAG_POWER, FLAG_UV, FLAG_TIMER, FLAG_AUTO, FLAG_NIGHT = 0x01, 0x02, 0x04, 0x20, 0x40
 HELD = (
     "it's ignoring remote commands, as it does after a long time unplugged; "
@@ -75,7 +76,7 @@ class Status:
     flags: int
     pm25: float
     temperature: float
-    filter_percent: float
+    filter_used: float  # percent of its filter's life used: hours run, of 4320 (180 days); a new one reads 0
 
     @property
     def on(self) -> bool:
@@ -108,7 +109,7 @@ def parse(data: bytes) -> Status | None:
         flags=data[6],
         pm25=pm / 10,
         temperature=data[10] / 10,
-        filter_percent=(data[12] | data[13] << 8) / 4320 * 100,
+        filter_used=(data[12] | data[13] << 8) / FILTER_HOURS * 100,
     )
 
 
@@ -467,7 +468,8 @@ def _said(s: Status) -> str:
     modes = [m for m, on in (("auto", s.auto), ("night mode", s.night), ("UV on", s.uv)) if on]
     timer = [f"timer {s.timer_hours} hours"] if s.timer_hours else []
     parts = ["on" if s.on else "off", f"fan {s.fan}", *modes, *timer]
-    return ", ".join([*parts, f"PM2.5 {s.pm25:.0f}", f"{s.temperature:.0f} °C", f"filter {s.filter_percent:.0f}%"])
+    left = max(0, 100 - s.filter_used)
+    return ", ".join([*parts, f"PM2.5 {s.pm25:.0f}", f"{s.temperature:.0f} °C", f"filter {left:.0f}% left"])
 
 
 WATCH_EVERY_S = 300.0  # how often the watch listens
