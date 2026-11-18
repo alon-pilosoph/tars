@@ -238,13 +238,6 @@ bool StreamingModel::perform_streaming_inference(const int8_t features[PREPROCES
         this->last_n_index_ = 0;
       this->recent_streaming_probabilities_[this->last_n_index_] = output->data.uint8[0];  // probability;
       this->unprocessed_probability_status_ = true;
-      // TARS (P5 step 2): what the model scores on this device, about once a second, to tune its cutoff by.
-      if (++this->tars_inferences_ % 33 == 0) {
-        uint8_t most = 0;
-        for (auto &prob : this->recent_streaming_probabilities_) most = std::max(most, prob);
-        ESP_LOGI(TAG, "tars score [window %u]: now %.2f, highest in window %.2f, cool-off %d, input[0..3] %d %d %d %d", (unsigned) this->sliding_window_size_, output->data.uint8[0] / 255.0f,
-                 most / 255.0f, this->ignore_windows_, input->data.int8[0], input->data.int8[1], input->data.int8[2], input->data.int8[3]);
-      }
     }
     if (this->recent_streaming_probabilities_[this->last_n_index_] < this->probability_cutoff_) {
       // Only increment ignore windows if less than the probability cutoff; this forces the model to "cool-off" from a

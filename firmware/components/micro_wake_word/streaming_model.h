@@ -86,7 +86,6 @@ class StreamingModel {
   bool unprocessed_probability_status_{false};
   uint8_t current_stride_step_{0};
   int16_t ignore_windows_{-MIN_SLICES_BEFORE_DETECTION};
-  uint32_t tars_inferences_{0};  // TARS: for logging its scores now and then
 
   uint8_t default_probability_cutoff_;
   uint8_t probability_cutoff_;

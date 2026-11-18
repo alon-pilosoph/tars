@@ -2,6 +2,9 @@
 # (docs/bodies.md). The Atom hears the name; the brain double-checks it, holds the conversation, and speaks through it.
 # The pins and audio settings are the board's, taken from M5Stack's config
 # (github.com/m5stack/esphome-yaml, common/atom-voices3r-satellite-base.yaml at f76024e).
+substitutions:
+  log_port: UART0
+
 esphome:
   name: tars-atom
   min_version: 2026.10.0
@@ -34,8 +37,12 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
 
+# The log goes to the board's serial pins (GPIO43, unused), where writing never waits. Over USB, a log line waits
+# while a computer is plugged in but nobody reads it, which stalls the link to the brain. To read it over USB while
+# debugging: esphome -s log_port USB_SERIAL_JTAG run tars-atom.yaml, and keep it open.
 logger:
   level: DEBUG
+  hardware_uart: ${log_port}
 
 # Updates over Wi-Fi (esphome upload tars-atom.yaml --device tars-atom.local), so the Atom can live away from a cable.
 ota:
@@ -46,7 +53,7 @@ external_components:
   # Echo cancelling and the board's audio chip.
   - source: github://n-IA-hane/esphome-audio-stack@v2026.11.0
     components: [esp_audio_stack, esp_aec]
-  # ESPHome's wake word component, with one log line added: the model's score about once a second.
+  # ESPHome's wake word component, keeping the last detection's score (for the wake message to the brain).
   - source:
       type: local
       path: ../components

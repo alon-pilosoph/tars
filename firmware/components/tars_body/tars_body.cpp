@@ -59,6 +59,7 @@ void TarsBody::setup() {
   config.reconnect_timeout_ms = 5000;
   config.network_timeout_ms = 10000;
   config.ping_interval_sec = 5;
+  config.pingpong_timeout_sec = 15;  // a brain gone without closing (a power cut) is noticed in 15 s, not 2 min
   this->client_ = esp_websocket_client_init(&config);
   if (this->client_ == nullptr) {
     this->mark_failed();
@@ -82,13 +83,12 @@ void TarsBody::on_event_(void *arg, esp_event_base_t base, int32_t event_id, voi
   auto *self = static_cast<TarsBody *>(arg);
   auto *data = static_cast<esp_websocket_event_data_t *>(event_data);
   switch (event_id) {
+    // Nothing here logs: a log line written from this task can block on the USB console when nobody reads it.
     case WEBSOCKET_EVENT_CONNECTED:
-      ESP_LOGD(TAG, "Connected to the brain; waiting for its challenge");
       break;
     case WEBSOCKET_EVENT_DISCONNECTED:
     case WEBSOCKET_EVENT_CLOSED:
     case WEBSOCKET_EVENT_ERROR:
-      ESP_LOGD(TAG, "Connection event %d", (int) event_id);
       self->taking_reply_ = false;
       self->dropped_ = true;
       break;
