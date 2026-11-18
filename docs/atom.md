@@ -67,6 +67,25 @@ nobody reads it, which stalls the link. To read it over USB while debugging, bui
 `esphome -s log_port USB_SERIAL_JTAG run firmware/atom-voices3r/tars-atom.yaml` and keep the log open (opening the
 USB port restarts the Atom).
 
+### Its sound, as tuned on the device
+
+Found with it in a bedroom, where a question after "Yes?" went unheard:
+
+- **The microphone's level** is raised 24 dB after the echo canceller (`mic_gain`, as M5Stack's configuration has
+  it). The codec's own gain stays at 12 dB, leaving room for the speaker's echo. Without it, speech reached the brain
+  about 24 dB too quiet.
+- **The echo canceller's plain mode** (`sr_low_cost`). M5Stack's `fd_low_cost` adds a suppression stage, for a
+  wake word over music, that muffled the microphone by 12 dB or more for about two seconds after anything played,
+  measured with a tone: just when someone answers "Yes?".
+- **A moment after each playback is left out** (250 ms): the amplifier switching off clicks loudly (about half of
+  full scale for 200 ms), which the brain would take for someone starting to speak.
+- **120 ms of silence before each playback**: the amplifier is switched on when sound starts and takes a moment to
+  come up, which cut "Yes?" to "es?".
+
+To see the levels for yourself: `tars_body: debug_levels: true` logs the level of the audio streamed up, and the
+microphone's every second with a short quiet tone every minute, and ESPHome's `web_server` shows the log on the home
+network. A diagnostic build only.
+
 ## Measured
 
 | | |

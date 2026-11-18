@@ -30,7 +30,13 @@ static const uint32_t PLAY_RATE = 24000;                            // the brain
 // A body holds at least 30 s of reply (the brain sends it faster than it plays); a long answer runs past that, so
 // 64 s, in PSRAM. Fuller than that, the connection waits for room, which slows the brain's sending.
 static const size_t REPLY_BYTES = 64 * PLAY_RATE * sizeof(int16_t);
-static const float BODY_CEILING_S = 120.0f;  // the most a conversation streams, whatever the brain says
+static const float BODY_CEILING_S = 120.0f;
+// Silence before each playback: the amplifier is switched on when sound starts, and takes a moment to come up, which
+// cut the first syllable ("Yes?" heard as "es?").
+// After a playback, what the microphone hears is left out for a moment: the amplifier switching off clicks loudly
+// (measured 17000 of 32767, for about 200 ms), which the brain would take for someone starting to speak.
+static const uint32_t AFTER_PLAY_MS = 250;
+static const size_t LEAD_IN_BYTES = 120 * PLAY_RATE / 1000 * sizeof(int16_t);  // the most a conversation streams, whatever the brain says
 static const int PROTOCOL = 1;
 
 void TarsBody::setup() {
@@ -134,13 +140,69 @@ void TarsBody::on_audio_(const std::vector<uint8_t> &data) {
     this->preroll_at_ = (this->preroll_at_ + 1) % PREROLL_SAMPLES;
   }
   this->preroll_filled_ = std::min(PREROLL_SAMPLES, this->preroll_filled_ + count);
-  if (this->listening_)
+#ifdef TARS_BODY_DEBUG_LEVELS
+  for (size_t i = 0; i < count; i++)
+    this->debug_energy_ += double(samples[i]) * samples[i];
+  this->debug_samples_ += count;
+#endif
+  if (this->listening_ && millis() >= this->quiet_until_)
     this->up_->write(data.data(), count * sizeof(int16_t));
 }
 
 // loop()
 
 void TarsBody::loop() {
+#ifdef TARS_BODY_DEBUG_LEVELS
+  // Self-test: the microphone's level each second, and a short quiet tone now and then (at 30 s, then every 60 s),
+  // to see whether playing something leaves the microphone quieter.
+  {
+    static uint32_t last = 0, tone_at = 30000;
+    uint32_t now = millis();
+    static uint32_t fine_until = 0;
+    if (now < fine_until && now - last >= 100) {  // around the tone: every 100 ms, with the time
+      double level = 0;
+      {
+        std::lock_guard<std::mutex> lock(this->mic_lock_);
+        if (this->debug_samples_)
+          level = sqrt(this->debug_energy_ / this->debug_samples_);
+        this->debug_energy_ = 0;
+        this->debug_samples_ = 0;
+      }
+      ESP_LOGI(TAG, "t=%u mic %.0f%s%s", (unsigned) now, level, this->speaker_->is_running() ? " run" : "",
+               this->speaker_->has_buffered_data() ? " buffered" : "");
+      last = now;
+    } else if (now >= fine_until && now - last >= 1000) {
+      double level = 0;
+      {
+        std::lock_guard<std::mutex> lock(this->mic_lock_);
+        if (this->debug_samples_)
+          level = sqrt(this->debug_energy_ / this->debug_samples_);
+        this->debug_energy_ = 0;
+        this->debug_samples_ = 0;
+      }
+      ESP_LOGI(TAG, "mic level %.0f%s", level, this->speaker_->is_running() ? " (speaker on)" : "");
+      last = now;
+    }
+    if (now >= tone_at && this->playing_ < 0 && !this->saying_unreachable_) {
+      static int16_t tone[12000];  // 0.5 s at 24 kHz, quiet
+      for (int i = 0; i < 12000; i++)
+        tone[i] = (int16_t) (1500 * sinf(2 * M_PI * 660 * i / 24000.0f));
+      ESP_LOGI(TAG, "self-test: a tone at t=%u", (unsigned) now);
+      fine_until = now + 3500;
+      this->unreachable_save_ = this->unreachable_;
+      this->unreachable_save_len_ = this->unreachable_len_;
+      this->unreachable_ = reinterpret_cast<const uint8_t *>(tone);
+      this->unreachable_len_ = sizeof(tone);
+      this->say_unreachable_();
+      tone_at = now + 60000;
+    }
+    if (!this->saying_unreachable_ && this->unreachable_save_ != nullptr) {
+      this->unreachable_ = this->unreachable_save_;
+      this->unreachable_len_ = this->unreachable_save_len_;
+      this->unreachable_save_ = nullptr;
+    }
+  }
+#endif
   if (this->client_ != nullptr && !esp_websocket_client_is_connected(this->client_) && network::is_connected()) {
     static bool started = false;
     if (!started) {
@@ -178,6 +240,19 @@ void TarsBody::loop() {
       break;
     }
     this->send_audio_(block, BLOCK_BYTES);
+#ifdef TARS_BODY_DEBUG_LEVELS
+    {
+      static uint32_t blocks = 0;
+      static double energy = 0;
+      const int16_t *pcm = reinterpret_cast<const int16_t *>(block);
+      for (size_t i = 0; i < BLOCK_SAMPLES; i++)
+        energy += double(pcm[i]) * pcm[i];
+      if (++blocks % 12 == 0) {
+        ESP_LOGI(TAG, "streamed %u blocks; last second's level %.0f", (unsigned) blocks, sqrt(energy / (12 * BLOCK_SAMPLES)));
+        energy = 0;
+      }
+    }
+#endif
   }
 
   // Down: the reply, or the line said when the brain can't be reached
@@ -235,6 +310,7 @@ void TarsBody::handle_(const std::string &text) {
     this->playing_ = said["id"] | 0;
     this->play_ended_ = false;
     this->taking_reply_ = true;
+    this->lead_in_left_ = LEAD_IN_BYTES;
     this->speaker_->start();
   } else if (kind == "play_end") {
     if ((said["id"] | -1) == this->playing_)
@@ -309,6 +385,8 @@ void TarsBody::stop_streaming_() {
 }
 
 void TarsBody::stop_playing_(bool tell) {
+  this->quiet_until_ = millis() + AFTER_PLAY_MS;
+  this->lead_in_left_ = 0;
   this->taking_reply_ = false;
   this->reply_->reset();
   this->pending_len_ = 0;
@@ -323,14 +401,28 @@ void TarsBody::stop_playing_(bool tell) {
 }
 
 void TarsBody::feed_speaker_() {
+  if (this->lead_in_left_ > 0 && (this->saying_unreachable_ || this->playing_ >= 0)) {
+    static const uint8_t SILENCE[1024] = {};
+    size_t took = this->speaker_->play(SILENCE, std::min(this->lead_in_left_, sizeof(SILENCE)), 0);
+    this->lead_in_left_ -= std::min(took, this->lead_in_left_);
+    return;
+  }
   if (this->saying_unreachable_) {
     size_t left = this->unreachable_len_ - this->unreachable_at_;
     if (left > 0) {
       size_t took = this->speaker_->play(this->unreachable_ + this->unreachable_at_, std::min<size_t>(left, 4096), 0);
       this->unreachable_at_ += took;
+#ifdef TARS_BODY_DEBUG_LEVELS
+      if (this->unreachable_at_ >= this->unreachable_len_)
+        ESP_LOGI(TAG, "t=%u all handed to the speaker", (unsigned) millis());
+#endif
     } else if (!this->speaker_->has_buffered_data()) {
       this->speaker_->finish();
       this->saying_unreachable_ = false;
+      this->quiet_until_ = millis() + AFTER_PLAY_MS;
+#ifdef TARS_BODY_DEBUG_LEVELS
+      ESP_LOGI(TAG, "t=%u would say played (nothing buffered)", (unsigned) millis());
+#endif
     }
     return;
   }
@@ -360,6 +452,7 @@ void TarsBody::feed_speaker_() {
     char played[64];
     snprintf(played, sizeof(played), "{\"type\":\"played\",\"id\":%" PRId32 ",\"cut\":false}", this->playing_);
     ESP_LOGD(TAG, "Played %" PRId32, this->playing_);
+    this->quiet_until_ = millis() + AFTER_PLAY_MS;
     this->send_text_(played);
     this->playing_ = -1;
     this->taking_reply_ = false;
@@ -371,6 +464,7 @@ void TarsBody::say_unreachable_() {
     return;
   this->unreachable_at_ = 0;
   this->saying_unreachable_ = true;
+  this->lead_in_left_ = LEAD_IN_BYTES;
   this->speaker_->start();
 }
 

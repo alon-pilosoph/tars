@@ -8,6 +8,7 @@
 #include "esphome/components/speaker/speaker.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
+#include "esphome/core/defines.h"
 
 #include <esp_websocket_client.h>
 
@@ -103,6 +104,14 @@ class TarsBody : public Component {
   bool play_ended_{false};
   uint8_t pending_[1024];
   size_t pending_len_{0};
+  size_t lead_in_left_{0};
+  std::atomic<uint32_t> quiet_until_{0};  // what the microphone hears before this (millis) isn't sent up
+#ifdef TARS_BODY_DEBUG_LEVELS
+  double debug_energy_{0};
+  size_t debug_samples_{0};
+  const uint8_t *unreachable_save_{nullptr};
+  size_t unreachable_save_len_{0};
+#endif  // silence still to play before a playback, while the amplifier comes up
 };
 
 template<typename... Ts> class WakeAction : public Action<Ts...>, public Parented<TarsBody> {
