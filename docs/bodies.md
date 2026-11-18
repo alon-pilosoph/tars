@@ -10,10 +10,9 @@ turns (when someone's done, the answer started during a pause, follow-ups, who's
 code as for the Pi's own speakerphone. That keeps a body small enough for an ESP32, and keeps one way of holding a
 conversation, not one per device.
 
-**Where it stands:** a second machine can be TARS's body in another room, for a brain with no microphone of its own:
-built and tested on one machine (each half over a real socket against the other), not yet tried across two in a real
-room. Several bodies holding conversations at once, and a body beside the Pi's own speakerphone, are the next step
-(rooms).
+**Where it stands:** tried across real machines: the home Mac as a body for the Pi, two bodies holding
+conversations at once ([rooms](#rooms)), and an ESP32 board, [the Atom](atom.md), that hears the name itself and
+leaves the double-check to the brain.
 
 ## Running one
 
@@ -46,6 +45,8 @@ a minute, then try again." `deploy/voice-assistant-body.service` runs it at boot
 assistant but tighter. Its protocol handling is [`bodyclient.py`](../src/voice_assistant/bodyclient.py)'s
 `BodyProtocol`, a small state machine with no devices in it: the ESP32 and the web page are held to the same
 behaviour.
+
+An ESP32 board runs TARS's own firmware instead: [the Atom](atom.md), set up with ESPHome.
 
 ## Pairing
 
@@ -90,8 +91,22 @@ off, there's one room and nothing about TARS changes.
 
 The web UI shows the room under each conversation's time and in its last line, and the Status page lists the bodies:
 each one's room, and whether it's connected (the voice process writes `bodies.json` beside the event log as they come
-and go); `--check` says the same. Not yet: wakes heard by a body that runs only the wake word aren't kept in the wake
-log (its conversations are); the Pi's buttons and the control socket act on its own room only.
+and go); `--check` says the same. A wake heard by a body that runs only the wake word is kept in the wake log with its
+room and audio, as the Pi's are, under the body's own wake model (`atom:<version>`), so Review shows it;
+the Pi's buttons and the control socket act on its own room only.
+
+## The web page
+
+A browser can be a body too, for as long as a page is open: [the Talk page](web-ui.md#talk). It asks the web UI for
+a ticket, opens the body link with it (`wss://` on `[bodies] secure_port` from a page over HTTPS, with the web UI's
+certificate; `ws://` on `port` otherwise), and talks by a tap: a `wake` with `how: button`.
+
+- **Who's speaking** is whoever is signed in on the page, in place of speaker ID. With sign-in off, nobody is known
+  from the page, and the voice is told as anywhere.
+- **A room only while it's open:** "Stacey on the web", each page its own. Nothing TARS says by itself goes there,
+  and talking on it doesn't count as being heard in a room, so reminders still follow the voice.
+- **Never at home:** a request made on a page never unlocks the front door, wherever the browser is, as a chat
+  without a trusted person can't.
 
 ## How fast
 
@@ -122,6 +137,11 @@ is on the home network or not. Text frames are JSON objects with a `type`; binar
 Anything wrong (an unknown device, a wrong proof, another protocol, audio before `hello`, no `hello` in time) closes
 the socket without saying what. An address that keeps failing waits a second longer each time (up to 30 s) before
 its next try is even looked at. A body that connects again replaces its older connection.
+
+A web page has no key. The web UI gives a signed-in page a one-time ticket (`POST /api/talk/ticket`), good for a
+minute, and the page's `hello` carries `ticket` in place of `device` and `proof`. It's let in as a body of its own
+(`kind: web`, `wake: none`, a fresh id), for the person the ticket was made for: who's speaking comes from the web
+UI's session, never from anything the page says. See [the web page](#the-web-page).
 
 `wake` says what the body checks itself before it says someone wants to talk:
 
@@ -179,7 +199,8 @@ These hold even if the brain were compromised; they're the body's, in its own co
   body itself opened, never from sleep.
 - A conversation has a hard cap (`max_listen_s`, and the body's own, whichever is lower); past it, the body stops
   streaming and sends `gone_quiet`.
-- It shows that it's streaming (a light, a visible state on a page).
+- It shows that it's streaming, where it has a way to: a light, a visible state on a page. A body with neither (the
+  Atom) shows nothing; TARS's own "Yes?" after the wake is the sign it's listening.
 - Muted means the wake word isn't even running.
 
 With `wake: model`, a few seconds of audio leave the room before the wake is confirmed, since the double-check runs on

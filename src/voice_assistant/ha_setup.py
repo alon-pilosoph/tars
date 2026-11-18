@@ -18,10 +18,13 @@ import json
 import re
 import time
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from .hass import HomeAssistant
 from .home import HomeError, Request, set_off_by_door
 from .toolbox import WITHDRAWN, held_for_the_web
+
+if TYPE_CHECKING:
+    from .hass import HomeAssistant
 
 DISCOVERED, INTEGRATIONS, SETUP, REMOVE, RENAME, AREA, UNDO, SETUP_HISTORY = (
     "discovered",

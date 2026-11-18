@@ -15,10 +15,13 @@ are audio: up, 16 kHz mono 16-bit, any length (re-blocked here to 80 ms); down, 
     brain → welcome {room, play_rate, max_listen_s}
     body → wake {how, score, preroll_ms}, then audio: the pre-roll (what had the name in it), then live
     brain → listen {on}   play {id, listening} + audio + play_end {id}   stop   sleep   mute {muted}   pong
+    brain → text {who, text}                  (a web page only: what was heard, and what's said)
     body → played {id, cut}   button {name}   gone_quiet   ping
 
 `proof` is the nonce signed with the body's Ed25519 key (bodykeys.py): the key never crosses, and the brain keeps
-only its public half. A wrong one closes the socket with no reason given, and an address that keeps failing waits
+only its public half. A web page (the Talk page) has no key: its hello carries a one-time `ticket` the web UI gave it
+in place of `device` and `proof`, and it's let in as a body of its own, `kind` web, for the person the ticket was
+for (bodykeys.Tickets). A wrong one closes the socket with no reason given, and an address that keeps failing waits
 longer each time.
 
 The reply's audio is sent as it's made, faster than it plays: a body must buffer at least 30 s of it
@@ -73,6 +76,9 @@ class Hello:
     echo_cancel: bool = False
     buttons: list[str] = field(default_factory=list)
     version: str = ""
+    # A web page let in by a ticket: who's signed in on it (None with sign-in off). From the ticket, never the page.
+    web: bool = False
+    person: str | None = None
 
 
 class BodyConnection:
@@ -311,7 +317,7 @@ class Checker(Protocol):
     last_audio: np.ndarray | None
     after_name: Future[np.ndarray] | None
 
-    def confirm(self, audio: np.ndarray, score: float) -> str: ...
+    def confirm(self, audio: np.ndarray, score: float, journal=None, wake_model: str = "") -> str: ...
 
     def find_after_name(self, audio: np.ndarray) -> Future[np.ndarray]: ...
 
@@ -326,6 +332,10 @@ class RemoteTrigger:
 
     def __init__(self, link: BodyConnection, checker: Checker | None = None):
         self.link, self.checker = link, checker
+        # Its room's journal (set by the room, once its assistant is made): the wakes it checks are kept there, with
+        # their audio, as the Pi's own are, under the body's own wake model.
+        self.journal = None
+        self.wake_model = f"{link.hello.kind or 'body'}:{link.hello.version or 'its own'}"
         # The checker keeps a confirm's results on itself (last_audio, after_name): one body's confirm and reading
         # them back at a time, when several bodies share it.
         self._checking = _CHECKING.setdefault(id(checker), threading.Lock())
@@ -352,7 +362,7 @@ class RemoteTrigger:
                 self.after_name = self.checker.find_after_name(preroll) if self.checker and len(preroll) else None
                 return ANSWER
             with self._checking:
-                outcome = self.checker.confirm(preroll, score)
+                outcome = self.checker.confirm(preroll, score, self.journal, self.wake_model)
                 self.last_audio, self.after_name = self.checker.last_audio, self.checker.after_name
             if outcome == IGNORE:
                 self.link.sleep()
@@ -378,6 +388,15 @@ class RemoteBody(LocalBody):
         super().__init__(mic, RemoteSpeaker(link, speaker_rate), RemoteTrigger(link, checker), recorder)
         self.link = link
 
+    def show(self, who: str, text: str) -> None:
+        """The conversation's words, for a body that shows them (a web page): `who` is "you" for what was heard, "tars"
+        for what's said. Other bodies are sent nothing: they've no screen."""
+        if self.link.hello.web and text.strip():
+            try:
+                self.link.send({"type": "text", "who": who, "text": text.strip()})
+            except BodyGone:
+                pass  # the conversation finds out on its own
+
     def play(self, audio, sample_rate, on_first_audio=None, listening=False) -> bool:
         if listening and self.hears_while_speaking:
             return bool(self.speaker.play_pcm_stream(audio, sample_rate, on_first_audio, listening=True))
@@ -392,7 +411,10 @@ class BodyListener:
 
     `key_for(device)`: the device's public key, or None for one that isn't paired (or was revoked). `allowed(address)`:
     whether an address may connect at all (the home network, for plain ws://). `welcome`: what's told a body that's
-    let in (room, play_rate, max_listen_s). `seen(device)`: called when one is let in."""
+    let in (room, play_rate, max_listen_s). `seen(device)`: called when one is let in. `redeem(ticket)`: (good, person)
+    for a web page's one-time ticket (bodykeys.Tickets.redeem); None: no web pages. A web page let in is put on
+    `pages`, for whoever gives it a room. `ssl`: an SSL context to serve wss:// on `ssl_port` too (a page served over
+    HTTPS may only open wss://)."""
 
     def __init__(
         self,
@@ -404,8 +426,13 @@ class BodyListener:
         port: int = 0,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        redeem: Callable[[str], tuple[bool, str | None]] | None = None,
+        ssl=None,
+        ssl_port: int = 0,
     ):
         self._key_for, self._welcome, self._allowed, self._seen = key_for, welcome, allowed, seen
+        self._redeem = redeem
+        self.pages: queue.Queue[Hello] = queue.Queue()
         self._clock, self._sleep = clock, sleep
         self._lock = threading.Lock()
         self._bodies: dict[str, BodyConnection] = {}
@@ -413,16 +440,24 @@ class BodyListener:
         self._failures: dict[str, int] = {}
         from websockets.sync.server import serve
 
-        self._server = serve(self._handle, host, port, max_size=MAX_FRAME, compression=None)
-        self.port = self._server.socket.getsockname()[1]
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True, name="body-listener")
+        self._servers = [serve(self._handle, host, port, max_size=MAX_FRAME, compression=None)]
+        self.port = self._servers[0].socket.getsockname()[1]
+        self.ssl_port = None
+        if ssl is not None:
+            self._servers.append(serve(self._handle, host, ssl_port, max_size=MAX_FRAME, compression=None, ssl=ssl))
+            self.ssl_port = self._servers[1].socket.getsockname()[1]
+        self._threads = [
+            threading.Thread(target=server.serve_forever, daemon=True, name="body-listener") for server in self._servers
+        ]
 
     def start(self) -> BodyListener:
-        self._thread.start()
+        for thread in self._threads:
+            thread.start()
         return self
 
     def close(self) -> None:
-        self._server.shutdown()
+        for server in self._servers:
+            server.shutdown()
         with self._lock:
             bodies = list(self._bodies.values())
         for body in bodies:
@@ -483,6 +518,8 @@ class BodyListener:
             self._arrived.notify_all()
         if old is not None:
             old.close()
+        if hello.web:
+            self.pages.put(hello)
         print(f"(body {hello.device} ({hello.kind or 'unknown'}) connected from {address})", flush=True)
         try:
             self._seen(hello.device)
@@ -515,6 +552,8 @@ class BodyListener:
             return None
         if not isinstance(said, dict) or said.get("type") != "hello" or said.get("protocol") != PROTOCOL:
             return None
+        if "ticket" in said:
+            return self._page(said)
         device, given = said.get("device"), said.get("proof")
         if not isinstance(device, str) or not device or not isinstance(given, str):
             return None
@@ -530,6 +569,25 @@ class BodyListener:
             echo_cancel=bool(said.get("echo_cancel")),
             buttons=[str(b)[:20] for b in buttons][:10] if isinstance(buttons, list) else [],
             version=str(said.get("version", ""))[:40],
+        )
+
+    def _page(self, said: dict) -> Hello | None:
+        """A web page's hello: its ticket, good once. It's a body of its own, with a fresh id; who it's for comes from
+        the ticket, and whatever else it says about itself is only how it hears."""
+        if self._redeem is None:
+            return None
+        good, person = self._redeem(said.get("ticket"))
+        if not good:
+            return None
+        return Hello(
+            f"web-{secrets.token_hex(4)}",
+            kind="web",
+            wake="none",
+            echo_cancel=bool(said.get("echo_cancel")),
+            buttons=["talk"],
+            version=str(said.get("version", ""))[:40],
+            web=True,
+            person=person,
         )
 
 

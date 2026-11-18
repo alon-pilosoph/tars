@@ -1104,7 +1104,8 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
       .sort((a, b) => b.size - a.size);
   }
   if (p === "/api/models") return d.models;
-  if (p === "/api/status") return { aloud: !DEMO_LINK.chatOnly, clustering: true, enroll_at: 5, health: true };
+  if (p === "/api/status")
+    return { aloud: !DEMO_LINK.chatOnly, clustering: true, enroll_at: 5, health: true, talk: true };
   if (p === "/api/health") return demoHealth(Date.now() / 1000);
   if (p === "/api/conversations") return d.convs.map(withItems).sort((a, b) => b.started - a.started);
   if ((m = p.match(/^\/api\/conversations\/(\d+)$/))) {

@@ -20,7 +20,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from . import usage
+from . import closing, usage
 from .audio import AudioDeviceError, chime
 from .body import NO_WAKE, Body, BodyGone, Wake
 from .commands import ON_PI, Command, HouseCommands, sentences
@@ -223,6 +223,7 @@ class Answer:
     error: Exception | None = None  # the brain failed to start the reply; raised once what was heard is written down
     sentences: list[tuple[float, str]] = field(default_factory=list)  # (when it was written, the sentence)
     on_pi: bool = False  # a house command, done without the model (commands.py)
+    closes: bool = False  # "thanks", "that's all": answered with a line made ahead, and the conversation ends
 
 
 class _MadeAhead:
@@ -276,14 +277,19 @@ class Assistant:
         commands: HouseCommands | None = None,
         rooms: Rooms | None = None,
         room: str = MAIN,
+        web: bool = False,
+        person: str | None = None,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
         `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
         reminder due aloud went somewhere else instead (reminders.ChatWhenOut: its person is out). `skill_clock`: the
         skills due to run by themselves (skills.py). `rooms`: the desk every room's assistant shares, which says which
-        room says what (rooms.py); `room`: this one's. Without a desk, it's the only room."""
+        room says what (rooms.py); `room`: this one's. Without a desk, it's the only room. `web`: its body is a web page
+        (the Talk page), so what's said there never counts as said at home (home.Request.by_web); `person`: who's
+        signed in on it, taken as who spoke in place of speaker ID (None: told by voice, as anywhere)."""
         self.body = body
         self.room = room
+        self.web, self.person = web, person
         self.rooms = rooms or Rooms(room)
         self.rooms.add(room)
         self.transcriber = transcriber
@@ -293,11 +299,13 @@ class Assistant:
         self.name_threshold = name_threshold
         self.journal = journal or Journal()
         self.error_lines = ERROR_LINES["dry" if humor >= DRY_FROM_HUMOR else "plain"]
+        self.closing_lines = closing.LINES["dry" if humor >= DRY_FROM_HUMOR else "plain"]
         self.timings: dict[str, float] = {}  # the last answer's latency by stage, in seconds
         self._woke_at: float | None = None  # when the wake word was confirmed, for how soon TARS greeted it
         self._greet_s: float | None = None
         self._only_echo = False  # the last request heard was nothing but a trace of TARS's own greeting
         self._last_reply = ""  # what TARS last answered in this conversation
+        self._closed = False  # the last answer ended the conversation ("thanks", "that's all")
         self._identifying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="speaker-id")
         self._thinking = threading.Lock()  # drafts take turns
         self.phrases = Phrases(voice, phrase_folder, clock)
@@ -511,7 +519,8 @@ class Assistant:
         """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
         people enrolled since and retry lines that failed."""
         names = list(self.speaker_id.voiceprints) if self.speaker_id else []
-        lines = [ASK_PHRASE, PARDON, greeting(None), *self.error_lines, *FILLERS, THINKING, ONE_MOMENT]
+        lines = [ASK_PHRASE, PARDON, greeting(None), *self.error_lines, *self.closing_lines.values(), *FILLERS]
+        lines += [THINKING, ONE_MOMENT]
         if usage.has_cap():  # made while there's budget, so it's said for free once there isn't
             lines.append(CAPPED_LINE)
         for line in lines + [greeting(n) for n in names]:
@@ -533,6 +542,7 @@ class Assistant:
         except Exception as e:  # noqa: BLE001 - a line TARS can't say is skipped, never fatal
             print(f"(couldn't say {text!r}: {e!r})")
             return False
+        self._show("tars", text)
         self._play(audio, on_first_audio)
         return True
 
@@ -618,6 +628,7 @@ class Assistant:
             self._play(audio[line])
             self.journal.said(line)
         self.brain.remember_said(" ".join(said))
+        self._last_reply = " ".join(said)  # what's heard next answers it ("no thanks" isn't a goodbye)
         listens = bool(follow_up_s) and asks(said)
         with self._open_for_answer(listens) as answer_s:
             heard = (
@@ -687,6 +698,7 @@ class Assistant:
                 self._play(audio[text])
                 self.journal.said(text)
                 self._skill_did(sent, changes, whose.speaker)
+                self._last_reply = text  # what's heard next answers it ("no thanks" isn't a goodbye)
                 with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
                     heard = (
                         self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(text))
@@ -1053,6 +1065,9 @@ class Assistant:
                 continue
             if answered:
                 pardoned = False
+            if answered and self._closed:  # "thanks", "that's all": said goodbye, nothing more to listen for
+                print("(conversation ended)")
+                return
             held = answered and self._say_held(self._last_who)
             if held:  # what's said next may well be about the message: listen for it, at least the ack window
                 heard = self.listen(
@@ -1120,7 +1135,7 @@ class Assistant:
             if self._greet_s is not None:  # the conversation's first request: how soon TARS greeted the wake word
                 self.timings["greet"], self._greet_s = self._greet_s, None
             said = self._speak(answer, t_stopped_talking)
-            self._last_reply = said.text
+            self._last_reply, self._closed = said.text, answer.closes
             if answer.written and answer.written.pardoned:  # the repeat answers it: not an untethered follow-up to skip
                 self.brain.remember_said(PARDON)
             heard.draft.keep()
@@ -1188,7 +1203,9 @@ class Assistant:
     ) -> Answer:
         """Transcribe, identify the speaker, and set the brain and voice to work, all without a sound."""
         # Speaker ID runs while the audio is transcribed, so it adds no latency.
-        identifying = self._identifying.submit(self.speaker_id.describe, pcm) if self.speaker_id else None
+        identifying = (
+            self._identifying.submit(self.speaker_id.describe, pcm) if self.speaker_id and not self.person else None
+        )
         t = time.perf_counter()
         try:
             text = without_echo(session.transcript(), echo_of)
@@ -1202,15 +1219,26 @@ class Assistant:
             why = "past the month's cap" if capped else f"speech to text didn't answer ({e!r})"
             print(f"({why}; heard a house command on the Pi)")
         stt_s = time.perf_counter() - t
-        answer = Answer(text, self._who(identifying), stt_s)
+        answer = Answer(text, Identified(self.person, None, None) if self.person else self._who(identifying), stt_s)
         self.rooms.heard(self.room, answer.who.name)  # what's for them is said here now
         if not text or draft.cancelled:
             return answer
+        self._show("you", text)
         prompt = self._prompt(text, answer.who.name, follow_up, tag)
         room = "" if self.rooms.single else self.room
         request = Request(
-            answer.who.name, answer.who.score, by_voice=True, heard=text, may_act=draft.may_act, room=room
+            answer.who.name,
+            answer.who.score,
+            by_voice=not self.web,
+            by_web=self.web,
+            heard=text,
+            may_act=draft.may_act,
+            room=room,
         )
+        # Not after a reminder or "Did you call me?" (tag), where "thanks" is the model's to take as an acknowledgement,
+        # nor after a question TARS asked ("News on?"), where "no thanks" is the answer.
+        if tag is None and not asks([self._last_reply]) and (kind := closing.closing(text)):
+            return self._closing_reply(answer, kind, prompt, request)
         # A follow-up may not be meant for TARS (the TV, someone else in the room): only the model may skip it.
         if self.commands and tag is None and not follow_up and (command := self.commands.commands.match(text)):
             return self._command_reply(answer, command, prompt, request)
@@ -1254,6 +1282,24 @@ class Assistant:
         answer.reply = StreamedReply(
             _tee(pieces(), answer.spoken),
             _MadeAhead(self.voice, self.phrases),
+            self._on_sentence(answer),
+        )
+        return answer
+
+    def _closing_reply(self, answer: Answer, kind: str, prompt: str, request: Request) -> Answer:
+        """ "Thanks" or "that's all": one short line made ahead, no model, and the conversation ends after it."""
+        answer.on_pi, answer.closes, answer.t_asked = True, True, time.perf_counter()
+        line = self.closing_lines[kind]
+
+        def pieces() -> Iterator[str]:
+            if not request.go_ahead():  # they carried on talking: it was no goodbye
+                return
+            self.brain.remember_exchange(prompt, line)
+            yield line
+
+        answer.reply = StreamedReply(
+            _tee(pieces(), answer.spoken),
+            _MadeAhead(self.voice, self.phrases),
             lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
         )
         return answer
@@ -1281,10 +1327,22 @@ class Assistant:
         answer.reply = StreamedReply(
             _tee(answer.written, answer.spoken),
             self.voice,
-            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
+            self._on_sentence(answer),
             self.phrases.made_ahead,
         )
         return answer
+
+    def _on_sentence(self, answer: Answer) -> Callable[[str], None]:
+        def said(sentence: str) -> None:
+            answer.sentences.append((time.perf_counter(), sentence))
+            self._show("tars", sentence)
+
+        return said
+
+    def _show(self, who: str, text: str) -> None:
+        """The conversation's words, to a body with a screen (a web page): "you" heard, "tars" said."""
+        if show := getattr(self.body, "show", None):
+            show(who, text)
 
     def _discard(self, answer: Answer) -> None:
         if answer.reply:

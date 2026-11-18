@@ -42,6 +42,11 @@ lock until it reports locked, for up to 12 seconds, and answers the model with o
 - `not confirmed: asked the front door to lock, and it still says locking`
 - `error: the front door jammed; someone needs to check it`, or `error: Home Assistant didn't answer ...`
 
+When more than one device could be meant ("turn off the light" with lights in several rooms) and the room it was
+said in doesn't settle it, TARS asks a quick question that names the choices ("The bedroom or Ari's room?") and
+changes nothing until it's answered, instead of guessing or saying it can't. The same goes for any request that could
+mean two things.
+
 The model is told to say what the tool answered, and never that something's done when it isn't. Home Assistant
 answers a service call once the device has done it, so a slow lock gets 30 seconds, and one that answers later still
 isn't said to have failed: the tool reads back what the lock says, as ever. A media player's press is done once its

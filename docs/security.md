@@ -79,6 +79,15 @@ them on a port of its own; off (the default), nothing listens.
 - **Unlocking from another room:** a paired body's room counts as "at home, by voice", like the Pi's own
   speakerphone: the trusted voice, recognised surely, saying "unlock", then the digits, as anywhere at home
   (`Request.room` says which room; `_may_unlock` treats every room alike). The web page (P6) will never count.
+- **A web page as a body** (the Talk page): it's let in only with a one-time ticket the web UI makes for a
+  signed-in session (`POST /api/talk/ticket`: a session needed, from this page only), good once and for a minute,
+  kept only as its hash. The person comes from the session, never the page, and a request made there never unlocks
+  (`Request.by_web`), wherever the browser is. Its `wss://` uses the web UI's certificate. With sign-in off, any page
+  at home can talk, as anyone at home can by voice.
+- **Tests:** `tests/test_bodykeys.py::test_a_talk_ticket_works_once_within_its_minute_for_its_person_and_only_its_hash_is_kept`,
+  `tests/test_bodylink.py::test_a_web_page_gets_in_once_with_its_ticket_and_who_it_is_comes_from_the_ticket`,
+  `tests/test_signin.py::test_the_talk_page_gets_a_ticket_for_whoever_is_signed_in_and_only_then`,
+  `tests/test_home.py::test_nothing_else_unlocks`.
 - **A stolen key** (copied off the body): at home, its holder can be that room's body. They can talk to TARS as
   someone in that room would, with the same guards as by voice (the front door still needs its challenge, an order
   still needs a tap on Telegram), and hear TARS's replies to it. `--body-remove ROOM` refuses it from then on;
@@ -93,7 +102,13 @@ them on a port of its own; off (the default), nothing listens.
   word, like the ESP32), a few seconds of audio leave the room before the wake is confirmed, since the double-check
   runs on the Pi; a `verified` body (one that double-checks itself) sends nothing before then. A body's own rules
   (no audio before its own wake, a cap on a conversation, showing that it's streaming) are its code's: a body that
-  breaks them sends audio TARS then drops.
+  breaks them sends audio TARS then drops. A body with no light or screen (the Atom) can't show that it's streaming.
+- **[The Atom](atom.md)**, an ESP32 body: how often its wake word alone fires, and so how often a few seconds of the
+  room reach the Pi to be checked and dropped, is still to be measured. Its key is built into its firmware, which
+  isn't encrypted on the chip: whoever has the Atom in hand can read the key off it (a stolen key, above;
+  `--body-remove` the room). Its Wi-Fi password and its update password are in the firmware too. Updates over Wi-Fi
+  need that password; a USB cable needs nothing. The build's `secrets.yaml` and `.esphome/` folder hold the same and
+  are never committed.
 
 ### A device on the home network, speaking for the front door
 

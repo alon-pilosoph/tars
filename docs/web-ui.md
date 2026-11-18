@@ -19,6 +19,7 @@ palette).
 | **Voices** | The voices TARS has grouped: name them (TARS then greets them by name), mark one "not a person", merge two, and Regroup voices. |
 | **Models** | The wake model and double-check in use and how they tested, the labeled wakes waiting to be learned from, and the version history, where "Use this" switches back. Training itself runs on a bigger machine. |
 | **Status** | Whether each part of TARS is running (the assistant, the web UI, Telegram), since when and which version; the day's wakes, answers and failed answers; each cloud service TARS uses, asked with TARS's own key, beside what the service's own status page says, and Home Assistant when `[home]` uses it; with `[presence]`, how each router last answered and who's home; how the backup's last pass went, and its timer, when `[backup]` is on; and the machine: CPU, load, memory, temperature, the Pi's power and heat warnings, storage and uptime. |
+| **Talk** | TARS from this page, on a phone or a laptop, with `[bodies]` on ([talk](#talk)): tap, ask, hear it answer here. |
 
 On a phone the pages are tabs along the bottom, Voices, Models and Status sit under the ⋯ at the top, and menus and
 dialogs open as sheets from the bottom. The tab title counts what's new: "TARS (3)".
@@ -204,6 +205,30 @@ UI's service keeps its devices ([the services](security.md#the-services-on-the-m
 a Pi, and the row isn't shown. On a Pi where the flags can't be read (the command fails, hangs, or prints something
 else), the row is a warning saying why, and the web UI's log says it too: never "Fine", and never left out.
 
+## Talk
+
+The Talk page makes the browser a body of TARS's while it's open ([bodies](bodies.md#the-web-page)): one big button,
+the conversation's words as they come, and TARS's voice from the page. A tap opens the microphone (the browser's
+own echo cancelling, noise suppression and gain on) and starts a conversation, as the Pi's talk button does; TARS
+greets, listens, answers, and listens for a follow-up; a tap while it speaks stops it. The microphone is closed
+between conversations.
+
+- **Who's speaking** is whoever's signed in: the page asks for a one-time ticket (`POST /api/talk/ticket`), and
+  the brain takes the person from it, never from the page. With sign-in off, the voice is told as anywhere.
+- **Never at home:** what's asked here never unlocks the front door, wherever the browser is.
+- **The microphone needs a secure page:** HTTPS (`[web] tls_cert`), or `localhost`. The page says so plainly, as
+  it does for a blocked microphone and for the voice assistant not answering. Over HTTPS the link is `wss://` on
+  `[bodies] secure_port`, with the same certificate.
+- **Inside** (`webui/src/talk/`): an AudioWorklet downsamples the microphone to 16 kHz (each sample the average of
+  those it spans) and sends 20 ms pieces; the reply's 24 kHz audio is queued into Web Audio, and the page says
+  `played` once the last of it has ended. `protocol.ts` is the page's half of the body link, with no browser in it,
+  held to the same rules as the Python body and the Atom.
+- **Tested:** `talk.test.ts` (the downsampling on known tones, and the protocol against the brain's button turn,
+  the cap, a refused microphone and a dropped link), and `checks/talk.spec.ts`, a real turn in Chromium with its
+  fake microphone against a scripted brain on the real body link (`tools/webui_demo.py serve --talk`).
+- **Not yet:** tried on real phones (iOS Safari makes sound only after a tap and suspends in the background), and
+  timed against the Pi.
+
 ## The API
 
 JSON over HTTP, all under `/api`. Errors carry a readable reason: `{"detail": "..."}`, or for a malformed body
@@ -214,7 +239,8 @@ fails is shown as it last loaded, saying so, and only when none answers is TARS 
 
 | Method and path | Does |
 |---|---|
-| `GET /api/status` | Whether voices can be regrouped, how many requests a voiceprint needs, and whether there's a Status page (`health`) |
+| `GET /api/status` | Whether voices can be regrouped, how many requests a voiceprint needs, whether there's a Status page (`health`), and a Talk page (`talk`) |
+| `POST /api/talk/ticket` | A one-time ticket for the Talk page's body link, for whoever's signed in, good for a minute, with where to open it: `{"ticket", "scheme": "ws" \| "wss", "port", "person"}`; 409 with `[bodies]` off |
 | `GET /api/health` | What the Status page shows: each process's heartbeat and systemd state, today's counts, the services (asked at most once a minute), the backup (`null` when it's off) and the machine |
 | `GET /api/conversations` | The newest 200 conversations, with their turns, sent items and the wake that started each |
 | `GET /api/conversations/{id}` | One conversation |
@@ -301,6 +327,9 @@ build (`.github/workflows/pages.yml`, `npm run site`) run in Playwright's own Ch
   for a phone's passkey to make one from an invite, be sent to sign-in without a session, sign out and back in to the
   page it was on, see a used invite refused, and see `?next=` pointing anywhere but TARS (`/\evil.example`,
   `//evil.example`, another site, `javascript:`) land on Home.
+  Then `checks/talk.spec.ts` (`checks/talk.config.ts`): the Talk page against a third backend with a scripted
+  brain on the real body link (`--talk`), in Chromium with its fake microphone: a tap streams the microphone's tone
+  up, the reply plays to its end, and the page says it played and goes back to waiting.
 - **`npm run visual`** (`checks/visual.spec.ts`, under 2 minutes): Playwright's `toHaveScreenshot()` on the states
   a link can open and after interactions (opening a menu, rating, ticking, a dialog), on desktop and phone. The page
   loads from the build on disk with a fixed clock, and each screenshot must match its baseline in `checks/screenshots/<platform>/`.

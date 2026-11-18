@@ -69,6 +69,7 @@ export interface ModelsInfo {
 
 export interface Status {
   aloud: boolean; // TARS has its microphone and speaker here; false: a chat-only home, with no pages about hearing
+  talk?: boolean; // [bodies] is on: the Talk page can be a body of TARS's
   clustering: boolean;
   enroll_at: number; // requests a named voice needs before TARS builds its voiceprint
   health: boolean; // the Status page is there

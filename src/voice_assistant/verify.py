@@ -368,21 +368,22 @@ class VerifiedTrigger:
             if (outcome := self.confirm(recent.audio(), score)) != IGNORE:
                 return outcome
 
-    def confirm(self, audio: np.ndarray, score: float) -> str:
+    def confirm(self, audio: np.ndarray, score: float, journal=None, wake_model: str = "") -> str:
         """The double-check of a wake the model scored `score` on `audio` (the check window that ends on it): ANSWER,
         ASK or IGNORE, kept in the journal. Not IGNORE: `last_audio` is `audio`, and on ANSWER `after_name` is being
-        found. Also for a network body that ran only the wake model itself (bodylink.RemoteTrigger)."""
+        found. Also for a network body that ran only the wake model itself (bodylink.RemoteTrigger), which keeps the
+        wake in its room's `journal`, under its own `wake_model`."""
         outcome, heard = self._verifier.decide(audio)
         if outcome == IGNORE and self._sure and self.pair.version == INSTALLED and score >= self._sure:
             outcome = ANSWER if heard_nothing(heard) else IGNORE
-        if self._journal:
-            self._journal.wake(
+        if journal := journal or self._journal:
+            journal.wake(
                 audio,
                 score,
                 outcome,
                 heard,
                 self._verifier.last_confidence,
-                self.pair.wake_model,
+                wake_model or self.pair.wake_model,
                 self.pair.check_model,
             )
         if outcome == IGNORE:

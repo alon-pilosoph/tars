@@ -234,32 +234,43 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
     time it connects: `assistant_for(body, room)` makes its assistant (once; it keeps its conversation's state across
     reconnections), and `run(assistant, idle_message)` runs its wake loop. A body that goes ends its room's
     conversation, never TARS: the room waits for it to come back, and meanwhile the desk (`rooms`) says nothing there.
-    A body paired while TARS runs is picked up within BODIES_RECHECK_S. `sample_rate`: the voice's."""
+    A body paired while TARS runs is picked up within BODIES_RECHECK_S. `sample_rate`: the voice's.
+
+    A web page let in by a ticket (the Talk page) is a room only while it's open: `assistant_for(body, room, page)`
+    makes it a fresh assistant each time, for the person signed in on it (`page`, the body's Hello), and the desk
+    gives it nothing to say."""
     import traceback
 
     from .body import BodyGone
-    from .bodykeys import BodyKeys
+    from .bodykeys import BodyKeys, Tickets
     from .bodylink import BodyListener, RemoteBody, welcome
     from .homenet import address
     from .recorder import make_recorder
 
     keys = BodyKeys(store)
+    tickets = Tickets(store)
 
     def at_home(peer: str) -> bool:
         found = address(peer)
         return found is not None and not found.is_global
 
+    def room_of(hello) -> str:
+        return page_room(hello) if hello.web else keys.room_of(hello.device) or ""
+
     listener = BodyListener(
         keys.public_key,
-        lambda hello: welcome(keys.room_of(hello.device) or "", sample_rate),
+        lambda hello: welcome(room_of(hello), sample_rate),
         allowed=at_home if cfg.bodies.plain_from_home else (lambda peer: False),
         host=cfg.bodies.host,
         port=cfg.bodies.port,
-        seen=keys.seen,
+        seen=lambda device: None if device.startswith("web-") else keys.seen(device),
+        redeem=tickets.redeem,
+        ssl=_ssl_context(cfg, root),
+        ssl_port=cfg.bodies.secure_port,
     ).start()
     print(f"(bodies: listening on port {listener.port} for {len(keys.listed())} paired)", flush=True)
-    # The double-check for a body that runs only the wake word, on this machine's models. Not journaled: a journal
-    # follows one room's conversation, and this is shared (keeping network bodies' wakes is a follow-up).
+    # The double-check for a body that runs only the wake word, on this machine's models, shared by every room: each
+    # room's trigger hands it the room's own journal, so its wakes are kept there.
     checker, _ = make_trigger(cfg, False, root, None)
     here = BodiesHere(Path(store.folder))
 
@@ -274,9 +285,10 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
             here.mark(device, name, True)
             try:
                 if assistant is None:
-                    assistant = assistant_for(body, name)
+                    assistant = assistant_for(body, name, None)
                 else:
                     assistant.body = body
+                body.trigger.journal = assistant.journal  # its wakes kept with its room's
                 run(assistant, f"Waiting for its name in the {name}...")
             except BodyGone as e:
                 print(f"(the {name}'s body went: {e}; waiting for it to come back)", flush=True)
@@ -301,7 +313,54 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
                 print(f"(bodies: couldn't read the paired bodies: {e!r})", flush=True)
             time.sleep(BODIES_RECHECK_S)
 
+    def page(hello) -> None:
+        """A web page's room: from its arrival until it goes. Never waited for again: a new page is a new ticket."""
+        name = page_room(hello)
+        link = listener.connected(hello.device, timeout=5)
+        if link is None:
+            return
+        rooms.page(name)
+        try:
+            body = RemoteBody(link, sample_rate, make_recorder(cfg, root), checker)
+            assistant = assistant_for(body, name, hello)
+            body.trigger.journal = assistant.journal
+            run(assistant, f"Waiting for a tap on {name}...")
+        except BodyGone:
+            print(f"({name} closed)", flush=True)
+        except Exception:  # noqa: BLE001 - a page's failure is never a room's, nor TARS's
+            traceback.print_exc()
+        finally:
+            link.close()
+            rooms.remove(name)
+
+    def pages() -> None:
+        while True:
+            hello = listener.pages.get()
+            threading.Thread(target=page, args=(hello,), daemon=True, name=f"page {hello.device}").start()
+
     threading.Thread(target=watch, daemon=True, name="bodies").start()
+    threading.Thread(target=pages, daemon=True, name="pages").start()
+    if listener.ssl_port:
+        print(f"(bodies: the Talk page's wss:// on port {listener.ssl_port})", flush=True)
+
+
+def page_room(hello) -> str:
+    """A web page's room: its person's, told apart from any other page ("Stacey on the web 3f9a", "the web 3f9a")."""
+    from .signin import shown
+
+    who = f"{shown(hello.person)} on the web" if hello.person else "the web"
+    return f"{who} {hello.device.removeprefix('web-')[:4]}"
+
+
+def _ssl_context(cfg: Config, root: Path):
+    """The web UI's certificate, for the Talk page's wss://; None without one (a page over http may use ws://)."""
+    if not cfg.web.tls_cert:
+        return None
+    import ssl
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(root / cfg.web.tls_cert, root / cfg.web.tls_key)
+    return context
 
 
 BODIES_RECHECK_S = 30.0
@@ -433,26 +492,27 @@ def start_presence(cfg: Config, root: Path, presence, reminders=None, came_in=No
     skills' clock, so a "welcome home" runs at once)."""
     if presence is None:
         return
+    from .hub import HubEvents
     from .reminders import came_in as messages_on_coming_in
     from .reminders import on_arrival
 
     for line in presence.left_out:
         print(f"(presence: leaving out {line}; until it's back nobody is marked out; see docs/presence.md)")
-    told = [c for c in (reminders and messages_on_coming_in(reminders.reminders, cfg.presence.quiet), came_in) if c]
-
-    def tell_came_in(names: list[str], door: str) -> None:
-        for one in told:
-            one(names, door)
-
-    doors = make_doors(cfg, presence, tell_came_in)
-    arrival = on_arrival(reminders.reminders, quiet=cfg.presence.quiet) if reminders else None
-    changes = [c for c in (arrival, doors and doors.phone_came_home) if c]
+    # The brain's side: what it does when someone comes home, or in by a door.
+    events = HubEvents()
+    if reminders:
+        events.on("came_in", messages_on_coming_in(reminders.reminders, cfg.presence.quiet))
+        events.on("home", on_arrival(reminders.reminders, quiet=cfg.presence.quiet))
+    events.on("came_in", came_in)
+    # The hub's side: the routers and the doors, which tell the brain through `events`.
+    doors = make_doors(cfg, presence, lambda names, door: events.emit("came_in", names, door))
 
     def changed(person: str, home: bool) -> None:
-        for change in changes:
-            change(person, home)
+        if doors:
+            doors.phone_came_home(person, home)
+        events.emit("home", person, home)
 
-    watcher = presence.watch(changed if changes else None)
+    watcher = presence.watch(changed if doors or events.wanted("home") else None)
     if watcher:
         print(f"(presence: asking {len(presence.routers)} router(s) every {presence.every_s:.0f} s)")
     if doors:
@@ -571,6 +631,10 @@ def make_home(
     for device in auto_lock_devices(cfg, root):
         extra[device.name] = device
     built = build(cfg.home, context, extra)
+    if built.tools:
+        from .hub import behind_hub
+
+        behind_hub(built.tools, context.hass)  # the house reached through the hub (docs/house-hub.md)
     if built.tools and (asked := {d["entity"]: a for d, _, _, a in auto_locks(cfg, root)}):
         built.tools.unlock_asked = lambda entity: asked[entity].mark() if entity in asked else None
     for name, why in built.unavailable.items():
@@ -646,6 +710,17 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, h
         states = [s.home for s in presence.board.states().values()]
         return True if any(states) else False if states and all(h is False for h in states) else None
 
+    # The brain's side says, posts and tells; auto-lock, on the hub's, emits.
+    from .hub import HubEvents
+
+    events = HubEvents()
+    events.on("said", say)
+    events.on("posted", post)
+    events.on("maintainers", tell_maintainers)
+
+    def emit(kind: str):
+        return lambda text: events.emit(kind, text)
+
     changing = home.changing if home else None
     for d, settings, off, asked in locks:
         hass = HomeAssistant(cfg.home.url, token)
@@ -658,7 +733,8 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, h
             return hass.call("lock.lock", {"entity_id": entity})
 
         auto = AutoLock(
-            d["name"].strip(), entity, d["door"], settings, off, read, lock, say, post, tell_maintainers, anyone_home,
+            d["name"].strip(), entity, d["door"], settings, off, read, lock, emit("said"), emit("posted"),
+            emit("maintainers"), anyone_home,
             asked=asked, changing=changing,
         )  # fmt: skip
         auto.start(

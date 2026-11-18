@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from . import toolbox
-from .config import ANDROID_TV, CAMERA, EVERYTHING, SPOTIFY, HomeConfig
+from .config import EVERYTHING, HomeConfig
 
 if TYPE_CHECKING:
     from .plugins import Loaded, PluginTool
@@ -97,6 +97,8 @@ class Request:
     None when nobody needs to know.
     `held_for_web()`: told each time something is held back because the turn read the web (toolbox.held_for_the_web),
     so the brain can write the reply again without it; None when nobody would.
+    `by_web`: said on the Talk page in a browser (a web body): `speaker` is who's signed in there, and it never
+    counts as being at home by voice, wherever the browser is.
     `by_door`: the door whose lock set this turn off (a skill run because someone came home by opening it, doors.py):
     what a lock says over MQTT is only ever who came in, so the turn reads the house, but changes nothing in it."""
 
@@ -104,6 +106,7 @@ class Request:
     score: float | None = None
     by_voice: bool = False
     by_chat: bool = False
+    by_web: bool = False
     heard: str = ""
     may_act: Callable[[float], bool] | None = None
     read_the_web: bool = False
@@ -267,91 +270,11 @@ class Built(NamedTuple):
 
 
 def build(cfg: HomeConfig, context: Context, extra: dict[str, Device] | None = None) -> Built:
-    """The devices [home] lists, made: Home Assistant's, then Android TVs, then each plugin's, then `extra`, made
-    already (TARS's own, like who's home). Like every service, optional: a device that can't be made (no token, a
-    missing extra, a plugin's own problem) is left out with why, and TARS starts without it."""
-    from . import androidtv, hass
-    from .plugins import Loaded, admit, provided
+    """The devices [home] lists, made, and the house tools over them: the hub's work (hub.build), here for the
+    plugins and code that have always called it from home."""
+    from .hub import build as hub_build
 
-    unavailable: dict[str, str] = {}
-    # As people call them ("AC", "front door"), and without label, which is how each is written, the same for all.
-    specs = [(d["name"].strip(), {k: v for k, v in d.items() if k != "label"}) for d in cfg.devices]
-    labels = {d["name"].strip(): d["label"].strip() for d in cfg.devices if d.get("label")}
-    if context.hass is None and cfg.url and context.secret(TOKEN_KEY):
-        context.hass = hass.HomeAssistant(cfg.url, context.secret(TOKEN_KEY))
-    makers: dict[str, Callable[[dict], Device]] = {}
-    plugin_tools: list[PluginTool] = []
-    loaded: dict[str, Loaded] = {}
-    for plugin, settings in cfg.plugins.items():
-        try:
-            module = load_plugin(settings["module"], context.root)
-            given, loaded[plugin] = admit(plugin, module, settings.get("grant"), context)
-            made = provided(
-                module.setup({k: v for k, v in settings.items() if k not in ("module", "grant")}, given),
-                plugin,
-                {t.name for t in plugin_tools},
-            )
-            makers |= {f"{plugin}.{kind}": make for kind, make in made.kinds.items()}
-            plugin_tools += made.tools
-        except Exception as e:  # noqa: BLE001 - a plugin that won't load costs its devices, not TARS
-            had = loaded.get(plugin)
-            loaded[plugin] = Loaded(plugin, had.version if had else "", had.needs if had else (), None, str(e))
-            for name, d in specs:
-                if str(d.get("kind", "")).startswith(f"{plugin}."):
-                    unavailable[name] = f"the plugin {plugin} didn't load: {e}"
-    # Home Assistant's and the Android TVs first: a plugin's device may lean on them (a TV remote asking the TV's box
-    # whether the TV is on).
-    for name, d in sorted(specs, key=lambda s: s[1].get("kind") not in (None, ANDROID_TV)):
-        if name in unavailable:
-            continue
-        kind = d.get("kind")
-        try:
-            if kind is None:
-                if context.hass is None:
-                    why = f"no {TOKEN_KEY} in .env" if cfg.url else "[home] url isn't set"
-                    raise ValueError(f"it goes through Home Assistant, and {why}")
-                device = hass.entity_device(name, d, context.hass)
-            elif kind == ANDROID_TV:
-                device = androidtv.make(name, d, context)
-            elif kind == CAMERA:
-                if context.hass is None:
-                    why = f"no {TOKEN_KEY} in .env" if cfg.url else "[home] url isn't set"
-                    raise ValueError(f"it goes through Home Assistant, and {why}")
-                device = hass.camera_device(name, d, context.hass)
-            elif kind == SPOTIFY:
-                from . import spotify
-
-                device = spotify.make(name, d, context)
-            elif kind in makers:
-                device = makers[kind](d | {"name": name})
-                context.plugin_of[name.lower()] = kind.partition(".")[0]
-            else:
-                raise ValueError(f"its plugin has no kind {kind.partition('.')[2]!r}")
-        except Exception as e:  # noqa: BLE001 - one device that can't be made never stops the others
-            unavailable[name] = str(e) or type(e).__name__
-            continue
-        device.label = labels.get(name) or device.label
-        context.devices[name.lower()] = device
-    for name, device in (extra or {}).items():
-        context.devices[name.lower()] = device
-    made = context.devices or context.hass is not None or plugin_tools
-    history = None
-    if cfg.config_dir and context.hass is not None:
-        from .haconfig import HAConfig
-
-        history = HAConfig(context.root / cfg.config_dir, cfg.container)
-    tools = None
-    if made:
-        tools = HomeTools(
-            cfg,
-            dict(context.devices),
-            hass=context.hass,
-            ha_config=history,
-            maintainers=context.maintainers,
-            plugin_tools=plugin_tools,
-        )
-        context.may_unlock = tools._may_unlock
-    return Built(tools, unavailable, loaded)
+    return hub_build(cfg, context, extra)
 
 
 def load_plugin(module: str, root: Path):
@@ -373,7 +296,10 @@ HOME_RULES = (
     "change isn't confirmed, or failed, say that plainly. Answer questions about a device from its status, not from "
     "memory: it may have changed since. When asked to change a device, call the tool even if its status says it's "
     "already that way: someone may have used its remote or switch since, and the tool knows what's safe to send. A "
-    "change to several devices is one call each.\n"
+    'change to several devices is one call each. When more than one device could be meant ("turn off the light" '
+    "with lights in several rooms) and the room it was said in doesn't settle it, ask one quick question that names "
+    "the choices (\"The bedroom or Ari's room?\") and change nothing yet; never say you can't when a question "
+    "would settle it.\n"
     "Unlocking: only when someone asks you to unlock it now. Call unlock at once, with no question first: the tool "
     "itself decides who may, from their voice or their chat, and when it refuses, say why in one line and don't try "
     "again. When it answers with a challenge, ask them, in a few words, to say the digits it gives, one at a time; "
@@ -603,6 +529,8 @@ class HomeTools:
     def _may_unlock(self, request: Request) -> str | None:
         """Why this request may not unlock, or None if it may."""
         cfg = self._cfg
+        if request.by_web:
+            return "refused: never from a web page, wherever it's open; by voice at home, or from a trusted chat"
         if request.by_chat:
             chats = {v.strip().lower() for v in cfg.unlock_chats}
             if not request.speaker or request.speaker.strip().lower() not in chats:
