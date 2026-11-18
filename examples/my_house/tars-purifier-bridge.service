@@ -1,0 +1,25 @@
+# The purifier bridge (bridge.py): the living-room purifier's Bluetooth, held ready for every TARS process.
+#   cp examples/my_house/tars-purifier-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now tars-purifier-bridge
+# The purifier's address is on ExecStart's line.
+[Unit]
+Description=TARS: the living-room purifier's Bluetooth, held ready
+After=bluetooth.target network-online.target
+
+[Service]
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen --all-extras python -m examples.my_house.bridge 48:87:2D:1F:FC:9B
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/voice-assistant -%h/.cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_BLUETOOTH
+LockPersonality=yes
+UMask=0077
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

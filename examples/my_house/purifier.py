@@ -188,6 +188,7 @@ class Bluetooth:
 
 ATOM_PORT = 8780  # the firmware's (firmware/atom-lite-bt)
 ATOM_KEY = "PURIFIER_ATOM_KEY"  # the key it and TARS share, in .env
+LOOPBACK = ("127.0.0.1", "localhost")  # an "Atom" there is the bridge on this machine (bridge.py)
 LINK_S = 20.0  # how long the Atom gets to connect to the purifier; it tries several times itself
 REPLY_S = 5.0  # for anything else it's asked
 
@@ -582,7 +583,12 @@ class Watch:
                 return heard
         if not self.stuck:
             self.stuck = True
-            if self._via:
+            if self._via in LOOPBACK:
+                self._tell(
+                    f"The purifier bridge on this machine isn't answering, so I can't work the {self.name}. "
+                    "Restarting it usually fixes it: systemctl --user restart tars-purifier-bridge."
+                )
+            elif self._via:
                 self._tell(
                     f"The Atom I reach the {self.name} through ({self._via}) isn't answering on Wi-Fi, so I can't "
                     "work it. Is it plugged in? Unplugging it and plugging it back in restarts it."
@@ -600,7 +606,10 @@ class Watch:
         self._failed = 0
         if self.stuck:
             self.stuck = False
-            self._tell(f"The Atom for the {self.name} answers again." if self._via else "My Bluetooth works again.")
+            if self._via in LOOPBACK:
+                self._tell("The purifier bridge answers again.")
+            else:
+                self._tell(f"The Atom for the {self.name} answers again." if self._via else "My Bluetooth works again.")
 
     def _back(self) -> None:
         # Kept every few minutes at most (a listen, or a request it answered), so the file is no burden.

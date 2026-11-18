@@ -199,6 +199,22 @@ The watch asks the Atom when the purifier last answered. When it's the Atom that
 Wi-Fi), twice running, the maintainers are told so, once, and again when it's back; never as the purifier being gone.
 The Atom's light: green, all well; orange, the purifier hasn't answered for a minute; red, no Wi-Fi.
 
+### The purifier beside the Pi, held ready too
+
+Made fresh for each request, a connection from the Pi's own Bluetooth took about eight seconds (its aluminium case
+dulls it), before the command itself. So the purifier in the Pi's own range is held ready the same way, by the purifier
+bridge ([`bridge.py`](bridge.py)): the Atom's firmware in Python, on the Pi, which every TARS process (voice,
+Telegram, the web UI) goes through, since the purifier takes one connection at a time. Give that purifier
+`atom = "127.0.0.1"`, and run the bridge as a service:
+
+```sh
+cp examples/my_house/tars-purifier-bridge.service ~/.config/systemd/user/   # its address is on ExecStart's line
+systemctl --user daemon-reload && systemctl --user enable --now tars-purifier-bridge
+```
+
+If the bridge stops answering, the maintainers are told so, as for an Atom. If it can't connect for two minutes, it
+switches the Pi's Bluetooth off and on.
+
 ## Setting it up
 
 The house's Home Assistant runs on the Pi ([setting it up](../../docs/home.md#setting-it-up)), with the MQTT broker
