@@ -11,6 +11,7 @@ choice, is in [docs/wake-word.md](../docs/wake-word.md#how-the-models-were-built
 |---|---|---|
 | Generic (committed, the default) | `models/generic/hey_tars.tflite` | `stage1/train.py generic` |
 | | `models/generic/hey_tars_check.json` | `stage2/train_check.py generic` |
+| Generic, openWakeWord (committed, optional) | `models/generic/hey_tars.onnx` | `open/recipe.sh` |
 | A household's pair (on its own machines) | `voice_data/events/wake_models/<setup>/vN/` | `household.py` |
 | Personal (local only, gitignored) | `models/personal/hey_tars.tflite` | `stage1/train.py personal` |
 | | `models/personal/hey_tars_check.json` | `stage2/train_check.py personal` |

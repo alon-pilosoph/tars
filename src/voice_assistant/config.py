@@ -72,6 +72,7 @@ class WakeConfig:
     verify: bool = False  # double-check each wake with an offline speech recognizer (verify.py)
     check_window_s: float = 2.5  # how much audio before the wake the double-check hears
     check_model: str = ""  # a learned layer for the double-check (.json); "" = plain phrase match
+    sure: float = 0.0  # a wake scored at least this stands when the check made out no words (0 = off)
 
 
 @dataclass
@@ -604,6 +605,8 @@ def _problems(cfg: Config) -> list[str]:
             problems.append(f"[{name}] deepgram_host must be a host name, like api.eu.deepgram.com")
     if not 0 < cfg.wake.threshold < 1:
         problems.append("[wake] threshold must be more than 0 and less than 1")
+    if not 0 <= cfg.wake.sure <= 1:
+        problems.append("[wake] sure must be from 0 (off) to 1")
     if cfg.wake.check_window_s <= 0:
         problems.append("[wake] check_window_s must be more than 0")
     for name in ("threshold", "wake_threshold"):

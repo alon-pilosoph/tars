@@ -264,6 +264,30 @@ an hour instead of 65, and there's that much less to review. The chain's answers
 with the voice at or under the TV, Vosk mostly can't make out the phrase, and that's now the limit (see
 [limitations](#limitations)).
 
+### The open stage 1 (optional)
+
+`models/generic/hey_tars.onnx` is a second generic stage 1, for a Pi: four small heads on openWakeWord's
+pretrained speech embedding, averaged into one openWakeWord model ([training/open](../training/open/recipe.sh)). The
+heads are a plain one and a conv-attention one, each trained once on the usual mixes and once with extra takes and
+lookalikes at +5 to −10 dB. Each pair erred in different places and the average beat every one of them. Like the
+microWakeWord model, it was trained on generic data only. It runs as `model = "models/generic/hey_tars.onnx"`,
+`threshold = 0.59`, `sure = 0.88`.
+
+| Same tests as above | microWakeWord (shipped) | Open, four heads |
+|---|---|---|
+| Stage 1 catches on the iPhone mixes, +10 / +5 / 0 / −5 dB | 93 / 81 / 63 / 28% | 100 / 90 / 65 / 37% |
+| Stage 1 wakes an hour on real TV, iPhone / speakerphone | 8 / 5 | 11 / 9 |
+| The owner's 34 requests over his TV on the speakerphone: stage 1 woke | 17 | 30 |
+| Same 34, answered by the whole chain | 9 | 14 (20 with `sure`) |
+| False answers: real TV hours, lab hours, 354 kept clips, 16 lookalike takes | 0 | 0 |
+| Cost on a Raspberry Pi 4 | under 1% of a core | 24 ms per 80 ms block, 30% of one core |
+
+Against 15 public "hey TARS" openWakeWord models, each at its own threshold for 10 false wakes an hour and ours made as
+strict as it on every false-wake measure, the open stage 1 does as well or better on every other measure against
+eight of them. The other seven each keep a lead on one to five measures: the small "people talking" and "far" sets of
+the wake tests (8 and 12 takes), and for four of them the voice at or under the TV, by 1–4 points. The embedding is
+the cost: the heads add about 1 ms.
+
 **Personal setup**, the owner's 15 held-out takes, 2.5 s window
 
 | Condition | Answered |
@@ -381,6 +405,16 @@ Moonshine features would help in loud babble, but at a size and per-check time j
 "hey": with a generic stage 1 that was also trained on voice conversions, other voices were answered 81% of the time at
 2 s and 94% at 3 s. The generic setup uses 3 s and the personal one 2.5 s. Waiting 240 ms after a wake before running
 the check did slightly worse, so the check runs at once.
+
+**A very sure wake the check can't make out.** With the voice at or under the TV, the recognizer often makes out no
+words at all (only its catch-all for unclear speech) even when the wake model is very sure. `[wake] sure` lets such a
+wake stand when the model scored at least that high; any words the recognizer does hear, a lookalike or other speech,
+still decide, so "hey cars" is turned down as before. A model is surest about 0.3 s after it first fires, as the rest
+of the name comes in, so with `sure` on, TARS listens 4 more blocks (320 ms) and judges the wake on the highest score.
+Measured on the owner's 34 takes over his TV with an openWakeWord-embedding stage 1 of ours, streamed as it runs live:
+answered 14 → 20 at `sure = 0.88`, with no false answers on two real TV hours, the lab's TV and audiobook hours, 354
+kept clips of other sounds and 16 lookalike takes (the highest no-wake score with nothing made out was 0.82). The
+value belongs to one model, so it is off (0) by default and household-trained models never use it.
 
 ## Limitations
 

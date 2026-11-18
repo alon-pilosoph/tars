@@ -24,6 +24,8 @@ mode = "wakeword"
 #   models/generic/   never trained on anyone's recordings: works for anyone out of the box (default)
 #   models/personal/  trained partly on the author's recordings; kept local (uses check_window_s = 2.5)
 # A path to a custom .onnx (openWakeWord) or .tflite (microWakeWord) model, or a pretrained openWakeWord name.
+# models/generic/hey_tars.onnx is the generic openWakeWord one, better over a loud TV, for a Pi (30% of one core):
+# with it, threshold = 0.59 and sure = 0.88 (docs/wake-word.md, the open stage 1).
 model = "models/generic/hey_tars.tflite"
 # The generic model's point for 10 wakes an hour on TV and audiobooks (docs/wake-word.md); the double-check below
 # throws out what gets through. A household's own models carry their own threshold.
@@ -37,6 +39,10 @@ check_model = "models/generic/hey_tars_check.json"
 # Seconds of audio the double-check hears. The generic model can fire a moment after the phrase ends, so it
 # needs 3.0 (measured: 94% of other voices vs 81% at 2.0); the personal one does best at 2.5.
 check_window_s = 3.0
+# Over a loud TV the double-check often makes out no words at all, even when the wake model is very sure. A wake this
+# model scores at least this high stands then; any words it does hear (a lookalike, other speech) still decide.
+# 0 = off. Only for the model above, and set for it: a household's own models never use it.
+sure = 0.0
 
 [recorder]
 # How sure the speech detector (Silero VAD, local) must be that it hears speech, 0-1.

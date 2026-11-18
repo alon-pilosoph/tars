@@ -200,7 +200,7 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
         if cfg.wake.verify:
             from .verify import VerifiedTrigger
 
-            trigger = VerifiedTrigger(pair_source(cfg, root), root / "models", journal=journal)
+            trigger = VerifiedTrigger(pair_source(cfg, root), root / "models", journal=journal, sure=cfg.wake.sure)
         else:
             trigger = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
     except (FileNotFoundError, ValueError) as e:  # a wake model or check that's missing or broken
