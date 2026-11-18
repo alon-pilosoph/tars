@@ -39,7 +39,7 @@ from voice_assistant.reminders import twelve_hour
 
 WRITE = "0000ef01-0000-1000-8000-00805f9b34fb"
 LIVE = "0000ef02-0000-1000-8000-00805f9b34fb"
-POWER, FAN, UV, TIMER, AUTO, NIGHT = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
+POWER, FAN, UV, TIMER, AUTO, NIGHT, BUZZER = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x08
 HELLO, ASK = 0xAF, 0xA2  # the app's opening of a control session; a request for a status
 FANS = ("low", "medium", "high", "turbo")
 MODES = ("auto", "night", "normal")
@@ -49,15 +49,15 @@ CONNECT_S = 12.0
 FIRST_STATUS_S = 4.0
 SETTLE_S = 6.0
 FILTER_HOURS = 4320  # a filter's life, as its hours-run counter counts it (the counter goes up; resetting zeroes it)
-FLAG_POWER, FLAG_UV, FLAG_TIMER, FLAG_AUTO, FLAG_NIGHT = 0x01, 0x02, 0x04, 0x20, 0x40
+FLAG_POWER, FLAG_UV, FLAG_TIMER, FLAG_BUZZER, FLAG_AUTO, FLAG_NIGHT = 0x01, 0x02, 0x04, 0x08, 0x20, 0x40
 HELD = (
     "it's ignoring remote commands, as it does after a long time unplugged; "
     "someone has to turn it on once at its panel, and then it listens again"
 )
 RULES = (
     "The air purifier's fan is low, medium, high or turbo; its mode is auto, night or normal; on takes minutes only "
-    "for its timer of 2, 4 or 8 hours; press takes uv_on and uv_off. Its own PM2.5 reading is rough: for how the air "
-    "is, a dedicated air monitor is better."
+    "for its timer of 2, 4 or 8 hours; press takes uv_on and uv_off, and buzzer_on and buzzer_off (its beeps). Its "
+    "own PM2.5 reading is rough: for how the air is, a dedicated air monitor is better."
 )
 
 
@@ -85,6 +85,10 @@ class Status:
     @property
     def uv(self) -> bool:
         return bool(self.flags & FLAG_UV)
+
+    @property
+    def buzzer(self) -> bool:
+        return bool(self.flags & FLAG_BUZZER)
 
     @property
     def auto(self) -> bool:
@@ -399,10 +403,15 @@ class Purifier(Device):
             return self._on(args.get("minutes"))
         if action == PRESS:
             pressed = button(args)
-            if pressed not in ("uv_on", "uv_off"):
-                return "error: its buttons are uv_on and uv_off"
-            on = pressed == "uv_on"
-            return self._do([frame(UV, 0, int(on))], lambda s: s.uv == on, f"UV {'on' if on else 'off'}")
+            if pressed in ("uv_on", "uv_off"):
+                on = pressed == "uv_on"
+                return self._do([frame(UV, 0, int(on))], lambda s: s.uv == on, f"UV {'on' if on else 'off'}")
+            if pressed in ("buzzer_on", "buzzer_off"):
+                on = pressed == "buzzer_on"
+                return self._do(
+                    [frame(BUZZER, 0, int(on))], lambda s: s.buzzer == on, f"buzzer {'on' if on else 'off'}"
+                )
+            return "error: its buttons are uv_on, uv_off, buzzer_on and buzzer_off"
         return self._set(args.get("fan"), args.get("mode"))
 
     def _on(self, minutes) -> str:
@@ -467,6 +476,7 @@ def _said(s: Status) -> str:
     if s.held:
         return f"off, and {HELD}; {s.temperature:.0f} °C"
     modes = [m for m, on in (("auto", s.auto), ("night mode", s.night), ("UV on", s.uv)) if on]
+    modes += [] if s.buzzer else ["buzzer off"]
     timer = [f"timer {s.timer_hours} hours"] if s.timer_hours else []
     parts = ["on" if s.on else "off", f"fan {s.fan}", *modes, *timer]
     left = max(0, 100 - s.filter_used)

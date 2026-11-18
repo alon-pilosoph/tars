@@ -31,13 +31,13 @@ class Pretend:
     """A purifier that takes commands, or doesn't: `held`; `fails` connections drop first."""
 
     def __init__(self, held=False, fails=0, ignores=False):
-        self.state = {"on": False, "fan": 1, "uv": False, "auto": False, "night": False, "timer": 0}
+        self.state = {"on": False, "fan": 1, "uv": False, "auto": False, "night": False, "timer": 0, "buzzer": True}
         self.held, self.fails, self.ignores = held, fails, ignores
         self.sent: list[bytes] = []
 
     def status(self) -> Status:
         s = self.state
-        flags = s["on"] | s["uv"] << 1 | bool(s["timer"]) << 2 | s["auto"] << 5 | s["night"] << 6
+        flags = s["on"] | s["uv"] << 1 | bool(s["timer"]) << 2 | s["buzzer"] << 3 | s["auto"] << 5 | s["night"] << 6
         return Status(self.held, FANS[s["fan"]], s["timer"], flags, 2.0, 24.0, 40.0)
 
     def talk(self, commands, done):
@@ -48,7 +48,7 @@ class Pretend:
             return self.status()
         self.sent += commands
         for c in [] if self.ignores else commands:
-            key = {1: "on", 2: "fan", 3: "uv", 4: "timer", 5: "auto", 6: "night"}[c[2]]
+            key = {1: "on", 2: "fan", 3: "uv", 4: "timer", 5: "auto", 6: "night", 8: "buzzer"}[c[2]]
             self.state[key] = c[4] if key in ("fan", "timer") else bool(c[4])
         return self.status()
 
@@ -101,6 +101,14 @@ def test_uv_is_a_press():
     p, link = purifier()
     assert call(p, "press", button="uv on") == "done: air purifier reports UV on"
     assert link.state["uv"]
+
+
+def test_its_buzzer_is_a_press_and_said_only_when_off():
+    p, link = purifier()
+    assert call(p, "press", button="buzzer off") == "done: air purifier reports buzzer off"
+    assert not link.state["buzzer"] and "buzzer off" in p.status()
+    assert call(p, "press", button="buzzer on") == "done: air purifier reports buzzer on"
+    assert "buzzer" not in p.status()
 
 
 def test_a_purifier_that_doesn_t_change_is_not_said_to_have():
