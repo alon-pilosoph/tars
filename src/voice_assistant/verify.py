@@ -374,7 +374,10 @@ class VerifiedTrigger:
         found. Also for a network body that ran only the wake model itself (bodylink.RemoteTrigger), which keeps the
         wake in its room's `journal`, under its own `wake_model`."""
         outcome, heard = self._verifier.decide(audio)
-        if outcome == IGNORE and self._sure and self.pair.version == INSTALLED and score >= self._sure:
+        # `sure` is a score of the installed model's own: a body's wake was scored by its own model (wake_model), on a
+        # scale of its own, so the words the check heard decide alone.
+        own = not wake_model
+        if outcome == IGNORE and own and self._sure and self.pair.version == INSTALLED and score >= self._sure:
             outcome = ANSWER if heard_nothing(heard) else IGNORE
         if journal := journal or self._journal:
             journal.wake(

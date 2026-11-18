@@ -409,6 +409,7 @@ def test_a_body_wake_checked_here_is_kept_with_its_room_audio_and_the_bodys_mode
 
     trigger = VerifiedTrigger.__new__(VerifiedTrigger)
     trigger._journal = None  # the shared checker has none of its own
+    trigger._sure, trigger._second_chance = 0.0, None
     trigger._sure = None  # no "sure" rule
     trigger._verifier = types.SimpleNamespace(decide=lambda audio: (IGNORE, "hey cars"), last_confidence=0.4)
     trigger.pair = types.SimpleNamespace(wake_model="models/generic/hey_tars.tflite", check_model="check.onnx")
@@ -580,7 +581,7 @@ def test_a_page_served_over_https_reaches_the_bodies_over_wss(tmp_path):
                             redeem=lambda t: (t == "t1", "stacey"), ssl=server).start()  # fmt: skip
     try:
         client = ssl.create_default_context(cafile=tmp_path / "c.pem")
-        ws = connect(f"wss://localhost:{listener.ssl_port}", legacy=True, ssl=client)
+        ws = connect(f"wss://127.0.0.1:{listener.ssl_port}", legacy=True, ssl=client, server_hostname="localhost")
         ws.recv(timeout=5)
         ws.send(json.dumps({"type": "hello", "protocol": 1, "ticket": "t1"}))
         assert json.loads(ws.recv(timeout=5))["type"] == "welcome"
