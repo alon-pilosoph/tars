@@ -37,6 +37,11 @@ wifi:
 logger:
   level: DEBUG
 
+# Updates over Wi-Fi (esphome upload tars-atom.yaml --device tars-atom.local), so the Atom can live away from a cable.
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
 external_components:
   # Echo cancelling and the board's audio chip.
   - source: github://n-IA-hane/esphome-audio-stack@v2026.11.0
