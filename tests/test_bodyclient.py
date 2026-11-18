@@ -223,7 +223,7 @@ def test_each_body_is_a_room_whose_assistant_waits_for_it_again_when_it_goes(log
     rooms, made, runs = Rooms("home"), [], []
 
     def assistant_for(body, room, page):
-        made.append(types.SimpleNamespace(body=body, room=room, page=page))
+        made.append(types.SimpleNamespace(body=body, room=room, page=page, journal=None))
         return made[-1]
 
     def run(assistant, idle):
@@ -287,7 +287,7 @@ def test_a_talk_page_is_a_room_of_its_own_for_its_person_until_it_closes(log, mo
     rooms, made, runs = Rooms("home"), [], []
 
     def assistant_for(body, room, page):
-        made.append(types.SimpleNamespace(body=body, room=room, page=page))
+        made.append(types.SimpleNamespace(body=body, room=room, page=page, journal=None))
         return made[-1]
 
     def run(assistant, idle):

@@ -269,8 +269,8 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
         ssl_port=cfg.bodies.secure_port,
     ).start()
     print(f"(bodies: listening on port {listener.port} for {len(keys.listed())} paired)", flush=True)
-    # The double-check for a body that runs only the wake word, on this machine's models. Not journaled: a journal
-    # follows one room's conversation, and this is shared (keeping network bodies' wakes is a follow-up).
+    # The double-check for a body that runs only the wake word, on this machine's models, shared by every room: each
+    # room's trigger hands it the room's own journal, so its wakes are kept there.
     checker, _ = make_trigger(cfg, False, root, None)
     here = BodiesHere(Path(store.folder))
 
@@ -288,6 +288,7 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
                     assistant = assistant_for(body, name, None)
                 else:
                     assistant.body = body
+                body.trigger.journal = assistant.journal  # its wakes kept with its room's
                 run(assistant, f"Waiting for its name in the {name}...")
             except BodyGone as e:
                 print(f"(the {name}'s body went: {e}; waiting for it to come back)", flush=True)
@@ -321,7 +322,9 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
         rooms.page(name)
         try:
             body = RemoteBody(link, sample_rate, make_recorder(cfg, root), checker)
-            run(assistant_for(body, name, hello), f"Waiting for a tap on {name}...")
+            assistant = assistant_for(body, name, hello)
+            body.trigger.journal = assistant.journal
+            run(assistant, f"Waiting for a tap on {name}...")
         except BodyGone:
             print(f"({name} closed)", flush=True)
         except Exception:  # noqa: BLE001 - a page's failure is never a room's, nor TARS's
