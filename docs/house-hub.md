@@ -190,6 +190,13 @@ held back.
    commands are done right as often, and the device changes as soon, on the same recorded requests
    (`tools/commands_bench.py`, `evals/house.py`), before and after.
 
+## Decided
+
+- **A hub at home, not all in the cloud** (the owner, 2026-11-18). A home whose devices are all in Home Assistant could
+  be worked from a server through Home Assistant's own remote access, with no TARS box at home, but it would lose
+  what only answers at home (an Android TV, an IR blaster, the routers for who's home) and the second unlock check,
+  which means nothing on the same server as the brain. Every home with devices gets a hub.
+
 ## Open questions for the owner
 
 1. **Chats:** the door bot, a passkey at home only, or no unlocking from chats in a hosted home?
