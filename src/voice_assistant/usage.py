@@ -10,10 +10,15 @@ context (carried): naming the speaker partway through (identified) reaches a dra
 A call on a thread started without it is counted as nobody's, in the background.
 
 Recording never costs a reply: rows go through a queue to one writer thread, and one that can't be written is said
-and dropped. A call the provider said nothing about (cut off part-way) is counted with zeros, marked as such, so the
-gap shows."""
+and dropped. A call the provider said nothing about (cut off part-way: a draft thrown away when someone kept talking)
+is still billed by the provider. A fast provider's (Cerebras, Groq) is read to its end on the side, so it's counted
+exactly; one that's hung up on (OpenAI's, where finishing would cost more, or any interrupted while being read) is
+counted as an estimate, marked unreported: its input from the size of what was sent, at the tokens per character this
+model's reported calls have shown, and its output from the text that had come back. Measured against Cerebras's own
+request log, a quarter of a voice session's calls were such drafts."""
 
 import contextvars
+import json
 import queue
 import threading
 import time
@@ -32,6 +37,8 @@ VOICE, TELEGRAM, WEB, ERRAND, SKILL, BACKGROUND = "voice", "telegram", "web", "e
 PRICES = Path(__file__).with_name("prices.toml")
 KEEP_DAYS = 400  # a little over a year: this month against the same one last year
 COLUMNS = ("input", "output", "reasoning", "cached", "searches", "seconds", "characters")
+TOKENS_PER_CHAR = 0.25  # a cut-off call's estimate, until a model's reported calls have shown its own
+DRAIN_S = 10.0  # the most a draft thrown away is read on, for its count
 
 
 @dataclass
@@ -260,7 +267,8 @@ def report(m: Month) -> str:
         lines.append(f"  {m.unpriced} calls to something with no price in prices.toml aren't in that.")
     if m.unreported:
         lines.append(
-            f"  {m.unreported} calls were cut off before the provider said what they used: counted as nothing."
+            f"  {m.unreported} calls were cut off before the provider said what they used: estimated from what was"
+            " sent."
         )
     return "\n".join(lines)
 
@@ -404,28 +412,52 @@ def spent() -> Spent | None:
 # The providers' streams, counted as they're read
 
 
+_rates: dict[tuple[str, str], float] = {}  # tokens per character of what's sent, by service and model, as reported
+
+
+def _size(sent) -> int:
+    return len(json.dumps(sent, default=str, ensure_ascii=False)) if sent is not None else 0
+
+
 class _Counted:
     """A provider's stream, passed through as it is, recording what it used once it ends or is closed: what the
-    provider said, or zeros marked unreported if it said nothing (closed early, cut off)."""
+    provider said, or, if it said nothing (closed early, cut off), an estimate marked unreported. `sent`: what the
+    request sent (its instructions, messages and tools), for the estimate.
 
-    def __init__(self, stream, service: str, model: str):
+    The usage comes only at a stream's end. A stream that `drains` (a fast provider's, where finishing costs next to
+    nothing: the reply is usually made before TARS lets go of it) is read to its end on a thread of its own once its
+    reader has stopped, for at most DRAIN_S, so a draft thrown away is counted exactly. One closed while it's being
+    read is hung up on at once, as an interrupt must, and estimated."""
+
+    drains = False
+
+    def __init__(self, stream, service: str, model: str, sent=None):
         self._stream, self._service, self._model = stream, service, model
         self._used: dict | None = None
-        self._done = False
+        self._done = self._reading = self._ended = False
+        self._lock = threading.Lock()
+        self.drainer: threading.Thread | None = None
+        self._chars_in, self._chars_out = _size(sent), 0
 
     def __iter__(self):
+        self._reading = True
         try:
             for event in self._stream:
                 self._read(event)
                 yield event
+            self._ended = True
         finally:
-            self._record()
+            self._reading = False
+            self._let_go()
 
     def close(self) -> None:
-        try:
-            self._stream.close()
-        finally:
-            self._record()
+        if self._reading or not self.drains:
+            try:
+                self._stream.close()
+            finally:
+                self._record()
+            return
+        self._let_go()
 
     def __enter__(self):
         self._stream.__enter__()
@@ -440,24 +472,70 @@ class _Counted:
     def __getattr__(self, name: str):
         return getattr(self._stream, name)
 
+    def _let_go(self) -> None:
+        """Its reader is done with it: counted now, or, cut short of a draining stream, once the rest is read."""
+        with self._lock:
+            if self._done or self.drainer is not None:
+                return
+            if self._ended or not self.drains:
+                drain = False
+            else:
+                drain = True
+                self.drainer = threading.Thread(target=self._drain, daemon=True, name="usage-drain")
+        if drain:
+            self.drainer.start()
+        else:
+            self._record()
+
+    def _drain(self) -> None:
+        until = time.monotonic() + DRAIN_S
+        try:
+            for event in self._stream:
+                self._read(event)
+                if time.monotonic() > until:
+                    break
+        except Exception:  # noqa: BLE001, S110 - whatever stopped it, what was read is counted
+            pass
+        finally:
+            try:
+                self._stream.close()
+            except Exception:  # noqa: BLE001, S110 - closed already is as good
+                pass
+            self._record()
+
     def _read(self, event) -> None:
         raise NotImplementedError
 
     def _record(self) -> None:
-        if self._done:
-            return
-        self._done = True
+        with self._lock:
+            if self._done:
+                return
+            self._done = True
+        key = (self._service, self._model)
         if self._used:
+            if self._chars_in and self._used.get("input"):
+                rate = self._used["input"] / self._chars_in
+                _rates[key] = rate if key not in _rates else 0.8 * _rates[key] + 0.2 * rate
             llm(self._service, self._model, **self._used)
         else:
-            llm(self._service, self._model, reported=False)
+            rate = _rates.get(key, TOKENS_PER_CHAR)
+            llm(self._service, self._model, input=round(self._chars_in * rate),
+                output=round(self._chars_out * TOKENS_PER_CHAR), reported=False)  # fmt: skip
 
 
 class CountedChat(_Counted):
     """A chat completions stream (Cerebras, Groq): the usage comes on the last chunk, as `usage` or Groq's
-    `x_groq.usage`, where the provider sends it unasked."""
+    `x_groq.usage`, where the provider sends it unasked. Fast enough to drain: a draft thrown away is counted
+    exactly."""
+
+    drains = True
 
     def _read(self, chunk) -> None:
+        for choice in getattr(chunk, "choices", None) or []:
+            delta = getattr(choice, "delta", None)
+            self._chars_out += len(getattr(delta, "content", None) or "")
+            for call in getattr(delta, "tool_calls", None) or []:
+                self._chars_out += len(getattr(getattr(call, "function", None), "arguments", None) or "")
         used = getattr(chunk, "usage", None) or getattr(getattr(chunk, "x_groq", None), "usage", None)
         if used:
             self._used = {
@@ -472,6 +550,8 @@ class CountedResponses(_Counted):
     """A Responses API stream (OpenAI): the usage, and the web searches made, come with the response's last event."""
 
     def _read(self, event) -> None:
+        if event.type in ("response.output_text.delta", "response.function_call_arguments.delta"):
+            self._chars_out += len(getattr(event, "delta", "") or "")
         if event.type not in ("response.completed", "response.incomplete", "response.failed"):
             return
         response = getattr(event, "response", None)

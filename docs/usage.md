@@ -33,8 +33,15 @@ checked. Two things are said rather than hidden:
 
 - **No price:** a model or voice that isn't in `prices.toml` is counted but not priced, and the report says how many
   calls that was. Add its price to fix it.
-- **Not reported:** a stream cut off before its end (you interrupted TARS, the connection dropped) never got the
-  provider's count. It's kept as a call that used nothing, and the report says how many there were.
+- **Cut off:** the usage comes only at the end of a stream, and a draft TARS throws away because you kept talking
+  is closed before its end, but the provider bills it all the same. A fast provider's (Cerebras, Groq) is read to
+  its end on the side once TARS has let go of it, for at most 10 s, so it's counted exactly: the reply is usually
+  made already, so finishing it costs next to nothing. One that's hung up on (OpenAI's, where reading on would cost
+  more, or one interrupted while it's being read) is kept as an estimate, marked as not reported: its input from the
+  size of what was sent, at the tokens per character that model's reported calls have shown (a quarter of a token per
+  character until it's seen one), and its output from the text that had come back. The report says how many there
+  were. Checked against Cerebras's request log: every call TARS had a count for matched it token for token, and the
+  drafts thrown away, a quarter of a voice session's calls, had been counted as nothing before this.
 
 Not every provider says everything. Where Cerebras or Groq don't say how much of the input was cached, it's
 priced as fresh. The seconds of streamed speech (Deepgram's Nova and Flux) are worked out from the audio TARS sent,

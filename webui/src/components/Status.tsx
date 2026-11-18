@@ -206,7 +206,7 @@ function Usage({ u }: { u: MonthUsage }) {
         <p className="hint">{`${u.unpriced} ${u.unpriced === 1 ? "call" : "calls"} to something with no price in prices.toml aren't in the cost.`}</p>
       )}
       {u.unreported > 0 && (
-        <p className="hint">{`${u.unreported} ${u.unreported === 1 ? "call was" : "calls were"} cut off before the provider said what it used, so ${u.unreported === 1 ? "it's" : "they're"} counted as nothing.`}</p>
+        <p className="hint">{`${u.unreported} ${u.unreported === 1 ? "call was" : "calls were"} cut off before the provider said what it used, so ${u.unreported === 1 ? "it's" : "they're"} estimated from what was sent.`}</p>
       )}
       <p className="hint">Estimates from TARS's own count, not a bill: the providers' dashboards are.</p>
     </>

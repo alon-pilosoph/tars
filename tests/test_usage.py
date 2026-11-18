@@ -98,11 +98,16 @@ def test_a_conversation_through_openai_is_counted_round_by_round(meter):
     ]
 
 
-def test_a_response_that_says_nothing_of_its_use_is_counted_as_unreported(meter):
+@pytest.fixture(autouse=True)
+def fresh_rates(monkeypatch):
+    monkeypatch.setattr(usage, "_rates", {})
+
+
+def test_a_response_that_says_nothing_of_its_use_is_counted_as_unreported_with_an_estimate(meter):
     brain = OpenAIChat(fake_openai_chat(lambda m: "Hi."), LLMConfig(web_search=False, send=False))
     "".join(brain.stream_reply("hello"))
     [row] = rows(meter)
-    assert row["reported"] == 0 and row["input"] == 0
+    assert row["reported"] == 0 and row["input"] > 0  # billed all the same: estimated from what was sent
 
 
 def test_a_stream_closed_before_its_end_is_counted_once_as_unreported(meter):
@@ -114,12 +119,47 @@ def test_a_stream_closed_before_its_end_is_counted_once_as_unreported(meter):
         def close(self):
             pass
 
-    counted = usage.CountedResponses(Stream(), "openai", "gpt-6-luna")
+    counted = usage.CountedResponses(Stream(), "openai", "gpt-6-luna", {"input": "x" * 400})
     reading = iter(counted)
     next(reading)  # the reply's first words, then the listener cuts in
     counted.close()
     reading.close()
-    assert [(r["reported"], r["model"]) for r in rows(meter)] == [(0, "gpt-6-luna")]
+    assert [(r["reported"], r["model"], r["output"]) for r in rows(meter)] == [(0, "gpt-6-luna", 0)]  # "Hi": 2 chars
+    assert rows(meter)[0]["input"] == round(len('{"input": "' + "x" * 400 + '"}') * usage.TOKENS_PER_CHAR)
+
+
+class Closable(list):
+    """A provider's stream: what it sends, and close."""
+
+    def close(self):
+        pass
+
+
+def chunk(text="", used=None):
+    delta = types.SimpleNamespace(content=text, tool_calls=None)
+    return types.SimpleNamespace(usage=used, choices=[types.SimpleNamespace(delta=delta)] if text else [])
+
+
+def test_a_cut_off_draft_is_estimated_at_the_rate_its_models_reported_calls_have_shown(meter):
+    """As measured on Cerebras: a draft thrown away costs about what the finished call next to it does."""
+    sent = {"messages": [{"role": "system", "content": "s" * 9000}, {"role": "user", "content": "what time is it"}]}
+    finished = types.SimpleNamespace(prompt_tokens=3000, completion_tokens=40)
+    list(usage.CountedChat(iter([chunk("It's nine."), chunk(used=finished)]), "Cerebras", "qwen-3.8-27b", sent))
+    draft = usage.CountedChat(Closable([chunk("It's " * 40), chunk("never")]), "Cerebras", "qwen-3.8-27b", sent)
+    reading = iter(draft)
+    next(reading)  # 200 characters of reply, then thrown away
+    draft.close()
+    reading.close()
+    reported, estimated = rows(meter)
+    assert (reported["input"], reported["reported"]) == (3000, 1)
+    assert estimated["reported"] == 0 and estimated["input"] == 3000  # the same request: the same size
+    assert estimated["output"] == 50  # 200 characters, at a quarter of a token each
+
+
+def test_the_report_says_cut_off_calls_are_estimated(meter):
+    usage.llm("Cerebras", "qwen-3.8-27b", input=3000, output=40, reported=False)
+    meter.flush()
+    assert "estimated from what was sent" in usage.report(usage.month(meter.store))
 
 
 USED = types.SimpleNamespace(prompt_tokens=50, completion_tokens=9)
@@ -361,3 +401,35 @@ def test_the_chat_memory_check_is_counted_for_whoever_wrote(meter, monkeypatch, 
         3,
         "alon",
     )
+
+
+def test_a_draft_its_reader_let_go_of_is_read_to_its_end_on_the_side_and_counted_exactly(meter):
+    """The usage comes only at a stream's end: a fast provider's draft thrown away is finished for its count."""
+    closed = []
+
+    class Stream(Closable):
+        def close(self):
+            closed.append(True)
+
+    used = types.SimpleNamespace(prompt_tokens=3007, completion_tokens=43)
+    stream = Stream([chunk("It's "), chunk("nine."), chunk(used=used)])
+    counted = usage.CountedChat(stream, "Cerebras", "qwen-3.8-27b", {"messages": []})
+    reading = iter(counted)
+    next(reading)  # the first words, then the draft is thrown away
+    reading.close()
+    counted.close()  # as llm.py closes it too: no second count
+    counted.drainer.join(5)
+    [row] = rows(meter)
+    assert (row["input"], row["output"], row["reported"]) == (3007, 43, 1) and closed == [True]
+
+
+def test_one_closed_while_its_being_read_is_hung_up_on_at_once_and_estimated(meter):
+    """An interrupt mustn't wait for the rest of the reply."""
+    stream = Closable([chunk("It's "), chunk(used=types.SimpleNamespace(prompt_tokens=50, completion_tokens=9))])
+    counted = usage.CountedChat(stream, "Cerebras", "qwen-3.8-27b", {"messages": "m" * 40})
+    reading = iter(counted)
+    next(reading)
+    counted.close()  # from another thread, while the reader is mid-stream
+    reading.close()
+    [row] = rows(meter)
+    assert row["reported"] == 0 and counted.drainer is None
