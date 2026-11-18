@@ -414,7 +414,8 @@ of the name comes in, so with `sure` on, TARS listens 4 more blocks (320 ms) and
 Measured on the owner's 34 takes over his TV with an openWakeWord-embedding stage 1 of ours, streamed as it runs live:
 answered 14 → 20 at `sure = 0.88`, with no false answers on two real TV hours, the lab's TV and audiobook hours, 354
 kept clips of other sounds and 16 lookalike takes (the highest no-wake score with nothing made out was 0.82). The
-value belongs to one model, so it is off (0) by default and household-trained models never use it.
+value belongs to one model, so it is off (0) by default and household-trained models never use it. Nor does a body's wake
+(the Atom's): its score is its own model's, on a scale of its own, so the check's words decide it alone.
 
 ## Limitations
 

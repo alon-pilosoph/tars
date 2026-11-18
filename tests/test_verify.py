@@ -326,13 +326,14 @@ def test_what_sounds_like_the_name():
         assert not sounds_like_name(heard), heard
 
 
-def sure_of(verifier, score: float, sure: float, version: str = INSTALLED) -> str:
-    """The double-check's outcome for a wake scored `score`, with `sure` set, on a pair of `version`."""
+def sure_of(verifier, score: float, sure: float, version: str = INSTALLED, wake_model: str = "") -> str:
+    """The double-check's outcome for a wake scored `score`, with `sure` set, on a pair of `version`; a body's wake
+    (scored by its own `wake_model`) with one."""
     trigger = FakeTrigger(fire_at=[])
     pair = Pair(version, "", "", None, trigger.threshold, 2.5, Path(""))
     v = VerifiedTrigger(FixedPair(pair), Path("models"), make_trigger=lambda path, t: trigger,
                         make_verifier=lambda phrase, folder: verifier, sure=sure)  # fmt: skip
-    return v.confirm(SILENCE, score)
+    return v.confirm(SILENCE, score, wake_model=wake_model)
 
 
 @pytest.mark.parametrize("heard", ["", "[unk]", "[unk] [unk]"])
@@ -343,6 +344,12 @@ def test_a_very_sure_wake_stands_when_the_check_heard_no_words(hearing, heard):
 @pytest.mark.parametrize("heard", ["[unk] hey bars", "lars", "what's the weather"])
 def test_heard_words_still_decide_however_sure_the_wake(hearing, heard):
     assert sure_of(hearing(heard), 0.99, sure=0.88) == sure_of(hearing(heard), 0.99, sure=0.0) != ANSWER
+
+
+def test_a_bodys_wake_is_never_let_stand_by_sure_its_score_is_its_own_models(hearing):
+    """The Atom's model scores on a scale of its own: its 0.9 says nothing of what the installed model's 0.88 does."""
+    assert sure_of(hearing("[unk]"), 0.95, sure=0.88, wake_model="atom:2026.10.2") == IGNORE
+    assert sure_of(hearing("hey tars"), 0.95, sure=0.88, wake_model="atom:2026.10.2") == ANSWER  # heard: as ever
 
 
 def test_a_wake_below_sure_still_needs_the_check(hearing):
