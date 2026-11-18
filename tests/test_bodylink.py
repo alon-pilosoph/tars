@@ -353,11 +353,12 @@ def test_a_body_that_cancels_its_own_echo_keeps_listening_while_it_plays(listene
 
 class FakeChecker:
     def __init__(self, outcomes):
-        self.outcomes, self.checked = list(outcomes), []
+        self.outcomes, self.checked, self.kept_in = list(outcomes), [], []
         self.last_audio = self.after_name = None
 
-    def confirm(self, audio, score):
+    def confirm(self, audio, score, journal=None, wake_model=""):
         self.checked.append((len(audio), score))
+        self.kept_in.append((journal, wake_model))
         outcome = self.outcomes.pop(0)
         if outcome != IGNORE:
             self.last_audio, self.after_name = audio, self.find_after_name(audio)
@@ -383,6 +384,7 @@ def test_a_model_wake_is_double_checked_here_and_one_that_isnt_tars_goes_back_to
     body = Body(listener.port, wake="model")
     checker = FakeChecker([IGNORE, ASK])
     remote = RemoteBody(listener.connected("kitchen", timeout=2), 24000, None, checker)
+    remote.trigger.journal = "the kitchen's journal"
     result = {}
     thread = threading.Thread(target=lambda: result.update(wake=remote.wait(lambda: False)))
     thread.start()
@@ -394,7 +396,34 @@ def test_a_model_wake_is_double_checked_here_and_one_that_isnt_tars_goes_back_to
     body.stream(speech(0.8))
     thread.join(5)
     assert result["wake"].how == ASK and checker.checked == [(12800, 0.7), (12800, 0.8)]
+    # Each wake checked is kept in the room's journal, under the body's own wake model (its kind and version).
+    assert checker.kept_in == [("the kitchen's journal", "test:its own")] * 2
     body.close()
+
+
+def test_a_body_wake_checked_here_is_kept_with_its_room_audio_and_the_bodys_model(log):
+    import types
+
+    from voice_assistant.journal import Journal
+    from voice_assistant.verify import VerifiedTrigger
+
+    trigger = VerifiedTrigger.__new__(VerifiedTrigger)
+    trigger._journal = None  # the shared checker has none of its own
+    trigger._verifier = types.SimpleNamespace(decide=lambda audio: (IGNORE, "hey cars"), last_confidence=0.4)
+    trigger.pair = types.SimpleNamespace(wake_model="models/generic/hey_tars.tflite", check_model="check.onnx")
+    trigger.phrase = "hey tars"
+    journal = Journal(log, room="Bedroom")
+    assert trigger.confirm(speech(1.0), 0.6, journal, "atom:2026.10.2") == IGNORE
+    journal.flush()
+    (row,) = log.store.rows("SELECT wake_score, outcome, heard, wake_model, room, audio FROM events")
+    assert (row["wake_score"], row["outcome"], row["heard"], row["wake_model"], row["room"]) == (
+        0.6,
+        IGNORE,
+        "hey cars",
+        "atom:2026.10.2",
+        "Bedroom",
+    )
+    assert row["audio"]
 
 
 def test_a_button_wakes_it_with_nothing_to_check_and_a_due_reminder_ends_the_wait(listener):

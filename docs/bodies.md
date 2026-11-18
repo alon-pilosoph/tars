@@ -91,8 +91,9 @@ off, there's one room and nothing about TARS changes.
 
 The web UI shows the room under each conversation's time and in its last line, and the Status page lists the bodies:
 each one's room, and whether it's connected (the voice process writes `bodies.json` beside the event log as they come
-and go); `--check` says the same. Not yet: wakes heard by a body that runs only the wake word aren't kept in the wake
-log (its conversations are); the Pi's buttons and the control socket act on its own room only.
+and go); `--check` says the same. A wake heard by a body that runs only the wake word is kept in the wake log with its
+room and audio, as the Pi's are, under the body's own wake model (`atom:<version>`), so Review shows it;
+the Pi's buttons and the control socket act on its own room only.
 
 ## The web page
 

@@ -317,7 +317,7 @@ class Checker(Protocol):
     last_audio: np.ndarray | None
     after_name: Future[np.ndarray] | None
 
-    def confirm(self, audio: np.ndarray, score: float) -> str: ...
+    def confirm(self, audio: np.ndarray, score: float, journal=None, wake_model: str = "") -> str: ...
 
     def find_after_name(self, audio: np.ndarray) -> Future[np.ndarray]: ...
 
@@ -332,6 +332,10 @@ class RemoteTrigger:
 
     def __init__(self, link: BodyConnection, checker: Checker | None = None):
         self.link, self.checker = link, checker
+        # Its room's journal (set by the room, once its assistant is made): the wakes it checks are kept there, with
+        # their audio, as the Pi's own are, under the body's own wake model.
+        self.journal = None
+        self.wake_model = f"{link.hello.kind or 'body'}:{link.hello.version or 'its own'}"
         # The checker keeps a confirm's results on itself (last_audio, after_name): one body's confirm and reading
         # them back at a time, when several bodies share it.
         self._checking = _CHECKING.setdefault(id(checker), threading.Lock())
@@ -358,7 +362,7 @@ class RemoteTrigger:
                 self.after_name = self.checker.find_after_name(preroll) if self.checker and len(preroll) else None
                 return ANSWER
             with self._checking:
-                outcome = self.checker.confirm(preroll, score)
+                outcome = self.checker.confirm(preroll, score, self.journal, self.wake_model)
                 self.last_audio, self.after_name = self.checker.last_audio, self.checker.after_name
             if outcome == IGNORE:
                 self.link.sleep()
