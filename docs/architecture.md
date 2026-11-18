@@ -73,7 +73,10 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    streams (off by default). All of this starts early, when Flux thinks you may be done, while the recording goes on:
    if you carry on talking the draft is thrown away, and it's only played, logged and allowed to send anything once
    your turn is confirmed over (see [response time](latency.md)).
-6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. The LLM answers `<skip>`
+6. **Follow-ups:** after answering, it listens a few more seconds without the wake word. "Thanks", "that's all",
+   "never mind" on their own end it: one short line made ahead ("Anytime.", "Okay."), no model, and no more
+   listening (`closing.py`). Not when TARS just asked something, where "no thanks" is the answer, nor after a
+   reminder, where "thanks" acknowledges it; and not "stop" or "good night", which are about something. The LLM answers `<skip>`
    when what it overheard wasn't meant for it, or is a fragment that asks for nothing ("eight hours."), and TARS
    stays quiet and forgets it. A `<skip>` for a request said by name, or a chat message, is forgotten too, but
    answered with "Sorry, I didn't catch that. Say it again?", and so is an answer to TARS's question that comes out

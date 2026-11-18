@@ -20,7 +20,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from . import usage
+from . import closing, usage
 from .audio import AudioDeviceError, chime
 from .body import NO_WAKE, Body, BodyGone, Wake
 from .commands import ON_PI, Command, HouseCommands, sentences
@@ -223,6 +223,7 @@ class Answer:
     error: Exception | None = None  # the brain failed to start the reply; raised once what was heard is written down
     sentences: list[tuple[float, str]] = field(default_factory=list)  # (when it was written, the sentence)
     on_pi: bool = False  # a house command, done without the model (commands.py)
+    closes: bool = False  # "thanks", "that's all": answered with a line made ahead, and the conversation ends
 
 
 class _MadeAhead:
@@ -298,11 +299,13 @@ class Assistant:
         self.name_threshold = name_threshold
         self.journal = journal or Journal()
         self.error_lines = ERROR_LINES["dry" if humor >= DRY_FROM_HUMOR else "plain"]
+        self.closing_lines = closing.LINES["dry" if humor >= DRY_FROM_HUMOR else "plain"]
         self.timings: dict[str, float] = {}  # the last answer's latency by stage, in seconds
         self._woke_at: float | None = None  # when the wake word was confirmed, for how soon TARS greeted it
         self._greet_s: float | None = None
         self._only_echo = False  # the last request heard was nothing but a trace of TARS's own greeting
         self._last_reply = ""  # what TARS last answered in this conversation
+        self._closed = False  # the last answer ended the conversation ("thanks", "that's all")
         self._identifying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="speaker-id")
         self._thinking = threading.Lock()  # drafts take turns
         self.phrases = Phrases(voice, phrase_folder, clock)
@@ -516,7 +519,8 @@ class Assistant:
         """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
         people enrolled since and retry lines that failed."""
         names = list(self.speaker_id.voiceprints) if self.speaker_id else []
-        lines = [ASK_PHRASE, PARDON, greeting(None), *self.error_lines, *FILLERS, THINKING, ONE_MOMENT]
+        lines = [ASK_PHRASE, PARDON, greeting(None), *self.error_lines, *self.closing_lines.values(), *FILLERS]
+        lines += [THINKING, ONE_MOMENT]
         if usage.has_cap():  # made while there's budget, so it's said for free once there isn't
             lines.append(CAPPED_LINE)
         for line in lines + [greeting(n) for n in names]:
@@ -624,6 +628,7 @@ class Assistant:
             self._play(audio[line])
             self.journal.said(line)
         self.brain.remember_said(" ".join(said))
+        self._last_reply = " ".join(said)  # what's heard next answers it ("no thanks" isn't a goodbye)
         listens = bool(follow_up_s) and asks(said)
         with self._open_for_answer(listens) as answer_s:
             heard = (
@@ -693,6 +698,7 @@ class Assistant:
                 self._play(audio[text])
                 self.journal.said(text)
                 self._skill_did(sent, changes, whose.speaker)
+                self._last_reply = text  # what's heard next answers it ("no thanks" isn't a goodbye)
                 with self._open_for_answer(bool(follow_up_s) and asks([text])) as answer_s:
                     heard = (
                         self.listen(start_timeout_s=follow_up_s, follow_up=True, max_s=answer_s, expect=offered(text))
@@ -1059,6 +1065,9 @@ class Assistant:
                 continue
             if answered:
                 pardoned = False
+            if answered and self._closed:  # "thanks", "that's all": said goodbye, nothing more to listen for
+                print("(conversation ended)")
+                return
             held = answered and self._say_held(self._last_who)
             if held:  # what's said next may well be about the message: listen for it, at least the ack window
                 heard = self.listen(
@@ -1126,7 +1135,7 @@ class Assistant:
             if self._greet_s is not None:  # the conversation's first request: how soon TARS greeted the wake word
                 self.timings["greet"], self._greet_s = self._greet_s, None
             said = self._speak(answer, t_stopped_talking)
-            self._last_reply = said.text
+            self._last_reply, self._closed = said.text, answer.closes
             if answer.written and answer.written.pardoned:  # the repeat answers it: not an untethered follow-up to skip
                 self.brain.remember_said(PARDON)
             heard.draft.keep()
@@ -1226,6 +1235,10 @@ class Assistant:
             may_act=draft.may_act,
             room=room,
         )
+        # Not after a reminder or "Did you call me?" (tag), where "thanks" is the model's to take as an acknowledgement,
+        # nor after a question TARS asked ("News on?"), where "no thanks" is the answer.
+        if tag is None and not asks([self._last_reply]) and (kind := closing.closing(text)):
+            return self._closing_reply(answer, kind, prompt, request)
         # A follow-up may not be meant for TARS (the TV, someone else in the room): only the model may skip it.
         if self.commands and tag is None and not follow_up and (command := self.commands.commands.match(text)):
             return self._command_reply(answer, command, prompt, request)
@@ -1270,6 +1283,24 @@ class Assistant:
             _tee(pieces(), answer.spoken),
             _MadeAhead(self.voice, self.phrases),
             self._on_sentence(answer),
+        )
+        return answer
+
+    def _closing_reply(self, answer: Answer, kind: str, prompt: str, request: Request) -> Answer:
+        """ "Thanks" or "that's all": one short line made ahead, no model, and the conversation ends after it."""
+        answer.on_pi, answer.closes, answer.t_asked = True, True, time.perf_counter()
+        line = self.closing_lines[kind]
+
+        def pieces() -> Iterator[str]:
+            if not request.go_ahead():  # they carried on talking: it was no goodbye
+                return
+            self.brain.remember_exchange(prompt, line)
+            yield line
+
+        answer.reply = StreamedReply(
+            _tee(pieces(), answer.spoken),
+            _MadeAhead(self.voice, self.phrases),
+            lambda sentence: answer.sentences.append((time.perf_counter(), sentence)),
         )
         return answer
 
