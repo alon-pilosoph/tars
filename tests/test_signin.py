@@ -366,3 +366,31 @@ def test_signing_out_someone_tars_doesnt_know_says_so(tmp_path, capsys):
     assert "1 unused invite(s) voided" in capsys.readouterr().out
     cli.web_sign_out(cfg, tmp_path, "Stacey")
     assert "Nobody called Stacey has a passkey, a session or an invite" in capsys.readouterr().out
+
+
+def test_the_talk_page_gets_a_ticket_for_whoever_is_signed_in_and_only_then(tmp_path):
+    from voice_assistant.bodykeys import Tickets
+
+    log = EventLog(tmp_path / "events")
+    accounts = Accounts(log.store)
+    client = TestClient(
+        create_app(log, accounts=accounts, talk=(8766, 8767)), base_url=ORIGIN, headers={"Origin": ORIGIN}
+    )
+    assert client.post("/api/talk/ticket").status_code == 401
+    client.cookies.set(COOKIE, accounts.start_session("Stacey"))
+    got = client.post("/api/talk/ticket").json()
+    assert (got["scheme"], got["port"], got["person"]) == ("ws", 8766, "stacey")  # this page is http: ws://
+    assert Tickets(log.store).redeem(got["ticket"]) == (True, "stacey")
+    assert client.post("/api/talk/ticket", headers={"Origin": "http://evil.example"}).status_code == 403
+    off = TestClient(create_app(log, accounts=accounts), base_url=ORIGIN, headers={"Origin": ORIGIN})
+    off.cookies.set(COOKIE, accounts.start_session("Stacey"))
+    assert off.post("/api/talk/ticket").status_code == 409  # [bodies] off: no Talk page
+
+
+def test_with_sign_in_off_a_talk_ticket_is_for_nobody_in_particular(tmp_path):
+    from voice_assistant.bodykeys import Tickets
+
+    log = EventLog(tmp_path / "events")
+    client = TestClient(create_app(log, talk=(8766, 8767)), base_url=ORIGIN, headers={"Origin": ORIGIN})
+    got = client.post("/api/talk/ticket").json()
+    assert got["person"] is None and Tickets(log.store).redeem(got["ticket"]) == (True, None)

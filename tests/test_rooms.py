@@ -250,3 +250,19 @@ def test_check_and_the_status_page_say_which_bodies_are_connected_now(log, monke
     assert (body["room"], body["connected"]) == ("Bedroom", True) and body["since"] is not None
     BodiesHere(log.folder).mark(device, "Bedroom", False)
     assert health.bodies(log)[0]["connected"] is False
+
+
+def test_a_web_page_is_a_room_only_while_open_and_is_never_given_anything(desk):
+    desk.heard("bedroom", "Stacey")
+    desk.page("Stacey on the web 3f9a")
+    desk.heard("Stacey on the web 3f9a", "Stacey")  # talking on the page doesn't move her things there
+    assert desk.room_for("Stacey") == "bedroom" and not desk.single
+    desk.connected("living room", False)
+    desk.connected("bedroom", False)
+    assert desk.room_for("Stacey") is None and desk.room_for(None) is None  # nowhere, rather than the page
+    items = [{"id": 1, "for": "stacey"}, {"id": 2}]
+    assert desk.take("Stacey on the web 3f9a", items, key, person) == []
+    desk.remove("Stacey on the web 3f9a")
+    desk.remove("living room")  # the main room stays
+    desk.connected("living room", True)
+    assert desk.room_for(None) == "living room"

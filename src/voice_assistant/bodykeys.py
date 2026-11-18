@@ -9,6 +9,7 @@ are paired and when each last connected.
 """
 
 import base64
+import hashlib
 import re
 import secrets
 import time
@@ -18,6 +19,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 KEY_PREFIX = "tars-body-1"  # a key's first part, and its version
+TICKET_S = 60.0  # how long a Talk page's ticket is good for: it's used at once, by the page that asked for it
 
 
 def _b64(data: bytes) -> str:
@@ -119,3 +121,41 @@ class BodyKeys:
         for row in gone:
             self.store.write("UPDATE bodies SET revoked=? WHERE device=?", (self._clock(), row["device"]))
         return len(gone)
+
+
+class Tickets:
+    """The `talk_tickets` table: one-time tickets that let a web page in as a body (docs/bodies.md#the-web-page). The
+    web UI hands one to a page that's signed in, with the session's person; the body listener takes it once, within
+    TICKET_S, in place of a device key, and the person comes from here, never from the page. Only its hash is kept.
+    `person` is None when sign-in is off: the page is let in, and its voice is told by speaker ID as anywhere."""
+
+    def __init__(self, store, clock: Callable[[], float] = time.time):
+        self.store, self._clock = store, clock
+
+    def issue(self, person: str | None) -> str:
+        ticket = secrets.token_urlsafe(24)
+        now = self._clock()
+        self.store.write("DELETE FROM talk_tickets WHERE expires < ?", (now - 86400,))
+        self.store.write(
+            "INSERT INTO talk_tickets (token, person, expires) VALUES (?, ?, ?)",
+            (_ticket_hash(ticket), person, now + TICKET_S),
+        )
+        return ticket
+
+    def redeem(self, ticket: str) -> tuple[bool, str | None]:
+        """(True, its person) for a ticket that's good, which is used up by it; (False, None) for anything else."""
+        if not isinstance(ticket, str) or not ticket:
+            return False, None
+        token, now = _ticket_hash(ticket), self._clock()
+        with self.store.transaction() as db:
+            row = db.execute(
+                "SELECT person FROM talk_tickets WHERE token=? AND used IS NULL AND expires > ?", (token, now)
+            ).fetchone()
+            if row is None:
+                return False, None
+            db.execute("UPDATE talk_tickets SET used=? WHERE token=?", (now, token))
+        return True, row["person"]
+
+
+def _ticket_hash(ticket: str) -> str:
+    return hashlib.sha256(ticket.encode()).hexdigest()

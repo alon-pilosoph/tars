@@ -224,6 +224,7 @@ def create_app(
     finished: Callable[[dict], None] | None = None,
     accounts=None,
     aloud: bool = True,
+    talk: tuple[int, int] | None = None,
 ) -> FastAPI:
     """`aloud`: this home has TARS's microphone and speaker ([audio] enabled); without, the page hides what's about
     hearing (Review, Voices, Models). `recluster` regroups the voices (see clustering.regroup); None hides the
@@ -236,7 +237,8 @@ def create_app(
     its path ([backup], Backup.read); None if it isn't there either. `ask` asks the assistant for something over
     control.py (by default, at the event log's folder): recording sessions' takes. `finished(session)` is called, in a
     thread of its own, once a recording session's last prompt is done (to enroll a voice from it). `accounts`
-    (signin.Accounts): with [web] sign_in, everything but the sign-in pages needs a session; None: no sign-in."""
+    (signin.Accounts): with [web] sign_in, everything but the sign-in pages needs a session; None: no sign-in.
+    `talk`: the body listener's ports (ws://, wss://) for the Talk page ([bodies] on); None: no Talk page."""
     app = FastAPI(title="TARS")
     if accounts is not None:
         from .signin import add_sign_in
@@ -387,6 +389,24 @@ def create_app(
         event_or_404(event_id)
         log.set_label(event_id, body.label)
         return {"ok": True}
+
+    @app.post("/api/talk/ticket")
+    def talk_ticket(request: Request):
+        """A one-time ticket for this page to open the body link with (docs/bodies.md#the-web-page), for whoever's
+        signed in, and where to open it: wss:// on the secure port for a page over HTTPS, else ws://."""
+        if talk is None:
+            raise HTTPException(409, "the Talk page needs [bodies] enabled on the Pi")
+        from .bodykeys import Tickets
+        from .signin import COOKIE
+
+        person = accounts.session(request.cookies.get(COOKIE)) if accounts is not None else None
+        secure = request.url.scheme == "https"
+        return {
+            "ticket": Tickets(log.store).issue(person),
+            "scheme": "wss" if secure else "ws",
+            "port": talk[1] if secure else talk[0],
+            "person": person,
+        }
 
     @app.post("/api/events/agree")
     def agree(body: Agree):

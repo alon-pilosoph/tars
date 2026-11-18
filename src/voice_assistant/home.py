@@ -97,6 +97,8 @@ class Request:
     None when nobody needs to know.
     `held_for_web()`: told each time something is held back because the turn read the web (toolbox.held_for_the_web),
     so the brain can write the reply again without it; None when nobody would.
+    `by_web`: said on the Talk page in a browser (a web body): `speaker` is who's signed in there, and it never
+    counts as being at home by voice, wherever the browser is.
     `by_door`: the door whose lock set this turn off (a skill run because someone came home by opening it, doors.py):
     what a lock says over MQTT is only ever who came in, so the turn reads the house, but changes nothing in it."""
 
@@ -104,6 +106,7 @@ class Request:
     score: float | None = None
     by_voice: bool = False
     by_chat: bool = False
+    by_web: bool = False
     heard: str = ""
     may_act: Callable[[float], bool] | None = None
     read_the_web: bool = False
@@ -603,6 +606,8 @@ class HomeTools:
     def _may_unlock(self, request: Request) -> str | None:
         """Why this request may not unlock, or None if it may."""
         cfg = self._cfg
+        if request.by_web:
+            return "refused: never from a web page, wherever it's open; by voice at home, or from a trusted chat"
         if request.by_chat:
             chats = {v.strip().lower() for v in cfg.unlock_chats}
             if not request.speaker or request.speaker.strip().lower() not in chats:
