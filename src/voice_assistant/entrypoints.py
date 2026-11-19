@@ -108,7 +108,7 @@ def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
 
 
 def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
-    from .clustering import regroup
+    from .clustering import enroll_named, regroup
     from .signin import Accounts
     from .webui import serve
 
@@ -147,6 +147,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
         aloud=cfg.audio.enabled,
         talk=(cfg.bodies.port, cfg.bodies.secure_port) if cfg.bodies.enabled else None,
+        relearn=functools.partial(enroll_named, log, speaker_id) if speaker_id else None,
     )
 
 

@@ -29,6 +29,7 @@ from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, REVIEW_SHOWN, UNKNOWN, EventLog
 from .health import Report
 from .homenet import address, home_name
+from .people import People
 from .recording import ON_DEVICE, STOPPED, Sessions, public_take
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
 from .skills import Skills
@@ -82,6 +83,15 @@ class Label(BaseModel):
 
 class Assignment(BaseModel):
     cluster_id: int | None
+
+
+class Answer(BaseModel):
+    event_id: int
+    to: int | Literal["tv", "unsure"]  # a person's id, the TV, or nobody's (not sure)
+
+
+class NewPerson(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
 
 
 class Agree(BaseModel):
@@ -225,6 +235,7 @@ def create_app(
     accounts=None,
     aloud: bool = True,
     talk: tuple[int, int] | None = None,
+    relearn: Callable[[], object] | None = None,
 ) -> FastAPI:
     """`aloud`: this home has TARS's microphone and speaker ([audio] enabled); without, the page hides what's about
     hearing (Review, Voices, Models). `recluster` regroups the voices (see clustering.regroup); None hides the
@@ -238,7 +249,9 @@ def create_app(
     control.py (by default, at the event log's folder): recording sessions' takes. `finished(session)` is called, in a
     thread of its own, once a recording session's last prompt is done (to enroll a voice from it). `accounts`
     (signin.Accounts): with [web] sign_in, everything but the sign-in pages needs a session; None: no sign-in.
-    `talk`: the body listener's ports (ws://, wss://) for the Talk page ([bodies] on); None: no Talk page."""
+    `talk`: the body listener's ports (ws://, wss://) for the Talk page ([bodies] on); None: no Talk page.
+    `relearn()`: the voiceprints made again from the people's requests (clustering.enroll_named), after the Voices
+    page changes whose a request is; None with speaker ID off."""
     app = FastAPI(title="TARS")
     if accounts is not None:
         from .signin import add_sign_in
@@ -247,6 +260,7 @@ def create_app(
     convos = ConversationLog(log)
     skills = Skills(log.store)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
+    people = People(log, relearn)
     extra = frozenset(h.lower() for h in allowed_hosts)
 
     @app.middleware("http")
@@ -651,6 +665,34 @@ def create_app(
     _recording_sessions(
         app, log, recording, ask or functools.partial(control.ask, log.folder), finished and finished_with_voices
     )
+
+    @app.get("/api/people")
+    def people_page():
+        """The Voices page: the people TARS knows by voice, and what it asks ("Who said this?")."""
+        with voices:
+            return people.page()
+
+    @app.post("/api/people")
+    def add_person(body: NewPerson):
+        with voices:
+            try:
+                return {"id": people.add(body.name)}
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
+
+    @app.post("/api/people/answer")
+    def answer_who(body: Answer):
+        with voices:
+            try:
+                people.answer(body.event_id, body.to)
+            except ValueError as e:
+                raise HTTPException(404, str(e)) from None
+        return {"ok": True}
+
+    @app.post("/api/people/clean-start")
+    def clean_start():
+        with voices:
+            return {"set_aside": people.clean_start()}
 
     @app.get("/api/status")
     def status():

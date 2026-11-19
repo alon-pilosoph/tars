@@ -1,185 +1,182 @@
-import { useState } from "react";
-import { plural } from "../format";
-import { type State, menuOpen, recluster, rename, toggleMenu, useStore, voiceName } from "../store";
-import type { Cluster } from "../types";
+/* The Voices page: the people TARS knows by voice, never anonymous voices. What it asks is one request at a time
+   ("Who said this?", with TARS's guess), and, under each person, the few of theirs that sound unlike the rest. Every
+   answer is final (people.py). */
+import { useEffect, useState } from "react";
+import { plural, roomName, stamp } from "../format";
+import { answerWho, loadPeople, someoneNew, useStore } from "../store";
+import type { Heard, PeoplePage, Person } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 import { Icon } from "./Icon";
 import { PlaySmall } from "./PlayButton";
 
+const SPEAKERPHONE = "home"; // the room of TARS's own speakerphone (rooms.MAIN)
+
+const mic = (room: string) =>
+  room === SPEAKERPHONE ? "On the speakerphone" : `In the ${roomName(room).toLowerCase()}`;
+
 export function Voices() {
   const s = useStore();
-  const canRegroup = s.status.clustering;
+  useEffect(() => {
+    loadPeople();
+  }, []);
   const head = (
-    <>
-      <PageHead title="Voices" sub="TARS groups requests by voice. Name a voice and TARS greets them by name.">
-        {canRegroup && (
-          <button className="btn big" disabled={s.reclustering} onClick={recluster}>
-            <Icon name="refresh" size="s" />
-            {s.reclustering ? "Regrouping…" : "Regroup voices"}
-          </button>
-        )}
-      </PageHead>
-      <p className="hint head-hint">
-        {canRegroup
-          ? "Regrouping puts new requests into the voices they sound like. Nothing already in a voice moves: to move one, use its ⋯."
-          : "Regrouping voices isn't set up on this TARS."}
-      </p>
-      {s.reclustering && (
-        <div className="running" role="status">
-          <Icon name="wave" />
-          <span>Regrouping voices. This can take a minute; the page stays as it is until it's done.</span>
-        </div>
-      )}
-    </>
+    <PageHead
+      title="Voices"
+      sub="The people TARS knows by voice: it greets them by name, and knows whose each request is."
+    />
   );
-  if (!s.clusters.length)
+  const page = s.people;
+  if (!page)
     return (
       <>
         {head}
-        <Empty title="No voices yet" text="Once a few people have asked TARS something, their voices show up here." />
+        {s.peopleError ? (
+          <Empty title="Couldn't load the voices" text={s.peopleError} />
+        ) : (
+          <p className="hint">Loading…</p>
+        )}
       </>
     );
-  const named = s.clusters.filter(c => c.kind === "person");
-  const unnamed = s.clusters.filter(c => c.kind === "unknown");
-  const groups = unnamed.filter(c => c.size >= GROUP_AT);
-  const strays = unnamed.filter(c => c.size < GROUP_AT);
-  const not = s.clusters.filter(c => c.kind === "not_person");
   return (
     <>
       {head}
-      {named.length > 0 && (
-        <>
-          <SecHead title="People" />
-          <div className="voices">
-            {named.map(c => (
-              <Voice key={c.id} c={c} s={s} />
-            ))}
-          </div>
-        </>
-      )}
-      {groups.length > 0 && (
-        <>
-          <SecHead title="Who's this?" />
-          <p className="hint voices-hint">
-            Name a voice only when every request in it is the same person. A mixed one can be sorted out request by
-            request, with each one's ⋯, or left as it is: TARS learns only from voices you name.
-          </p>
-          <div className="voices">
-            {groups.map(c => (
-              <Voice key={c.id} c={c} s={s} />
-            ))}
-          </div>
-        </>
-      )}
-      <Folded
-        title="Not sure yet"
-        note="Voices heard only once. Each joins a voice above once it's heard again."
-        voices={strays}
-        s={s}
-      />
-      <Folded title="Not people" note="TV, radio and the like. TARS ignores them." voices={not} s={s} />
-    </>
-  );
-}
-
-// An unnamed voice heard only once is too little to name: it's folded away until it's heard again.
-const GROUP_AT = 2;
-
-function Folded({ title, note, voices, s }: { title: string; note: string; voices: Cluster[]; s: State }) {
-  const [open, setOpen] = useState(false);
-  if (!voices.length) return null;
-  return (
-    <>
-      <SecHead title={title}>
-        <span className="muted">{note}</span>
-      </SecHead>
-      {open ? (
-        <div className="voices">
-          {voices.map(c => (
-            <Voice key={c.id} c={c} s={s} />
-          ))}
-        </div>
-      ) : (
-        <button className="voices-fold" onClick={() => setOpen(true)}>
-          {`Show ${plural(voices.length, "voice")}`}
-          <Icon name="chev-down" size="s" />
-        </button>
-      )}
-    </>
-  );
-}
-
-// Requests a voice shows before "Show all": each can be moved on its own, so a mixed voice can be sorted out.
-const SHOWN = 4;
-
-function Voice({ c, s }: { c: Cluster; s: State }) {
-  const [all, setAll] = useState(false);
-  const name = voiceName(c);
-  const unnamed = !c.name && c.kind === "unknown";
-  const left = c.name && c.kind === "person" ? Math.max(0, s.status.enroll_at - c.size) : 0;
-  const menu = { kind: "voice", id: c.id } as const;
-  return (
-    <article className="voice" data-id={c.id}>
-      <div className="voice-head">
-        <div>
-          <h3 className="voice-name">{name}</h3>
-          <div className="voice-meta">
-            {`${plural(c.size, "request")}${left ? `. ${left} more before TARS knows this voice well` : ""}${unnamed ? ". Not named yet" : ""}.`}
-          </div>
-        </div>
-        <div className="btns">
-          {unnamed && (
-            <button className="btn primary" onClick={() => rename(c.id)}>
-              Name it
-            </button>
-          )}
-          <div className="anchor">
-            <button
-              className="icon-btn"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen(s, menu)}
-              aria-label={`More for ${name}`}
-              onClick={e => toggleMenu(menu, e.currentTarget)}
-            >
-              <Icon name="more" />
-            </button>
-          </div>
-        </div>
+      {page.ask.length > 0 && <WhoSaid page={page} />}
+      <SecHead title="People" />
+      <div className="voices">
+        {page.people.map(p => (
+          <PersonCard key={p.id} p={p} enrollAt={page.enroll_at} />
+        ))}
       </div>
-      {c.samples.length > 0 && (
-        <div className="samples">
-          {(all ? c.samples : c.samples.slice(0, SHOWN)).map(x => (
-            <Sample key={x.event_id} x={x} name={name} s={s} />
+      <button className="btn ghost big add-person" onClick={() => someoneNew()}>
+        Add someone
+      </button>
+    </>
+  );
+}
+
+function WhoSaid({ page }: { page: PeoplePage }) {
+  const [card, ...rest] = page.ask;
+  const id = card.event_id;
+  return (
+    <section className="who-said" aria-label="Who said this?">
+      <h2 className="sec-title">Who said this?</h2>
+      <div className="sample">
+        <PlaySmall clip={{ event: id, part: "request" }} label="the request" />
+        <span>{`“${card.transcript || "…"}”`}</span>
+      </div>
+      <div className="who-where">{mic(card.room)}</div>
+      <div className="who-where">{stamp(card.ts)}</div>
+      {card.guess && <p className="hint who-guess">{`Sounds like ${card.guess.name}.`}</p>}
+      <div className="who-btns">
+        {page.people.map(p => (
+          <button
+            key={p.id}
+            className={`btn big ${card.guess?.id === p.id ? "primary" : ""}`}
+            onClick={() => answerWho(id, p.id, `Saved as ${p.name}'s.`)}
+          >
+            {p.name}
+          </button>
+        ))}
+        <button className="btn big" onClick={() => someoneNew(id)}>
+          Someone else
+        </button>
+        <button className="btn big" onClick={() => answerWho(id, "tv", "Saved as the TV or radio.")}>
+          TV or radio
+        </button>
+        <button className="btn ghost big" onClick={() => answerWho(id, "unsure", "Left out: TARS won't ask again.")}>
+          Not sure
+        </button>
+      </div>
+      {rest.length > 0 && <p className="hint">{`${rest.length} more after this one.`}</p>}
+    </section>
+  );
+}
+
+function PersonCard({ p, enrollAt }: { p: Person; enrollAt: number }) {
+  const [teach, setTeach] = useState(false);
+  const [all, setAll] = useState(false);
+  return (
+    <article className="voice person" data-id={p.id}>
+      <h3 className="voice-name">{p.name}</h3>
+      {p.mics.length === 0 ? (
+        <div className="voice-meta">{`TARS doesn't know ${p.name}'s voice yet.`}</div>
+      ) : (
+        p.mics.map(m => (
+          <div key={m.room} className="voice-meta">
+            {`${mic(m.room)}: ${
+              m.requests >= enrollAt
+                ? `knows ${p.name}'s voice (${plural(m.requests, "request")})`
+                : `${m.requests} of ${enrollAt} requests before TARS knows ${p.name}'s voice there`
+            }`}
+          </div>
+        ))
+      )}
+      {p.check.length > 0 && (
+        <div className="person-check">
+          <p className="hint">{`These don't sound like the rest of ${p.name}'s. Are they ${p.name}'s?`}</p>
+          {p.check.map(h => (
+            <div key={h.event_id} className="sample">
+              <PlaySmall clip={{ event: h.event_id, part: "request" }} label="the request" />
+              <span>{`“${h.transcript || "…"}”`}</span>
+              <button className="btn" onClick={() => answerWho(h.event_id, p.id, `Kept as ${p.name}'s.`)}>
+                Yes
+              </button>
+              <button className="btn ghost" onClick={() => answerWho(h.event_id, "unsure", `No longer ${p.name}'s.`)}>
+                No
+              </button>
+            </div>
           ))}
-          {!all && c.samples.length > SHOWN && (
-            <button className="voices-fold" onClick={() => setAll(true)}>
-              {`Show all ${plural(c.samples.length, "request")}`}
-              <Icon name="chev-down" size="s" />
-            </button>
-          )}
         </div>
+      )}
+      <button className="voices-fold" onClick={() => setTeach(!teach)}>
+        {`How to teach TARS ${p.name}'s voice`}
+        <Icon name={teach ? "chev-up" : "chev-down"} size="s" />
+      </button>
+      {teach && <Teach name={p.name} enrollAt={enrollAt} />}
+      {p.shown.length > 0 && (
+        <>
+          <button className="voices-fold" onClick={() => setAll(!all)}>
+            {all ? `Hide ${p.name}'s requests` : `${p.name}'s requests (${p.requests})`}
+            <Icon name={all ? "chev-up" : "chev-down"} size="s" />
+          </button>
+          {all && (
+            <div className="samples">
+              {p.shown.map(h => (
+                <Theirs key={h.event_id} h={h} name={p.name} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </article>
   );
 }
 
-function Sample({ x, name, s }: { x: Cluster["samples"][number]; name: string; s: State }) {
-  const menu = { kind: "sampleVoice", id: x.event_id } as const;
+function Theirs({ h, name }: { h: Heard; name: string }) {
   return (
     <div className="sample">
-      <PlaySmall clip={{ event: x.event_id, part: "request" }} label={`a request from ${name}`} />
-      <span>{`“${x.transcript || "…"}”`}</span>
-      <div className="anchor sample-more">
-        <button
-          className="icon-btn"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen(s, menu)}
-          aria-label={`Whose voice is “${x.transcript || "this request"}”?`}
-          onClick={e => toggleMenu(menu, e.currentTarget)}
-        >
-          <Icon name="more" size="s" />
-        </button>
-      </div>
+      <PlaySmall clip={{ event: h.event_id, part: "request" }} label="the request" />
+      <span>{`“${h.transcript || "…"}”`}</span>
+      <button className="btn ghost" onClick={() => answerWho(h.event_id, "unsure", `No longer ${name}'s.`)}>
+        {`Not ${name}`}
+      </button>
+    </div>
+  );
+}
+
+function Teach({ name, enrollAt }: { name: string; enrollAt: number }) {
+  return (
+    <div className="teach">
+      <p>{`Alone with TARS in a room, close to it, in a normal voice, ${name} says a dozen things, each starting with
+        "hey TARS", and waits for each answer. Like:`}</p>
+      <ul>
+        <li>What's the time?</li>
+        <li>What's the weather going to be like tomorrow?</li>
+        <li>Tell me something interesting about octopuses.</li>
+        <li>Set a timer for one minute, then: cancel the timer.</li>
+        <li>How many grams are in a cup of flour?</li>
+      </ul>
+      <p>{`Each then comes up here, under "Who said this?". Tap ${name}. After ${enrollAt} in a room, TARS knows ${name}'s voice there.`}</p>
     </div>
   );
 }

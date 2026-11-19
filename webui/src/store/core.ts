@@ -8,6 +8,7 @@ import type {
   Health,
   Item,
   ModelsInfo,
+  PeoplePage,
   RemindersInfo,
   SkillsInfo,
   Status,
@@ -84,6 +85,8 @@ export interface State {
   skills: SkillsInfo | null; // what TARS was taught, as the server has it: taught by talking, any time
   health: Health | null; // the Status page's, loaded when it's shown, and with Refresh while it is
   healthError: string;
+  people: PeoplePage | null; // the Voices page's, loaded the same way
+  peopleError: string;
   snapshot: Snapshot;
   open: Set<number>; // conversations opened up, with their details
   moreTurns: Set<number>;
@@ -113,6 +116,8 @@ let current: State = {
   skills: null,
   health: null,
   healthError: "",
+  people: null,
+  peopleError: "",
   snapshot: {
     events: new Set(),
     convs: new Set(),

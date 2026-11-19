@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { type LoadErrors, type LoadPart, type Snapshot, get, set, setNow } from "./core";
 import { healthLoaded, loadHealth } from "./health";
+import { loadPeople, peopleLoaded } from "./people";
 import { errText, toast } from "./ui";
 
 interface Data {
@@ -167,12 +168,14 @@ export async function settled() {
     await writesDone();
     await loads;
     await healthLoaded();
+    await peopleLoaded();
   } while (writes !== writesMade());
 }
 
 export async function refreshNow() {
   set({ refreshing: true });
-  await Promise.all([refresh(), get().tab === "status" ? loadHealth() : null]);
+  const tab = get().tab;
+  await Promise.all([refresh(), tab === "status" ? loadHealth() : null, tab === "voices" ? loadPeople() : null]);
   set({ refreshing: false });
 }
 

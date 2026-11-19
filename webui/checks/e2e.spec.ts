@@ -287,13 +287,20 @@ test("an opened conversation: not for TARS, who was talking, delete", async () =
 
 test("a name prompt: Cancel doesn't save", async () => {
   await nav("Voices").click();
-  const voice = page.locator(".voice", { has: page.getByRole("button", { name: "Name it" }) }).first();
-  await expect(voice, "an unnamed voice in the demo log").not.toHaveCount(0);
-  await voice.getByRole("button", { name: "Name it" }).click();
+  await page.getByRole("button", { name: "Add someone" }).click();
   await dialog().getByRole("textbox").fill("Nobody");
   await dialog().getByRole("button", { name: "Cancel" }).click();
   await expect(dialog()).toBeHidden();
   expect((await A.clusters()).some(c => c.name === "Nobody")).toBe(false);
+});
+
+test("who said this: a tap answers it, and the next one comes", async () => {
+  await nav("Voices").click();
+  const card = page.getByRole("region", { name: "Who said this?" });
+  const first = await card.locator(".sample > span").textContent();
+  await card.getByRole("button", { name: "Not sure" }).click();
+  await expect(toast()).toHaveText("Left out: TARS won't ask again.");
+  await expect(card.locator(".sample > span")).not.toHaveText(first ?? "");
 });
 
 test("an unknown voice is named from its conversation, with Enter", async () => {

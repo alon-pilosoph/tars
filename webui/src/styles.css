@@ -1889,6 +1889,47 @@ dialog.dialog::backdrop {
 .head-hint {
   margin: -16px 0 24px;
 }
+.who-said {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+  margin: 8px 0 28px;
+}
+.who-said .sec-title {
+  margin: 0 0 8px;
+}
+.who-where {
+  color: var(--muted);
+  font-size: 14px;
+}
+.who-guess {
+  margin: 10px 0 0;
+}
+.who-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 6px;
+}
+.person-check {
+  margin: 10px 0;
+}
+.person-check .sample .btn,
+.voice .sample .btn {
+  flex: none;
+}
+.teach {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+.teach ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.add-person {
+  margin-top: 8px;
+}
 .voices-hint {
   margin: -4px 0 12px;
 }
