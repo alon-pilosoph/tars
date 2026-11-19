@@ -68,16 +68,22 @@ def test_the_talk_button_greets_nobody_by_name_since_a_press_carries_no_voice(mo
     assert kw["greet"] == ALWAYS and kw.get("wake", Wake()).audio is None
 
 
-def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(conversations):
+def test_muted_it_doesn_t_even_listen_for_its_name_and_unmuting_listens_again(conversations, monkeypatch):
     assistant, _ = make_assistant([], [])
     assistant.mute(True)
     assert assistant.talk().startswith("ignored: muted")
     waking(assistant, "name")
-    threading.Timer(0.3, assistant.mute, [False]).start()  # the speakerphone unmuted, a moment later
-    started = time.monotonic()
+    monkeypatch.setattr(assistant_module, "MUTED_POLL_S", 30.0)  # the next look far off, so unmuting can't wait for it
+    unmuted = []
+
+    def unmute():  # the speakerphone unmuted, a moment later
+        unmuted.append(time.monotonic())
+        assistant.mute(False)
+
+    threading.Timer(0.3, unmute).start()
     assert conversations(assistant) == [PAUSE]  # then its name woke it, as usual
     assert assistant.body.waits == 2  # the wake model was asked only once unmuted: its name, then Asleep
-    assert 0.3 <= time.monotonic() - started < 1.0  # back at once, not at the next look
+    assert unmuted and time.monotonic() - unmuted[0] < 10.0  # back at once, not at the next look
 
 
 def test_muted_what_s_due_is_still_said(monkeypatch):
