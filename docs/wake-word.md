@@ -417,6 +417,41 @@ kept clips of other sounds and 16 lookalike takes (the highest no-wake score wit
 value belongs to one model, so it is off (0) by default and household-trained models never use it. Nor does a body's wake
 (the Atom's): its score is its own model's, on a scale of its own, so the check's words decide it alone.
 
+## A second chance over the TV (experimental)
+
+With the voice at or under a TV's level, the double-check can't make out the phrase: the recognizer hears the TV's
+words as much as the speaker's. Generic noise suppression doesn't help (RNNoise in front of the check cut answers
+from 71% to 27%: TV speech is speech, so it goes with the voice). What does is target speaker extraction: given a
+few seconds of one person's voice, a model keeps that voice and drops the rest.
+
+`[extract]` (off by default) uses it as a second chance, never a filter. The double-check hears the raw audio first,
+so a guest is judged as always. Only when it turns a wake down that was said over other speech (speech in the
+window before the name, at a level near the name's) is each enrolled person's voice taken out of the same window
+and checked again. The extraction runs on a server (`tools/extract_server.py`, WeSep's pretrained BSRNN + ECAPA):
+0.2 s a wake on an Apple M-series GPU, 23 s on a Pi 4, so not on the Pi. The reference is a few of the person's
+ordinary requests (`voice_data/enroll/<name>/`).
+
+Measured offline on the owner's takes over a real TV hour (iPhone), with the reference made of five of his requests
+TARS heard on other days:
+
+| Voice over the TV | +10 dB | +5 dB | 0 dB | −5 dB |
+|---|---|---|---|---|
+| Answered, raw | 70% | 44% | 20% | 12% |
+| Answered, with the second chance | 93% | 76% | 52% | 22% |
+
+No extra false answers: none on the TV-only hours, none on the owner's own lookalikes ("hey cars"...) over the TV.
+With the wrong person's voice as the reference, extraction suppresses the speaker instead of inventing a wake, and
+an extraction that kept almost nothing is dropped (`kept_least`). The same extraction on the request itself cut
+Deepgram's word errors over the TV from 75-126% to 19-51%.
+
+**The request, too.** After such a wake by an enrolled person, the conversation hears them alone
+(`extract.RequestFocus`): every 0.48 s the last 3 s go to the server, the speech detector and the end-of-turn model
+judge their extracted voice, and what's transcribed (as a finished recording; a stream would carry the TV) is that
+voice. In TARS's own recorder, on the owner's requests
+with real TV talking on after them, recordings that ended within 6 s of his last word went from 10-13 of 48 to 43-46
+of 48 (voice 0 and 5 dB over the TV), about 1.3-1.5 s after it. The server takes about 0.2 s of GPU time per 0.48 s,
+so it keeps up as he talks; if it fails, the recording carries on hearing the raw audio.
+
 ## Limitations
 
 - **The owner's soft *t*** is the main reason for the generic setup's missed takes, and stage 1 never fired on most

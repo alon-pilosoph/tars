@@ -341,3 +341,23 @@ class ToolCallStream(FakeStream):
                 part = types.SimpleNamespace(index=i, id=f"qc_{i}" if n == 0 else None, function=function)
                 delta = types.SimpleNamespace(content=None, tool_calls=[part])
                 yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+
+@pytest.fixture
+def hearing(monkeypatch, tmp_path):
+    """Makes verifiers whose recognizer 'hears' fixed text, so the matching rules can be tested without the model."""
+    import vosk
+
+    from voice_assistant import verify
+    from voice_assistant.verify import PhraseVerifier
+
+    monkeypatch.setattr(vosk, "Model", lambda path: None)
+    monkeypatch.setattr(verify, "ensure_model", lambda folder: folder)
+
+    def verifier(text: str, phrase: str = "hey tars") -> PhraseVerifier:
+        v = PhraseVerifier(phrase, tmp_path)
+        v.heard = lambda pcm: text
+        v.name_end_s = lambda pcm: None
+        return v
+
+    return verifier

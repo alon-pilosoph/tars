@@ -392,6 +392,22 @@ what's merged is installed on the Pi by the updater.
   - **The reviewer is the last line.** A pull request that looks right and does something else, or a new dependency
     (`uv add` is allowed), gets as far as a review lets it.
 
+### The extraction server, a second chance over the TV
+
+With `[extract]` on (off by default; experimental), a wake the double-check turns down said over other speech is sent
+to an extraction server on another machine at home (`tools/extract_server.py`, a computer with a GPU), with each
+enrolled person's reference: a few of their ordinary requests, kept in `voice_data/enroll/<name>/`.
+
+- **What leaves the machine:** the 3 s around such a wake, and the references, at most a few times a day. Nothing
+  else: the request that follows is heard as always.
+- **Defenses:** it's only for an address `[extract] url` names; a server that doesn't answer within `timeout_s`
+  costs nothing but the second chance; a wrong or failed extraction never answers on its own (the check still has to
+  hear the name in it).
+- **Open:** **plain HTTP and no sign-in** on the home network: a device on the Wi-Fi that sees the traffic hears
+  those seconds and the references, and anyone at home can send the server work. The references are personal data,
+  kept like voiceprints. Fine for a server beside the Pi at home; not for one elsewhere until it has TLS and a key
+  (the hosting plan).
+
 ### Someone in the room, or a recorded or cloned voice
 
 - **Defenses:** anyone in the room can ask TARS anything, by design; only unlocking is held back, for a trusted voice

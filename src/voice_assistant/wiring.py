@@ -200,12 +200,66 @@ def make_trigger(cfg: Config, push_to_talk: bool, root: Path, journal=None):
         if cfg.wake.verify:
             from .verify import VerifiedTrigger
 
-            trigger = VerifiedTrigger(pair_source(cfg, root), root / "models", journal=journal, sure=cfg.wake.sure)
+            trigger = VerifiedTrigger(
+                pair_source(cfg, root),
+                root / "models",
+                journal=journal,
+                second_chance=second_chance(cfg, root),
+                sure=cfg.wake.sure,
+            )
         else:
             trigger = wake_word_trigger(cfg.wake.model, cfg.wake.threshold)
     except (FileNotFoundError, ValueError) as e:  # a wake model or check that's missing or broken
         raise ConfigError(str(e)) from None
     return trigger, f"Say '{trigger.phrase}'..."
+
+
+def second_chance(cfg: Config, root: Path):
+    """The wake's second chance over the TV ([extract], extract.py), or None when it's off or nobody's enrolled."""
+    x = cfg.extract
+    if not (x.enabled and x.url):
+        return None
+    from .extract import Extractor, SecondChance
+    from .vad import SileroVAD
+
+    extractor = Extractor(x.url, root / x.enroll, x.timeout_s, x.kept_least)
+    if not extractor.voices:
+        print(f"([extract] is on, but nobody's enrolled in {x.enroll}: no second chance)")
+        return None
+    print(f"(a second chance over the TV for {', '.join(extractor.voices)})")
+    return SecondChance(extractor, SileroVAD(root / cfg.recorder.vad_model), x.mixed_share, x.mixed_level_db)
+
+
+def request_focus(cfg: Config, root: Path):
+    """After a wake said over the TV by someone enrolled: their voice alone for the conversation ([extract],
+    extract.RequestFocus), or None."""
+    x = cfg.extract
+    if not (x.enabled and x.url):
+        return None
+    from .extract import Extractor, RequestFocus
+    from .stt import transcribe_recording
+    from .vad import SileroVAD
+
+    extractor = Extractor(x.url, root / x.enroll, x.timeout_s, x.kept_least)
+    if not extractor.voices:
+        return None
+    env = root / ".env"
+    keys = env_keys(env)
+    cfg, _ = with_keys(cfg, keys)
+    client = make_openai_client(env) if OPENAI_KEY in keys else None
+    whole = make_recording_transcriber(cfg, env, client, spoken=True)
+    from .speaker import SpeakerID
+
+    voices = SpeakerID(root / cfg.speaker.model, root / cfg.speaker.voiceprints, cfg.speaker.threshold)
+    return RequestFocus(
+        extractor,
+        SileroVAD(root / cfg.recorder.vad_model),
+        lambda pcm: transcribe_recording(whole, pcm),
+        x.mixed_share,
+        x.mixed_level_db,
+        voices.embed,
+        x.same_voice,
+    )
 
 
 @contextmanager

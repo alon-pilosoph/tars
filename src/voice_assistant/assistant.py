@@ -30,6 +30,7 @@ from .conversations import LLM, STT, SentItem
 from .draft import Draft
 from .echo import without_echo
 from .errors import SERVICE_FAILURES
+from .extract import FocusedSpeech, RequestFocus
 from .home import ONE_MOMENT, Request
 from .journal import Journal
 from .llm import (
@@ -257,6 +258,9 @@ class Assistant:
     """The conversation, with a body (body.py) to hear and speak with. Typed questions (answer_text) need only a body
     that plays, the brain and the voice: the transcriber may be None."""
 
+    _focus_maker: RequestFocus | None = None
+    _focus: FocusedSpeech | None = None  # this conversation's, when its wake was said over the TV
+
     def __init__(
         self,
         body: Body,
@@ -279,6 +283,7 @@ class Assistant:
         room: str = MAIN,
         web: bool = False,
         person: str | None = None,
+        focus: RequestFocus | None = None,
     ):
         """`phrase_folder`: where the short lines' audio is kept for this voice, so they survive an offline restart.
         `clock`: seconds, for when a line that failed to make is tried again. `elsewhere(reminder)`: True if a
@@ -286,7 +291,9 @@ class Assistant:
         skills due to run by themselves (skills.py). `rooms`: the desk every room's assistant shares, which says which
         room says what (rooms.py); `room`: this one's. Without a desk, it's the only room. `web`: its body is a web page
         (the Talk page), so what's said there never counts as said at home (home.Request.by_web); `person`: who's
-        signed in on it, taken as who spoke in place of speaker ID (None: told by voice, as anywhere)."""
+        signed in on it, taken as who spoke in place of speaker ID (None: told by voice, as anywhere). `focus`: hearing
+        only the person who woke it, over a TV ([extract], extract.RequestFocus)."""
+        self._focus_maker = focus
         self.body = body
         self.room = room
         self.web, self.person = web, person
@@ -839,6 +846,20 @@ class Assistant:
             print(f"(couldn't mark the reminder acknowledged: {e!r})")
         self._reread_reminders()
 
+    def _focus_on(self, wake: Wake) -> FocusedSpeech | None:
+        """Hearing only whoever woke it, for this conversation: when [extract] is on, the wake was said over other
+        speech by someone enrolled, and this body records here (a network body's recording isn't ours to steer)."""
+        if not (self._focus_maker and wake.audio is not None and hasattr(self.body, "recorder")):
+            return None
+        try:
+            focus = self._focus_maker.for_wake(wake.audio)
+        except Exception as e:  # noqa: BLE001 - heard as always
+            print(f"(couldn't set up hearing one voice: {e!r})")
+            return None
+        if focus:
+            print("(said over other voices: listening for that voice alone)")
+        return focus
+
     def wake_speaker(self, audio: np.ndarray | None) -> str | None:
         """Who said the wake word in `audio`, for the greeting; None if nobody is sure, or speaker ID couldn't tell."""
         if not self.speaker_id or audio is None:
@@ -924,7 +945,12 @@ class Assistant:
         word in the wake window: a request said in one breath with the name starts there. `expect`: words likely
         said, the choices TARS just offered."""
         # Past the month's cap, nothing goes out: the recording is kept here, for a house command heard on the Pi.
-        session = BufferedSession(_over_the_cap) if usage.capped() else self.transcriber.session(expect)
+        focus = self._focus if self._focus_maker and not usage.capped() else None
+        if focus:  # their voice alone, sent once they've finished: a stream would carry the TV
+            focus.reset()
+            session = BufferedSession(lambda pcm, f=focus: self._focus_maker.transcribe(f, pcm))
+        else:
+            session = BufferedSession(_over_the_cap) if usage.capped() else self.transcriber.session(expect)
         draft: Draft[Answer] | None = None
 
         def paused(pcm: bytes) -> None:
@@ -951,6 +977,7 @@ class Assistant:
                 stop=self._stop.is_set,
                 max_s=max_s,
                 lead=_found(after_name),
+                **({"speech": focus} if focus else {}),
             )
         except BaseException:
             # Every draft must be settled, or the next one would wait behind it.
@@ -994,10 +1021,12 @@ class Assistant:
         self.voice.warm()
         if not usage.capped():  # a line made now would be paid for
             self.prepare_phrases()
+        self._focus = self._focus_on(wake)
         try:
             with usage.turn(None, usage.VOICE):  # whose, once handle() knows the voice
                 self._converse(follow_up_s, first, greet_after_s, greet, wake, asked)
         finally:
+            self._focus = None
             self._just_said = []
             self.journal.end_conversation()
 

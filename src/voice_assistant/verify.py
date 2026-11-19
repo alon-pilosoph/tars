@@ -9,7 +9,7 @@ import tempfile
 import threading
 import zipfile
 from collections import deque
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable
 from concurrent.futures import Future
 from itertools import pairwise
 from pathlib import Path
@@ -319,12 +319,16 @@ class VerifiedTrigger:
         journal: Journal | None = None,
         make_trigger: Callable[[str, float], WakeModel] = wake_word_trigger,
         make_verifier: Callable[[str, Path], PhraseVerifier] = PhraseVerifier,
+        second_chance: Callable[[np.ndarray], Iterable[np.ndarray]] | None = None,
         sure: float = 0.0,
     ):
         """The wake model, threshold, check and check window come from the pair `pairs` has in use, and follow it
-        while TARS runs. `sure` (0 = off): a wake the installed model scored at least this high stands when the check
-        heard no words at all, as over a loud TV, where the recognizer often makes out nothing; heard words decide."""
+        while TARS runs. `second_chance` (extract.SecondChance): for a wake the check turns down, other versions of
+        its audio to check again, such as an enrolled voice taken out of the TV; the first that passes answers.
+        `sure` (0 = off): a wake the installed model scored at least this high stands when the check heard no words
+        at all, as over a loud TV, where the recognizer often makes out nothing; heard words decide."""
         self._pairs, self._models_dir, self._journal, self._sure = pairs, models_dir, journal, sure
+        self._second_chance = second_chance
         self._make_trigger, self._make_verifier = make_trigger, make_verifier
         self._stamp, self.pair, self._verifier = None, None, None
         self._follow_versions(quiet=True)
@@ -379,6 +383,8 @@ class VerifiedTrigger:
         own = not wake_model
         if outcome == IGNORE and own and self._sure and self.pair.version == INSTALLED and score >= self._sure:
             outcome = ANSWER if heard_nothing(heard) else IGNORE
+        if outcome == IGNORE and self._second_chance:
+            outcome, heard = self._again(audio, heard)
         if journal := journal or self._journal:
             journal.wake(
                 audio,
@@ -395,6 +401,18 @@ class VerifiedTrigger:
         self.last_audio = audio
         self.after_name = self.find_after_name(audio) if outcome == ANSWER else None
         return outcome
+
+    def _again(self, audio: np.ndarray, heard: str) -> tuple[str, str]:
+        """The second chance: ANSWER if another version of `audio` passes the check, else IGNORE as it was. Never
+        ASK: a close call in extracted audio isn't worth interrupting for."""
+        try:
+            for version in self._second_chance(audio):
+                outcome, again = self._verifier.decide(version)
+                if outcome == ANSWER:
+                    return ANSWER, f"{again} (a voice taken out of the mix)"
+        except Exception as e:  # noqa: BLE001 - the raw check's answer stands
+            print(f"(the second chance failed: {e!r})")
+        return IGNORE, heard
 
     def find_after_name(self, audio: np.ndarray) -> Future[np.ndarray]:
         """Where the name ends takes a recognizer pass (about 0.25 s on a Pi 4): made on the side, so the greeting

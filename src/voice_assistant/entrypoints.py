@@ -54,6 +54,7 @@ from .wiring import (
     own_speaker,
     phrase_folder,
     reminder_tools,
+    request_focus,
     serve_rooms,
     skill_clock,
     snapshot_files,
@@ -739,6 +740,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             room=room,
             web=page is not None,
             person=page.person if page is not None else None,
+            focus=request_focus(cfg, root),
         )
 
     def wake_loop(assistant: Assistant, idle_message: str) -> None:

@@ -32,23 +32,6 @@ from .conftest import GENERIC, FakeTrigger, SilentMic, needs_models
 SILENCE = np.zeros(16000, np.int16)
 
 
-@pytest.fixture
-def hearing(monkeypatch, tmp_path):
-    """Makes verifiers whose recognizer 'hears' fixed text, so the matching rules can be tested without the model."""
-    import vosk
-
-    monkeypatch.setattr(vosk, "Model", lambda path: None)
-    monkeypatch.setattr(verify, "ensure_model", lambda folder: folder)
-
-    def verifier(text: str, phrase: str = "hey tars") -> PhraseVerifier:
-        v = PhraseVerifier(phrase, tmp_path)
-        v.heard = lambda pcm: text
-        v.name_end_s = lambda pcm: None
-        return v
-
-    return verifier
-
-
 def listening(trigger, verifier, journal=None, wake_model: str = "") -> VerifiedTrigger:
     """A VerifiedTrigger on a fixed pair, listening with `trigger` and checking with `verifier`."""
     pair = Pair(INSTALLED, wake_model, "", None, trigger.threshold, 2.5, Path(wake_model))
