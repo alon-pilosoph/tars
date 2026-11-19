@@ -80,10 +80,14 @@ takes the guess, a tap gives the other answer, and Back takes the last answer ba
 ## Voices
 
 The voice embedding of each wake's first request (WeSpeaker ResNet34, the model speaker ID uses) goes into leader
-clustering: each request joins the closest voice if it's similar enough (cosine similarity 0.5), or else starts a
-new one, oldest requests first so voice numbers stay stable. Whatever a person decided stays put when the Voices
-page's Regroup voices runs: a request moved to a voice by hand, merged voices, names, and voices marked "not a
-person".
+clustering when the Voices page's Regroup voices runs: each request not yet in a voice joins the one it sounds most
+like, as that voice is heard on the same mic (a voice through another mic scores lower), if it's similar enough
+(cosine similarity 0.5) and clearly the closest (0.05 ahead of the next); otherwise it starts a new one. **Nothing
+already in a voice is ever moved by regrouping**: what the page shows changes only when someone changes it (moving
+a request with its ⋯, merging, naming, "not a person"). A voice marked "not a person" takes in later requests that
+sound like it, so the TV keeps being set aside. Tried on the household's own requests (2026-11-19), a stricter bar
+only shattered the speakerphone's old ones into single requests; mixed voices are for a person to sort out, one
+request at a time, or leave unnamed, as only named voices are learned from. "Not a person" is never trained on.
 
 Regrouping also rebuilds the voiceprints speaker ID uses, from exactly the named people with 5 or more requests
 (two voices with the same name count as one person). **A voiceprint is a person's on one mic**: a voice doesn't sound

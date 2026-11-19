@@ -24,6 +24,7 @@ import {
   markSeen,
   moveTo,
   newVoice,
+  notAPerson,
   openMerge,
   rename,
   setTab,
@@ -58,6 +59,10 @@ function menuBody(s: State, m: MenuState) {
     case "eventVoice": {
       const e = eventById(s, m.id);
       return e ? voicePicker(s, e.id, e.cluster_id) : null;
+    }
+    case "sampleVoice": {
+      const voice = s.clusters.find(c => c.samples.some(x => x.event_id === m.id));
+      return voice ? voicePicker(s, m.id, voice.id) : null;
     }
   }
 }
@@ -169,6 +174,9 @@ function voicePicker(s: State, eventId: number, current: number | null) {
       <hr />
       <MenuItem icon="edit" act={() => newVoice(eventId)}>
         Someone new…
+      </MenuItem>
+      <MenuItem icon="notfor" act={() => notAPerson(eventId)}>
+        Not a person (the TV, the radio)
       </MenuItem>
     </>
   );

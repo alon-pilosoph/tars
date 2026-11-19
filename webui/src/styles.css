@@ -1269,6 +1269,13 @@ select {
   font-size: 15px;
   color: var(--tars);
 }
+.sample > span {
+  flex: 1;
+}
+.sample-more {
+  margin-left: auto;
+  flex: none;
+}
 .sample .play-sm {
   margin: 0 0 0 -12px;
 }
@@ -1881,6 +1888,18 @@ dialog.dialog::backdrop {
 }
 .head-hint {
   margin: -16px 0 24px;
+}
+.voices-hint {
+  margin: -4px 0 12px;
+}
+.voices-fold {
+  color: var(--muted);
+  font-size: 14px;
+  min-height: 36px;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 8px;
 }
 .models-note {
   margin-top: 16px;

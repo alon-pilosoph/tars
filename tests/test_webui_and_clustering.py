@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from voice_assistant import webui
-from voice_assistant.clustering import MIN_REQUESTS_TO_ENROLL, enroll_named, recluster
+from voice_assistant.clustering import MIN_REQUESTS_TO_ENROLL, _unit, enroll_named, recluster
 from voice_assistant.events import NOT_PERSON, PERSON, REAL, UNKNOWN
 from voice_assistant.reminders import NewReminder, Reminders
 from voice_assistant.verify import ANSWER
@@ -116,7 +116,7 @@ def test_each_voice_comes_with_its_newest_requests(log, client):
     ids = add_requests(log, voice(np.eye(16)[0], rng, 6))
     recluster(log)
     (cluster,) = client.get("/api/clusters").json()
-    assert cluster["size"] == 6 and [s["event_id"] for s in cluster["samples"]] == ids[::-1][:4]
+    assert cluster["size"] == 6 and [s["event_id"] for s in cluster["samples"]] == ids[::-1]  # all, to go through
     assert cluster["samples"][0]["transcript"] == "hi"
 
 
@@ -173,6 +173,21 @@ def test_two_voices_become_two_clusters_and_stay_put_on_rerun(log):
     before = {i: log.get(i)["cluster_id"] for i in ids_a + ids_b}
     recluster(log)
     assert {i: log.get(i)["cluster_id"] for i in ids_a + ids_b} == before  # voice numbers are stable
+
+
+def test_regrouping_sorts_only_whats_new_and_moves_nothing_already_in_a_voice(log):
+    rng = np.random.default_rng(9)
+    first = add_requests(log, voice(np.eye(16)[0], rng, 3))
+    recluster(log)
+    (stray,) = add_requests(log, voice(np.eye(16)[1], rng, 1))  # someone else, left in the voice by an older grouping
+    log.assign(stray, log.get(first[0])["cluster_id"], pinned=False)
+    before = {i: log.get(i)["cluster_id"] for i in [*first, stray]}
+    later = add_requests(log, voice(np.eye(16)[0], rng, 2))
+    said = recluster(log)["summary"]
+    assert {i: log.get(i)["cluster_id"] for i in [*first, stray]} == before  # nothing in a voice moved
+    assert {log.get(i)["cluster_id"] for i in later} == {before[first[0]]}  # the new ones, where they sound like
+    assert said == "Sorted 2 new requests into voices, 0 of them new. Nothing already in a voice was moved."
+    assert recluster(log)["summary"].startswith("Nothing new to sort")
 
 
 def test_manual_moves_and_named_voices_survive_reclustering(log):
@@ -253,6 +268,44 @@ def test_a_voice_gets_a_voiceprint_for_each_mic_it_has_enough_requests_on_and_on
     sid = RecordingSpeakerID()
     assert enroll_named(log, sid) == ["Alon"]
     assert sid.enrolled == {("alon", ""): MIN_REQUESTS_TO_ENROLL + 2, ("alon", "Bedroom"): MIN_REQUESTS_TO_ENROLL}
+
+
+def test_a_voice_marked_not_a_person_takes_in_what_sounds_like_it_later(log):
+    rng = np.random.default_rng(6)
+    tv = add_requests(log, voice(np.eye(16)[3], rng, 3))
+    recluster(log)
+    log.rename_cluster(log.get(tv[0])["cluster_id"], None, kind=NOT_PERSON)
+    later = add_requests(log, voice(np.eye(16)[3], rng, 2))  # the TV again, days later
+    recluster(log)
+    assert {log.get(i)["cluster_id"] for i in later} == {log.get(tv[0])["cluster_id"]}
+
+
+def test_a_request_about_as_close_to_two_voices_joins_neither(log):
+    rng = np.random.default_rng(7)
+    mum, son = np.eye(16)[0], np.eye(16)[1]
+    ids = add_requests(log, voice(mum, rng, 3) + voice(son, rng, 3))
+    recluster(log)
+    log.rename_cluster(log.get(ids[0])["cluster_id"], "Stacey")
+    log.rename_cluster(log.get(ids[-1])["cluster_id"], "Ari")
+    (between,) = add_requests(log, [_unit(mum + son)])  # half one, half the other: 0.7 to each
+    recluster(log)
+    assert log.get(between)["cluster_id"] not in {log.get(ids[0])["cluster_id"], log.get(ids[-1])["cluster_id"]}
+
+
+def test_a_voice_is_compared_as_heard_on_the_same_mic(log):
+    rng = np.random.default_rng(8)
+    through_atom, through_speakerphone = np.eye(16)[0], np.eye(16)[1]  # Alon, as each mic hears him
+    atom = add_requests(log, voice(through_atom, rng, 3), room="Bedroom")
+    speakerphone = add_requests(log, voice(through_speakerphone, rng, 3), room="home")
+    recluster(log)
+    alon = log.get(atom[0])["cluster_id"]
+    log.rename_cluster(alon, "Alon")
+    for i in speakerphone:  # told they're his too
+        log.assign(i, alon, pinned=True)
+    # On the speakerphone, 0.55 like him as it hears him; against both mics at once it would be under 0.5.
+    (again,) = add_requests(log, [_unit(0.55 * through_speakerphone + 0.835 * np.eye(16)[3])], room="home")
+    recluster(log)
+    assert log.get(again)["cluster_id"] == alon
 
 
 def test_serves_the_built_page_and_its_assets(log, client):

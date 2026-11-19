@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { plural } from "../format";
 import { type State, menuOpen, recluster, rename, toggleMenu, useStore, voiceName } from "../store";
 import type { Cluster } from "../types";
@@ -20,7 +21,7 @@ export function Voices() {
       </PageHead>
       <p className="hint head-hint">
         {canRegroup
-          ? "Regrouping sorts every request into voices again. Anything you've named, moved or merged stays that way."
+          ? "Regrouping puts new requests into the voices they sound like. Nothing already in a voice moves: to move one, use its ⋯."
           : "Regrouping voices isn't set up on this TARS."}
       </p>
       {s.reclustering && (
@@ -38,34 +39,81 @@ export function Voices() {
         <Empty title="No voices yet" text="Once a few people have asked TARS something, their voices show up here." />
       </>
     );
-  const ppl = s.clusters.filter(c => c.kind !== "not_person");
+  const named = s.clusters.filter(c => c.kind === "person");
+  const unnamed = s.clusters.filter(c => c.kind === "unknown");
+  const groups = unnamed.filter(c => c.size >= GROUP_AT);
+  const strays = unnamed.filter(c => c.size < GROUP_AT);
   const not = s.clusters.filter(c => c.kind === "not_person");
   return (
     <>
       {head}
-      <SecHead title="People" />
-      <div className="voices">
-        {ppl.map(c => (
-          <Voice key={c.id} c={c} s={s} />
-        ))}
-      </div>
-      {not.length > 0 && (
+      {named.length > 0 && (
         <>
-          <SecHead title="Not people">
-            <span className="muted">TV, radio and the like. TARS ignores them.</span>
-          </SecHead>
+          <SecHead title="People" />
           <div className="voices">
-            {not.map(c => (
+            {named.map(c => (
               <Voice key={c.id} c={c} s={s} />
             ))}
           </div>
         </>
       )}
+      {groups.length > 0 && (
+        <>
+          <SecHead title="Who's this?" />
+          <p className="hint voices-hint">
+            Name a voice only when every request in it is the same person. A mixed one can be sorted out request by
+            request, with each one's ⋯, or left as it is: TARS learns only from voices you name.
+          </p>
+          <div className="voices">
+            {groups.map(c => (
+              <Voice key={c.id} c={c} s={s} />
+            ))}
+          </div>
+        </>
+      )}
+      <Folded
+        title="Not sure yet"
+        note="Voices heard only once. Each joins a voice above once it's heard again."
+        voices={strays}
+        s={s}
+      />
+      <Folded title="Not people" note="TV, radio and the like. TARS ignores them." voices={not} s={s} />
     </>
   );
 }
 
+// An unnamed voice heard only once is too little to name: it's folded away until it's heard again.
+const GROUP_AT = 2;
+
+function Folded({ title, note, voices, s }: { title: string; note: string; voices: Cluster[]; s: State }) {
+  const [open, setOpen] = useState(false);
+  if (!voices.length) return null;
+  return (
+    <>
+      <SecHead title={title}>
+        <span className="muted">{note}</span>
+      </SecHead>
+      {open ? (
+        <div className="voices">
+          {voices.map(c => (
+            <Voice key={c.id} c={c} s={s} />
+          ))}
+        </div>
+      ) : (
+        <button className="voices-fold" onClick={() => setOpen(true)}>
+          {`Show ${plural(voices.length, "voice")}`}
+          <Icon name="chev-down" size="s" />
+        </button>
+      )}
+    </>
+  );
+}
+
+// Requests a voice shows before "Show all": each can be moved on its own, so a mixed voice can be sorted out.
+const SHOWN = 4;
+
 function Voice({ c, s }: { c: Cluster; s: State }) {
+  const [all, setAll] = useState(false);
   const name = voiceName(c);
   const unnamed = !c.name && c.kind === "unknown";
   const left = c.name && c.kind === "person" ? Math.max(0, s.status.enroll_at - c.size) : 0;
@@ -100,14 +148,38 @@ function Voice({ c, s }: { c: Cluster; s: State }) {
       </div>
       {c.samples.length > 0 && (
         <div className="samples">
-          {c.samples.map(x => (
-            <div key={x.event_id} className="sample">
-              <PlaySmall clip={{ event: x.event_id, part: "request" }} label={`a request from ${name}`} />
-              <span>{`“${x.transcript || "…"}”`}</span>
-            </div>
+          {(all ? c.samples : c.samples.slice(0, SHOWN)).map(x => (
+            <Sample key={x.event_id} x={x} name={name} s={s} />
           ))}
+          {!all && c.samples.length > SHOWN && (
+            <button className="voices-fold" onClick={() => setAll(true)}>
+              {`Show all ${plural(c.samples.length, "request")}`}
+              <Icon name="chev-down" size="s" />
+            </button>
+          )}
         </div>
       )}
     </article>
+  );
+}
+
+function Sample({ x, name, s }: { x: Cluster["samples"][number]; name: string; s: State }) {
+  const menu = { kind: "sampleVoice", id: x.event_id } as const;
+  return (
+    <div className="sample">
+      <PlaySmall clip={{ event: x.event_id, part: "request" }} label={`a request from ${name}`} />
+      <span>{`“${x.transcript || "…"}”`}</span>
+      <div className="anchor sample-more">
+        <button
+          className="icon-btn"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen(s, menu)}
+          aria-label={`Whose voice is “${x.transcript || "this request"}”?`}
+          onClick={e => toggleMenu(menu, e.currentTarget)}
+        >
+          <Icon name="more" size="s" />
+        </button>
+      </div>
+    </div>
   );
 }

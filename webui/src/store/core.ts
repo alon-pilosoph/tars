@@ -47,7 +47,8 @@ export type DialogState =
   | { kind: "note"; item: Item }
   | { kind: "image"; item: Item };
 
-export type MenuTarget = { kind: "event" | "eventVoice" | "voice" | "item" | "who"; id: number } | { kind: "more" };
+export type MenuTarget =
+  { kind: "event" | "eventVoice" | "sampleVoice" | "voice" | "item" | "who"; id: number } | { kind: "more" };
 export type MenuState = MenuTarget & { anchor: HTMLElement; sheet: boolean };
 
 /** What the page showed at the last Refresh or page load. Reloads after your own actions only update these, so

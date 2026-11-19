@@ -1097,7 +1097,7 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
         const own = newestFirst(d.events.filter(e => e.cluster_id === c.id));
         const samples = own
           .filter(e => e.has_request_audio)
-          .slice(0, 4)
+          .slice(0, 60)
           .map(e => ({ event_id: e.id, transcript: e.transcript }));
         return { ...c, size: own.length, samples };
       })
@@ -1174,7 +1174,7 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
   }
   if (p === "/api/clusters" && method === "POST") {
     const id = Math.max(0, ...d.clusters.map(c => c.id)) + 1;
-    d.clusters.push({ id, name: body.name, kind: body.name ? "person" : "unknown" });
+    d.clusters.push({ id, name: body.name, kind: body.kind ?? (body.name ? "person" : "unknown") });
     return { id };
   }
   if (p === "/api/clusters/merge") {
