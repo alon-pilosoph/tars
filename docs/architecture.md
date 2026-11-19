@@ -56,7 +56,7 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    decides when you're done, from your words as well as the pause. If Flux fails, the local rules take over: after
    `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (local, 8 MB) may keep
    waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes, Alon?" (speaker ID from the
-   wake alone) and waits.
+   wake's last 1.2 s, where the name is, started while the wake is double-checked) and waits.
 4. **Speech to text** is Flux too, streamed while you talk, so the words come with its decision; if the stream
    fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX, local) runs at the same
    time, so knowing who's talking adds no latency. The request reaches the LLM tagged `[Speaker: Alon]`. With

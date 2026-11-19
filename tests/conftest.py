@@ -14,7 +14,7 @@ from openai import APIConnectionError
 
 from voice_assistant.assistant import Assistant
 from voice_assistant.audio import BLOCK_SAMPLES, SAMPLE_RATE
-from voice_assistant.body import Recorded
+from voice_assistant.body import Recorded, Wake
 from voice_assistant.conversations import ConversationLog
 from voice_assistant.events import EventLog
 from voice_assistant.stt import BufferedSession
@@ -170,12 +170,15 @@ class FakeBody:
         self.cuts: set[int] = set()
         self._cut = False
 
-    def wait(self, due):
+    def wait(self, due, heard=None):
         self.waits += 1
         if not self.wakes:
             raise Asleep
         wake = self.wakes.pop(0)
-        return wake(due) if callable(wake) else wake
+        wake = wake(due) if callable(wake) else wake
+        if heard and isinstance(wake, Wake) and wake.audio is not None:  # as a double-checked trigger does
+            heard(wake.audio)
+        return wake
 
     def record(self, start_timeout_s=None, on_pause=None, on_resume=None, max_s=None, **kw):
         self.timeouts.append(start_timeout_s)

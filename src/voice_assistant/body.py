@@ -18,7 +18,7 @@ import numpy as np
 from .audio import Microphone, Speaker
 from .recorder import PREROLL_BLOCKS, UtteranceRecorder
 from .stt import TurnState
-from .wake import Due, Trigger
+from .wake import Due, Heard, Trigger
 
 
 class BodyGone(Exception):
@@ -50,8 +50,9 @@ class Body(Protocol):
     def hears_while_speaking(self) -> bool:
         """Whether what it plays is taken back out of what it hears, so it can listen while it speaks."""
 
-    def wait(self, due: Due) -> Wake:
-        """Blocks until someone wants to talk, or `due` (asked often, and quick) says something's due."""
+    def wait(self, due: Due, heard: Heard | None = None) -> Wake:
+        """Blocks until someone wants to talk, or `due` (asked often, and quick) says something's due. `heard` is told
+        a wake's audio as soon as it's heard, before it's double-checked (wake.Heard)."""
 
     def record(
         self,
@@ -113,8 +114,8 @@ class LocalBody:
     def hears_while_speaking(self) -> bool:
         return bool(self.mic and self.mic.echo and self.mic.echo.working)
 
-    def wait(self, due: Due) -> Wake:
-        how = self.trigger.wait(self.mic, due=due)
+    def wait(self, due: Due, heard: Heard | None = None) -> Wake:
+        how = self.trigger.wait(self.mic, due=due, heard=heard)
         return Wake(how, self.trigger.last_audio, self.trigger.after_name)
 
     def record(self, **kw) -> Recorded | None:

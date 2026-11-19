@@ -20,7 +20,7 @@ import numpy as np
 from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
 from .models import fetch
 from .versions import INSTALLED
-from .wake import DUE, Due, WakeModel, wake_word_trigger
+from .wake import DUE, Due, Heard, WakeModel, wake_word_trigger
 
 if TYPE_CHECKING:
     from .journal import Journal
@@ -334,9 +334,9 @@ class VerifiedTrigger:
         self._follow_versions(quiet=True)
         self.phrase = self._trigger.phrase
 
-    def wait(self, mic: Microphone, due: Due | None = None) -> str:
+    def wait(self, mic: Microphone, due: Due | None = None, heard: Heard | None = None) -> str:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite, DUE when `due` says a
-        reminder is due."""
+        reminder is due. `heard` is told each wake's audio as the check starts on it."""
         self.after_name = None
         mic.clear()
 
@@ -369,7 +369,10 @@ class VerifiedTrigger:
                     recent.add(block)
                     score = max(score, self._trigger.score(block))
             self._trigger.reset()
-            if (outcome := self.confirm(recent.audio(), score)) != IGNORE:
+            audio = recent.audio()
+            if heard:
+                heard(audio)
+            if (outcome := self.confirm(audio, score)) != IGNORE:
                 return outcome
 
     def confirm(self, audio: np.ndarray, score: float, journal=None, wake_model: str = "") -> str:

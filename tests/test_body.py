@@ -141,14 +141,14 @@ def test_local_body_waits_on_the_trigger_with_its_mic_and_hands_back_what_woke_i
     mic, audio, after = Mic(), np.zeros(320, np.int16), Future()
     asked = []
 
-    def wait(m, due=None):
-        asked.append((m, due))
+    def wait(m, due=None, heard=None):
+        asked.append((m, due, heard))
         return ANSWER
 
     trigger = types.SimpleNamespace(wait=wait, last_audio=audio, after_name=after)
     body = LocalBody(mic, Speaker(), trigger, None)
-    due = lambda: False
-    assert body.wait(due) == Wake(ANSWER, audio, after) and asked == [(mic, due)]
+    due, heard = lambda: False, lambda audio: None
+    assert body.wait(due, heard) == Wake(ANSWER, audio, after) and asked == [(mic, due, heard)]
 
 
 def test_local_body_records_from_its_mic_and_says_how_long_the_silence_after_was():
@@ -198,3 +198,31 @@ def test_local_body_throws_away_and_clears_what_its_mic_heard():
     body.discard()
     body.clear()
     assert (mic.discarded, mic.cleared) == (1, 1)
+
+
+def test_who_said_the_wake_word_is_found_while_it_is_checked_from_the_names_end():
+    from voice_assistant import assistant as assistant_module
+
+    calls = []
+
+    class Naming:
+        voiceprints = ("alon",)
+
+        def identify(self, pcm, threshold=None, mic=""):
+            calls.append(len(pcm) // 2)
+            return "alon"
+
+        def describe(self, pcm, mic=""):
+            return "alon", 0.8, None
+
+    wake = Wake(ANSWER, np.zeros(3 * 16000, np.int16))
+    assistant, _ = awake([speech(), None], ["what time is it"], ["Noon."], wakes=[wake])
+    assistant.speaker_id = Naming()
+    told = []
+    heard = assistant._heard_wake
+    assistant._heard_wake = lambda audio: (told.append(len(audio)), heard(audio))
+    with pytest.raises(Asleep):
+        assistant.run_forever("Say 'hey tars'...", follow_up_s=4.0, greet="always")
+    assert told == [3 * 16000]  # started as the wake was heard, not after it was confirmed
+    assert calls == [round(assistant_module.WAKE_VOICE_S * 16000)]  # once, on the end of it, where the name is
+    assert assistant.body.plays[0] == b"Yes, Alon?"
