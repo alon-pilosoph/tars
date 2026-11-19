@@ -42,7 +42,11 @@ their own sources, fetches the prepared clips from Hugging Face
 2. copies the labeled wakes and near-misses and the pair in use from TARS (nothing there is changed);
 3. holds every fifth wake out for testing, with any wake seconds from it, so the same audio is never both trained
    and tested on;
-4. trains one candidate pair, both stages, on the generic recipe plus the household's clips (about 25 minutes);
+4. trains one candidate pair, both stages, on the generic recipe plus the household's clips (about 25 minutes). To
+   build the wake model as the shipped one was, the average of its last snapshots rather than one checkpoint, pass
+   `--train-args "--snapshots 2000 --average 5"`. The double-check is trained on the shipped generic layer's rows
+   (`--hard`'s when they've been made) at its own threshold: on the older rows at 0.3, a household layer let 25% of
+   lookalikes through against the shipped 6%;
 5. tests the candidate and the pair in use end to end: the household's held-out wakes, the held-out voices and
    lookalikes in 8 conditions, and false answers per hour on TV and audiobooks;
 6. prints the comparison and installs the candidate only if it answers more of the household's real wakes (or lets
