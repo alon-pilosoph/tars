@@ -1045,6 +1045,13 @@ def make_wishes(cfg: Config, root: Path, events):
     return Wishes(events.store, cfg.wishes, github, told, running_has(root))
 
 
+def own_mic(cfg: Config) -> str:
+    """The room of this machine's own microphone (TARS's speakerphone), as speaker ID's voiceprints name mics."""
+    from .rooms import MAIN
+
+    return cfg.bodies.room if cfg.bodies.enabled else MAIN
+
+
 def make_feeds(cfg: Config, events):
     """The feeds tool (feeds.py), in the event database."""
     from .feeds import make

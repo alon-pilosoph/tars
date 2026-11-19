@@ -22,10 +22,10 @@ def voice(direction, rng, n=1):
     return [direction + rng.normal(0, 0.05, direction.shape) for _ in range(n)]
 
 
-def add_requests(log, embeddings):
+def add_requests(log, embeddings, room=None):
     ids = []
     for emb in embeddings:
-        e = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9)
+        e = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9, room=room)
         log.add_request(e, AUDIO, "hi", None, None, emb.astype(np.float32))
         ids.append(e)
     return ids
@@ -230,7 +230,8 @@ def test_named_voices_with_enough_requests_are_enrolled(log):
     log.rename_cluster(big, "Stacey")
     log.rename_cluster(small, "Guest")
     sid = RecordingSpeakerID()
-    assert enroll_named(log, sid) == ["Stacey"] and sid.enrolled == {"stacey": MIN_REQUESTS_TO_ENROLL}
+    enrolled = {("stacey", ""): MIN_REQUESTS_TO_ENROLL, ("stacey", "home"): MIN_REQUESTS_TO_ENROLL}
+    assert enroll_named(log, sid) == ["Stacey"] and sid.enrolled == enrolled  # one mic: the home's (no room), and all
 
 
 def test_voices_sharing_a_name_are_one_person(log):
@@ -240,7 +241,18 @@ def test_voices_sharing_a_name_are_one_person(log):
     log.rename_cluster(log.get(ids[0])["cluster_id"], "Alon")
     log.rename_cluster(log.get(ids[-1])["cluster_id"], " alon")  # far from the mic: a second voice, same person
     sid = RecordingSpeakerID()
-    assert enroll_named(log, sid) == ["Alon"] and sid.enrolled == {"alon": 6}
+    assert enroll_named(log, sid) == ["Alon"] and sid.enrolled == {("alon", ""): 6, ("alon", "home"): 6}
+
+
+def test_a_voice_gets_a_voiceprint_for_each_mic_it_has_enough_requests_on_and_one_of_all(log):
+    rng = np.random.default_rng(5)
+    ids = add_requests(log, voice(np.eye(16)[0], rng, MIN_REQUESTS_TO_ENROLL), room="Bedroom")
+    add_requests(log, voice(np.eye(16)[0], rng, 2), room="home")  # too few on the speakerphone for its own
+    recluster(log)
+    log.rename_cluster(log.get(ids[0])["cluster_id"], "Alon")
+    sid = RecordingSpeakerID()
+    assert enroll_named(log, sid) == ["Alon"]
+    assert sid.enrolled == {("alon", ""): MIN_REQUESTS_TO_ENROLL + 2, ("alon", "Bedroom"): MIN_REQUESTS_TO_ENROLL}
 
 
 def test_serves_the_built_page_and_its_assets(log, client):

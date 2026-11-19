@@ -51,6 +51,7 @@ from .wiring import (
     make_s3,
     make_speaker_id,
     need_voice,
+    own_mic,
     own_speaker,
     phrase_folder,
     reminder_tools,
@@ -96,7 +97,7 @@ def enroll_speaker(cfg: Config, person: str, mic_name: str, root: Path) -> None:
             f"run --record-voice {person} --mic {mic_name} first."
         )
     speaker_id = make_speaker_id(cfg, root)
-    speaker_id.enroll(person, [read_wav(c) for c in clips])
+    speaker_id.enroll(person, [read_wav(c) for c in clips], own_mic(cfg))
     print(
         f"Enrolled {person} from {len(clips)} sentences ({mic_name} mic). "
         f"Everyone enrolled: {', '.join(speaker_id.voiceprints)}"
@@ -140,7 +141,7 @@ def web_ui(cfg: Config, root: Path, host: str, port: int) -> None:
         voice_names=voices,
         health=make_health(cfg, root, log),
         bucket=bucket,
-        finished=functools.partial(enroll_from_session, speaker_id, log.store),
+        finished=functools.partial(enroll_from_session, speaker_id, log.store, mic=own_mic(cfg)),
         accounts=Accounts(log.store) if cfg.web.sign_in else None,
         tls=(root / cfg.web.tls_cert, root / cfg.web.tls_key) if cfg.web.tls_cert else None,
         aloud=cfg.audio.enabled,
@@ -308,8 +309,9 @@ def web_sign_out(cfg: Config, root: Path, person: str) -> None:
     )
 
 
-def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
-    """A voice session's takes become its person's voiceprint (speaker ID), as --enroll does with --record-voice's."""
+def enroll_from_session(speaker_id, store: Store, session: dict, mic: str = "") -> None:
+    """A voice session's takes become its person's voiceprint (speaker ID) on `mic`, TARS's own speakerphone's room,
+    where they were said, as --enroll does with --record-voice's."""
     from .audio import read_wav
     from .recording import MIN_ENROLL_TAKES, VOICE, Sessions
 
@@ -319,7 +321,7 @@ def enroll_from_session(speaker_id, store: Store, session: dict) -> None:
     if len(takes) < MIN_ENROLL_TAKES:
         print(f"(only {len(takes)} good takes from {session['person']}'s session: not enough to enroll)")
         return
-    speaker_id.enroll(session["person"], [read_wav(store.folder / t["audio"]) for t in takes])
+    speaker_id.enroll(session["person"], [read_wav(store.folder / t["audio"]) for t in takes], mic)
     print(f"Enrolled {session['person']} from {len(takes)} takes of their recording session.")
 
 

@@ -12,7 +12,8 @@ import numpy as np
 
 from .audio import read_wav
 from .events import PERSON, UNKNOWN, EventLog, person_key, voice_decided
-from .speaker import SpeakerID
+from .rooms import MAIN
+from .speaker import ANY_MIC, SpeakerID
 
 # Same-person sentences score ~0.8-0.9 with this speaker model and different people <= ~0.2 (measured on the
 # user's recordings); requests are often shorter and noisier, so the bar sits well below the same-person range.
@@ -65,14 +66,27 @@ def recluster(log: EventLog, same_voice: float = SAME_VOICE) -> dict:
 
 
 def enroll_named(log: EventLog, speaker_id: SpeakerID) -> list[str]:
-    """Rebuilds every named person's voiceprint; voices sharing a name count as one person. Returns who is enrolled."""
-    people: dict[str, tuple[str, list]] = {}
+    """Rebuilds every named person's voiceprints: one for each mic (room) they have MIN_REQUESTS_TO_ENROLL requests
+    on, and one of all of them together (ANY_MIC), for a mic they have too few on. Voices sharing a name count as
+    one person. Returns who is enrolled."""
+    people: dict[str, tuple[str, dict[str, list]]] = {}
     for c in log.clusters():
         if c["kind"] == PERSON and (key := person_key(c["name"])):
-            people.setdefault(key, (c["name"].strip(), []))[1].extend(_readable(log.request_audio(c["id"])))
-    enough = {key: (name, clips) for key, (name, clips) in people.items() if len(clips) >= MIN_REQUESTS_TO_ENROLL}
-    speaker_id.set_cluster_voiceprints({key: speaker_id.voiceprint(clips) for key, (_, clips) in enough.items()})
-    return sorted(name for name, _ in enough.values())
+            mics = people.setdefault(key, (c["name"].strip(), {}))[1]
+            for path, room in log.request_audio_by_room(c["id"]):
+                mics.setdefault(room or MAIN, []).extend(_readable([path]))
+    prints, enrolled = {}, []
+    for key, (name, mics) in people.items():
+        every = [clip for clips in mics.values() for clip in clips]
+        if len(every) < MIN_REQUESTS_TO_ENROLL:
+            continue
+        enrolled.append(name)
+        prints[(key, ANY_MIC)] = speaker_id.voiceprint(every)
+        for mic, clips in mics.items():
+            if len(clips) >= MIN_REQUESTS_TO_ENROLL:
+                prints[(key, mic)] = speaker_id.voiceprint(clips)
+    speaker_id.set_cluster_voiceprints(prints)
+    return sorted(enrolled)
 
 
 def _readable(paths: list[Path]) -> list[np.ndarray]:

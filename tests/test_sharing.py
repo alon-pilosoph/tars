@@ -39,7 +39,7 @@ def test_speaker_id_matches_while_voiceprints_are_swapped(tmp_path):
 
     sid = SpeakerID.__new__(SpeakerID)  # without the model: embed is a stand-in
     sid._voiceprints_path, sid.threshold, sid._lock = tmp_path / "voiceprints.npz", 0.5, threading.Lock()
-    sid.voiceprints, sid._from_clusters, sid._loaded_mtime = {}, set(), None
+    sid.prints, sid._from_clusters, sid._loaded_mtime = {}, set(), None
     sid.embed = lambda audio: np.ones(4) / 2
     rng = np.random.default_rng(0)
 
@@ -49,7 +49,7 @@ def test_speaker_id_matches_while_voiceprints_are_swapped(tmp_path):
 
     def rename():
         for i in range(50):
-            sid.set_cluster_voiceprints({f"p{j}": rng.normal(size=4) for j in range(i % 7)})
+            sid.set_cluster_voiceprints({(f"p{j}", ""): rng.normal(size=4) for j in range(i % 7)})
 
     together(match, match, rename)
     assert sid.names() == sorted(sid.voiceprints) or set(sid.names()) == set(sid.voiceprints)
