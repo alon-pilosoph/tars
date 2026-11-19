@@ -218,7 +218,9 @@ deploy/sim/run.sh uv run python -m voice_assistant.browser view https://wolt.com
 
 Voices are grouped in the web UI as people use TARS, and naming one makes a voiceprint. To recognize someone before
 that, send them a [recording session](web-ui.md#recording-sessions): a link to a page on their phone that has them
-say twelve sentences into TARS's own speakerphone, and makes their voiceprint from them.
+say twelve sentences into TARS's own speakerphone, plain talking, and makes their voiceprint on it from them. A
+voiceprint is per mic: in a room with a body (the Atom), a dozen requests to it, named on the Voices page, make that
+mic's ([self-learning](self-learning.md)).
 
 ```bash
 uv run voice-assistant --record-session voice --for NAME   # the link, to NAME's Telegram chat if they have one

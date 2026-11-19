@@ -865,7 +865,8 @@ class Assistant:
         if not self.speaker_id or audio is None:
             return None
         try:
-            return self.speaker_id.identify(audio.astype("int16").tobytes(), threshold=self.name_threshold)
+            pcm = audio.astype("int16").tobytes()
+            return self.speaker_id.identify(pcm, threshold=self.name_threshold, mic=self.room)
         except Exception as e:  # noqa: BLE001 - greeted without a name
             print(f"(couldn't tell who spoke: {e!r})")
             return None
@@ -1233,7 +1234,9 @@ class Assistant:
         """Transcribe, identify the speaker, and set the brain and voice to work, all without a sound."""
         # Speaker ID runs while the audio is transcribed, so it adds no latency.
         identifying = (
-            self._identifying.submit(self.speaker_id.describe, pcm) if self.speaker_id and not self.person else None
+            self._identifying.submit(self.speaker_id.describe, pcm, self.room)  # held to this room's mic
+            if self.speaker_id and not self.person
+            else None
         )
         t = time.perf_counter()
         try:

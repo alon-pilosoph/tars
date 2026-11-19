@@ -146,7 +146,7 @@ def test_voiceprints_are_shared_between_processes_whatever_the_names(tmp_path, n
     web = speaker_id_without_the_model(tmp_path / "vp.npz")
     assistant = speaker_id_without_the_model(tmp_path / "vp.npz")
     web.enroll("file", [clip(1, 0, 0, 0)])  # np.savez can't take "file" as an array name
-    web.set_cluster_voiceprints({"allow_pickle": web.voiceprint([clip(0, 1, 0, 0)])})
+    web.set_cluster_voiceprints({("allow_pickle", ""): web.voiceprint([clip(0, 1, 0, 0)])})
     assert assistant.identify(clip(1, 0, 0, 0).tobytes()) == "file"  # picked up without a restart
     assert assistant.identify(clip(0, 1, 0, 0).tobytes()) == "allow_pickle"
 
@@ -154,10 +154,10 @@ def test_voiceprints_are_shared_between_processes_whatever_the_names(tmp_path, n
 def test_voiceprints_made_from_named_voices_go_when_the_name_does(tmp_path, no_speaker_model):
     sid = speaker_id_without_the_model(tmp_path / "vp.npz")
     sid.enroll("alon", [clip(1, 0, 0, 0)])  # recorded sentences, --enroll
-    sid.set_cluster_voiceprints({"stacey": sid.voiceprint([clip(0, 1, 0, 0)])})
+    sid.set_cluster_voiceprints({("stacey", ""): sid.voiceprint([clip(0, 1, 0, 0)])})
     sid.set_cluster_voiceprints({})  # Stacey's voice was renamed, merged away or marked not a person
     assert set(speaker_id_without_the_model(tmp_path / "vp.npz").voiceprints) == {"alon"}
-    sid.set_cluster_voiceprints({"alon": sid.voiceprint([clip(0, 0, 1, 0)])})  # naming a voice Alon replaces it
+    sid.set_cluster_voiceprints({("alon", ""): sid.voiceprint([clip(0, 0, 1, 0)])})  # naming a voice Alon replaces it
     sid.set_cluster_voiceprints({})
     assert speaker_id_without_the_model(tmp_path / "vp.npz").voiceprints == {}
 
@@ -178,7 +178,7 @@ def test_the_first_voiceprint_format_still_loads(tmp_path, no_speaker_model):
 def test_naming_a_voice_replaces_the_voiceprint_enrolled_under_that_name(tmp_path, no_speaker_model):
     sid = speaker_id_without_the_model(tmp_path / "vp.npz")
     sid.enroll("Alon ", [clip(1, 0, 0, 0)])  # --enroll keeps the name as typed
-    sid.set_cluster_voiceprints({"alon": sid.voiceprint([clip(0, 1, 0, 0)])})  # keyed by events.person_key
+    sid.set_cluster_voiceprints({("alon", ""): sid.voiceprint([clip(0, 1, 0, 0)])})  # keyed by events.person_key
     assert list(speaker_id_without_the_model(tmp_path / "vp.npz").voiceprints) == ["alon"]
 
 
@@ -225,3 +225,29 @@ def test_a_wake_model_file_that_came_down_broken_is_fetched_again_not_kept(tmp_p
     with pytest.raises(RuntimeError, match="something else"):  # nothing broken to fetch: raised at once
         wake._load(fault, "hey_jarvis", fetched.append)
     assert fetched == [["hey_jarvis"]]
+
+
+def test_a_request_is_held_to_the_voiceprint_of_the_mic_that_heard_it(tmp_path, no_speaker_model):
+    sid = speaker_id_without_the_model(tmp_path / "vp.npz")
+    # Alon on the Atom, and Stacey only from the speakerphone: through the Atom, Alon sounds like (1, 0, 0, 0).
+    sid.set_cluster_voiceprints(
+        {
+            ("alon", "Bedroom"): sid.voiceprint([clip(1, 0, 0, 0)]),
+            ("alon", "home"): sid.voiceprint([clip(0, 0, 1, 0)]),
+            ("stacey", "home"): sid.voiceprint([clip(0, 1, 0, 0)]),
+        }
+    )
+    assert sid.identify(clip(1, 0, 0, 0).tobytes(), mic="Bedroom") == "alon"
+    assert sid.identify(clip(1, 0, 0, 0).tobytes(), mic="home") is None  # the speakerphone's Alon sounds otherwise
+    assert sid.identify(clip(0, 1, 0, 0).tobytes(), mic="Bedroom") == "stacey"  # her other mic's is better than none
+    assert sid.voiceprints == {"alon": ["Bedroom", "home"], "stacey": ["home"]}
+
+
+def test_one_of_every_mic_is_used_on_a_mic_someone_has_none_of_their_own(tmp_path, no_speaker_model):
+    sid = speaker_id_without_the_model(tmp_path / "vp.npz")
+    sid.enroll("Alon", [clip(1, 0, 0, 0)])  # before voiceprints had mics: every mic's
+    sid.enroll("Alon", [clip(0, 0, 1, 0)], mic="Kitchen")
+    assert sid.identify(clip(1, 0, 0, 0).tobytes(), mic="Bedroom") == "alon"
+    assert sid.identify(clip(1, 0, 0, 0).tobytes(), mic="Kitchen") is None
+    again = speaker_id_without_the_model(tmp_path / "vp.npz")  # kept, mics and all
+    assert again.voiceprints == {"alon": ["", "Kitchen"]}

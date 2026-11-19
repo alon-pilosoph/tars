@@ -367,13 +367,19 @@ class EventLog:
         return samples
 
     def request_audio(self, cluster_id: int) -> list[Path]:
-        paths = [
-            self.folder / r["utterance_audio"]
-            for r in self.store.rows(
-                "SELECT utterance_audio FROM events WHERE cluster_id=? AND utterance_audio IS NOT NULL", (cluster_id,)
-            )
+        return [path for path, _ in self.request_audio_by_room(cluster_id)]
+
+    def request_audio_by_room(self, cluster_id: int) -> list[tuple[Path, str | None]]:
+        """A voice's requests that still have their audio, with the room each was heard in (None: a home with one,
+        or before rooms)."""
+        rows = self.store.rows(
+            "SELECT utterance_audio, room FROM events WHERE cluster_id=? AND utterance_audio IS NOT NULL", (cluster_id,)
+        )
+        return [
+            (self.folder / r["utterance_audio"], r["room"])
+            for r in rows
+            if (self.folder / r["utterance_audio"]).exists()
         ]
-        return [p for p in paths if p.exists()]
 
     def wakes(self, ids: list[int | None]) -> dict[int, dict]:
         """What conversations show about the wakes that started them, including whether a person decided the voice."""

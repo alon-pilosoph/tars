@@ -372,11 +372,11 @@ class FakeSpeakerID:
         self.voiceprints = {"alon": None}
         self.who, self.thresholds = who, []
 
-    def identify(self, pcm, threshold=None):
+    def identify(self, pcm, threshold=None, mic=""):
         self.thresholds.append(threshold)
         return self.who
 
-    def describe(self, pcm):
+    def describe(self, pcm, mic=""):
         return self.who, 0.8 if self.who else 0.1, None
 
 
