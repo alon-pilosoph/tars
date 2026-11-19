@@ -20,7 +20,7 @@ def test_a_real_status_is_read_and_anything_else_is_not():
     on = parse(ON_FRAME)
     assert on.on and not on.held and on.fan == "medium" and not on.uv and on.timer_hours == 0
     assert on.pm25 == pytest.approx(14.2) and on.temperature == pytest.approx(24.6)
-    assert on.filter_percent == pytest.approx(40.74, abs=0.01)
+    assert on.filter_used == pytest.approx(40.74, abs=0.01)  # its hours-run counter: 1760 of 4320
     assert not parse(OFF_FRAME).on
     assert parse(HELD_FRAME).held
     assert parse(ON_FRAME[:-3] + b"\x00\x00\xee") is None  # a bad checksum
@@ -31,13 +31,13 @@ class Pretend:
     """A purifier that takes commands, or doesn't: `held`; `fails` connections drop first."""
 
     def __init__(self, held=False, fails=0, ignores=False):
-        self.state = {"on": False, "fan": 1, "uv": False, "auto": False, "night": False, "timer": 0}
+        self.state = {"on": False, "fan": 1, "uv": False, "auto": False, "night": False, "timer": 0, "buzzer": True}
         self.held, self.fails, self.ignores = held, fails, ignores
         self.sent: list[bytes] = []
 
     def status(self) -> Status:
         s = self.state
-        flags = s["on"] | s["uv"] << 1 | bool(s["timer"]) << 2 | s["auto"] << 5 | s["night"] << 6
+        flags = s["on"] | s["uv"] << 1 | bool(s["timer"]) << 2 | s["buzzer"] << 3 | s["auto"] << 5 | s["night"] << 6
         return Status(self.held, FANS[s["fan"]], s["timer"], flags, 2.0, 24.0, 40.0)
 
     def talk(self, commands, done):
@@ -48,7 +48,7 @@ class Pretend:
             return self.status()
         self.sent += commands
         for c in [] if self.ignores else commands:
-            key = {1: "on", 2: "fan", 3: "uv", 4: "timer", 5: "auto", 6: "night"}[c[2]]
+            key = {1: "on", 2: "fan", 3: "uv", 4: "timer", 5: "auto", 6: "night", 8: "buzzer"}[c[2]]
             self.state[key] = c[4] if key in ("fan", "timer") else bool(c[4])
         return self.status()
 
@@ -64,7 +64,7 @@ def purifier(**kw) -> tuple[Purifier, Pretend]:
 
 def test_on_off_and_its_status():
     p, link = purifier()
-    assert p.status() == "air purifier: off, fan medium, PM2.5 2, 24 °C, filter 40%"
+    assert p.status() == "air purifier: off, fan medium, PM2.5 2, 24 °C, filter 60% left"
     assert call(p, "on") == "done: air purifier reports on"
     assert call(p, "off") == "done: air purifier reports off"
     assert link.sent == [frame(1, 0, 1), frame(1, 0, 0)]
@@ -101,6 +101,14 @@ def test_uv_is_a_press():
     p, link = purifier()
     assert call(p, "press", button="uv on") == "done: air purifier reports UV on"
     assert link.state["uv"]
+
+
+def test_its_buzzer_is_a_press_and_said_only_when_off():
+    p, link = purifier()
+    assert call(p, "press", button="buzzer off") == "done: air purifier reports buzzer off"
+    assert not link.state["buzzer"] and "buzzer off" in p.status()
+    assert call(p, "press", button="buzzer on") == "done: air purifier reports buzzer on"
+    assert "buzzer" not in p.status()
 
 
 def test_a_purifier_that_doesn_t_change_is_not_said_to_have():
@@ -243,3 +251,167 @@ def test_a_restart_that_doesnt_help_is_told_once_and_never_as_the_purifier_gone(
     can_listen[0] = True
     watch.look()
     assert told[-1] == "My Bluetooth works again." and not watch.stuck
+
+
+class PretendAtom:
+    """firmware/atom-lite-bt as TARS meets it, on this machine's loopback, with a purifier beside it (Pretend): its
+    key "the-key"; `near` False, it can't connect to the purifier; `heard_ms`, what "heard" says."""
+
+    def __init__(self, purifier: Pretend, near=True, heard_ms=1000):
+        import asyncio
+        import threading
+
+        self.purifier, self.near, self.heard_ms = purifier, near, heard_ms
+        self.sessions, self.links = 0, 0
+        self.loop = asyncio.new_event_loop()
+        ready = threading.Event()
+
+        def run():
+            asyncio.set_event_loop(self.loop)
+            self.server = self.loop.run_until_complete(asyncio.start_server(self._serve, "127.0.0.1", 0))
+            self.port = self.server.sockets[0].getsockname()[1]
+            ready.set()
+            self.loop.run_forever()
+
+        threading.Thread(target=run, daemon=True).start()
+        ready.wait()
+
+    def stop(self):
+        def close():
+            self.server.close()
+            self.loop.stop()
+
+        self.loop.call_soon_threadsafe(close)
+
+    def _frame(self) -> bytes:
+        s = self.purifier.status()
+        body = [0x0D, 0xA0, 0x20 if s.held else 0x21, FANS.index(s.fan), s.timer_hours, s.flags, 0, 20, 0, 240, 0]
+        body += [0x40, 0x06, 0]
+        return bytes([0xAA, *body, sum(body) & 0xFF, 0xEE])
+
+    async def _serve(self, reader, writer):
+        import asyncio
+        import hashlib
+        import hmac
+
+        self.sessions += 1
+        writer.write(b"tars-bt 1 0123abcd\n")
+        proof = hmac.new(b"the-key", b"0123abcd", hashlib.sha256).hexdigest()
+        if (await reader.readline()).decode().strip() != f"auth {proof}":
+            writer.write(b"refused\n")
+            writer.close()
+            return
+        writer.write(b"ok\n")
+        live = None
+
+        async def report():
+            while True:
+                writer.write(b"live " + self._frame().hex().encode() + b"\n")
+                await asyncio.sleep(0.05)
+
+        while line := (await reader.readline()).decode().strip():
+            if line == "link":
+                if not self.near:
+                    writer.write(b"failed it didn't answer\n")
+                    continue
+                self.links += 1
+                writer.write(b"linked\n")  # its latest status follows at once, then each it reports
+                live = asyncio.ensure_future(report())
+            elif line == "unlink":
+                if live:
+                    live.cancel()
+                writer.write(b"unlinked\n")
+            elif line == "heard":
+                writer.write(f"heard {self.heard_ms}\n".encode())
+            elif line.startswith("send "):
+                sent = bytes.fromhex(line[5:])
+                if sent[2] not in (0xAF, 0xA2):  # its hello and asking for a status change nothing
+                    self.purifier.talk([sent], lambda _: True)
+                writer.write(b"sent\n")
+        if live:
+            live.cancel()
+        writer.close()
+
+
+@pytest.fixture
+def atom(monkeypatch):
+    """An Atom link to a PretendAtom, made with `atom(**kw)`."""
+    from examples.my_house import purifier as module
+
+    made = []
+
+    def make(key="the-key", **kw):
+        fake = PretendAtom(Pretend(), **kw)
+        made.append(fake)
+        monkeypatch.setattr(module, "ATOM_PORT", fake.port)
+        monkeypatch.setattr(module, "SETTLE_S", 0.5)
+        module._found.clear()
+        return module.Atom("48:87:2D:1F:C1:5C", "127.0.0.1", key), fake
+
+    yield make
+    for fake in made:
+        fake.stop()
+
+
+def test_through_an_atom_it_works_the_purifier_as_from_this_machine(atom):
+    link, fake = atom()
+    p = Purifier("bedroom purifier", link, sleep=lambda _: None)
+    assert p.status().startswith("bedroom purifier: off, fan medium")
+    assert call(p, "on") == "done: bedroom purifier reports on"
+    assert call(p, "set", fan="turbo") == "done: bedroom purifier reports fan turbo"
+    assert fake.purifier.state["on"] and fake.purifier.state["fan"] == 3
+    assert (fake.sessions, fake.links) == (3, 3)  # a connection a request, to the Atom and through it
+    assert link.heard(1.0) is True
+
+
+def test_an_atom_that_cant_reach_it_or_cant_be_reached_is_said(atom):
+    link, _ = atom(near=False, heard_ms=-1)
+    p = Purifier("bedroom purifier", link, sleep=lambda _: None)
+    with pytest.raises(HomeError, match="the Atom couldn't connect to it"):
+        p.status()
+    assert link.heard(1.0) is False  # the Atom answers, and hasn't heard it
+    link, fake = atom()
+    fake.stop()
+    with pytest.raises(HomeError, match="the Atom at 127.0.0.1 didn't answer"):
+        Purifier("bedroom purifier", link, sleep=lambda _: None).status()
+    assert link.heard(1.0) is None  # nothing known about the purifier
+
+
+def test_an_atom_with_another_key_is_refused(atom):
+    link, _ = atom(key="not-the-key")
+    with pytest.raises(HomeError, match="refused the key"):
+        Purifier("bedroom purifier", link, sleep=lambda _: None).status()
+
+
+def test_an_atom_gone_quiet_on_wi_fi_is_told_as_the_atom_not_the_purifier():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told, reachable = [0.0], [], [False]
+    watch = Watch(
+        "bedroom purifier",
+        lambda s: True if reachable[0] else None,
+        told.append,
+        clock=lambda: now[0],
+        via="tars-bt-bedroom.local",
+    )
+    now[0] = GONE_AFTER_S * 3
+    for _ in range(4):
+        watch.look()
+    assert len(told) == 1 and "The Atom I reach the bedroom purifier through" in told[0] and not watch.gone
+    reachable[0] = True
+    watch.look()
+    assert told[-1] == "The Atom for the bedroom purifier answers again."
+
+
+def test_an_atom_purifier_needs_its_key(tmp_path):
+    import examples.my_house as plugin
+    from examples.my_house.purifier import Atom
+    from voice_assistant.home import Context
+
+    spec = {"name": "bedroom purifier", "address": "48:87:2D:1F:C1:5C", "atom": "tars-bt-bedroom.local"}
+    with pytest.raises(ValueError, match="no PURIFIER_ATOM_KEY in .env"):
+        plugin.setup({}, Context(tmp_path, lambda name: None))["purifier"](spec)
+    made = plugin.setup({}, Context(tmp_path, {"PURIFIER_ATOM_KEY": "k"}.get))["purifier"](spec)
+    assert isinstance(made._link, Atom) and made._link.host == "tars-bt-bedroom.local"
+    with pytest.raises(ValueError, match="its Bluetooth address, like"):
+        plugin.setup({}, Context(tmp_path, lambda name: None))["purifier"]({**spec, "address": "bedroom"})

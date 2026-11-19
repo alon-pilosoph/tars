@@ -27,7 +27,7 @@ unlock_voices = ["alon"]
 
 [home.plugins.my_house]
 module = "examples.my_house"
-grant = ["TUYA_LOCAL_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
+grant = ["TUYA_LOCAL_KEY", "PURIFIER_ATOM_KEY", "home_assistant", "tv_agent", "devices", "announce", "tell"]
 blaster = { id = "bf0123456789abcdef", address = "192.168.1.50", version = "3.5", control_type = 2 }
 
 [[home.devices]]
@@ -170,6 +170,51 @@ seconds"), and again when it's back. A request it answers counts as heard. When 
 told, and never as the purifier being gone. Two of them in range show as `AC500` with
 different addresses: the one in a room away is faint (around -88 dBm) and may not answer at all from there.
 
+### A purifier in another room
+
+One out of the Pi's range is reached through an M5Stack Atom Lite beside it, running our own firmware
+([`firmware/atom-lite-bt`](../../firmware/atom-lite-bt/src/main.cpp)): it keeps a Bluetooth connection to the purifier
+ready, and TARS uses it over Wi-Fi, a request at a time, so a command is confirmed by the purifier's own status in
+about a second and a half. The protocol stays in `purifier.py`; the Atom only carries the bytes. Give the purifier
+`atom`, the Atom's address on the home network, and put the key it shares with the Atom in `.env` as
+`PURIFIER_ATOM_KEY` (the plugin's grant names it, as above):
+
+```toml
+[[home.devices]]
+name = "bedroom purifier"
+kind = "my_house.purifier"
+address = "48:87:2D:00:00:01"
+atom = "tars-bt-bedroom.local"
+```
+
+What the purifier does, which the firmware works around (found in November 2026): it takes a request's commands only
+on a fresh connection, after the hello frames, so each connection carries one request and is replaced after; and it
+drops a connection after about 13 seconds without a hello, so the ready one gets a hello every few seconds. Through
+ESPHome's Bluetooth proxy, and ESPHome's own Bluetooth stack, connections hung or never came up; NimBLE, which the
+firmware uses, connected every time.
+
+While the Atom holds its purifier, nothing else can connect to it (Soehnle's app included).
+
+The watch asks the Atom when the purifier last answered. When it's the Atom that doesn't answer (unplugged, or off the
+Wi-Fi), twice running, the maintainers are told so, once, and again when it's back; never as the purifier being gone.
+The Atom's light: green, all well; orange, the purifier hasn't answered for a minute; red, no Wi-Fi.
+
+### The purifier beside the Pi, held ready too
+
+Made fresh for each request, a connection from the Pi's own Bluetooth took about eight seconds (its aluminium case
+dulls it), before the command itself. So the purifier in the Pi's own range is held ready the same way, by the purifier
+bridge ([`bridge.py`](bridge.py)): the Atom's firmware in Python, on the Pi, which every TARS process (voice,
+Telegram, the web UI) goes through, since the purifier takes one connection at a time. Give that purifier
+`atom = "127.0.0.1"`, and run the bridge as a service:
+
+```sh
+cp examples/my_house/tars-purifier-bridge.service ~/.config/systemd/user/   # its address is on ExecStart's line
+systemctl --user daemon-reload && systemctl --user enable --now tars-purifier-bridge
+```
+
+If the bridge stops answering, the maintainers are told so, as for an Atom. If it can't connect for two minutes, it
+switches the Pi's Bluetooth off and on.
+
 ## Setting it up
 
 The house's Home Assistant runs on the Pi ([setting it up](../../docs/home.md#setting-it-up)), with the MQTT broker
@@ -206,6 +251,12 @@ for the Nuki (`docker compose --profile mqtt up -d`).
 5. **The TV and the soundbar.** `uv run python -m examples.my_house.ir press soundbar volume_up` should make it
    louder, and `... ir test TV`, with the TV on, tries its on, off and power codes and saves what worked.
 6. **The Fire TV.** As any Android TV box ([setting it up](../../docs/home.md#setting-it-up), step 4).
+7. **The Atom, for a purifier in another room.** In `firmware/atom-lite-bt`, copy `src/secrets.example.h` to
+   `src/secrets.h` and fill it in (`openssl rand -base64 32` for its key, which goes in TARS's `.env` too), set
+   `NAME` and `PURIFIER` (the purifier's address) in `platformio.ini`, plug the Atom into a computer with
+   [PlatformIO](https://platformio.org) and `pio run -e usb -t upload`. After that it needs only power, beside the
+   purifier, from a USB-A port (a USB-C charger gives the Atom Lite nothing); updates go over Wi-Fi
+   (`pio run -e ota -t upload`).
 
 `uv run voice-assistant --check` then has a line for each: the blaster answers, the AC's profile was tried on the
 AC, the TV's codes were tried on it, and the Fire TV answers.
