@@ -92,9 +92,9 @@ STEP_TIMEOUT_S = 40.0  # one step: the model's answer, a screenshot to read
 # How long a new task, or someone's own command, waits for the step the agent is on to end (a model's answer can't be
 # cut short: it's thrown away when it comes).
 STOP_WAIT_S = 5.0
-# How hard the model thinks at each step: high, as every call to it does (the owner's choice, 2026-11-19); "low" made
-# each step quicker, at the model's default effort each step thought for seconds.
-AGENT_EFFORT = "high"
+# How hard the model thinks at each step: medium, as every everyday call to it does (the owner's choice, 2026-11-19;
+# high only for the hardest work); "low" made each step quicker, the model's default thought for seconds a step.
+AGENT_EFFORT = "medium"
 UI_DUMP = "/sdcard/tars_ui.xml"
 KEY_FILE = "voice_data/androidtv/adbkey"  # TARS's ADB key: the box asks once whether to trust it
 CONNECT_TIMEOUT_S = 3.0  # also how long a command may go without a word from the box, unless it says otherwise

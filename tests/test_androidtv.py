@@ -341,7 +341,7 @@ def test_the_agent_works_step_by_step_and_finishes_with_what_to_say():
     assert "input keyevent KEYCODE_WAKEUP" in box.commands  # it woke the TV first
     assert box.state["front"] == "com.stremio.one"
     assert any(c.endswith("input text toy%sstory") for c in box.commands)
-    assert client.requests[-1]["reasoning"] == {"effort": "high"}
+    assert client.requests[-1]["reasoning"] == {"effort": "medium"}
     pressed = next(i["output"] for i in client.requests[-1]["input"] if str(i.get("output", "")).startswith("pressed"))
     assert "the screen now:\napp: " in pressed  # no extra round trip to look
     last = client.requests[-1]["input"]

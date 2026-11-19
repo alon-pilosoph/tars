@@ -85,7 +85,7 @@ class Notes:
             model=model,
             input=prompt,
             store=False,
-            reasoning={"effort": "high"},
+            reasoning={"effort": "medium"},
         )
         notes = (reply.output_text or "").strip()
         if notes:
