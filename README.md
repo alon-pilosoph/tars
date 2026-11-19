@@ -39,6 +39,9 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **Knows who's talking**, locally and in parallel, so it adds no latency ([self-learning](docs/self-learning.md)).
   To know someone from the start, TARS sends them a link to a short recording session on its own speakerphone
   ([recording sessions](docs/web-ui.md#recording-sessions)).
+- **Gets to know each person**: their words for things, how they like to be answered, the people around them,
+  what's coming up (asked about after). Learned as it goes, by looking back on each conversation, and used without
+  ever saying so ([memory](docs/memory.md)).
 - **In every room**: another machine, or a small ESP32 board, is TARS's ears and voice in another room, each room its
   own conversation, with reminders said where their person was last heard ([bodies](docs/bodies.md),
   [the Atom](docs/atom.md)).
@@ -128,7 +131,8 @@ assistant, edit the system prompt.
 | [The house](docs/home.md) | Home Assistant's devices, an Android TV and its agent, unlocking, plugins, setting it up |
 | [Who's home](docs/presence.md) | phones on the Wi-Fi, asking the routers, the front door's lock, the rules, where it's used |
 | [Wishes that come true](docs/wishes.md) | what TARS couldn't do, built by Claude Code once a maintainer taps Build it, and told to whoever asked |
-| [Skills and preferences](docs/skills.md) | taught by talking: "when I say bedtime…", "every day at 19:55, ask me…", "turn the AC back on at 5am", "when Stacey gets home…", "skip the sports news" |
+| [Skills](docs/skills.md) | taught by talking: "when I say bedtime…", "every day at 19:55, ask me…", "turn the AC back on at 5am", "when Stacey gets home…" |
+| [Memory](docs/memory.md) | what TARS knows about each person: their words for things, how they like answers, who's who, what's coming up, learned as it goes and used without saying so |
 | [Feeds](docs/feeds.md) | RSS feeds found, followed and summed up by talking: "find me feeds about gaming", "what's new in gaming?" |
 | [Reading pages](docs/pages.md) | "tell me more about that one": a link's page read the quick way or in the browser, signed in where they subscribe, learned per site |
 | [TARS's browser](docs/browser.md) | errands on any site from a chat, signing in from the vault, never committing without the person |

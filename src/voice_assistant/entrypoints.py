@@ -63,6 +63,7 @@ from .wiring import (
     start_auto_locks,
     start_buttons,
     start_heartbeat,
+    start_look_back,
     start_metering,
     start_presence,
     tell_maintainers,
@@ -362,6 +363,8 @@ def telegram(cfg: Config, root: Path) -> None:
     events = household.events
     start_heartbeat(events, "telegram", root)
     start_metering(cfg, events)
+    if not cfg.audio.enabled:  # a chat-only home: no voice process to look back on conversations
+        start_look_back(cfg, root, household)
     presence = household.presence
     tools = None
     if household.reminders is not None:
@@ -402,6 +405,7 @@ def telegram(cfg: Config, root: Path) -> None:
             skills=skills,
             myself=myself,
             tools=[p] if (p := make_pages(cfg, events, browse)) else [],
+            memory=household.memory,
         )
 
     tars = TelegramTars(
@@ -644,6 +648,7 @@ def typed(cfg: Config, root: Path) -> None:
         skills=household.skills,
         myself=household.myself,
         pages=make_pages(cfg, household.events),
+        memory=household.memory,
     )
     with Speaker(
         find_device(cfg.audio.output_device, "output"), voice.sample_rate, cfg.audio.playback_prebuffer_s
@@ -686,6 +691,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     events = household.events
     start_heartbeat(events, "assistant", root)
     start_metering(cfg, events)
+    start_look_back(cfg, root, household)
     speaker_id = household.speaker_id
     presence = household.presence
     reminders = make_reminders(cfg, household, push_to_talk)
@@ -703,7 +709,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         offer_welcome(skills)
     myself = household.myself
     tools = {"reminders": reminders, "home": home, "browser": browser, "feeds": household.feeds, "skills": skills,
-             "myself": myself, "pages": make_pages(cfg, events, browser)}  # fmt: skip
+             "myself": myself, "pages": make_pages(cfg, events, browser), "memory": household.memory}  # fmt: skip
     transcriber, brain, voice = make_pipeline(cfg, root, **tools)
     commands = house_commands(cfg, root, home)
     if commands and cfg.home.local_first:

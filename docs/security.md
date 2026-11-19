@@ -290,7 +290,7 @@ instructions and…". A model may believe them, so what matters is what code all
   - **A reply that searched the web, or read the feeds or a page, changes nothing.** From the moment a search
     starts, or a feed's stories or a page's words are read (a tool that says its answers are from `outside`), the
     house tool only reads devices for the rest of that reply (`Request.read_the_web`, set in `llm.py`, refused in `home.py`), and no other
-    tool changes anything either: no errand is started, no feed followed, no skill or preference taught, no setting
+    tool changes anything either: no errand is started, no feed followed, no skill taught, nothing remembered or forgotten, no setting
     set and no wish noted ([what each tool may change](#what-each-tool-may-change)). Each refusal of that kind goes
     through `toolbox.held_for_the_web`, which tells the brain; it then writes the reply once more from the person's
     own words alone: the first try and everything it read are dropped, and web search and every `outside` tool are
@@ -596,7 +596,8 @@ and holds each change at least as `held_back` does. Reading is never held back, 
 | a plugin's tool | what the plugin's code does, when it declares `changes=True`; one that doesn't is called as a read | yes | yes | yes | its grants; one change at a time with the house's |
 | `browse` | an errand queued, run in the person's own accounts | yes | yes | yes | only for someone known with a chat; nothing ordered, booked, paid or sent without their tap on Order, at the amounts shown |
 | `feeds` | a feed followed or dropped (reading marks what was told, by the reply's `<told>` marker) | yes | yes | yes | each person's own; reading marks the reply as having read the web |
-| `skills` | a skill saved, changed, paused, resumed or deleted; a preference remembered or forgotten | yes | yes | yes | only someone TARS knows; a skill does each step through the tools above, under their rules |
+| `skills` | a skill saved, changed, paused, resumed or deleted | yes | yes | yes | only someone TARS knows; a skill does each step through the tools above, under their rules |
+| `memory` | something about the person asking or the household remembered, corrected or forgotten (reading isn't held back) | yes | yes | yes | only someone TARS knows, and only theirs or the household's; a private one only in their own chat; what TARS picks up by itself is the look back's, after the conversation, from what was said to it by people it knows ([memory](memory.md)) |
 | `tars` | a setting set (`config.local.toml`, then a restart); a wish noted (to the maintainers, maybe a GitHub issue) or granted | yes | yes; nor are the records or the log read | yes | a setting only for someone known or asking aloud, only what `ADJUSTABLE` lists, within bounds; granting only for maintainers; a wish's issue posted only on a maintainer's tap |
 | `read_page` | whether the person subscribes to a site, saved; an errand to read a page, started through `browse` | yes | yes | yes | a page read only off the home network, at every redirect; reading it marks the reply as having read the web; the errand under `browse`'s rules, started before anything of the page reaches the model |
 | `send` | an item on the TARS page and the asker's chat | made only once the reply is kept | no: links come from the web | no | a link must be http(s), a file a known type |

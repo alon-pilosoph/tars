@@ -5,7 +5,8 @@ runs in WAL mode and every multi-step change is one IMMEDIATE transaction. event
 conversations.py (turns, sent items), reminders.py (timers, reminders, messages), presence.py (who's home),
 recording.py (recording sessions and their takes), browser/errands.py (the errands queued for TARS's browser) and
 feeds.py (the feeds each person follows), pages.py (how each site's pages are read), skills.py (what TARS is
-taught: skills and preferences) and myself.py (the wishes: what TARS was asked for and couldn't do) build on this.
+taught: skills), memory.py (what TARS knows about each person and the household) and myself.py (the wishes: what
+TARS was asked for and couldn't do) build on this.
 """
 
 import secrets
@@ -21,6 +22,14 @@ from .audio import save_wav
 from .config import ConfigError
 
 DB_FILE = "events.db"  # in the event log's folder
+
+# How far TARS has looked back on each conversation for what to remember (reflect.py): it can go on later, in a chat.
+LOOKED_BACK = """CREATE TABLE looked_back (
+    conversation_id INTEGER PRIMARY KEY,
+    through_turn INTEGER NOT NULL,   -- the last turn looked at
+    at REAL NOT NULL,
+    tries INTEGER NOT NULL DEFAULT 0 -- looks that failed since the last that worked
+)"""
 
 # AUTOINCREMENT so an id is never reused: the web UI deletes rows while the assistant adds them, and a reused id
 # would silently attach a new wake to an old conversation (or delete it along with one).
@@ -332,13 +341,24 @@ TABLES = {
     old TEXT NOT NULL,               -- JSON: what it was
     new TEXT NOT NULL                -- JSON: what it became
 )""",
-    "preferences": """CREATE TABLE preferences (
+    "looked_back": LOOKED_BACK,
+    "memories": """CREATE TABLE memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    person TEXT NOT NULL,            -- as person_key has them
-    about TEXT NOT NULL DEFAULT '',  -- "gaming news", "the AC"
-    text TEXT NOT NULL,              -- the preference, in plain words
-    guessed INTEGER NOT NULL DEFAULT 0, -- noticed by the model, not said by them
-    at REAL NOT NULL
+    person TEXT NOT NULL,            -- as person_key has them; '' for the household's (memory.py)
+    kind TEXT NOT NULL,              -- fact | like | style | thread | person
+    about TEXT NOT NULL DEFAULT '',  -- its topic: "the car", "Ari", "answers"
+    text TEXT NOT NULL,              -- in plain words, with dates written out
+    said INTEGER NOT NULL DEFAULT 1, -- they said it; 0: TARS noticed it (a guess)
+    private INTEGER NOT NULL DEFAULT 0, -- only ever in their own chat
+    due REAL,                        -- a thread: when it happens
+    until REAL,                      -- when it stops mattering; NULL: it lasts
+    asked REAL,                      -- a thread: when TARS asked how it went
+    source TEXT NOT NULL,            -- voice | chat | web | look back | moved
+    turn_id INTEGER,                 -- the turn it came from, if one did
+    created REAL NOT NULL,
+    changed REAL NOT NULL,
+    replaced REAL,                   -- when a correction replaced it, kept as history; NULL: as it is now
+    replaced_by INTEGER              -- the memory that replaced it
 )""",
 }
 INDEXES = [
@@ -351,7 +371,7 @@ INDEXES = [
     "CREATE INDEX errands_status ON errands(status)",
     "CREATE INDEX takes_session ON takes(session_id)",
     "CREATE UNIQUE INDEX feeds_person_url ON feeds(person, url)",
-    "CREATE INDEX preferences_person ON preferences(person)",
+    "CREATE INDEX memories_person ON memories(person)",
     "CREATE INDEX door_events_key ON door_events(key)",
     "CREATE INDEX usage_at ON usage(at)",
 ]
@@ -566,6 +586,33 @@ MIGRATIONS = [
     expires REAL NOT NULL,
     used REAL                        -- when a body link came with it; NULL: not yet
 )"""
+    ],
+    [  # preferences become memories (likes), and memories hold every kind of knowing
+        """CREATE TABLE memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person TEXT NOT NULL,            -- as person_key has them; '' for the household's (memory.py)
+    kind TEXT NOT NULL,              -- fact | like | style | thread | person
+    about TEXT NOT NULL DEFAULT '',  -- its topic: "the car", "Ari", "answers"
+    text TEXT NOT NULL,              -- in plain words, with dates written out
+    said INTEGER NOT NULL DEFAULT 1, -- they said it; 0: TARS noticed it (a guess)
+    private INTEGER NOT NULL DEFAULT 0, -- only ever in their own chat
+    due REAL,                        -- a thread: when it happens
+    until REAL,                      -- when it stops mattering; NULL: it lasts
+    asked REAL,                      -- a thread: when TARS asked how it went
+    source TEXT NOT NULL,            -- voice | chat | web | look back | moved
+    turn_id INTEGER,                 -- the turn it came from, if one did
+    created REAL NOT NULL,
+    changed REAL NOT NULL,
+    replaced REAL,                   -- when a correction replaced it, kept as history; NULL: as it is now
+    replaced_by INTEGER              -- the memory that replaced it
+)""",
+        "CREATE INDEX memories_person ON memories(person)",
+        (
+            "INSERT INTO memories (person, kind, about, text, said, source, created, changed) "
+            "SELECT person, 'like', about, text, 1 - guessed, 'moved', at, at FROM preferences ORDER BY id"
+        ),
+        "DROP TABLE preferences",
+        LOOKED_BACK,
     ],
 ]
 

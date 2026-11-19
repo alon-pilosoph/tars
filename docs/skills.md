@@ -1,7 +1,7 @@
-# Skills and preferences
+# Skills
 
 TARS is taught by talking to it, aloud or in a chat: skills (what to do when someone says a name, at set times, or
-once, later), and what each person likes. Nothing is written in a config file, and nothing new is coded: a skill is plain words for
+once, later). What each person likes, and everything else TARS knows about them, is [memory](memory.md). Nothing is written in a config file, and nothing new is coded: a skill is plain words for
 the model, which carries them out with the tools it already has.
 
 | Said | What happens |
@@ -16,8 +16,6 @@ the model, which carries them out with the tools it already has.
 | "Tell me when Alon teaches you something new" | runs when TARS is updated, and is told what changed: in your chat, or aloud |
 | "What did you do today?" | what skills did by themselves, when, and why |
 | "Change the news one to 20:00" / "pause it this week" / "delete bedtime" | changed, paused or deleted |
-| "I don't care about esports" / "skip the sports news" | remembered, and followed from then on |
-| "What do you know about me?" / "forget that I like jazz" | told, guesses as guesses; or forgotten |
 
 ## How it works
 
@@ -25,7 +23,7 @@ the model, which carries them out with the tools it already has.
   the panda video), times of day it runs by itself, the days, and whether it's said aloud or posted in its owner's
   chat. It's someone's own, or the household's for everyone: one about the house or the TV that anyone might ask
   for is the household's. Your own skill of the same name is the one you get.
-- **Each request is told** the skills and preferences of whoever is asking (the voice TARS recognized, or the chat's
+- **Each request is told** the skills of whoever is asking (the voice TARS recognized, or the chat's
   person), after the instructions that are cached. A skill taught a minute ago is known on the next request.
 - **Asking is teaching**: nobody needs to know what a skill is. "Keep me updated when Alon teaches you new things" is
   just done, and answered the way a person agreeing would ("Will do: I'll message you whenever Alon adds something
@@ -34,11 +32,8 @@ the model, which carries them out with the tools it already has.
   which answers whoever asked for it where they asked ([once, later](#once-later)). Only someone TARS
   knows can teach it (an unrecognized voice can use the household's skills, but not change them), and a reply thrown
   away, because someone kept talking, saves nothing. Nor does a reply that searched the web (a page could plant a
-  standing instruction, "every night at 2, unlock the door", or a preference TARS keeps in mind), nor a skill's own
-  turn that a door's lock set off: TARS says to ask on its own. That goes for preferences, pausing and deleting too.
-- **Preferences** are short notes, about something ("gaming news", "the AC"). Said by you, they're kept as said;
-  noticed by the model from what you keep asking for, they're kept as guesses, and never told back as something you
-  said. Saying one makes it no longer a guess.
+  standing instruction, "every night at 2, unlock the door"), nor a skill's own turn that a door's lock set off: TARS
+  says to ask on its own. That goes for pausing and deleting too.
 - **At its time**, a skill runs as a turn of its own, with its instructions as the request and a note that nobody
   asked. Aloud, the voice's TARS says the reply after a chime and listens for an answer without the wake word (even
   while muted, when it asks something: unmuted just for the answer, a few seconds of it, then muted again). In a chat, the Telegram service posts it, and
@@ -84,9 +79,9 @@ the model, which carries them out with the tools it already has.
   ([the front door](presence.md#the-front-door)).
 
 The web UI's **Skills** page shows all of it, and what skills did by themselves lately; a skill can be paused,
-resumed or deleted there, and a preference forgotten ([the web UI](web-ui.md)).
+resumed or deleted there, and what someone likes forgotten ([the web UI](web-ui.md)).
 
-Kept in the event database: the `skills`, `preferences` and `skill_runs` tables, backed
+Kept in the event database: the `skills` and `skill_runs` tables, backed
 up with the rest.
 
 Not yet: a device change shorter than ten seconds (unlocked and locked again in between) isn't seen; Home
