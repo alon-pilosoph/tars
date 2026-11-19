@@ -350,6 +350,33 @@ class _AtomSession:
         return self.latest
 
 
+BRIDGE_UNIT = "tars-purifier-bridge"  # bridge.py, as tars-purifier-bridge.service runs it
+BRIDGE_UP_S = 15.0  # a restarted bridge answers within this
+
+
+def restart_bridge(host: str = "127.0.0.1", wait_s: float = BRIDGE_UP_S) -> bool:
+    """The purifier bridge on this machine restarted (systemctl --user, as the same user TARS runs as), and waited
+    for until it takes a connection again: whether it does."""
+    try:
+        done = subprocess.run(
+            ["systemctl", "--user", "restart", BRIDGE_UNIT], capture_output=True, timeout=30, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"(purifier watch: couldn't restart the bridge: {e})")
+        return False
+    if done.returncode != 0:
+        print(f"(purifier watch: couldn't restart the bridge: {done.stderr.decode(errors='replace').strip()})")
+        return False
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        try:
+            socket.create_connection((host, ATOM_PORT), timeout=1.0).close()
+            return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
 def power(state: str) -> bool:
     """This machine's Bluetooth `state`, "on" or "off": whether bluetoothctl did it."""
     try:
@@ -493,9 +520,10 @@ STUCK_AFTER = 2  # listens in a row this machine couldn't make before its Blueto
 class Watch:
     """Whether the purifier's Bluetooth is still on, for TARS's maintainers. `heard(seconds)`: whether its broadcast
     is heard, None if this machine couldn't listen (Bluetooth.heard). `tell(text)`: to the maintainers' chats.
-    `restart()`: this machine's Bluetooth off and on (Bluetooth.restart). Told once when it's gone quiet for
+    `restart()`: what reaching it again takes: this machine's Bluetooth off and on (Bluetooth.restart), or the bridge
+    restarted (restart_bridge), for one through the bridge. Told once when it's gone quiet for
     GONE_AFTER_S, and once when it's back; anything that reaches it (a request it answered) counts as heard. When
-    it's this machine that can't listen, STUCK_AFTER times running, its Bluetooth is restarted first; told only if
+    it's this machine (or its bridge) that can't listen, STUCK_AFTER times running, it's restarted first; told only if
     that doesn't fix it, and never as the purifier being gone."""
 
     def __init__(
@@ -585,7 +613,12 @@ class Watch:
         if self._failed < STUCK_AFTER:
             return None
         if self._restart is not None:
-            print("(purifier watch: this machine's Bluetooth can't listen; restarting it)")
+            what = (
+                "the purifier bridge isn't answering"
+                if self._via in LOOPBACK
+                else "this machine's Bluetooth can't listen"
+            )
+            print(f"(purifier watch: {what}; restarting it)")
             self._restart()
             heard = self._heard(LISTEN_S)
             if heard is not None:
@@ -593,7 +626,12 @@ class Watch:
                 return heard
         if not self.stuck:
             self.stuck = True
-            if self._via in LOOPBACK:
+            if self._via in LOOPBACK and self._restart is not None:
+                self._tell(
+                    f"The purifier bridge on this machine isn't answering, so I can't work the {self.name}. I "
+                    "restarted it and it still doesn't; restarting me (the Pi) usually fixes it."
+                )
+            elif self._via in LOOPBACK:
                 self._tell(
                     f"The purifier bridge on this machine isn't answering, so I can't work the {self.name}. "
                     "Restarting it usually fixes it: systemctl --user restart tars-purifier-bridge."

@@ -32,6 +32,13 @@ KEEP_S = 5.0  # a hello this often keeps the ready connection up
 STATUS_S = 2.5  # a new connection counts once it's reported a status
 TRIES = 3  # when a request is waiting for one
 STUCK_S = 120.0  # failing to connect this long, this machine's Bluetooth is switched off and on, once in a while
+# Failing this long, Bluetooth restarted and all, the bridge stops, and systemd starts it afresh (Restart=always): a
+# fresh process is what has brought it back when restarting Bluetooth alone didn't (2026-11-19).
+GIVE_UP_S = 330.0
+
+
+class GivingUp(Exception):
+    """The bridge can't reach the purifier however it tries: its process ends, to be started afresh."""
 
 
 class Bridge:
@@ -50,7 +57,8 @@ class Bridge:
         self.listener: asyncio.Queue[bytes] | None = None  # the session's, while one holds it
         self.lock = asyncio.Lock()  # a session, or the keeping, at a time
         self._kept = 0.0
-        self._failing_since = 0.0
+        self._failing_since = 0.0  # since the last Bluetooth restart, or the first failure
+        self._down_since = 0.0  # since it last had a connection: Bluetooth restarts don't reset it
 
     def linked(self) -> bool:
         return self.client is not None and self.client.is_connected
@@ -82,7 +90,7 @@ class Bridge:
                 while self.last_heard == heard and time.monotonic() < deadline:
                     await asyncio.sleep(0.05)
                 if self.last_heard != heard:
-                    self.client, self._kept, self._failing_since = client, 0.0, 0.0
+                    self.client, self._kept, self._failing_since, self._down_since = client, 0.0, 0.0, 0.0
                     return ""
                 why = "it sent no status"
             except Exception as e:  # noqa: BLE001 - bleak's errors, BlueZ's and timeouts: tried again
@@ -104,6 +112,8 @@ class Bridge:
             async with self.lock:
                 try:
                     await self._keep_once()
+                except GivingUp:
+                    raise
                 except Exception as e:  # noqa: BLE001 - kept trying
                     print(f"(purifier bridge: {e!r})")
                     await self.drop()
@@ -117,6 +127,9 @@ class Bridge:
             if why:
                 now = time.monotonic()
                 self._failing_since = self._failing_since or now
+                self._down_since = self._down_since or now
+                if now - self._down_since >= GIVE_UP_S:
+                    raise GivingUp(f"no connection for {GIVE_UP_S:.0f} s, Bluetooth restarted and all ({why})")
                 if now - self._failing_since >= STUCK_S:
                     print(f"(purifier bridge: no connection for {STUCK_S:.0f} s ({why}); restarting Bluetooth)")
                     await asyncio.to_thread(power, "off")
@@ -148,12 +161,26 @@ class Bridge:
             writer.close()
             return
         say("ok")
+        # "heard" (is the purifier still there?) is answered at once, from what's known: never behind a request, or
+        # the keeping's reconnecting and Bluetooth restarts, which would make a busy bridge look like a dead one.
+        try:
+            first = (await reader.readline()).decode(errors="replace").strip()
+        except ConnectionError:
+            writer.close()
+            return
+        while first == "heard":
+            say(f"heard {int((time.monotonic() - self.last_heard) * 1000) if self.last_heard else -1}")
+            await writer.drain()
+            first = (await reader.readline()).decode(errors="replace").strip()
+        if not first:
+            writer.close()
+            return
         async with self.lock:
             requesting = False
             queue: asyncio.Queue[bytes] = asyncio.Queue()
             pump = asyncio.create_task(self._pump(queue, say))
             try:
-                while line := (await reader.readline()).decode(errors="replace").strip():
+                async for line in _lines(reader, first):
                     if line == "link":
                         why = "" if self.linked() and not self.used else await self.connect(TRIES)
                         if why:
@@ -197,12 +224,22 @@ class Bridge:
             say(f"live {(await queue.get()).hex()}")
 
 
+async def _lines(reader: asyncio.StreamReader, first: str):
+    """A session's lines: `first`, already read, then each until it hangs up."""
+    yield first
+    while line := (await reader.readline()).decode(errors="replace").strip():
+        yield line
+
+
 async def run(address: str, key: str, port: int = ATOM_PORT) -> None:
     bridge = Bridge(address, key)
     server = await asyncio.start_server(bridge.serve, "127.0.0.1", port)
     print(f"Purifier bridge for {address} on 127.0.0.1:{port}")
     async with server:
-        await asyncio.gather(server.serve_forever(), bridge.keep())
+        try:
+            await asyncio.gather(server.serve_forever(), bridge.keep())
+        except GivingUp as e:
+            raise SystemExit(f"(purifier bridge: {e}; stopping, to be started afresh)") from None
 
 
 def main() -> None:

@@ -212,8 +212,16 @@ cp examples/my_house/tars-purifier-bridge.service ~/.config/systemd/user/   # it
 systemctl --user daemon-reload && systemctl --user enable --now tars-purifier-bridge
 ```
 
-If the bridge stops answering, the maintainers are told so, as for an Atom. If it can't connect for two minutes, it
-switches the Pi's Bluetooth off and on.
+It heals itself, in steps, and the maintainers hear only about what none of them fixed:
+
+- **A request** that hits a Bluetooth error is tried again on a fresh connection (the purifier device's own tries).
+- **The bridge**, failing to connect for two minutes, switches the Pi's Bluetooth off and on; still failing after
+  five and a half, it stops, and systemd starts it afresh (`Restart=always`): a fresh process is what brought it back
+  when restarting Bluetooth alone didn't (2026-11-19). The watch's "is the purifier there?" is answered at once,
+  never behind a reconnect, so a busy bridge isn't taken for a dead one.
+- **The voice assistant**, when the bridge doesn't answer two looks in a row, restarts it (`systemctl --user restart
+  tars-purifier-bridge`, as the same user) and listens again; only if it still doesn't answer are the maintainers
+  told.
 
 ## Setting it up
 
