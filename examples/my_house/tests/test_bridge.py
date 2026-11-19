@@ -47,6 +47,8 @@ class PretendBleak:
 
     async def disconnect(self):
         self.is_connected = False
+        if self._reporting:
+            self._reporting.cancel()
 
 
 def _frame(purifier: Pretend) -> bytes:
@@ -70,13 +72,26 @@ def bridge(monkeypatch):
         ready.set()
         loop.run_forever()
 
-    threading.Thread(target=run, daemon=True).start()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
     ready.wait()
     monkeypatch.setattr(module, "ATOM_PORT", made["server"].sockets[0].getsockname()[1])
     monkeypatch.setattr(module, "SETTLE_S", 1.0)
     module._found.clear()
     yield made["bridge"]
+
+    async def shut():
+        made["server"].close()
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await made["server"].wait_closed()
+
+    asyncio.run_coroutine_threadsafe(shut(), loop).result(timeout=5)
     loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=5)
+    loop.close()
 
 
 def until_linked(bridge: Bridge) -> None:
