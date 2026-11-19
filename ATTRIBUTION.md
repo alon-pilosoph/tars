@@ -16,6 +16,7 @@ script.
 | [Silero VAD](https://github.com/snakers4/silero-vad) | MIT | speech detection; downloaded |
 | [Smart Turn](https://github.com/pipecat-ai/smart-turn) | BSD 2-Clause | end of turn; downloaded |
 | [WeSpeaker ResNet34-LM](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM) | CC BY 4.0 | speaker ID; downloaded |
+| [WeSep](https://github.com/wenet-e2e/wesep) (BSRNN + ECAPA, pretrained on VoxCeleb) and [WeSpeaker](https://github.com/wenet-e2e/wespeaker) | Apache 2.0 | `[extract]`'s server, an enrolled voice taken out of the TV; installed apart, never in this repo |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) (library; its pretrained models are CC BY-NC-SA 4.0) | Apache 2.0 | only for pretrained names like "hey_jarvis" |
 
 ## Web UI
