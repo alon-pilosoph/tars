@@ -140,7 +140,7 @@ def model_reader(client, model: str) -> Reader:
     def read(domain: str, text: str, links: list[str]) -> tuple[str | None, int | None]:
         listed = "\n".join(f"{i}. {link[:300]}" for i, link in enumerate(links, 1)) or "(none)"
         response = client.responses.create(
-            model=model, store=False, reasoning={"effort": "low"},
+            model=model, store=False, reasoning={"effort": "high"},
             input=READ.format(domain=domain, text=text[:TEXT_KEPT], links=listed),
             text={"format": {"type": "json_schema", "name": "sign_in", "schema": READ_SCHEMA, "strict": True}},
         )  # fmt: skip

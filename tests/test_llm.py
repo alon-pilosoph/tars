@@ -1004,6 +1004,12 @@ def test_qwen_is_told_when_to_hand_over_a_hard_question_unless_thats_off():
     assert llm.PONDER not in cerebras.requests[0]["messages"][0]["content"]
 
 
+def test_with_no_time_limit_the_thinking_model_takes_as_long_as_it_takes():
+    brain, openai, _ = cerebras_brain(lambda m: llm.PONDER, think_timeout_s=0, think_effort="xhigh")
+    assert "".join(brain.stream_reply("plan three days in Rome")) == f"{llm.THINKING} From OpenAI."
+    assert "timeout" not in openai.requests[0] and openai.requests[0]["reasoning"] == {"effort": "xhigh"}
+
+
 def test_the_thinking_model_is_given_a_time_limit():
     brain, openai, _ = cerebras_brain(lambda m: llm.PONDER, think_timeout_s=0.05)
 

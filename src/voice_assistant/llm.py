@@ -860,11 +860,9 @@ class OpenAIChat:
         model, extra, instructions = self._cfg.model, self._extra, self._instructions
         if think:
             model = self._cfg.think_model or self._cfg.model
-            extra = {
-                **self._extra,
-                "reasoning": {"effort": self._cfg.think_effort},
-                "timeout": self._cfg.think_timeout_s,
-            }
+            extra = {**self._extra, "reasoning": {"effort": self._cfg.think_effort}}
+            if self._cfg.think_timeout_s:
+                extra["timeout"] = self._cfg.think_timeout_s
             instructions = f"{self._instructions}\n\n{THINK_RULES}"
         if said_first.strip():
             instructions = f"{instructions}\n\n{CARRY_ON.format(said=said_first.strip())}"
@@ -1294,6 +1292,9 @@ class QuickChat(OpenAIChat):
             yield from super()._stream_reply(context, writing, said_first=answer)
             return
         limit = self._cfg.think_timeout_s
+        if not limit:  # no limit: it thinks for as long as it takes
+            yield from super()._stream_reply(context, writing, said_first=answer, think=True)
+            return
         timer = threading.Timer(limit, _stop, (writing, f"no answer within {limit:.0f} s"))
         timer.daemon, timer.name = True, "think-timeout"
         timer.start()
