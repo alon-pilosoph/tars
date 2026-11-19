@@ -100,7 +100,9 @@ class Request:
     `by_web`: said on the Talk page in a browser (a web body): `speaker` is who's signed in there, and it never
     counts as being at home by voice, wherever the browser is.
     `by_door`: the door whose lock set this turn off (a skill run because someone came home by opening it, doors.py):
-    what a lock says over MQTT is only ever who came in, so the turn reads the house, but changes nothing in it."""
+    what a lock says over MQTT is only ever who came in, so the turn reads the house, but changes nothing in it.
+    `attached`: what came with the message for the model to see or read (attached.Attached: a photo, a file); its
+    words are from anywhere, so the reply reads the house, but changes nothing in it."""
 
     speaker: str | None = None
     score: float | None = None
@@ -115,6 +117,7 @@ class Request:
     changed: Callable[[str, str], None] | None = None
     held_for_web: Callable[[], None] | None = None
     room: str = ""  # the room whose body heard it, by voice (rooms.py); "" with one room, or in a chat
+    attached: tuple = ()  # attached.Attached; typed loosely like emit
 
     def answered(self, what: str, answer: str) -> str:
         """`answer`, the house's to the change `what`, told to `changed`, and handed back."""

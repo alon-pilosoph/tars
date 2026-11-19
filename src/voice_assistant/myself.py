@@ -171,7 +171,8 @@ class Myself:
             house = ", ".join(devices) or "none listed"
             lines.append(f"the house: {house}" + ("; and all of Home Assistant" if cfg.home.url else ""))
         if cfg.telegram.enabled:
-            lines.append(f"Telegram: for {', '.join(cfg.telegram.people) or 'nobody yet'}")
+            people = ", ".join(cfg.telegram.people) or "nobody yet"
+            lines.append(f"Telegram: for {people}; reads writing, voice messages, photos, PDFs and text files")
         on = {
             "reminders": cfg.reminders.enabled,
             "who's home": cfg.presence.enabled,

@@ -375,7 +375,8 @@ def telegram(cfg: Config, root: Path) -> None:
     aloud = cfg.audio.enabled  # chat-only: no microphone to mute, nothing to say /say with
     home = chat_home(cfg, root, presence, events if aloud else None, announce)
     client = make_openai_client(env) if OPENAI_KEY in env_keys(env) else None
-    llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people)
+    sees = client is not None  # photos and files are seen by OpenAI's model
+    llm, rules = chat_brain_config(cfg, client is not None), channel_rules(cfg.telegram.people, sees)
     who = "OpenAI's " + llm.model if not any(getattr(llm, p.setting) for p in QUICK_PROVIDERS) else "Qwen first"
     print(f"(chats are answered by {who})")
     queue = errand_queue(cfg, events, client is not None)  # errands asked for here and aloud, run here
@@ -412,6 +413,7 @@ def telegram(cfg: Config, root: Path) -> None:
         continuity=make_continuity(cfg, env, client),
         send_items=cfg.telegram.send_items,
         transcriber=make_recording_transcriber(cfg, env, client),
+        sees=sees,
         env=env,
         home=home,
         say=functools.partial(ask_to_say, events.store.folder) if aloud else None,

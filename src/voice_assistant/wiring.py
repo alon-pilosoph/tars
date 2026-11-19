@@ -912,11 +912,16 @@ def brains(cfg: Config, root: Path, typed: bool = False, reminders=None, home=No
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
+    from .attached import ask_for_a_photo
+
+    chats = list(cfg.telegram.people) if cfg.telegram.enabled and client is not None else []
+    rules = ask_for_a_photo(chats)  # what it can't see from here, it asks to be sent in a chat
     return lambda: make_brain(
         client,
         brain_config(cfg, typed=typed),
         env,
         reminders,
+        channel_rules=rules,
         home=home,
         browser=browser,
         feeds=feeds,

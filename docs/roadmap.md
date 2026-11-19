@@ -30,7 +30,8 @@ homes](#later-tars-in-other-homes).
 
 **Built so far, alongside step 1:** [reminders, timers and messages](reminders.md), [the house](home.md) (Home
 Assistant's devices, an Android TV box and the agent that works it, plugins for the rest), [TARS on
-Telegram](telegram.md) (chats and voice messages, with reminders and what TARS sends on a phone), the web UI's
+Telegram](telegram.md) (chats, voice messages, and photos and files it reads, with reminders and what TARS sends on
+a phone), the web UI's
 [Status page](web-ui.md#the-status-page), the [backup to S3](backup.md), [who's home](presence.md) (phones on the
 Wi-Fi, from the routers), [TARS's browser](browser.md) (errands on any website, nothing ordered without a tap) and
 [handing hard questions to a larger model](#built-handing-hard-questions-to-a-larger-model). Since then: [skills and
