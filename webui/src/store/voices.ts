@@ -15,6 +15,19 @@ export async function moveTo(eventId: number, clusterId: number) {
   );
 }
 
+/** One request isn't a person (the TV, the radio): it goes to the "not a person" voice, made the first time. */
+export async function notAPerson(eventId: number) {
+  const s = get();
+  let into = s.clusters.filter(c => c.kind === "not_person").sort((a, b) => b.size - a.size)[0]?.id ?? null;
+  await saveThenReload(
+    async () => {
+      if (into == null) into = (await post<{ id: number }>("/api/clusters", { kind: "not_person" })).id;
+      await post(`/api/events/${eventId}/cluster`, { cluster_id: into });
+    },
+    () => "Marked as not a person. It stays that way when voices are regrouped.",
+  );
+}
+
 export async function newVoice(eventId: number) {
   const said = eventById(get(), eventId)?.transcript;
   const name = await prompt({

@@ -116,7 +116,7 @@ def test_each_voice_comes_with_its_newest_requests(log, client):
     ids = add_requests(log, voice(np.eye(16)[0], rng, 6))
     recluster(log)
     (cluster,) = client.get("/api/clusters").json()
-    assert cluster["size"] == 6 and [s["event_id"] for s in cluster["samples"]] == ids[::-1][:4]
+    assert cluster["size"] == 6 and [s["event_id"] for s in cluster["samples"]] == ids[::-1]  # all, to go through
     assert cluster["samples"][0]["transcript"] == "hi"
 
 
@@ -173,6 +173,21 @@ def test_two_voices_become_two_clusters_and_stay_put_on_rerun(log):
     before = {i: log.get(i)["cluster_id"] for i in ids_a + ids_b}
     recluster(log)
     assert {i: log.get(i)["cluster_id"] for i in ids_a + ids_b} == before  # voice numbers are stable
+
+
+def test_regrouping_sorts_only_whats_new_and_moves_nothing_already_in_a_voice(log):
+    rng = np.random.default_rng(9)
+    first = add_requests(log, voice(np.eye(16)[0], rng, 3))
+    recluster(log)
+    (stray,) = add_requests(log, voice(np.eye(16)[1], rng, 1))  # someone else, left in the voice by an older grouping
+    log.assign(stray, log.get(first[0])["cluster_id"], pinned=False)
+    before = {i: log.get(i)["cluster_id"] for i in [*first, stray]}
+    later = add_requests(log, voice(np.eye(16)[0], rng, 2))
+    said = recluster(log)["summary"]
+    assert {i: log.get(i)["cluster_id"] for i in [*first, stray]} == before  # nothing in a voice moved
+    assert {log.get(i)["cluster_id"] for i in later} == {before[first[0]]}  # the new ones, where they sound like
+    assert said == "Sorted 2 new requests into voices, 0 of them new. Nothing already in a voice was moved."
+    assert recluster(log)["summary"].startswith("Nothing new to sort")
 
 
 def test_manual_moves_and_named_voices_survive_reclustering(log):

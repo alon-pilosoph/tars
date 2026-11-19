@@ -40,7 +40,7 @@ class KeptFile(NamedTuple):
     stays: bool
 
 
-SAMPLES = 4  # requests a voice is shown with
+SAMPLES = 60  # a voice's requests the Voices page can show, newest first, each to be moved on its own
 
 
 def person_key(name: str | None) -> str | None:

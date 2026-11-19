@@ -21,7 +21,7 @@ export function Voices() {
       </PageHead>
       <p className="hint head-hint">
         {canRegroup
-          ? "Regrouping sorts every request into voices again. Anything you've named, moved or merged stays that way."
+          ? "Regrouping puts new requests into the voices they sound like. Nothing already in a voice moves: to move one, use its ⋯."
           : "Regrouping voices isn't set up on this TARS."}
       </p>
       {s.reclustering && (
@@ -61,8 +61,8 @@ export function Voices() {
         <>
           <SecHead title="Who's this?" />
           <p className="hint voices-hint">
-            Name a voice only when every request in it is the same person. One that's mixed (two people, or someone and
-            the TV) is fine left as it is: TARS learns only from voices you name.
+            Name a voice only when every request in it is the same person. A mixed one can be sorted out request by
+            request, with each one's ⋯, or left as it is: TARS learns only from voices you name.
           </p>
           <div className="voices">
             {groups.map(c => (
@@ -109,7 +109,11 @@ function Folded({ title, note, voices, s }: { title: string; note: string; voice
   );
 }
 
+// Requests a voice shows before "Show all": each can be moved on its own, so a mixed voice can be sorted out.
+const SHOWN = 4;
+
 function Voice({ c, s }: { c: Cluster; s: State }) {
+  const [all, setAll] = useState(false);
   const name = voiceName(c);
   const unnamed = !c.name && c.kind === "unknown";
   const left = c.name && c.kind === "person" ? Math.max(0, s.status.enroll_at - c.size) : 0;
@@ -144,14 +148,38 @@ function Voice({ c, s }: { c: Cluster; s: State }) {
       </div>
       {c.samples.length > 0 && (
         <div className="samples">
-          {c.samples.map(x => (
-            <div key={x.event_id} className="sample">
-              <PlaySmall clip={{ event: x.event_id, part: "request" }} label={`a request from ${name}`} />
-              <span>{`“${x.transcript || "…"}”`}</span>
-            </div>
+          {(all ? c.samples : c.samples.slice(0, SHOWN)).map(x => (
+            <Sample key={x.event_id} x={x} name={name} s={s} />
           ))}
+          {!all && c.samples.length > SHOWN && (
+            <button className="voices-fold" onClick={() => setAll(true)}>
+              {`Show all ${plural(c.samples.length, "request")}`}
+              <Icon name="chev-down" size="s" />
+            </button>
+          )}
         </div>
       )}
     </article>
+  );
+}
+
+function Sample({ x, name, s }: { x: Cluster["samples"][number]; name: string; s: State }) {
+  const menu = { kind: "sampleVoice", id: x.event_id } as const;
+  return (
+    <div className="sample">
+      <PlaySmall clip={{ event: x.event_id, part: "request" }} label={`a request from ${name}`} />
+      <span>{`“${x.transcript || "…"}”`}</span>
+      <div className="anchor sample-more">
+        <button
+          className="icon-btn"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen(s, menu)}
+          aria-label={`Whose voice is “${x.transcript || "this request"}”?`}
+          onClick={e => toggleMenu(menu, e.currentTarget)}
+        >
+          <Icon name="more" size="s" />
+        </button>
+      </div>
+    </div>
   );
 }
