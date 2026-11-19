@@ -799,7 +799,7 @@ def start_auto_locks(cfg: Config, root: Path, say, presence=None, events=None, h
 
 
 def make_skills(events):
-    """What TARS is taught, skills and preferences (skills.py), in the event database."""
+    """What TARS is taught to do (skills.py), in the event database."""
     from .skills import make
 
     return make(events)
@@ -905,7 +905,7 @@ def ask_to_say(folder: Path, text: str) -> None:
 
 
 def brains(cfg: Config, root: Path, typed: bool = False, reminders=None, home=None, browser=None, feeds=None,
-           skills=None, myself=None, pages=None) -> Callable[[], Brain]:  # fmt: skip
+           skills=None, myself=None, pages=None, memory=None) -> Callable[[], Brain]:  # fmt: skip
     """What makes the brain make_pipeline makes, with the same tools: one for each room (rooms.py), whose
     conversations are their own."""
     env = root / ".env"
@@ -923,6 +923,7 @@ def brains(cfg: Config, root: Path, typed: bool = False, reminders=None, home=No
         skills=skills,
         myself=myself,
         tools=[pages] if pages else [],
+        memory=memory,
     )
 
 
@@ -937,13 +938,14 @@ def make_pipeline(
     skills=None,
     myself=None,
     pages=None,
+    memory=None,
 ):
     """The cloud stages, as config.toml picks them: (transcriber, brain, voice); no transcriber for typed questions.
     With `reminders` (a ReminderTools), the brain can set them and knows what's set; with `home` (a HomeTools), it
     can work the devices in the house; with `browser` (browser/errands.py's BrowseTool), it can send TARS on errands;
     with `feeds` (feeds.py), it reads and manages the RSS feeds people follow; with `skills` (skills.py), it's taught
     skills and preferences, and knows them; with `myself` (myself.py), it knows itself; with `pages` (pages.py), it
-    reads the page a link goes to."""
+    reads the page a link goes to; with `memory` (memory.py), it knows each person and the household."""
     from .effects import apply_effect
     from .stt import (
         DeepgramTranscriber,
@@ -957,7 +959,7 @@ def make_pipeline(
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
-    brain = brains(cfg, root, typed, reminders, home, browser, feeds, skills, myself, pages)()
+    brain = brains(cfg, root, typed, reminders, home, browser, feeds, skills, myself, pages, memory)()
     if cfg.tts.provider == "deepgram":
         speech = DeepgramSpeech(api_key(env, DEEPGRAM_KEY), cfg.tts)
     elif cfg.tts.provider == "cartesia":
@@ -1043,6 +1045,22 @@ def make_wishes(cfg: Config, root: Path, events):
 
     told = Told(lambda text, buttons: tell_maintainers(cfg, root, text, buttons), person)
     return Wishes(events.store, cfg.wishes, github, told, running_has(root))
+
+
+def start_look_back(cfg: Config, root: Path, household) -> None:
+    """TARS looking back on each conversation for what to remember (reflect.py), on a thread of its own, with
+    [memory] look_back on and an OpenAI key; one process does it: the voice's, or a chat-only home's Telegram."""
+    if not cfg.memory.look_back:
+        return
+    env = root / ".env"
+    if OPENAI_KEY not in env_keys(env):
+        print(f"(memory: no {OPENAI_KEY}, so TARS doesn't look back on conversations; what's kept is still used)")
+        return
+    from .reflect import LookBack, openai_asker
+
+    ask = openai_asker(make_openai_client(env), cfg.llm.model, cfg.llm.reasoning_effort)
+    store = household.events.store
+    LookBack(store, household.memory, ask, cfg.memory.look_back_minutes * 60).start()
 
 
 def make_feeds(cfg: Config, events):
@@ -1411,11 +1429,11 @@ def start_buttons(cfg: Config, volume, assistant, root: Path):
 
 class Household:
     """The parts of TARS that the assistant, typed questions, the web UI and the Telegram service each make the same
-    way from config.toml: the event log, who's home, the voiceprints, the reminders, the skills, the feeds, the wishes
-    and TARS knowing itself. Each is made the first time it's asked for, and kept: a process pays only for what it
-    asks for, in the order it asks. Nothing here starts a thread, listens or opens a device; starting is the
-    process's own (start_heartbeat, start_presence). What a process makes its own way, the house, the doors, the
-    errands, the brain, isn't here."""
+    way from config.toml: the event log, who's home, the voiceprints, the reminders, the skills, what TARS knows of
+    each person, the feeds, the wishes and TARS knowing itself. Each is made the first time it's asked for, and kept:
+    a process pays only for what it asks for, in the order it asks. Nothing here starts a thread, listens or opens a
+    device; starting is the process's own (start_heartbeat, start_presence, start_look_back). What a process makes
+    its own way, the house, the doors, the errands, the brain, isn't here."""
 
     def __init__(self, cfg: Config, root: Path):
         self.cfg, self.root = cfg, root
@@ -1449,6 +1467,13 @@ class Household:
     @functools.cached_property
     def skills(self):
         return make_skills(self.events)
+
+    @functools.cached_property
+    def memory(self):
+        """What TARS knows about each person and the household (memory.py)."""
+        from .memory import Memory
+
+        return Memory(self.events.store)
 
     @functools.cached_property
     def feeds(self):

@@ -785,6 +785,7 @@ class OpenAIChat:
         skills=None,
         myself=None,
         tools: Sequence[Provider] = (),
+        memory=None,
     ):
         """`reminders`: TARS's timers, reminders and messages, when it has them. No `client` (no OpenAI key): only
         QuickChat, whose Qwen then answers everything. `clock`: seconds, for when the conversation went quiet and when
@@ -793,8 +794,9 @@ class OpenAIChat:
         `remind_tools`: the reminder tools, if not REMIND_TOOLS (a chat's can choose to have one said aloud).
         `home`: the devices in the house, when there are any. `browser`: TARS's errands in its browser
         (browser/errands.py), in a chat that has them. `feeds`: the RSS feeds people follow (feeds.py). `skills`:
-        what TARS is taught, skills and preferences (skills.py). `myself`: TARS knowing itself (myself.py). `tools`:
-        any other providers of tools (toolbox.py), offered after those."""
+        what TARS is taught to do (skills.py). `myself`: TARS knowing itself (myself.py). `tools`: any other
+        providers of tools (toolbox.py), offered after those. `memory`: what TARS knows about each person and the
+        household (memory.py), told on every request, with its tool."""
         self._clock = clock or time.monotonic
         self._channel_rules = [channel_rules] if channel_rules else []
         self._remind_tools = remind_tools or REMIND_TOOLS
@@ -803,6 +805,7 @@ class OpenAIChat:
         self._reminders = reminders
         self._home = home if home and home.tools else None
         self._skills = skills
+        self._memory = memory
         self._history: list[dict] = []
         self._asked: dict | None = None  # the question of the reply in progress, or the last one
         self._writing = _Writing()
@@ -814,7 +817,7 @@ class OpenAIChat:
         # Every model's calls go through the one toolbox; each is offered its part of it.
         self._reminding = reminding(reminders, self._remind_tools) if reminders else None
         self._house = self._home.toolset() if self._home else None
-        given = [p.toolset() for p in (browser, feeds, skills, myself, *tools) if p]
+        given = [p.toolset() for p in (browser, feeds, skills, memory, myself, *tools) if p]
         self._toolbox = Toolbox(t for t in [SENDING] * cfg.send + [self._reminding, self._house, *given] if t)
         self._tools = ([web_search_tool(cfg)] if cfg.web_search else []) + self._toolbox.specs
         self._system_prompt = cfg.system_prompt.replace("{humor}", str(cfg.humor))
@@ -988,6 +991,12 @@ class OpenAIChat:
                 parts.append(self._skills.note(self._writing.request.speaker))
             except Exception as e:  # noqa: BLE001 - what TARS was taught that can't be read never costs a reply
                 print(f"(couldn't read the skills: {e!r})")
+        if self._memory:
+            request = self._writing.request
+            try:  # what's known of whoever this reply is for, and the household; their private things in their chat
+                parts.append(self._memory.note(request.speaker, private=request.by_chat))
+            except Exception as e:  # noqa: BLE001 - what TARS knows that can't be read never costs a reply
+                print(f"(couldn't read what TARS knows: {e!r})")
         return "\n\n".join(p for p in parts if p)
 
     @property
@@ -1159,10 +1168,12 @@ class QuickChat(OpenAIChat):
         skills=None,
         myself=None,
         tools: Sequence[Provider] = (),
+        memory=None,
     ):
         super().__init__(
-            client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills, myself, tools
-        )
+            client, cfg, reminders, clock, channel_rules, remind_tools, home, browser, feeds, skills, myself, tools,
+            memory,
+        )  # fmt: skip
         self._quick = quick
         own_remind, own_send = cfg.quick_tools and bool(reminders), cfg.quick_tools and cfg.send
         # Qwen works the house itself with its own tools, or when there's no OpenAI to hand it to.

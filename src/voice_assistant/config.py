@@ -397,6 +397,15 @@ class FeedsConfig:
 
 
 @dataclass
+class MemoryConfig:
+    # What TARS knows about each person and the household (docs/memory.md): what they ask it to remember, and what it
+    # picks up by itself, by looking back on each conversation once it has been quiet for look_back_minutes, with
+    # [llm] model. Off: nothing new is learned by itself, and what's kept is still used.
+    look_back: bool = True
+    look_back_minutes: float = 10.0
+
+
+@dataclass
 class HouseholdConfig:
     # Who looks after TARS, by their names as TARS knows them: what someone asked for and TARS couldn't do is posted
     # to their Telegram chats, only they mark it done, and only they may change Home Assistant's setup by asking.
@@ -478,6 +487,7 @@ class Config:
     backup: BackupConfig
     browser: BrowserConfig
     feeds: FeedsConfig
+    memory: MemoryConfig
     household: HouseholdConfig
     updates: UpdatesConfig
     bodies: BodiesConfig
@@ -620,6 +630,8 @@ def _problems(cfg: Config) -> list[str]:
             problems.append(f"[{name}] deepgram_host must be a host name, like api.eu.deepgram.com")
     if not 0 < cfg.wake.threshold < 1:
         problems.append("[wake] threshold must be more than 0 and less than 1")
+    if cfg.memory.look_back_minutes <= 0:
+        problems.append("[memory] look_back_minutes must be more than 0")
     if not 0 <= cfg.wake.sure <= 1:
         problems.append("[wake] sure must be from 0 (off) to 1")
     if cfg.wake.check_window_s <= 0:

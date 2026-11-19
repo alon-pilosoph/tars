@@ -452,6 +452,13 @@ login_port = 8091
 # deploy/browser-host/setup.sh <name>. "": Chrome on this machine, for developing the browser on a Mac.
 sprite = ""
 
+[memory]
+# What TARS knows about each person and the household (docs/memory.md): what they ask it to remember, and what it picks
+# up by itself, looking back on each conversation said to it (never what it overheard) once it has been quiet this
+# long, with [llm] model. Off: nothing new is learned by itself; what's kept is still used.
+look_back = true
+look_back_minutes = 10
+
 [feeds]
 # RSS feeds, followed by talking to TARS: "find me good feeds about gaming", "what's new in gaming?" (docs/feeds.md).
 # Each person's are their own, kept in the event database. When TARS can't tell whose voice

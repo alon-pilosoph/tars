@@ -529,7 +529,7 @@ it's used. It isn't in the backup, so a restored TARS signs in again.
 ### Skills
 
 Skills, named things to do, some at set times, are taught by talking to TARS, and can use the house like any other
-request: [skills and preferences](skills.md).
+request: [skills](skills.md) and [memory](memory.md).
 
 ### All of Home Assistant
 

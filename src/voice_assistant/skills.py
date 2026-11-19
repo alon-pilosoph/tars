@@ -1,5 +1,5 @@
-"""Skills and preferences: what TARS is taught by talking to it, kept in the event database, for the model to carry
-out with the tools it has.
+"""Skills: what TARS is taught to do by talking to it, kept in the event database, for the model to carry out with
+the tools it has.
 
 A skill is a name and what to do, in plain words: "bedtime: turn the TV off and the AC to 24". Asked for by its name,
 or for what it's for (its `when`), the model does it as if it had been asked for all of it. It can also run by itself
@@ -9,13 +9,11 @@ Telegram service's): "every day at 19:55, ask whether I want the news on". Or on
 tried again, or given up and its asker told, when it didn't happen. A skill is its owner's, or the household's, for
 anyone in it.
 
-A preference is something TARS knows about a person, in plain words, that it keeps in mind whenever they ask
-anything: "skip esports in the gaming news", "likes the AC at 23". It's said by them, or noticed by the model and
-marked as a guess.
+What someone likes, and everything else TARS knows about them, is memory.py's.
 
 All of it is taught, changed and removed in conversation, through the skills tool, by someone TARS knows, never in a
 reply that read the web (a page could plant a standing instruction) nor in a turn a door's lock set off, and every
-request is told the skills and preferences of whoever is asking (note()). Nothing here does a step: the tools keep
+request is told the skills of whoever is asking (note()). Nothing here does a step: the tools keep
 their own rules, so a skill can't unlock (that needs the words said by a voice trusted with it), one set off by
 someone opening a door's lock reads the house but changes nothing in it (Due.door), and an order still waits for its
 tap."""
@@ -53,7 +51,6 @@ COOLDOWN_S = 600.0  # a skill that runs when something happens runs again no soo
 CAME_IN_FRESH_S = 60.0
 MOST_RUNS = 20  # told when asked what TARS did
 TIME = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
-MOST_NOTES = 40  # a person's preferences told to the model, newest first
 LATE_S = 90.0  # a one-off run later than this after its time (TARS was off) is told it's late
 # A one-off whose try didn't happen (docs/skills.md#once-later) is tried again ONCE_RETRY_S later, ONCE_TRIES tries at
 # most, all within ONCE_WINDOW_S of the first: then it's given up, kept as failed, and whoever asked is told. A try cut
@@ -68,9 +65,9 @@ PROCESS = {ALOUD: "assistant", CHAT: "telegram"}
 NOT_MADE = ("error", "not confirmed", "refused")
 STOPPED = "TARS stopped while it was doing it"
 SLIPPED = "something went wrong on my side"
-SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET = "save", "delete", "pause", "resume", "remember", "forget"
+SAVE, DELETE, PAUSE, RESUME = "save", "delete", "pause", "resume"
 LIST, RUNS = "list", "runs"
-ACTIONS = (LIST, RUNS, SAVE, DELETE, PAUSE, RESUME, REMEMBER, FORGET)
+ACTIONS = (LIST, RUNS, SAVE, DELETE, PAUSE, RESUME)
 ARRIVES, LEAVES, CHANGES = "arrives", "leaves", "device"  # what a skill can run on, besides the time
 # Someone the door's lock let in, through the door: its sensor says it shut behind them (doors.py). Later than
 # ARRIVES, which is mostly their phone finding the Wi-Fi on the way up: this is them walking in.
@@ -83,7 +80,7 @@ SKILLS_TOOL = {
     "type": "function",
     "name": "skills",
     "description": "Teach TARS: save, change, pause or delete a skill (what to do when someone says its name, at "
-    "set times, or once, later), and remember or forget what someone likes.",
+    "set times, or once, later).",
     "strict": True,
     "parameters": {
         "type": "object",
@@ -99,23 +96,19 @@ SKILLS_TOOL = {
             "trigger",
             "say",
             "household",
-            "about",
-            "guess",
         ],
         "properties": {
             "action": {
                 "type": "string",
                 "enum": list(ACTIONS),
-                "description": "list: every skill and preference they have. runs: what skills did by themselves "
-                "lately, and why. save: a new skill, or a change to one, "
-                "in full, by its name. delete, pause, resume: a skill, by name. remember: a preference, in "
-                "instructions. forget: a preference, by its words in instructions.",
+                "description": "list: every skill they have. runs: what skills did by themselves lately, and why. "
+                "save: a new skill, or a change to one, in full, by its name. delete, pause, resume: a skill, by "
+                "name.",
             },
             "name": {"type": ["string", "null"], "description": "save, delete, pause, resume: the skill's name."},
             "instructions": {
                 "type": ["string", "null"],
-                "description": "save: what to do, in plain words, complete. remember: the preference, as a short "
-                "note. forget: the preference's words.",
+                "description": "save: what to do, in plain words, complete.",
             },
             "when": {
                 "type": ["string", "null"],
@@ -205,26 +198,16 @@ SKILLS_TOOL = {
                 "description": "save: true if it's for everyone at home (the TV, the house), false or null if it's "
                 "theirs.",
             },
-            "about": {
-                "type": ["string", "null"],
-                "description": "remember: what it's about, in a word or two ('gaming news', 'the AC', 'music').",
-            },
-            "guess": {
-                "type": ["boolean", "null"],
-                "description": "remember: true if you noticed it rather than they said it.",
-            },
         },
     },
 }
 CAN_SKILLS = (
-    "be taught by them: skills (named things to do, maybe at set times) and what each person likes, and do things "
-    "later (once, at a time), with the skills tool"
+    "be taught skills by them (named things to do, maybe at set times), and do things later (once, at a time), with "
+    "the skills tool"
 )
-NEEDS_SKILLS = (
-    "doing something later, teaching TARS a skill, changing or removing one, or telling it what they like or don't"
-)
+NEEDS_SKILLS = "doing something later, or teaching TARS a skill, changing or removing one"
 RULES = (
-    "Skills and preferences: you're taught them by talking, with the skills tool, and each request lists those of "
+    "Skills: you're taught them by talking, with the skills tool, and each request lists those of "
     "whoever is asking.\n"
     '- Using a skill: when they ask for one by name ("put on cartoons" is the skill cartoons), or what they ask is '
     "what one is for, do what its instructions say, with your tools, as if they'd asked for all of it themselves; "
@@ -244,11 +227,7 @@ RULES = (
     'something back ("back on", "back to how it was"), look at how it is first and write that into its '
     'instructions ("turn the AC back on: cool, 23°, fan auto"), so it comes back as it was. Answer in plain '
     "words with when it'll happen: \"Done, the AC's off. I'll turn it back on at 5:00, cool at 23°.\"\n"
-    "- Preferences: when they say what they like or don't (in the news, music, the house, anything), remember it, "
-    "and say in a few words that you will. When something is clear from what they keep asking for, remember it as "
-    "a guess, without making a fuss. Follow their preferences whenever they apply, and never present a guess as "
-    'something they said. "What do you know about me?": tell them, guesses as guesses; they can correct or remove '
-    'any of it. "What did you do today?": the skills\' runs.'
+    '- "What did you do today?": the skills\' runs.'
 )
 # A skill's own turn, at its time: written as the request, so the model knows nobody asked, and that what it says is
 # heard by whoever is in the room, or read in the chat.
@@ -475,7 +454,7 @@ def on_its_own(skill: Skill, when: datetime, skip: str, why: str = "") -> str:
 
 
 class Skills:
-    """The skills and preferences in the event database, and the brain's skills tool over them: tool, rules, can and
+    """The skills in the event database, and the brain's skills tool over them: tool, rules, can and
     needs, as the browser's errands give them (llm.py), and note() for each request."""
 
     tool, rules, can, needs = SKILLS_TOOL, RULES, CAN_SKILLS, NEEDS_SKILLS
@@ -540,29 +519,19 @@ class Skills:
         names = {s.name for s in own}
         return own + [s for s in self.all() if s.household and s.name not in names]
 
-    def preferences(self, person: str | None) -> list[dict]:
-        if not person_key(person):
-            return []
-        return self.store.rows(
-            "SELECT * FROM preferences WHERE person=? ORDER BY id DESC LIMIT ?", (person_key(person), MOST_NOTES)
-        )
-
     def note(self, person: str | None) -> str:
-        """For the model, on each request: the skills and preferences of whoever is asking."""
-        parts = []
-        if skills := self.visible(person):
-            whose = f"{person}'s and the household's" if person else "the household's (TARS isn't sure who's asking)"
-            parts.append(f"Skills ({whose}):\n" + "\n".join(line(s) for s in skills))
-        if prefs := self.preferences(person):
-            parts.append(f"What {person} likes and doesn't:\n" + "\n".join(_pref_line(p) for p in prefs))
-        return "\n\n".join(parts)
+        """For the model, on each request: the skills of whoever is asking."""
+        if not (skills := self.visible(person)):
+            return ""
+        whose = f"{person}'s and the household's" if person else "the household's (TARS isn't sure who's asking)"
+        return f"Skills ({whose}):\n" + "\n".join(line(s) for s in skills)
 
     # The tool.
 
     def toolset(self) -> toolbox.Toolset:
         """The skills tool for the brain (toolbox.py). Only someone TARS knows can teach it, and what it's taught, or
-        asked to forget, is held back as any change is (toolbox.held_back, in call): refused in a reply that read the
-        web, whose pages could plant a standing instruction or a preference, and in a turn a door's lock set off, and
+        asked to drop, is held back as any change is (toolbox.held_back, in call): refused in a reply that read the
+        web, whose pages could plant a standing instruction, and in a turn a door's lock set off, and
         made only once the turn goes ahead. Listing what's taught, and what ran, isn't held back."""
         failed = "error: couldn't reach what TARS was taught ({e!r}); nothing changed"
         return toolbox.one_tool(self, toolbox.ITS_OWN, failed)
@@ -571,7 +540,7 @@ class Skills:
         args = args if isinstance(args, dict) else {}
         action, person = args.get("action"), getattr(request, "speaker", None)
         if action == LIST:
-            return self.note(person) or "Nothing taught yet: no skills, and no preferences."
+            return self.note(person) or "Nothing taught yet: no skills."
         if action == RUNS:
             return self.runs(person)
         if not person_key(person):
@@ -584,11 +553,7 @@ class Skills:
         try:
             if action == SAVE:
                 return self._save(person, name, args, chat=bool(getattr(request, "by_chat", False)))
-            if action in (DELETE, PAUSE, RESUME):
-                return self._change(person, name, action)
-            if action == REMEMBER:
-                return self._remember(person, args)
-            return self._forget(person, _clean(args.get("instructions")))
+            return self._change(person, name, action)
         except ValueError as e:
             return f"error: {e}"
 
@@ -684,7 +649,8 @@ class Skills:
     # The web UI's Skills page: everything, everyone's, and changed by id (it has no one asking).
 
     def page(self) -> dict:
-        """Every skill, everyone's preferences and the latest runs, for the web UI (types.ts SkillsInfo)."""
+        """Every skill, everyone's likes (memory.py's, until the memory page) and the latest runs, for the web UI
+        (types.ts SkillsInfo)."""
         skills = [
             {
                 "id": s.id,
@@ -699,7 +665,10 @@ class Skills:
             }
             for s in self.all()
         ]
-        prefs = self.store.rows("SELECT id, person, about, text, guessed, at FROM preferences ORDER BY person, id DESC")
+        prefs = self.store.rows(
+            "SELECT id, person, about, text, 1 - said AS guessed, changed AS at FROM memories "
+            "WHERE kind='like' AND replaced IS NULL ORDER BY person, id DESC"
+        )
         runs = self.store.rows(
             "SELECT id, name, owner, at, why, said, failed FROM skill_runs ORDER BY id DESC LIMIT 50"
         )
@@ -716,7 +685,8 @@ class Skills:
         return self._by_id("DELETE FROM skills WHERE id=?", (skill_id,))
 
     def forget(self, preference_id: int) -> bool:
-        return self._by_id("DELETE FROM preferences WHERE id=?", (preference_id,))
+        """A like, from the Skills page: memory.py's, by its id."""
+        return self._by_id("DELETE FROM memories WHERE id=? AND kind='like'", (preference_id,))
 
     def _by_id(self, sql: str, args: tuple) -> bool:
         with self.store.transaction() as db:
@@ -748,38 +718,6 @@ class Skills:
                 )
         return f"done: {name} {'deleted' if action == DELETE else action + 'd'}"
 
-    def _remember(self, person: str, args: dict) -> str:
-        text = _clean(args.get("instructions"))
-        if not text:
-            raise ValueError("remember needs the preference, in instructions")
-        about = _clean(args.get("about")).lower()
-        with self.store.transaction() as db:
-            same = db.execute(
-                "SELECT id FROM preferences WHERE person=? AND lower(text)=lower(?)", (person_key(person), text)
-            ).fetchone()
-            if same:  # said again: no longer a guess, if it was one
-                db.execute(
-                    "UPDATE preferences SET guessed=?, at=? WHERE id=?",
-                    (bool(args.get("guess")), self._clock(), same["id"]),
-                )
-            else:
-                db.execute(
-                    "INSERT INTO preferences (person, about, text, guessed, at) VALUES (?, ?, ?, ?, ?)",
-                    (person_key(person), about, text, bool(args.get("guess")), self._clock()),
-                )
-        return "done: remembered" + (" (as a guess)" if args.get("guess") else "")
-
-    def _forget(self, person: str, words: str) -> str:
-        prefs = self.preferences(person)
-        gone = [
-            p for p in prefs if words and (words.lower() in p["text"].lower() or p["text"].lower() in words.lower())
-        ]
-        if not gone:
-            return "error: nothing they like or don't has those words; list shows what TARS knows"
-        with self.store.transaction() as db:
-            db.executemany("DELETE FROM preferences WHERE id=?", [(p["id"],) for p in gone])
-        return f"done: forgot {'; '.join(p['text'] for p in gone)}"
-
     def _find(self, db, owner: str, name: str):
         rows = db.execute("SELECT * FROM skills WHERE name=?", (name,)).fetchall()
         return next((r for r in rows if person_key(r["owner"]) == person_key(owner)), None)
@@ -800,11 +738,6 @@ class Skills:
             row["once"],
             row["updated_by"],
         )
-
-
-def _pref_line(p: dict) -> str:
-    about = f"({p['about']}) " if p["about"] else ""
-    return f"- {about}{p['text']}" + (" [a guess]" if p["guessed"] else "")
 
 
 def _clean(value) -> str:

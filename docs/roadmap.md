@@ -15,7 +15,7 @@ being right.
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
 | 4 | [Plugins and updates](#4-plugins-and-updates) | plugins react to nothing yet, and updating takes SSH | large |
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting to try for a week |
-| 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | preferences built; facts, scopes and the page left |
+| 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | memories and the look back built; voiceprints, the nightly look, the page left |
 
 Alongside the steps, built: [house commands on the Pi](#built-house-commands-on-the-pi), small and independent of
 them; and [wishes that come true](#built-wishes-that-come-true), where something TARS couldn't do becomes a pull
@@ -33,9 +33,9 @@ Assistant's devices, an Android TV box and the agent that works it, plugins for 
 Telegram](telegram.md) (chats and voice messages, with reminders and what TARS sends on a phone), the web UI's
 [Status page](web-ui.md#the-status-page), the [backup to S3](backup.md), [who's home](presence.md) (phones on the
 Wi-Fi, from the routers), [TARS's browser](browser.md) (errands on any website, nothing ordered without a tap) and
-[handing hard questions to a larger model](#built-handing-hard-questions-to-a-larger-model). Since then: [skills and
-preferences](skills.md) taught by talking, run at set times, when someone comes or goes, when a device changes or
-when TARS is updated, with a Skills page; [feeds](feeds.md) per person; Spotify, live TV channels and a camera in
+[handing hard questions to a larger model](#built-handing-hard-questions-to-a-larger-model). Since then:
+[skills](skills.md) taught by talking, run at set times, when someone comes or goes, when a device changes or when
+TARS is updated, with a Skills page; [memory](memory.md), what TARS knows about each person; [feeds](feeds.md) per person; Spotify, live TV channels and a camera in
 [the house](home.md); [all of Home Assistant](home.md#all-of-home-assistant) (any entity, its history and logbook,
 any service, the unlock rules kept), with [its setup versioned](home.md#home-assistants-own-setup) and sealed in the
 backup; and TARS [knowing itself](architecture.md) (its version, what's new, its docs, its records and log), changing
@@ -241,9 +241,9 @@ said in plain words, and done the same way every time.
 **Built** ([skills](skills.md)): everything is a skill, plain words for the model carried out with its tools; only
 the trigger is code: a time (with days), someone coming home or going out, a device's status or reading, or TARS
 being updated. Asking for one is just done and agreed to in plain words ("Will do: I'll message you whenever Alon
-adds something new"), never called a skill, said in the chat it was asked in or aloud. Each person's preferences are
-kept the same way. "What did you do today?" is answered from the runs kept, and the web UI's Skills page lists every
-skill and preference, where it came from and what it did. Limits are in code: unlocking stays a trusted voice saying
+adds something new"), never called a skill, said in the chat it was asked in or aloud. What each person likes is
+[memory](memory.md)'s now. "What did you do today?" is answered from the runs kept, and the web UI's Skills page
+lists every skill, where it came from and what it did. Limits are in code: unlocking stays a trusted voice saying
 "unlock", an order still needs its tap.
 
 **Left:**
@@ -267,49 +267,34 @@ household rules have run for a week with no wrong run.
 
 ## 6. Long-term memory and personalization
 
-**Goal:** TARS remembers things that matter over time, per person: "Stacey is vegetarian", "Alon's standup is at
-9:30", "the car is a 2019 Corolla". It can offer to remember something, anyone can say "remember this" or "forget
-that", and the web UI shows exactly what it keeps, where it can be edited or deleted. Personalization is the same
-page: each person's settings, and the persona part of the system prompt.
+**Goal:** TARS gets to know each person, and it feels like magic: their words for things, how they like to be
+answered, the people around them, what's coming up, what they like; used without ever saying so, and asked about
+after ("How did the interview go?"). A first-class part of TARS, not an extra: the owner's call, 2026-11-19.
 
-**Where it stands.** Half of it is built as preferences ([skills](skills.md)): what someone likes or doesn't, kept per
-person in the `preferences` table, said by them or noticed by the model and marked as a guess, told on every request
-of theirs, and "what do you know about me?", "forget that" answered by talking; the Skills page shows them. TARS's
-settings change by asking too (humor, how long it remembers, its voice), but for the whole household, not per
-person. Left: facts as well as likes ("the car is a 2019 Corolla"), the household's own memories, using a person's
-only when speaker ID is sure (no voiceprints are enrolled yet, so by voice nobody is), editing on the page, and
-settings per person. The design below still holds for those; the `memories` table may simply be `preferences`
-grown.
+**Built ([memory](memory.md)):** the `memories` table, five kinds (style, like, fact, person, thread), each with
+whose it is, how it's known (said, or a guess), where it came from and when, dates written out, corrections kept as
+history and forgetting for good; the memory tool for what people ask TARS to remember, correct or forget; what's kept
+for whoever is asking, and the household's, told on every request, used and never recited; and the look back: once a
+conversation is quiet, one request reads it and what's kept, and code checks each change it proposes (only what was
+said to TARS, by people it knows; said only from their own turn; nothing sensitive inferred; at most 8). Preferences
+became likes.
 
-**Design:**
+**Decided (2026-11-19):** the household hears each other's memories (a private one only when asked for, in that
+person's chat); threads are asked about once; TARS never says what it noticed; nothing overheard is ever learned from;
+voiceprints for the household, so what's said aloud is someone's (until then, by voice only the household's is used).
 
-- **Storage:** a `memories` table in the event database (`store.py`, with the usual automatic upgrade): the text,
-  whose it is (a person, by the same names speaker ID uses, or the household), the conversation turn it came from,
-  and when it was made and last changed.
-- **Writing:** `remember` and `forget` tools, given to Qwen with its reminder and send tools (`[llm] quick_tools`),
-  so those turns skip the hand-off; with `quick_tools` off they go to OpenAI's model the way `<look-up>` turns do.
-  TARS offers only for lasting facts and preferences, at most once a conversation, and never for anything said to
-  someone else. The call doesn't hold up the reply: TARS speaks what the model said and saves in the background,
-  without another round to the model.
-- **Reading:** everything kept for the person speaking, plus the household's, goes into the prompt as a short
-  "what you know" block. No search system: a household's memories fit in the prompt for a long time (with a cap
-  and a warning well before they don't).
-- **Only when sure who's talking.** Personal memories are used only when speaker ID's match is confident;
-  otherwise only the household's. A wrong guess would put one person's memories in another's conversation, which
-  is why step 1 checks speaker ID on the speakerphone first.
-- **A Memory page in the web UI:** per person and for the household, every memory with where it came from (a
-  link to the conversation), edit, delete, and add by hand. Deleting really deletes.
-- **Personalization:** each person's settings on the same page, starting with humor (overriding `[llm] humor`).
-  The system prompt splits in two: the persona (who TARS is, how it talks), editable there, with `config.toml`'s
-  as the default; and the rules the code depends on (skipping overheard chatter, the send tool, memory), which stay
-  in the code, so the page can't break them.
+**Next, in order:**
 
-**Measure:** a set of scripted conversations (tell it a fact, ask about it days later, a second voice asking the
-same, "forget that"), run through `--text` and through the speakerphone, checking what's kept, what's used, and that
-one person's memory never reaches another's answer.
-
-**Open question:** what TARS offers to remember. Too eager and it's a nag; the week of real use will show which
-facts come up again.
+1. **Voiceprints from the Atom**, made from real requests named in the web UI, and old turns recognized once someone
+   has one, so the look back can learn from what was said aloud.
+2. **The nightly look over each person's whole picture** (Letta's sleep-time idea): duplicates merged, a style
+   seen across many conversations kept, guesses that never came up again let go, and when to act or ask learned
+   from what they confirm or undo.
+3. **A Memory page**: every memory, why TARS thinks so (a link to the turn), edit, delete, "never learn this"; UI by
+   screenshots first.
+4. **Measured**: scripted conversations over days (told, used later, a second voice, forgotten, a style signal, a
+   thread) checked for what's kept, what's used, and that nothing crosses between people; paid, so estimated first.
+5. **Settings per person** (humor, length), from the same page, and the persona split from the rules the code needs.
 
 ## Built: wishes that come true
 
