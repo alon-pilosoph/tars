@@ -72,7 +72,9 @@ i2c:
 esp_aec:
   id: aec
   sample_rate: 16000
-  mode: fd_low_cost
+  # The plain mode, not M5Stack's fd_low_cost: that one's extra suppression (for a wake word over music) muffled the
+  # microphone by 12 dB or more for about two seconds after anything played, just when a question follows "Yes?".
+  mode: sr_low_cost
   filter_length: 4
 
 esp_audio_stack:
@@ -113,6 +115,19 @@ esp_audio_stack:
     - switch.turn_on: speaker_enable
   on_amplifier_idle:
     - switch.turn_off: speaker_enable
+
+# The microphone's level, raised after the echo canceller, as M5Stack's configuration does: the codec's own gain stays
+# low (12 dB) to leave room for the speaker's echo, and this lifts speech without lifting the echo the canceller
+# removes. Left out, the Atom sent its audio about 24 dB too quiet: the brain heard "Yes?"'s question as silence.
+number:
+  - platform: esp_audio_stack
+    esp_audio_stack_id: audio_stack
+    mic_gain:
+      id: mic_gain
+      internal: true
+      min_value: -20
+      max_value: 30
+      initial_value: 24
 
 microphone:
   - platform: esp_audio_stack

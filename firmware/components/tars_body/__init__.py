@@ -66,6 +66,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_SPEAKER): cv.use_id(speaker.Speaker),
         # Said when someone calls TARS and the brain can't be reached: a 16-bit mono WAV at 24 kHz.
         cv.Optional(CONF_UNREACHABLE): cv.file_,
+        # Diagnostics: log the level of the audio streamed up, once a second.
+        cv.Optional("debug_levels", default=False): cv.boolean,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -103,6 +105,8 @@ async def to_code(config):
         line_id = cv.declare_id(cg.uint8)(f"{config[CONF_ID].id}_unreachable")
         cg.add(var.set_unreachable(cg.progmem_array(line_id, [HexInt(b) for b in pcm]), len(pcm)))
 
+    if config["debug_levels"]:
+        cg.add_define("TARS_BODY_DEBUG_LEVELS")
     esp32.add_idf_component(name="espressif/esp_websocket_client", ref="1.6.0")
     esp32.request_tls()  # esp_websocket_client links esp_tls even for ws://
 
