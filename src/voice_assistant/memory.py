@@ -227,10 +227,13 @@ class Memory:
 
     # Changing: the tool's, the look back's, and the web UI's.
 
-    def remember(self, person: str, args: dict, source: str, turn_id: int | None = None) -> str:
+    def remember(
+        self, person: str, args: dict, source: str, turn_id: int | None = None, at: float | None = None
+    ) -> str:
+        """`at`: when it was said, if not now (the look back's, after the conversation)."""
         new = self._fields(args)
         whose = HOUSEHOLD if args.get("household") else person_key(person)
-        now = self._clock()
+        now, at = self._clock(), at or self._clock()
         with self.store.transaction() as db:
             same = db.execute(
                 "SELECT id, said FROM memories WHERE person=? AND replaced IS NULL AND lower(text)=lower(?)",
@@ -244,14 +247,15 @@ class Memory:
             memory_id = db.execute(
                 "INSERT INTO memories (person, kind, about, text, said, private, due, until, source, turn_id, created, "
                 "changed) VALUES (:person, :kind, :about, :text, :said, :private, :due, :until, :source, :turn_id, "
-                ":now, :now)",
-                {**new, "person": whose, "source": source, "turn_id": turn_id, "now": now},
+                ":at, :now)",
+                {**new, "person": whose, "source": source, "turn_id": turn_id, "at": at, "now": now},
             ).lastrowid
         return f"done: remembered (#{memory_id})"
 
-    def correct(self, person: str, args: dict, source: str, turn_id: int | None = None) -> str:
+    def correct(self, person: str, args: dict, source: str, turn_id: int | None = None, at: float | None = None) -> str:
+        """`at`: when it changed, if not now: the old one was so until then."""
         new = self._fields(args)
-        now = self._clock()
+        now, at = self._clock(), at or self._clock()
         with self.store.transaction() as db:
             old = self._mine(db, person, args.get("id"))
             if old is None:
@@ -259,7 +263,7 @@ class Memory:
             memory_id = db.execute(
                 "INSERT INTO memories (person, kind, about, text, said, private, due, until, source, turn_id, created, "
                 "changed) VALUES (:person, :kind, :about, :text, :said, :private, :due, :until, :source, :turn_id, "
-                ":now, :now)",
+                ":at, :now)",
                 {
                     **new,
                     "person": old["person"],
@@ -268,10 +272,11 @@ class Memory:
                     "private": old["private"],
                     "source": source,
                     "turn_id": turn_id,
+                    "at": at,
                     "now": now,
                 },
             ).lastrowid
-            db.execute("UPDATE memories SET replaced=?, replaced_by=? WHERE id=?", (now, memory_id, old["id"]))
+            db.execute("UPDATE memories SET replaced=?, replaced_by=? WHERE id=?", (at, memory_id, old["id"]))
         return f"done: #{old['id']} is now #{memory_id}; the old one is kept as history"
 
     def forget(self, person: str | None, memory_id) -> str:

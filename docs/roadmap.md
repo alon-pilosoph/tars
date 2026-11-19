@@ -276,8 +276,8 @@ whose it is, how it's known (said, or a guess), where it came from and when, dat
 history and forgetting for good; the memory tool for what people ask TARS to remember, correct or forget; what's kept
 for whoever is asking, and the household's, told on every request, used and never recited; and the look back: once a
 conversation is quiet, one request reads it and what's kept, and code checks each change it proposes (only what was
-said to TARS, by people it knows; said only from their own turn; nothing sensitive inferred; at most 8). Preferences
-became likes.
+said to TARS, by people it knows; said only from their own turn; nothing sensitive inferred; at most 8); and once a
+night each person's whole picture, for the patterns no single conversation shows. Preferences became likes.
 
 **Decided (2026-11-19):** the household hears each other's memories (a private one only when asked for, in that
 person's chat); threads are asked about once; TARS never says what it noticed; nothing overheard is ever learned from;
@@ -287,9 +287,8 @@ voiceprints for the household, so what's said aloud is someone's (until then, by
 
 1. **Voiceprints from the Atom**, made from real requests named in the web UI, and old turns recognized once someone
    has one, so the look back can learn from what was said aloud.
-2. **The nightly look over each person's whole picture** (Letta's sleep-time idea): duplicates merged, a style
-   seen across many conversations kept, guesses that never came up again let go, and when to act or ask learned
-   from what they confirm or undo.
+2. **When to act or ask**, learned from what each person confirms or undoes (the nightly look over each person's
+   whole picture, built, reads it; nothing yet records an undo).
 3. **A Memory page**: every memory, why TARS thinks so (a link to the turn), edit, delete, "never learn this"; UI by
    screenshots first.
 4. **Measured**: scripted conversations over days (told, used later, a second voice, forgotten, a style signal, a

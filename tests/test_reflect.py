@@ -20,6 +20,11 @@ class Model:
     def __init__(self, *answers):
         self.answers, self.asked = list(answers), []
 
+    @property
+    def conversations(self) -> list[str]:
+        """What it was asked of single conversations, not of a whole picture."""
+        return [a for a in self.asked if "The conversation, " in a]
+
     def __call__(self, instructions: str, text: str) -> str:
         self.asked.append(text)
         answer = self.answers.pop(0) if self.answers else []
@@ -150,14 +155,14 @@ def test_a_conversation_is_looked_back_on_once_quiet_and_again_for_what_is_new(l
     assert looking.due() == []  # not quiet yet
     now[0] += QUIET
     looking.tick()
-    assert len(model.asked) == 1 and looking.due() == []
+    assert len(model.conversations) == 1 and looking.due() == []
     convos.add_tars_turn(conversation, "Nice.", ts=now[0])
     now[0] += QUIET + 1
     assert looking.due() == []  # only TARS said more: nothing new of theirs
     convos.add_person_turn(conversation, "My teacher is called Dana.", speaker="Alon", ts=now[0])
     now[0] += QUIET + 1
     looking.tick()
-    assert len(model.asked) == 2 and looking.due() == []
+    assert len(model.conversations) == 2 and looking.due() == []
 
 
 def test_a_conversation_with_nobody_tars_knows_is_never_asked_about(log, convos, memory, now):
@@ -173,7 +178,7 @@ def test_a_look_back_that_fails_is_tried_again_and_then_left(log, convos, memory
     looking = look_back(log, memory, model, now)
     for _ in range(MOST_TRIES + 2):
         looking.tick()
-    assert len(model.asked) == MOST_TRIES and looking.due() == []
+    assert len(model.conversations) == MOST_TRIES and looking.due() == []
     assert "couldn't look back on conversation 1: RuntimeError('down')" in capsys.readouterr().out
 
 
@@ -190,3 +195,51 @@ def test_what_the_model_gets_wrong_is_skipped_and_the_rest_kept(log, convos, mem
     assert done[0] == "skipped: kind is one of style, like, fact, person, thread"
     assert done[1] == "skipped: 'dance' isn't a change"
     assert "Maya: his sister, lives in Haifa." in memory.note("Alon")
+
+
+def test_a_memory_is_dated_when_it_was_said_not_when_it_was_looked_back_on(log, convos, memory, now):
+    _, (said,) = chat(convos, ("Alon", "We got a new car, an Ioniq 5."), at=NOW - 10 * 24 * 3600)
+    look_back(log, memory, Model([change(text="Drives a 2024 Ioniq 5.", turn=said)]), now).look_back(1)
+    assert "Drives a 2024 Ioniq 5. [said 2026-11-09]" in memory.note("Alon")
+
+
+# The nightly look at each person's whole picture.
+
+
+def test_once_a_night_each_person_s_weeks_are_read_for_what_no_one_conversation_shows(log, convos, memory, now):
+    days = []
+    for n in range(4):  # "the news" is Channel 12, said in four conversations over four days
+        _, (ask, _) = chat(convos, ("Alon", "Put the news on. Channel 12"), ("TARS", "On."), at=NOW - (4 - n) * 86400)
+        days.append(ask)
+    _, (overheard,) = chat(convos, ("Stacey", "Don't tell TARS about the party."), via=None, at=NOW - 86400)
+    convos.mark_not_for_tars(overheard)
+    chat(convos, ("Stacey", "Boiler on."), at=NOW - 40 * 86400)  # too long ago to count
+    model = Model([change(kind="style", text="'The news' means Channel 12.", said=False, turn=days[-1])])
+    looking = look_back(log, memory, model, now)
+    now[0] = datetime(2026, 11, 20, 3, 0).astimezone().timestamp()
+    looking.nightly()
+    assert model.asked == []  # not before WHOLE_HOUR
+    now[0] = datetime(2026, 11, 20, 4, 30).astimezone().timestamp()
+    looking.nightly()
+    looking.nightly()  # once a day
+    (alon,) = model.asked  # Alon's alone: nothing of Stacey's said to TARS in the last weeks
+    alon = [alon]
+    assert len(alon) == 1 and alon[0].count("Put the news on. Channel 12") == 4
+    assert all("party" not in a for a in model.asked)
+    assert "'The news' means Channel 12. [a guess 2026-11-18]" in memory.note("Alon")  # when it was last said
+
+
+def test_the_whole_picture_can_merge_two_into_one(log, convos, memory, now):
+    memory.remember("Alon", {"kind": "like", "text": "Likes jazz."}, "chat")
+    memory.remember("Alon", {"kind": "like", "text": "Listens to jazz in the evenings."}, "chat")
+    _, (said,) = chat(convos, ("Alon", "Play some jazz, like every evening."))
+    model = Model(
+        [
+            change(do="correct", kind="like", text="Likes jazz, in the evenings.", id=1, turn=said),
+            change(do="retire", id=2),
+        ]
+    )
+    done = look_back(log, memory, model, now).whole_picture("Alon")
+    assert done[0].startswith("done: #1 is now #3") and done[1] == "done: #2 is history"
+    note = memory.note("Alon")
+    assert "Likes jazz, in the evenings." in note and "Listens to jazz" not in note

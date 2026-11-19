@@ -32,44 +32,78 @@ MOST_A_TICK = 5  # conversations looked back on in one go, oldest first
 MOST_CHANGES = 8
 MOST_TRIES = 3  # a conversation the look back keeps failing on is left
 MOST_TURNS = 80  # of one conversation, the newest: a long chat is looked at in its latest part
+# The nightly look at each person's whole picture: what they said over WHOLE_DAYS, at most WHOLE_TURNS of it.
+WHOLE_DAYS = 30
+WHOLE_TURNS = 300
+WHOLE_HOUR = 4  # local time: after this, once a day
+MOST_WHOLE_CHANGES = 12
+TARS_SAID_CHARS = 160  # of each of TARS's replies, for context
+WHOLE_DONE = "whole_picture_day"  # in the meta table: the last day the whole pictures were looked at
 REMEMBER, CORRECT, RETIRE, ASKED = "remember", "correct", "retire", "asked"
 HOUSEHOLD_NAME = "household"
 
-INSTRUCTIONS = """You look back on a conversation between TARS, a household's assistant, and the people in the \
-household, to keep what's worth knowing about them next time: so TARS answers like someone who knows them. You see \
-the conversation, and what TARS already knows about the people in it and the household, each with its number.
-
-Keep what lasts or is coming up:
+# What's worth keeping, for both looks: one conversation, and a person's whole picture.
+WHAT_TO_KEEP = """Keep what lasts or is coming up:
 - fact: about them or their life (work, family, the home, their things, plans): "Works from home on Fridays".
-- person: someone around them, and who they are to them: "Yossi: the electrician".
-- like: what they like or don't, in anything: "Doesn't want esports in the gaming news".
+- person: someone around them, and who they are to them, the household's own people too: "Stacey: Alon's \
+partner"; "Ari: their son, has his own room with a camera"; "Yossi: the electrician".
+- like: what they like or don't, in anything: "Doesn't want esports in the gaming news"; "Ari watches Dig Dig Duk".
 - style: how they talk and want to be answered: length, tone, humour, directness; their own words for things \
-("Ari's room" is the nursery; "warm" means 24 degrees); when they want TARS to just do it and when to ask first. \
-Keep style only from a clear signal: they said so, corrected TARS, cut it short, asked for more or less, undid what it \
-did, or used their word for something.
+("Ari's room" is the nursery; "warm" means 24 degrees; "the news" means Channel 12); when they want TARS to just do \
+it and when to ask first. Keep style only from a clear signal: they said so, corrected TARS, cut it short, asked for \
+more or less, undid what it did, or used their word for something.
 - thread: something coming up that they mentioned, with when it happens ("due"): an interview, a trip, a delivery, \
 a visit. TARS will ask how it went, once, after.
 
 Never keep:
 - what they asked for this once (turn on the light, the weather, a timer), small talk, a mood of the moment;
+- what TARS already keeps another way: a skill or routine they set up, a reminder, the feeds they follow;
 - codes, passwords, card or account numbers;
-- anything about health, money, relationships, religion or politics that the person didn't plainly say about \
-themselves (then it's said: true);
+- anything about health, money, religion, politics or intimate life that the person didn't plainly say about \
+themselves (then it's said: true); who's who in the family is fine;
 - anything from a turn by "someone TARS couldn't tell": that's only context.
 
 Then:
 - Check against what's kept. Don't repeat it. When something changed or was wrong, correct it (its id, the whole \
 new note). When something is over or no longer so (a thread that has happened and been asked about, a fact that \
 stopped being true), retire it (its id).
-- A thread TARS asked about in this conversation: "asked" (its id). If they said how it went, keep what matters of \
-that as a fact, and retire the thread.
 - said: true only when the person said it themselves; false when you worked it out.
 - turn: the number of the turn it comes from.
-- Write each as a short note in the third person, in English, with dates written out from the conversation's \
-dates ("born in March 2026", never "eight months old"; "on 2026-11-27", never "next Thursday").
-- whose: the person's name as it appears in the conversation, or "household" for what's about the home or \
-everyone in it.
+- Write each as a short note in the third person, in English, with dates written out ("born in March 2026", never \
+"eight months old"; "on 2026-11-27", never "next Thursday").
+- whose: the person's name as it appears, or "household" for what's about the home or everyone in it."""
+
+INSTRUCTIONS = (
+    """You look back on a conversation between TARS, a household's assistant, and the people in the household, to keep \
+what's worth knowing about them next time: so TARS answers like someone who knows them. You see the conversation, and \
+what TARS already knows about the people in it and the household, each with its number.
+
+"""
+    + WHAT_TO_KEEP
+    + """
+- A thread TARS asked about in this conversation: "asked" (its id). If they said how it went, keep what matters of \
+that as a fact, and retire the thread.
 - Few and good: most conversations need no change at all; keep at most {most}."""
+)
+
+WHOLE_INSTRUCTIONS = (
+    """You look over everything TARS, a household's assistant, knows about one person, and what they've said to it \
+over the last weeks, to keep TARS's picture of them right and small: so it answers like someone who knows them. You \
+see what's kept (numbered) and their conversations, by date.
+
+Look for what no single conversation shows:
+- the same thing, asked the same way again and again: their word for something ("the news" is always Channel 12), \
+how they like something set, what they keep correcting or undoing, when they want TARS to just do it;
+- what they keep coming back to: an interest, a person, a show, a place;
+- guesses that what they said since contradicts (correct or retire them), and two that say the same thing (correct \
+one to say it all, retire the other).
+Only from a pattern you can point to: say the turn it's clearest in.
+
+"""
+    + WHAT_TO_KEEP
+    + """
+- Keep the picture small and true: at most {most} changes, and none when it's right as it is."""
+)
 
 SCHEMA = {
     "type": "object",
@@ -145,6 +179,85 @@ class LookBack:
     def tick(self) -> None:
         for conversation in self.due():
             self.look_back(conversation)
+        self.nightly()
+
+    def nightly(self) -> None:
+        """Once a day, after WHOLE_HOUR: each person who said something to TARS lately, their whole picture."""
+        now = datetime.fromtimestamp(self._clock()).astimezone()
+        today = now.strftime("%Y-%m-%d")
+        done = self.store.row("SELECT value FROM meta WHERE key=?", (WHOLE_DONE,))
+        if now.hour < WHOLE_HOUR or (done and done["value"] == today):
+            return
+        self.store.write(
+            "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (WHOLE_DONE, today),
+        )
+        for person in self.lately():
+            self.whole_picture(person)
+
+    def lately(self) -> list[str]:
+        """Everyone TARS knows who said something to it in the last WHOLE_DAYS."""
+        rows = self.store.rows(
+            "SELECT DISTINCT speaker FROM turns WHERE role='person' AND speaker IS NOT NULL "
+            "AND COALESCE(not_for_tars, 0)=0 AND ts > ? ORDER BY speaker",
+            (self._clock() - WHOLE_DAYS * 24 * 3600,),
+        )
+        names: dict[str, str] = {}
+        for r in rows:
+            names.setdefault(person_key(r["speaker"]), r["speaker"])
+        return list(names.values())
+
+    def whole_picture(self, person: str) -> list[str]:
+        """One person's: what's kept and what they said over WHOLE_DAYS, asked, and the changes made."""
+        key = person_key(person)
+        since = self._clock() - WHOLE_DAYS * 24 * 3600
+        mine = self.store.rows(
+            "SELECT DISTINCT conversation_id FROM turns WHERE role='person' AND speaker IS NOT NULL "
+            "AND lower(trim(speaker))=? AND ts > ?",
+            (key, since),
+        )
+        if not mine:
+            return []
+        ids = [r["conversation_id"] for r in mine]
+        turns = self.store.rows(
+            "SELECT t.id, t.ts, t.role, COALESCE(t.corrected_text, t.text) AS text, t.speaker, c.via FROM turns t "
+            f"JOIN conversations c ON c.id = t.conversation_id WHERE t.conversation_id IN ({','.join('?' * len(ids))}) "
+            "AND COALESCE(t.not_for_tars, 0)=0 AND t.ts > ? ORDER BY t.id DESC LIMIT ?",
+            (*ids, since, WHOLE_TURNS),
+        )[::-1]
+        lines, day = [], None
+        for t in turns:
+            if (on := _when(t["ts"], "%A %Y-%m-%d")) != day:
+                day = on
+                lines.append(f"\n{on}:")
+            who = "TARS" if t["role"] == "tars" else t["speaker"] or "someone TARS couldn't tell"
+            text = (t["text"] or "")[:TARS_SAID_CHARS] if t["role"] == "tars" else t["text"] or ""
+            where = "chat" if t["via"] == "telegram" else "aloud"
+            lines.append(f"[turn {t['id']}, {_when(t['ts'], '%H:%M')}, {where}] {who}: {text}")
+        now = self._clock()
+        kept = [r for r in self.memory.current(person, private=True) if r["person"]]
+        household = [r for r in self.memory.current(None) if not r["person"]]
+        text = (
+            f"Today is {_when(now, '%A %Y-%m-%d')}.\n\nWhat TARS knows about {person}:\n"
+            + ("\n".join(_line(r, now) for r in kept) or "nothing")
+            + "\n\nAbout the household:\n"
+            + ("\n".join(_line(r, now) for r in household) or "nothing")
+            + f"\n\nWhat {person} said to TARS over the last {WHOLE_DAYS} days, and its replies:"
+            + "\n".join(lines)
+        )
+        try:
+            with usage.turn(person, usage.BACKGROUND):
+                answer = self._ask(WHOLE_INSTRUCTIONS.format(most=MOST_WHOLE_CHANGES), text)
+            changes = json.loads(answer)["changes"]
+        except Exception as e:  # noqa: BLE001 - tried again tomorrow
+            print(f"(couldn't look over what TARS knows of {person}: {e!r})")
+            return []
+        theirs = {t["id"]: key for t in turns if t["role"] == "person" and person_key(t["speaker"]) == key}
+        when = {t["id"]: t["ts"] for t in turns}
+        done = [self._apply(c, {key: person}, theirs, when, now) for c in changes[:MOST_WHOLE_CHANGES]]
+        for line in done:
+            print(f"(looked over what TARS knows of {person}: {line})")
+        return done
 
     def look_back(self, conversation_id: int) -> list[str]:
         """One conversation: asked, and the changes made. What each change came to, for the log and the tests."""
@@ -174,7 +287,9 @@ class LookBack:
             return []
         whose = {person_key(p): p for p in people}
         theirs = {t["id"]: person_key(t["speaker"]) for t in turns if t["role"] == "person" and t["speaker"]}
-        done = [self._apply(c, whose, theirs) for c in changes[:MOST_CHANGES]]
+        when = {t["id"]: t["ts"] for t in turns}
+        ended = max(when.values())
+        done = [self._apply(c, whose, theirs, when, ended) for c in changes[:MOST_CHANGES]]
         self._done(conversation_id, last)
         for line in done:
             print(f"(looked back on conversation {conversation_id}: {line})")
@@ -205,8 +320,12 @@ class LookBack:
         known.append("About the household:\n" + ("\n".join(_line(r, now) for r in household) or "nothing"))
         return f"Today is {_when(now, '%A %Y-%m-%d')}.\n\n" + "\n\n".join(known) + "\n\n" + "\n".join(lines)
 
-    def _apply(self, change: dict, whose: dict[str, str], theirs: dict[int, str]) -> str:
-        """One change, if it passes the checks: what it came to."""
+    def _apply(
+        self, change: dict, whose: dict[str, str], theirs: dict[int, str], when: dict[int, float], ended: float
+    ) -> str:
+        """One change, if it passes the checks: what it came to. `whose`: who may have one (by person_key);
+        `theirs`: whose each turn was; `when`: each turn's time, and `ended`, the conversation's last: when it was
+        said."""
         if not isinstance(change, dict):
             return "skipped: not a change"
         do, name = change.get("do"), str(change.get("whose") or "")
@@ -231,11 +350,12 @@ class LookBack:
             "until": change.get("until"),
             "id": change.get("id"),
         }
+        at = when.get(turn, ended) if turn is not None else ended
         try:
             if do == REMEMBER:
-                return self.memory.remember(owner, args, LOOK_BACK, turn)
+                return self.memory.remember(owner, args, LOOK_BACK, turn, at)
             if do == CORRECT:
-                return self.memory.correct(owner, args, LOOK_BACK, turn)
+                return self.memory.correct(owner, args, LOOK_BACK, turn, at)
             if do == RETIRE:
                 return self.memory.retire(owner, args["id"])
             if do == ASKED:

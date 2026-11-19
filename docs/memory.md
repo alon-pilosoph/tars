@@ -46,6 +46,14 @@ says otherwise.
   It costs about a fifth of a cent a conversation with Luna. Off with `[memory] look_back = false`; without an
   OpenAI key it doesn't run. One process does it: the voice's, or in a chat-only home, Telegram's.
 
+- **Once a night, each person's whole picture.** After 4:00, for everyone who said something to TARS in the last 30
+  days: what's kept about them and what they said (with TARS's replies, shortened), in one request, for what no single
+  conversation shows: the same thing asked the same way again and again ("the news" is always Channel 12), what they
+  keep correcting or coming back to, guesses since contradicted, two memories that say the same thing (merged). The
+  same checks, at most 12 changes. About a cent a person a night.
+
+A memory is dated when it was said, not when TARS looked back on it.
+
 ## How it's used
 
 Every request is told what's kept about whoever is asking, and the household's ([`memory.py`](../src/voice_assistant/memory.py)
@@ -72,8 +80,6 @@ came from, is next.
 ## Not yet
 
 - **A page for all of it**: every memory, why TARS thinks so (a link to the turn), edit, delete, "never learn this".
-- **A nightly look over each person's whole picture**: duplicates merged, a style seen across many conversations
-  kept, old guesses that never came up again let go.
 - **Voices recognized in old conversations**: turns from before someone's voiceprint aren't theirs yet.
 - **Measuring it**: scripted conversations over days (told, used later, a second voice, forgotten, a style signal,
   a thread) checked for what's kept, what's used, and that nothing crosses between people.
