@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { plural } from "../format";
 import { type State, menuOpen, recluster, rename, toggleMenu, useStore, voiceName } from "../store";
 import type { Cluster } from "../types";
@@ -38,28 +39,71 @@ export function Voices() {
         <Empty title="No voices yet" text="Once a few people have asked TARS something, their voices show up here." />
       </>
     );
-  const ppl = s.clusters.filter(c => c.kind !== "not_person");
+  const named = s.clusters.filter(c => c.kind === "person");
+  const unnamed = s.clusters.filter(c => c.kind === "unknown");
+  const groups = unnamed.filter(c => c.size >= GROUP_AT);
+  const strays = unnamed.filter(c => c.size < GROUP_AT);
   const not = s.clusters.filter(c => c.kind === "not_person");
   return (
     <>
       {head}
-      <SecHead title="People" />
-      <div className="voices">
-        {ppl.map(c => (
-          <Voice key={c.id} c={c} s={s} />
-        ))}
-      </div>
-      {not.length > 0 && (
+      {named.length > 0 && (
         <>
-          <SecHead title="Not people">
-            <span className="muted">TV, radio and the like. TARS ignores them.</span>
-          </SecHead>
+          <SecHead title="People" />
           <div className="voices">
-            {not.map(c => (
+            {named.map(c => (
               <Voice key={c.id} c={c} s={s} />
             ))}
           </div>
         </>
+      )}
+      {groups.length > 0 && (
+        <>
+          <SecHead title="Who's this?" />
+          <p className="hint voices-hint">
+            Name a voice only when every request in it is the same person. One that's mixed (two people, or someone and
+            the TV) is fine left as it is: TARS learns only from voices you name.
+          </p>
+          <div className="voices">
+            {groups.map(c => (
+              <Voice key={c.id} c={c} s={s} />
+            ))}
+          </div>
+        </>
+      )}
+      <Folded
+        title="Not sure yet"
+        note="Voices heard only once. Each joins a voice above once it's heard again."
+        voices={strays}
+        s={s}
+      />
+      <Folded title="Not people" note="TV, radio and the like. TARS ignores them." voices={not} s={s} />
+    </>
+  );
+}
+
+// An unnamed voice heard only once is too little to name: it's folded away until it's heard again.
+const GROUP_AT = 2;
+
+function Folded({ title, note, voices, s }: { title: string; note: string; voices: Cluster[]; s: State }) {
+  const [open, setOpen] = useState(false);
+  if (!voices.length) return null;
+  return (
+    <>
+      <SecHead title={title}>
+        <span className="muted">{note}</span>
+      </SecHead>
+      {open ? (
+        <div className="voices">
+          {voices.map(c => (
+            <Voice key={c.id} c={c} s={s} />
+          ))}
+        </div>
+      ) : (
+        <button className="voices-fold" onClick={() => setOpen(true)}>
+          {`Show ${plural(voices.length, "voice")}`}
+          <Icon name="chev-down" size="s" />
+        </button>
       )}
     </>
   );

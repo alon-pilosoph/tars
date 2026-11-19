@@ -343,13 +343,20 @@ class EventLog:
             "GROUP BY c.id ORDER BY size DESC"
         )
 
-    def embeddings(self) -> list[tuple[int, np.ndarray, int | None, bool]]:
-        """(event id, embedding, cluster id, pinned) for every request with a voice embedding."""
+    def embeddings(self) -> list[tuple[int, np.ndarray, int | None, bool, str | None]]:
+        """(event id, embedding, cluster id, pinned, room) for every request with a voice embedding; room None in a
+        home with one, or from before rooms."""
         rows = self.store.rows(
-            "SELECT id, embedding, cluster_id, cluster_pinned FROM events WHERE embedding IS NOT NULL"
+            "SELECT id, embedding, cluster_id, cluster_pinned, room FROM events WHERE embedding IS NOT NULL"
         )
         return [
-            (r["id"], np.frombuffer(r["embedding"], dtype=np.float32), r["cluster_id"], bool(r["cluster_pinned"]))
+            (
+                r["id"],
+                np.frombuffer(r["embedding"], dtype=np.float32),
+                r["cluster_id"],
+                bool(r["cluster_pinned"]),
+                r["room"],
+            )
             for r in rows
         ]
 

@@ -160,7 +160,7 @@ def test_requests_keep_audio_transcript_and_voice(log):
     row = log.get(event)
     assert row["transcript"] == "what's the weather" and row["speaker"] == "alon"
     assert (log.folder / row["utterance_audio"]).exists()
-    ((event_id, embedding, cluster, pinned),) = log.embeddings()
+    ((event_id, embedding, cluster, pinned, _room),) = log.embeddings()
     assert event_id == event and embedding.tolist() == [1, 1, 1, 1] and cluster is None and not pinned
 
 
