@@ -365,3 +365,12 @@ def test_with_sure_on_the_check_judges_the_wake_on_how_sure_it_got(hearing):
 def test_without_sure_the_check_runs_as_soon_as_the_wake_fires(hearing):
     trigger = FakeTrigger(fire_at=[3])
     assert listening(trigger, hearing("hey tars")).wait(SilentMic(20)) == ANSWER and trigger.n == 3
+
+
+def test_a_wake_is_told_as_heard_before_the_check_runs_on_it(hearing):
+    verifier, order = hearing("hey tars"), []
+    decide = verifier.decide
+    verifier.decide = lambda audio: (order.append("checked"), decide(audio))[1]
+    woke = listening(FakeTrigger(fire_at=[3]), verifier)
+    assert woke.wait(SilentMic(20), heard=lambda audio: order.append(len(audio))) == ANSWER
+    assert order == [len(woke.last_audio), "checked"]  # speaker ID can start on it while it's checked

@@ -51,7 +51,7 @@ from .audio import BLOCK_SAMPLES, BLOCK_SECONDS, ECHO_TAIL_S, MIC_STALL_S, SPEAK
 from .body import BodyGone, LocalBody
 from .bodykeys import verify
 from .verify import ANSWER, ASK, IGNORE
-from .wake import DUE, Due
+from .wake import DUE, Due, Heard
 
 PROTOCOL = 1
 WAKES = ("verified", "model", "none")  # hello's `wake`: what the body checks itself before a wake
@@ -340,9 +340,10 @@ class RemoteTrigger:
         # them back at a time, when several bodies share it.
         self._checking = _CHECKING.setdefault(id(checker), threading.Lock())
 
-    def wait(self, mic: RemoteMicrophone, due: Due | None = None) -> str | None:
+    def wait(self, mic: RemoteMicrophone, due: Due | None = None, heard: Heard | None = None) -> str | None:
         """ANSWER (or None, for a button) once someone wants to talk, ASK when the wake sounded close, DUE when `due`
-        says something's due. The body is sent back to sleep first: whatever was before is over."""
+        says something's due. The body is sent back to sleep first: whatever was before is over. `heard` is told a
+        wake's pre-roll as soon as it's in, before any double-check."""
         self.last_audio = self.after_name = None
         self.link.sleep()
         while True:
@@ -357,6 +358,8 @@ class RemoteTrigger:
             preroll = _preroll(mic, preroll_ms)
             if how == "button" or self.link.hello.wake == "none":
                 return None
+            if heard and len(preroll):
+                heard(preroll)
             if self.link.hello.wake == "verified" or self.checker is None:
                 self.last_audio = preroll
                 self.after_name = self.checker.find_after_name(preroll) if self.checker and len(preroll) else None
