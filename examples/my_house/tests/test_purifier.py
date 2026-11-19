@@ -415,3 +415,69 @@ def test_an_atom_purifier_needs_its_key(tmp_path):
     assert isinstance(made._link, Atom) and made._link.host == "tars-bt-bedroom.local"
     with pytest.raises(ValueError, match="its Bluetooth address, like"):
         plugin.setup({}, Context(tmp_path, lambda name: None))["purifier"]({**spec, "address": "bedroom"})
+
+
+def test_a_bridge_that_doesnt_answer_is_restarted_before_anyone_is_told():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told, restarts = [0.0], [], []
+    answers = iter([None, None, True])  # the bridge doesn't answer twice; restarted, it does
+    watch = Watch(
+        "air purifier",
+        lambda s: next(answers),
+        told.append,
+        clock=lambda: now[0],
+        restart=lambda: restarts.append(1) or True,
+        via="127.0.0.1",
+    )
+    now[0] = GONE_AFTER_S * 2
+    watch.look()
+    watch.look()
+    assert restarts == [1] and told == [] and not watch.stuck
+
+
+def test_a_bridge_restart_that_doesnt_help_is_told_once_with_what_was_tried():
+    from examples.my_house.purifier import GONE_AFTER_S, Watch
+
+    now, told = [0.0], []
+    watch = Watch(
+        "air purifier", lambda s: None, told.append, clock=lambda: now[0], restart=lambda: False, via="127.0.0.1"
+    )
+    now[0] = GONE_AFTER_S * 2
+    for _ in range(4):
+        watch.look()
+    (said,) = told
+    assert "purifier bridge on this machine isn't answering" in said and "I restarted it and it still doesn't" in said
+
+
+def test_the_watch_restarts_what_it_can_reach(monkeypatch):
+    import examples.my_house as plugin
+    from examples.my_house.purifier import Atom, Bluetooth, restart_bridge
+
+    bluetooth = Bluetooth("48:87:2D:1F:FC:9B")
+    assert plugin._restarter(bluetooth, None) == bluetooth.restart
+    assert plugin._restarter(Atom("x", "127.0.0.1", "k"), "127.0.0.1") is restart_bridge
+    assert plugin._restarter(Atom("x", "atom-bedroom.local", "k"), "atom-bedroom.local") is None  # out of reach
+
+
+def test_restarting_the_bridge_waits_until_it_takes_connections(monkeypatch):
+    import socket
+    import subprocess
+
+    from examples.my_house import purifier as module
+
+    ran = []
+    monkeypatch.setattr(
+        subprocess, "run", lambda cmd, **kw: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0, b"", b"")
+    )
+    server = socket.create_server(("127.0.0.1", 0))
+    monkeypatch.setattr(module, "ATOM_PORT", server.getsockname()[1])
+    try:
+        assert module.restart_bridge(wait_s=2) is True
+    finally:
+        server.close()
+    assert ran == [["systemctl", "--user", "restart", "tars-purifier-bridge"]]
+    monkeypatch.setattr(
+        subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 5, b"", b"Unit not found.")
+    )
+    assert module.restart_bridge(wait_s=0.1) is False

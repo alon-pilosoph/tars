@@ -53,7 +53,7 @@ from .ac import AC, FOLDER, PROFILE, STATE, Profile
 from .blaster import TUYA_KEY, Blaster, check_spec
 from .direct_play import STREMIO_RULES, Catalog, FireTv
 from .ir import CODE_SETS, TESTED, Remote, tested_path
-from .purifier import ATOM_KEY, WATCH_FILE, Atom, Bluetooth, Purifier, Watch
+from .purifier import ATOM_KEY, LOOPBACK, WATCH_FILE, Atom, Bluetooth, Purifier, Watch, restart_bridge
 from .screen import Screen
 
 # What it needs, to be granted under [home.plugins.my_house] grant: the blaster's key, the Atom's key (a purifier out
@@ -185,13 +185,23 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
             spec["name"],
             link.heard,
             context.tell,
-            restart=link.restart if isinstance(link, Bluetooth) else None,
+            restart=_restarter(link, atom),
             memory=context.root / WATCH_FILE,
             via=atom.strip() if atom else "",
         ).start()
         return Purifier(spec["name"], link, answered=watch.answered)
 
     return {"ac": ac, "remote": remote, "firetv": firetv, "purifier": purifier}
+
+
+def _restarter(link, atom: str | None):
+    """What a purifier's watch restarts when it can't listen: this machine's Bluetooth, or the bridge on this
+    machine it's reached through; an Atom elsewhere is out of its reach (None)."""
+    if isinstance(link, Bluetooth):
+        return link.restart
+    if atom and atom.strip() in LOOPBACK:
+        return restart_bridge
+    return None
 
 
 def _only(spec: dict, allowed: set[str]) -> None:

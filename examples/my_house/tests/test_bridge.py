@@ -67,6 +67,7 @@ def bridge(monkeypatch):
     def run():
         asyncio.set_event_loop(loop)
         made["bridge"] = b = Bridge("48:87:2D:1F:FC:9B", "the-key", client_class=PretendBleak)
+        b.loop = loop  # for a test to act on the bridge's own loop
         made["server"] = loop.run_until_complete(asyncio.start_server(b.serve, "127.0.0.1", 0))
         made["keeping"] = loop.create_task(b.keep())
         ready.set()
@@ -92,6 +93,10 @@ def bridge(monkeypatch):
     loop.call_soon_threadsafe(loop.stop)
     thread.join(timeout=5)
     loop.close()
+
+
+def bridge_loop(bridge: Bridge) -> asyncio.AbstractEventLoop:
+    return bridge.loop
 
 
 def until_linked(bridge: Bridge) -> None:
@@ -132,3 +137,35 @@ def test_out_of_reach_it_says_so(bridge):
     link = Atom("48:87:2D:1F:FC:9B", "127.0.0.1", "the-key")
     with pytest.raises(HomeError, match="couldn't connect to it"):
         Purifier("living room air purifier", link, sleep=lambda _: None).status()
+
+
+def test_is_it_there_is_answered_at_once_even_while_the_bridge_is_busy_reconnecting(bridge):
+    """The watch's question must never wait behind the keeping's reconnects and Bluetooth restarts: a busy bridge
+    isn't a dead one (2026-11-19: it was told as one)."""
+    import time
+
+    until_linked(bridge)
+    loop = bridge_loop(bridge)
+    held = asyncio.run_coroutine_threadsafe(bridge.lock.acquire(), loop)
+    held.result(timeout=5)
+    try:
+        started = time.monotonic()
+        assert Atom("48:87:2D:1F:FC:9B", "127.0.0.1", "the-key").heard(60) is True
+        assert time.monotonic() - started < 2.0
+    finally:
+        loop.call_soon_threadsafe(bridge.lock.release)
+
+
+def test_a_bridge_that_cant_connect_however_it_tries_gives_up_to_be_started_afresh(monkeypatch):
+    from examples.my_house import bridge as module_bridge
+
+    monkeypatch.setattr(module_bridge, "GIVE_UP_S", 0.3)
+    monkeypatch.setattr(module_bridge, "power", lambda state: True)
+    PretendBleak.purifier, PretendBleak.near = Pretend(), False
+    b = Bridge("48:87:2D:1F:FC:9B", "the-key", client_class=PretendBleak)
+
+    async def keeping():
+        await asyncio.wait_for(b.keep(), 10)
+
+    with pytest.raises(module_bridge.GivingUp, match="no connection for 0 s"):
+        asyncio.run(keeping())
