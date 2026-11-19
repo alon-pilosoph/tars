@@ -553,7 +553,7 @@ home](#later-a-brain-anywhere-a-body-at-home)), which makes the setup at home a 
 
 Qwen replies `<ponder>` for a question that needs real thinking (planning, comparing options, several steps), TARS
 says "Let me think about that for a moment.", and `[llm] think_model` (default: `model`) answers at `think_effort`
-(default high), with the same conversation, tools and web search, within `think_timeout_s` (45 s); see [who does
+(xhigh here), with the same conversation, tools and web search, within `think_timeout_s` (none, by default); see [who does
 what](architecture.md#the-llms-tools). The web UI marks those turns. Each model is told, from one list, what it can do
 itself, what it hands over, and what TARS can't do at all. The marker isn't `<think>`, because Qwen 3 writes its own
 reasoning between those tags.
