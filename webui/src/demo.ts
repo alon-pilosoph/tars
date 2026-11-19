@@ -1091,6 +1091,37 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
         .filter(e => e.kind !== "near_miss" || e.label || e.auto_label)
     );
   }
+  if (p === "/api/people" && method === "GET") {
+    // As people.py shows it: the named people, what they said, where, and the requests nobody answered.
+    const heard = (e: DemoEvent) => ({ event_id: e.id, ts: e.ts, room: "bedroom", transcript: e.transcript ?? "" });
+    const named = d.clusters.filter(c => c.kind === "person" && c.name);
+    const decided = new Set(d.clusters.filter(c => c.kind !== "unknown").map(c => c.id));
+    const voiced = d.events.filter(e => e.has_request_audio && e.kind === "wake");
+    const people = named.map(c => {
+      const own = newestFirst(voiced.filter(e => e.cluster_id === c.id));
+      const mics = own.length ? [{ room: "bedroom", requests: own.length }] : [];
+      const check = c.name === "Alon" && own.length > 2 ? [heard(own[own.length - 1])] : [];
+      return { id: c.id, name: c.name, requests: own.length, mics, check, shown: own.slice(0, 60).map(heard) };
+    });
+    const ask = newestFirst(voiced.filter(e => !e.cluster_pinned && !decided.has(e.cluster_id ?? -1)))
+      .slice(0, 10)
+      .map((e, n) => ({ ...heard(e), guess: n === 0 && named[1] ? { id: named[1].id, name: named[1].name } : null }));
+    return { people, ask, enroll_at: 5 };
+  }
+  if (p === "/api/people" && method === "POST") {
+    const id = Math.max(0, ...d.clusters.map(c => c.id)) + 1;
+    d.clusters.push({ id, name: body.name, kind: "person" });
+    return { id };
+  }
+  if (p === "/api/people/answer") {
+    const e = d.events.find(x => x.id === body.event_id);
+    if (e) {
+      const tv = d.clusters.find(c => c.kind === "not_person")?.id ?? null;
+      const to = body.to === "tv" ? tv : body.to === "unsure" ? null : body.to;
+      Object.assign(e, { cluster_id: to, cluster_pinned: true });
+    }
+    return { ok: true };
+  }
   if (p === "/api/clusters" && method === "GET") {
     return d.clusters
       .map(c => {

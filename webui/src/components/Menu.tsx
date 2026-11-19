@@ -160,7 +160,7 @@ function voicePicker(s: State, eventId: number, current: number | null) {
     <>
       <div className="menu-title">Whose voice is it?</div>
       {s.clusters
-        .filter(c => c.kind !== "not_person" || c.id === current)
+        .filter(c => (c.kind === "person" && c.name) || c.id === current) // people, never anonymous voices
         .map(c => (
           <MenuItem
             key={c.id}

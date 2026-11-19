@@ -27,6 +27,30 @@ export interface VoiceSample {
   transcript: string | null;
 }
 
+/** A request the Voices page shows: what was said, where (its room's mic) and when. */
+export interface Heard {
+  event_id: number;
+  ts: number;
+  room: string;
+  transcript: string;
+}
+
+/** Someone TARS knows by voice: how much it heard them on each mic, what may be someone else's, and their newest. */
+export interface Person {
+  id: number;
+  name: string;
+  requests: number;
+  mics: { room: string; requests: number }[];
+  check: Heard[];
+  shown: Heard[];
+}
+
+export interface PeoplePage {
+  people: Person[];
+  ask: (Heard & { guess: { id: number; name: string } | null })[];
+  enroll_at: number;
+}
+
 export interface Cluster {
   id: number;
   name: string | null;

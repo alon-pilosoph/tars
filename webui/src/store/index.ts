@@ -10,3 +10,4 @@ export * from "./skills";
 export * from "./selectors";
 export * from "./ui";
 export * from "./voices";
+export * from "./people";
