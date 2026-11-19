@@ -217,9 +217,13 @@ def build_train(feat, layout: Layout, setup: str, user, accent: bool, phrase: st
 
 
 def household_layer(layout: Layout, clips: Path) -> dict:
-    """The generic layer's training rows (DATA/check/generic_base.npz) plus a household's clips/{positive,negative},
-    each in every training condition at weight 5, as the personal layer weights the owner's."""
-    with np.load(layout.check / "generic_base.npz") as base:
+    """The generic layer's training rows plus a household's clips/{positive,negative}, each in every training condition
+    at weight 5, as the personal layer weights the owner's. The rows and the bar are the shipped generic layer's:
+    with --hard's rows (DATA/check/generic_hard_base.npz) when they've been made, at the repo's generic layer's own
+    threshold; a household layer on the older rows at 0.3 let 25% of lookalikes through against the shipped 6%."""
+    hard = layout.check / "generic_hard_base.npz"
+    shipped = json.loads((REPO / "models/generic/hey_tars_check.json").read_text())
+    with np.load(hard if hard.exists() else layout.check / "generic_base.npz") as base:
         X, y, w, phrases = list(base["X"]), list(base["y"]), list(base["w"]), [str(p) for p in base["phrases"]]
     feat = Features(phrases)
     rng = np.random.default_rng(1)
@@ -237,6 +241,7 @@ def household_layer(layout: Layout, clips: Path) -> dict:
         feat,
         "Learned layer over Vosk's n-best scores, trained on the generic layer's data plus this "
         "household's own wakes. Made by training.household.",
+        shipped.get("threshold", THRESHOLD),
     )
 
 
