@@ -117,7 +117,7 @@ gets no answer at all, so a stranger learns nothing, not even that TARS is there
 with a voice the first word is what you feel. A chat is read whole, so that buys nothing, and every hand-off made the
 chat wait for two models. So a chat goes to `[llm] model` directly (`[telegram] brain = "openai"`), which also
 searches the web and sends real links itself, on the standard tier rather than "fast" (`[telegram] service_tier`,
-nobody's waiting on a first word) and with a little thinking (`reasoning_effort = "low"`). Without an OpenAI key, or
+nobody's waiting on a first word) and at medium effort (`reasoning_effort = "medium"`). Without an OpenAI key, or
 with `brain = "quick"`, Qwen answers first as by voice. There's no backup the other way: if OpenAI fails, the chat
 says so.
 

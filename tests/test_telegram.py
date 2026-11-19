@@ -951,7 +951,7 @@ def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path)
     # As shipped: Qwen on Cerebras, Luna at "fast".
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     llm = chat_brain_config(cfg, has_openai=True)
-    assert (llm.groq_model, llm.cerebras_model, llm.service_tier, llm.reasoning_effort) == ("", "", "", "high")
+    assert (llm.groq_model, llm.cerebras_model, llm.service_tier, llm.reasoning_effort) == ("", "", "", "medium")
     assert llm.model == cfg.llm.model and llm.send == cfg.llm.send
     assert chat_brain_config(cfg, has_openai=False).cerebras_model == cfg.llm.cerebras_model  # no OpenAI: Qwen answers
     quick = dataclasses.replace(cfg, telegram=dataclasses.replace(cfg.telegram, brain="quick"))

@@ -109,8 +109,9 @@ model = "gpt-6-luna"
 # "fast" = OpenAI's priority processing: lower latency, higher price per token. Empty = default tier.
 service_tier = "fast"
 # OpenAI's model's reasoning effort (and the quick model's, if quick_reasoning_effort is empty). Empty = the default.
-# High, like every call to the model: better answers, at seconds more before the first word when Qwen hands over.
-reasoning_effort = "high"
+# Medium, like every everyday call to the model (the owner's choice, 2026-11-19): high cost seconds more before the
+# first word when Qwen hands over. The hardest questions think at think_effort above.
+reasoning_effort = "medium"
 # Percent, like TARS's in the film. It goes into the system prompt ({humor}) and picks how TARS says something
 # went wrong: dry at 50 and up, plain below. (Asking TARS to change it only lasts for the conversation.)
 humor = 75
@@ -252,9 +253,9 @@ keep_days = 7
 # Who answers a chat: "openai" ([llm] model: web search, real links; Qwen when there's no OpenAI key) or "quick" (Qwen
 # first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing there.
 brain = "openai"
-# OpenAI's settings for chats: the standard tier, since nobody's waiting on a first word, and high effort.
+# OpenAI's settings for chats: the standard tier, since nobody's waiting on a first word, and medium effort.
 service_tier = ""
-reasoning_effort = "high"
+reasoning_effort = "medium"
 
 [home]
 # The house (docs/home.md): TARS checks and changes the devices listed below, by voice ("is the front door locked?",

@@ -1117,7 +1117,7 @@ def chat_brain_config(cfg: Config, has_openai: bool) -> LLMConfig:
 
 
 CONTINUITY_MAX_TOKENS = 400  # one word, with room for the quick model's reasoning before it
-OPENAI_CONTINUITY_MAX_TOKENS = 4000  # and for OpenAI's at high effort, which thinks for longer
+OPENAI_CONTINUITY_MAX_TOKENS = 4000  # and for OpenAI's, which thinks for longer at its reasoning effort
 
 
 def make_continuity(cfg: Config, env_path: Path, client):
