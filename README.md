@@ -50,8 +50,8 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:
   every part running, the services, the backup, the Pi ([web UI](docs/web-ui.md)). Its **Talk** page is TARS from a
   phone or a laptop: tap, ask, hear it answer there, as whoever's signed in ([talk](docs/web-ui.md#talk)).
-- **On Telegram too**: write to it or send it a voice message away from home, and get its reminders and what it
-  sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
+- **On Telegram too**: write to it, send it a voice message, or a photo or a PDF to look at (asked aloud, it asks for
+  one when it needs to see something), and get its reminders and what it sends on your phone, with nothing at home opened to the internet ([Telegram](docs/telegram.md)).
 - **Errands on any website**, asked aloud or in a chat: TARS's own browser orders on Wolt or books a table, with
   nothing built for any one site. It signs in from its own vault (a code by email or in the chat), and nothing is
   ordered until you tap Order on the checkout it shows you ([the browser](docs/browser.md)).

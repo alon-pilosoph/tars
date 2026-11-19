@@ -35,9 +35,14 @@ from voice_assistant.reminders import (
     ReminderTools,
 )
 from voice_assistant.telegram import (
+    ALOUD_WITHIN_S,
+    AS_PHOTO,
+    CANT_OPEN,
     CANT_READ,
+    CANT_SEE,
     CHAT_REMIND_TOOLS,
     COMMANDS,
+    COULDNT_FETCH,
     COULDNT_LISTEN,
     FRESH,
     HELLO,
@@ -53,6 +58,7 @@ from voice_assistant.telegram import (
     SORRY,
     SPEAKER,
     STALE_S,
+    TOO_BIG,
     TOO_LONG,
     VOLUME_HOW,
     Bot,
@@ -284,10 +290,11 @@ def test_the_commands_menu_is_set_and_a_failure_to_is_no_matter(monkeypatch):
         tars(bot, [ScriptedBrain()], sleep=time.sleep).run_forever()
 
 
-def test_a_photo_or_voice_note_gets_a_plain_answer():
+def test_a_sticker_or_a_video_gets_a_plain_answer():
     bot = FakeBot()
     update = message("")
     del update["message"]["text"]
+    update["message"]["sticker"] = {"file_id": "CAACAgI"}
     tars(bot, [ScriptedBrain()]).handle(update)
     assert bot.said() == [CANT_READ]
 
@@ -944,7 +951,7 @@ def test_chats_go_to_openai_on_the_standard_tier_unless_told_otherwise(tmp_path)
     # As shipped: Qwen on Cerebras, Luna at "fast".
     cfg = load_config(Path(__file__).parents[1] / "config.toml", local=False)
     llm = chat_brain_config(cfg, has_openai=True)
-    assert (llm.groq_model, llm.cerebras_model, llm.service_tier, llm.reasoning_effort) == ("", "", "", "low")
+    assert (llm.groq_model, llm.cerebras_model, llm.service_tier, llm.reasoning_effort) == ("", "", "", "high")
     assert llm.model == cfg.llm.model and llm.send == cfg.llm.send
     assert chat_brain_config(cfg, has_openai=False).cerebras_model == cfg.llm.cerebras_model  # no OpenAI: Qwen answers
     quick = dataclasses.replace(cfg, telegram=dataclasses.replace(cfg.telegram, brain="quick"))
@@ -1526,3 +1533,111 @@ def test_the_bot_swaps_in_fresh_connections_only_when_they_are_its_own():
     first = own._http
     own.reconnect()
     assert own._http is not first
+
+
+class SeeingBot(FakeBot):
+    """Telegram, handing over what was sent by its file id; one that's an exception is raised instead."""
+
+    def __init__(self, files=None, **kw):
+        super().__init__(**kw)
+        self.files_by_id, self.downloaded = files or {}, []
+
+    def download(self, file_id):
+        self.downloaded.append(file_id)
+        found = self.files_by_id[file_id]
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+
+def photo(caption="", file_id="big", sent_at=None, album=None, update_id=1):
+    update = message("", sent_at=sent_at, update_id=update_id)
+    del update["message"]["text"]
+    sizes = [{"file_id": "small", "file_size": 2_000}, {"file_id": file_id, "file_size": 200_000}]
+    update["message"]["photo"] = sizes
+    if caption:
+        update["message"]["caption"] = caption
+    if album:
+        update["message"]["media_group_id"] = album
+    return update
+
+
+def document(name, mime, size=50_000, caption=""):
+    update = message("")
+    del update["message"]["text"]
+    update["message"]["document"] = {"file_id": "doc", "file_name": name, "mime_type": mime, "file_size": size}
+    if caption:
+        update["message"]["caption"] = caption
+    return update
+
+
+def test_a_photo_is_fetched_at_its_biggest_and_put_in_front_of_the_brain_with_its_caption(convos):
+    bot, brain = SeeingBot({"big": b"jpeg"}), ScriptedBrain(["A rash, mild. Keep an eye on it."])
+    tars(bot, [brain], convos).handle(photo("what is this?"))
+    assert bot.downloaded == ["big"] and bot.said() == ["A rash, mild. Keep an eye on it."]
+    assert brain.asked == ["[Speaker: Alon] [Photo] what is this?"]
+    (seen,) = brain.request.attached
+    assert (seen.kind, seen.mime, seen.data) == ("image", "image/jpeg", b"jpeg")
+    (conversation,) = convos.conversations()
+    assert conversation["turns"][0]["text"] == "[Photo] what is this?"  # the log knows it by its tag
+
+
+def test_a_pdf_and_a_text_file_are_read_and_anything_else_says_what_to_send_instead():
+    bot, brain = SeeingBot({"doc": b"%PDF-1.7"}), ScriptedBrain(["Friday, 12:30. Want a reminder?"])
+    tars(bot, [brain]).handle(document("notice.pdf", "application/pdf"))
+    assert brain.asked == ["[Speaker: Alon] [File: notice.pdf]"] and brain.request.attached[0].kind == "pdf"
+    bot, brain = SeeingBot({"doc": b"milk\neggs"}), ScriptedBrain(["Two things."])
+    tars(bot, [brain]).handle(document("list.txt", "text/plain"))
+    assert brain.request.attached[0].kind == "text"
+    for name, mime, says in [("plan.docx", "application/msword", CANT_OPEN), ("IMG.HEIC", "image/heic", AS_PHOTO)]:
+        bot, brain = SeeingBot(), ScriptedBrain()
+        tars(bot, [brain]).handle(document(name, mime))
+        assert bot.said() == [says] and bot.downloaded == [] and brain.asked == []
+
+
+def test_a_file_too_big_to_fetch_says_so_without_fetching_it():
+    bot = SeeingBot()
+    tars(bot, [ScriptedBrain()]).handle(document("scan.pdf", "application/pdf", size=30_000_000))
+    assert bot.said() == [TOO_BIG] and bot.downloaded == []
+
+
+def test_an_album_is_one_message_with_all_its_photos_and_its_caption():
+    bot, brain = SeeingBot({"one": b"1", "two": b"2"}), ScriptedBrain(["Two receipts."])
+    updates = [photo(file_id="one", album="g1"), photo("add these up", file_id="two", album="g1", update_id=2)]
+    for update in together(updates):
+        tars(bot, [brain]).handle(update)
+    assert brain.asked == ["[Speaker: Alon] [Photo] [Photo] add these up"]
+    assert [a.data for a in brain.request.attached] == [b"1", b"2"]
+
+
+def test_a_photo_telegram_wont_hand_over_says_so_and_asks_nothing():
+    bot, brain = SeeingBot({"big": TelegramError("getFile: ConnectError")}), ScriptedBrain()
+    tars(bot, [brain]).handle(photo())
+    assert bot.said() == [COULDNT_FETCH] and brain.asked == []
+
+
+def test_without_a_model_that_sees_a_photo_is_turned_down_and_the_rules_dont_offer_it():
+    bot, brain = SeeingBot({"big": b"jpeg"}), ScriptedBrain()
+    tars(bot, [brain], sees=False).handle(photo())
+    assert bot.said() == [CANT_SEE] and bot.downloaded == [] and brain.asked == []
+    assert "[Photo]" in channel_rules(["Alon"]) and "[Photo]" not in channel_rules(["Alon"], sees=False)
+
+
+def test_what_they_just_asked_aloud_comes_with_the_photo_they_were_asked_for(convos):
+    at_home = convos.start(None)
+    convos.add_person_turn(at_home, "what's this rash on Ari's arm?", speaker="Alon")
+    convos.add_tars_turn(at_home, "Send me a photo of it on Telegram and I'll take a look.")
+    bot, brain = SeeingBot({"big": b"jpeg"}), ScriptedBrain(["Looks like a mild heat rash."])
+    tars(bot, [brain], convos).handle(photo())
+    (asked,) = brain.asked
+    assert asked.startswith("[Speaker: Alon] [Shortly before, aloud at home: Alon: \"what's this rash on Ari's arm?\"")
+    assert asked.endswith('TARS: "Send me a photo of it on Telegram and I\'ll take a look."] [Photo]')
+
+
+def test_what_someone_else_said_aloud_or_long_ago_isnt_put_in_front_of_a_photo(convos):
+    at_home = convos.start(None)
+    convos.add_person_turn(at_home, "what's this?", speaker="Stacey")
+    convos.add_person_turn(at_home, "and this?", speaker="Alon", ts=time.time() - ALOUD_WITHIN_S - 60)
+    bot, brain = SeeingBot({"big": b"jpeg"}), ScriptedBrain(["A cat."])
+    tars(bot, [brain], convos).handle(photo())
+    assert brain.asked == ["[Speaker: Alon] [Photo]"]

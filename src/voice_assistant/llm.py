@@ -20,6 +20,7 @@ from typing import Protocol
 from openai import OpenAI, OpenAIError, RateLimitError
 
 from . import usage
+from .attached import has_parts, put_away, with_parts
 from .config import LLMConfig
 from .conversations import FILE, HOUSEHOLD, KINDS, LINK, LIST, NOTE, PERSON, SentItem
 from .home import ONE_MOMENT, HomeTools, Request
@@ -836,13 +837,20 @@ class OpenAIChat:
         with self._lock:
             self._forget_if_quiet()
             self._previous_turn_at, self._last_turn_at = self._last_turn_at, self._clock()
-            self._asked = {"role": "user", "content": text}
+            request = request or Request()
+            self._asked = {"role": "user", "content": with_parts(text, request.attached)}
             self._history.append(self._asked)
+            put_away(self._history)
             self.sent, self.changes = [], []
             self._writing = writing = _Writing(self.first_answerer)
-            writing.request = dataclasses.replace(
-                request or Request(), emit=self._emit, held_for_web=lambda: setattr(writing, "held_for_web", True)
-            )
+            if request.attached:
+                # Its words are from anywhere, as a web page's are, and are the message itself: there's no writing
+                # it again without them, so what it holds back stays held back, and they ask again on its own.
+                writing.request = dataclasses.replace(request, emit=self._emit, read_the_web=True, held_for_web=None)
+            else:
+                writing.request = dataclasses.replace(
+                    request, emit=self._emit, held_for_web=lambda: setattr(writing, "held_for_web", True)
+                )
             # Set up now rather than on the first read, so an interrupt() in between isn't lost.
             return self._stream_reply(list(self._history), writing)
 
@@ -855,11 +863,9 @@ class OpenAIChat:
         model, extra, instructions = self._cfg.model, self._extra, self._instructions
         if think:
             model = self._cfg.think_model or self._cfg.model
-            extra = {
-                **self._extra,
-                "reasoning": {"effort": self._cfg.think_effort},
-                "timeout": self._cfg.think_timeout_s,
-            }
+            extra = {**self._extra, "reasoning": {"effort": self._cfg.think_effort}}
+            if self._cfg.think_timeout_s:
+                extra["timeout"] = self._cfg.think_timeout_s
             instructions = f"{self._instructions}\n\n{THINK_RULES}"
         if said_first.strip():
             instructions = f"{instructions}\n\n{CARRY_ON.format(said=said_first.strip())}"
@@ -1208,6 +1214,11 @@ class QuickChat(OpenAIChat):
         self._quick_extra = {"reasoning_effort": effort} if effort else {}
 
     def _stream_reply(self, context: list, writing: _Writing) -> Iterator[str]:
+        if self._client is not None and any(has_parts(item) for item in context):
+            # Something to see or read is still in front of the conversation, and Qwen can't see it: OpenAI answers.
+            writing.answered_by = OPENAI
+            yield from super()._stream_reply(context, writing)
+            return
         answer, handed_off, cut_off = "", None, False
         ready = [service for service in self._quick if self._clock() >= service.back_at]
         if not ready and self._client is None:
@@ -1292,6 +1303,9 @@ class QuickChat(OpenAIChat):
             yield from super()._stream_reply(context, writing, said_first=answer)
             return
         limit = self._cfg.think_timeout_s
+        if not limit:  # no limit: it thinks for as long as it takes
+            yield from super()._stream_reply(context, writing, said_first=answer, think=True)
+            return
         timer = threading.Timer(limit, _stop, (writing, f"no answer within {limit:.0f} s"))
         timer.daemon, timer.name = True, "think-timeout"
         timer.start()

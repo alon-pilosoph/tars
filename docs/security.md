@@ -296,6 +296,11 @@ instructions and…". A model may believe them, so what matters is what code all
     own words alone: the first try and everything it read are dropped, and web search and every `outside` tool are
     taken away. So "put the news on" still puts it on when the model went to the web first, and nothing from the web
     can be in the reply that does it.
+  - **A reply with a photo or a file in front of it changes nothing in the house either.** What's in one (a flyer, a
+    forwarded PDF, a screenshot) is words from anywhere, so a message that comes with one starts with
+    `Request.read_the_web` set (`llm.py`). There's no writing it again without the photo, which is the message itself:
+    the refusal stands, and they ask again on its own. Reminders and sends, made only once the reply is kept, are
+    fine, as after a web search (the open item below applies to them too).
   - **A Telegram chat works the house as the voice does** (`wiring.py`, `chat_home()`): only people in
     `[telegram] people` reach it at all, it unlocks only as above, and a chat's reply that searched the web changes
     nothing either. A chat can mute and unmute TARS's microphone at home

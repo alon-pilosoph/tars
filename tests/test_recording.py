@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -131,10 +132,10 @@ def test_a_big_house_is_sampled_not_recorded_whole():
     assert len([p for p in house_script(devices, random.Random(2)) if p.means]) == MOST_COMMANDS
 
 
-def test_the_voice_script_has_enough_to_enroll_with_some_from_afar():
+def test_the_voice_script_has_enough_to_enroll_all_plain_talking():
     prompts = voice_script()
     assert len(prompts) >= 10 and len({p.id for p in prompts}) == len(prompts)
-    assert any(p.quiet for p in prompts) and all(p.means is None for p in prompts)
+    assert not any(p.quiet or p.how for p in prompts) and all(p.means is None for p in prompts)
 
 
 def test_the_wake_script_says_hey_tars_everywhere_its_said_and_lookalikes_it_mustnt_wake_to():
@@ -642,3 +643,17 @@ def test_uploads_only_go_to_a_session_recorded_on_its_device(log):
     assert client.post(upload.format(here, "nope", "silence"), content=wav_at(16_000)).status_code == 404
     assert client.post(upload.format(here, "w1", "whenever"), content=wav_at(16_000)).status_code == 422
     assert client.post(upload.format(here, "w1", "silence"), content=b"not a recording").status_code == 422
+
+
+def test_a_voice_session_becomes_a_voiceprint_on_the_speakerphones_own_mic(log, tmp_path):
+    from voice_assistant.entrypoints import enroll_from_session
+
+    sessions = Sessions(log.store)
+    token = sessions.create(VOICE, "Alon", voice_script()[:5])
+    session = sessions.open(token)
+    for prompt in sessions.prompts(session):
+        sessions.add_take(session, prompt, take_audio(), "silence")
+    made = []
+    speaker_id = SimpleNamespace(enroll=lambda name, clips, mic="": made.append((name, len(clips), mic)))
+    enroll_from_session(speaker_id, log.store, sessions.open(token), mic="Living room")
+    assert made == [("Alon", 5, "Living room")]

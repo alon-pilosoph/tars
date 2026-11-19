@@ -304,6 +304,16 @@ class ConversationLog:
         )
         return rows[0]["conversation_id"] if rows else None
 
+    def aloud_lately(self, person: str, since: float) -> list[dict]:
+        """The turns since `since` of the newest conversation aloud (not in a chat) that `person` spoke in then, oldest
+        first, as turns_of has them: what they'd just asked at home, for a photo they then send in their chat."""
+        rows = self.store.rows(
+            "SELECT t.conversation_id FROM turns t JOIN conversations c ON c.id = t.conversation_id "
+            "WHERE c.via IS NULL AND t.role = ? AND t.speaker = ? AND t.ts >= ? ORDER BY t.ts DESC, t.id DESC LIMIT 1",
+            (ROLE_PERSON, person, since),
+        )
+        return [t for t in self.turns_of(rows[0]["conversation_id"]) if t["ts"] >= since] if rows else []
+
     def turns_of(self, conversation_id: int) -> list[dict]:
         """A conversation's turns, oldest first: role, what was said (as corrected, if it was), when, and whether
         TARS's failed."""

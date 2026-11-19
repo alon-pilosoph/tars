@@ -126,7 +126,7 @@ class LLMConfig:
     # instead of handing those turns to `model`. Off until tools/capability_bench.py shows it gets them right.
     quick_tools: bool = False
     # Questions that need real thinking go from the quick model to `think_model` (empty = `model`) at this reasoning
-    # effort, for at most think_timeout_s. Empty think_effort = no such hand-off.
+    # effort, for at most think_timeout_s (0 = no limit). Empty think_effort = no such hand-off.
     think_model: str = ""
     think_effort: str = "high"
     think_timeout_s: float = 45.0
@@ -651,8 +651,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[llm] memory_minutes must be 0 or more")
     if r.greet not in GREETS:
         problems.append(f"[recorder] greet must be {', '.join(GREETS)}, not {r.greet!r}")
-    if cfg.llm.think_timeout_s <= 0:
-        problems.append("[llm] think_timeout_s must be more than 0")
+    if cfg.llm.think_timeout_s < 0:
+        problems.append("[llm] think_timeout_s must be 0 (no limit) or more")
     if cfg.llm.home_country and not re.fullmatch(r"[A-Z]{2}", cfg.llm.home_country):
         problems.append(f"[llm] home_country must be a two-letter country code, like IL, not {cfg.llm.home_country!r}")
     if cfg.tts.provider not in ("openai", "deepgram", "cartesia"):

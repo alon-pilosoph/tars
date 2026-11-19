@@ -75,7 +75,8 @@ them, grouped as they're said, each recorded, worth redoing, left for later or n
 recorded from there. While the page is open TARS doesn't listen for its name (a phrase can say "hey
 TARS"), what's due is still said between takes, and three minutes after the page last asked for anything it listens
 again by itself. A session left halfway carries on where it stopped. When a voice session is finished, its good takes
-(at least five) become the person's voiceprint.
+(at least five) become the person's voiceprint on the speakerphone. Its sentences are plain talking, in a normal
+voice, close to the mic: nothing from across the room, quiet, or over the TV.
 
 | The phrase, before a take | A take that needs doing again |
 |---|---|

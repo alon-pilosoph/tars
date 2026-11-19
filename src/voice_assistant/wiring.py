@@ -912,11 +912,16 @@ def brains(cfg: Config, root: Path, typed: bool = False, reminders=None, home=No
     keys = env_keys(env)
     cfg, _ = with_keys(cfg, keys)
     client = make_openai_client(env) if OPENAI_KEY in keys else None
+    from .attached import ask_for_a_photo
+
+    chats = list(cfg.telegram.people) if cfg.telegram.enabled and client is not None else []
+    rules = ask_for_a_photo(chats)  # what it can't see from here, it asks to be sent in a chat
     return lambda: make_brain(
         client,
         brain_config(cfg, typed=typed),
         env,
         reminders,
+        channel_rules=rules,
         home=home,
         browser=browser,
         feeds=feeds,
@@ -1063,6 +1068,13 @@ def start_look_back(cfg: Config, root: Path, household) -> None:
     LookBack(store, household.memory, ask, cfg.memory.look_back_minutes * 60).start()
 
 
+def own_mic(cfg: Config) -> str:
+    """The room of this machine's own microphone (TARS's speakerphone), as speaker ID's voiceprints name mics."""
+    from .rooms import MAIN
+
+    return cfg.bodies.room if cfg.bodies.enabled else MAIN
+
+
 def make_feeds(cfg: Config, events):
     """The feeds tool (feeds.py), in the event database."""
     from .feeds import make
@@ -1105,6 +1117,7 @@ def chat_brain_config(cfg: Config, has_openai: bool) -> LLMConfig:
 
 
 CONTINUITY_MAX_TOKENS = 400  # one word, with room for the quick model's reasoning before it
+OPENAI_CONTINUITY_MAX_TOKENS = 4000  # and for OpenAI's at high effort, which thinks for longer
 
 
 def make_continuity(cfg: Config, env_path: Path, client):
@@ -1146,7 +1159,7 @@ def make_continuity(cfg: Config, env_path: Path, client):
             model=cfg.llm.model,
             instructions=system["content"],
             input=rest,
-            max_output_tokens=CONTINUITY_MAX_TOKENS,
+            max_output_tokens=OPENAI_CONTINUITY_MAX_TOKENS,
             **reasoning,
         )
         usage.response("openai", cfg.llm.model, reply)

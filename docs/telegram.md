@@ -1,7 +1,7 @@
 # TARS on Telegram
 
 The household can chat with TARS on Telegram from anywhere, in writing or with a voice message: ask it something,
-set a reminder, have it send something. TARS also sends things there: a reminder set in a chat comes to that chat
+set a reminder, have it send something, or send it a photo or a file to look at. TARS also sends things there: a reminder set in a chat comes to that chat
 when it's due, and what TARS sends at home for someone ("send me the recipe") comes to their phone as well as the
 TARS page.
 
@@ -44,6 +44,8 @@ the chat instead.
 |---|---|
 | "what's 17 times 23?" | TARS answers in the chat |
 | a voice message: "remind me to call mum at six" | written down by speech to text, as at home, and answered in writing |
+| a photo of a rash: "what is this?" | OpenAI's model sees it and answers; with no words, TARS says what it is |
+| the school's PDF notice, or a photo of the invitation | read; it says what's in it, and offers a reminder ("the day before?") |
 | "what's the weather?" | handed to OpenAI with web search, as by voice; "typing..." while it looks |
 | "remind me at 6 to call mum" | set, and posted to this chat at 6:00 |
 | "set a pasta timer for 12 minutes" | "Your pasta timer is done." in this chat after 12 minutes |
@@ -172,6 +174,21 @@ from the moment it arrives, so a reminder that comes due meanwhile is posted aft
 now.". Either way it's kept on the web UI, with its recording and why. Who sent it is the chat's person, as for
 anything written there: speaker ID isn't asked, and a voice message never trains it.
 
+**Photos and files, seen.** A photo (an album is one message), a PDF or a text file (`.txt`, `.csv`, `.ics`, and the
+like), up to 20 MB, is fetched from Telegram and goes to OpenAI's model with the words sent with it, tagged `[Photo]`
+or `[File: name]`; Qwen can't see, so a conversation with one in front of it is OpenAI's alone, whatever `[telegram]
+brain` says. Anything else ("I can't open that kind of file yet"), a HEIC sent as a file ("send it as a photo"), a
+video or a sticker gets a plain answer, without being fetched; without an OpenAI key, a photo gets "I can't see photos
+or read files here". The words in one are from anywhere, like a web page's: the brain is told they're something to
+read, never instructions, and a reply with one in front of it reads the house but changes nothing in it (asked again
+on its own, it does). Reminders and what TARS sends are fine. It stays in front of the model for its own turn and
+three more of theirs, then the conversation keeps only its words and TARS's replies about it: sent every turn, a photo
+would cost its tokens each time. The log and the web UI keep the tag and the words, not the photo. When something
+was said aloud at home in the last 15 minutes by the same person, it goes in front of the photo
+(`[Shortly before, aloud at home: ...]`), so "what's this rash on Ari's arm?" asked aloud, and "Send me a photo of it
+on Telegram", carry on in the chat. Asked aloud, TARS knows who has a chat, and asks them for a photo when answering
+needs it to see something, rather than guessing.
+
 **Writing, not speaking.** The system prompt is written for the ear. For a chat, a rule goes last in the
 instructions, so it wins: this is in writing, reply as in a text message, plain text, links are fine, what you send is
 posted here, a `[Voice message]` may have a word misheard (say what you heard and ask), and who's on Telegram (so a
@@ -232,11 +249,12 @@ part of every request's address, so no error message includes the address.
 
 ## What it sends Telegram
 
-Telegram gets what's written in the chats, the voice messages sent there, TARS's replies, the reminders posted there,
+Telegram gets what's written in the chats, the voice messages, photos and files sent there, TARS's replies, the reminders posted there,
 and what TARS sends to them; with `[browser]`, an errand's checkout screenshot and what it asks to approve, and the
 sign-in codes sent back. A login is never sent through Telegram: only a link to TARS's own page for it. Nothing from
 home goes to Telegram except the things sent for someone with a chat. A voice message's recording also goes to speech to
-text, as a request at home does: Deepgram, or OpenAI if Deepgram fails. Telegram bot chats aren't end-to-end encrypted:
+text, as a request at home does: Deepgram, or OpenAI if Deepgram fails. A photo or file goes to OpenAI with the
+message, and with the next three; nothing is uploaded to be kept there (`store` is off). Telegram bot chats aren't end-to-end encrypted:
 Telegram's servers can read them, as they can any chat that isn't a secret chat.
 
 The check of whether a message carries a conversation on ([one conversation or a new
@@ -245,9 +263,9 @@ service, Cerebras or Groq (OpenAI's without either), even when `[telegram] brain
 
 ## Not yet
 
-- **Photos, and replies by voice.** A photo gets "I can only read text and listen to voice messages for now."; a
-  photo could go to OpenAI's model, which reads images. TARS answers a voice message in writing; it could answer in
-  its own voice, as a voice message.
+- **Replies by voice.** TARS answers a voice message in writing; it could answer in its own voice, as a voice
+  message.
+- **Word documents, spreadsheets, videos.** Only photos, PDFs and text files are read; a screenshot of the rest works.
 - **"Got it" for a reminder posted to a chat.** It's posted once and done, so there's nothing to acknowledge;
   "remind me again in ten minutes" snoozes it, and it's posted again then.
 - **Missed reminders at home forwarded to a phone.** A reminder nobody acknowledged aloud could go to its person's

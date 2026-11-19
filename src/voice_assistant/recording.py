@@ -122,15 +122,12 @@ VOICE_SENTENCES = [
     "There's a strange noise coming from the garage.",
     "Thanks, that's all I needed.",
 ]
-# The voiceprint should know you from where you really talk to TARS, so a few are from afar and a few quiet.
-VOICE_HOWS = ["", "", "", "", "", "", "", FAR, FAR, SOFTLY, "", SOFTLY]
 
 
 def voice_script() -> list[Prompt]:
-    return [
-        Prompt(f"v{n}", say, how, quiet=how in (FAR, SOFTLY))
-        for n, (say, how) in enumerate(zip(VOICE_SENTENCES, VOICE_HOWS, strict=True), 1)
-    ]
+    """Plain talking, in their normal voice, close to the mic: a voiceprint of how they sound, with nothing else in
+    it (the owner's call, 2026-11-19: no TV, nothing from afar or quiet)."""
+    return [Prompt(f"v{n}", say, "") for n, say in enumerate(VOICE_SENTENCES, 1)]
 
 
 # How people ask for each thing a device does: {n} is its name, {t} a temperature.

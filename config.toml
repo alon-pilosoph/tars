@@ -99,17 +99,18 @@ quick_tools = true
 # Every model and effort tried: docs/models.md. Empty = reasoning_effort below.
 quick_reasoning_effort = "low"
 # Questions that need real thinking (planning, comparing, several steps) go to this model at this reasoning effort,
-# for at most think_timeout_s; TARS says "Let me think about that for a moment." first. Empty think_model = `model`;
+# for at most think_timeout_s (0 = no limit); TARS says "Let me think about that for a moment." first. Empty think_model = `model`;
 # empty think_effort = no such hand-off.
 think_model = ""
-think_effort = "high"
-think_timeout_s = 45
+think_effort = "xhigh"
+think_timeout_s = 0
 # OpenAI's model: web search, sending things, and a backup for the one above.
 model = "gpt-6-luna"
 # "fast" = OpenAI's priority processing: lower latency, higher price per token. Empty = default tier.
 service_tier = "fast"
 # OpenAI's model's reasoning effort (and the quick model's, if quick_reasoning_effort is empty). Empty = the default.
-reasoning_effort = "none"
+# High, like every call to the model: better answers, at seconds more before the first word when Qwen hands over.
+reasoning_effort = "high"
 # Percent, like TARS's in the film. It goes into the system prompt ({humor}) and picks how TARS says something
 # went wrong: dry at 50 and up, plain below. (Asking TARS to change it only lasts for the conversation.)
 humor = 75
@@ -251,9 +252,9 @@ keep_days = 7
 # Who answers a chat: "openai" ([llm] model: web search, real links; Qwen when there's no OpenAI key) or "quick" (Qwen
 # first, handing over as by voice). A chat is read whole, so Qwen's faster start buys nothing there.
 brain = "openai"
-# OpenAI's settings for chats: the standard tier, since nobody's waiting on a first word, and a little thinking.
+# OpenAI's settings for chats: the standard tier, since nobody's waiting on a first word, and high effort.
 service_tier = ""
-reasoning_effort = "low"
+reasoning_effort = "high"
 
 [home]
 # The house (docs/home.md): TARS checks and changes the devices listed below, by voice ("is the front door locked?",
