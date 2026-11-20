@@ -35,7 +35,7 @@ everything else in the database goes on (reminders, sent items, skills, who's ho
 
 A few rules keep the log honest:
 
-- **Nothing is kept until stage 1 fires or comes close.** A "Yes, Alon?" or "Did you call me?" nobody answers, or
+- **Nothing is kept until stage 1 fires or comes close.** A "Yes Alon" or "Did you call me?" nobody answers, or
   a wake followed by noise, doesn't start a conversation; the conversation starts at the first thing someone says.
 - **Writing never costs a reply.** Every write goes through `journal.py`, which catches its own failures (disk full,
   the database locked by the web UI), prints a warning and carries on. Near-misses are written off the mic loop.
