@@ -158,13 +158,16 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
         return device
 
     def purifier(spec: dict) -> Purifier:
-        _only(spec, {"address", "atom"})
+        _only(spec, {"address", "atom", "watch"})
         address = spec.get("address")
         if not (isinstance(address, str) and re.fullmatch(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", address.strip())):
             raise ValueError("it needs address, its Bluetooth address, like 48:87:2D:1F:C1:5C")
         atom = spec.get("atom")
         if atom is not None and not (isinstance(atom, str) and atom.strip()):
             raise ValueError("atom is the Atom's address on the home network, like tars-bt-bedroom.local")
+        watched = spec.get("watch", True)
+        if watched is not True and watched is not False:
+            raise ValueError("watch is true or false: whether the maintainers are told when it goes quiet")
         if not atom:
             try:
                 import bleak  # noqa: F401 - only whether it's there
@@ -178,7 +181,7 @@ def setup(settings: dict, context: Context) -> dict[str, Callable[[dict], Device
             link = Atom(address.strip(), atom.strip(), key)
         else:
             link = Bluetooth(address.strip())
-        if not (context.background and context.tell):
+        if not (watched and context.background and context.tell):
             return Purifier(spec["name"], link)
         # The voice assistant's watches its Bluetooth, and tells the maintainers when it goes quiet.
         watch = Watch(
