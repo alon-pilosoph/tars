@@ -24,9 +24,12 @@ function personParam(v: string | null): PersonFilter {
   return idParam(v) ?? "all";
 }
 
+/** The page a link's query (location.search) is for. */
+export const tabIn = (search: string): Tab => oneOf(new URLSearchParams(search).get("tab"), TABS) ?? "home";
+
 export const DEMO = PARAMS.has("demo");
 export const LINK = {
-  tab: oneOf(PARAMS.get("tab"), TABS) ?? "home",
+  tab: tabIn(location.search),
   person: personParam(PARAMS.get("person")),
   guess: oneOf(PARAMS.get("guess"), ["yes", "no", "none"] as const) ?? ("all" as GuessFilter),
   conv: idParam(PARAMS.get("conv")),
