@@ -108,14 +108,70 @@ def test_adding_someone_twice_is_the_same_person(people):
         people.add("  ")
 
 
-def test_an_answer_relearns_the_voices_on_its_own_thread(log):
+def test_an_answer_relearns_the_voices_on_its_own_thread_the_night_after(log):
     import threading
 
-    done = threading.Event()
-    people = People(log, rebuild=done.set)
+    done, now = threading.Event(), [_at(20, 22)]
+    people = People(log, rebuild=done.set, clock=lambda: now[0], look_s=0.01)
     (one,) = add_requests(log, voice(np.eye(16)[0], np.random.default_rng(7), 1))
     people.answer(one, people.add("Alon"))
+    assert not done.wait(0.1)
+    now[0] = _at(21, 4)
     assert done.wait(5)
+
+
+def test_a_days_answers_are_relearned_once_that_night(log):
+    rebuilds, now = [], [_at(20, 9)]
+    people = People(log, rebuild=lambda: rebuilds.append(now[0]), clock=lambda: now[0], look_s=3600)
+    alon = people.add("Alon")
+    for i, e in enumerate(add_requests(log, voice(np.eye(16)[0], np.random.default_rng(9), 3))):
+        now[0] = _at(20, 9 + 4 * i)  # 9:00, 13:00, 17:00
+        people.answer(e, alon)
+    now[0] = _at(21, 3, 59)
+    assert not people.relearn_if_due() and rebuilds == []
+    now[0] = _at(21, 4)
+    assert people.relearn_if_due() and rebuilds == [_at(21, 4)]
+    assert not people.relearn_if_due()
+
+
+def test_an_answer_after_the_nights_hour_waits_for_the_next_night(log):
+    rebuilds, now = [], [_at(21, 4, 30)]
+    people = People(log, rebuild=lambda: rebuilds.append(now[0]), clock=lambda: now[0], look_s=3600)
+    people.relearn()
+    now[0] = _at(21, 23)
+    assert not people.relearn_if_due()
+    now[0] = _at(22, 4)
+    assert people.relearn_if_due() and rebuilds == [_at(22, 4)]
+
+
+def test_a_night_missed_is_relearned_when_the_web_ui_is_back(log):
+    rebuilds, now = [], [_at(20, 12)]
+    people = People(log, rebuild=lambda: rebuilds.append(now[0]), clock=lambda: now[0], look_s=3600)
+    people.relearn()
+    now[0] = _at(21, 15)  # down at 4:00, up again in the afternoon
+    assert people.relearn_if_due() and rebuilds == [_at(21, 15)]
+
+
+def test_a_failed_relearn_is_tried_again_the_next_night(log):
+    tries, now = [], [_at(20, 12)]
+
+    def rebuild():
+        tries.append(now[0])
+        raise RuntimeError("no audio")
+
+    people = People(log, rebuild=rebuild, clock=lambda: now[0], look_s=3600)
+    people.relearn()
+    now[0] = _at(21, 4)
+    assert people.relearn_if_due() and tries == [_at(21, 4)]
+    now[0] = _at(21, 23)
+    assert not people.relearn_if_due()
+    now[0] = _at(22, 4)
+    assert people.relearn_if_due() and len(tries) == 2
+
+
+def _at(day: int, hour: int, minute: int = 0) -> float:
+    """A local time in November 2026."""
+    return time.mktime((2026, 11, day, hour, minute, 0, 0, 0, -1))
 
 
 def test_the_page_and_its_answers_over_the_api(log, client):

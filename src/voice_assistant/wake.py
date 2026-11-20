@@ -58,7 +58,7 @@ class WakeWordTrigger:
         self.phrase = name.replace("_", " ")
 
     def score(self, block: np.ndarray) -> float:
-        return max(self._model.predict(block).values())
+        return float(max(self._model.predict(block).values()))  # NumPy's float32, which SQLite would keep as bytes
 
     def reset(self) -> None:
         # Scores stay high for a few frames after a hit; resetting stops a re-trigger.

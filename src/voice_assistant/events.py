@@ -110,7 +110,7 @@ class EventLog:
             return self.store.write(
                 "INSERT INTO events (ts, kind, wake_score, outcome, heard, confidence, wake_model, check_model, audio, "
                 "room) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (ts, WAKE, wake_score, outcome, heard, confidence, wake_model, check_model, audio, room),
+                (ts, WAKE, float(wake_score), outcome, heard, _num(confidence), wake_model, check_model, audio, room),
             )
 
     def add_near_miss(
@@ -123,7 +123,7 @@ class EventLog:
         with self.store.removed_on_failure(audio):
             return self.store.write(
                 "INSERT INTO events (ts, kind, wake_score, wake_model, audio) VALUES (?, ?, ?, ?, ?)",
-                (ts, NEAR_MISS, peak_score, wake_model, audio),
+                (ts, NEAR_MISS, float(peak_score), wake_model, audio),
             )
 
     def add_request(
@@ -452,3 +452,8 @@ def auto_label(event: dict, answered_wake_times: list[float]) -> tuple[str | Non
             return NOT_REAL, "nobody answered “Did you call me?”"
         return None, "it woke, but nobody spoke"
     return None, ""
+
+
+def _num(x: float | None) -> float | None:
+    """A plain float for SQLite: NumPy's float32 isn't one, and would be kept as its bytes."""
+    return None if x is None else float(x)

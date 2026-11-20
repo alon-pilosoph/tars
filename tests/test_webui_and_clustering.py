@@ -31,6 +31,16 @@ def add_requests(log, embeddings, room=None):
     return ids
 
 
+def test_a_score_kept_as_bytes_reads_back_as_its_number(log, client):
+    """A wake logged before scores were made floats has its NumPy float32's bytes in the database."""
+    import struct
+
+    event = log.add_wake(AUDIO, 0.5, "ignore", "hey tara", None)
+    log.store.write("UPDATE events SET wake_score=? WHERE id=?", (struct.pack("<f", 0.618), event))
+    (row,) = client.get("/api/events").json()
+    assert row["wake_score"] == pytest.approx(0.618)
+
+
 def test_api_lists_labels_retags_and_deletes(log, client):
     event = log.add_wake(AUDIO, 0.9, ANSWER, "hey tars", 0.9)
     (row,) = client.get("/api/events").json()

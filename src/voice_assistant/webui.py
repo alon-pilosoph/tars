@@ -10,6 +10,7 @@ browser of someone at home; with [web] sign_in, only to someone signed in with a
 
 import base64
 import functools
+import struct
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
@@ -193,6 +194,14 @@ def ranged(data: bytes, media_type: str, asked: str | None) -> Response:
     )
 
 
+def _number(v: object) -> object:
+    """A score SQLite kept as the bytes of a NumPy float (a wake logged before events.add_wake made it a float), read
+    back as the number it was; anything else as it is."""
+    if isinstance(v, bytes) and len(v) in (4, 8):
+        return struct.unpack("<f" if len(v) == 4 else "<d", v)[0]
+    return v
+
+
 def event(e: dict) -> dict:
     """What the browser gets for an event: whether it has audio, not where it's stored."""
     out = {
@@ -214,6 +223,8 @@ def event(e: dict) -> dict:
         )
     }
     out.update(
+        wake_score=_number(e["wake_score"]),
+        confidence=_number(e["confidence"]),
         cluster_pinned=bool(e["cluster_pinned"]),
         has_wake_audio=bool(e["audio"]),
         has_request_audio=bool(e["utterance_audio"]),
@@ -250,8 +261,8 @@ def create_app(
     thread of its own, once a recording session's last prompt is done (to enroll a voice from it). `accounts`
     (signin.Accounts): with [web] sign_in, everything but the sign-in pages needs a session; None: no sign-in.
     `talk`: the body listener's ports (ws://, wss://) for the Talk page ([bodies] on); None: no Talk page.
-    `relearn()`: the voiceprints made again from the people's requests (clustering.enroll_named), after the Voices
-    page changes whose a request is; None with speaker ID off."""
+    `relearn()`: the voiceprints made again from the people's requests (clustering.enroll_named), the night after the
+    Voices page changes whose a request is (people.People.relearn); None with speaker ID off."""
     app = FastAPI(title="TARS")
     if accounts is not None:
         from .signin import add_sign_in

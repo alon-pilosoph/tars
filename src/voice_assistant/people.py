@@ -6,18 +6,21 @@ guess (the person whose requests, on the same mic, it sounds most like); and, fo
 requests that sound least like the rest ("Yours?"), so one put there by mistake is caught. Each answer is final: the
 request is pinned where it was put, and asked about never again. Not sure, or the TV, are answers too.
 
-Voiceprints are rebuilt from the people's requests after every answer that changes someone's (`rebuild`, on its own
-thread): what's named is what's learned from, and nothing else (clustering.enroll_named).
+Voiceprints are rebuilt from the people's requests (`rebuild`, on its own thread) once a night, with the nightly look
+at memory (reflect.WHOLE_HOUR), for all the day's answers: a rebuild hears every named request again and keeps the
+machine busy for minutes. What's named is what's learned from, and nothing else (clustering.enroll_named).
 """
 
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta
 
 import numpy as np
 
 from .clustering import MARGIN, MIN_REQUESTS_TO_ENROLL, SAME_VOICE
 from .events import NOT_PERSON, PERSON, UNKNOWN, EventLog, person_key
+from .reflect import WHOLE_HOUR
 from .rooms import MAIN
 
 ASK_DAYS = 14  # how far back "Who said this?" goes: older requests aren't worth a person's time
@@ -26,6 +29,8 @@ CHECK_BELOW = 0.5  # a person's request that sounds less like the rest than this
 MOST_CHECKED = 3  # of each person's, at a time
 MOST_SHOWN = 60  # of each person's requests, newest first
 TV, UNSURE = "tv", "unsure"
+RELEARN_DUE = "voices_relearn_since"  # meta: when the first answer not yet learned from was given; kept over a restart
+LOOK_S = 60.0  # how often the relearner looks whether it's time
 
 
 def _unit(v: np.ndarray) -> np.ndarray:
@@ -34,14 +39,19 @@ def _unit(v: np.ndarray) -> np.ndarray:
 
 class People:
     """`log`: the event log. `rebuild()`: the voiceprints made again from the people's requests (regroup's
-    enroll_named), called on its own thread after an answer that changes someone's; None when speaker ID is off.
-    `clock`: seconds."""
+    enroll_named), called on a thread of its own the night after an answer that changes someone's; None when speaker
+    ID is off. `clock`: seconds."""
 
     def __init__(
-        self, log: EventLog, rebuild: Callable[[], object] | None = None, clock: Callable[[], float] = time.time
+        self,
+        log: EventLog,
+        rebuild: Callable[[], object] | None = None,
+        clock: Callable[[], float] = time.time,
+        look_s: float = LOOK_S,
     ):
-        self.log, self._rebuild, self._clock = log, rebuild, clock
-        self._rebuilding = threading.Lock()
+        self.log, self._rebuild, self._clock, self._look_s = log, rebuild, clock, look_s
+        if rebuild is not None:
+            threading.Thread(target=self._relearner, daemon=True, name="relearn-voices").start()
 
     # What the page shows.
 
@@ -167,18 +177,36 @@ class People:
         return max(found, key=lambda c: c["size"])["id"] if found else self.log.new_cluster(None, NOT_PERSON)
 
     def relearn(self) -> None:
-        """The voiceprints made again, on a thread of their own; one at a time, and one more if asked meanwhile."""
-        if self._rebuild is None:
-            return
+        """The voiceprints made again tonight, after WHOLE_HOUR: marked here, with when the first answer was."""
+        if self._rebuild is not None:
+            self.log.store.write(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)", (RELEARN_DUE, str(self._clock()))
+            )
 
-        def run() -> None:
-            with self._rebuilding:
-                try:
-                    self._rebuild()
-                except Exception as e:  # noqa: BLE001 - tried again on the next answer
-                    print(f"(couldn't relearn the voices: {e!r})")
+    def relearn_if_due(self) -> bool:
+        """The voiceprints made again if an answer is waiting from before the night's WHOLE_HOUR that has passed.
+        Unmarked first, in one go with the look (so it's done once): an answer given during the rebuild waits a
+        night."""
+        now = datetime.fromtimestamp(self._clock()).astimezone()
+        night = now.replace(hour=WHOLE_HOUR, minute=0, second=0, microsecond=0)
+        if now < night:
+            night -= timedelta(days=1)
+        with self.log.store.transaction() as db:
+            due = db.execute(
+                "DELETE FROM meta WHERE key=? AND CAST(value AS REAL) < ?", (RELEARN_DUE, night.timestamp())
+            ).rowcount
+        if due:
+            try:
+                self._rebuild()
+            except Exception as e:  # noqa: BLE001 - tried again the next night
+                print(f"(couldn't relearn the voices: {e!r})")
+                self.relearn()
+        return bool(due)
 
-        threading.Thread(target=run, daemon=True, name="relearn-voices").start()
+    def _relearner(self) -> None:
+        while True:
+            if not self.relearn_if_due():
+                time.sleep(self._look_s)
 
 
 def _by_mic(rows: list[dict]) -> dict[str, np.ndarray]:

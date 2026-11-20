@@ -478,3 +478,12 @@ def test_a_wake_turned_down_on_nothing_like_the_name_settles_itself_out_of_revie
     assert all(rows[i]["auto_label"] == NOT_REAL for i in far)
     assert rows[far[0]]["auto_reason"] == "the double-check heard nothing like hey TARS"
     assert all(learning_label(rows[i]) is None for i in far)  # still only the check's verdict: not taught
+
+
+def test_a_numpy_score_is_kept_as_a_number(log):
+    """openWakeWord scores are NumPy float32s, which SQLite would keep as their bytes (and the Review page crashed)."""
+    wake = log.add_wake(AUDIO, np.float32(0.62), IGNORE, "hey tara", np.float32(0.26))
+    near = log.add_near_miss(AUDIO, np.float32(0.4))
+    rows = {r["id"]: r for r in log.store.rows("SELECT id, wake_score, confidence FROM events")}
+    assert rows[wake]["wake_score"] == pytest.approx(0.62) and rows[wake]["confidence"] == pytest.approx(0.26)
+    assert rows[near]["wake_score"] == pytest.approx(0.4)
