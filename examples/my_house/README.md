@@ -169,6 +169,8 @@ seconds"), and again when it's back. A request it answers counts as heard. When 
 (`bluetoothctl`, allowed to the `bluetooth` group) and listens again; only if that doesn't fix it are the maintainers
 told, and never as the purifier being gone. Two of them in range show as `AC500` with
 different addresses: the one in a room away is faint (around -88 dBm) and may not answer at all from there.
+`watch = false` on a purifier stops its watch: it's still worked, best effort, but nobody is told when it goes quiet
+(for one whose link is known to be flaky, until it gets an Atom).
 
 ### A purifier in another room
 

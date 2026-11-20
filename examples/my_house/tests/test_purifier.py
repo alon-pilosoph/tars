@@ -217,6 +217,21 @@ def test_only_the_voice_assistants_house_watches_it(tmp_path, monkeypatch):
     assert started == ["air purifier"]
 
 
+def test_watch_false_works_it_best_effort_and_tells_no_one(tmp_path, monkeypatch):
+    pytest.importorskip("bleak")
+    import examples.my_house as plugin
+    from voice_assistant.home import Context
+
+    started = []
+    monkeypatch.setattr(plugin.Watch, "start", lambda self, *a: started.append(self.name) or self)
+    voice_side = Context(tmp_path, lambda name: None, tell=print, background=True)
+    spec = {"name": "air purifier", "address": "48:87:2D:1F:FC:9B", "watch": False}
+    assert plugin.setup({}, voice_side)["purifier"](spec).name == "air purifier"
+    assert started == []
+    with pytest.raises(ValueError, match="true or false"):
+        plugin.setup({}, voice_side)["purifier"]({**spec, "watch": "no"})
+
+
 def test_when_this_machine_cant_listen_its_bluetooth_is_restarted_before_anyone_is_told():
     from examples.my_house.purifier import GONE_AFTER_S, Watch
 
