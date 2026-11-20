@@ -10,6 +10,7 @@ browser of someone at home; with [web] sign_in, only to someone signed in with a
 
 import base64
 import functools
+import struct
 import threading
 from collections import OrderedDict
 from collections.abc import Callable
@@ -193,6 +194,14 @@ def ranged(data: bytes, media_type: str, asked: str | None) -> Response:
     )
 
 
+def _number(v: object) -> object:
+    """A score SQLite kept as the bytes of a NumPy float (a wake logged before events.add_wake made it a float), read
+    back as the number it was; anything else as it is."""
+    if isinstance(v, bytes) and len(v) in (4, 8):
+        return struct.unpack("<f" if len(v) == 4 else "<d", v)[0]
+    return v
+
+
 def event(e: dict) -> dict:
     """What the browser gets for an event: whether it has audio, not where it's stored."""
     out = {
@@ -214,6 +223,8 @@ def event(e: dict) -> dict:
         )
     }
     out.update(
+        wake_score=_number(e["wake_score"]),
+        confidence=_number(e["confidence"]),
         cluster_pinned=bool(e["cluster_pinned"]),
         has_wake_audio=bool(e["audio"]),
         has_request_audio=bool(e["utterance_audio"]),
