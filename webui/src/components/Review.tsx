@@ -117,7 +117,7 @@ function GuessSeg({ s, events }: { s: State; events: TarsEvent[] }) {
   );
 }
 
-const n2 = (x: number | null) => (x == null ? "?" : x.toFixed(2));
+const n2 = (x: number | null) => (typeof x === "number" ? x.toFixed(2) : "?"); // never the page, for one bad score
 
 function score(e: TarsEvent, s: State) {
   if (e.kind === "near_miss") {
