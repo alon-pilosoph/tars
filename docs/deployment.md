@@ -295,8 +295,8 @@ should get "Yes, <name>?". Note down false wakes from the TV, missed wakes, wron
 | **Voiceprints** (who's talking) | requests in a named voice (5+) | the Pi, on Regroup voices | seconds |
 | **The wake model and its double-check**, as a pair | synthetic voices plus the household's labeled wakes and near-misses | a bigger machine, now and then | tens of minutes ([`training/`](../training/README.md)) |
 
-**Decision: the Pi runs the models; a bigger machine trains them.** Voiceprints rebuild in seconds, so the Pi does
-that itself. Training a wake pair takes tens of minutes and needs the training data folder, so it runs elsewhere and
+**Decision: the Pi runs the models; a bigger machine trains them.** Voiceprints rebuild in a few minutes, once a night, so
+the Pi does that itself. Training a wake pair takes tens of minutes and needs the training data folder, so it runs elsewhere and
 the Pi only runs the pairs; see [self-learning](self-learning.md#learning-from-it) for how they're installed and
 switched. The experiments where more wake model training made it worse, and accented clips hurt it, were single
 runs, and stage 1 varies widely from run to run

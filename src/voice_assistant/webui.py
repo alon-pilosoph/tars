@@ -250,8 +250,8 @@ def create_app(
     thread of its own, once a recording session's last prompt is done (to enroll a voice from it). `accounts`
     (signin.Accounts): with [web] sign_in, everything but the sign-in pages needs a session; None: no sign-in.
     `talk`: the body listener's ports (ws://, wss://) for the Talk page ([bodies] on); None: no Talk page.
-    `relearn()`: the voiceprints made again from the people's requests (clustering.enroll_named), after the Voices
-    page changes whose a request is; None with speaker ID off."""
+    `relearn()`: the voiceprints made again from the people's requests (clustering.enroll_named), the night after the
+    Voices page changes whose a request is (people.People.relearn); None with speaker ID off."""
     app = FastAPI(title="TARS")
     if accounts is not None:
         from .signin import add_sign_in

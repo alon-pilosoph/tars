@@ -82,7 +82,8 @@ takes the guess, a tap gives the other answer, and Back takes the last answer ba
 The Voices page shows people, not voices ([people.py](../src/voice_assistant/people.py)): what it asks is "Who said
 this?", one recent request at a time with TARS's guess (the person it sounds most like on the same mic, when that's
 clear), and, under each person, the few of theirs that sound least like the rest. Every answer pins the request, and
-the voiceprints are rebuilt from the people's requests after each one. The grouping below still runs behind it, but
+the voiceprints are rebuilt from the people's requests that night, after 4:00 with the nightly look at memory, once
+for all the day's answers (a rebuild hears every named request again, minutes of the Pi's processor). The grouping below still runs behind it, but
 no voice nobody named is ever shown.
 
 The voice embedding of each wake's first request (WeSpeaker ResNet34, the model speaker ID uses) goes into leader
