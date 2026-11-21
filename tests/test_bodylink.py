@@ -386,9 +386,7 @@ def test_a_model_wake_is_double_checked_here_and_one_that_isnt_tars_goes_back_to
     remote = RemoteBody(listener.connected("kitchen", timeout=2), 24000, None, checker)
     remote.trigger.journal = "the kitchen's journal"
     result = {}
-    heard = []  # how many wakes were checked by then, and the audio's length: each told before its check
-    told = lambda audio: heard.append((len(checker.checked), len(audio)))
-    thread = threading.Thread(target=lambda: result.update(wake=remote.wait(lambda: False, told)))
+    thread = threading.Thread(target=lambda: result.update(wake=remote.wait(lambda: False)))
     thread.start()
     body.until("sleep")
     body.send(type="wake", how="word", score=0.7, preroll_ms=800)
@@ -398,7 +396,6 @@ def test_a_model_wake_is_double_checked_here_and_one_that_isnt_tars_goes_back_to
     body.stream(speech(0.8))
     thread.join(5)
     assert result["wake"].how == ASK and checker.checked == [(12800, 0.7), (12800, 0.8)]
-    assert heard == [(0, 12800), (1, 12800)]
     # Each wake checked is kept in the room's journal, under the body's own wake model (its kind and version).
     assert checker.kept_in == [("the kitchen's journal", "test:its own")] * 2
     body.close()

@@ -21,10 +21,10 @@ from typing import NamedTuple
 import numpy as np
 
 from . import closing, usage
-from .audio import SAMPLE_RATE, AudioDeviceError, chime
+from .audio import AudioDeviceError, chime
 from .body import NO_WAKE, Body, BodyGone, Wake
 from .commands import ON_PI, Command, HouseCommands, sentences
-from .config import GREETS, LLMConfig, RemindersConfig, SpeakerConfig
+from .config import GREETS, LLMConfig, RemindersConfig
 from .control import Op, Refused
 from .conversations import LLM, STT, SentItem
 from .draft import Draft
@@ -79,10 +79,7 @@ ANSWER_ONLY_S = 6.0
 MUTED_POLL_S = 0.25  # muted, how often what's due is looked for (unmuting ends the wait at once)
 ERROR_LINE_WAIT_S = 1.0
 AFTER_NAME_WAIT_S = 1.0  # the longest the first request waits to know what followed the name (about 0.25 s)
-# Who said the wake word is told from the end of its audio, where the name is: the whole check window (3 s, mostly TV
-# or silence) took about 1 s on a Pi 4 and matched worse on the speakerphone; its last 1.2 s takes about 0.35 s.
-WAKE_VOICE_S = 1.2
-PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes Alon")
+PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes?")
 UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
 VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
 ANNOUNCEMENT_KEEP_S = 600.0  # how the TV went is old news after this, and isn't said any more
@@ -93,8 +90,10 @@ TAKE_PAD_BLOCKS = 6  # room kept before and after a take's speech (6 blocks of 8
 TAKE_START_S = 6.0  # after a take's beep, how long it waits for someone to speak
 
 
-def greeting(name: str | None) -> str:
-    return f"Yes {name.capitalize()}" if name else "Yes?"
+# What TARS says to its name, to everyone alike: naming who called took a voice match the greeting waited on, about
+# 0.35 s of a reply that comes 0.4-0.6 s after the name without it (measured on the Pi). Who's asking is still told from
+# what's said next.
+GREETING = "Yes?"
 
 
 class Identified(NamedTuple):
@@ -271,7 +270,6 @@ class Assistant:
         brain: Brain,
         voice: Voice,
         speaker_id: SpeakerID | None = None,
-        name_threshold: float = SpeakerConfig.wake_threshold,
         journal: Journal | None = None,
         humor: int = LLMConfig.humor,
         phrase_folder: Path | None = None,
@@ -306,7 +304,6 @@ class Assistant:
         self.brain = brain
         self.voice = voice
         self.speaker_id = speaker_id
-        self.name_threshold = name_threshold
         self.journal = journal or Journal()
         self.error_lines = ERROR_LINES["dry" if humor >= DRY_FROM_HUMOR else "plain"]
         self.closing_lines = closing.LINES["dry" if humor >= DRY_FROM_HUMOR else "plain"]
@@ -317,10 +314,6 @@ class Assistant:
         self._last_reply = ""  # what TARS last answered in this conversation
         self._closed = False  # the last answer ended the conversation ("thanks", "that's all")
         self._identifying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="speaker-id")
-        # Who said the wake word, started the moment the wake is heard, while it's double-checked; its own workers,
-        # so it never waits behind a request's speaker ID, nor behind a wake the check turned down.
-        self._naming = ThreadPoolExecutor(max_workers=2, thread_name_prefix="wake-speaker")
-        self._wake_who: Future[str | None] | None = None
         self._thinking = threading.Lock()  # drafts take turns
         self.phrases = Phrases(voice, phrase_folder, clock)
         self.ack_window_s = ack_window_s
@@ -498,17 +491,14 @@ class Assistant:
                 if woke is None:  # unmuted: back to listening for its name
                     continue
             else:
-                self._wake_who = None
-                wake = self.body.wait(self._woken, self._heard_wake)
+                wake = self.body.wait(self._woken)
                 woke = wake.how
             self._stop.clear()  # pressed while idle, it stops nothing
             if self._talk.is_set():
                 self._talk.clear()
                 if not self.muted:
-                    self._woke_at, self._greet_s, self._wake_who = time.monotonic(), None, None
+                    self._woke_at, self._greet_s = time.monotonic(), None
                     print("Listening...  (the talk button)")
-                    # A press carries no voice: the wake's audio is the last time its name was said, maybe by someone
-                    # else, so it's greeted without a name; who's asking is told from what's said next.
                     self.converse(follow_up_s, greet=ALWAYS)
                 if woke != DUE:
                     continue
@@ -531,14 +521,13 @@ class Assistant:
             self.converse(follow_up_s, greet_after_s=greet_after_s, greet=greet, wake=wake)
 
     def prepare_phrases(self) -> None:
-        """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to add greetings for
-        people enrolled since and retry lines that failed."""
-        names = list(self.speaker_id.voiceprints) if self.speaker_id else []
-        lines = [ASK_PHRASE, PARDON, greeting(None), *self.error_lines, *self.closing_lines.values(), *FILLERS]
+        """Synthesizes the short lines ahead so they play instantly. Called again on each wake, to retry lines that
+        failed."""
+        lines = [ASK_PHRASE, PARDON, GREETING, *self.error_lines, *self.closing_lines.values(), *FILLERS]
         lines += [THINKING, ONE_MOMENT]
         if usage.has_cap():  # made while there's budget, so it's said for free once there isn't
             lines.append(CAPPED_LINE)
-        for line in lines + [greeting(n) for n in names]:
+        for line in lines:
             self.phrases.get(line, ahead=True)
         for line in self.commands.lines() if self.commands else []:
             self.phrases.get(line, ahead=True)
@@ -868,51 +857,25 @@ class Assistant:
             print("(said over other voices: listening for that voice alone)")
         return focus
 
-    def _heard_wake(self, audio: np.ndarray) -> None:
-        """A wake was heard (wake.Heard): who said it is found while it's double-checked, ready for the greeting."""
-        if self.speaker_id:
-            self._wake_who = self._naming.submit(self.wake_speaker, audio)
-
-    def _who_woke(self, wake: Wake) -> str | None:
-        """Who said the wake word: as found while it was checked, or found now if it wasn't."""
-        if self._wake_who is not None:
-            found, self._wake_who = self._wake_who, None
-            return found.result()  # wake_speaker never raises
-        return self.wake_speaker(wake.audio)
-
-    def wake_speaker(self, audio: np.ndarray | None) -> str | None:
-        """Who said the wake word in `audio` (its last WAKE_VOICE_S, where the name is), for the greeting; None if
-        nobody is sure, or speaker ID couldn't tell."""
-        if not self.speaker_id or audio is None:
-            return None
-        try:
-            pcm = audio[-round(WAKE_VOICE_S * SAMPLE_RATE) :].astype("int16").tobytes()
-            return self.speaker_id.identify(pcm, threshold=self.name_threshold, mic=self.room)
-        except Exception as e:  # noqa: BLE001 - greeted without a name
-            print(f"(couldn't tell who spoke: {e!r})")
-            return None
-
-    def greet(self, wake: Wake) -> None:
-        text = greeting(self._who_woke(wake))
-        print(f"Bot:  {text}")
-        if self.say(text, on_first_audio=self._greeted):
-            self.journal.said(text)
+    def greet(self) -> None:
+        print(f"Bot:  {GREETING}")
+        if self.say(GREETING, on_first_audio=self._greeted):
+            self.journal.said(GREETING)
 
     def greet_and_listen(self, wake: Wake = NO_WAKE) -> Utterance | None:
-        """Says "Yes <name>" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
+        """Says "Yes?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
         waits for the greeting, as for anything TARS says. What followed the wake word before listening began (the
         wake's after_name) is dropped when the mic waits for the greeting, as what's heard after it doesn't run on
         from the name."""
         if not self.body.hears_while_speaking:
-            self.greet(wake)
+            self.greet()
             return self.listen()
-        text = greeting(self._who_woke(wake))
-        print(f"Bot:  {text}  (listening while it's said)")
+        print(f"Bot:  {GREETING}  (listening while it's said)")
         try:
-            audio = self.phrases.get(text).result(timeout=PHRASE_WAIT_S)
+            audio = self.phrases.get(GREETING).result(timeout=PHRASE_WAIT_S)
         except Exception as e:  # noqa: BLE001 - no greeting, but still listening
-            print(f"(couldn't say {text!r}: {e!r})")
+            print(f"(couldn't say {GREETING!r}: {e!r})")
             return self.listen(after_name=wake.after_name)
         failed: list[BaseException] = []
 
@@ -925,12 +888,12 @@ class Assistant:
         playing = threading.Thread(target=play, daemon=True, name="greeting")
         playing.start()
         try:
-            heard = self.listen(echo_of=text, after_name=wake.after_name)
+            heard = self.listen(echo_of=GREETING, after_name=wake.after_name)
         finally:
             playing.join()
         if failed:
             raise failed[0]
-        self.journal.said(text)
+        self.journal.said(GREETING)
         return heard
 
     def _greeted(self) -> None:
@@ -1068,7 +1031,7 @@ class Assistant:
             elif greet == PAUSE and greet_after_s:
                 heard = self.listen(start_timeout_s=greet_after_s, after_name=wake.after_name)
                 if heard is None:
-                    self.greet(wake)
+                    self.greet()
                     heard = self.listen()
             else:
                 heard = self.listen(after_name=wake.after_name)

@@ -132,8 +132,21 @@ def test_a_rejected_wake_keeps_listening_until_one_passes(hearing, capsys):
     verifier = hearing("")
     verifier.check = lambda pcm: next(answers)
     assert listening(trigger, verifier).wait(SilentMic(20)) == ANSWER
-    assert trigger.n == 9 and trigger.resets == 2
+    assert trigger.n == 9 and trigger.resets == 1  # the one turned down; the answered one's waits for the next wait
     assert "heard 'hey there'" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("heard, outcome", [("hey tars", ANSWER), ("hey cars", ASK)])
+def test_an_answered_wake_resets_the_model_when_tars_next_listens_not_before_it_answers(hearing, heard, outcome):
+    """The reset takes about 0.6 s on a Pi 4: before, it held up every "Yes?"."""
+    trigger = FakeTrigger(fire_at=[3, 6])
+    woke = listening(trigger, hearing(heard))
+    mic = SilentMic(20)
+    assert woke.wait(mic) == outcome and trigger.resets == 0
+    resets_when_next_read = []
+    read = mic.read
+    mic.read = lambda: (resets_when_next_read.append(trigger.resets), read())[1]
+    assert woke.wait(mic) == outcome and resets_when_next_read[0] == 1  # reset before it hears anything new
 
 
 def test_a_close_call_returns_ask_right_away(hearing):
@@ -367,10 +380,57 @@ def test_without_sure_the_check_runs_as_soon_as_the_wake_fires(hearing):
     assert listening(trigger, hearing("hey tars")).wait(SilentMic(20)) == ANSWER and trigger.n == 3
 
 
-def test_a_wake_is_told_as_heard_before_the_check_runs_on_it(hearing):
-    verifier, order = hearing("hey tars"), []
-    decide = verifier.decide
-    verifier.decide = lambda audio: (order.append("checked"), decide(audio))[1]
-    woke = listening(FakeTrigger(fire_at=[3]), verifier)
-    assert woke.wait(SilentMic(20), heard=lambda audio: order.append(len(audio))) == ANSWER
-    assert order == [len(woke.last_audio), "checked"]  # speaker ID can start on it while it's checked
+class Checks:
+    """A check that answers in turn from `decisions`: (outcome, heard, confidence), keeping each audio's length."""
+
+    def __init__(self, *decisions):
+        self.decisions, self.lengths, self.last_confidence = list(decisions), [], None
+
+    def decide(self, audio):
+        self.lengths.append(len(audio))
+        outcome, heard, self.last_confidence = self.decisions.pop(0)
+        return outcome, heard
+
+    def use_check(self, spec):
+        pass
+
+    def name_end_s(self, audio):
+        return None
+
+
+def sure_listening(trigger, checks) -> VerifiedTrigger:
+    pair = Pair(INSTALLED, "", "", None, trigger.threshold, 2.5, Path(""))
+    return VerifiedTrigger(FixedPair(pair), Path("models"), make_trigger=lambda path, t: trigger,
+                           make_verifier=lambda phrase, folder: checks, sure=0.88)  # fmt: skip
+
+
+def test_a_check_sure_of_the_name_early_answers_without_the_rest_of_the_listen_on():
+    trigger, checks = FakeTrigger(fire_at=[3]), Checks((ANSWER, "hey tars", 0.95))
+    assert sure_listening(trigger, checks).wait(SilentMic(20)) == ANSWER
+    assert trigger.n == 3 + verify.EARLY_BLOCKS and len(checks.lengths) == 1  # one check, 2 blocks after it fired
+
+
+@pytest.mark.parametrize(
+    "early",
+    [
+        (ANSWER, "hey bar", 0.49),  # passed, but not sure enough: the two false wakes on the Pi scored 0.45-0.49
+        (ASK, "hey tar", 0.2),  # a slow "TARS" not yet whole
+        (IGNORE, "[unk]", 0.1),
+    ],
+)
+def test_anything_short_of_a_sure_early_answer_hears_the_listen_on_out_and_checks_again(early):
+    trigger, checks = FakeTrigger(fire_at=[3]), Checks(early, (ANSWER, "hey tars", 0.4))
+    assert sure_listening(trigger, checks).wait(SilentMic(20)) == ANSWER
+    assert trigger.n == 3 + verify.SURE_BLOCKS
+    assert checks.lengths[1] - checks.lengths[0] == (verify.SURE_BLOCKS - verify.EARLY_BLOCKS) * BLOCK_SAMPLES
+
+
+def test_an_early_answer_is_kept_in_the_journal_as_checked(hearing):
+    kept = []
+    journal = type("J", (), {"wake": lambda self, *a: kept.append(a), "near_miss": lambda self, *a: None})()
+    trigger, checks = FakeTrigger(fire_at=[3]), Checks((ANSWER, "hey tars", 0.95))
+    woke = sure_listening(trigger, checks)
+    woke._journal = journal
+    assert woke.wait(SilentMic(20)) == ANSWER
+    audio, _, outcome, heard, confidence = kept[0][:5]
+    assert (outcome, heard, confidence) == (ANSWER, "hey tars", 0.95) and len(audio) == checks.lengths[0]

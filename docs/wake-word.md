@@ -60,7 +60,7 @@ to the last 3 seconds with a grammar limited to "hey tars", "hey darts" (the sof
 the start of "what's" is already in the window by then, read off the mic with the name. On an answer, a second Vosk pass
 with word times finds where the name ends (the name right after the last "hey"; if something else is there, it may be
 the request, so nothing is taken), and the request is recorded from there if speech runs on from it without a break;
-after a pause, or a "Yes Alon" said with the mic closed, it starts where the mic hears it, as before. The pass is its
+after a pause, or a "Yes?" said with the mic closed, it starts where the mic hears it, as before. The pass is its
 own because asking the check for word times changes its alternatives, and so its confidence: on 17 of the household's
 wake windows, a "bar" rose from 0.23 to 0.42, past the 0.3 threshold. It takes about 0.25 s on a Pi 4 and runs while
 TARS gets on with the wake; the mic keeps what's said meanwhile. On the household's two clipped "hey TARS, what's new"
@@ -411,6 +411,13 @@ words at all (only its catch-all for unclear speech) even when the wake model is
 wake stand when the model scored at least that high; any words the recognizer does hear, a lookalike or other speech,
 still decide, so "hey cars" is turned down as before. A model is surest about 0.3 s after it first fires, as the rest
 of the name comes in, so with `sure` on, TARS listens 4 more blocks (320 ms) and judges the wake on the highest score.
+Most wakes don't need all of it: halfway (160 ms), a clear "TARS" is whole, so the check runs then, and a check at
+least 0.8 sure of the name answers at once. Anything less (a slow "TARS" heard as "hey tar", or a pass the check is
+less sure of) hears the 320 ms out and is checked again, exactly as before. On the 231 wakes kept on the Pi since the
+open stage 1 went live, it answers the same ones the full listen-on does: 29 of the 36 answered got through halfway, at
+0.93-0.96; the two it would have let through that the full check turns down scored 0.45-0.49 there. After a wake,
+the model is reset so the same name doesn't fire twice; openWakeWord's reset takes about 0.6 s on a Pi 4, so a wake
+TARS answers is reset when it next listens for its name, and only a wake turned down is reset on the spot.
 Measured on the owner's 34 takes over his TV with an openWakeWord-embedding stage 1 of ours, streamed as it runs live:
 answered 14 → 20 at `sure = 0.88`, with no false answers on two real TV hours, the lab's TV and audiobook hours, 354
 kept clips of other sounds and 16 lookalike takes (the highest no-wake score with nothing made out was 0.82). The

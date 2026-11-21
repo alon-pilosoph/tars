@@ -23,7 +23,7 @@ class Journal:
         self.events, self.room = events, room
         self.conversations = ConversationLog(events) if events else None
         self._wake: int | None = None  # id of the logged wake being answered
-        self._said: list[tuple[float, str]] = []  # "Yes Alon" / "Did you call me?": kept only if someone answers
+        self._said: list[tuple[float, str]] = []  # "Yes?" / "Did you call me?": kept only if someone answers
         self._conversation: int | None = None
         self._gone = False  # the conversation was deleted in the web UI while it went on: keep no more of it
         self._first_pending = False  # the wake's request was heard; its answer says whether the wake was real

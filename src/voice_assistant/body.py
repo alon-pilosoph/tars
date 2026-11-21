@@ -18,7 +18,7 @@ import numpy as np
 from .audio import Microphone, Speaker
 from .recorder import PREROLL_BLOCKS, UtteranceRecorder
 from .stt import TurnState
-from .wake import Due, Heard, Trigger
+from .wake import Due, Trigger
 
 
 class BodyGone(Exception):
@@ -30,7 +30,7 @@ class Wake(NamedTuple):
     """What a wait for a wake ended on."""
 
     how: str | None = None  # None or verify.ANSWER: its name; verify.ASK: it sounded close; wake.DUE: something's due
-    audio: np.ndarray | None = None  # what woke it, for speaker ID; None when there's nothing to go on
+    audio: np.ndarray | None = None  # what woke it, to hear that voice alone over others; None if there's nothing
     after_name: Future[np.ndarray] | None = None  # on a confirmed wake, what followed the name: found on the side
 
 
@@ -50,9 +50,8 @@ class Body(Protocol):
     def hears_while_speaking(self) -> bool:
         """Whether what it plays is taken back out of what it hears, so it can listen while it speaks."""
 
-    def wait(self, due: Due, heard: Heard | None = None) -> Wake:
-        """Blocks until someone wants to talk, or `due` (asked often, and quick) says something's due. `heard` is told
-        a wake's audio as soon as it's heard, before it's double-checked (wake.Heard)."""
+    def wait(self, due: Due) -> Wake:
+        """Blocks until someone wants to talk, or `due` (asked often, and quick) says something's due."""
 
     def record(
         self,
@@ -114,8 +113,8 @@ class LocalBody:
     def hears_while_speaking(self) -> bool:
         return bool(self.mic and self.mic.echo and self.mic.echo.working)
 
-    def wait(self, due: Due, heard: Heard | None = None) -> Wake:
-        how = self.trigger.wait(self.mic, due=due, heard=heard)
+    def wait(self, due: Due) -> Wake:
+        how = self.trigger.wait(self.mic, due=due)
         return Wake(how, self.trigger.last_audio, self.trigger.after_name)
 
     def record(self, **kw) -> Recorded | None:

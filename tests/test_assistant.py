@@ -310,7 +310,7 @@ def test_a_line_stuck_behind_the_voice_keeps_nobody_waiting_long():
     assistant.voice.stream = lambda text: stuck.wait() and iter([text.encode()])
     try:
         t = time.monotonic()
-        assert not assistant.say("Yes Alon", wait_s=0.05)
+        assert not assistant.say("Yes?", wait_s=0.05)
         assert time.monotonic() - t < 1
     finally:
         stuck.set()
@@ -363,7 +363,7 @@ def test_did_you_call_me_goes_quiet_on_silence_or_no():
     assert brain.forgotten == 1 and assistant.body.timeouts == [assistant_module.ASK_TIMEOUT_S]
 
 
-HEY_TARS = np.zeros(32000, np.int16)  # Alon's, to speaker ID
+HEY_TARS = np.zeros(32000, np.int16)  # Alon's
 ALON = Wake(audio=HEY_TARS)
 
 
@@ -380,29 +380,20 @@ class FakeSpeakerID:
         return self.who, 0.8 if self.who else 0.1, None
 
 
-def test_a_bare_wake_word_gets_a_greeting_by_name_then_the_question():
+def test_a_bare_wake_word_gets_yes_then_the_question():
     assistant, brain = make_assistant([None, b"q", None], ["what's the weather"])
     assistant.speaker_id = FakeSpeakerID("alon")
     said = []
     assistant.say = lambda text, **kw: said.append(text)
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5, wake=ALON)
-    assert said == ["Yes Alon"]
+    assert said == ["Yes?"]  # a known voice too: the greeting waits on no voice match
     assert assistant.body.timeouts[:2] == [1.5, None]  # short wait, greeting, then the normal wait
-    assert assistant.speaker_id.thresholds[0] == assistant.name_threshold  # the greeting uses the wake clip's bar
+    assert assistant.speaker_id.thresholds == []  # the wake word itself isn't matched to anyone
     assert brain.asked[0].endswith("what's the weather")
 
 
-def test_greeting_without_a_confident_name_is_just_yes():
-    assistant, _ = make_assistant([None, None], [])
-    assistant.speaker_id = FakeSpeakerID(None)
-    said = []
-    assistant.say = lambda text, **kw: said.append(text)
-    assistant.converse(follow_up_s=4.0, greet_after_s=1.5, wake=ALON)
-    assert said == ["Yes?"]
-
-
 @pytest.mark.parametrize("greet, heard", [("always", [b"q", None]), ("pause", [None, b"q", None])])
-def test_when_speaker_id_fails_on_the_wake_word_the_greeting_is_just_yes(greet, heard):
+def test_the_greeting_is_yes_even_when_speaker_id_is_broken(greet, heard):
     assistant, brain, played = greeting_at_once(heard, ["what time is it"])
     assistant.speaker_id.identify = raising(ValueError("shapes (256,) and (192,) not aligned"))
     assistant.voice.stream = lambda text: iter([text.encode()])
@@ -454,7 +445,7 @@ def test_what_followed_the_name_goes_to_the_first_request_only():
     [("always", True, [b"q", None]), ("pause", False, [None, b"q", None]), ("never", False, [b"q", None])],
 )
 def test_what_followed_the_name_is_heard_while_the_mic_stays_open(greet, echo, heard):
-    transcript = "Yes, Alon? What's new" if echo else "what's new"
+    transcript = "Yes? What's new" if echo else "what's new"
     assistant, _, _ = greeting_at_once(heard, [transcript], echo=echo)
     what = np.ones(1920, np.int16)
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet=greet, wake=ALON._replace(after_name=found(what)))
@@ -463,7 +454,7 @@ def test_what_followed_the_name_is_heard_while_the_mic_stays_open(greet, echo, h
 
 
 def test_a_greeting_said_with_the_mic_closed_drops_what_followed_the_name():
-    """Without echo cancellation the mic is cleared for "Yes Alon": what's heard after it doesn't run on from it."""
+    """Without echo cancellation the mic is cleared for "Yes?": what's heard after it doesn't run on from it."""
     assistant, _, _ = greeting_at_once([b"q", None], ["what's new"])
     assistant.converse(follow_up_s=4.0, greet="always", wake=ALON._replace(after_name=found(np.ones(1920, np.int16))))
     assert assistant.body.leads == [None, None] and assistant.body.pauses >= 1
@@ -477,7 +468,7 @@ def test_if_the_greeting_cant_be_said_what_followed_the_name_is_still_heard(caps
     what = np.ones(1920, np.int16)
     assistant.converse(follow_up_s=4.0, greet="always", wake=ALON._replace(after_name=found(what)))
     assert assistant.body.leads[0] is what
-    assert "couldn't say 'Yes Alon'" in capsys.readouterr().out
+    assert "couldn't say 'Yes?'" in capsys.readouterr().out
 
 
 def test_if_the_name_couldnt_be_timed_the_request_is_heard_from_the_mic(capsys):
@@ -559,7 +550,7 @@ def test_did_you_call_me_and_greetings_open_the_thread(tmp_path):
     assistant.say = lambda text, **kw: True
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5, wake=ALON)
     turns = convos.get(convos.conversations()[0]["id"])["turns"]
-    assert [t["text"] for t in turns] == ["Yes Alon", "what time is it", "Noon."]
+    assert [t["text"] for t in turns] == ["Yes?", "what time is it", "Noon."]
     assert turns[1]["speaker"]["name"] == "Alon"
 
 
@@ -1023,21 +1014,22 @@ def greeting_at_once(utterances, transcripts, echo=False):
 def test_greeting_at_once_says_yes_with_no_wait_for_a_pause():
     assistant, brain, played = greeting_at_once([b"q", None], ["what's the weather"])
     assistant.converse(follow_up_s=4.0, greet_after_s=1.5, greet="always", wake=ALON)
-    assert len(played) == 2  # "Yes Alon", then the answer
+    assert len(played) == 2  # "Yes?", then the answer
     assert assistant.body.timeouts[0] is None  # no waiting to see whether more follows the wake word
     assert assistant.body.pauses >= 1  # without echo cancellation, the mic closes while it's said
     assert brain.asked[0].endswith("what's the weather") and "greet" in assistant.timings
 
 
-def test_with_echo_cancellation_the_greeting_is_said_with_the_mic_open_and_its_trace_taken_off():
-    assistant, brain, played = greeting_at_once([b"q", None], ["Yes, Alon? What's the weather"], echo=True)
+def test_with_echo_cancellation_the_greeting_is_said_with_the_mic_open():
+    assistant, brain, played = greeting_at_once([b"q", None], ["Yes? What's the weather"], echo=True)
     assistant.converse(follow_up_s=4.0, greet="always", wake=ALON)
     assert played[0] and assistant.body.pauses == 1  # the greeting with the mic open; only the answer closes it
-    assert brain.asked[0].endswith("] What's the weather")  # what got through of "Yes Alon" is gone
+    # A trace of a one-word "Yes?" stays: it can't be told from someone saying "yes" first (echo.without_echo).
+    assert brain.asked[0].endswith("] Yes? What's the weather")
 
 
 def test_if_all_it_heard_was_its_own_greeting_it_keeps_listening():
-    assistant, brain, _ = greeting_at_once([b"q", b"q", None], ["yes alon", "what time is it"], echo=True)
+    assistant, brain, _ = greeting_at_once([b"q", b"q", None], ["yes", "what time is it"], echo=True)
     heard = []
     assistant.journal.heard = lambda pcm, text, name, score, embedding, first: heard.append((text, name, embedding))
     assistant.converse(follow_up_s=4.0, greet="always", wake=ALON)

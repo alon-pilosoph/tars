@@ -55,8 +55,8 @@ One mic stream, read in 80 ms blocks from one queue, so nothing fights over the 
    hears you start, from straight after the name when you said it all in one breath ("hey TARS, what's new"); Deepgram's [Flux](https://deepgram.com/learn/introducing-flux-conversational-speech-recognition)
    decides when you're done, from your words as well as the pause. If Flux fails, the local rules take over: after
    `end_silence_s` (0.8 s) of silence, [Smart Turn](https://github.com/pipecat-ai/smart-turn) (local, 8 MB) may keep
-   waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes Alon" (speaker ID from the
-   wake's last 1.2 s, where the name is, started while the wake is double-checked) and waits.
+   waiting up to `max_pause_s` (1.6 s). A bare "hey TARS" followed by a pause gets "Yes?", the same for everyone, and
+   waits: naming who called took a voice match the greeting had to wait for.
 4. **Speech to text** is Flux too, streamed while you talk, so the words come with its decision; if the stream
    fails, OpenAI transcribes the same recording. **Speaker ID** (WeSpeaker ResNet34 on ONNX, local) runs at the same
    time, so knowing who's talking adds no latency. The request reaches the LLM tagged `[Speaker: Alon]`. With
@@ -116,7 +116,7 @@ to end. When TARS wakes, it connects to Cerebras, OpenAI and the voice while you
 | Qwen writes a tool call out as text (`<toolcall>`, `<function=`, also HTML-escaped) | the reply is cut off there, unsaid, and OpenAI takes the turn |
 | Qwen writes a marker HTML-escaped (`&lt;look-up&gt;`, `&lt;skip&gt;`) | it still counts as the marker: it isn't spoken, and does what the marker does |
 | The voice | gives up after 4 s without audio, then says a spoken error line ("That didn't work. Not my finest moment. Try again.", plainer below 50% humor), made at startup so it plays even when the voice service is what failed; a reminder or how a task on the TV went waits, with no chime, and is tried again a minute later; the lines made ahead are tried again once a minute, not at every chance |
-| Speaker ID | "Yes?" for the wake word, and the request answered as from an unknown voice |
+| Speaker ID | the request answered as from an unknown voice |
 | The microphone stops delivering audio, muted too | the assistant exits so systemd restarts it |
 | A write to the event log | `journal.py` absorbs it; the reply goes ahead |
 

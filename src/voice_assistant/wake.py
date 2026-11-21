@@ -13,18 +13,15 @@ from .audio import BLOCK_SAMPLES, Microphone
 DUE = "due"
 # Something wait() asks on every block of audio: is a reminder due? It must be quick.
 Due = Callable[[], bool]
-# Told the audio a wake fired on as soon as it's heard, before the double-check: speaker ID starts on it meanwhile.
-Heard = Callable[[np.ndarray], None]
 
 
 class Trigger(Protocol):
-    last_audio: np.ndarray | None  # what woke it, for speaker ID; None when there's nothing to go on
+    last_audio: np.ndarray | None  # what woke it, to hear that voice alone over others; None if there's nothing
     after_name: Future[np.ndarray] | None  # what followed the name, for the wait that just ended; None if unknown
 
-    def wait(self, mic: Microphone, due: Due | None = None, heard: Heard | None = None) -> str | None:
+    def wait(self, mic: Microphone, due: Due | None = None) -> str | None:
         """Block until the user wants to talk (a double-checked trigger says how sure it is: verify.ANSWER or ASK),
-        or until `due` says a reminder is due (DUE). Push-to-talk never asks `due`. A double-checked trigger tells
-        `heard` each wake's audio before checking it; the others, which keep no audio, never call it."""
+        or until `due` says a reminder is due (DUE). Push-to-talk never asks `due`."""
 
 
 class WakeModel(Protocol):
@@ -64,7 +61,7 @@ class WakeWordTrigger:
         # Scores stay high for a few frames after a hit; resetting stops a re-trigger.
         self._model.reset()
 
-    def wait(self, mic: Microphone, due: Due | None = None, heard: Heard | None = None) -> str | None:
+    def wait(self, mic: Microphone, due: Due | None = None) -> str | None:
         mic.clear()
         while self.score(mic.read()) < self.threshold:
             if due and due():
@@ -137,7 +134,7 @@ class MicroWakeWordTrigger:
         self._pending = audio[i:]
         return best
 
-    def wait(self, mic: Microphone, due: Due | None = None, heard: Heard | None = None) -> str | None:
+    def wait(self, mic: Microphone, due: Due | None = None) -> str | None:
         mic.clear()
         while self.score(mic.read()) < self.threshold:
             if due and due():
@@ -155,7 +152,7 @@ def wake_word_trigger(model: str, threshold: float) -> WakeWordTrigger | MicroWa
 class PushToTalkTrigger:
     last_audio = after_name = None
 
-    def wait(self, mic: Microphone, due: Due | None = None, heard: Heard | None = None) -> None:
+    def wait(self, mic: Microphone, due: Due | None = None) -> None:
         input("Press Enter, then speak... ")
         mic.clear()
 
