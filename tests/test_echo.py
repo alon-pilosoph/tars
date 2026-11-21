@@ -16,14 +16,14 @@ sd = pytest.importorskip("sounddevice")  # the voice extra: patched here, import
 @pytest.mark.parametrize(
     "text, said, left",
     [
-        ("Yes, Alon? What's the weather", "Yes, Alon?", "What's the weather"),
-        ("Yes, Alan? What time is it", "Yes, Alon?", "What time is it"),
-        ("yes what's the weather", "Yes, Alon?", "yes what's the weather"),
+        ("Yes, Alon? What's the weather", "Yes Alon", "What's the weather"),
+        ("Yes, Alan? What time is it", "Yes Alon", "What time is it"),
+        ("yes what's the weather", "Yes Alon", "yes what's the weather"),
         ("Yes, turn on the lights", "Yes?", "Yes, turn on the lights"),
         ("Yes.", "Yes?", ""),
-        ("yes alon", "Yes, Alon?", ""),
-        ("What's the weather", "Yes, Alon?", "What's the weather"),
-        ("Alon wants to know", "Yes, Alon?", "Alon wants to know"),  # only from the start, in order
+        ("yes alon", "Yes Alon", ""),
+        ("What's the weather", "Yes Alon", "What's the weather"),
+        ("Alon wants to know", "Yes Alon", "Alon wants to know"),  # only from the start, in order
         ("Yes, please", None, "Yes, please"),
     ],
 )

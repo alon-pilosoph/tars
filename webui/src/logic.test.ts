@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { post, writesDone, writesMade } from "./api";
 import { demoAuto } from "./demo";
+import { tabIn } from "./params";
 import {
   ago,
   answerSplit,
@@ -491,5 +492,14 @@ describe("Review's filter by TARS's guess", () => {
     expect(kept("yes")).toEqual([wakes[0]]);
     expect(kept("no")).toEqual([wakes[1], wakes[2]]);
     expect(kept("none")).toEqual([wakes[3]]);
+  });
+});
+
+describe("tabIn", () => {
+  it("reads the page from a link's query, Home when there's none or it isn't a page", () => {
+    expect(tabIn("?tab=reminders")).toBe("reminders");
+    expect(tabIn("?demo&tab=talk")).toBe("talk");
+    expect(tabIn("")).toBe("home");
+    expect(tabIn("?tab=nope")).toBe("home");
   });
 });

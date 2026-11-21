@@ -13,7 +13,7 @@ output_device = ""
 # prevents stutter, at the cost of the same amount of delay. Measured need: 0.0-0.5s.
 playback_prebuffer_s = 0.3
 # Take TARS's own sound back out of what the mic hears (WebRTC's echo canceller), so the mic can stay open while it
-# speaks: "Yes, <name>?" doesn't cost what you say over it. Off until it's been checked in the room:
+# speaks: "Yes <name>" doesn't cost what you say over it. Off until it's been checked in the room:
 # uv run python tools/echo_bench.py
 echo_cancel = false
 
@@ -60,7 +60,7 @@ answer_early_s = 0.25
 max_utterance_s = 15.0
 # After answering, keep listening this long for a follow-up without the wake word. 0 = off.
 follow_up_s = 4.0
-# When TARS says "Yes, <your name>?" after "hey TARS": "always" (at once, so you know it's listening; with
+# When TARS says "Yes <your name>" after "hey TARS": "always" (at once, so you know it's listening; with
 # echo_cancel, the mic stays open while it's said, so you can carry straight on), "pause" (only if you pause for
 # greet_after_s), or "never".
 greet = "pause"

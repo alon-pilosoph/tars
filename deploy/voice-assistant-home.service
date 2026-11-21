@@ -1,0 +1,20 @@
+# systemd *user* service that brings deploy/home-assistant's containers up if any is down: Home Assistant, and
+# Mosquitto once its passwords are made. Started by voice-assistant-home.timer, soon after the Pi starts and every five
+# minutes; deploy/install-pi.sh installs both when Home Assistant runs from deploy/home-assistant on this machine.
+# Docker's own restart policy brings them back after most power cuts, but not always: on 2026-11-21 one brought Home
+# Assistant back and left Mosquitto down, saying nothing. Up already, nothing happens. A changed compose.yaml (after an
+# update) is put in use, which restarts that container.
+#
+#   systemctl --user start voice-assistant-home            # a pass now
+#   systemctl --user disable --now voice-assistant-home.timer   # before stopping a container on purpose
+#   journalctl --user-unit voice-assistant-home            # what each pass did
+
+[Unit]
+Description=TARS's Home Assistant containers, up
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/voice-assistant/deploy/home-assistant
+# Mosquitto's profile only once its passwords are there: without them it won't start (docs/home.md#setting-it-up).
+ExecStart=/bin/sh -c 'if [ -e mosquitto/passwords ]; then exec docker compose --profile mqtt up -d; else exec docker compose up -d; fi'
+TimeoutStartSec=10min

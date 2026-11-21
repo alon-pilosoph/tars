@@ -60,7 +60,7 @@ to the last 3 seconds with a grammar limited to "hey tars", "hey darts" (the sof
 the start of "what's" is already in the window by then, read off the mic with the name. On an answer, a second Vosk pass
 with word times finds where the name ends (the name right after the last "hey"; if something else is there, it may be
 the request, so nothing is taken), and the request is recorded from there if speech runs on from it without a break;
-after a pause, or a "Yes, Alon?" said with the mic closed, it starts where the mic hears it, as before. The pass is its
+after a pause, or a "Yes Alon" said with the mic closed, it starts where the mic hears it, as before. The pass is its
 own because asking the check for word times changes its alternatives, and so its confidence: on 17 of the household's
 wake windows, a "bar" rose from 0.23 to 0.42, past the 0.3 threshold. It takes about 0.25 s on a Pi 4 and runs while
 TARS gets on with the wake; the mic keeps what's said meanwhile. On the household's two clipped "hey TARS, what's new"
