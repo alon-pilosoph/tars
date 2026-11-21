@@ -494,10 +494,18 @@ playing?". It needs Premium. The model says what kind of thing was asked for, an
 - **An artist:** that artist. **A playlist:** their own first; two of theirs with the name are asked about.
 - **A genre or a mood:** a playlist of it with enough songs in it. Spotify's own playlists are closed to an app like
   this one.
-- **"Something I like":** a shuffled mix of their most played and liked songs. Spotify's own picks for them are closed
-  too. **"More like this":** more of the artist playing.
+- **"Something I like":** a shuffled mix of what's played most on the account (all time, the last months, the last
+  weeks); not the liked songs, whose newest saves can be years old. A household shares the account, so songs whose own
+  name or album's says they're a child's song or not really music ("White Noise", "Lullabies", "for kids",
+  "שירי ילדים") are left out. It's a best effort: a children's song with nothing in its name gets through, so "take
+  this song (artist, album) out of my mix" while it plays skips it and keeps it out, for everyone's mix, in
+  `voice_data/spotify_left_out.json`; "put that artist back in my mix" undoes it, and "what's out of my mix?" lists it. Spotify's
+  terms rule out doing more (no Spotify content into an AI model, no analysing listening to profile anyone), so
+  nothing asks a model or keeps what's played. Spotify's own picks for them are closed too. **"More like this":**
+  more of the artist playing.
 
-It's said to play only once Spotify says so.
+It's said to play only once Spotify says so. A TV's app that has only just opened shows up before it can play and
+lets the first play pass, so a play Spotify doesn't take is sent again (three tries after waking it, two otherwise).
 
 ```toml
 [[home.devices]]
