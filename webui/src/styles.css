@@ -1456,6 +1456,13 @@ pre.cmd {
   flex-direction: column;
   gap: 34px;
   margin-top: 24px;
+  /* Shown only when loading is slow enough to notice: a quick load would just blink it. */
+  animation: skel-in 150ms 200ms both;
+}
+@keyframes skel-in {
+  from {
+    opacity: 0;
+  }
 }
 .skel-row {
   display: grid;
