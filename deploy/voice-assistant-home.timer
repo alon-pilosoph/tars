@@ -1,0 +1,12 @@
+# Runs voice-assistant-home.service two minutes after the Pi starts (Docker's had its own go by then), and every five
+# minutes after, so a container that's down is back within five. docs/deployment.md#after-a-power-cut
+
+[Unit]
+Description=TARS's Home Assistant containers, checked every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

@@ -123,6 +123,15 @@ raise SystemExit(0 if load_config(Path('config.toml')).updates.enabled else 1)";
 elif [ -e "$HOME/.config/systemd/user/voice-assistant-update.timer" ]; then
   systemctl --user disable --now voice-assistant-update.timer || true
 fi
+# Home Assistant's containers back up if any is down, if Home Assistant runs from deploy/home-assistant here
+# (docs/deployment.md#after-a-power-cut).
+if [ -d deploy/home-assistant/config ]; then
+  cp deploy/voice-assistant-home.service deploy/voice-assistant-home.timer "$HOME/.config/systemd/user/"
+  systemctl --user daemon-reload
+  systemctl --user enable --now voice-assistant-home.timer
+elif [ -e "$HOME/.config/systemd/user/voice-assistant-home.timer" ]; then
+  systemctl --user disable --now voice-assistant-home.timer || true
+fi
 
 echo "== Checking everything (it says \"TARS is ready.\" and listens a moment)"
 sleep 3  # the services just restarted

@@ -133,7 +133,9 @@ TARS its own user on the household's Mosquitto when there are doors to listen to
 ([the front door](presence.md#the-front-door)),
 downloads the models, lists the audio devices, and installs and starts the systemd user units, at boot too: the
 assistant and the web UI, TARS on Telegram with `[telegram]` on ([setting it up](telegram.md#setting-it-up)), and the
-backup's timer with `[backup]` on ([backing up to S3](backup.md)). Then it runs `voice-assistant --check`.
+backup's timer with `[backup]` on ([backing up to S3](backup.md)), and, when Home Assistant runs from
+`deploy/home-assistant` on the Pi, a timer that brings its containers back if any is down
+([after a power cut](#after-a-power-cut)). Then it runs `voice-assistant --check`.
 
 Every key is optional: it says what TARS does without the ones `.env` doesn't have, and stops only when hearing,
 thinking or speaking has no service at all; add keys and run it again
@@ -164,7 +166,8 @@ By hand, the steps are at the top of each unit:
 [`deploy/voice-assistant-telegram.service`](../deploy/voice-assistant-telegram.service), and
 [`deploy/voice-assistant-backup.service`](../deploy/voice-assistant-backup.service) with
 [`deploy/voice-assistant-backup.timer`](../deploy/voice-assistant-backup.timer), and
-[`deploy/voice-assistant-update.service`](../deploy/voice-assistant-update.service) with its timer. A rerun with
+[`deploy/voice-assistant-update.service`](../deploy/voice-assistant-update.service) with its timer, and
+[`deploy/voice-assistant-home.service`](../deploy/voice-assistant-home.service) with its timer. A rerun with
 `[telegram]`, `[backup]`, `[browser]` or `[updates]` off stops and disables that unit.
 
 ### Updates
@@ -202,6 +205,29 @@ ten minutes ([`deploy/voice-assistant-update.timer`](../deploy/voice-assistant-u
 What it can't catch is an update that starts and checks fine but behaves wrongly: what's merged still matters.
 `journalctl --user-unit voice-assistant-update` shows each pass; `systemctl --user start voice-assistant-update`
 runs one now.
+
+### After a power cut
+
+The Pi comes back by itself, with nobody logged in: the services start at boot (lingering), TARS waits for Home
+Assistant and the network and follows the house again once they answer, and a body (an Atom in another room)
+connects again on its own. Home Assistant and Mosquitto have Docker's restart policy, which isn't always enough: after
+one cut Docker brought Home Assistant back and left Mosquitto down without a word. So `voice-assistant-home.timer`
+runs `docker compose up -d` in `deploy/home-assistant` two minutes after boot and every five minutes after; a
+container that's down, then, is back within five. To stop one on purpose, disable the timer first
+(`systemctl --user disable --now voice-assistant-home.timer`), or it comes back.
+
+Two things software can't do:
+
+- **The case has to switch on by itself.** An Argon ONE (V2, or M.2, for the Pi 4) waits for its button when power
+  comes back, unless the jumper on its board is moved from pins 1-2 to 2-3 ("always on"). Unplug it, open the case,
+  move the jumper. Other cases with a power button may have a setting like it.
+- **A cut in the middle of a write can harm the SD card.** Shut down first when you can (`sudo shutdown now`);
+  [the backup](backup.md) is there for when a card does die. A UPS HAT, or a power bank that passes power through,
+  rides out short cuts.
+
+The system journal on Raspberry Pi OS is kept in memory, so what happened just before a cut is gone after it. To keep
+it (`journalctl -b -1` then shows the boot before), once: `sudo mkdir -p /var/log/journal && sudo systemctl restart
+systemd-journald`.
 
 ### Trying it on a simulated Pi first
 
