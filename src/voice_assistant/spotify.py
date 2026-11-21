@@ -8,7 +8,14 @@ which prints a link to sign in with, and asks for the address Spotify sends you 
 voice_data/spotify.json, readable by TARS's user alone: Spotify swaps it for a new one as it's used.
 
 A device that only shows up in Spotify while its app is open (a TV's) can be woken first: `wake` names the device in
-the house that opens it, the Fire TV, whose "open" turns the TV on too."""
+the house that opens it, the Fire TV, whose "open" turns the TV on too.
+
+"Something I like" is what's played most on the account. A household shares it, so a child's songs and the white
+noise at bedtime are among them: those whose song or album name says so ("white noise", "לילדים") are left out, as a
+best effort, in code. Spotify's terms rule out more: no Spotify content into an AI model, and no analysing listening
+to profile anyone (developer.spotify.com/policy, III.13-14), so nothing here asks a model or keeps what's played.
+What still gets through, they take out themselves: "take this song (artist, album) out of my mix" while it plays
+keeps it in voice_data/spotify_left_out.json, until "put it back"."""
 
 import base64
 import hashlib
@@ -30,6 +37,7 @@ from .home import PLAY, PRESS, SET, STATUS, Device, HomeError, Request, button
 
 CLIENT_KEY = "SPOTIFY_CLIENT_ID"
 TOKEN_FILE = "voice_data/spotify.json"
+LEFT_OUT_FILE = "voice_data/spotify_left_out.json"  # what they took out of "something I like", by its uri
 ACCOUNTS, API = "https://accounts.spotify.com", "https://api.spotify.com/v1"
 REDIRECT = "http://127.0.0.1:8888/callback"  # Spotify's own rule: plain http only on this machine's own address
 SCOPES = (  # playing, and reading what's liked and played, for "something I like"; nothing that changes the library
@@ -39,6 +47,9 @@ SCOPES = (  # playing, and reading what's liked and played, for "something I lik
 TIMEOUT_S = 8.0
 WAKE_WAIT_S = 30.0  # a TV's Spotify app opening and showing up as a device
 PLAYING_WAIT_S = 6.0  # Spotify saying it's playing what it was asked to
+# A play sent again when Spotify doesn't say it's playing: a TV's app that has only just opened shows up as a device
+# before it can play, and may let the first one pass.
+TRIES, WOKEN_TRIES = 2, 3
 POLL_S = 1.0
 KINDS = ("playlist", "album", "artist", "track")  # with no mode, an exact name is taken in this order
 SONG, ARTIST, ALBUM, PLAYLIST, GENRE, MOOD, LIKED, MORE, CHOICE = (
@@ -66,12 +77,27 @@ VERSION = re.compile(
     r"\s*[-(\[].*(remaster|live|version|edit|mix|mono|stereo|deluxe|anniversary|acoustic|karaoke|instrumental|demo|unplugged).*$",
     re.IGNORECASE,
 )
+# Buttons for what's playing, and "something I like": its song, artist or album taken out of the mix, and put back.
+LEAVE_OUT = {"leave_out_song": "track", "leave_out_artist": "artist", "leave_out_album": "album"}
+BRING_BACK = "bring_back"
 BUTTONS = {
     "pause": ("PUT", "/me/player/pause"),
     "play": ("PUT", "/me/player/play"),
     "next": ("POST", "/me/player/next"),
     "previous": ("POST", "/me/player/previous"),
 }
+TOP_TRACKS = tuple(  # what's played most: all time first, then the last months, then the last weeks
+    f"/me/top/tracks?limit=50&time_range={span}" for span in ("long_term", "medium_term", "short_term")
+)
+# Left out of "something I like", by the song's or its album's own name: what isn't really music, and children's songs.
+# Only the song's own: an artist's other albums would drop a grown-up artist for a single children's album.
+NOT_FOR_THE_MIX = re.compile(
+    r"white noise|pink noise|brown noise|rain sounds|nature sounds|ocean waves|sleep sounds|sounds for sleep|"
+    r"for sleeping|sleep aid|baby sleep|binaural|\b\d{3} ?hz\b|guided meditation|podcast|audiobook|"
+    r"lullab|nursery rhyme|for kids|kids songs|children's songs|for toddlers|baby songs|para baixinhos|"
+    r"רעש לבן|שירי ילדים|לילדים|לפעוטות|לתינוקות|שירי ערש|שיר ערש|שירים ראשונים",
+    re.IGNORECASE,
+)
 LINK = re.compile(
     r"open\.spotify\.com/(?:intl-\w+/)?(track|album|playlist|artist)/(\w+)|spotify:(track|album|playlist|artist):(\w+)"
 )
@@ -125,11 +151,13 @@ class Spotify(Device):
         wake: Callable[[], str] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        left_out: Path | None = None,
     ):
         """`play_on`: the Spotify device to play on, by its name in Spotify, or part of it ("Fire TV"). `wake()`:
         opens it, if it shows up only while its app is open, and says how that went."""
         super().__init__(name)
         self.account, self.play_on, self._http, self._wake = account, play_on, http, wake
+        self._left_out_file = left_out  # None: nothing is kept, and nothing can be taken out
         self._sleep, self._clock = sleep, clock
         self._offered: list[dict] = []  # the options last asked about
         self._offered_at = 0.0
@@ -139,7 +167,7 @@ class Spotify(Device):
     def what(self) -> str:
         return (
             f"Spotify, playing on {self.play_on}: status (what's playing), play (title: what they asked for; mode: "
-            f"{', '.join(MODES)}), press ({', '.join(BUTTONS)}), set (volume)"
+            f"{', '.join(MODES)}), press ({', '.join([*BUTTONS, *LEAVE_OUT, BRING_BACK])}), set (volume)"
         )
 
     def rules(self) -> str:
@@ -148,8 +176,13 @@ class Spotify(Device):
             'album, playlist (theirs first), genre or mood ("some jazz", "something calm": a playlist of it), liked '
             '("something I like", "my music": from what they like and play; no title needed), more ("more like this": '
             "more of what's playing). A Spotify link needs no mode. When play asks which, say the options briefly and "
-            'ask; then play with their answer as the title ("2", "the live one") and the mode choice. Say what '
-            "play found and that it's playing only when it says so."
+            'ask; then play with their answer as the title ("2", "the live one") and the mode choice. '
+            'When they want the song playing, or its artist or album, out of their mix ("take this out of my '
+            'mix", "no more of this artist in my mix"), press leave_out_song, leave_out_artist or leave_out_album: '
+            'it\'s skipped, and kept out of "something I like" for everyone. To put one back ("put that artist back '
+            "in my mix\"), press bring_back with the name as the title; with no title it lists what's out. "
+            "Pause, skip, go back and the volume are done only by pressing or setting, every time: never say it's "
+            "done without. Say what play found and that it's playing only when it says so."
         )
 
     def slow(self, action: str, args: dict) -> bool:
@@ -174,8 +207,12 @@ class Spotify(Device):
             self._api("PUT", f"/me/player/volume?volume_percent={int(level)}")
             return f"sent: volume {int(level)}%"
         pressed = button(args)
+        if pressed in LEAVE_OUT:
+            return self._leave_out(LEAVE_OUT[pressed])
+        if pressed == BRING_BACK:
+            return self._bring_back(str(args.get("title") or "").strip())
         if pressed not in BUTTONS:
-            return f"error: its buttons are {', '.join(BUTTONS)}"
+            return f"error: its buttons are {', '.join([*BUTTONS, *LEAVE_OUT, BRING_BACK])}"
         method, path = BUTTONS[pressed]
         self._api(method, path)
         return f"sent: {pressed}"
@@ -218,23 +255,37 @@ class Spotify(Device):
             "type": "track" if isinstance(what, list) else "",
             "name": said,
         }
-        device = self._device()
+        device, woke = self._device()
         body = {"uris": what} if isinstance(what, list) else {"context_uri": what}
-        if shuffle:
-            self._api("PUT", f"/me/player/shuffle?state=true&device_id={device['id']}")
-        self._api("PUT", f"/me/player/play?device_id={device['id']}", body)
-        self._offered, deadline = [], self._clock() + PLAYING_WAIT_S
-        while True:
-            now = self._api("GET", "/me/player") or {}
-            if now.get("is_playing") and (now.get("device") or {}).get("id") == device["id"]:
+        self._offered = []
+        tries = WOKEN_TRIES if woke else TRIES
+        for tried in range(1, tries + 1):
+            if shuffle:
+                self._api("PUT", f"/me/player/shuffle?state=true&device_id={device['id']}")
+            self._api("PUT", f"/me/player/play?device_id={device['id']}", body)
+            if self._playing_on(device["id"]):
                 done = f"done: playing {said} on {device['name']} (Spotify says so)"
                 if others:  # kept to switch to, as an answer to "which?" is
                     self._offered, self._offered_at = [self._last, *others], self._clock()
                     listed = "; ".join(f"{n}. {describe(i)}" for n, i in enumerate(others, 2))
                     done += f". Also found: {listed}; say so in a few words, and play their pick with mode choice"
                 return done
+            if tried < tries:
+                print(f"(spotify: {device['name']} isn't playing {said} yet; asked again)", flush=True)
+        return (
+            f"not confirmed: asked Spotify {tries} times to play {said} on {device['name']}, and it doesn't say it is: "
+            "say it didn't start, not that it's playing"
+        )
+
+    def _playing_on(self, device_id: str) -> bool:
+        """Whether Spotify says it's playing on the device, within PLAYING_WAIT_S."""
+        deadline = self._clock() + PLAYING_WAIT_S
+        while True:
+            now = self._api("GET", "/me/player") or {}
+            if now.get("is_playing") and (now.get("device") or {}).get("id") == device_id:
+                return True
             if self._clock() >= deadline:
-                return f"not confirmed: asked Spotify to play {said} on {device['name']}, and it doesn't say it is"
+                return False
             self._sleep(POLL_S)
 
     def _search(self, query: str, kind: str, limit: int = 10) -> list[dict]:
@@ -345,20 +396,17 @@ class Spotify(Device):
         return lists[0]["uri"], describe(lists[0])
 
     def _liked(self, wanted: str):
-        """What they like: their most played and their liked songs, shuffled. Spotify's own picks for them are closed
-        to an app like this one."""
+        """What they like: what's played most, all time and lately, shuffled, without what its name says is a child's
+        song or isn't really music. Not their liked songs: a library's newest saves can be years old. Spotify's own
+        picks for them are closed to an app like this one."""
         uris: list[str] = []
-        for path in (
-            "/me/top/tracks?limit=50&time_range=medium_term",
-            "/me/tracks?limit=50",
-            "/me/top/tracks?limit=50&time_range=short_term",
-        ):
-            for entry in self._api("GET", path).get("items") or []:
-                track = entry.get("track", entry) if entry else None
-                if track and track.get("uri") and track["uri"] not in uris:
+        out = set(self._left_out())
+        for path in TOP_TRACKS:
+            for track in self._api("GET", path).get("items") or []:
+                if track and track.get("uri") and track["uri"] not in uris and for_the_mix(track, out):
                     uris.append(track["uri"])
         if not uris:
-            return "error: Spotify has nothing they've liked or played much to go by yet"
+            return "error: Spotify has nothing played much to go by yet"
         random.shuffle(uris)
         return uris[:MOST_URIS], "a mix of what you like", True
 
@@ -389,10 +437,63 @@ class Spotify(Device):
                 return ([item["uri"]] if kind == "track" else item["uri"]), describe(item)
         return f"error: Spotify found nothing for {wanted!r}"
 
-    def _device(self) -> dict:
+    def _leave_out(self, kind: str) -> str:
+        """The song playing, or its artist or album, out of "something I like" from now on; the song skipped."""
+        if self._left_out_file is None:
+            return "error: there's nowhere to keep what's left out"
+        item = (self._api("GET", "/me/player") or {}).get("item") or {}
+        if not item.get("uri"):
+            return "error: nothing is playing"
+        if kind == "track":
+            what = item
+        elif kind == "artist":
+            what = next(iter(item.get("artists") or []), {})
+        else:
+            what = item.get("album") or {}
+        if not what.get("uri"):
+            return f"error: Spotify doesn't say what the {kind} playing is"
+        name = describe(what | {"type": kind})
+        out = self._left_out()
+        out[what["uri"]] = name
+        self._keep_left_out(out)
+        self._api(*BUTTONS["next"])
+        return f"sent: next; {name} is out of their mix from now on (bring_back puts it back)"
+
+    def _bring_back(self, wanted: str) -> str:
+        """What was left out, by its name, back in "something I like"; with no name, what's out."""
+        out = self._left_out()
+        if not wanted:
+            return "left out of their mix: " + ("; ".join(out.values()) or "nothing")
+        words = normal(wanted).split()
+        found = [u for u, n in out.items() if words and all(w in normal(n) for w in words)]
+        if not found:
+            return f"error: nothing left out is called {wanted!r}; left out: {'; '.join(out.values()) or 'nothing'}"
+        names = [out.pop(u) for u in found]
+        self._keep_left_out(out)
+        return f"done: {'; '.join(names)} back in their mix"
+
+    def _left_out(self) -> dict[str, str]:
+        """What's left out of "something I like": each uri, with its name to be put back by."""
+        if self._left_out_file is None:
+            return {}
+        try:
+            kept = json.loads(self._left_out_file.read_text())
+        except OSError, ValueError:
+            return {}
+        return {str(k): str(v) for k, v in kept.items()} if isinstance(kept, dict) else {}
+
+    def _keep_left_out(self, out: dict[str, str]) -> None:
+        if self._left_out_file is not None:
+            self._left_out_file.parent.mkdir(parents=True, exist_ok=True)
+            part = self._left_out_file.with_suffix(".part")
+            part.write_text(json.dumps(out, ensure_ascii=False, indent=1))
+            part.replace(self._left_out_file)
+
+    def _device(self) -> tuple[dict, bool]:
+        """The device to play on, and whether it was woken for this."""
         found = self._match(self._api("GET", "/me/player/devices").get("devices") or [])
         if found:
-            return found
+            return found, False
         if self._wake is None:
             raise HomeError(f"{self.play_on} isn't on Spotify now: is its app open?")
         said = self._wake()
@@ -402,7 +503,7 @@ class Spotify(Device):
         while self._clock() < deadline:
             self._sleep(POLL_S)
             if found := self._match(self._api("GET", "/me/player/devices").get("devices") or []):
-                return found
+                return found, True
         raise HomeError(f"{self.play_on} didn't show up on Spotify after its app was opened")
 
     def _match(self, devices: list[dict]) -> dict | None:
@@ -459,6 +560,16 @@ def artists(item: dict) -> tuple:
     return tuple(a.get("name") for a in item.get("artists") or [])
 
 
+def for_the_mix(track: dict, left_out: set[str] = frozenset()) -> bool:
+    """Whether a song may go in "something I like": not taken out (`left_out`: uris of songs, artists, albums), and
+    its name and its album's say it's neither a child's song nor something that isn't really music."""
+    album = track.get("album") or {}
+    uris = {track.get("uri"), album.get("uri"), *(a.get("uri") for a in track.get("artists") or [])}
+    if uris & left_out:
+        return False
+    return not NOT_FOR_THE_MIX.search(f"{track.get('name', '')} | {album.get('name', '')}")
+
+
 def describe(item: dict) -> str:
     kind, name = item.get("type", ""), item.get("name", "")
     artists = ", ".join(a.get("name", "") for a in item.get("artists") or [])
@@ -483,7 +594,7 @@ def make(name: str, spec: dict, context) -> Spotify:
                 return f"error: there's no device called {target!r} to open Spotify on"
             return device.call("open", {"app": "spotify"}, Request())
 
-    return Spotify(name, account, spec["play_on"], http, wake)
+    return Spotify(name, account, spec["play_on"], http, wake, left_out=context.root / LEFT_OUT_FILE)
 
 
 def begin(client_id: str, path: Path, http: httpx.Client | None = None) -> tuple[str, Callable[[str], None]]:

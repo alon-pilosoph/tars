@@ -77,6 +77,10 @@ class Service:
         self.devices, self.plays, self.status = list(devices), plays, status
         self.played, self.calls, self.player = [], [], None
         self.favourites: list[str] = []
+        self.top = {
+            "long_term": [item("track", "Echoes", "e1", "Pink Floyd"), item("track", "Time", "e2", "Pink Floyd")],
+            "short_term": [item("track", "Time", "e2", "Pink Floyd"), item("track", "Top", "t9")],
+        }
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         path, query = request.url.path.removeprefix("/v1"), dict(request.url.params)
@@ -96,13 +100,12 @@ class Service:
             return httpx.Response(200, json={"items": MINE})
         if path == "/me/top/artists":
             return httpx.Response(200, json={"items": [{"name": n} for n in self.favourites]})
-        if path.startswith("/me/top/tracks") or path == "/me/tracks":
-            liked = [{"track": item("track", "Liked", "l1")}] if path == "/me/tracks" else [item("track", "Top", "t9")]
-            return httpx.Response(200, json={"items": liked})
+        if path == "/me/top/tracks":
+            return httpx.Response(200, json={"items": self.top.get(query.get("time_range"), [])})
         if path == "/me/player/play" and request.method == "PUT":
             body = json.loads(request.content or b"{}")
             self.played.append((query.get("device_id"), body))
-            if self.plays:
+            if self.plays is True or (self.plays is not False and len(self.played) > self.plays):
                 self.player = {"is_playing": True, "device": {"id": query.get("device_id"), "name": "x"}}
             return httpx.Response(204)
         if path == "/me/player":
@@ -115,10 +118,12 @@ class Signed:
         return "t"
 
 
-def device(service, play_on="Fire TV", wake=None):
+def device(service, play_on="Fire TV", wake=None, left_out=None):
     http = httpx.Client(transport=httpx.MockTransport(service.handle))
     ticks = itertools.count(step=1.0)
-    return Spotify("spotify", Signed(), play_on, http, wake, sleep=lambda s: None, clock=lambda: next(ticks))
+    return Spotify(
+        "spotify", Signed(), play_on, http, wake, sleep=lambda s: None, clock=lambda: next(ticks), left_out=left_out
+    )
 
 
 def play(found, title, mode=""):
@@ -159,7 +164,26 @@ def test_nothing_found_says_so_and_plays_nothing():
 
 
 def test_it_isnt_said_to_play_until_spotify_says_it_does():
-    assert play(device(Service(plays=False)), "the Beatles").startswith("not confirmed")
+    service = Service(plays=False)
+    assert play(device(service), "the Beatles").startswith("not confirmed: asked Spotify 2 times")
+    assert len(service.played) == 2
+
+
+def test_a_play_spotify_lets_pass_is_sent_again():
+    service = Service(plays=1)  # the first is ignored
+    assert play(device(service), "the Beatles").startswith("done")
+    assert len(service.played) == 2
+
+
+def test_a_just_woken_device_gets_more_tries():
+    service = Service(devices=[PHONE], plays=2)  # an app that has only just opened lets two pass
+
+    def wake():
+        service.devices.append(TV)
+        return "done: spotify is open"
+
+    assert play(device(service, wake=wake), "the Beatles").startswith("done")
+    assert len(service.played) == 3
 
 
 def test_a_device_not_on_spotify_yet_is_woken_and_waited_for():
@@ -351,11 +375,93 @@ def test_a_mood_plays_a_long_enough_playlist_not_spotifys_own():
     assert "Calm Evening" in play(device(service), "something calm", "mood")
 
 
-def test_something_i_like_is_a_shuffled_mix_of_their_own():
+def test_something_i_like_is_a_shuffled_mix_of_what_is_played_most_not_old_saves():
     service = Service()
     assert "a mix of what you like" in play(device(service), "", "liked")
-    assert set(service.played[0][1]["uris"]) == {"spotify:track:l1", "spotify:track:t9"}
+    assert sorted(service.played[0][1]["uris"]) == ["spotify:track:e1", "spotify:track:e2", "spotify:track:t9"]
     assert ("PUT", "/me/player/shuffle") in service.calls
+    assert ("GET", "/me/tracks") not in service.calls
+
+
+def album(track, name):
+    return track | {"album": {"name": name}}
+
+
+def test_the_mix_leaves_out_what_its_name_says_is_a_childs_song_or_not_music():
+    service = Service()
+    service.top["medium_term"] = [
+        item("track", "Deep Sleep - White Noise", "w1", "Sound Lab"),
+        album(item("track", "Morning", "w2", "Sound Lab"), "Rain Sounds for Sleep"),
+        album(item("track", "Song One", "k1", "Kids Artist"), "Songs for Toddlers"),
+        album(item("track", "שיר אחד", "k2", "Kids Artist"), "שירי ילדים"),
+        album(item("track", "Twinkle", "k3", "Kids Artist"), "Lullabies for Babies"),
+        album(item("track", "Hey Jude", "a1", "The Beatles"), "Past Masters"),
+    ]
+    play(device(service), "", "liked")
+    uris = set(service.played[0][1]["uris"])
+    assert "spotify:track:a1" in uris
+    assert not uris & {f"spotify:track:{k}" for k in ("w1", "w2", "k1", "k2", "k3")}
+
+
+def song(name, key, artist, album_name, album_key):
+    return item("track", name, key, artist) | {
+        "artists": [{"name": artist, "uri": f"spotify:artist:{artist.lower()}"}],
+        "album": {"name": album_name, "uri": f"spotify:album:{album_key}"},
+    }
+
+
+TOC = song("Song One", "k1", "Kids Artist", "Kids Album", "dd")
+DUG = song("Song Two", "k2", "Kids Artist", "Kids Album", "dd")
+ECHOES = song("Echoes", "e1", "Pink Floyd", "Meddle", "md")
+
+
+@pytest.mark.parametrize(
+    "button, name, stays",
+    [
+        ("leave out song", "Song One by Kids Artist", {"k2", "e1"}),
+        ("leave_out_artist", "Kids Artist (artist)", {"e1"}),
+        ("leave-out-album", "Kids Album", {"e1"}),
+    ],
+)
+def test_the_song_playing_or_its_artist_or_album_comes_out_of_the_mix(tmp_path, button, name, stays):
+    service = Service()
+    service.top = {"short_term": [TOC, DUG, ECHOES]}
+    service.player = {"is_playing": True, "item": TOC, "device": TV}
+    found = device(service, left_out=tmp_path / "out.json")
+    assert found.call("press", {"button": button}, Request()) == (
+        f"sent: next; {name} is out of their mix from now on (bring_back puts it back)"
+    )
+    assert ("POST", "/me/player/next") in service.calls
+    play(found, "", "liked")
+    assert {u.rsplit(":", 1)[1] for u in service.played[0][1]["uris"]} == stays
+
+
+def test_what_was_taken_out_is_listed_and_put_back_by_its_name(tmp_path):
+    service = Service()
+    service.top = {"short_term": [TOC, ECHOES]}
+    service.player = {"is_playing": True, "item": TOC, "device": TV}
+    found = device(service, left_out=tmp_path / "out.json")
+    found.call("press", {"button": "leave_out_artist"}, Request())
+    assert found.call("press", {"button": "bring_back"}, Request()) == "left out of their mix: Kids Artist (artist)"
+    assert found.call("press", {"button": "bring_back", "title": "Someone Else"}, Request()).startswith("error")
+    assert found.call("press", {"button": "bring_back", "title": "kids artist"}, Request()) == (
+        "done: Kids Artist (artist) back in their mix"
+    )
+    play(found, "", "liked")
+    assert len(service.played[0][1]["uris"]) == 2
+
+
+def test_nothing_playing_takes_nothing_out(tmp_path):
+    found = device(Service(), left_out=tmp_path / "out.json")
+    assert found.call("press", {"button": "leave_out_song"}, Request()) == "error: nothing is playing"
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_a_mix_of_nothing_but_what_isnt_for_it_says_so():
+    service = Service()
+    service.top = {"short_term": [item("track", "Atmospheric White Noise", "w1", "Abstract Time")]}
+    assert play(device(service), "", "liked").startswith("error: Spotify has nothing played much")
+    assert service.played == []
 
 
 def test_more_like_this_is_more_of_the_artist_playing():
