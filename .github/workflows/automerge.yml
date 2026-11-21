@@ -62,7 +62,9 @@ jobs:
             say "Not merged: ${failed:-a check} failed. Fix it and comment #automerge again."
             exit 1
           fi
-          if ! gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$head"; then
+          # --admin: the owner's role bypasses the ruleset's required approval (as the Merge button does for them),
+          # but gh only uses it when told. The checks were waited for above, and only the commenter's commit merges.
+          if ! gh pr merge "$PR" -R "$REPO" --squash --admin --match-head-commit "$head"; then
             say "Not merged: something was pushed after #automerge (it was at ${head:0:7}), or GitHub refused. Look, then comment #automerge again."
             exit 1
           fi
