@@ -588,7 +588,8 @@ entity named so counts as a door).
 About half an hour, on the Pi (or the Mac while you try it).
 
 1. **Home Assistant.** Already running somewhere on the home network? Use that. Otherwise, on the Pi:
-   `cd deploy/home-assistant && docker compose up -d` (Docker first: `curl -fsSL https://get.docker.com | sudo sh`).
+   `cd deploy/home-assistant && docker compose up -d` (Docker first: `curl -fsSL https://get.docker.com | sudo sh`);
+   `deploy/install-pi.sh` then keeps it, and the broker, up ([after a power cut](deployment.md#after-a-power-cut)).
    Open `http://<the Pi>:8123`, make the owner account, set the home's location, and add your devices' integrations
    (Settings, Devices & services). For devices that report over MQTT, start the broker too. First its passwords, one
    user for Home Assistant and one for each device, made in Mosquitto's own image so the file ends up owned by

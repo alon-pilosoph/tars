@@ -17,6 +17,10 @@ services:
       - ./config:/config
       - /etc/localtime:/etc/localtime:ro # the Pi's time zone
       - /run/dbus:/run/dbus:ro # Bluetooth devices
+    # So Home Assistant can reset the Bluetooth adapter when it stops answering; without them it says it can't.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
 
   mosquitto:
     profiles: [mqtt]
