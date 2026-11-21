@@ -83,6 +83,11 @@ class HomeAssistant:
     def ping(self) -> str:
         return self._send("GET", "/api/").get("message", "")
 
+    def running(self) -> bool:
+        """Whether Home Assistant has finished starting: until then it answers, but its integrations, and so their
+        entities, are still being set up."""
+        return self._send("GET", "/api/config").get("state", "RUNNING") == "RUNNING"
+
     def close(self) -> None:
         self._http.close()
 

@@ -302,6 +302,54 @@ def test_home_assistant_is_one_of_the_services_when_home_uses_it(tmp_path):
     assert hass.status == FAIL and "HOME_ASSISTANT_TOKEN" in hass.detail
 
 
+class StartingHass:
+    """Home Assistant as it starts: refusing `refused` pings, then answering, and reporting it's started only after
+    `starting` more."""
+
+    def __init__(self, refused: int = 0, starting: int = 0, config_fails: bool = False):
+        self.refused, self.starting, self.config_fails, self.pings = refused, starting, config_fails, 0
+
+    def ping(self):
+        from voice_assistant.home import HomeError
+
+        self.pings += 1
+        if self.pings <= self.refused:
+            raise HomeError("Home Assistant didn't answer (ConnectError)")
+        return "API running."
+
+    def running(self):
+        from voice_assistant.home import HomeError
+
+        if self.config_fails:
+            raise HomeError("HTTP 401")
+        return self.pings > self.refused + self.starting
+
+
+def waited(hass, **limits):
+    """What wait_for_home_assistant returned, and the seconds it slept, on a clock that only its sleeps move."""
+    now = [0.0]
+    said = check.wait_for_home_assistant(
+        hass, sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0], **limits
+    )
+    return said, now[0]
+
+
+def test_the_check_waits_for_home_assistant_to_finish_starting():
+    # Restarted by an update just before: it answers at once, and has its entities 12 pings later.
+    hass = StartingHass(refused=2, starting=12)
+    assert waited(hass) == ("API running.", 14 * check.HASS_POLL_S)
+    assert waited(StartingHass()) == ("API running.", 0.0)  # already up: no wait
+
+
+def test_the_check_stops_waiting_for_home_assistant_in_time():
+    from voice_assistant.home import HomeError
+
+    assert waited(StartingHass(starting=1000), starting_s=60)[1] == 60  # still starting: checked as it is
+    with pytest.raises(HomeError, match="didn't answer"):
+        waited(StartingHass(refused=1000), refused_s=30)  # down: a person isn't kept long
+    assert waited(StartingHass(config_fails=True)) == ("API running.", 0.0)  # won't say: not waited on
+
+
 def test_reminders_waiting_for_telegram_are_counted_while_nothing_posts_them(log):
     import dataclasses
 

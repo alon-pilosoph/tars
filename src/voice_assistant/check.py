@@ -700,6 +700,52 @@ def home_assistant(cfg: Config, token: str | None, ping: Callable[[], object]) -
     return Result("Home Assistant", OK, f"answers at {cfg.home.url} ({time.perf_counter() - t:.1f} s)")
 
 
+# Home Assistant just started (an update that changed deploy/home-assistant/compose.yaml restarts it right before the
+# check) answers within seconds, and has its entities only once its integrations are set up: a minute or two on a Pi.
+# Checked before then, every device in the house would fail, and an update would take itself back for it.
+HASS_STARTING_S = 240.0
+# Not answering at all is waited on for less: it's as likely down as starting, and a person may be waiting.
+HASS_REFUSED_S = 30.0
+HASS_POLL_S = 5.0
+
+
+def wait_for_home_assistant(
+    hass,
+    starting_s: float = HASS_STARTING_S,
+    refused_s: float = HASS_REFUSED_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """Pings Home Assistant, waiting while it's still starting (up to `starting_s`) or not answering (up to
+    `refused_s`): what its last ping said, or the HomeError of the last try."""
+    from .home import HomeError
+
+    start, said_so = clock(), False
+
+    def wait(why: str) -> None:
+        nonlocal said_so
+        if not said_so:
+            print(f"(Home Assistant {why}; waiting for it)", flush=True)
+            said_so = True
+        sleep(HASS_POLL_S)
+
+    while True:
+        try:
+            said = hass.ping()
+        except HomeError:
+            if clock() - start >= refused_s:
+                raise
+            wait("doesn't answer yet")
+            continue
+        try:
+            started = hass.running()
+        except HomeError:  # it answers, and won't say whether it's started: the devices' checks will tell
+            return said
+        if started or clock() - start >= starting_s:
+            return said
+        wait("is still starting")
+
+
 def house(built, hass_ok: bool) -> list[Result]:
     """Every device in [home], as TARS made it (home.build), and what each says about itself: the entities it reads,
     whether a box or a blaster answers, a profile that was never tried. One that couldn't be made says why."""
@@ -1004,7 +1050,7 @@ def service_checks(cfg: Config, root: Path) -> ServiceChecks:
     def hass_ping(token: str) -> str:
         hass = HomeAssistant(cfg.home.url, token)
         try:
-            return hass.ping()
+            return wait_for_home_assistant(hass)
         finally:
             hass.close()
 
