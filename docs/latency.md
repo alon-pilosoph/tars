@@ -178,8 +178,8 @@ The voice gives up after 4 s without audio instead of the client's 15 s, and TAR
 lines synthesized at startup ("I lost that one somewhere between here and the server. Ask me again."; plainer below
 50% humor). If Deepgram fails, OpenAI transcribes the same recording, and every transcript after it in that
 request, so a stream that's connected but stalled costs its wait once: 5 s for Nova's transcript, or 1 s for the last
-words Flux never sent. A short line keeps a conversation waiting at most 3 s while it's made ("Yes Alon" for someone
-just enrolled), and what TARS says on its own at most 10 s, after which it's tried again later.
+words Flux never sent. A short line keeps a conversation waiting at most 3 s while it's made ("Yes?" the first time
+with a new voice), and what TARS says on its own at most 10 s, after which it's tried again later.
 
 Qwen runs on Cerebras, then OpenAI's Luna answers (`QuickChat` in `llm.py`). With Groq set up too, Groq is asked first:
 

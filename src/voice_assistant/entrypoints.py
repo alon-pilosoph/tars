@@ -737,7 +737,6 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             room_brain,
             voice,
             speaker_id,
-            name_threshold=cfg.speaker.wake_threshold,
             journal=room_journal,
             humor=cfg.llm.humor,
             phrase_folder=phrase_folder(cfg, root),

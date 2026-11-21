@@ -20,7 +20,7 @@ import numpy as np
 from .audio import BLOCK_SECONDS, SAMPLE_RATE, Microphone
 from .models import fetch
 from .versions import INSTALLED
-from .wake import DUE, Due, Heard, WakeModel, wake_word_trigger
+from .wake import DUE, Due, WakeModel, wake_word_trigger
 
 if TYPE_CHECKING:
     from .journal import Journal
@@ -304,10 +304,15 @@ class NearMisses:
 
 
 SURE_BLOCKS = 4  # how long a wake listens on before the check when `sure` is on: 4 x 80 ms
+# With `sure` on, a first check runs this far into it (2 x 80 ms): a clear "TARS" is whole by then, so a check this
+# confident of it answers without the rest. Measured on 231 wakes on the Pi: 29 of the 36 answered got through it, at
+# 0.93-0.96; two the full check turns down scored 0.45-0.49 on it, below EARLY_SURE, so they're checked again.
+EARLY_BLOCKS = 2
+EARLY_SURE = 0.8
 
 
 class VerifiedTrigger:
-    last_audio: np.ndarray | None = None  # what woke it, for speaker ID
+    last_audio: np.ndarray | None = None  # what woke it, for hearing that voice alone over others
     # On a confirmed wake, what followed the name in the wake window: found while TARS gets on with it.
     after_name: Future[np.ndarray] | None = None
     pair: Pair
@@ -331,13 +336,17 @@ class VerifiedTrigger:
         self._second_chance = second_chance
         self._make_trigger, self._make_verifier = make_trigger, make_verifier
         self._stamp, self.pair, self._verifier = None, None, None
+        self._fired = False  # a wake was answered and the model not reset since
         self._follow_versions(quiet=True)
         self.phrase = self._trigger.phrase
 
-    def wait(self, mic: Microphone, due: Due | None = None, heard: Heard | None = None) -> str:
+    def wait(self, mic: Microphone, due: Due | None = None) -> str:
         """Returns ANSWER for a confirmed wake, ASK when it sounded close but not quite, DUE when `due` says a
-        reminder is due. `heard` is told each wake's audio as the check starts on it."""
+        reminder is due."""
         self.after_name = None
+        if self._fired:  # the last wake's reset, put off until now: nobody waits on it here
+            self._trigger.reset()
+            self._fired = False
         mic.clear()
 
         def fresh() -> tuple[RecentAudio, NearMisses, None]:
@@ -362,25 +371,47 @@ class VerifiedTrigger:
                     return DUE
                 continue
             if self._sure and self.pair.version == INSTALLED:
-                # The model is surest a moment after it first fires, as the rest of the name comes in: hear that
-                # moment, so a wake the check can't make out is judged on how sure the model got.
-                for _ in range(SURE_BLOCKS):
-                    block = mic.read()
-                    recent.add(block)
-                    score = max(score, self._trigger.score(block))
-            self._trigger.reset()
-            audio = recent.audio()
-            if heard:
-                heard(audio)
-            if (outcome := self.confirm(audio, score)) != IGNORE:
+                # The model fires partway through the name and is surest a moment later, as the rest comes in. A clear
+                # "TARS" is whole EARLY_BLOCKS on, and a check sure of it answers then; anything else hears the moment
+                # out, so a slow "TARS" is heard whole, and one the check can't make out is judged on how sure the
+                # model got.
+                score = self._listen_on(mic, recent, score, EARLY_BLOCKS)
+                early = self._verifier.decide(audio := recent.audio())
+                if early[0] == ANSWER and (self._verifier.last_confidence or 0.0) >= EARLY_SURE:
+                    self._fired = True
+                    return self.confirm(audio, score, decided=early)
+                score = self._listen_on(mic, recent, score, SURE_BLOCKS - EARLY_BLOCKS)
+            outcome = self.confirm(recent.audio(), score)
+            # The model's reset stops the same name firing again, and takes about 0.6 s on a Pi 4 (openWakeWord
+            # rebuilds its feature buffers): a wake turned down has it now, before listening on; one TARS answers has
+            # it when TARS next listens for its name, so the greeting doesn't wait on it.
+            if outcome != IGNORE:
+                self._fired = True
                 return outcome
+            self._trigger.reset()
 
-    def confirm(self, audio: np.ndarray, score: float, journal=None, wake_model: str = "") -> str:
+    def _listen_on(self, mic: Microphone, recent: RecentAudio, score: float, blocks: int) -> float:
+        """`blocks` more of the wake, into `recent`; the highest score the model gave, `score` included."""
+        for _ in range(blocks):
+            block = mic.read()
+            recent.add(block)
+            score = max(score, self._trigger.score(block))
+        return score
+
+    def confirm(
+        self,
+        audio: np.ndarray,
+        score: float,
+        journal=None,
+        wake_model: str = "",
+        decided: tuple[str, str] | None = None,
+    ) -> str:
         """The double-check of a wake the model scored `score` on `audio` (the check window that ends on it): ANSWER,
         ASK or IGNORE, kept in the journal. Not IGNORE: `last_audio` is `audio`, and on ANSWER `after_name` is being
         found. Also for a network body that ran only the wake model itself (bodylink.RemoteTrigger), which keeps the
-        wake in its room's `journal`, under its own `wake_model`."""
-        outcome, heard = self._verifier.decide(audio)
+        wake in its room's `journal`, under its own `wake_model`. `decided`: the check's (outcome, heard) on `audio`,
+        when it's already been run."""
+        outcome, heard = decided or self._verifier.decide(audio)
         # `sure` is a score of the installed model's own: a body's wake was scored by its own model (wake_model), on a
         # scale of its own, so the words the check heard decide alone.
         own = not wake_model

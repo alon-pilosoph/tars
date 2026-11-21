@@ -162,8 +162,6 @@ effect = ""
 enabled = true
 # Minimum voiceprint similarity (0-1) to name someone; below it they're "unknown".
 threshold = 0.5
-# The same, but for naming you from just "hey TARS" (much less audio, so a lower bar; measured 0% wrong names).
-wake_threshold = 0.25
 
 
 [extract]

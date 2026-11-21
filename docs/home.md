@@ -74,7 +74,7 @@ Unlocking is the one change that needs more than a request. When someone says "u
    - **by voice**: the request came through the microphone, not a typed `--text` question (a Telegram chat has its
      own rule: [from a chat](#from-a-chat));
    - **a trusted voice**: speaker ID named someone in `[home] unlock_voices`;
-   - **sure enough**: speaker ID's score is at least `unlock_threshold` (0.6, against 0.5 to greet someone by name);
+   - **sure enough**: speaker ID's score is at least `unlock_threshold` (0.6, against 0.5 to name who's asking);
    - **asked for**: the words heard in that turn include "unlock". The model can't unlock on its own reading of
      something else: "is the door unlocked?", a note, or a web page that says to let someone in.
 4. **The challenge** (`[home] unlock_challenge`, on by default): the tool answers with three random digits instead
@@ -313,7 +313,7 @@ in the voice's log, with what it did.
 | Button | Does |
 |---|---|
 | **Volume up and down** | Turn TARS's speaker 10% a press (with `own_speaker`), by the same rules as asking: never muted, never below 10%. Held, a step every 0.3 s. |
-| **Talk** | TARS listens, as if called by name, and says "Yes?" at once: never a name, since a press is nobody's voice (who's asking is told from what they say next). |
+| **Talk** | TARS listens, as if called by name, and says "Yes?" at once (who's asking is told from what they say next). |
 | **Stop** | What TARS is saying stops now, the reply being written with it, and it doesn't wait for a follow-up. A reminder whose line had begun counts as acknowledged, and a timer ringing on goes off; one stopped before its line is said again later, never acknowledged unheard. |
 | **Mute** | The speakerphone's own mute (below): its mic off, its light red. Again, on. |
 

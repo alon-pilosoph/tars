@@ -1,4 +1,4 @@
-"""The short lines TARS says, made ahead so they play at once. Two kinds are kept: the fixed lines ("Yes Alon",
+"""The short lines TARS says, made ahead so they play at once. Two kinds are kept: the fixed lines ("Yes?",
 "Did you call me?", the error lines), in memory and on disk, so they play even after a restart with the network down;
 and the active reminders' lines, in memory until the reminder is done. Any other line is made when it's said."""
 

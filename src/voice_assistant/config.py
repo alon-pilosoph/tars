@@ -147,8 +147,6 @@ class TTSConfig:
 class SpeakerConfig:
     enabled: bool = False
     threshold: float = 0.5
-    # "hey TARS" alone is under a second of speech, so naming someone from it needs its own, lower bar.
-    wake_threshold: float = 0.25
     model: str = "models/voxceleb_resnet34_LM.onnx"
     voiceprints: str = "voice_data/voiceprints.npz"
 
@@ -636,9 +634,8 @@ def _problems(cfg: Config) -> list[str]:
         problems.append("[wake] sure must be from 0 (off) to 1")
     if cfg.wake.check_window_s <= 0:
         problems.append("[wake] check_window_s must be more than 0")
-    for name in ("threshold", "wake_threshold"):
-        if not 0 < getattr(cfg.speaker, name) <= 1:
-            problems.append(f"[speaker] {name} must be more than 0 and at most 1")
+    if not 0 < cfg.speaker.threshold <= 1:
+        problems.append("[speaker] threshold must be more than 0 and at most 1")
     for name in ("start_timeout_s", "max_utterance_s"):
         if getattr(r, name) <= 0:
             problems.append(f"[recorder] {name} must be more than 0")

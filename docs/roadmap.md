@@ -54,7 +54,7 @@ starting with the 20-minute [first test run](deployment.md#a-first-test-run). No
 `config.local.toml`; `uv run voice-assistant --list-devices` lists the names), and `--mic-test` from across the room
 sounds right. Speaker ID has no voiceprints until someone names their voice in the Voices tab, which offers it after 5
 requests, or records a [voice session](web-ui.md#recording-sessions) on the speakerphone
-(`--record-session voice --for alon`). Until then nobody is greeted by name or can unlock by voice.
+(`--record-session voice --for alon`). Until then TARS can't tell who's asking, and nobody can unlock by voice.
 
 **What to track:**
 

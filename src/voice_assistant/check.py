@@ -308,7 +308,7 @@ def voiceprints(names: list[str]) -> Result:
         return Result(
             "Voiceprints",
             WARN,
-            "none yet, so TARS can't greet anyone by name",
+            "none yet, so TARS can't tell who's asking",
             f"name your voice in the web UI's Voices tab after {MIN_REQUESTS_TO_ENROLL} requests, or --record-voice "
             "NAME then --enroll NAME",
         )
