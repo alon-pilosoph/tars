@@ -117,7 +117,7 @@ def build(folder: Path) -> None:
             ["and in tonight's top story the storm is moving east", "you won't believe what happened next"][i],
             NOT_FOR_US,
         )
-    # "Yes, Alon?", then silence
+    # "Yes Alon", then silence
     log.set_follow(wake(clip("alon", "wake", 6), 0.86, ANSWER, "hey tars", 0.93, 150), SAID_NOTHING)
     request(
         wake(clip("alon", "lookalike", 0), 0.71, ASK, "hey cars", 0.18, 120),

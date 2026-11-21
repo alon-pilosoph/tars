@@ -178,9 +178,9 @@ def test_nothing_is_added_to_a_deleted_conversation(convos):
 
 
 def test_what_tars_said_before_anyone_spoke_is_kept_with_the_conversation_or_not_at_all(convos):
-    c = convos.start(None, ts=1.0, said=[(1.0, "Yes, Alon?"), (2.0, "Did you call me?")])
+    c = convos.start(None, ts=1.0, said=[(1.0, "Yes Alon"), (2.0, "Did you call me?")])
     assert [(t["role"], t["text"]) for t in convos.get(c)["turns"]] == [
-        (ROLE_TARS, "Yes, Alon?"),
+        (ROLE_TARS, "Yes Alon"),
         (ROLE_TARS, "Did you call me?"),
     ]
     with pytest.raises(sqlite3.IntegrityError):  # turns.ts is NOT NULL: the second turn can't be written

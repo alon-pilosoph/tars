@@ -72,7 +72,7 @@ ERROR_LINES = {
     "plain": ["Something went wrong. Please try again.", "That didn't work. Please ask again."],
 }
 DRY_FROM_HUMOR = 50  # percent
-PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes, <name>?" after the wake word
+PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes <name>" after the wake word
 # Muted, and unmuted only to hear the answer to what TARS asked: the longest that answer is recorded. "No, I'm
 # good" and "channel twelve" take two seconds; what's said after is the room's, not TARS's.
 ANSWER_ONLY_S = 6.0
@@ -82,7 +82,7 @@ AFTER_NAME_WAIT_S = 1.0  # the longest the first request waits to know what foll
 # Who said the wake word is told from the end of its audio, where the name is: the whole check window (3 s, mostly TV
 # or silence) took about 1 s on a Pi 4 and matched worse on the speakerphone; its last 1.2 s takes about 0.35 s.
 WAKE_VOICE_S = 1.2
-PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes, Alon?")
+PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes Alon")
 UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
 VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
 ANNOUNCEMENT_KEEP_S = 600.0  # how the TV went is old news after this, and isn't said any more
@@ -94,7 +94,7 @@ TAKE_START_S = 6.0  # after a take's beep, how long it waits for someone to spea
 
 
 def greeting(name: str | None) -> str:
-    return f"Yes, {name.capitalize()}?" if name else "Yes?"
+    return f"Yes {name.capitalize()}" if name else "Yes?"
 
 
 class Identified(NamedTuple):
@@ -899,7 +899,7 @@ class Assistant:
             self.journal.said(text)
 
     def greet_and_listen(self, wake: Wake = NO_WAKE) -> Utterance | None:
-        """Says "Yes, <name>?" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
+        """Says "Yes <name>" the moment the wake is confirmed. With the echo taken out of what the mic hears, it's
         said with the mic open, so whatever follows the wake word straight away is heard too; otherwise the mic
         waits for the greeting, as for anything TARS says. What followed the wake word before listening began (the
         wake's after_name) is dropped when the mic waits for the greeting, as what's heard after it doesn't run on
@@ -1032,7 +1032,7 @@ class Assistant:
     ) -> None:
         """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
 
-        `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes, <name>?":
+        `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes <name>":
         ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER. `wake`: what woke
         it, whose voice the greeting names, and what followed the name before listening began, where the request
         starts if it was said in one breath. `asked`: what TARS said on its own that `first` answers, so an answer

@@ -225,4 +225,4 @@ def test_who_said_the_wake_word_is_found_while_it_is_checked_from_the_names_end(
         assistant.run_forever("Say 'hey tars'...", follow_up_s=4.0, greet="always")
     assert told == [3 * 16000]  # started as the wake was heard, not after it was confirmed
     assert calls == [round(assistant_module.WAKE_VOICE_S * 16000)]  # once, on the end of it, where the name is
-    assert assistant.body.plays[0] == b"Yes, Alon?"
+    assert assistant.body.plays[0] == b"Yes Alon"
