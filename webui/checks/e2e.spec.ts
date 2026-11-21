@@ -472,3 +472,13 @@ test("a chat-only home ([audio] enabled = false) has no pages about hearing, and
   await expect(page.locator(".conv").first()).toBeVisible(); // Home, not the Review page
   await page.unroute("**/api/status");
 });
+
+test("the address follows the page: a reload stays on it, and Back goes to the one before", async () => {
+  await nav("Home").click();
+  await nav("Reminders").click();
+  await expect(page).toHaveURL(/\?tab=reminders$/);
+  await page.reload();
+  await expect(nav("Reminders")).toHaveAttribute("aria-current", "page");
+  await page.goBack();
+  await expect(nav("Home")).toHaveAttribute("aria-current", "page");
+});
