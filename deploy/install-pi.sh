@@ -128,6 +128,9 @@ fi
 if [ -d deploy/home-assistant/config ]; then
   cp deploy/voice-assistant-home.service deploy/voice-assistant-home.timer "$HOME/.config/systemd/user/"
   systemctl --user daemon-reload
+  # A pass now, and only then the timer: a compose.yaml this changed restarts Home Assistant here, before the check
+  # below (which waits for it to finish starting), not in the middle of it, which made an update take itself back.
+  systemctl --user start voice-assistant-home || echo "!! Home Assistant's containers didn't start: see above."
   systemctl --user enable --now voice-assistant-home.timer
 elif [ -e "$HOME/.config/systemd/user/voice-assistant-home.timer" ]; then
   systemctl --user disable --now voice-assistant-home.timer || true

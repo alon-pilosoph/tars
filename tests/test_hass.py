@@ -285,6 +285,16 @@ def test_an_entity_home_assistant_cant_reach_is_said_so():
     assert lock.check()[0].status == "warn"
 
 
+def test_home_assistant_says_whether_it_has_finished_starting():
+    def handler(state):
+        return lambda request: httpx.Response(200, json={"state": state} if state else {"version": "2026.11"})
+
+    assert not HomeAssistant(URL, TOKEN, httpx.MockTransport(handler("NOT_RUNNING"))).running()
+    assert not HomeAssistant(URL, TOKEN, httpx.MockTransport(handler("STARTING"))).running()
+    assert HomeAssistant(URL, TOKEN, httpx.MockTransport(handler("RUNNING"))).running()
+    assert HomeAssistant(URL, TOKEN, httpx.MockTransport(handler(None))).running()  # an older one: no state
+
+
 def test_home_assistant_says_why_it_refused_a_service():
     def handler(request):
         return httpx.Response(400, text="Entity does not support this service.")

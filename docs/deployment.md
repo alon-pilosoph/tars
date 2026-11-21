@@ -214,7 +214,10 @@ connects again on its own. Home Assistant and Mosquitto have Docker's restart po
 one cut Docker brought Home Assistant back and left Mosquitto down without a word. So `voice-assistant-home.timer`
 runs `docker compose up -d` in `deploy/home-assistant` two minutes after boot and every five minutes after; a
 container that's down, then, is back within five. To stop one on purpose, disable the timer first
-(`systemctl --user disable --now voice-assistant-home.timer`), or it comes back.
+(`systemctl --user disable --now voice-assistant-home.timer`), or it comes back. An update that changes
+`compose.yaml` restarts Home Assistant from `install-pi.sh`, before its check, and the check waits for Home Assistant
+to finish starting (up to four minutes; 30 s when it doesn't answer at all), since until then its devices aren't
+there and the update would take itself back.
 
 Two things software can't do:
 
