@@ -203,6 +203,21 @@ What it can't catch is an update that starts and checks fine but behaves wrongly
 `journalctl --user-unit voice-assistant-update` shows each pass; `systemctl --user start voice-assistant-update`
 runs one now.
 
+### Merging with a comment
+
+A comment of just `#automerge` on a pull request, from the repository's owner, squash-merges it once its checks pass
+([`.github/workflows/automerge.yml`](../.github/workflows/automerge.yml)): a merge from the GitHub app on a phone, or
+from wherever the pull request was read. It reacts 👀 when it starts and 🚀 once merged; when a check fails, or
+something's pushed after the comment, it doesn't merge and says why on the pull request, and a fresh `#automerge`
+tries again. Anyone else's comment, or one with more in it, does nothing.
+
+It merges as the owner, with their token, so one is needed once: a fine-grained personal access token for this
+repository alone, with **Contents**, **Pull requests** and **Workflows** read and write (Workflows, for a pull request
+that changes a workflow), saved as the repository's Actions secret `AUTOMERGE_TOKEN`. Without it, `#automerge` fails
+and says the secret's missing. The owner's merge is what `main`'s ruleset lets past its required approval, as one by
+hand is ([wishes](wishes.md#setting-it-up)), and it sets off CI and the site's deploy on `main`, which a merge by the
+workflow's own token wouldn't.
+
 ### Trying it on a simulated Pi first
 
 [`deploy/sim/run.sh`](../deploy/sim/run.sh) runs TARS on a simulated Pi 4 in a container, from this clone: the Pi's

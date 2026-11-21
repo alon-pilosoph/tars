@@ -1,0 +1,69 @@
+# #automerge: the owner's comment on a pull request squash-merges it once its checks pass, so merging takes no trip to
+# a terminal (docs/deployment.md#merging-with-a-comment). The comment is the review: only the repository's owner's sets
+# it off, and it has to be the whole comment.
+#
+# Its reach: AUTOMERGE_TOKEN, the owner's fine-grained token for this repository alone (Contents, Pull requests and
+# Workflows: read and write), so the merge is the owner's, as one by hand is: main's ruleset lets the owner's role
+# bypass its required approval, and a merge by the owner's token sets off CI and Pages on main, which one by the
+# workflow's own token wouldn't. It never checks the pull request out, and issue_comment runs this file as main has it,
+# so nothing in a pull request runs here, or changes what this does. What's merged is the commit the pull request was
+# on when the comment was read: a push after that stops it (--match-head-commit), and it says so on the pull request.
+# Every check has to pass, not just the required ones; one that fails stops it, and it says which.
+name: Automerge
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: automerge-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  merge:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.user.login == github.repository_owner &&
+      startsWith(github.event.comment.body, '#automerge')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.issue.number }}
+      BODY: ${{ github.event.comment.body }}
+      COMMENT: ${{ github.event.comment.id }}
+    steps:
+      - name: Merge once the checks pass
+        run: |
+          # The whole comment, give or take spaces and line ends (a phone's keyboard adds them).
+          [ "$(printf '%s' "$BODY" | tr -d '[:space:]')" = "#automerge" ] || { echo "Not just #automerge: nothing to do."; exit 0; }
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::AUTOMERGE_TOKEN isn't set (docs/deployment.md#merging-with-a-comment)"
+            exit 1
+          fi
+          say() { gh pr comment "$PR" -R "$REPO" --body "$1"; }
+          read -r head state draft < <(gh pr view "$PR" -R "$REPO" --json headRefOid,state,isDraft \
+            --jq '"\(.headRefOid) \(.state) \(.isDraft)"')
+          if [ "$state" != OPEN ] || [ "$draft" = true ]; then
+            say "Not merged: it's $( [ "$draft" = true ] && echo 'a draft' || echo "${state,,}" )."
+            exit 0
+          fi
+          gh api "repos/$REPO/issues/comments/$COMMENT/reactions" -f content=eyes >/dev/null
+          # A push just before the comment may not have its checks yet: give them two minutes to show up.
+          for _ in $(seq 12); do
+            gh pr checks "$PR" -R "$REPO" >/dev/null 2>&1 || [ $? -eq 8 ] && break  # 8: some still running
+            sleep 10
+          done
+          if ! gh pr checks "$PR" -R "$REPO" --watch --fail-fast --interval 30 >/dev/null; then
+            failed=$(gh pr checks "$PR" -R "$REPO" --json name,bucket --jq '[.[] | select(.bucket == "fail") | .name] | join(", ")')
+            say "Not merged: ${failed:-a check} failed. Fix it and comment #automerge again."
+            exit 1
+          fi
+          if ! gh pr merge "$PR" -R "$REPO" --squash --match-head-commit "$head"; then
+            say "Not merged: something was pushed after #automerge (it was at ${head:0:7}), or GitHub refused. Look, then comment #automerge again."
+            exit 1
+          fi
+          gh api "repos/$REPO/issues/comments/$COMMENT/reactions" -f content=rocket >/dev/null

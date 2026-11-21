@@ -70,7 +70,9 @@ request.
   without the Workflows permission, or from a workflow's own token.
 - **Nothing merges itself**, once `main` is protected (step 3 of [setting it up](#setting-it-up), **required**): then
   a reviewed pull request, with CI and the `wish fence` check passing, is the only way in. Without it, the workflow's
-  tokens, which can push branches, could push to `main`. TARS doesn't check that it's set up.
+  tokens, which can push branches, could push to `main`. TARS doesn't check that it's set up. The owner's
+  `#automerge` comment ([merging with a comment](deployment.md#merging-with-a-comment)) is that review, given from a
+  phone: only the owner's sets it off, and what it merges is the commit they commented on.
 - **A build that stops moving stops**: after `[wishes] tries` fixes, with no pull request after three hours, or with
   CI never finishing on its latest commit, or no fix pushed after it was sent back, for three hours. A pull request
   that's built and waiting for review waits as long as it takes.
