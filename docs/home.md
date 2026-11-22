@@ -166,11 +166,32 @@ domain:
 | `media_player` | status, on, off, press (volume up and down, mute, play and pause, next, previous) | |
 | `sensor` | status, history | |
 | `binary_sensor` | status | |
+| `device_tracker` | status: where a person or phone is, at home, at a zone by its name, or away | |
 
 Any of them can have `details`, other entities read out with its status (`["sensor.boiler_time_left"]`). The device
 names are what people call them, and the model gets each one's name and what it can do. Any device, of any kind, may
 have a `label`: how it's written for people, in a chat's `/home`, when that isn't its name (`name = "fire tv"`,
 `label = "Fire TV"`). It's still called and asked for by its name.
+
+**A reading that only updates when asked** (a phone's location from iCloud, a drive time from Waze, with their
+polling turned off in Home Assistant to spare the phones' batteries) gets `refresh`: the services that fetch a fresh
+one, called in order before its status, each then waiting up to 30 seconds for the device or one of its `details` to
+update. `homeassistant.update_entity` with no `entity_id` updates the device itself. A status with a refresh says how
+old the reading is ("as of 10:25"), says so if a step failed, and isn't asked for again within a minute; TARS says
+"One moment." first. A skill that checks the device on a schedule gets a fresh reading the same way.
+
+```toml
+[[home.devices]]
+name = "Dana's phone"
+entity = "device_tracker.dana_iphone"
+details = ["sensor.waze_dana_to_home"]
+refresh = [
+  { service = "icloud.update", data = { account = "dana@example.com" } },
+  { service = "homeassistant.update_entity", data = { entity_id = "sensor.waze_dana_to_home" } },
+]
+```
+
+A Home Assistant zone ("Grandma's", "Work") is a place a tracker can be at: it says its name.
 
 **A sensor's history** (`history.py`) is Home Assistant's long-term statistics of it and its `sensor` details: an
 average, low and high for each hour, which Home Assistant keeps for good (its state history goes after ten days). The

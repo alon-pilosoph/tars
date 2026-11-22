@@ -418,3 +418,118 @@ def test_following_moves_only_leaves_out_a_change_from_unknown_or_unavailable(mo
     done = lambda: len(seen) >= 2 or not socket._in
     hass_module.follow("http://ha:8123", "token", [door], lambda e, s: seen.append(s), done, moves_only=True)
     assert seen == ["on", "off"]
+
+
+# A device's refresh: services that fetch a fresh reading before its status (a phone's location, then the drive time).
+
+
+class Refreshing:
+    """Home Assistant with a phone's location and a drive time that only update when a service asks: icloud.update
+    moves the phone, homeassistant.update_entity recomputes the drive."""
+
+    def __init__(self, answers: bool = True):
+        self.when = 0
+        self.calls: list[tuple[str, dict]] = []
+        self.answers = answers
+        self.states = {
+            "device_tracker.phone": {"state": "not_home", "last_updated": "2026-01-01T08:00:00+00:00"},
+            "sensor.drive_home": {
+                "state": "28",
+                "attributes": {"friendly_name": "Drive home", "unit_of_measurement": "min"},
+                "last_updated": "2026-01-01T08:00:00+00:00",
+            },
+        }
+
+    def state(self, entity: str) -> dict:
+        return self.states[entity]
+
+    def call(self, service: str, data: dict) -> bool:
+        self.calls.append((service, data))
+        if not self.answers:
+            raise HomeError("Home Assistant didn't answer")
+        self.when += 1
+        stamp = f"2026-01-01T08:{self.when:02d}:00+00:00"
+        if service == "icloud.update":
+            self.states["device_tracker.phone"] = {"state": "Parents", "last_updated": stamp}
+        elif service == "homeassistant.update_entity" and data.get("entity_id") == "sensor.drive_home":
+            drive = self.states["sensor.drive_home"]
+            self.states["sensor.drive_home"] = {**drive, "state": "12", "last_updated": stamp}
+        return True
+
+
+PHONE = {
+    "name": "Dana's phone",
+    "entity": "device_tracker.phone",
+    "details": ["sensor.drive_home"],
+    "refresh": [
+        {"service": "icloud.update", "data": {"account": "someone@example.com"}},
+        {"service": "homeassistant.update_entity", "data": {"entity_id": "sensor.drive_home"}},
+    ],
+}
+
+
+def refreshing(spec: dict, ha: Refreshing):
+    now = [0.0]
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    return entity_device(spec["name"], spec, ha, clock=lambda: now[0], sleep=sleep), now
+
+
+def test_a_refreshed_device_is_read_after_its_steps_in_order():
+    ha = Refreshing()
+    phone, _ = refreshing(PHONE, ha)
+    said = phone.status()
+    assert [s for s, _ in ha.calls] == ["icloud.update", "homeassistant.update_entity"]
+    assert said.startswith("Dana's phone: at Parents, Drive home: 12 min (as of ")
+    assert phone.slow("status", {}) and not phone.slow("history", {})
+
+
+def test_a_refresh_a_moment_ago_is_not_asked_for_again():
+    ha = Refreshing()
+    phone, now = refreshing(PHONE, ha)
+    phone.status()
+    phone.status()
+    assert len(ha.calls) == 2
+    now[0] += 61
+    phone.status()
+    assert len(ha.calls) == 4
+
+
+def test_update_entity_with_no_entity_refreshes_the_device_itself():
+    ha = Refreshing()
+    drive, _ = refreshing(
+        {"name": "drive", "entity": "sensor.drive_home", "refresh": [{"service": "homeassistant.update_entity"}]}, ha
+    )
+    assert "12 min" in drive.status()
+    assert ha.calls == [("homeassistant.update_entity", {"entity_id": "sensor.drive_home"})]
+
+
+def test_a_refresh_that_fails_still_reads_and_says_so():
+    ha = Refreshing(answers=False)
+    phone, _ = refreshing(PHONE, ha)
+    said = phone.status()
+    assert "away, not at any place" in said and "couldn't refresh it (icloud.update: " in said and "as of " in said
+
+
+def test_a_step_nothing_follows_waits_only_so_long():
+    ha = Refreshing()
+    stuck, now = refreshing({**PHONE, "refresh": [{"service": "light.turn_on", "data": {"entity_id": "x"}}]}, ha)
+    stuck.status()
+    assert now[0] == pytest.approx(30.0, abs=1)
+
+
+def test_without_refresh_status_is_as_before_and_quick():
+    ha = Refreshing()
+    phone, _ = refreshing({k: v for k, v in PHONE.items() if k != "refresh"}, ha)
+    assert phone.status() == "Dana's phone: away, not at any place Home Assistant has a zone for, Drive home: 28 min"
+    assert ha.calls == [] and not phone.slow("status", {})
+
+
+def test_a_tracker_says_where_it_is():
+    ha = Refreshing()
+    phone, _ = refreshing({"name": "phone", "entity": "device_tracker.phone"}, ha)
+    ha.states["device_tracker.phone"] = {"state": "home"}
+    assert phone.status() == "phone: at home"
+    assert phone.actions == ("status",) and "where a person" in phone.what()
