@@ -233,7 +233,7 @@ class TelegramConfig:
 
 # The Home Assistant domains TARS works ([[home.devices]] entity = "<domain>.<id>"); sensors are only read.
 HOME_DOMAINS = ("lock", "switch", "light", "fan", "input_boolean", "cover", "climate", "media_player")
-HOME_SENSORS = ("sensor", "binary_sensor")
+HOME_SENSORS = ("sensor", "binary_sensor", "device_tracker")
 # A device worked over ADB rather than through Home Assistant ([[home.devices]] kind = "androidtv").
 ANDROID_TV = "androidtv"
 # A Home Assistant camera, shown or watched rather than switched ([[home.devices]] kind = "camera", entity = camera.*).
@@ -244,6 +244,7 @@ CAMERA_WATCH_S = 600
 EVERYTHING = "everything"  # what the home tool calls all the devices at once, for their status
 _ENTITY = re.compile(r"[a-z_]+\.[a-z0-9_]+")
 _SERVICE = re.compile(r"[a-z_]+\.[a-z0-9_]+")
+MAX_REFRESH_STEPS = 5  # a [[home.devices]] refresh: each step may wait up to 30 s
 _MODULE = re.compile(r"[A-Za-z_]\w*(\.[A-Za-z_]\w*)*")
 
 
@@ -963,6 +964,31 @@ def _home_problems(home: HomeConfig) -> list[str]:
     return problems
 
 
+def _refresh_problems(refresh: object, where: str) -> list[str]:
+    """A device's refresh: the services that fetch a fresh reading, in order, each with any data it needs."""
+    fine = (
+        isinstance(refresh, list)
+        and 1 <= len(refresh) <= MAX_REFRESH_STEPS
+        and all(
+            isinstance(step, dict)
+            and set(step) <= {"service", "data"}
+            and isinstance(step.get("service"), str)
+            and _SERVICE.fullmatch(step["service"])
+            and isinstance(step.get("data", {}), dict)
+            for step in refresh
+        )
+    )
+    if fine:
+        return []
+    return [
+        (
+            f"{where}: refresh must be a list of up to {MAX_REFRESH_STEPS} steps, each "
+            '{ service = "<domain>.<service>" }, with data = { ... } if it needs any, like '
+            '[{ service = "homeassistant.update_entity" }]'
+        )
+    ]
+
+
 def _entity_problems(home: HomeConfig, d: dict, where: str) -> list[str]:
     """A device worked through Home Assistant: its entity, and the settings its domain may have."""
     entity, problems = d.get("entity"), []
@@ -974,9 +1000,10 @@ def _entity_problems(home: HomeConfig, d: dict, where: str) -> list[str]:
         problems.append(f"{where}: TARS works {kinds}; not {domain}")
     if not home.url:
         problems.append(f"{where} goes through Home Assistant: set [home] url")
-    allowed = {"name", "entity", "details"}
+    allowed = {"name", "entity", "details", "refresh"}
     allowed |= {"door", "battery", "auto_lock"} if domain == "lock" else set()
     allowed |= {"timer"} if domain in ("switch", "light", "fan", "input_boolean") else set()
+    allowed |= {"address"} if domain == "device_tracker" else set()
     problems += [f"{where} ({domain}) has no setting {k}" for k in d if k not in allowed]
     for key, domains in (("door", ("binary_sensor",)), ("battery", ("sensor",))):
         value = d.get(key)
@@ -991,6 +1018,10 @@ def _entity_problems(home: HomeConfig, d: dict, where: str) -> list[str]:
     details = d.get("details", [])
     if not (isinstance(details, list) and all(isinstance(e, str) and _ENTITY.fullmatch(e) for e in details)):
         problems.append(f'{where}: details must be a list of entity ids, like ["sensor.boiler_time_left"]')
+    if "refresh" in d:
+        problems += _refresh_problems(d["refresh"], where)
+    if "address" in d and d["address"] != "openstreetmap":
+        problems.append(f'{where}: address can only be "openstreetmap" (its nearest street address, when away)')
     if "timer" in d:
         t = d["timer"]
         fine = (

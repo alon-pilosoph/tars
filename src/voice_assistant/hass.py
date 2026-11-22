@@ -8,6 +8,7 @@ so. An entity whose state Home Assistant only assumes (an IR-controlled AC or TV
 import copy
 import json
 import re
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -17,7 +18,7 @@ import httpx
 from websockets import WebSocketException
 from websockets.sync.client import connect
 
-from . import history
+from . import history, places
 from .config import CAMERA_WATCH_S
 from .conversations import FILE, LINK, SentItem
 from .home import (
@@ -47,6 +48,10 @@ HTTP_TIMEOUT_S = 5.0
 # Home Assistant answers a service call once the device has done it (a lock's bolt turning), so it gets longer.
 SERVICE_TIMEOUT_S = 30.0
 POLL_S = 0.5
+# A device with `refresh` asks for a fresh reading before its status: each step waits at most this long for something
+# it reads to update, and a reading refreshed less than REFRESH_EVERY_S ago is read as it is.
+REFRESH_WAIT_S = 30.0
+REFRESH_EVERY_S = 60.0
 UNKNOWN = ("unknown", "unavailable", "")
 # Years of hourly statistics can take Home Assistant a few seconds to gather.
 STATISTICS_TIMEOUT_S = 20.0
@@ -342,6 +347,11 @@ class Entity(Device):
         self.entity = spec["entity"]
         self.domain = self.entity.partition(".")[0]
         self.details: list[str] = list(spec.get("details", []))
+        # Services called, in order, to fetch a fresh reading before its status (a phone's location, then the drive
+        # time from it): for things Home Assistant only updates when asked.
+        self.refresh: list[dict] = [dict(step) for step in spec.get("refresh", [])]
+        self._refreshed: float | None = None
+        self._refreshing = threading.Lock()
         self._hass, self._clock, self._sleep = hass, clock, sleep
 
     def past(self, start: float, end: float) -> list[tuple[float, str]]:
@@ -365,7 +375,9 @@ class Entity(Device):
         )
         then = _Then()
         replay = copy.copy(self)
-        replay._hass = then
+        replay._hass, replay.refresh = then, []
+        if hasattr(replay, "address"):
+            replay.address = None  # the past is said by zone alone: no lookups for every point it passed
         statuses: list[tuple[float, str]] = []
         for at, entity, state in changes:
             then.states[entity] = state
@@ -377,11 +389,50 @@ class Entity(Device):
         return statuses
 
     def status(self) -> str:
+        failed = self._refresh()
         found = self._hass.state(self.entity)
         guess = " (Home Assistant's guess: it can't report back)" if _assumed(found) else ""
         parts = [f"{self.name}: {self._said(found)}{guess}", *self._extra(found)]
         parts += [_reading(self._hass, e) for e in self.details]
-        return ", ".join(p for p in parts if p)
+        said = ", ".join(p for p in parts if p)
+        if not self.refresh:
+            return said
+        when = _when(found.get("last_updated") or found.get("last_changed"))
+        trouble = f"couldn't refresh it ({failed}); " if failed else ""
+        return f"{said} ({trouble}as of {when})"
+
+    def slow(self, action: str, args: dict) -> bool:
+        return action == STATUS and bool(self.refresh)
+
+    def _refresh(self) -> str:
+        """Calls its refresh steps, each then waiting for something it reads to update, unless it was refreshed a
+        moment ago: "" when done, or what went wrong (the reading is still given, with how old it is)."""
+        if not self.refresh:
+            return ""
+        with self._refreshing:
+            if self._refreshed is not None and self._clock() - self._refreshed < REFRESH_EVERY_S:
+                return ""
+            reads = [self.entity, *self.details]
+            for step in self.refresh:
+                before = {e: self._updated(e) for e in reads}
+                data = dict(step.get("data") or {})
+                if step["service"] == "homeassistant.update_entity":
+                    data.setdefault("entity_id", self.entity)
+                try:
+                    self._hass.call(step["service"], data)
+                except HomeError as e:
+                    return f"{step['service']}: {e}"
+                deadline = self._clock() + REFRESH_WAIT_S
+                while all(self._updated(e) == before[e] for e in reads) and self._clock() < deadline:
+                    self._sleep(POLL_S)
+            self._refreshed = self._clock()
+            return ""
+
+    def _updated(self, entity: str) -> str | None:
+        try:
+            return self._hass.state(entity).get("last_updated")
+        except HomeError:
+            return None
 
     def glance(self) -> str:
         found = self._hass.state(self.entity)
@@ -492,7 +543,7 @@ class Lock(Entity):
         return self._change("lock.unlock", {}, _state_is("unlocked", "open"), "unlock")
 
     def slow(self, action: str, args: dict) -> bool:
-        return action in (LOCK, UNLOCK)
+        return action in (LOCK, UNLOCK) or super().slow(action, args)
 
     def _entities(self) -> list[str]:
         return [e for e in (self.door, self.battery) if e]
@@ -756,11 +807,16 @@ class Sensor(Entity):
     """Something only read: a temperature, a door or window, a power meter. A sensor with numbers (not a binary
     sensor) has a history too: Home Assistant's statistics of it and its details (history.py)."""
 
-    def __init__(self, name: str, spec: dict, hass: HomeAssistant, **timing):
+    def __init__(self, name: str, spec: dict, hass: HomeAssistant, addresses: places.Addresses | None = None, **timing):
         super().__init__(name, spec, hass, **timing)
         self.actions = (STATUS, HISTORY) if self.domain == "sensor" else (STATUS,)
+        # A tracker's nearest street address when it's at no zone: OpenStreetMap's, only when its spec asks.
+        asked = spec.get("address") == places.OPENSTREETMAP and self.domain == "device_tracker"
+        self.address: places.Addresses | None = (addresses or places.shared()) if asked else None
 
     def what(self) -> str:
+        if self.domain == "device_tracker":
+            return "where a person or their phone is (home, a named place, or away): status only"
         if HISTORY not in self.actions:
             return "a sensor: status only"
         return "a sensor: status, and history (its readings in the past, its details' too)"
@@ -792,6 +848,8 @@ class Sensor(Entity):
     def _said(self, found: dict) -> str:
         state = super()._said(found)
         unit = (found.get("attributes") or {}).get("unit_of_measurement")
+        if self.domain == "device_tracker":
+            return _place(state)
         if self.domain == "binary_sensor":
             device_class = (found.get("attributes") or {}).get("device_class", "")
             return _binary(state, device_class)
@@ -799,6 +857,16 @@ class Sensor(Entity):
 
     def call(self, action: str, args: dict, request) -> str:
         return f"error: the {self.name} can only be read"
+
+    def _extra(self, found: dict) -> list[str]:
+        a = found.get("attributes") or {}
+        if self.address is None or found.get("state") != "not_home":
+            return []
+        latitude, longitude = a.get("latitude"), a.get("longitude")
+        if not (isinstance(latitude, int | float) and isinstance(longitude, int | float)):
+            return []
+        near = self.address.near(float(latitude), float(longitude))
+        return [f"near {near} (OpenStreetMap's nearest address)"] if near else []
 
 
 SENSOR_HISTORY_RULES = (
@@ -823,6 +891,23 @@ def _binary(state: str, device_class: str) -> str:
         "lock": ("unlocked", "locked"),
     }.get(device_class, ("on", "off"))
     return {"on": words[0], "off": words[1]}.get(state, state)
+
+
+def _place(state: str) -> str:
+    """Where a phone or a person is, from a device tracker's state: home, a zone's name, or away."""
+    if state == "home":
+        return "at home"
+    if state == "not_home":
+        return "away, not at any place Home Assistant has a zone for"
+    return state if state in UNKNOWN or state.startswith("not reachable") else f"at {state}"
+
+
+def _when(stamp: str | None) -> str:
+    """When Home Assistant last updated a reading, in local time: "10:25", or "Nov 21, 10:25" before today."""
+    if not stamp:
+        return "an unknown time"
+    at = datetime.fromisoformat(stamp).astimezone()
+    return at.strftime("%H:%M") if at.date() == datetime.now().astimezone().date() else at.strftime("%b %d, %H:%M")
 
 
 def _reading(hass: HomeAssistant, entity: str, say: Callable[[str], str | None] | None = None) -> str:
@@ -900,6 +985,7 @@ KINDS: dict[str, type[Entity]] = {
     "media_player": MediaPlayer,
     "sensor": Sensor,
     "binary_sensor": Sensor,
+    "device_tracker": Sensor,
 }
 
 

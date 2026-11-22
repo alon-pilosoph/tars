@@ -486,6 +486,14 @@ name = "boiler"
 entity = "switch.boiler"
 timer = { service = "switcher_kis.turn_on_with_timer", field = "timer_minutes", max = 9999 }
 [[home.devices]]
+name = "drive"
+entity = "sensor.drive_home"
+refresh = [{ service = "not a service" }]
+[[home.devices]]
+name = "phone"
+entity = "device_tracker.phone"
+address = "google"
+[[home.devices]]
 name = "tv"
 kind = "androidtv"
 [[home.devices]]
@@ -508,6 +516,8 @@ kind = "my_house.ac"
         "two devices have that name",
         "TARS works lock, switch",
         "timer must be",
+        "refresh must be a list of up to 5 steps",
+        'address can only be "openstreetmap"',
         "(androidtv) needs address",
         "kind must be androidtv, camera, spotify or a plugin's",
         "'everything' is the name for every device at once",
@@ -533,10 +543,19 @@ door = "binary_sensor.front_door_door"
 name = "AC"
 kind = "my_house.ac"
 state = "binary_sensor.ac_light"
+[[home.devices]]
+name = "Dana's phone"
+entity = "device_tracker.dana_phone"
+details = ["sensor.dana_drive_home"]
+address = "openstreetmap"
+refresh = [
+  { service = "icloud.update", data = { account = "someone@example.com" } },
+  { service = "homeassistant.update_entity", data = { entity_id = "sensor.dana_drive_home" } },
+]
 """
     )
     home = load_config(path, local=False).home
-    assert home.plugins["my_house"]["blaster"]["id"] == "bf01" and len(home.devices) == 2
+    assert home.plugins["my_house"]["blaster"]["id"] == "bf01" and len(home.devices) == 3
 
 
 # The brain.
