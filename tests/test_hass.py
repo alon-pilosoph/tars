@@ -533,3 +533,75 @@ def test_a_tracker_says_where_it_is():
     ha.states["device_tracker.phone"] = {"state": "home"}
     assert phone.status() == "phone: at home"
     assert phone.actions == ("status",) and "where a person" in phone.what()
+
+
+# A tracker's nearest street address, from OpenStreetMap, when it's at no zone.
+
+
+def nominatim(answers: list, address: dict | None = None, fails: bool = False) -> httpx.MockTransport:
+    def handle(request: httpx.Request) -> httpx.Response:
+        answers.append(dict(request.url.params))
+        if fails:
+            return httpx.Response(503, text="busy")
+        return httpx.Response(200, json={"address": address or {}})
+
+    return httpx.MockTransport(handle)
+
+
+def test_an_address_is_said_in_a_few_words():
+    from voice_assistant.places import worded
+
+    assert worded({"house_number": "12", "road": "Herzl Street", "city": "Netanya"}) == "12 Herzl Street, Netanya"
+    assert worded({"suburb": "Old North", "city": "Tel Aviv"}) == "Old North, Tel Aviv"
+    assert worded({}) == ""
+    assert worded({"road": "2379", "suburb": "Ramat HaHayal", "city": "Tel Aviv"}) == "Ramat HaHayal, Tel Aviv"
+
+
+def test_nominatim_is_asked_at_its_pace_and_a_nearby_point_is_remembered():
+    from voice_assistant.places import Addresses
+
+    asked, now, slept = [], [0.0], []
+
+    def sleep(s):
+        slept.append(s)
+        now[0] += s
+
+    places = Addresses(nominatim(asked, {"road": "Herzl Street", "city": "Netanya"}), lambda: now[0], sleep)
+    assert places.near(32.3, 34.85) == "Herzl Street, Netanya"
+    assert places.near(32.3001, 34.8501) == "Herzl Street, Netanya"  # about 15 m away: not asked again
+    assert len(asked) == 1 and asked[0]["lat"] == "32.3" and asked[0]["format"] == "jsonv2"
+    places.near(32.4, 34.9)
+    assert len(asked) == 2 and slept and slept[0] == pytest.approx(1.1)
+
+
+def test_no_answer_from_nominatim_is_no_address():
+    from voice_assistant.places import Addresses
+
+    assert Addresses(nominatim([], fails=True)).near(32.3, 34.85) == ""
+
+
+def tracker(state: str, address: bool = True):
+    from voice_assistant.places import Addresses
+
+    asked: list = []
+    ha = Refreshing()
+    ha.states["device_tracker.phone"] = {"state": state, "attributes": {"latitude": 32.3, "longitude": 34.85}}
+    spec = {"name": "Dana's phone", "entity": "device_tracker.phone"} | (
+        {"address": "openstreetmap"} if address else {}
+    )
+    places = Addresses(nominatim(asked, {"house_number": "12", "road": "Herzl Street", "city": "Netanya"}))
+    return Sensor(spec["name"], spec, ha, addresses=places), asked
+
+
+def test_a_tracker_away_from_every_zone_says_the_nearest_address():
+    phone, asked = tracker("not_home")
+    said = phone.status()
+    assert said.startswith("Dana's phone: away, not at any place")
+    assert said.endswith("near 12 Herzl Street, Netanya (OpenStreetMap's nearest address)") and len(asked) == 1
+
+
+def test_a_tracker_at_a_zone_or_without_address_asks_no_one():
+    at_zone, asked = tracker("Dana's parents' house")
+    assert at_zone.status() == "Dana's phone: at Dana's parents' house" and asked == []
+    off, asked = tracker("not_home", address=False)
+    assert "near" not in off.status() and asked == []

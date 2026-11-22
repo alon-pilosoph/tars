@@ -1003,6 +1003,7 @@ def _entity_problems(home: HomeConfig, d: dict, where: str) -> list[str]:
     allowed = {"name", "entity", "details", "refresh"}
     allowed |= {"door", "battery", "auto_lock"} if domain == "lock" else set()
     allowed |= {"timer"} if domain in ("switch", "light", "fan", "input_boolean") else set()
+    allowed |= {"address"} if domain == "device_tracker" else set()
     problems += [f"{where} ({domain}) has no setting {k}" for k in d if k not in allowed]
     for key, domains in (("door", ("binary_sensor",)), ("battery", ("sensor",))):
         value = d.get(key)
@@ -1019,6 +1020,8 @@ def _entity_problems(home: HomeConfig, d: dict, where: str) -> list[str]:
         problems.append(f'{where}: details must be a list of entity ids, like ["sensor.boiler_time_left"]')
     if "refresh" in d:
         problems += _refresh_problems(d["refresh"], where)
+    if "address" in d and d["address"] != "openstreetmap":
+        problems.append(f'{where}: address can only be "openstreetmap" (its nearest street address, when away)')
     if "timer" in d:
         t = d["timer"]
         fine = (

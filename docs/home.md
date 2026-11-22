@@ -191,7 +191,13 @@ refresh = [
 ]
 ```
 
-A Home Assistant zone ("Grandma's", "Work") is a place a tracker can be at: it says its name.
+A Home Assistant zone ("Grandma's", "Work") is a place a tracker can be at: it says its name. Away from every zone,
+a tracker with `address = "openstreetmap"` also says the nearest street address ("near 12 Herzl Street, Netanya"),
+from OpenStreetMap's [Nominatim](https://nominatim.org). That sends the phone's position, and nothing else, to
+nominatim.openstreetmap.org each time it's read (a point within 50 m of the last is answered from memory, and it
+asks at most once a second, as Nominatim's policy wants), so it's off unless a device asks, and the people it tracks
+should agree to it. Name zones as anyone would say them ("Dana's parents' house"): TARS knows who's asking, and
+says "your parents' house" to Dana.
 
 **A sensor's history** (`history.py`) is Home Assistant's long-term statistics of it and its `sensor` details: an
 average, low and high for each hour, which Home Assistant keeps for good (its state history goes after ten days). The

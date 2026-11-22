@@ -490,6 +490,10 @@ name = "drive"
 entity = "sensor.drive_home"
 refresh = [{ service = "not a service" }]
 [[home.devices]]
+name = "phone"
+entity = "device_tracker.phone"
+address = "google"
+[[home.devices]]
 name = "tv"
 kind = "androidtv"
 [[home.devices]]
@@ -513,6 +517,7 @@ kind = "my_house.ac"
         "TARS works lock, switch",
         "timer must be",
         "refresh must be a list of up to 5 steps",
+        'address can only be "openstreetmap"',
         "(androidtv) needs address",
         "kind must be androidtv, camera, spotify or a plugin's",
         "'everything' is the name for every device at once",
@@ -542,6 +547,7 @@ state = "binary_sensor.ac_light"
 name = "Dana's phone"
 entity = "device_tracker.dana_phone"
 details = ["sensor.dana_drive_home"]
+address = "openstreetmap"
 refresh = [
   { service = "icloud.update", data = { account = "someone@example.com" } },
   { service = "homeassistant.update_entity", data = { entity_id = "sensor.dana_drive_home" } },

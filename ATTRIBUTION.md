@@ -19,6 +19,12 @@ script.
 | [WeSep](https://github.com/wenet-e2e/wesep) (BSRNN + ECAPA, pretrained on VoxCeleb) and [WeSpeaker](https://github.com/wenet-e2e/wespeaker) | Apache 2.0 | `[extract]`'s server, an enrolled voice taken out of the TV; installed apart, never in this repo |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) (library; its pretrained models are CC BY-NC-SA 4.0) | Apache 2.0 | only for pretrained names like "hey_jarvis" |
 
+## Data TARS looks up
+
+| Data | License | How it's used |
+|---|---|---|
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) © OpenStreetMap contributors, through [Nominatim](https://nominatim.org) | ODbL 1.0 | a phone's nearest street address, asked for when a device tracker has `address = "openstreetmap"`; said as OpenStreetMap's |
+
 ## Web UI
 
 | Asset | License | How it's used |

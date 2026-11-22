@@ -18,7 +18,7 @@ import httpx
 from websockets import WebSocketException
 from websockets.sync.client import connect
 
-from . import history
+from . import history, places
 from .config import CAMERA_WATCH_S
 from .conversations import FILE, LINK, SentItem
 from .home import (
@@ -376,6 +376,8 @@ class Entity(Device):
         then = _Then()
         replay = copy.copy(self)
         replay._hass, replay.refresh = then, []
+        if hasattr(replay, "address"):
+            replay.address = None  # the past is said by zone alone: no lookups for every point it passed
         statuses: list[tuple[float, str]] = []
         for at, entity, state in changes:
             then.states[entity] = state
@@ -805,9 +807,12 @@ class Sensor(Entity):
     """Something only read: a temperature, a door or window, a power meter. A sensor with numbers (not a binary
     sensor) has a history too: Home Assistant's statistics of it and its details (history.py)."""
 
-    def __init__(self, name: str, spec: dict, hass: HomeAssistant, **timing):
+    def __init__(self, name: str, spec: dict, hass: HomeAssistant, addresses: places.Addresses | None = None, **timing):
         super().__init__(name, spec, hass, **timing)
         self.actions = (STATUS, HISTORY) if self.domain == "sensor" else (STATUS,)
+        # A tracker's nearest street address when it's at no zone: OpenStreetMap's, only when its spec asks.
+        asked = spec.get("address") == places.OPENSTREETMAP and self.domain == "device_tracker"
+        self.address: places.Addresses | None = (addresses or places.shared()) if asked else None
 
     def what(self) -> str:
         if self.domain == "device_tracker":
@@ -852,6 +857,16 @@ class Sensor(Entity):
 
     def call(self, action: str, args: dict, request) -> str:
         return f"error: the {self.name} can only be read"
+
+    def _extra(self, found: dict) -> list[str]:
+        a = found.get("attributes") or {}
+        if self.address is None or found.get("state") != "not_home":
+            return []
+        latitude, longitude = a.get("latitude"), a.get("longitude")
+        if not (isinstance(latitude, int | float) and isinstance(longitude, int | float)):
+            return []
+        near = self.address.near(float(latitude), float(longitude))
+        return [f"near {near} (OpenStreetMap's nearest address)"] if near else []
 
 
 SENSOR_HISTORY_RULES = (
