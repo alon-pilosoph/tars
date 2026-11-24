@@ -1738,6 +1738,19 @@ pre.cmd {
   .said {
     font-size: 16px;
   }
+  /* The reply gets the row's width: an opened conversation has Good and Bad, and here only a given rating shows. */
+  .rate:not(:has([aria-pressed="true"])),
+  .rate .icon-btn[aria-pressed="false"] {
+    display: none;
+  }
+  .rate {
+    margin: 0;
+    pointer-events: none; /* a tap opens the conversation */
+  }
+  .rate .icon-btn {
+    width: 20px;
+    height: 24px;
+  }
   .p-turn .said {
     font-size: 18px;
   }
