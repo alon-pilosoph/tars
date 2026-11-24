@@ -174,6 +174,8 @@ class LearningConfig:
     folder: str = "voice_data/events"
     # Audio of events nothing labels (lonely near-misses, wakes nobody spoke after) is dropped after this many days.
     keep_audio_days: float = 60.0
+    # Near-misses that keep their audio each hour, the closest to waking; 0 keeps all.
+    near_misses_an_hour: int = 10
 
 
 @dataclass
