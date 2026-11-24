@@ -347,6 +347,16 @@ def test_an_invite_over_https_needs_web_link_to_be_a_name(tmp_path):
         cli.web_invite(cli_config(sign_in=True, tls_cert="c.pem", tls_key="k.pem"), tmp_path, "Stacey", 8080)
 
 
+def test_an_invite_with_sign_in_off_is_refused_and_nothing_is_made(tmp_path):
+    from voice_assistant import entrypoints as cli
+    from voice_assistant.config import ConfigError
+
+    with pytest.raises(ConfigError, match="Sign-in is off"):
+        cli.web_invite(cli_config(link="https://pi.tail.ts.net:8080"), tmp_path, "Robin", 8080)
+    log = EventLog(tmp_path / "voice_data/events")
+    assert log.store.rows("SELECT * FROM web_invites") == []
+
+
 def test_links_without_web_link_are_https_when_the_web_ui_is(monkeypatch):
     from voice_assistant import entrypoints as cli
     from voice_assistant.browser import login_page
@@ -360,7 +370,7 @@ def test_links_without_web_link_are_https_when_the_web_ui_is(monkeypatch):
 def test_signing_out_someone_tars_doesnt_know_says_so(tmp_path, capsys):
     from voice_assistant import entrypoints as cli
 
-    cfg = cli_config(link="https://pi.tail.ts.net:8080")
+    cfg = cli_config(sign_in=True, link="https://pi.tail.ts.net:8080")
     cli.web_invite(cfg, tmp_path, "Stacey", 8080)
     cli.web_sign_out(cfg, tmp_path, "stacey")
     assert "1 unused invite(s) voided" in capsys.readouterr().out
