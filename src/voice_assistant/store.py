@@ -24,6 +24,13 @@ from .config import ConfigError
 DB_FILE = "events.db"  # in the event log's folder
 
 # How far TARS has looked back on each conversation for what to remember (reflect.py): it can go on later, in a chat.
+NEVER_LEARN = """CREATE TABLE never_learn (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person TEXT NOT NULL,            -- whose it was, as memories.person has it
+    about TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,              -- what the look back isn't to keep again (memory.Memory.never)
+    at REAL NOT NULL
+)"""
 LOOKED_BACK = """CREATE TABLE looked_back (
     conversation_id INTEGER PRIMARY KEY,
     through_turn INTEGER NOT NULL,   -- the last turn looked at
@@ -360,6 +367,7 @@ TABLES = {
     replaced REAL,                   -- when a correction replaced it, kept as history; NULL: as it is now
     replaced_by INTEGER              -- the memory that replaced it
 )""",
+    "never_learn": NEVER_LEARN,
 }
 INDEXES = [
     "CREATE INDEX events_ts ON events(ts)",
@@ -614,6 +622,7 @@ MIGRATIONS = [
         "DROP TABLE preferences",
         LOOKED_BACK,
     ],
+    [NEVER_LEARN],  # what the Memory page was told never to learn again
 ]
 
 

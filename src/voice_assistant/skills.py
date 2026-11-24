@@ -665,16 +665,11 @@ class Skills:
             }
             for s in self.all()
         ]
-        prefs = self.store.rows(
-            "SELECT id, person, about, text, 1 - said AS guessed, changed AS at FROM memories "
-            "WHERE kind='like' AND replaced IS NULL ORDER BY person, id DESC"
-        )
         runs = self.store.rows(
             "SELECT id, name, owner, at, why, said, failed FROM skill_runs ORDER BY id DESC LIMIT 50"
         )
         return {
             "skills": skills,
-            "preferences": [{**p, "guessed": bool(p["guessed"])} for p in prefs],
             "runs": [{**r, "failed": bool(r["failed"])} for r in runs],
         }
 
@@ -683,10 +678,6 @@ class Skills:
 
     def delete(self, skill_id: int) -> bool:
         return self._by_id("DELETE FROM skills WHERE id=?", (skill_id,))
-
-    def forget(self, preference_id: int) -> bool:
-        """A like, from the Skills page: memory.py's, by its id."""
-        return self._by_id("DELETE FROM memories WHERE id=? AND kind='like'", (preference_id,))
 
     def _by_id(self, sql: str, args: tuple) -> bool:
         with self.store.transaction() as db:

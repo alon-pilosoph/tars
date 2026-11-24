@@ -13,7 +13,6 @@ from voice_assistant.audio import chime
 from voice_assistant.config import ConfigError, LLMConfig, load_config
 from voice_assistant.home import Request
 from voice_assistant.llm import SKIP, OpenAIChat
-from voice_assistant.memory import Memory
 from voice_assistant.reminders import MESSAGE, TELEGRAM, VOICE, Reminders
 from voice_assistant.skills import (
     ALOUD,
@@ -623,7 +622,6 @@ def test_the_skills_page_shows_everything_taught_and_done_and_changes_it(log, cl
     skills = Skills(log.store)
     teach(skills, name="panda", instructions="Play it.", when="kids want calm", household=True)
     teach(skills, name="welcome", instructions="Greet her.", trigger={**STACEY_HOME, "who": "stacey"})
-    Memory(log.store).remember("Alon", {"kind": "like", "text": "Skip esports.", "noticed": True}, "chat")
     (welcome,) = [s for s in skills.all() if s.name == "welcome"]
     skills.ran(welcome, "Stacey just came home", "Welcome home, Stacey.")
     page = client.get("/api/skills").json()
@@ -640,16 +638,12 @@ def test_the_skills_page_shows_everything_taught_and_done_and_changes_it(log, cl
         "paused": False,
     }
     assert by_name["welcome"]["runs_by_itself"] == "when Stacey comes home"
-    assert [(p["person"], p["text"], p["guessed"]) for p in page["preferences"]] == [("alon", "Skip esports.", True)]
     assert [(r["name"], r["why"]) for r in page["runs"]] == [("welcome", "Stacey just came home")]
     panda = by_name["panda"]["id"]
     assert client.post(f"/api/skills/{panda}/pause", json={"paused": True}).json() == {"ok": True}
     assert [s.paused for s in skills.all() if s.name == "panda"] == [True]
     assert client.delete(f"/api/skills/{panda}").json() == {"ok": True}
     assert client.delete(f"/api/skills/{panda}").status_code == 404
-    pref = page["preferences"][0]["id"]
-    assert client.delete(f"/api/preferences/{pref}").json() == {"ok": True}
-    assert client.get("/api/skills").json()["preferences"] == []
 
 
 UPDATED = {"event": "updated", "who": None, "device": None, "says": None, "above": None, "below": None, "reading": None}

@@ -171,12 +171,13 @@ def test_only_so_many_are_told_and_the_rest_are_recalled(memory, now):
 
 def test_preferences_become_likes_when_the_database_is_upgraded(tmp_path):
     db = tmp_path / "db"
-    Store(db)  # the latest version, then put back one step, with a preference kept the old way
+    Store(db)  # the latest version, then put back two steps, with a preference kept the old way
     path = next(db.glob("*.db")) if db.is_dir() else db
     with sqlite3.connect(path) as raw:
         version = raw.execute("PRAGMA user_version").fetchone()[0]
         raw.execute("DROP TABLE memories")
         raw.execute("DROP TABLE looked_back")
+        raw.execute("DROP TABLE never_learn")
         raw.execute(
             "CREATE TABLE preferences (id INTEGER PRIMARY KEY AUTOINCREMENT, person TEXT NOT NULL, "
             "about TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, guessed INTEGER NOT NULL DEFAULT 0, at REAL NOT NULL)"
@@ -185,7 +186,7 @@ def test_preferences_become_likes_when_the_database_is_upgraded(tmp_path):
             "INSERT INTO preferences (person, about, text, guessed, at) VALUES ('alon', 'news', 'No esports.', 1, ?)",
             (NOW,),
         )
-        raw.execute(f"PRAGMA user_version = {version - 1}")
+        raw.execute(f"PRAGMA user_version = {version - 2}")
     memory = Memory(Store(db), clock=lambda: NOW)
     assert "- #1 (news) No esports. [a guess 2026-11-19]" in memory.note("Alon")
 

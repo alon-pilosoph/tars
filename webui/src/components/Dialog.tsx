@@ -116,7 +116,7 @@ export function Dialog() {
               {d.kind === "prompt" && (
                 <>
                   <label className="field">
-                    <span className="lbl">Name</span>
+                    <span className="lbl">{d.label ?? "Name"}</span>
                     <input
                       ref={input}
                       type="text"

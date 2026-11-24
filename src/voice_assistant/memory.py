@@ -46,6 +46,7 @@ ACTIONS = (REMEMBER, CORRECT, FORGET, RECALL, LIST)
 MOST_TOLD = 60  # a person's memories on every request; past this, the rest are recalled by the tool
 MOST_HOUSEHOLD = 40
 MOST_RECALLED = 12
+SAME_NOTE = 0.6  # of two notes' words, shared: they say the same thing
 MOST_CHARS = 300  # one memory: a note, not a story
 THREAD_KEPT_S = 7 * 24 * 3600  # a thread with no until of its own matters for this long after it happens
 
@@ -295,6 +296,93 @@ class Memory:
             db.executemany("DELETE FROM memories WHERE id=?", [(i,) for i in gone])
         return bool(gone)
 
+    # The Memory page's: by id, whoever's it is, for anyone signed in. Never a private one: that's only ever in its
+    # own person's chat.
+
+    def page(self) -> dict:
+        """The Memory page (types.ts MemoriesInfo): everything kept now but the private, each with where it came from
+        and what it replaced; and what's never to be learned again."""
+        rows = self.store.rows(
+            "SELECT m.*, t.conversation_id AS conversation, COALESCE(t.corrected_text, t.text) AS heard, "
+            "t.speaker AS heard_from FROM memories m "
+            "LEFT JOIN turns t ON t.id = m.turn_id AND COALESCE(t.not_for_tars, 0) = 0 "
+            "WHERE m.private = 0 ORDER BY m.changed DESC, m.id DESC"
+        )
+        replaced: dict[int, list[dict]] = {}
+        for r in rows:
+            if r["replaced_by"] is not None:
+                replaced.setdefault(r["replaced_by"], []).append(r)
+        now = self._clock()
+        memories = [
+            {
+                **{k: r[k] for k in ("id", "person", "kind", "about", "text", "due", "until", "source", "created")},
+                "guessed": not r["said"],
+                "conversation": r["conversation"],
+                "heard": r["heard"],
+                "heard_from": r["heard_from"],
+                "history": _history(r["id"], replaced),
+            }
+            for r in rows
+            if r["replaced"] is None and (r["until"] is None or r["until"] > now)
+        ]
+        return {"memories": memories, "never": self.nevers()}
+
+    def edit(self, memory_id: int, text: str) -> bool:
+        """Its words put right on the page; the rest of it as it was, and the old words kept as history."""
+        text = _clean(text)
+        if not text:
+            raise ValueError("this needs the memory, in text")
+        if len(text) > MOST_CHARS:
+            raise ValueError(f"keep it to a short note (under {MOST_CHARS} characters)")
+        now = self._clock()
+        with self.store.transaction() as db:
+            old = self._shown(db, memory_id)
+            if old is None:
+                return False
+            if old["text"] == text:
+                return True
+            new = db.execute(
+                "INSERT INTO memories (person, kind, about, text, said, private, due, until, asked, source, created, "
+                "changed) VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)",
+                (*(old[k] for k in ("person", "kind", "about")), text, *(old[k] for k in ("due", "until", "asked")),
+                 WEB, now, now),
+            ).lastrowid  # fmt: skip
+            db.execute("UPDATE memories SET replaced=?, replaced_by=? WHERE id=?", (now, new, old["id"]))
+        return True
+
+    def drop(self, memory_id: int, never: bool = False) -> bool:
+        """Forgotten for good, history and all; with `never`, its words alone are kept, for the look back not to learn
+        it again."""
+        with self.store.transaction() as db:
+            old = self._shown(db, memory_id)
+            if old is None:
+                return False
+            if never:
+                db.execute(
+                    "INSERT INTO never_learn (person, about, text, at) VALUES (?, ?, ?, ?)",
+                    (old["person"], old["about"], old["text"], self._clock()),
+                )
+            db.executemany("DELETE FROM memories WHERE id=?", [(i,) for i in self._with_history(db, old["id"])])
+        return True
+
+    def nevers(self) -> list[dict]:
+        return self.store.rows("SELECT id, person, about, text, at FROM never_learn ORDER BY id DESC")
+
+    def allow(self, never_id: int) -> bool:
+        """What was never to be learned may be again."""
+        with self.store.transaction() as db:
+            return db.execute("DELETE FROM never_learn WHERE id=?", (never_id,)).rowcount > 0
+
+    def never_of(self, people) -> list[dict]:
+        """What's never to be learned about any of `people` (by person_key), or the household."""
+        return [n for n in self.nevers() if n["person"] in {*people, HOUSEHOLD}]
+
+    @staticmethod
+    def _shown(db, memory_id: int):
+        return db.execute(
+            "SELECT * FROM memories WHERE id=? AND replaced IS NULL AND private=0", (memory_id,)
+        ).fetchone()
+
     def retire(self, person: str | None, memory_id) -> str:
         """One that's no longer so (a thread that's over, a fact that stopped being true), with nothing in its
         place: kept as history."""
@@ -405,6 +493,22 @@ def _by_kind(rows: list[dict], now: float) -> str:
         if these:
             out.append(f"{HEADINGS[kind]}:\n" + "\n".join(_line(r, now) for r in these))
     return "\n".join(out)
+
+
+def _history(memory_id: int, replaced: dict[int, list[dict]]) -> list[dict]:
+    """What a memory replaced, newest first, however far back."""
+    out, todo = [], [memory_id]
+    while todo:
+        for r in replaced.get(todo.pop(), []):
+            out.append({"text": r["text"], "replaced": r["replaced"]})
+            todo.append(r["id"])
+    return out
+
+
+def same_note(a: str, b: str) -> bool:
+    """Whether two notes say nearly the same thing: most of their words are shared."""
+    one, two = _words(a), _words(b)
+    return bool(one and two) and len(one & two) / len(one | two) >= SAME_NOTE
 
 
 def _words(text: str) -> set[str]:

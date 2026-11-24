@@ -1,16 +1,17 @@
 /* The page's link parameters, for linking to a view:
 
-   ?tab=home|sent|review|reminders|skills|voices|models|status|talk     ?person=all|household|<voice id>
+   ?tab=home|sent|review|reminders|skills|memory|voices|models|status|talk     ?person=all|household|<voice id>
    ?guess=yes|no|none   Review: only the wakes TARS guessed were for it, weren't, or didn't guess
    ?conv=<id>     that conversation, open and scrolled to
    ?item=<id>     scrolled to that item
    ?demo          built-in sample data, no server; demoParams.ts adds more parameters for the screenshot tests */
 
-export type Tab = "home" | "sent" | "review" | "reminders" | "skills" | "voices" | "models" | "status" | "talk";
+export type Tab =
+  "home" | "sent" | "review" | "reminders" | "skills" | "memory" | "voices" | "models" | "status" | "talk";
 export type PersonFilter = "all" | "household" | number;
 export type GuessFilter = "all" | "yes" | "no" | "none";
 
-const TABS: Tab[] = ["home", "sent", "review", "reminders", "skills", "voices", "models", "status", "talk"];
+const TABS: Tab[] = ["home", "sent", "review", "reminders", "skills", "memory", "voices", "models", "status", "talk"];
 /** The pages about what TARS hears, which a chat-only home ([audio] enabled = false) doesn't have. */
 export const HEARING: Tab[] = ["review", "voices", "models"];
 

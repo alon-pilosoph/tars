@@ -10,6 +10,7 @@ import type {
   ModelsInfo,
   PeoplePage,
   RemindersInfo,
+  MemoriesInfo,
   SkillsInfo,
   Status,
   TarsEvent,
@@ -35,6 +36,7 @@ export type DialogState =
   | {
       kind: "prompt";
       title: string;
+      label?: string; // the field's; "Name" if not said
       text?: string;
       placeholder: string;
       value?: string;
@@ -64,7 +66,8 @@ export interface Snapshot {
 }
 
 /** What a load reads, an endpoint each: one that fails leaves the rest. */
-export type LoadPart = "events" | "clusters" | "models" | "status" | "convs" | "items" | "reminders" | "skills";
+export type LoadPart =
+  "events" | "clusters" | "models" | "status" | "convs" | "items" | "reminders" | "skills" | "memories";
 /** The parts the last load couldn't get, with why. */
 export type LoadErrors = Partial<Record<LoadPart, string>>;
 
@@ -82,6 +85,7 @@ export interface State {
   convs: Conversation[];
   items: Item[];
   reminders: RemindersInfo | null; // always as the server has them: they change by the minute
+  memories: MemoriesInfo | null; // what TARS knows about people
   skills: SkillsInfo | null; // what TARS was taught, as the server has it: taught by talking, any time
   health: Health | null; // the Status page's, loaded when it's shown, and with Refresh while it is
   healthError: string;
@@ -114,6 +118,7 @@ let current: State = {
   items: [],
   reminders: null,
   skills: null,
+  memories: null,
   health: null,
   healthError: "",
   people: null,

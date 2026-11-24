@@ -6,6 +6,7 @@ import { Menu } from "./components/Menu";
 import { Models } from "./components/Models";
 import { Reminders } from "./components/Reminders";
 import { Review } from "./components/Review";
+import { Memory } from "./components/Memory";
 import { Skills } from "./components/Skills";
 import { Talk } from "./components/Talk";
 import { LoadErrors, Loading, Unreachable } from "./components/States";
@@ -31,6 +32,7 @@ const VIEWS = {
   review: Review,
   reminders: Reminders,
   skills: Skills,
+  memory: Memory,
   voices: Voices,
   models: Models,
   status: StatusView,
@@ -124,6 +126,7 @@ export function App() {
           <div className="top-end">
             <nav className="nav-2" aria-label="More pages">
               <NavLink s={s} tab="skills" label="Skills" />
+              <NavLink s={s} tab="memory" label="Memory" />
               {aloud && <NavLink s={s} tab="voices" label="Voices" />}
               {aloud && <NavLink s={s} tab="models" label="Models" />}
               {s.status.health && <NavLink s={s} tab="status" label="Status" />}

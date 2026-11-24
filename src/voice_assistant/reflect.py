@@ -10,6 +10,7 @@ so) or mark asked (a thread TARS has now asked about). Code checks each change b
   couldn't tell are read only as context, never kept from.
 - A change is for someone who spoke in it, or the household. "Said" only when that person's own turn says it;
   anything else is kept as noticed (a guess). Nothing it keeps is private: only the person asking can make one so.
+- What the Memory page was told never to learn is in the request, and refused if it comes back in much the same words.
 - At most MOST_CHANGES a conversation; most need none.
 
 The household's people only: nothing outside the house reaches it, except the request itself (OpenAI, store off).
@@ -24,7 +25,7 @@ from datetime import datetime
 
 from . import usage
 from .events import person_key
-from .memory import KINDS, LOOK_BACK, MOST_CHARS, THREAD, Memory, _line
+from .memory import KINDS, LOOK_BACK, MOST_CHARS, THREAD, Memory, _line, same_note
 from .store import Store
 
 TICK_S = 60.0  # how often it looks for conversations to look back on
@@ -58,6 +59,7 @@ a visit. TARS will ask how it went, once, after.
 Never keep:
 - what they asked for this once (turn on the light, the weather, a timer), small talk, a mood of the moment;
 - what TARS already keeps another way: a skill or routine they set up, a reminder, the feeds they follow;
+- what's listed as never to be kept, however it's worded;
 - codes, passwords, card or account numbers;
 - anything about health, money, religion, politics or intimate life that the person didn't plainly say about \
 themselves (then it's said: true); who's who in the family is fine;
@@ -242,6 +244,7 @@ class LookBack:
             + ("\n".join(_line(r, now) for r in kept) or "nothing")
             + "\n\nAbout the household:\n"
             + ("\n".join(_line(r, now) for r in household) or "nothing")
+            + self._never([key])
             + f"\n\nWhat {person} said to TARS over the last {WHOLE_DAYS} days, and its replies:"
             + "\n".join(lines)
         )
@@ -295,6 +298,11 @@ class LookBack:
             print(f"(looked back on conversation {conversation_id}: {line})")
         return done
 
+    def _never(self, people: list[str]) -> str:
+        """What someone said on the Memory page is never to be learned about them, or the household."""
+        notes = [f"- {n['text']}" for n in self.memory.never_of(people)]
+        return "\n\nNever to be kept, however it's worded:\n" + "\n".join(notes) if notes else ""
+
     def _done(self, conversation_id: int, last: int) -> None:
         self.store.write(
             "INSERT INTO looked_back (conversation_id, through_turn, at, tries) VALUES (?, ?, ?, 0) "
@@ -318,6 +326,8 @@ class LookBack:
             known.append(f"What TARS knows about {person}:\n" + ("\n".join(_line(r, now) for r in kept) or "nothing"))
         household = [r for r in self.memory.current(None) if not r["person"]]
         known.append("About the household:\n" + ("\n".join(_line(r, now) for r in household) or "nothing"))
+        if never := self._never([person_key(p) for p in people]):
+            known.append(never.strip())
         return f"Today is {_when(now, '%A %Y-%m-%d')}.\n\n" + "\n\n".join(known) + "\n\n" + "\n".join(lines)
 
     def _apply(
@@ -350,6 +360,8 @@ class LookBack:
             "until": change.get("until"),
             "id": change.get("id"),
         }
+        if do in (REMEMBER, CORRECT) and any(same_note(n["text"], args["text"]) for n in self.memory.never_of(whose)):
+            return "skipped: never to be learned"
         at = when.get(turn, ended) if turn is not None else ended
         try:
             if do == REMEMBER:

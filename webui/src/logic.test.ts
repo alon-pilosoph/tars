@@ -432,11 +432,15 @@ describe("a load where some endpoints fail", () => {
     items: [4],
     reminders: "r",
     skills: "k",
+    memories: "y",
   };
   const answers = { events: ok([10]), clusters: ok([20]), models: ok("M"), status: ok("S"), convs: ok([30]) };
 
   it("keeps what failed as it last loaded, and says why", () => {
-    const { data, failed } = settle({ ...answers, items: no("HTTP 500"), reminders: ok("R"), skills: ok("K") }, last);
+    const { data, failed } = settle(
+      { ...answers, items: no("HTTP 500"), reminders: ok("R"), skills: ok("K"), memories: ok("Y") },
+      last,
+    );
     expect(data).toEqual({
       events: [10],
       clusters: [20],
@@ -446,6 +450,7 @@ describe("a load where some endpoints fail", () => {
       items: [4],
       reminders: "R",
       skills: "K",
+      memories: "Y",
     });
     expect(failed).toEqual({ items: "HTTP 500" });
   });
@@ -460,6 +465,7 @@ describe("a load where some endpoints fail", () => {
       items: no("items timed out"),
       reminders: no("reminders timed out"),
       skills: no("skills timed out"),
+      memories: no("memories timed out"),
     };
     expect(() => settle(none, last)).toThrow("events timed out");
   });

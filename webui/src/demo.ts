@@ -20,6 +20,8 @@ import type {
   ProcessHealth,
   Reminder,
   RemindersInfo,
+  MemoriesInfo,
+  Memory,
   SkillsInfo,
   ServiceHealth,
   Speaker,
@@ -41,8 +43,51 @@ interface DemoData {
   models: ModelsInfo;
   reminders: RemindersInfo;
   skills: SkillsInfo;
+  memories: MemoriesInfo;
 }
 let D: DemoData | null = null;
+
+/** What TARS knows, for the Memory page. */
+function demoMemories(now: number): MemoriesInfo {
+  const ago = (hours: number) => now - hours * 3600;
+  const row = (id: number, person: string, kind: Memory["kind"], about: string, text: string, hours: number) => {
+    const plain: Memory = {
+      id,
+      person,
+      kind,
+      about,
+      text,
+      guessed: false,
+      due: null,
+      until: null,
+      source: "voice",
+      created: ago(hours),
+      conversation: null,
+      heard: null,
+      heard_from: null,
+      history: [],
+    };
+    return plain;
+  };
+  return {
+    memories: [
+      { ...row(1, "alon", "style", "answers", "Wants short answers in the morning.", 50), guessed: true },
+      { ...row(2, "alon", "like", "gaming news", "Skip esports.", 26), source: "chat" },
+      {
+        ...row(3, "alon", "fact", "the car", "Drives a 2024 hatchback.", 74),
+        source: "look back",
+        heard: "We picked up the new car today.",
+        heard_from: "alon",
+        conversation: 1,
+        history: [{ text: "Drives a 2016 hatchback.", replaced: ago(74) }],
+      },
+      { ...row(4, "stacey", "thread", "pottery", "Has a pottery class.", 30), due: now + 2 * 86400 },
+      row(5, "stacey", "like", "music", "Likes jazz in the evening.", 72),
+      row(6, "", "person", "the plumber", "Robin: the plumber.", 120),
+    ],
+    never: [{ id: 1, person: "alon", about: "coffee", text: "Has stopped drinking coffee.", at: ago(20) }],
+  };
+}
 
 /** What the household taught TARS, for the Skills page. */
 function demoSkills(now: number): SkillsInfo {
@@ -94,11 +139,6 @@ function demoSkills(now: number): SkillsInfo {
         say: "chat",
         paused: false,
       },
-    ],
-    preferences: [
-      { id: 1, person: "alon", about: "gaming news", text: "Skip esports.", guessed: false, at: ago(60 * 26) },
-      { id: 2, person: "alon", about: "the AC", text: "Likes it at 23 at night.", guessed: true, at: ago(60 * 50) },
-      { id: 3, person: "stacey", about: "music", text: "Jazz in the evening.", guessed: false, at: ago(60 * 72) },
     ],
     runs: [
       {
@@ -777,7 +817,8 @@ function build(): DemoData {
     clusters,
     convs,
     items: empty ? [] : items,
-    skills: empty ? { skills: [], preferences: [], runs: [] } : demoSkills(now),
+    skills: empty ? { skills: [], runs: [] } : demoSkills(now),
+    memories: empty ? { memories: [], never: [] } : demoMemories(now),
     reminders: {
       enabled: !DEMO_LINK.remindersOff,
       reminders,
@@ -1055,6 +1096,7 @@ const LOADED_FROM: Record<LoadPart, string> = {
   items: "/api/items",
   reminders: "/api/reminders",
   skills: "/api/skills",
+  memories: "/api/memories",
 };
 
 export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
@@ -1279,8 +1321,25 @@ export async function demoApi(path: string, opts: Opts = {}): Promise<unknown> {
     d.skills.skills = d.skills.skills.filter(x => x.id !== Number(m![1]));
     return ok;
   }
-  if ((m = p.match(/^\/api\/preferences\/(\d+)$/)) && method === "DELETE") {
-    d.skills.preferences = d.skills.preferences.filter(x => x.id !== Number(m![1]));
+  if (p === "/api/memories" && method === "GET") return clone(d.memories);
+  if ((m = p.match(/^\/api\/memories\/(\d+)(\/never)?$/))) {
+    const id = Number(m[1]);
+    const known = d.memories.memories.find(x => x.id === id);
+    if (known && method === "POST" && !m[2]) {
+      const at = Date.now() / 1000;
+      known.history = [{ text: known.text, replaced: at }, ...known.history];
+      Object.assign(known, { text: body.text, guessed: false, source: "web", created: at, heard: null });
+      return ok;
+    }
+    if (known && m[2]) {
+      const { person, about, text } = known;
+      d.memories.never.unshift({ id, person, about, text, at: Date.now() / 1000 });
+    }
+    d.memories.memories = d.memories.memories.filter(x => x.id !== id);
+    return ok;
+  }
+  if ((m = p.match(/^\/api\/never\/(\d+)$/))) {
+    d.memories.never = d.memories.never.filter(x => x.id !== Number(m![1]));
     return ok;
   }
   if (p === "/api/models/use") {

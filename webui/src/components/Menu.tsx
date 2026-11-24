@@ -252,6 +252,9 @@ function moreMenu(s: State) {
       <MenuItem icon="spark" act={() => setTab("skills")} checked={s.tab === "skills"}>
         Skills
       </MenuItem>
+      <MenuItem icon="note" act={() => setTab("memory")} checked={s.tab === "memory"}>
+        Memory
+      </MenuItem>
       {s.status.aloud && (
         <MenuItem icon="voices" act={() => setTab("voices")} checked={s.tab === "voices"}>
           Voices
