@@ -338,14 +338,36 @@ export interface Skill {
   paused: boolean;
 }
 
-/** Something TARS knows a person likes, or doesn't. */
-export interface Preference {
+/** Something TARS knows about a person or the household (memory.Memory.page). */
+export interface Memory {
+  id: number;
+  person: string; // "" for the household's
+  kind: "style" | "like" | "fact" | "person" | "thread";
+  about: string;
+  text: string;
+  guessed: boolean; // noticed by TARS, not said
+  due: number | null; // a thread: when it happens
+  until: number | null;
+  source: string; // voice | chat | web | look back | moved
+  created: number;
+  conversation: number | null; // the one it came from, if it's known and still kept
+  heard: string | null; // what was said there
+  heard_from: string | null;
+  history: { text: string; replaced: number }[]; // what it replaced, newest first
+}
+
+/** Something TARS was told never to learn again. */
+export interface NeverLearn {
   id: number;
   person: string;
   about: string;
   text: string;
-  guessed: boolean; // noticed by TARS, not said
   at: number;
+}
+
+export interface MemoriesInfo {
+  memories: Memory[];
+  never: NeverLearn[];
 }
 
 /** A skill that ran by itself. */
@@ -360,6 +382,5 @@ export interface SkillRun {
 
 export interface SkillsInfo {
   skills: Skill[];
-  preferences: Preference[];
   runs: SkillRun[];
 }

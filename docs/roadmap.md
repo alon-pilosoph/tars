@@ -15,7 +15,7 @@ being right.
 | 3 | ["TARS stop": interrupting a reply](#3-tars-stop-interrupting-a-reply) | the one daily annoyance left; the speakerphone may not allow it | a measurement, then medium or hardware |
 | 4 | [Plugins and updates](#4-plugins-and-updates) | plugins react to nothing yet, and updating takes SSH | large |
 | 5 | [Automations and skills](#5-automations-and-skills) | "every time someone gets home…", taught in plain words | mostly built; dry runs for devices built; the arrival greeting to try for a week |
-| 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | memories and the look back built; voiceprints, the nightly look, the page left |
+| 6 | [Long-term memory and personalization](#6-long-term-memory-and-personalization) | the biggest one for conversations, and it leans on speaker ID | memories and the look back built; voiceprints, undos and measuring left |
 
 Alongside the steps, built: [house commands on the Pi](#built-house-commands-on-the-pi), small and independent of
 them; and [wishes that come true](#built-wishes-that-come-true), where something TARS couldn't do becomes a pull
@@ -290,8 +290,7 @@ voiceprints for the household, so what's said aloud is someone's (until then, by
    has one, so the look back can learn from what was said aloud.
 2. **When to act or ask**, learned from what each person confirms or undoes (the nightly look over each person's
    whole picture, built, reads it; nothing yet records an undo).
-3. **A Memory page**: every memory, why TARS thinks so (a link to the turn), edit, delete, "never learn this"; UI by
-   screenshots first.
+3. **A Memory page**: built ([memory](memory.md#the-memory-page)).
 4. **Measured**: scripted conversations over days (told, used later, a second voice, forgotten, a style signal, a
    thread) checked for what's kept, what's used, and that nothing crosses between people; paid, so estimated first.
 5. **Settings per person** (humor, length), from the same page, and the persona split from the rules the code needs.

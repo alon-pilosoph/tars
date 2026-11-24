@@ -1067,6 +1067,12 @@ main.wide {
 .rem .btn {
   margin-top: -6px;
 }
+.mem-kind {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 22px 0 12px;
+}
 .skills-teach {
   margin: -6px 0 8px;
 }

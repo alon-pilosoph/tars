@@ -1,10 +1,10 @@
 import { Fragment } from "react";
 import { personName, stamp } from "../format";
-import { deleteSkill, forgetPreference, pauseSkill, useStore } from "../store";
-import type { Preference, Skill, SkillRun } from "../types";
+import { deleteSkill, pauseSkill, useStore } from "../store";
+import type { Skill, SkillRun } from "../types";
 import { Empty, PageHead, SecHead } from "./Blocks";
 
-const SUB = "What TARS was taught by talking: things to do by name, some on their own, and what each of you likes.";
+const SUB = "What TARS was taught by talking: things to do by name, and some on their own.";
 const TEACH = "To teach it something new, or change one, just tell TARS: “from now on, when I say bedtime…”.";
 
 /** Whose: "Everyone's" for the household's, else the person's name. */
@@ -14,8 +14,8 @@ export function Skills() {
   const s = useStore();
   const info = s.skills;
   if (!info) return <PageHead title="Skills" sub={SUB} />; // they never loaded: LoadErrors says why
-  const { skills, preferences, runs } = info;
-  if (!skills.length && !preferences.length && !runs.length)
+  const { skills, runs } = info;
+  if (!skills.length && !runs.length)
     return (
       <>
         <PageHead title="Skills" sub={SUB} />
@@ -25,7 +25,6 @@ export function Skills() {
   const owners = [...new Set(skills.map(sk => sk.owner))].sort((a, b) =>
     a === "household" ? -1 : b === "household" ? 1 : a.localeCompare(b),
   );
-  const people = [...new Set(preferences.map(p => p.person))].sort();
   return (
     <>
       <PageHead title="Skills" sub={SUB} />
@@ -38,18 +37,6 @@ export function Skills() {
               .filter(sk => sk.owner === owner)
               .map(sk => (
                 <SkillRow key={sk.id} sk={sk} />
-              ))}
-          </div>
-        </Fragment>
-      ))}
-      {people.map(person => (
-        <Fragment key={person}>
-          <SecHead title={`What TARS knows about ${personName(person)}`} />
-          <div className="rem-rows">
-            {preferences
-              .filter(p => p.person === person)
-              .map(p => (
-                <PreferenceRow key={p.id} p={p} />
               ))}
           </div>
         </Fragment>
@@ -95,21 +82,6 @@ function SkillRow({ sk }: { sk: Skill }) {
           Delete
         </button>
       </div>
-    </article>
-  );
-}
-
-function PreferenceRow({ p }: { p: Preference }) {
-  return (
-    <article className="rem" data-id={p.id}>
-      <div className="rem-when">{p.about}</div>
-      <div>
-        <p className="says">{p.text}</p>
-        <div className="r-meta">{p.guessed ? `A guess TARS made, ${stamp(p.at)}.` : `Said ${stamp(p.at)}.`}</div>
-      </div>
-      <button className="btn ghost" onClick={() => forgetPreference(p)}>
-        Forget
-      </button>
     </article>
   );
 }

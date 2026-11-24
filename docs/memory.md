@@ -74,12 +74,24 @@ hears each other's: what Stacey told TARS may come up when Alon asks, aloud. Som
 ## Where it's kept
 
 The `memories` table of the event database, backed up with it, and `looked_back` (how far each conversation has been
-looked back on). The Skills page shows each person's likes, and forgets one; a page for all of it, with where each
-came from, is next.
+looked back on). `never_learn`
+holds what's not to be learned again.
+
+## The Memory page
+
+The web UI's **Memory** page shows what's kept about everyone and the household to whoever can open it, as the
+household may hear each other's; never a private one, which it can't change either. Each says whether it was said or
+guessed, when, the words it came from with a link to that conversation when the look back found it in one, and what
+it replaced. There:
+
+- **Edit** puts its words right, as said; the old ones become history.
+- **Forget** deletes it and its history. TARS may learn it again.
+- **Never learn** forgets it too, keeping its last words alone: the look back is told not to keep them, however
+  worded, and code refuses a note that shares most of their words. Asking TARS to remember it still works, and Allow
+  again takes it off the list. A paraphrase that shares few words is up to the model.
 
 ## Not yet
 
-- **A page for all of it**: every memory, why TARS thinks so (a link to the turn), edit, delete, "never learn this".
 - **Voices recognized in old conversations**: turns from before someone's voiceprint aren't theirs yet.
 - **Measuring it**: scripted conversations over days (told, used later, a second voice, forgotten, a style signal,
   a thread) checked for what's kept, what's used, and that nothing crosses between people.

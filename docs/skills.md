@@ -81,7 +81,7 @@ the model, which carries them out with the tools it already has.
   ([the front door](presence.md#the-front-door)).
 
 The web UI's **Skills** page shows all of it, and what skills did by themselves lately; a skill can be paused,
-resumed or deleted there, and what someone likes forgotten ([the web UI](web-ui.md)).
+resumed or deleted there ([the web UI](web-ui.md)).
 
 Kept in the event database: the `skills` and `skill_runs` tables, backed
 up with the rest.

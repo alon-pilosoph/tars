@@ -1,5 +1,5 @@
 import { del, post } from "../api";
-import type { Preference, Skill } from "../types";
+import type { Skill } from "../types";
 import { saveThenReload } from "./actions";
 import { confirm } from "./ui";
 
@@ -20,8 +20,5 @@ export async function deleteSkill(sk: Skill) {
   });
   if (ok) await saveThenReload(() => del(`/api/skills/${sk.id}`), "Deleted.", { fail: "Couldn't delete it" });
 }
-
-export const forgetPreference = (p: Preference) =>
-  saveThenReload(() => del(`/api/preferences/${p.id}`), "Forgotten.", { fail: "Couldn't forget it" });
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

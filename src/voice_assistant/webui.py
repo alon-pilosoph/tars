@@ -30,6 +30,7 @@ from .conversations import FILE, LIST, ROLE_TARS, ConversationLog
 from .events import NOT_PERSON, NOT_REAL, PERSON, REAL, REVIEW_SHOWN, UNKNOWN, EventLog
 from .health import Report
 from .homenet import address, home_name
+from .memory import Memory
 from .people import People
 from .recording import ON_DEVICE, STOPPED, Sessions, public_take
 from .reminders import MESSAGE, REMINDER, TIMER, WEB, NewReminder, Reminders, line
@@ -147,6 +148,10 @@ class ReminderBody(BaseModel):
 
 class Snooze(BaseModel):
     minutes: float
+
+
+class MemoryText(BaseModel):
+    text: str
 
 
 class Paused(BaseModel):
@@ -270,6 +275,7 @@ def create_app(
         add_sign_in(app, accounts)  # first, so the check below runs before it
     convos = ConversationLog(log)
     skills = Skills(log.store)
+    memory = Memory(log.store)
     voices = threading.Lock()  # one change to the voices at a time: re-clustering mustn't undo a move made meanwhile
     people = People(log, relearn)
     extra = frozenset(h.lower() for h in allowed_hosts)
@@ -647,8 +653,8 @@ def create_app(
 
     @app.get("/api/skills")
     def list_skills():
-        """The Skills page: what TARS was taught by talking (skills and preferences) and what skills did by
-        themselves. Taught and changed by talking to TARS; here, only paused, deleted and forgotten."""
+        """The Skills page: what TARS was taught by talking and what skills did by themselves.
+        Taught and changed by talking to TARS; here, only paused and deleted."""
         return skills.page()
 
     @app.post("/api/skills/{skill_id}/pause")
@@ -663,11 +669,34 @@ def create_app(
             raise HTTPException(404, "no such skill")
         return {"ok": True}
 
-    @app.delete("/api/preferences/{preference_id}")
-    def forget_preference(preference_id: int):
-        if not skills.forget(preference_id):
+    @app.get("/api/memories")
+    def list_memories():
+        """The Memory page: what TARS knows about each person and the household, but for the private."""
+        return memory.page()
+
+    def known(found: bool):
+        if not found:
             raise HTTPException(404, "TARS doesn't know that any more")
         return {"ok": True}
+
+    @app.post("/api/memories/{memory_id}")
+    def edit_memory(memory_id: int, body: MemoryText):
+        try:
+            return known(memory.edit(memory_id, body.text))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.delete("/api/memories/{memory_id}")
+    def forget_memory(memory_id: int):
+        return known(memory.drop(memory_id))
+
+    @app.post("/api/memories/{memory_id}/never")
+    def never_learn(memory_id: int):
+        return known(memory.drop(memory_id, never=True))
+
+    @app.delete("/api/never/{never_id}")
+    def allow_again(never_id: int):
+        return known(memory.allow(never_id))
 
     def finished_with_voices(session: dict) -> None:  # enrolling changes the voices: not while they're regrouped
         with voices:
