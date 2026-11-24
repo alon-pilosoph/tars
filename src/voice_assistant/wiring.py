@@ -135,7 +135,9 @@ def make_event_log(cfg: Config, root: Path) -> EventLog:
     kept in it. [learning] log_events only says whether wakes and audio are recorded too."""
     from .events import EventLog
 
-    return EventLog(root / cfg.learning.folder, record=cfg.learning.log_events)
+    return EventLog(
+        root / cfg.learning.folder, record=cfg.learning.log_events, near_misses_an_hour=cfg.learning.near_misses_an_hour
+    )
 
 
 def start_metering(cfg: Config, events: EventLog) -> None:

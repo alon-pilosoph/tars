@@ -287,7 +287,7 @@ uv run voice-assistant --enroll NAME         # NAME's voiceprint from those sent
   own, such as `home.example.com`, point its DNS A record at the Pi's Tailscale address (`100.x.y.z`): it resolves
   anywhere, but only connects from your tailnet.
 - **Storage.** A wake window is 3 s (96 KB), a request about 4 s (130 KB). At around 60 events a day that's about
-  12 MB a day. Audio training wouldn't learn from is dropped after `[learning] keep_audio_days` (60); audio with
+  12 MB a day; near-misses add at most 10 an hour. Audio training wouldn't learn from is dropped after `[learning] keep_audio_days` (60); audio with
   an answer, or an automatic label training uses, is kept, since it's the training data. A 64 GB card lasts years,
   and with the backup on, a request's audio leaves the card after a month.
 - **Backup.** SD cards die, and the labels are the valuable part. With `[backup]` on, everything TARS keeps goes to an

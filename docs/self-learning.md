@@ -48,6 +48,9 @@ A few rules keep the log honest:
   real in Review, a wake nobody spoke after, and a wake the double-check turned away that nobody answered in Review
   (the check's own verdict isn't training data). Audio with a person's answer, or with an automatic label training uses, is kept.
   This runs at startup and once a day.
+- **A noisy room doesn't fill the card.** Of each clock hour's near-misses, only the `[learning] near_misses_an_hour`
+  (10) closest to waking keep their audio; the rest keep their row. One a real wake followed within 10 seconds, or
+  answered in Review, always keeps it, and none is judged before 30 seconds have passed.
 
 The assistant and the web UI share the database ([how](architecture.md#the-web-ui)), and an older one is upgraded
 automatically when either starts. Code: `store.py` (the database and files), `events.py` (wakes, near-misses, voices),

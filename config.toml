@@ -195,6 +195,9 @@ folder = "voice_data/events"
 # that nobody answered) is dropped after this many days. Training data (a person's answer, or an automatic label
 # like "a request followed") stays. 0 = keep all.
 keep_audio_days = 60
+# How many near-misses keep their audio each hour, the closest to waking: a room with the TV on can make hundreds. One
+# a real wake followed (a missed "hey TARS") or answered in Review is always kept. 0 = keep all.
+near_misses_an_hour = 10
 
 [reminders]
 # Timers, reminders and messages, set by voice ("remind me to call the bank at nine", "tell Stacey dinner's ready")

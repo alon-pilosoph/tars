@@ -487,3 +487,42 @@ def test_a_numpy_score_is_kept_as_a_number(log):
     rows = {r["id"]: r for r in log.store.rows("SELECT id, wake_score, confidence FROM events")}
     assert rows[wake]["wake_score"] == pytest.approx(0.62) and rows[wake]["confidence"] == pytest.approx(0.26)
     assert rows[near]["wake_score"] == pytest.approx(0.4)
+
+
+def test_only_the_closest_near_misses_of_an_hour_keep_their_audio_and_missed_ones_always_do(tmp_path):
+    log = EventLog(tmp_path / "db", near_misses_an_hour=2)
+    hour, pcm = 1_800_000_000.0, np.zeros(1600, dtype=np.int16)
+    ids = {}
+    ids["missed"] = log.add_near_miss(pcm, 0.10, ts=hour + 1)
+    wake = log.add_wake(pcm, 0.9, "answer", "hey tars", 0.9)
+    log.store.write("UPDATE events SET ts=? WHERE id=?", (hour + 5, wake))
+    for i, score in enumerate((0.20, 0.50, 0.30, 0.40)):
+        ids[score] = log.add_near_miss(pcm, score, ts=hour + 60 * (i + 1))
+    kept = lambda: {
+        r["id"] for r in log.store.rows("SELECT id FROM events WHERE kind='near_miss' AND audio IS NOT NULL")
+    }
+    files = lambda: len(list((tmp_path / "db").rglob("*_near.wav")))
+    assert kept() == {ids["missed"], ids[0.50], ids[0.40]} and files() == 3
+    assert log.store.row("SELECT COUNT(*) AS n FROM events WHERE kind='near_miss'")["n"] == 5  # the rows stay
+    fresh = log.add_near_miss(pcm, 0.05, ts=hour + 500)  # too new to judge
+    assert fresh in kept()
+    log.add_near_miss(pcm, 0.06, ts=hour + 3600)  # the next hour starts over
+    assert fresh in kept() and ids[0.50] in kept()
+
+
+def test_a_near_miss_answered_in_review_is_never_dropped_by_the_cap(tmp_path):
+    log = EventLog(tmp_path / "db", near_misses_an_hour=1)
+    hour, pcm = 1_800_000_000.0, np.zeros(1600, dtype=np.int16)
+    answered = log.add_near_miss(pcm, 0.10, ts=hour)
+    log.store.write("UPDATE events SET label='real' WHERE id=?", (answered,))
+    for i in range(1, 4):
+        log.add_near_miss(pcm, 0.2 + i / 10, ts=hour + 60 * i)
+    rows = log.store.rows("SELECT id FROM events WHERE audio IS NOT NULL ORDER BY id")
+    assert rows[0]["id"] == answered and len(rows) == 2
+
+
+def test_with_no_cap_every_near_miss_keeps_its_audio(tmp_path):
+    log, pcm = EventLog(tmp_path / "db"), np.zeros(1600, dtype=np.int16)
+    for i in range(5):
+        log.add_near_miss(pcm, 0.1, ts=1_800_000_000.0 + 60 * i)
+    assert log.store.row("SELECT COUNT(*) AS n FROM events WHERE audio IS NOT NULL")["n"] == 5

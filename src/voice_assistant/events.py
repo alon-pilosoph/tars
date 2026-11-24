@@ -24,6 +24,7 @@ REAL, NOT_REAL = "real", "not_real"
 PERSON, NOT_PERSON, UNKNOWN = "person", "not_person", "unknown"
 MISSED_WINDOW_S = 10.0  # a near-miss followed this soon by a real wake was probably a missed "hey TARS"
 DAY_S = 24 * 3600
+SETTLED_S = 30.0  # by now a wake that follows a near-miss is in the log
 BLANK_MS = 150.0  # a near-miss with less sound than this has nothing to hear: the shortest real "hey TARS" has 488 ms
 REVIEW_SHOWN = 500  # Review shows this many of the newest wakes waiting for an answer, and as many answered ones
 # The newest requests of each voice stay on the machine whatever a backup does: a person's voiceprint is rebuilt from
@@ -82,11 +83,12 @@ def known_as(name: str | None, people: Collection[str]) -> str | None:
 
 
 class EventLog:
-    def __init__(self, folder: Path, record: bool = True):
+    def __init__(self, folder: Path, record: bool = True, near_misses_an_hour: int = 0):
         """`record` ([learning] log_events): keep wakes, near-misses and their audio, and what was said by voice or
         sent as a voice message, as audio. Off, none of it is written; the database, conversations as text and
-        everything else kept here go on."""
-        self.folder, self.record = folder, record
+        everything else kept here go on. `near_misses_an_hour` ([learning], 0: all): how many near-misses keep their
+        audio each hour, past those a real wake followed and those answered in Review (_cap_near_misses)."""
+        self.folder, self.record, self._near_misses_an_hour = folder, record, near_misses_an_hour
         self.store = Store(folder)
 
     def add_wake(
@@ -121,10 +123,40 @@ class EventLog:
         ts = ts or time.time()
         audio = self.store.save_audio(pcm, f"{int(ts * 1000)}_near")
         with self.store.removed_on_failure(audio):
-            return self.store.write(
+            event_id = self.store.write(
                 "INSERT INTO events (ts, kind, wake_score, wake_model, audio) VALUES (?, ?, ?, ?, ?)",
                 (ts, NEAR_MISS, float(peak_score), wake_model, audio),
             )
+        if self._near_misses_an_hour:
+            try:
+                self._cap_near_misses(ts)
+            except Exception as e:  # noqa: BLE001 - it's kept all the same; the next one tries again
+                print(f"(couldn't drop old near-misses' audio: {e!r})")
+        return event_id
+
+    def _cap_near_misses(self, now: float) -> None:
+        """Of this clock hour's near-misses, the audio of only the closest stays: a room with the TV on can make
+        hundreds an hour. Their rows all stay. One a real wake followed (a missed "hey TARS") or someone answered is
+        never dropped, nor counted, and none is judged until a wake has had time to follow it."""
+        hour = now - now % 3600
+        rows = self._labeled(
+            self.store.rows(
+                "SELECT * FROM events WHERE kind=? AND ts >= ? AND ts <= ? AND label IS NULL AND audio IS NOT NULL",
+                (NEAR_MISS, hour, now),
+            )
+        )
+        lonely = [r for r in rows if r["auto_label"] is None]
+        lonely.sort(key=lambda r: r["wake_score"], reverse=True)
+        dropped = []
+        with self.store.transaction() as db:
+            for r in lonely[self._near_misses_an_hour :]:
+                # Someone may have answered it in Review since it was read.
+                if (
+                    now - r["ts"] > SETTLED_S
+                    and db.execute("UPDATE events SET audio=NULL WHERE id=? AND label IS NULL", (r["id"],)).rowcount
+                ):
+                    dropped.append(r["audio"])
+        self.store.remove(dropped)
 
     def add_request(
         self,

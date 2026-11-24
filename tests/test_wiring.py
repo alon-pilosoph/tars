@@ -184,3 +184,17 @@ def test_the_devices_skills_wait_on_are_followed_and_told_to_the_clock(monkeypat
     clock = SimpleNamespace(say="aloud", saw=lambda name, status: told.append((name, status)))
     wiring.follow_devices(cfg, tmp_path, home, clock)
     assert done.wait(5) and told == [("front door", "front door: unlocked")]
+
+
+def test_the_event_log_tars_runs_with_caps_near_misses_as_config_says(tmp_path):
+    import numpy as np
+
+    from voice_assistant.wiring import Household
+
+    cfg = load_config(REPO_CONFIG, local=False)
+    cfg = dataclasses.replace(cfg, learning=dataclasses.replace(cfg.learning, near_misses_an_hour=2))
+    log = Household(cfg, tmp_path).events
+    for i in range(6):
+        log.add_near_miss(np.zeros(1600, dtype=np.int16), 0.1 * i, ts=1_800_000_000.0 + 60 * i)
+    kept = log.store.row("SELECT COUNT(*) AS n FROM events WHERE audio IS NOT NULL")["n"]
+    assert kept == 2
