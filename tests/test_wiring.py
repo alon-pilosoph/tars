@@ -161,6 +161,7 @@ def test_typed_questions_ask_for_neither_the_voices_nor_the_reminders(tmp_path, 
 
 
 def test_the_devices_skills_wait_on_are_followed_and_told_to_the_clock(monkeypatch, tmp_path):
+    """The house as make_home makes it, its devices behind the hub: not devices made for the test."""
     from types import SimpleNamespace
 
     from voice_assistant import hass, wiring
@@ -176,8 +177,10 @@ def test_the_devices_skills_wait_on_are_followed_and_told_to_the_clock(monkeypat
         done.set()
 
     monkeypatch.setattr(hass, "follow", follow)
-    device = hass.entity_device("front door", {"entity": "lock.front"}, None)
-    cfg = SimpleNamespace(home=SimpleNamespace(url="http://ha:8123"))
+    devices = [{"name": "front door", "entity": "lock.front"}]
+    cfg = load_config(REPO_CONFIG, local=False)
+    cfg = dataclasses.replace(cfg, home=dataclasses.replace(cfg.home, url="http://ha:8123", devices=devices))
+    home = wiring.make_home(cfg, tmp_path)
     clock = SimpleNamespace(say="aloud", saw=lambda name, status: told.append((name, status)))
-    wiring.follow_devices(cfg, tmp_path, SimpleNamespace(devices={"front door": device}), clock)
+    wiring.follow_devices(cfg, tmp_path, home, clock)
     assert done.wait(5) and told == [("front door", "front door: unlocked")]

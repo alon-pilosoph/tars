@@ -379,6 +379,7 @@ class HomeTools:
         self._clock = clock
         self._digits = digits or (lambda: "".join(secrets.choice("123456789") for _ in range(CHALLENGE_DIGITS)))
         self.devices = {name.strip().lower(): d for name, d in devices.items()}
+        self.hub = None  # what holds the devices themselves, once they're reached through it (hub.behind_hub)
         self.tool = home_tool(devices)
         self._lock = threading.Lock()
         # Told the entity of a lock someone's asked to unlock, before and after: auto-lock counts from then
