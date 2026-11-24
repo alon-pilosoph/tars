@@ -26,6 +26,7 @@ from voice_assistant.skills import (
     OneOffs,
     Skill,
     Skills,
+    dry_run,
     happened,
     import_config,
     on_its_own,
@@ -1218,3 +1219,62 @@ def test_a_coming_in_more_than_a_minute_old_by_the_time_its_read_is_too_late_to_
     door.came("Stacey", at=SUNDAY.timestamp() - 30)
     clock.look(SUNDAY)
     assert [d.why for d in clock.take()] == ["Stacey just came in by the front door"]
+
+
+# Home Assistant's events (Clock.saw).
+
+UNLOCKS = {"event": "device", "device": "front door", "says": "unlocked"}
+
+
+def test_a_change_gone_again_before_the_next_look_sets_off_its_skill_once():
+    house = House()
+    house.statuses["front door"] = "front door: locked"
+    clock = house.clock(on(UNLOCKS))
+    clock.look(SUNDAY)
+    clock.saw("front door", "front door: unlocked")
+    clock.saw("front door", "front door: locked")
+    assert clock._wake.is_set()  # looked at now, not at the next tick
+    clock.look(SUNDAY)
+    assert [d.why for d in clock.take()] == ["the front door now says unlocked (front door: unlocked)"]
+    clock.look(SUNDAY)
+    assert clock.take() == []
+
+
+def test_what_a_look_read_before_its_event_came_isnt_acted_on_twice():
+    house = House()
+    house.statuses["front door"] = "front door: locked"
+    clock = house.clock(on(UNLOCKS))
+    clock.look(SUNDAY)
+    house.statuses["front door"] = "front door: unlocked"
+    clock.look(SUNDAY)
+    assert len(clock.take()) == 1
+    clock._fired.clear()  # not for the cooldown's sake
+    clock.saw("front door", "front door: unlocked")
+    clock.look(SUNDAY)
+    assert clock.take() == []
+
+
+def test_events_before_the_first_look_or_for_devices_nothing_waits_on_do_nothing():
+    house = House()
+    clock = house.clock(on(UNLOCKS))
+    clock.saw("front door", "front door: unlocked")
+    clock.look(SUNDAY)
+    clock.saw("boiler", "boiler: on")
+    clock.look(SUNDAY)
+    assert clock.take() == [] and not clock._wake.is_set()
+
+
+def test_a_change_that_sets_nothing_off_waits_for_the_tick():
+    house = House()
+    house.statuses["front door"] = "front door: locked"
+    clock = house.clock(on(UNLOCKS))
+    clock.look(SUNDAY)
+    clock.saw("front door", "front door: locked, battery 80%")
+    assert not clock._wake.is_set()
+
+
+def test_a_dry_run_counts_a_change_gone_at_once_but_not_a_moment_out_of_reach():
+    locked, unlocked = "front door: locked", "front door: unlocked"
+    assert dry_run(UNLOCKS, [(0, locked), (100, unlocked), (103, locked)]) == [100]
+    away = "front door: not reachable (Home Assistant can't reach it)"
+    assert dry_run(UNLOCKS, [(0, unlocked), (100, away), (103, unlocked)]) == []

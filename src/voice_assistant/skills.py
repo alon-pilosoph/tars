@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 import tomllib
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -44,6 +44,7 @@ HOUSEHOLD = "household"  # a skill's owner when it's everyone's
 ALOUD, CHAT = "aloud", "chat"  # where a skill that runs by itself says what it has to say
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 TICK_S = 10.0  # how often a clock looks for a skill that's due, or something happening one waits for
+MOST_SEEN = 500  # statuses kept for a device between two looks
 DRY_RUN_DAYS = 7  # a device trigger is replayed over this much of the device's history before it's kept
 COOLDOWN_S = 600.0  # a skill that runs when something happens runs again no sooner: no loops, no flapping
 # Someone who came in by a door longer ago than this, by the time a clock reads it, didn't "just" come in: it's seen,
@@ -410,11 +411,12 @@ def fired(trigger: dict, before: str, now: str) -> str:
 
 def dry_run(trigger: dict, past: list[tuple[float, str]]) -> list[float]:
     """When a device trigger would have run over its device's past statuses ((when, status), in order): each change
-    it's set off by, no sooner than COOLDOWN_S after the last, as the clock runs it. The clock looks every TICK_S, so
-    a status gone again sooner than that is taken as never seen."""
+    it's set off by, no sooner than COOLDOWN_S after the last, as the clock runs it. One gone again at
+    once counts, as Home Assistant's events tell the clock (Clock.saw), unless the device was only out of reach for
+    less than TICK_S."""
     seen: list[tuple[float, str]] = []
     for i, (at, status) in enumerate(past):
-        if i + 1 < len(past) and past[i + 1][0] - at < TICK_S:
+        if i + 1 < len(past) and past[i + 1][0] - at < TICK_S and says(status, "not reachable"):
             continue
         if not seen or seen[-1][1] != status:
             seen.append((at, status))
@@ -935,6 +937,9 @@ class Clock:
     skill that runs on it keeps the one it last saw (`seen`, `see`), so one deployed while TARS was down, which
     restarts it, is still told, once, with what changed between the two (`between(old, new)`).
 
+    A device that changes between two looks is told with saw(device, status), each status in turn, so one gone again
+    before the next look still sets a skill off; and one that sets a skill off is looked at now.
+
     A one-off, wherever it answers, is due from its time on, and is this TARS's when `one_offs` (OneOffs) takes it
     for this process: so it runs while either process is up, and only one of them runs it. Without `one_offs`, no
     one-off is run here."""
@@ -973,6 +978,9 @@ class Clock:
         self._home: dict[str, bool | None] | None = None  # who was home last time; None before the first look
         self._statuses: dict[str, str] = {}  # each device's, last time
         self._reading: dict[str, str | None] = {}  # each device's, this time
+        self._waiting: dict[str, list[dict]] = {}  # the device triggers there are, by device, as of the last look
+        self._seen_since: dict[str, deque[str]] = {}  # each device's statuses since the last look (saw)
+        self._passed: dict[str, list[str]] = {}  # the same, for this look
         self._due: list[Due] = []
         self._lock = threading.Lock()
         self._closing = threading.Event()
@@ -981,6 +989,19 @@ class Clock:
     def nudge(self) -> None:
         """Look now, not at the next tick: someone just came in (doors.py, in this process)."""
         self._wake.set()
+
+    def saw(self, device: str, status: str) -> None:
+        """A device's status just now, as Home Assistant's events have it. Only for a device a skill waits for; what
+        comes before its first look is never acted on."""
+        with self._lock:
+            triggers, seen = self._waiting.get(device), self._seen_since.get(device)
+            before = seen[-1] if seen else self._statuses.get(device)
+            if not triggers or before is None or status == before:
+                return
+            self._seen_since.setdefault(device, deque(maxlen=MOST_SEEN)).append(status)
+            now = any(fired(t, before, status) for t in triggers)
+        if now:
+            self.nudge()
 
     def start(self) -> Clock:
         threading.Thread(target=self._keep, daemon=True, name=f"skill clock ({self.say})").start()
@@ -1096,6 +1117,9 @@ class Clock:
 
     def _happened(self, skills: list[Skill], when: datetime) -> list[Due]:
         """The skills waiting for something that's happened since the last look."""
+        with self._lock:
+            self._passed = {device: list(seen) for device, seen in self._seen_since.items()}
+            self._seen_since = {}
         events: list[tuple[dict, str]] = []  # (what happened, as a trigger matches it; in words)
         if self._people and any(s.trigger["event"] in (ARRIVES, LEAVES) for s in skills):
             events += self._comings_and_goings()
@@ -1217,10 +1241,13 @@ class Clock:
         return f"TARS was just updated ({last} to {now}). What changed, newest first, a title each:\n{changed}"
 
     def _changed(self, skill: Skill) -> str:
-        """Why a device trigger is set off now, from its status before and now; "" if it isn't."""
+        """Why a device trigger is set off now, from its status before, each since, and now; "" if it isn't."""
         device = skill.trigger["device"]
         now, before = self._read(device), self._statuses.get(device)
-        return fired(skill.trigger, before, now) if now is not None and before is not None else ""
+        if before is None:
+            return ""
+        statuses = [before, *self._passed.get(device, []), *([now] if now is not None else [])]
+        return next((why for b, n in itertools.pairwise(statuses) if (why := fired(skill.trigger, b, n))), "")
 
     def _read(self, device: str) -> str | None:
         if device not in self._reading:
@@ -1237,9 +1264,17 @@ class Clock:
         for skill in skills:
             if skill.trigger["event"] == CHANGES:
                 self._read(skill.trigger["device"])
-        for device, status in self._reading.items():
-            if status is not None:
-                self._statuses[device] = status
+        waiting: dict[str, list[dict]] = {}
+        for skill in skills:
+            if skill.trigger["event"] == CHANGES:
+                waiting.setdefault(skill.trigger["device"], []).append(skill.trigger)
+        with self._lock:
+            for device, status in self._reading.items():
+                if status is None and device in self._passed:
+                    status = self._passed[device][-1]
+                if status is not None:
+                    self._statuses[device] = status
+            self._waiting = waiting
         self._reading = {}
 
     def _keep(self) -> None:

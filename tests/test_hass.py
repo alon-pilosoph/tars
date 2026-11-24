@@ -605,3 +605,47 @@ def test_a_tracker_at_a_zone_or_without_address_asks_no_one():
     assert at_zone.status() == "Dana's phone: at Dana's parents' house" and asked == []
     off, asked = tracker("not_home", address=False)
     assert "near" not in off.status() and asked == []
+
+
+def test_live_words_each_change_as_status_does_and_says_nothing_for_one_out_of_reach():
+    from voice_assistant.hass import Live, entity_device
+
+    class Hass:
+        def states(self):
+            return [
+                {"entity_id": "lock.front", "state": "locked", "attributes": {}},
+                {"entity_id": "binary_sensor.front", "state": "off", "attributes": {}},
+                {"entity_id": "light.other", "state": "on", "attributes": {}},
+            ]
+
+    spec = {"entity": "lock.front", "door": "binary_sensor.front"}
+    far = {"entity": "sensor.drive", "refresh": [{"service": "homeassistant.update_entity"}]}
+    devices = {n: entity_device(n, s, Hass()) for n, s in (("front door", spec), ("drive", far))}
+    said = []
+    live = Live(devices, Hass(), lambda name, status: said.append((name, status)))
+    assert live.entities == ["binary_sensor.front", "lock.front"]  # not the one that asks for a fresh reading
+    live.seed()
+    for entity, state in (
+        ("lock.front", "unlocked"), ("binary_sensor.front", "on"), ("lock.front", "unavailable"),
+        ("binary_sensor.front", "off"), ("lock.front", "locked"),
+    ):  # fmt: skip
+        live.new({"entity_id": entity, "state": state, "attributes": {}})
+    assert said == [
+        ("front door", "front door: unlocked, door closed"),
+        ("front door", "front door: unlocked, door open"),
+        ("front door", "front door: locked, door closed"),
+    ]
+
+
+def test_following_hands_on_new_states_whole_attributes_alone_included(monkeypatch):
+    import voice_assistant.hass as hass_module
+
+    sockets = [FakeSocket([changed("lock.a", "locked", old="locked"), changed("lock.a", "unavailable", old="locked")])]
+    monkeypatch.setattr(hass_module, "connect", lambda url, **kw: sockets.pop(0))
+    monkeypatch.setattr(hass_module.time, "sleep", lambda s: None)
+    whole, states = [], []
+    hass_module.follow(
+        "http://ha:8123", "token", ["lock.a"], lambda e, s: states.append(s), lambda: len(whole) >= 2,
+        on_new=lambda state: whole.append(state["state"]),
+    )  # fmt: skip
+    assert whole == ["locked", "unavailable"] and states == []

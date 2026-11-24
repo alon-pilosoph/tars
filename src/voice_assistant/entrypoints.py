@@ -425,7 +425,7 @@ def telegram(cfg: Config, root: Path) -> None:
         home=home,
         say=functools.partial(ask_to_say, events.store.folder) if aloud else None,
         spotify_login=spotify_login(cfg, root, env),
-        skill_clock=skill_clock(skills, "chat", home, presence, myself),
+        skill_clock=skill_clock(skills, "chat", home, presence, myself, cfg, root),
         aloud=aloud,
     )
     told.append(tars)
@@ -725,7 +725,7 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
     rooms = Rooms(main_room(cfg, events.store) if rooms_on else here)
     if network:  # no microphone of its own: every room, the main one too, is there once its body connects
         rooms.connected(rooms.main, False)
-    clock = skill_clock(skills, "aloud", home, presence, myself)
+    clock = skill_clock(skills, "aloud", home, presence, myself, cfg, root)
     clocks.extend([clock] if clock else [])
     elsewhere = make_chat_when_out(cfg, presence, reminders)
     new_brain = brains(cfg, root, **tools)

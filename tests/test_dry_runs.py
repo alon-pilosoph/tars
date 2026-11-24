@@ -47,14 +47,14 @@ def test_a_dry_run_counts_each_time_as_the_clock_would_with_its_cooldown():
     assert dry_run(UNLOCKED, past) == [T0 + 60, T0 + 60 + COOLDOWN_S + 1]
 
 
-def test_a_dry_run_doesnt_count_a_status_gone_before_the_clock_would_look():
+def test_a_dry_run_counts_a_status_gone_before_the_next_look_as_events_do():
     past = [
         (T0, "front door: locked"),
         (T0 + 60, "front door: unlocked"),
         (T0 + 60 + TICK_S / 2, "front door: locked"),
         (T0 + 3600, "front door: unlocked"),
     ]
-    assert dry_run(UNLOCKED, past) == [T0 + 3600]
+    assert dry_run(UNLOCKED, past) == [T0 + 60, T0 + 3600]
 
 
 def test_the_note_says_how_often_and_when_and_when_to_bring_it_up():

@@ -52,6 +52,9 @@ the model, which carries them out with the tools it already has.
   ("unlocked", "open", "off"; as a word, so "unlocked" isn't "locked"), or a reading in it crosses a limit ("co2"
   over 1000). The turn is told what happened ("Stacey just came home"). Each service watches for its own skills,
   every 10 seconds: who's home from the event database, and only the devices a trigger names, by their status.
+  A device of Home Assistant's is followed by its events too (`hass.Live`): a change that sets a skill off is acted on
+  at once, and one gone again by the next look (unlocked and locked again) is still seen. One that asks for a fresh
+  reading (`refresh`), a plugin's own and an Android TV are only looked at.
   What changed while TARS was starting is seen, never acted on, and a skill set off runs again no sooner than ten
   minutes later, so it can't set itself off, or flap with a reading around its limit. A skill runs at set times or
   on something happening, not both.
@@ -61,8 +64,7 @@ the model, which carries them out with the tools it already has.
   reminded of.
 - **Dry runs**: a skill that waits on a device is replayed over the device's last 7 days before it's kept. Its Home
   Assistant history is worded as its status is now (`Entity.past`), and the same rule the clock uses, cooldown and
-  all, counts when it would have run; a status gone again within the clock's 10 seconds isn't counted, as the clock
-  could miss it. The model is told ("it would have run 41 times, most often around 16:00", the hour only from three
+  all, counts when it would have run; out of reach for less than 10 seconds isn't counted. The model is told ("it would have run 41 times, most often around 16:00", the hour only from three
   runs) and says so only when it matters: far more often than wanted, or never, offering to change it. A device Home
   Assistant doesn't keep a history of (an Android TV, a plugin's without `past`) is kept without one.
 - **On TARS being updated**: a skill can run when TARS itself is updated, told what changed from the version it last
@@ -83,9 +85,6 @@ resumed or deleted there, and what someone likes forgotten ([the web UI](web-ui.
 
 Kept in the event database: the `skills` and `skill_runs` tables, backed
 up with the rest.
-
-Not yet: a device change shorter than ten seconds (unlocked and locked again in between) isn't seen; Home
-Assistant's own event stream would catch it.
 
 ## Once, later
 
