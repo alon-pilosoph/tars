@@ -57,6 +57,16 @@ class LocalHub:
             raise ValueError(f"not a request the hub makes of Home Assistant: {request}")
         return getattr(self._hass, request)(*args, **kwargs)
 
+    def live(self, on_status: Callable[[str, str], None]):
+        """The devices' statuses as Home Assistant's events change them (hass.Live), each handed to
+        `on_status(name, status)`; None without Home Assistant, or with nothing of its to follow."""
+        if self._hass is None:
+            return None
+        from .hass import Live
+
+        live = Live(self._devices, self._hass, on_status)
+        return live if live.entities else None
+
     def describe(self) -> dict[str, Description]:
         return {name: Description.of(device) for name, device in self._devices.items()}
 
@@ -168,6 +178,7 @@ def behind_hub(tools: HomeTools, hass=None) -> LocalHub:
     """The house tools' devices and Home Assistant (`hass`) moved behind a hub: the tools then reach each device
     through its HubDevice, and Home Assistant through HubHomeAssistant."""
     hub = LocalHub(tools.devices, hass)
+    tools.hub = hub
     tools.devices = {name: HubDevice(hub, described) for name, described in hub.describe().items()}
     if tools.ha is not None and hass is not None:
         tools.ha.through(HubHomeAssistant(hub))

@@ -808,14 +808,14 @@ def make_skills(events):
 def follow_devices(cfg: Config, root: Path, home, clock) -> None:
     """The house's devices, followed in Home Assistant from now on, for the skills that wait on one (Clock.saw). With
     no Home Assistant, the clock's own looks are all there is."""
-    from .hass import HomeAssistant, Live, follow
+    from .hass import follow
     from .home import TOKEN_KEY
 
     token = dotenv_values(root / ".env").get(TOKEN_KEY)
     if not (home and cfg.home.url and token):
         return
-    live = Live(home.devices, HomeAssistant(cfg.home.url, token), clock.saw)
-    if not live.entities:
+    live = home.hub.live(clock.saw) if home.hub else None
+    if live is None:
         return
     run = functools.partial(
         follow, cfg.home.url, token, live.entities, lambda entity, state: None, on_subscribed=live.seed, on_new=live.new
