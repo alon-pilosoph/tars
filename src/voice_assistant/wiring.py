@@ -805,7 +805,27 @@ def make_skills(events):
     return make(events)
 
 
-def skill_clock(skills, say: str, home=None, presence=None, myself=None):
+def follow_devices(cfg: Config, root: Path, home, clock) -> None:
+    """The house's devices, followed in Home Assistant from now on, for the skills that wait on one (Clock.saw). With
+    no Home Assistant, the clock's own looks are all there is."""
+    from .hass import HomeAssistant, Live, follow
+    from .home import TOKEN_KEY
+
+    token = dotenv_values(root / ".env").get(TOKEN_KEY)
+    if not (home and cfg.home.url and token):
+        return
+    live = Live(home.devices, HomeAssistant(cfg.home.url, token), clock.saw)
+    if not live.entities:
+        return
+    run = functools.partial(
+        follow, cfg.home.url, token, live.entities, lambda entity, state: None, on_subscribed=live.seed, on_new=live.new
+    )
+    threading.Thread(target=run, daemon=True, name=f"skill devices ({clock.say})").start()
+
+
+def skill_clock(
+    skills, say: str, home=None, presence=None, myself=None, cfg: Config | None = None, root: Path | None = None
+):
     """The clock for the skills that run by themselves and say what they have to `say` ("aloud": the voice's TARS;
     "chat": the Telegram service's, skills.ALOUD and CHAT), or None without skills. They're read again on every
     tick, so one taught a minute ago is kept to. With `home` (a HomeTools) and `presence`, it also watches the
@@ -866,6 +886,8 @@ def skill_clock(skills, say: str, home=None, presence=None, myself=None):
         **updates,
         **came_in,
     )
+    if cfg and root:
+        follow_devices(cfg, root, home, clock)
     return clock.start()
 
 

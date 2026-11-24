@@ -158,3 +158,26 @@ def test_typed_questions_ask_for_neither_the_voices_nor_the_reminders(tmp_path, 
         entrypoints.typed(config(), tmp_path)
     (household,) = households
     assert made(household) == PARTS - {"speaker_id", "reminders"}
+
+
+def test_the_devices_skills_wait_on_are_followed_and_told_to_the_clock(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from voice_assistant import hass, wiring
+
+    (tmp_path / ".env").write_text("HOME_ASSISTANT_TOKEN=t\n")
+    monkeypatch.setattr(hass.HomeAssistant, "states", lambda self: [])
+    told, done = [], threading.Event()
+
+    def follow(url, token, entities, on_state, on_subscribed, on_new):
+        assert entities == ["lock.front"]
+        on_subscribed()
+        on_new({"entity_id": "lock.front", "state": "unlocked", "attributes": {}})
+        done.set()
+
+    monkeypatch.setattr(hass, "follow", follow)
+    device = hass.entity_device("front door", {"entity": "lock.front"}, None)
+    cfg = SimpleNamespace(home=SimpleNamespace(url="http://ha:8123"))
+    clock = SimpleNamespace(say="aloud", saw=lambda name, status: told.append((name, status)))
+    wiring.follow_devices(cfg, tmp_path, SimpleNamespace(devices={"front door": device}), clock)
+    assert done.wait(5) and told == [("front door", "front door: unlocked")]

@@ -514,6 +514,43 @@ class _Then:
         return self.states[entity]
 
 
+class Live:
+    """Devices' statuses as Home Assistant's events change them (follow's on_new), each worded as status() words it
+    and handed to `on_status(name, status)`, so one gone again at once is still seen. Nothing is read from Home
+    Assistant for it but the states it starts from (seed, follow's on_subscribed). A device that can't be reached
+    says nothing here: it's back where it was, or somewhere else, when it answers. One with `refresh`, or that looks
+    up an address, isn't followed: its status costs more than a state."""
+
+    def __init__(self, devices: dict[str, Device], hass: HomeAssistant, on_status: Callable[[str, str], None]):
+        self._hass, self._on_status, self._then = hass, on_status, _Then()
+        self._devices: dict[str, tuple[Entity, set[str]]] = {}
+        for name, device in devices.items():
+            if not isinstance(device, Entity) or device.refresh or getattr(device, "address", None) is not None:
+                continue
+            replay = copy.copy(device)
+            replay._hass = self._then
+            self._devices[name] = (replay, {device.entity, *device._entities(), *device.details})
+        self.entities = sorted({e for _, entities in self._devices.values() for e in entities})
+
+    def seed(self) -> None:
+        wanted = set(self.entities)
+        self._then.states.update({s["entity_id"]: s for s in self._hass.states() if s.get("entity_id") in wanted})
+
+    def new(self, state: dict) -> None:
+        entity = state["entity_id"]
+        self._then.states[entity] = state
+        if state.get("state") in UNKNOWN:
+            return
+        for name, (device, entities) in self._devices.items():
+            if entity not in entities or self._then.states.get(device.entity, {}).get("state") in (None, *UNKNOWN):
+                continue
+            try:
+                said = device.status()
+            except HomeError:
+                continue  # it reads Home Assistant some other way: the clock's own look has it
+            self._on_status(name, said)
+
+
 def _assumed(found: dict) -> bool:
     """Whether Home Assistant only assumes the entity's state (one worked by IR): it can't report back."""
     return bool((found.get("attributes") or {}).get("assumed_state"))
@@ -1061,6 +1098,7 @@ def follow(
     unknown_too: bool = False,
     moves_only: bool = False,
     on_subscribed: Callable[[], None] | None = None,
+    on_new: Callable[[dict], None] | None = None,
 ) -> None:
     """Follows `entities` over Home Assistant's websocket API, calling on_state(entity, state) each time one's state
     changes ("on", "off"; never a change of attributes alone, and unknown or unavailable only with `unknown_too`),
@@ -1069,7 +1107,9 @@ def follow(
     (Home Assistant starting, a Bluetooth sensor heard again), says where it is, not that it moved. Reconnects by
     itself: Home Assistant restarting is logged once, and back when it's back. Runs on the caller's thread.
     `on_subscribed()`: called each time Home Assistant has taken the subscription, the first and after every
-    reconnect, so a caller can read what changed while nothing was followed (nothing here says it)."""
+    reconnect, so a caller can read what changed while nothing was followed (nothing here says it).
+    `on_new(state)`: called first with each new state whole, as Home Assistant has it: a change of attributes alone,
+    and unknown or unavailable, included."""
     wanted, address = set(entities), "ws" + url.rstrip("/").removeprefix("http") + "/api/websocket"
     tries, down = 0, ""
     while not stop():
@@ -1102,6 +1142,11 @@ def follow(
                     if data.get("entity_id") not in wanted:
                         continue
                     new, old = (data.get("new_state") or {}).get("state"), (data.get("old_state") or {}).get("state")
+                    if on_new and new is not None:
+                        try:
+                            on_new(data["new_state"])
+                        except Exception as e:  # noqa: BLE001 - as below
+                            print(f"(home: couldn't act on {data['entity_id']} {new}: {e!r})")
                     if new is None or new == old or (new in UNKNOWN and not unknown_too):
                         continue
                     if moves_only and (old is None or old in UNKNOWN):
