@@ -118,6 +118,7 @@ nothing to type and nothing a look-alike page could reuse: a passkey only answer
 
 | What | How |
 |---|---|
+| First | `[web] sign_in = true` ([HTTPS first](#signing-in)) and a restart of the web UI: an invite's link opens only once sign-in is on. The web UI is closed to everyone until they use theirs |
 | A first passkey | `voice-assistant --web-invite Stacey`: a one-time link, sent to her Telegram chat if she has one (printed otherwise), good for a day. Opening it and tapping **Make a passkey** makes one and signs her in. |
 | Another device | another invite, opened there; a person can have several passkeys |
 | Signing in | **Sign in with a passkey** on `/sign-in`, where any page sends someone with no session; the phone offers the passkeys it has for TARS |

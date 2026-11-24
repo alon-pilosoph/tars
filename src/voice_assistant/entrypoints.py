@@ -237,13 +237,16 @@ def web_invite(cfg: Config, root: Path, person: str, port: int) -> None:
     log = make_event_log(cfg, root)
     if not person.strip():
         raise ConfigError("--web-invite needs the person's name.")
+    if not cfg.web.sign_in:
+        raise ConfigError(
+            "Sign-in is off, and an invite's link doesn't open until it's on: set [web] sign_in = true, restart the "
+            "web UI, then make the invite (docs/web-ui.md#signing-in)."
+        )
     if cfg.web.tls_cert and not cfg.web.link:
         raise ConfigError(
             "Set [web] link to the web UI's name, e.g. https://<pi-name>.<tailnet>.ts.net:8080: passkeys belong to a "
             "name, and browsers won't make one for an address (docs/web-ui.md#signing-in)."
         )
-    if not cfg.web.sign_in:
-        print("(sign-in is off: the link works, but the web UI won't ask for it until [web] sign_in = true)")
     url = f"{web_link(cfg, port)}/sign-in/invite/{Accounts(log.store).invite(person)}"
     print(f"A link for {person} to make a passkey for the web UI, good for a day:\n{url}")
     text = f"A link to sign in to TARS's web page: it makes a passkey on your phone. It works once, for a day.\n{url}"
