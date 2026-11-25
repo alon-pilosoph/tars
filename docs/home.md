@@ -179,6 +179,8 @@ one, called in order before its status, each then waiting up to 30 seconds for t
 update. `homeassistant.update_entity` with no `entity_id` updates the device itself. A status with a refresh says how
 old the reading is ("as of 10:25"), says so if a step failed, and isn't asked for again within a minute; TARS says
 "One moment." first. A skill that checks the device on a schedule gets a fresh reading the same way.
+When the device is unavailable because its integration stopped working in Home Assistant (its sign-in ended), the
+status and `--check` say that, not that the device can't be reached, and when it became unavailable.
 
 ```toml
 [[home.devices]]

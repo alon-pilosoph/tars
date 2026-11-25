@@ -392,12 +392,18 @@ class Entity(Device):
         failed = self._refresh()
         found = self._hass.state(self.entity)
         guess = " (Home Assistant's guess: it can't report back)" if _assumed(found) else ""
-        parts = [f"{self.name}: {self._said(found)}{guess}", *self._extra(found)]
+        # Only with a refresh: the others' statuses are also worded from Home Assistant's events alone (Live), and the
+        # two must match.
+        down = _down(self._hass, self.entity) if self.refresh and found.get("state") == "unavailable" else ""
+        parts = [f"{self.name}: {f'no reading: {down}' if down else self._said(found) + guess}", *self._extra(found)]
         parts += [_reading(self._hass, e) for e in self.details]
         said = ", ".join(p for p in parts if p)
         if not self.refresh:
             return said
         when = _when(found.get("last_updated") or found.get("last_changed"))
+        if found.get("state") == "unavailable":  # its stamp is when it went, not when it last reported
+            trouble = f"couldn't refresh it ({failed}); " if failed and not down else ""
+            return f"{said} ({trouble}unavailable since {when})"
         trouble = f"couldn't refresh it ({failed}); " if failed else ""
         return f"{said} ({trouble}as of {when})"
 
@@ -451,6 +457,8 @@ class Entity(Device):
             fix = "check the entity ids in Home Assistant (Settings, Devices & services, Entities) and config.toml"
             return [Check("fail", f"Home Assistant has no {', '.join(missing)}", fix)]
         if said[0].endswith(" unavailable"):
+            if down := _down(self._hass, self.entity):
+                return [Check("warn", said[0], down)]
             return [Check("warn", said[0], "Home Assistant knows it but can't reach it: is it online?")]
         return [Check("ok", ", ".join(said))]
 
@@ -499,6 +507,24 @@ class Entity(Device):
             if self._clock() >= deadline:
                 return False, found
             self._sleep(POLL_S)
+
+
+def _down(hass: HomeAssistant, entity: str) -> str:
+    """Why an unavailable entity is so, when its integration is what's down (a sign-in that ended): nothing is known
+    of the device itself then. "" when the integration is up, or Home Assistant doesn't say."""
+    try:
+        entry_id = next((e.get("config_entry_id") for e in hass.entity_entries() if e.get("entity_id") == entity), None)
+        entry = next((e for e in hass.entries() if entry_id and e.get("entry_id") == entry_id), None)
+    except HomeError:
+        return ""
+    state = (entry or {}).get("state") or "loaded"
+    if entry is None or state in ("loaded", "setup_in_progress"):
+        return ""
+    return (
+        f"Home Assistant's {entry.get('domain')} integration isn't working ({state.replace('_', ' ')}), which says "
+        "nothing about the device itself; it needs fixing in Home Assistant (Settings, Devices & services), "
+        "perhaps signing in again"
+    )
 
 
 class _Then:
