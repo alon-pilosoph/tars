@@ -83,8 +83,10 @@ class RecorderConfig:
     end_silence_s: float = 0.8
     max_utterance_s: float = 15.0
     follow_up_s: float = 4.0
-    greet_after_s: float = 1.5  # say "Yes <name>" if nothing follows the wake word this long; 0 = off
-    # When to say "Yes <name>" after the wake word: "pause" (if nothing follows it for greet_after_s), "always" (at
+    # Say "Yes?" if nothing follows the wake word this long; 0 = off. On 88 wakes on the Pi, a request said in one
+    # breath started within 0.69 s of the name (90% within 0.43 s); otherwise people waited for "Yes".
+    greet_after_s: float = 0.8
+    # When to say "Yes?" after the wake word: "pause" (if nothing follows it for greet_after_s), "always" (at
     # once), or "never".
     greet: str = "pause"
     end_of_turn: str = "smart"  # silence: end_silence_s ends it | smart: a model may extend it to max_pause_s

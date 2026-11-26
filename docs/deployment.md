@@ -328,7 +328,7 @@ minutes on this:
 | a second person, 5+ requests | a second voice in Voices |
 
 Then answer the wakes in Review, and in Voices name your voice and press Regroup voices: the next bare "hey TARS"
-should get "Yes <name>". Note down false wakes from the TV, missed wakes, wrong guesses, and anything that felt slow.
+should get "Yes?". Note down false wakes from the TV, missed wakes, wrong guesses, and anything that felt slow.
 
 ## Design decisions
 
