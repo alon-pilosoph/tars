@@ -513,6 +513,48 @@ def test_a_refresh_that_fails_still_reads_and_says_so():
     assert "away, not at any place" in said and "couldn't refresh it (icloud.update: " in said and "as of " in said
 
 
+class Down(Refreshing):
+    """The phone unavailable, its integration's entry in `state`."""
+
+    def __init__(self, state: str):
+        super().__init__(answers=False)
+        self.entry_state = state
+        self.states["device_tracker.phone"]["state"] = "unavailable"
+
+    def entity_entries(self) -> list[dict]:
+        return [{"entity_id": "device_tracker.phone", "config_entry_id": "e1"}]
+
+    def entries(self) -> list[dict]:
+        return [{"entry_id": "e1", "domain": "icloud", "title": "someone@example.com", "state": self.entry_state}]
+
+
+def test_an_integration_that_is_down_is_not_said_to_be_the_phone():
+    phone, _ = refreshing(PHONE, Down("setup_error"))
+    said = phone.status()
+    assert said.startswith("Dana's phone: no reading: Home Assistant's icloud integration isn't working (setup error)")
+    assert "unavailable since " in said and "as of " not in said and "not reachable" not in said
+    assert "someone@example.com" not in said
+    (found,) = phone.check()
+    assert found.status == "warn" and "icloud integration isn't working" in found.fix
+
+
+def test_a_phone_out_of_reach_with_its_integration_up_is_said_so():
+    phone, _ = refreshing(PHONE, Down("loaded"))
+    said = phone.status()
+    assert "not reachable" in said and "couldn't refresh it (icloud.update: " in said and "unavailable since " in said
+
+
+def test_an_integration_that_cant_be_read_leaves_the_status_as_it_was():
+    ha = Down("setup_error")
+
+    def refused():
+        raise HomeError("Home Assistant said: Unauthorized")
+
+    ha.entity_entries = refused
+    phone, _ = refreshing(PHONE, ha)
+    assert "not reachable" in phone.status()
+
+
 def test_a_step_nothing_follows_waits_only_so_long():
     ha = Refreshing()
     stuck, now = refreshing({**PHONE, "refresh": [{"service": "light.turn_on", "data": {"entity_id": "x"}}]}, ha)
