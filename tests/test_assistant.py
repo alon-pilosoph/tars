@@ -392,6 +392,19 @@ def test_a_bare_wake_word_gets_yes_then_the_question():
     assert brain.asked[0].endswith("what's the weather")
 
 
+def test_a_request_said_while_it_got_ready_is_read_before_any_greeting(capsys):
+    """Over a TV, setting up hearing one voice took seconds after the wake word. The mic's audio from the wake on was
+    still waiting to be read, and a "Yes?" after only the usual pause's worth of it threw the request away."""
+    assistant, brain = make_assistant([b"q", None], ["turn the volume up a bit"])
+    said = []
+    assistant.say = lambda text, **kw: said.append(text)
+    assistant._woke_at = time.monotonic() - 4.0  # getting ready took 4 s
+    assistant.converse(follow_up_s=4.0, greet_after_s=0.8, wake=ALON)
+    assert 4.8 <= assistant.body.timeouts[0] < 5.5  # all that was heard since the wake, then the usual pause
+    assert said == [] and brain.asked[0].endswith("turn the volume up a bit")
+    assert "heard while getting ready" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("greet, heard", [("always", [b"q", None]), ("pause", [None, b"q", None])])
 def test_the_greeting_is_yes_even_when_speaker_id_is_broken(greet, heard):
     assistant, brain, played = greeting_at_once(heard, ["what time is it"])

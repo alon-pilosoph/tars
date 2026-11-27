@@ -79,6 +79,7 @@ ANSWER_ONLY_S = 6.0
 MUTED_POLL_S = 0.25  # muted, how often what's due is looked for (unmuting ends the wait at once)
 ERROR_LINE_WAIT_S = 1.0
 AFTER_NAME_WAIT_S = 1.0  # the longest the first request waits to know what followed the name (about 0.25 s)
+BEHIND_NOTED_S = 1.0  # getting ready after the wake took this long: noted in the log
 PHRASE_WAIT_S = 3.0  # the longest a short line keeps a conversation waiting while it's made ("Yes?")
 UNPROMPTED_WAIT_S = 10.0  # the same for what TARS says on its own, which may wait behind lines being made ahead
 VOICE_RETRY_S = 60.0  # a reminder or announcement the voice couldn't make is tried again after this
@@ -857,6 +858,18 @@ class Assistant:
             print("(said over other voices: listening for that voice alone)")
         return focus
 
+    def _behind(self) -> float:
+        """How long since the wake word, in seconds: the mic's audio from then on is still waiting to be read. The wait
+        for a request before "Yes?" counts the audio it reads, from the wake on, and "Yes?" said with the mic closed
+        throws away whatever is still waiting, so the wait covers this too. Otherwise a request said while TARS got
+        ready (setting up hearing one voice over the TV took seconds) was thrown away by the greeting it outran."""
+        if self._woke_at is None:
+            return 0.0
+        behind = time.monotonic() - self._woke_at
+        if behind >= BEHIND_NOTED_S:
+            print(f"(reading {behind:.1f}s heard while getting ready)")
+        return behind
+
     def greet(self) -> None:
         print(f"Bot:  {GREETING}")
         if self.say(GREETING, on_first_audio=self._greeted):
@@ -1029,7 +1042,7 @@ class Assistant:
             if greet == ALWAYS:
                 heard = self.greet_and_listen(wake)
             elif greet == PAUSE and greet_after_s:
-                heard = self.listen(start_timeout_s=greet_after_s, after_name=wake.after_name)
+                heard = self.listen(start_timeout_s=greet_after_s + self._behind(), after_name=wake.after_name)
                 if heard is None:
                     self.greet()
                     heard = self.listen()
