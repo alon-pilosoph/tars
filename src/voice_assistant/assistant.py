@@ -72,7 +72,7 @@ ERROR_LINES = {
     "plain": ["Something went wrong. Please try again.", "That didn't work. Please ask again."],
 }
 DRY_FROM_HUMOR = 50  # percent
-PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes <name>" after the wake word
+PAUSE, ALWAYS, NEVER = GREETS  # when to say "Yes?" after the wake word
 # Muted, and unmuted only to hear the answer to what TARS asked: the longest that answer is recorded. "No, I'm
 # good" and "channel twelve" take two seconds; what's said after is the room's, not TARS's.
 ANSWER_ONLY_S = 6.0
@@ -995,7 +995,7 @@ class Assistant:
     ) -> None:
         """Answer one request, then keep listening for follow-ups (no wake word) until nobody speaks.
 
-        `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes <name>":
+        `first` is an already-recorded request (a reply to "Did you call me?"). `greet`: when to say "Yes?":
         ALWAYS at once, PAUSE once nothing has followed the wake word for `greet_after_s`, or NEVER. `wake`: what woke
         it, whose voice the greeting names, and what followed the name before listening began, where the request
         starts if it was said in one breath. `asked`: what TARS said on its own that `first` answers, so an answer

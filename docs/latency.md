@@ -155,7 +155,7 @@ starts 0.25-0.35 s after that: a 0.3 s margin cut the start off "twelve" two tim
 
 ### The greeting and the open mic
 
-With `[recorder] greet = "always"`, TARS says "Yes <name>" the moment the wake word passes its double-check, so
+With `[recorder] greet = "always"`, TARS says "Yes?" the moment the wake word passes its double-check, so
 you always know it's listening. The double-check (21 ms on the development Mac) and speaker ID for the name (43 ms)
 are all it waits for, and the line is made ahead. Each turn records how long after the wake word the greeting
 started (`greet` in its timings).
@@ -168,7 +168,7 @@ recorded speech through a simulated room, it removed about 30 dB once it had lea
 speech recognition heard nothing of TARS's own voice.
 
 Both are off by default until measured in a real room (see [limitations](#limitations)): `greet = "pause"` says
-"Yes <name>" only once nothing has followed the wake word for `greet_after_s`. If the canceller can't start or
+"Yes?" only once nothing has followed the wake word for `greet_after_s` (0.8 s). If the canceller can't start or
 fails, TARS carries on with the mic closed while it speaks; `--check` says so, and warns when the devices' delay is
 more than the 0.5 s the canceller can take.
 
@@ -420,7 +420,8 @@ TARS's own voice ([when a service fails](#when-a-service-fails)). **Trade-off:**
 | `[recorder] end_silence_s` | `0.8` | without Flux: silence that ends your turn |
 | `[recorder] max_pause_s` | `1.6` | without Flux: how long a pause may be when you sounded mid-thought |
 | `[recorder] end_of_turn` | `"smart"` | without Flux: `silence` turns Smart Turn off |
-| `[recorder] greet` | `"pause"` | when to say "Yes <name>" after the wake word: `always` at once, `pause` only after `greet_after_s` of nothing, `never` |
+| `[recorder] greet` | `"pause"` | when to say "Yes?" after the wake word: `always` at once, `pause` only after `greet_after_s` of nothing, `never` |
+| `[recorder] greet_after_s` | `0.8` | the pause after the name that gets "Yes?": on 88 wakes, a request said in one breath started within 0.69 s of it; the silence is counted from the wake's own audio, so it runs while the wake is checked |
 | `[audio] echo_cancel` | `false` | take TARS's own sound out of what the mic hears, so the mic stays open while it greets you; off until checked in the room with `tools/echo_bench.py` |
 | `[recorder] answer_early_s` | `0.25` | without Flux: when the answer starts being prepared; `0` waits for the end. Not used with `[home] local_first` |
 | `[home] local_first` | `false` | with `commands_on_pi`: the recording stays on the Pi until the turn is over and Vosk has found it isn't a house command; anything else is then sent whole, with no streaming and no draft ([local first](#local-first)) |
