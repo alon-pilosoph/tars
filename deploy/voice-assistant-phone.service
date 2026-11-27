@@ -1,0 +1,46 @@
+# systemd *user* service: the phone's door to TARS (docs/phone.md), on the brain's machine. It answers only on
+# 127.0.0.1, for a tunnel to reach, and holds no models: the conversation is the voice assistant's.
+# deploy/install-pi.sh sets it up once TARS_PHONE_URL is in .env.
+#
+#   journalctl --user-unit voice-assistant-phone -f    # follow the logs
+
+[Unit]
+Description=TARS on the phone
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Assumes the repo is cloned to ~/voice-assistant and uv is installed in ~/.local/bin.
+WorkingDirectory=%h/voice-assistant
+ExecStart=%h/.local/bin/uv run --frozen --all-extras python -m voice_assistant.phone
+Environment=PYTHONUNBUFFERED=1
+# Sandboxed like a network body (docs/security.md#the-services-on-the-machine): no D-Bus, no Docker, the home read-only
+# but its own folder (the database a call's ticket is written in, and uv's caches).
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/voice-assistant -%h/.cache
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+Restart=always
+RestartSec=3
+# 78 (EX_CONFIG): a setting missing from .env, or a wrong one. Restarting won't fix it; see the logs.
+RestartPreventExitStatus=78
+
+[Install]
+WantedBy=default.target

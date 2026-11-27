@@ -285,7 +285,7 @@ def local_body(
         yield LocalBody(mic, speaker, trigger, recorder), idle_message
 
 
-def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assistant_for, run) -> None:
+def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assistant_for, run, call=None) -> None:
     """[bodies]: each paired body as a room of its own (docs/bodies.md#rooms), on a thread of its own, from the first
     time it connects: `assistant_for(body, room)` makes its assistant (once; it keeps its conversation's state across
     reconnections), and `run(assistant, idle_message)` runs its wake loop. A body that goes ends its room's
@@ -294,7 +294,7 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
 
     A web page let in by a ticket (the Talk page) is a room only while it's open: `assistant_for(body, room, page)`
     makes it a fresh assistant each time, for the person signed in on it (`page`, the body's Hello), and the desk
-    gives it nothing to say."""
+    gives it nothing to say. A phone call is let in the same way, and `call(assistant, link)` holds it (calls.py)."""
     import traceback
 
     from .body import BodyGone
@@ -377,9 +377,17 @@ def serve_rooms(cfg: Config, root: Path, store, sample_rate: int, rooms, assista
             return
         rooms.page(name)
         try:
-            body = RemoteBody(link, sample_rate, make_recorder(cfg, root), checker)
+            # A call takes its turns by Flux (calls.py): it needs none of the recorder's models.
+            recorder = None if hello.kind == "phone" else make_recorder(cfg, root)
+            body = RemoteBody(link, sample_rate, recorder, checker)
             assistant = assistant_for(body, name, hello)
             body.trigger.journal = assistant.journal
+            if hello.kind == "phone":
+                if call is not None:
+                    call(assistant, link)
+                else:
+                    print("(a phone call needs [stt] provider = flux, and its key)", flush=True)
+                return
             run(assistant, f"Waiting for a tap on {name}...")
         except BodyGone:
             print(f"({name} closed)", flush=True)
@@ -404,6 +412,8 @@ def page_room(hello) -> str:
     """A web page's room: its person's, told apart from any other page ("Stacey on the web 3f9a", "the web 3f9a")."""
     from .signin import shown
 
+    if hello.kind == "phone":
+        return f"{shown(hello.person)} on the phone" if hello.person else "the phone"
     who = f"{shown(hello.person)} on the web" if hello.person else "the web"
     return f"{who} {hello.device.removeprefix('web-')[:4]}"
 
@@ -940,12 +950,12 @@ def brains(cfg: Config, root: Path, typed: bool = False, reminders=None, home=No
 
     chats = list(cfg.telegram.people) if cfg.telegram.enabled and client is not None else []
     rules = ask_for_a_photo(chats)  # what it can't see from here, it asks to be sent in a chat
-    return lambda: make_brain(
+    return lambda channel="": make_brain(
         client,
         brain_config(cfg, typed=typed),
         env,
         reminders,
-        channel_rules=rules,
+        channel_rules="\n\n".join(r for r in (rules, channel) if r),
         home=home,
         browser=browser,
         feeds=feeds,
@@ -954,6 +964,55 @@ def brains(cfg: Config, root: Path, typed: bool = False, reminders=None, home=No
         tools=[pages] if pages else [],
         memory=memory,
     )
+
+
+def make_approvals(cfg: Config, root: Path, folder: Path):
+    """What asks in the caller's Telegram chat before a call does anything that needs it (approvals.py); None without
+    [telegram], or its token."""
+    from .approvals import Approvals
+    from .config import TELEGRAM_KEY
+    from .telegram import Bot
+
+    token = dotenv_values(root / ".env").get(TELEGRAM_KEY)
+    if not (cfg.telegram.enabled and token):
+        return None
+    bot = Bot(token)
+    chats = {name.strip().lower(): chat for name, chat in cfg.telegram.people.items()}
+
+    def post(chat: int, text: str, buttons: list[tuple[str, str]]) -> None:
+        if buttons:
+            bot.send_buttons(chat, text, buttons, preview=False)
+        else:
+            bot.send(chat, text)
+
+    return Approvals(folder, lambda person: chats.get((person or "").strip().lower()), post)
+
+
+def make_calls(
+    cfg: Config, root: Path, folder: Path, new_brain=None, keyterms: Callable[[], list[str]] = list
+) -> Callable | None:
+    """What holds a phone call (calls.py): (assistant, link). None without Flux, which hears it. `new_brain()`: another
+    brain like a call's. `keyterms()`: the household's own words (people, devices), for Flux to lean towards.
+    `folder`: the event log's, where taps that approve something come back."""
+    env = root / ".env"
+    keys = env_keys(env)
+    cfg, _ = with_keys(cfg, keys)
+    if cfg.stt.provider != "flux" or DEEPGRAM_KEY not in keys:
+        return None
+    from .calls import CallConversation
+    from .stt import FluxCall
+
+    key = api_key(env, DEEPGRAM_KEY)
+
+    approvals = make_approvals(cfg, root, folder)
+
+    def hold(assistant, link) -> None:
+        def listen(event) -> FluxCall:
+            return FluxCall(key, cfg.stt, event, tuple(keyterms()))
+
+        CallConversation(assistant, link, listen, new_brain, approvals).hold()
+
+    return hold
 
 
 def make_pipeline(

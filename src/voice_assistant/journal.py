@@ -98,9 +98,16 @@ class Journal:
         self._said = []
 
     def heard(
-        self, pcm: bytes, text: str, name: str | None, score: float | None, embedding: np.ndarray | None, first: bool
+        self,
+        pcm: bytes | None,
+        text: str,
+        name: str | None,
+        score: float | None,
+        embedding: np.ndarray | None,
+        first: bool,
     ) -> None:
-        """Someone spoke (`first`: right after the wake). Written in the background, so TARS can answer meanwhile."""
+        """Someone spoke (`first`: right after the wake; no `pcm`: a call, which isn't recorded).
+        Written in the background, so TARS can answer meanwhile."""
         if self.events:
             said, self._said = self._said, []
             self._background.submit(self._heard, time.time(), said, pcm, text, name, score, embedding, first)

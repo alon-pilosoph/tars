@@ -1437,3 +1437,13 @@ def test_a_request_that_could_mean_two_things_gets_a_question_not_a_refusal():
 
     assert ASK_DONT_REFUSE in abilities(["say the time"], [], ["make phone calls"])
     assert "The bedroom or Ari's room?" in HOME_RULES and "change nothing yet" in HOME_RULES
+
+
+def test_a_brain_carries_over_anothers_conversation_but_not_the_question_it_is_on():
+    first, second = (OpenAIChat(None, LLMConfig()) for _ in range(2))
+    first.remember_exchange("hello", "hi")
+    first.stream_reply("something slow")
+    second.carry_over(first)
+    assert [m["content"] for m in second._history] == ["hello", "hi"]
+    second.remember_said("more")
+    assert [m["content"] for m in first._history] == ["hello", "hi", "something slow"]

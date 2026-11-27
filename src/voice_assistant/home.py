@@ -118,6 +118,7 @@ class Request:
     held_for_web: Callable[[], None] | None = None
     room: str = ""  # the room whose body heard it, by voice (rooms.py); "" with one room, or in a chat
     attached: tuple = ()  # attached.Attached; typed loosely like emit
+    approve: Callable | None = None  # on a phone call: what to answer a tool call instead of making it (approvals.py)
 
     def answered(self, what: str, answer: str) -> str:
         """`answer`, the house's to the change `what`, told to `changed`, and handed back."""
