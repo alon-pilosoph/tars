@@ -17,6 +17,9 @@ Every tool says what calling it may change (`does`), and there's no default, so 
   the house's unlocking, a door's own turn and the web (home.py, ha_tool.py), and each provider's own, said where it
   hands over its toolset; every change at least as held_back does.
 
+A request may come with an `approve` of its own (a phone call's, approvals.py), asked before every call, whatever the
+tool does: what it answers is the call's answer, and the tool isn't called.
+
 Web search isn't one of them: it's OpenAI's own tool, run on its side, and the brain marks the reply that used it
 (Request.read_the_web) for every tool here to go by. A tool whose answers are words from anywhere (`outside`: a
 feed's stories) marks its reply the same way once it's answered.
@@ -186,6 +189,9 @@ class Toolbox:
     def call(self, tool: Tool, args, turn: Turn) -> str:
         """What `tool` answers, held back as its `does` says; its failing, said as its `failed`."""
         try:
+            approve = getattr(turn.request, "approve", None)
+            if approve is not None and (instead := approve(tool, args, turn)) is not None:
+                return instead
             if tool.does == CHANGES and (refused := held_back(turn.request)):
                 return refused
             return tool.call(args, turn)

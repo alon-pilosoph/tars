@@ -105,6 +105,15 @@ raise SystemExit(0 if load_config(Path('config.toml')).telegram.enabled else 1)"
 elif [ -e "$HOME/.config/systemd/user/voice-assistant-telegram.service" ]; then
   systemctl --user disable --now voice-assistant-telegram || true
 fi
+# TARS on the phone, if .env has its address (docs/phone.md).
+if grep -qE '^TARS_PHONE_URL=.+' .env 2>/dev/null; then
+  cp deploy/voice-assistant-phone.service "$HOME/.config/systemd/user/"
+  systemctl --user daemon-reload
+  systemctl --user enable voice-assistant-phone
+  systemctl --user restart voice-assistant-phone
+elif [ -e "$HOME/.config/systemd/user/voice-assistant-phone.service" ]; then
+  systemctl --user disable --now voice-assistant-phone || true
+fi
 # The backup to S3, every 15 minutes, if [backup] is on (docs/backup.md).
 if "$UV" run --frozen python -c "from pathlib import Path; from voice_assistant.config import load_config; \
 raise SystemExit(0 if load_config(Path('config.toml')).backup.enabled else 1)"; then

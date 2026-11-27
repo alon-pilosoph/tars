@@ -43,6 +43,7 @@ def audio_seconds(size: int) -> float:
 
 
 CONNECT_S = 5.0
+MAX_KEYTERMS = 100  # Flux's most
 # How sure Flux must be that the turn is over, and how sure for an early "maybe" (where a draft starts).
 FLUX_EOT, FLUX_EAGER_EOT = 0.7, 0.5
 # Flux ends a turn after this much silence whatever it thinks; the recorder's backstop is a little sooner.
@@ -415,6 +416,81 @@ class FluxSession:
         with self._changed:
             self._error = self._error or error
             self._changed.notify_all()
+
+
+class FluxCall:
+    """A whole call on one Flux stream: `event(kind, transcript, sure)` for every turn event as it comes (StartOfTurn,
+    Update, EagerEndOfTurn, TurnResumed, EndOfTurn), from the stream's own thread, and ("Failed", why, 0) once if it
+    ends before it's closed. `sure`: how sure Flux is of its least sure word. `keyterms`: words to lean towards all
+    call long."""
+
+    def __init__(
+        self,
+        api_key: str,
+        cfg: STTConfig,
+        event: Callable[[str, str, float], None],
+        keyterms: tuple[str, ...] = (),
+    ):
+        self._keyterms = keyterms[:MAX_KEYTERMS]
+        # At the last event: how long ago its last word ended, in the audio sent; None if Flux didn't say.
+        self.waited: float | None = None
+        self._event, self._sent, self._closed = event, 0, False
+        self._outbox: queue.Queue[bytes | str | None] = queue.Queue()
+        self._failing = threading.Lock()
+        self._failed = False
+        url = with_keyterms(FluxTranscriber(api_key, cfg)._url, self._keyterms)
+        threading.Thread(target=self._run, args=(url, api_key), daemon=True, name="flux-call").start()
+
+    def feed(self, pcm: bytes) -> None:
+        if not self._failed and not self._closed:
+            self._sent += len(pcm)
+            self._outbox.put(pcm)
+
+    def expect(self, terms: tuple[str, ...]) -> None:
+        """Words the next turn likely has (the choices TARS just offered), besides the call's own."""
+        if not self._failed and not self._closed:
+            keyterms = list(dict.fromkeys((*terms, *self._keyterms)))[:MAX_KEYTERMS]
+            self._outbox.put(json.dumps({"type": "Configure", "keyterms": keyterms}))
+
+    def close(self) -> None:
+        self._closed = True
+        self._outbox.put(None)
+        if self._sent:  # what Deepgram bills: the audio it was sent
+            usage.stt("deepgram", FLUX_MODEL, audio_seconds(self._sent))
+            self._sent = 0
+
+    def _run(self, url: str, key: str) -> None:
+        try:
+            with deepgram_connect(url, key) as ws:
+                threading.Thread(target=self._receive, args=(ws,), daemon=True, name="flux-call-receive").start()
+                while (item := self._outbox.get()) is not None:
+                    ws.send(item)
+                ws.send(json.dumps({"type": "CloseStream"}))
+        except Exception as e:  # noqa: BLE001 - told as Failed
+            self._fail(said(e))
+
+    def _receive(self, ws) -> None:
+        try:
+            for message in ws:
+                event = json.loads(message)
+                if event.get("type") == "TurnInfo" and event.get("event"):
+                    ends = [float(w["end"]) for w in event.get("words") or () if w.get("end") is not None]
+                    self.waited = max(0.0, audio_seconds(self._sent) - ends[-1]) if ends else None
+                    sure = min((float(w.get("confidence", 1)) for w in event.get("words") or ()), default=1.0)
+                    self._event(event["event"], (event.get("transcript") or "").strip(), sure)
+                elif event.get("type") == "Error":
+                    self._fail(str(event.get("description") or event))
+                    return
+            self._fail("it closed")
+        except Exception as e:  # noqa: BLE001 - told as Failed
+            self._fail(said(e))
+
+    def _fail(self, why: str) -> None:
+        with self._failing:
+            if self._failed or self._closed:
+                return
+            self._failed = True
+        self._event("Failed", why, 0.0)
 
 
 class FallbackTranscriber:

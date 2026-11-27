@@ -240,3 +240,59 @@ def test_a_garbled_message_from_the_voice_is_the_service_failing_not_a_bug():
     no_audio.recv = lambda timeout=None: json.dumps({"type": "chunk"})
     with pytest.raises(ServiceError, match="Cartesia voice"):
         b"".join(cartesia([no_audio]).stream("Hi."))
+
+
+class AlongSocket:
+    """Cartesia's side of a context: two bytes and a timestamp for each input, done once told there's no more."""
+
+    def __init__(self, error=""):
+        import queue
+
+        self.sent, self.out, self.error, self.closed = [], queue.Queue(), error, False
+
+    def send(self, message):
+        said = json.loads(message)
+        self.sent.append(said)
+        about = {"context_id": said["context_id"]}
+        if self.error:
+            self.out.put({**about, "type": "error", "message": self.error})
+        elif said["continue"]:
+            n = len(self.sent)
+            self.out.put(
+                {
+                    **about,
+                    "type": "timestamps",
+                    "word_timestamps": {"words": [said["transcript"].strip()], "start": [n - 1], "end": [n]},
+                }
+            )
+            self.out.put({**about, "type": "chunk", "data": base64.b64encode(b"ab").decode()})
+        else:
+            self.out.put({**about, "type": "done"})
+
+    def recv(self, timeout=None):
+        return json.dumps(self.out.get(timeout=timeout))
+
+    def close(self):
+        self.closed = True
+
+
+def test_cartesia_says_several_sentences_in_one_breath():
+    socket = AlongSocket()
+    voice = cartesia([socket])
+    rest = iter(["Two.", None])
+    got = list(voice.along("One.", lambda: next(rest)))
+    assert got == [[("One.", 1)], b"ab", [("Two.", 2)], b"ab"]
+    assert [(m["transcript"], m["continue"]) for m in socket.sent] == [("One.", True), (" Two.", True), ("", False)]
+    assert len({m["context_id"] for m in socket.sent}) == 1 and socket.sent[0]["add_timestamps"]
+    assert voice._idle.qsize() == 1  # kept for the next reply
+
+
+def test_a_breath_that_fails_or_is_cut_short_is_not_kept():
+    voice = cartesia([AlongSocket(error="no")])
+    with pytest.raises(ServiceError, match="Cartesia voice: no"):
+        list(voice.along("One.", lambda: None))
+    voice = cartesia([AlongSocket()])
+    pieces = voice.along("One.", lambda: None)
+    next(pieces)
+    pieces.close()
+    assert voice._idle.qsize() == 0 and voice._turns._value == voice.AT_ONCE

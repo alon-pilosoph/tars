@@ -88,6 +88,16 @@ them on a port of its own; off (the default), nothing listens.
   `tests/test_bodylink.py::test_a_web_page_gets_in_once_with_its_ticket_and_who_it_is_comes_from_the_ticket`,
   `tests/test_signin.py::test_the_talk_page_gets_a_ticket_for_whoever_is_signed_in_and_only_then`,
   `tests/test_home.py::test_nothing_else_unlocks`.
+- **A phone call** ([calling TARS](phone.md)): `phone.py` takes only requests Twilio signed, from a listed number,
+  then a PIN (five wrong ones refuse every call for an hour), and the audio only with a token from that PIN, good once,
+  for 30 s, for that call. It answers only on 127.0.0.1, for a tunnel. The call enters TARS as the Talk page does, by
+  a one-time ticket, so it never unlocks (`Request.by_web`), and what's not on a short list of what a call may do waits
+  for Approve in the caller's Telegram chat, shown whole (`approvals.py`); a tool added later waits too until it's
+  listed. Calls aren't recorded; their audio passes through Twilio and Deepgram.
+- **Tests:** `tests/test_phone.py::test_only_twilio_and_only_an_allowed_caller`,
+  `::test_wrong_pins_lock_it_and_a_token_is_good_once_for_its_own_call`, `::test_audio_without_a_token_is_closed`;
+  `tests/test_approvals.py::test_anything_else_waits_for_a_tap_and_is_then_done_once`,
+  `::test_only_the_chat_that_was_asked_may_answer`, `::test_a_made_up_tap_reaches_nothing`.
 - **A stolen key** (copied off the body): at home, its holder can be that room's body. They can talk to TARS as
   someone in that room would, with the same guards as by voice (the front door still needs its challenge, an order
   still needs a tap on Telegram), and hear TARS's replies to it. `--body-remove ROOM` refuses it from then on;

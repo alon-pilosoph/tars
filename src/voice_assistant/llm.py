@@ -1106,6 +1106,16 @@ class OpenAIChat:
             self._history = self._history[-MAX_TURNS * 2 :]
             self._previous_turn_at = self._last_turn_at = self._clock()
 
+    def carry_over(self, other: OpenAIChat) -> None:
+        """The other's conversation from here on, but for a question it's still answering (calls.py)."""
+        with other._lock:
+            history = list(other._history)
+            if history and history[-1] is other._asked:
+                history.pop()
+            at = other._last_turn_at
+        with self._lock:
+            self._history, self._last_turn_at, self._previous_turn_at = history, at, at
+
     def start_over(self) -> None:
         with self._lock:
             self._history.clear()

@@ -57,6 +57,7 @@ PROTOCOL = 1
 WAKES = ("verified", "model", "none")  # hello's `wake`: what the body checks itself before a wake
 HELLO_WAIT_S = 10.0  # how long a body has to answer the challenge
 MAX_FRAME = 256 * 1024  # bytes: a frame bigger than this closes the connection (a second of audio is 32 KiB)
+PHONE = "phone"  # the kind of a call let in by a ticket (phone.py): calls.py holds its conversation
 MAX_QUEUED_S = 30.0  # audio up that waits unread; past it, the oldest is dropped (a flood, or nobody reading)
 MIN_BODY_BUFFER_S = 30.0  # what a body must be able to hold of a reply, which comes faster than it plays
 MAX_LISTEN_S = 120.0  # welcome's max_listen_s: a conversation's cap on streaming, which the body enforces too
@@ -581,7 +582,7 @@ class BodyListener:
             return None
         return Hello(
             f"web-{secrets.token_hex(4)}",
-            kind="web",
+            kind=PHONE if said.get("kind") == PHONE else "web",
             wake="none",
             echo_cancel=bool(said.get("echo_cancel")),
             buttons=["talk"],

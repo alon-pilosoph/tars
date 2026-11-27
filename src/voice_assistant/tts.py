@@ -6,7 +6,7 @@ import queue
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Protocol
 from urllib.parse import urlencode
 
@@ -227,6 +227,53 @@ class CartesiaSpeech(WarmSockets):
 
     def _send(self, ws, text: str) -> None:
         ws.send(json.dumps({**self._request, "transcript": text, "context_id": uuid.uuid4().hex, "continue": False}))
+
+    def along(self, first: str, more: Callable[[], str | None]) -> Iterator[bytes | list[tuple[str, float]]]:
+        """Several sentences in one breath: `first`, then each `more()` gives, until it gives None. Yields the audio,
+        and now and then the words in it with when each ends, in seconds from the start."""
+        from websockets.exceptions import WebSocketException
+
+        with self._turns:
+            ws, done, failed = None, False, []
+            try:
+                ws = self._take()
+                context = {**self._request, "context_id": uuid.uuid4().hex, "add_timestamps": True,
+                           "max_buffer_delay_ms": 0}  # fmt: skip
+                usage.tts(self.name, self.model, len(first))
+                ws.send(json.dumps({**context, "transcript": first, "continue": True}))
+
+                def rest() -> None:
+                    try:
+                        while (sentence := more()) is not None:
+                            usage.tts(self.name, self.model, len(sentence))
+                            ws.send(json.dumps({**context, "transcript": f" {sentence}", "continue": True}))
+                        ws.send(json.dumps({**context, "transcript": "", "continue": False}))
+                    except Exception as e:  # noqa: BLE001 - raised where the audio is read
+                        failed.append(e)
+
+                sending = threading.Thread(target=usage.carried(rest), daemon=True, name="cartesia-along")
+                sending.start()
+                while True:
+                    event = json.loads(ws.recv(timeout=STALL_S))
+                    if event.get("context_id") not in (None, context["context_id"]):
+                        continue
+                    kind = event.get("type")
+                    if kind == "chunk":
+                        yield base64.b64decode(event["data"])
+                    elif kind == "timestamps":
+                        at = event["word_timestamps"]
+                        yield list(zip(at["words"], at["end"], strict=True))
+                    elif kind == "error":
+                        raise ServiceError(f"{self.title}: {event.get('message') or event.get('title') or event}")
+                    elif kind == "done":
+                        break
+                sending.join(STALL_S)
+                done = not failed and not sending.is_alive()
+            except (WebSocketException, OSError, ValueError, KeyError) as e:
+                raise ServiceError(f"{self.title}: {said(e)}", status_of(e)) from e
+            finally:
+                if ws is not None:
+                    self._keep(ws) if done else self._discard(ws)
 
     def _audio(self, ws) -> Iterator[bytes]:
         while True:

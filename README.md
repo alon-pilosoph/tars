@@ -45,6 +45,9 @@ It runs on a Raspberry Pi 4 (or 5) with a USB speakerphone, or on a Mac while yo
 - **In every room**: another machine, or a small ESP32 board, is TARS's ears and voice in another room, each room its
   own conversation, with reminders said where their person was last heard ([bodies](docs/bodies.md),
   [the Atom](docs/atom.md)).
+- **A phone number**: call TARS from anywhere, the car included. One conversation until you hang up, with the same
+  voice and brain: answers prepared before you finish, talking over it stops it, and it keeps only what you heard.
+  What a call shouldn't do on its own waits for a tap in your chat ([calling TARS](docs/phone.md)).
 - **Every paid service is optional** ([what runs instead](docs/architecture.md#running-on-the-keys-there-are)).
 - **Knows what it used and what that cost**, per service and per person (`--usage`, [usage](docs/usage.md)).
 - **A household web UI**: conversations, what TARS sent, wakes to review, reminders, voices, and a Status page:

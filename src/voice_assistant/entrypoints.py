@@ -434,6 +434,9 @@ def telegram(cfg: Config, root: Path) -> None:
     told.append(tars)
     if cfg.updates.enabled:
         listen_for_update_taps(cfg, root, tars)
+    from .approvals import tap_listener as approval_taps
+
+    tars.listen_first(approval_taps(events.store.folder, tars.bot))
     if wishes:
         from .wishes import tap_listener
 
@@ -688,8 +691,11 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
         )
     need_voice()
     from .assistant import Announcements, Assistant
+    from .bodylink import PHONE
+    from .calls import PHONE_RULES
     from .journal import Journal
     from .rooms import MAIN, Rooms
+    from .wiring import make_calls
 
     household = Household(cfg, root)
     events = household.events
@@ -756,6 +762,14 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             focus=request_focus(cfg, root),
         )
 
+    def in_room(body, room: str, page) -> Assistant:
+        room_brain = new_brain(PHONE_RULES if page and page.kind == PHONE else "")
+        return assistant_on(body, room, Journal(events, room=room), room_brain, page)
+
+    def household_words() -> list[str]:
+        devices = [d.display for d in home.devices.values()] if home else []
+        return ["TARS", *(speaker_id.names() if speaker_id else []), *devices]
+
     def wake_loop(assistant: Assistant, idle_message: str) -> None:
         assistant.run_forever(
             idle_message,
@@ -771,8 +785,9 @@ def run(cfg: Config, push_to_talk: bool, root: Path) -> None:
             events.store,
             voice.sample_rate,
             rooms,
-            lambda body, room, page: assistant_on(body, room, Journal(events, room=room), new_brain(), page),
+            in_room,
             wake_loop,
+            make_calls(cfg, root, events.store.folder, lambda: new_brain(PHONE_RULES), household_words),
         )
     if network:  # no microphone of its own: the rooms are all there is
         threading.Event().wait()
